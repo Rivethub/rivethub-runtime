@@ -7,6 +7,7 @@ use kernel::filing::FilingStore as _;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::EmbedTable;
+use kernel::memory::SessionDeletion as _;
 use kernel::memory::jobs::UnembeddedStore as _;
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
@@ -1055,5 +1056,314 @@ async fn a_pinned_login_captures_without_reaching_the_job_queue(pool: PgPool) ->
         swept.iter().any(|target| target.id == captured),
         "the store's embedding sweep does not see the pinned login's message: {swept:?}"
     );
+    Ok(())
+}
+
+async fn session_rows_as(
+    probe: &PgPool,
+    owner: &Viewer,
+    session: &str,
+    topic: TopicId,
+) -> Result<(), sqlx::Error> {
+    let who = owner.principal().as_str();
+    let topic = topic.uuid();
+    let sql = format!(
+        "INSERT INTO rh_session_startup (session_id, topic_id, tokens, sections, created_at)
+             VALUES ('{session}', '{topic}', 1, '[]', now());
+         INSERT INTO rh_session_suggestions (session_id, name, topic_id) VALUES ('{session}', 'Kitchen', '{topic}');
+         INSERT INTO rh_session_keeps (session_key, kept_at, kept_by) VALUES ('{session}', now(), '{who}')"
+    );
+    Scope::Viewer(owner.clone())
+        .run(async { sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(probe).await })
+        .await?;
+    Ok(())
+}
+
+async fn planted_as(
+    pool: &PgPool,
+    who: &str,
+    table: &str,
+    insert: &str,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "SELECT set_config('rh.principal', '{who}', true);
+         ALTER TABLE {table} DISABLE TRIGGER USER;
+         {insert};
+         ALTER TABLE {table} ENABLE TRIGGER USER"
+    )))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_cannot_take_over_another_persons_session_key(pool: PgPool) -> TestResult {
+    let (store, _tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    store
+        .capture_batch(
+            &batch(LATER, "bob's session"),
+            &CaptureOptions::owned_by(bob.principal()),
+        )
+        .await?;
+    let kitchen = work_topic(&store, &alice, "Kitchen").await?;
+    let probe = probe(&pool).await?;
+    queue_access(&pool, PROBE).await?;
+    session_rows_as(&probe, &alice, FIRST, kitchen).await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+
+    let bare = FIRST.trim_start_matches("claude-code:");
+    for key in [FIRST, bare] {
+        let squat =
+            sqlx::query("INSERT INTO rh_conversations (session_key, agent) VALUES ($1, 'other')")
+                .bind(key)
+                .execute(&pinned)
+                .await;
+        assert!(
+            squat.is_err(),
+            "a pinned login opened a conversation under someone else's session key {key}"
+        );
+    }
+    planted_as(
+        &pool,
+        bob.principal().as_str(),
+        "rh_conversations",
+        &format!("INSERT INTO rh_conversations (session_key, agent, owner_user_id) VALUES ('{FIRST}', 'other', 'bob')"),
+    )
+    .await?;
+    for table in [
+        "rh_session_startup",
+        "rh_session_suggestions",
+        "rh_session_keeps",
+    ] {
+        assert_eq!(
+            visible(&pinned, Scope::Closed, table).await?,
+            0,
+            "{table}: a planted same-key conversation showed someone else's rows"
+        );
+    }
+    let rewritten =
+        sqlx::query("UPDATE rh_session_suggestions SET name = 'taken' WHERE session_id = $1")
+            .bind(FIRST)
+            .execute(&pinned)
+            .await?;
+    let dropped = sqlx::query("DELETE FROM rh_session_keeps WHERE session_key = $1")
+        .bind(FIRST)
+        .execute(&pinned)
+        .await?;
+    assert_eq!(
+        (rewritten.rows_affected(), dropped.rows_affected()),
+        (0, 0),
+        "a pinned login wrote someone else's session rows through a shared key"
+    );
+    let tombstoned = sqlx::query(
+        "INSERT INTO rh_session_tombstones (session_key, deleted_at, deleted_by) VALUES ($1, now(), 'bob')",
+    )
+    .bind(FIRST)
+    .execute(&pinned)
+    .await;
+    assert!(
+        tombstoned.is_err(),
+        "a pinned login tombstoned a session key someone else owns"
+    );
+    planted_as(
+        &pool,
+        bob.principal().as_str(),
+        "rh_session_tombstones",
+        &format!("INSERT INTO rh_session_tombstones (session_key, deleted_at, deleted_by) VALUES ('{FIRST}', now(), 'bob')"),
+    )
+    .await?;
+    let hers =
+        format!("rh_conversations WHERE session_key = '{FIRST}' AND owner_user_id = 'alice'");
+    assert_eq!(unscoped(&pool, &hers).await?, 1);
+    Scope::Maintenance
+        .run(PostgresMemory::new(pool.clone()).purge_tombstoned(100))
+        .await?;
+    assert_eq!(
+        unscoped(&pool, &hers).await?,
+        1,
+        "the purge erased someone else's conversation for a planted tombstone"
+    );
+    assert_eq!(
+        unscoped(&pool, "rh_session_startup").await?,
+        1,
+        "the purge erased someone else's session rows for a planted tombstone"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_cannot_write_the_shared_ledgers(pool: PgPool) -> TestResult {
+    let (store, _tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    let kitchen = work_topic(&store, &alice, "Kitchen").await?;
+    let garage = work_topic(&store, &bob, "Garage").await?;
+    let slug_of = |topic: TopicId| {
+        sqlx::query_scalar::<_, String>("SELECT slug FROM rh_topics WHERE id = $1")
+            .bind(topic.uuid())
+    };
+    let hers = slug_of(kitchen).fetch_one(&pool).await?;
+    let his = slug_of(garage).fetch_one(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_tag_taxonomy (key, value, display) VALUES ('project', 'house', 'House');
+         INSERT INTO rh_worker_runs (task, finished_at) VALUES ('tidy', now())",
+    )
+    .execute(&pool)
+    .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+
+    for sql in [
+        "INSERT INTO rh_job_failures (job_key, failures, first_failed_at, last_failed_at)
+             VALUES ('compact-hers', 999, now(), now())",
+        "INSERT INTO rh_worker_runs (task, finished_at) VALUES ('summarize', now() + interval '100 years')",
+        "UPDATE rh_worker_runs SET finished_at = now() + interval '100 years'",
+    ] {
+        let outcome = sqlx::query(sql).execute(&pinned).await;
+        let written = match &outcome {
+            Ok(done) => done.rows_affected() > 0,
+            Err(error) => !refused(error),
+        };
+        assert!(
+            !written,
+            "a pinned login wrote a worker ledger: {sql}: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        visible(&pinned, Scope::Closed, "rh_worker_runs").await?,
+        0,
+        "a pinned login reads the worker ledger"
+    );
+    let theirs = sqlx::query(
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('work', $1, now())
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at",
+    )
+    .bind(&hers)
+    .execute(&pinned)
+    .await;
+    assert!(
+        theirs.is_err(),
+        "a pinned login blocklisted someone else's topic slug"
+    );
+    sqlx::query(
+        "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('work', $1, now())
+         ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at",
+    )
+    .bind(&his)
+    .execute(&pinned)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_tag_taxonomy (key, value, display) VALUES ('project', 'school', 'School')",
+    )
+    .execute(&pinned)
+    .await?;
+    let rejected =
+        sqlx::query("UPDATE rh_tag_taxonomy SET state = 'rejected' WHERE value = 'house'")
+            .execute(&pinned)
+            .await?;
+    let removed = sqlx::query("DELETE FROM rh_tag_taxonomy WHERE value = 'house'")
+        .execute(&pinned)
+        .await?;
+    assert_eq!(
+        (rejected.rows_affected(), removed.rows_affected()),
+        (0, 0),
+        "a pinned login changed the household vocabulary"
+    );
+    let rewritten = sqlx::query(
+        "INSERT INTO rh_tag_taxonomy (key, value, display) VALUES ('project', 'house', 'Hut')
+         ON CONFLICT (key, value) DO UPDATE SET display = EXCLUDED.display",
+    )
+    .execute(&pinned)
+    .await;
+    assert!(
+        rewritten.is_err(),
+        "a pinned login rewrote a household vocabulary entry"
+    );
+    assert_eq!(
+        unscoped(
+            &pool,
+            "rh_tag_taxonomy WHERE value = 'house' AND display = 'House' AND state = 'accepted'"
+        )
+        .await?,
+        1
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_deferring_connection_writes_chunks_without_the_queue(pool: PgPool) -> TestResult {
+    let (store, _tenancy) = seed(&pool).await?;
+    let bob = viewer("bob")?;
+    store
+        .capture_batch(
+            &batch(LATER, "bob's long message"),
+            &CaptureOptions::owned_by(bob.principal()),
+        )
+        .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+    let mut tx = pinned.begin().await?;
+    sqlx::query("SET LOCAL rivet.defer_embed_enqueue = 'on'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_message_chunks (message_id, idx, char_start, char_end, content, owner_user_id)
+         SELECT m.id, 0, 0, 5, 'bob''s', m.owner_user_id FROM rh_messages m
+           JOIN rh_conversations c ON c.id = m.conversation_id WHERE c.session_key = $1",
+    )
+    .bind(LATER)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    assert_eq!(
+        visible(&pinned, Scope::Closed, "rh_message_chunks").await?,
+        1
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_writes_wiki_pages_only_in_its_own_scopes(pool: PgPool) -> TestResult {
+    let (_store, _tenancy) = seed(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory) VALUES
+             ('alice', 'alice', 'private', 'alice-', 'users/alice'),
+             ('bob', 'bob', 'private', 'bob-', 'users/bob'),
+             ('household', 'household', 'household', 'household-', 'spaces/household');
+         INSERT INTO rh_wiki_topics (slug, title, scope, local_slug, owner_user_id, visibility)
+             VALUES ('alice-oncology', 'Oncology', 'alice', 'oncology', 'alice', 'private')",
+    )
+    .execute(&pool)
+    .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+    let page = "INSERT INTO rh_wiki_topics (slug, title, scope, local_slug, owner_user_id, visibility) VALUES ";
+    for row in [
+        "('alice-dr-smith', 'Dr Smith', 'alice', 'dr-smith', 'bob', 'private')",
+        "('kitchen', 'Kitchen', NULL, NULL, 'bob', 'private')",
+        "('notes', 'Notes', 'bob', 'notes', 'bob', 'private')",
+        "('bob-oncology', 'Oncology', 'bob', 'oncology', 'alice', 'private')",
+    ] {
+        let planted = sqlx::query(sqlx::AssertSqlSafe(format!("{page}{row}")))
+            .execute(&pinned)
+            .await;
+        assert!(
+            planted.is_err(),
+            "a pinned login planted a wiki page outside its own scope: {row}"
+        );
+    }
+    for row in [
+        "('bob-notes', 'Notes', 'bob', 'notes', 'bob', 'private')",
+        "('household-dinner', 'Dinner', 'household', 'dinner', 'household', 'household')",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!("{page}{row}")))
+            .execute(&pinned)
+            .await?;
+    }
+    assert_eq!(visible(&pinned, Scope::Closed, "rh_wiki_topics").await?, 2);
     Ok(())
 }
