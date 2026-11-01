@@ -51,16 +51,27 @@ fn count(value: i64) -> Result<u64, Error> {
     u64::try_from(value).map_err(Error::from)
 }
 
+pub(crate) struct Tombstone {
+    pub(crate) deleted_at: DateTime<Utc>,
+    pub(crate) owner: Option<String>,
+}
+
 pub(crate) async fn tombstone_at(
     conn: &mut PgConnection,
     session_key: &str,
-) -> Result<Option<DateTime<Utc>>, Error> {
-    sqlx::query_scalar!(
-        "SELECT deleted_at FROM rh_session_tombstones WHERE session_key = $1",
+) -> Result<Option<Tombstone>, Error> {
+    sqlx::query!(
+        "SELECT deleted_at, owner_user_id FROM rh_session_tombstones WHERE session_key = $1",
         session_key
     )
     .fetch_optional(conn)
     .await
+    .map(|row| {
+        row.map(|row| Tombstone {
+            deleted_at: row.deleted_at,
+            owner: row.owner_user_id,
+        })
+    })
     .map_err(|source| Error::operation("tombstone lookup", source))
 }
 
@@ -109,14 +120,23 @@ async fn lock(conn: &mut PgConnection, session_key: &str) -> Result<(), Error> {
     Ok(())
 }
 
-async fn forget_session(conn: &mut PgConnection, session_key: &str) -> Result<(), Error> {
+async fn forget_session(
+    conn: &mut PgConnection,
+    session_key: &str,
+    owner: Option<&str>,
+) -> Result<(), Error> {
     sqlx::query!(
-        "WITH placements AS (DELETE FROM rh_session_placements WHERE session_id = $1),
-              suggestions AS (DELETE FROM rh_session_suggestions WHERE session_id = $1),
-              startup AS (DELETE FROM rh_session_startup WHERE session_id = $1),
-              history AS (DELETE FROM rh_session_history WHERE session_id = $1)
-         DELETE FROM rh_filing_corrections WHERE session_id = $1",
-        session_key
+        "WITH placements AS (DELETE FROM rh_session_placements
+                              WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),
+              suggestions AS (DELETE FROM rh_session_suggestions
+                               WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),
+              startup AS (DELETE FROM rh_session_startup
+                           WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),
+              history AS (DELETE FROM rh_session_history
+                           WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2))
+         DELETE FROM rh_filing_corrections WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)",
+        session_key,
+        owner
     )
     .execute(conn)
     .await
@@ -144,11 +164,17 @@ async fn forget_wiki_holds(
     Ok(())
 }
 
-async fn purge(conn: &mut PgConnection, session_key: &str) -> Result<DeletedSession, Error> {
+async fn purge(
+    conn: &mut PgConnection,
+    session_key: &str,
+    owner: Option<&str>,
+) -> Result<DeletedSession, Error> {
     let fail = |operation| move |source| Error::operation(operation, source);
     let conversations: Vec<Uuid> = sqlx::query_scalar!(
-        "SELECT id FROM rh_conversations WHERE session_key = $1 FOR UPDATE",
-        session_key
+        "SELECT id FROM rh_conversations
+          WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2) FOR UPDATE",
+        session_key,
+        owner
     )
     .fetch_all(&mut *conn)
     .await
@@ -182,7 +208,7 @@ async fn purge(conn: &mut PgConnection, session_key: &str) -> Result<DeletedSess
         .await
         .map_err(fail("session summaries delete"))?
         .rows_affected();
-    forget_session(conn, session_key).await?;
+    forget_session(conn, session_key, owner).await?;
     forget_wiki_holds(conn, session_key, &conversations, &summaries).await?;
     let removed_conversations = sqlx::query!(
         "DELETE FROM rh_conversations WHERE id = ANY($1)",
@@ -211,33 +237,35 @@ impl PostgresMemory {
             .await
             .map_err(|source| Error::operation("session delete begin", source))?;
         lock(&mut tx, session_key).await?;
-        if tombstone.is_none() {
-            let Some(deleted_at) = tombstone_at(&mut tx, session_key).await? else {
-                return Ok(DeletedSession::default());
-            };
-            if used_after(&mut tx, session_key, deleted_at).await? {
-                lift(&mut tx, session_key).await?;
-                tx.commit()
-                    .await
-                    .map_err(|source| Error::operation("tombstone lift commit", source))?;
-                return Ok(DeletedSession::default());
+        let owner = match tombstone {
+            None => {
+                let Some(found) = tombstone_at(&mut tx, session_key).await? else {
+                    return Ok(DeletedSession::default());
+                };
+                if used_after(&mut tx, session_key, found.deleted_at).await? {
+                    lift(&mut tx, session_key).await?;
+                    tx.commit()
+                        .await
+                        .map_err(|source| Error::operation("tombstone lift commit", source))?;
+                    return Ok(DeletedSession::default());
+                }
+                found.owner
             }
-        }
-        if let Some((deleted_at, deleted_by)) = tombstone {
-            sqlx::query!(
+            Some((deleted_at, deleted_by)) => sqlx::query_scalar!(
                 "INSERT INTO rh_session_tombstones (session_key, deleted_at, deleted_by)
                  VALUES ($1, $2, $3)
                  ON CONFLICT (session_key) DO UPDATE
-                    SET deleted_at = EXCLUDED.deleted_at, deleted_by = EXCLUDED.deleted_by",
+                    SET deleted_at = EXCLUDED.deleted_at, deleted_by = EXCLUDED.deleted_by
+                 RETURNING owner_user_id",
                 session_key,
                 deleted_at,
                 deleted_by
             )
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
-            .map_err(|source| Error::operation("tombstone write", source))?;
-        }
-        let deleted = purge(&mut tx, session_key).await?;
+            .map_err(|source| Error::operation("tombstone write", source))?,
+        };
+        let deleted = purge(&mut tx, session_key, owner.as_deref()).await?;
         tx.commit()
             .await
             .map_err(|source| Error::operation("session delete commit", source))?;
@@ -419,10 +447,14 @@ impl PostgresMemory {
     async fn purge_all(&self, limit: u32) -> Result<DeletedSession, Error> {
         let pending = sqlx::query_scalar!(
             "SELECT t.session_key FROM rh_session_tombstones t
-              WHERE EXISTS (SELECT 1 FROM rh_conversations c WHERE c.session_key = t.session_key)
-                 OR EXISTS (SELECT 1 FROM rh_session_placements p WHERE p.session_id = t.session_key)
-                 OR EXISTS (SELECT 1 FROM rh_session_suggestions s WHERE s.session_id = t.session_key)
-                 OR EXISTS (SELECT 1 FROM rh_session_startup u WHERE u.session_id = t.session_key)
+              WHERE EXISTS (SELECT 1 FROM rh_conversations c WHERE c.session_key = t.session_key
+                             AND (t.owner_user_id IS NULL OR c.owner_user_id = t.owner_user_id))
+                 OR EXISTS (SELECT 1 FROM rh_session_placements p WHERE p.session_id = t.session_key
+                             AND (t.owner_user_id IS NULL OR p.owner_user_id = t.owner_user_id))
+                 OR EXISTS (SELECT 1 FROM rh_session_suggestions s WHERE s.session_id = t.session_key
+                             AND (t.owner_user_id IS NULL OR s.owner_user_id = t.owner_user_id))
+                 OR EXISTS (SELECT 1 FROM rh_session_startup u WHERE u.session_id = t.session_key
+                             AND (t.owner_user_id IS NULL OR u.owner_user_id = t.owner_user_id))
               ORDER BY t.deleted_at, t.session_key
               LIMIT $1",
             i64::from(limit)

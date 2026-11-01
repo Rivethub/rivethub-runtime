@@ -204,13 +204,12 @@ async fn dropped_when_deleted(
     writer: &mut CaptureWriter<'_>,
     batch: &CaptureBatchRequest,
 ) -> Result<Option<CaptureResult>, Error> {
-    let Some(deleted_at) =
-        crate::deletion::tombstone_at(&mut writer.tx, &batch.session_key).await?
+    let Some(tombstone) = crate::deletion::tombstone_at(&mut writer.tx, &batch.session_key).await?
     else {
         return Ok(None);
     };
     let stamps = batch.messages.iter().map(|message| message.created_at);
-    if kernel::memory::used_since(deleted_at, stamps) {
+    if kernel::memory::used_since(tombstone.deleted_at, stamps) {
         crate::deletion::lift(&mut writer.tx, &batch.session_key).await?;
         return Ok(None);
     }

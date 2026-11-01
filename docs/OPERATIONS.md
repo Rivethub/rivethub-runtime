@@ -252,10 +252,14 @@ every poll. `rh memory recompile`, `rh memory run` and the other queue commands 
 run them from the store's operator node.
 
 Migration 0054 (CONTRACT note 122) puts the tables 0044 left open under row-level security, so the grants above stay
-as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Four tables
-stay readable and writable by every login (`rh_topic_tombstones`, `rh_tag_taxonomy`, `rh_worker_runs`,
-`rh_job_failures`), and `rh_session_tombstones`, `rh_backfills` and the two migration ledgers are readable by every
-login but written only under maintenance or, for tombstones, by the session's owner. On a store that already holds
+as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Migration 0056
+(CONTRACT note 124) closes the four tables 0054 left open: a person login reads `rh_topic_tombstones` and
+`rh_tag_taxonomy` but writes only tombstones for its own topics and vocabulary rows it created, and it neither reads
+nor writes `rh_worker_runs` or `rh_job_failures`. `rh_session_tombstones`, `rh_backfills` and the two migration ledgers
+are readable by every login but written only under maintenance or, for tombstones, by the session's owner, and a
+session key belongs to the first person who captured under it: a person login cannot open a conversation or write a
+tombstone under another person's key. It writes wiki pages only in its own scope or a space scope it belongs to, under
+that scope's key prefix. On a store that already holds
 agent presets and conversations of more than one owner, 0054 stops until the connection names the person who owns the
 existing presets, as 0042 did: `postgres://…/memory?options=-c%20rh.store_owner%3D<user>`. Run it before you create
 the first person login.

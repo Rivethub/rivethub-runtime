@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH placements AS (DELETE FROM rh_session_placements\n                              WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),\n              suggestions AS (DELETE FROM rh_session_suggestions\n                               WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),\n              startup AS (DELETE FROM rh_session_startup\n                           WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),\n              history AS (DELETE FROM rh_session_history\n                           WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2))\n         DELETE FROM rh_filing_corrections WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5af86d7253437e03b967bb96e758de8abb86674169d0ede8c484249f66fa8432"
+}

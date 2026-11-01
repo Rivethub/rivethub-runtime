@@ -1498,10 +1498,9 @@ identified login that is not pinned (the operator's gateway keeps its page), so 
 login may insert, because the job queue's fail path flags a job from whatever scope ran it. `rh_summary_sources`,
 `rh_topic_redirects` and `rh_wiki_redirects` show with the summary, topic or page they point at. `rh_backfills`,
 `_rivetos_migrations` and `_sqlx_migrations` are readable by every login and written under maintenance only (a planted
-row would skip a future migration; the migrator sets `rh.maintenance` on every connection it opens). Four tables stay
-open: `rh_topic_tombstones` (a global slug blocklist that every owner's topic removal upserts), `rh_tag_taxonomy` (one
-household vocabulary that the gateway and MCP tag routes edit for any caller), `rh_worker_runs` and `rh_job_failures`
-(task names, job keys and counters that the task runner's completion writes under owner scope on every node).
+row would skip a future migration; the migrator sets `rh.maintenance` on every connection it opens). Four tables stayed
+open here, `rh_topic_tombstones`, `rh_tag_taxonomy`, `rh_worker_runs` and `rh_job_failures`; note 124 closes them to
+pinned logins and replaces the `rh_session_owner` policies on the session tables with owner columns.
 `rh_session_suggestions.topic_id` becomes `ON DELETE CASCADE`, because foreign keys ignore row security and a topic
 removal by one owner would otherwise fail on another owner's hidden suggestion; a merge retargets only the suggestions
 the merger can see. What changes for a running node: a gateway request lists the caller's own startup rows,
@@ -1532,6 +1531,42 @@ is reached by a worker sweep (embeddings, chunks, summaries with filing and titl
 one difference: the embedding sweep skips messages of 20 characters or fewer, which the capture trigger used to queue.
 Unchanged for service logins and existing nodes, which keep their queue grants. `memory_postgres::SCHEMA_VERSION` is
 55.
+
+(124) A person login keeps to its own session keys, ledgers and wiki scopes (Phil, 2026-11-01; tenancy plan section 7):
+a second adversarial pass over notes 121 to 123 showed that `rh_session_owner` resolved a session's owner under the
+caller's own row security, so a pinned login that inserted a conversation under another person's session key (that
+person's conversation being invisible to it) became the resolved owner of the key, read and rewrote their startup,
+suggestion, keep and correction rows, tombstoned the key, and had the purge job erase their conversation. Postgres
+migration 0056 closes this in three places. `rh_session_startup`, `rh_session_suggestions`, `rh_session_keeps`,
+`rh_filing_corrections` and `rh_session_tombstones` gain `owner_user_id DEFAULT rh_scope_principal()` (the store owner
+on a single-owner store, as 0054), backfilled through `rh_session_owner` under maintenance, and their policies compare
+that column directly, as `rh_session_history` already did; `rh_session_owner` remains for `rh_tasks_archive` and the
+backfill. A session key family (the key, its bare form and its `claude-code:` form) belongs to one person:
+`rh_session_claim_trigger`, a SECURITY DEFINER trigger on `rh_conversations` and `rh_session_tombstones` with EXECUTE
+revoked from PUBLIC (note 123), refuses an insert or re-key whose family already holds a conversation of another owner
+with `insufficient_privilege`; one owner's key under several agents, or under its bare and prefixed forms, is unchanged,
+and so is a maintenance write with no principal. A tombstone erases only its owner's rows: `erase` reads the tombstone's
+owner and deletes the conversations, placements, suggestions, startup rows, history marks and corrections of that owner
+under the key (every row when the tombstone has no owner, as an operator's has), and the purge sweep lists a tombstone
+as pending only against rows of its owner, so a planted tombstone neither erases nor loops. The four tables note 122
+left open close to pinned logins. `rh_job_failures` and `rh_worker_runs` are read and written under maintenance or by an
+unpinned login (a person node runs no jobs, note 123). `rh_topic_tombstones` is readable by every login and written
+under maintenance, by an unpinned login, or by a pinned login for a slug of a topic it owns (a topic removal writes the
+tombstone before it deletes the topic). `rh_tag_taxonomy` gains `owner_user_id DEFAULT rh_scope_pin()`, so rows a
+service login writes stay household rows with no owner, every login reads every row, and a pinned login writes only
+rows it created: its decisions and deletions touch no household row, an upsert of an existing household value fails as
+a row-security error, and vocabulary it adds is household vocabulary that the operator's login can remove, as before.
+`rh_wiki_topics` takes a pinned login's write only when the row's `scope` is a scope the login can read, its
+`visibility` and `owner_user_id` are that scope's (the scope owner for a private scope, the scope name for a shared
+one) and its `slug` is the scope's `key_prefix` followed by its `local_slug`, because the wiki builder keys every lookup
+by scope and its upsert keeps the existing row's owner, so a row planted in another person's scope (or with no scope,
+which the primary scope treats as its own) received that person's page text on the next build and the planting login
+read it; service logins and maintenance keep the 0049 policy. `notify_chunk_embedding_queue` honours
+`rivet.defer_embed_enqueue` as `notify_embedding_queue` does, so a deferring connection can insert a chunk; only the
+embedding worker writes chunks today. What changes for a running node: nothing for service logins and workers beyond
+the new columns, which `rh memory merge-store` rewrites like the other owned tables; a dump import needs the same bypass
+as before; a person node's topic removal and tag edits work as before except the household upsert above.
+`memory_postgres::SCHEMA_VERSION` is 56.
 
 ## 4. Gaps to close before building the affected slice
 

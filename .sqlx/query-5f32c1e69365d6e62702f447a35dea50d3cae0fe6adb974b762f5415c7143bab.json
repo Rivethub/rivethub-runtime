@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT deleted_at, owner_user_id FROM rh_session_tombstones WHERE session_key = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deleted_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_user_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "owner_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "5f32c1e69365d6e62702f447a35dea50d3cae0fe6adb974b762f5415c7143bab"
+}

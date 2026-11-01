@@ -15,7 +15,7 @@ fn url(pool: &PgPool) -> String {
 
 #[sqlx::test(migrations = false)]
 async fn a_fresh_database_is_not_adopted_and_left_untouched(pool: PgPool) -> TestResult {
-    assert_eq!(SCHEMA_VERSION, 55);
+    assert_eq!(SCHEMA_VERSION, 56);
     match PostgresMemory::connect(&url(&pool)).await {
         Err(error @ Error::NotAdopted) => assert_eq!(
             error.to_string(),
@@ -79,7 +79,7 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
     };
     assert!(
         line.contains(
-            "the memory schema reports version 9999, this build requires 55 — rolling updates migrate first; continuing"
+            "the memory schema reports version 9999, this build requires 56 — rolling updates migrate first; continuing"
         ),
         "the warning must name the rolling update: {line}"
     );

@@ -1127,6 +1127,17 @@ async fn a_pinned_login_cannot_take_over_another_persons_session_key(pool: PgPoo
             "a pinned login opened a conversation under someone else's session key {key}"
         );
     }
+    let appended = sqlx::query(
+        "INSERT INTO rh_conversations (session_key, agent) VALUES ($1, 'rivet')
+         ON CONFLICT (session_key, agent) DO UPDATE SET updated_at = now()",
+    )
+    .bind(FIRST)
+    .execute(&pinned)
+    .await;
+    assert!(
+        appended.is_err(),
+        "a pinned login appended to someone else's conversation through its session key"
+    );
     planted_as(
         &pool,
         bob.principal().as_str(),
