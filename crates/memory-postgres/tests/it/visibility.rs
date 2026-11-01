@@ -36,7 +36,11 @@ const FIRST: &str = "claude-code:00000000-0000-4000-8000-0000000000b1";
 const SECOND: &str = "claude-code:00000000-0000-4000-8000-0000000000b2";
 const LATER: &str = "claude-code:00000000-0000-4000-8000-0000000000b3";
 const UNCAPTURED: &str = "claude-code:00000000-0000-4000-8000-0000000000b4";
+const THIRD: &str = "claude-code:00000000-0000-4000-8000-0000000000b5";
 const PROBE: &str = "rh_rls_probe";
+const PERSON: &str = "rh_rls_person";
+const OWNER: &str = "rh_rls_owner";
+const GROUP: &str = "rh_rls_group";
 
 fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     CaptureBatchRequest {
@@ -531,5 +535,198 @@ async fn capture_checks_event_ids_through_their_index_under_row_security(
             .any(|line| line.contains("rh_messages_event_id")),
         "{plan:#?}"
     );
+    Ok(())
+}
+
+async fn owned_by_an_ordinary_role(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DO $$ BEGIN CREATE ROLE {OWNER} NOLOGIN; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+    )))
+    .execute(pool)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DO $$ DECLARE item record; BEGIN
+            FOR item IN SELECT c.oid::regclass AS name FROM pg_class c
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'v') LOOP
+                EXECUTE format('ALTER TABLE %s OWNER TO {OWNER}', item.name);
+            END LOOP;
+            FOR item IN SELECT p.oid::regprocedure AS name FROM pg_proc p
+                          JOIN pg_namespace n ON n.oid = p.pronamespace
+                         WHERE n.nspname = 'public' AND p.prokind = 'f'
+                           AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') LOOP
+                EXECUTE format('ALTER FUNCTION %s OWNER TO {OWNER}', item.name);
+            END LOOP;
+        END $$"
+    )))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::error::Error>> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DO $$ BEGIN CREATE ROLE {PERSON} LOGIN PASSWORD '{PERSON}'; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+    )))
+    .execute(pool)
+    .await?;
+    for grant in [
+        format!("GRANT USAGE ON SCHEMA public TO {PERSON}"),
+        format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {PERSON}"),
+        format!("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {PERSON}"),
+        format!("GRANT USAGE ON SCHEMA graphile_worker TO {PERSON}"),
+        format!("GRANT ALL ON ALL TABLES IN SCHEMA graphile_worker TO {PERSON}"),
+        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA graphile_worker TO {PERSON}"),
+        format!(
+            "DO $$ DECLARE t text; BEGIN
+                FOREACH t IN ARRAY ARRAY['_private_jobs', '_private_job_queues', '_private_tasks'] LOOP
+                    EXECUTE format('CREATE POLICY rh_rls_person ON graphile_worker.%I TO {PERSON} USING (true)', t);
+                END LOOP;
+             END $$"
+        ),
+        format!(
+            "DO $$ BEGIN CREATE ROLE {GROUP} NOLOGIN; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        ),
+        format!("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {GROUP}"),
+        format!("GRANT {GROUP} TO {PERSON}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(grant))
+            .execute(pool)
+            .await?;
+    }
+    sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, $2)")
+        .bind(PERSON)
+        .bind(principal)
+        .execute(pool)
+        .await?;
+    let options = pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .username(PERSON)
+        .password(PERSON);
+    Ok(
+        memory_postgres::scoped(PgPoolOptions::new().max_connections(2))
+            .connect_with(options)
+            .await?,
+    )
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestResult {
+    let (store, tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    tenancy
+        .mark_session(
+            &alice,
+            &SessionId::try_from(FIRST.to_owned())?,
+            Some(&Visibility::Space(household()?)),
+            Utc::now(),
+        )
+        .await?;
+    store
+        .capture_batch(
+            &batch(THIRD, "a session outside the household"),
+            &CaptureOptions::owned_by(&Owner::new("carol".to_owned())?),
+        )
+        .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+    let forged = Scope::Viewer(alice.clone());
+    for scope in [forged.clone(), Scope::Maintenance, Scope::Closed] {
+        assert_eq!(
+            visible(&pinned, scope.clone(), "rh_conversations").await?,
+            1,
+            "{scope:?}"
+        );
+        assert_eq!(visible(&pinned, scope, "rh_messages").await?, 1);
+    }
+    let mut elevated = pinned.begin().await?;
+    sqlx::query("SELECT rh_elevate()")
+        .execute(&mut *elevated)
+        .await?;
+    let seen: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_conversations")
+        .fetch_one(&mut *elevated)
+        .await?;
+    assert_eq!(seen, 1, "rh_elevate() widened a pinned login");
+    elevated.rollback().await?;
+    let mut regrouped = pinned.begin().await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET ROLE {GROUP}")))
+        .execute(&mut *regrouped)
+        .await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', true)")
+        .execute(&mut *regrouped)
+        .await?;
+    let seen: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_conversations")
+        .fetch_one(&mut *regrouped)
+        .await?;
+    assert_eq!(seen, 1, "SET ROLE into a group widened a pinned login");
+    regrouped.rollback().await?;
+    let as_person = PostgresMemory::new(pinned.clone());
+    let stolen = forged
+        .clone()
+        .run(as_person.capture_batch(
+            &batch(LATER, "claimed for alice"),
+            &CaptureOptions::owned_by(&Owner::new("alice".to_owned())?),
+        ))
+        .await;
+    assert!(
+        stolen.is_err(),
+        "a pinned login captured a session as someone else"
+    );
+    forged
+        .run(as_person.capture_batch(
+            &batch(LATER, "bob's own session"),
+            &CaptureOptions::owned_by(&Owner::new("bob".to_owned())?),
+        ))
+        .await?;
+    let owners: Vec<(String, String)> = sqlx::query_as(
+        "SELECT session_key, owner_user_id FROM rh_conversations WHERE session_key = $1",
+    )
+    .bind(LATER)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(owners, vec![(LATER.to_owned(), "bob".to_owned())]);
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM rh_message_counts WHERE owner_user_id = $1")
+            .bind("bob")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        counted, 1,
+        "the count trigger did not run for a pinned login"
+    );
+    let remapped =
+        sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, 'alice')")
+            .bind(OWNER)
+            .execute(&pinned)
+            .await;
+    assert!(remapped.is_err(), "a pinned login wrote the role mapping");
+    Scope::Maintenance
+        .run(PostgresTenancy::new(pinned).sync_spaces(&[]))
+        .await?;
+    assert_eq!(
+        visible(&pool, Scope::Maintenance, "rh_space_members").await?,
+        2
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn every_elevating_function_runs_as_its_owner_on_a_pinned_path(pool: PgPool) -> TestResult {
+    let loose: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = current_schema() AND p.proname <> 'rh_elevate'
+            AND (p.prosrc LIKE '%rh_elevate()%' OR p.prosrc LIKE '%rh_refresh_%')
+            AND NOT (p.prosecdef
+                     AND format('search_path=pg_catalog, %s, pg_temp', current_schema()) = ANY (p.proconfig))
+          ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(loose, Vec::<String>::new());
     Ok(())
 }
