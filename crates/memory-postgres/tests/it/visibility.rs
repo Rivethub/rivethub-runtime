@@ -6,6 +6,8 @@ use chrono::Utc;
 use kernel::filing::FilingStore as _;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
+use kernel::memory::EmbedTable;
+use kernel::memory::jobs::UnembeddedStore as _;
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
 use kernel::tenancy::Space;
@@ -609,7 +611,6 @@ async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::e
             .execute(pool)
             .await?;
     }
-    queue_access(pool, PERSON).await?;
     sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, $2)")
         .bind(PERSON)
         .bind(principal)
@@ -946,5 +947,113 @@ async fn every_elevating_function_runs_as_its_owner_on_a_pinned_path(pool: PgPoo
     .fetch_all(&pool)
     .await?;
     assert_eq!(loose, Vec::<String>::new());
+    Ok(())
+}
+
+fn refused(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .as_deref()
+        == Some("42501")
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_cannot_call_or_attach_an_elevating_function(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+    let callable: Vec<String> = sqlx::query_scalar(
+        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = current_schema() AND p.prosecdef AND has_function_privilege(p.oid, 'EXECUTE')
+          ORDER BY 1",
+    )
+    .fetch_all(&pinned)
+    .await?;
+    assert_eq!(
+        callable,
+        Vec::<String>::new(),
+        "a pinned login may call these elevating functions"
+    );
+    for call in [
+        "SELECT rh_backfill_message_counts(10)",
+        "SELECT rh_backfill_chunk_said(gen_random_uuid(), 10)",
+    ] {
+        let outcome = sqlx::query(call).execute(&pinned).await;
+        assert!(
+            outcome.as_ref().is_err_and(refused),
+            "{call} as a pinned login: {outcome:?}"
+        );
+    }
+    let mut conn = pinned.acquire().await?;
+    sqlx::query("CREATE TEMP TABLE forged (LIKE rh_messages INCLUDING DEFAULTS)")
+        .execute(&mut *conn)
+        .await?;
+    let attached = sqlx::query(
+        "CREATE TRIGGER forged AFTER INSERT ON forged
+             FOR EACH ROW EXECUTE FUNCTION rh_message_counts_inserted()",
+    )
+    .execute(&mut *conn)
+    .await;
+    assert!(
+        attached.as_ref().is_err_and(refused),
+        "a pinned login attached an elevating trigger function to its own table: {attached:?}"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_captures_without_reaching_the_job_queue(pool: PgPool) -> TestResult {
+    let (store, _) = seed(&pool).await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+    for sql in [
+        "SELECT count(*) FROM graphile_worker._private_jobs",
+        "SELECT graphile_worker.add_job('embed-target', '{}')",
+    ] {
+        let outcome = sqlx::query(sql).execute(&pinned).await;
+        assert!(
+            outcome.as_ref().is_err_and(refused),
+            "{sql} as a pinned login: {outcome:?}"
+        );
+    }
+    let queued_before = unscoped(&pool, "graphile_worker._private_jobs").await?;
+    let bob = viewer("bob")?;
+    let as_person = PostgresMemory::new(pinned.clone());
+    assert!(
+        matches!(
+            as_person.queue().await,
+            Err(memory_postgres::Error::QueueAbsent)
+        ),
+        "a pinned login reached the job queue"
+    );
+    Scope::Viewer(bob.clone())
+        .run(as_person.capture_batch(
+            &batch(LATER, "bob's own session, long enough to embed"),
+            &CaptureOptions::owned_by(bob.principal()),
+        ))
+        .await?;
+    Scope::Viewer(bob.clone())
+        .run(work_topic(&as_person, &bob, "Kitchen"))
+        .await?;
+    assert_eq!(
+        unscoped(&pool, "graphile_worker._private_jobs").await?,
+        queued_before,
+        "a pinned login's capture queued a job"
+    );
+    let captured: String = sqlx::query_scalar(
+        "SELECT m.id::text FROM rh_messages m JOIN rh_conversations c ON c.id = m.conversation_id
+          WHERE c.session_key = $1",
+    )
+    .bind(LATER)
+    .fetch_one(&pool)
+    .await?;
+    let swept = Scope::Maintenance
+        .run(store.unembedded(EmbedTable::Messages, 100))
+        .await?;
+    assert!(
+        swept.iter().any(|target| target.id == captured),
+        "the store's embedding sweep does not see the pinned login's message: {swept:?}"
+    );
     Ok(())
 }
