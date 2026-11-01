@@ -4,13 +4,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use kernel::memory::MemoryStore as _;
+use kernel::owner::Owner;
+use kernel::tenancy::{Scope, Viewer};
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientConfig};
 use serde::Deserialize;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+const PROBE: &str = "rh_mcp_probe";
 
 #[derive(Deserialize)]
 struct Recording {
@@ -207,6 +212,69 @@ async fn recorded_memory_text(pool: PgPool) -> TestResult {
     shutdown.cancel();
     task.await??;
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn tool_calls_see_the_owner_rows_through_row_security(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DO $$ BEGIN CREATE ROLE {PROBE} NOLOGIN; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+    )))
+    .execute(&pool)
+    .await?;
+    for grant in [
+        format!("GRANT USAGE ON SCHEMA public TO {PROBE}"),
+        format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {PROBE}"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(grant))
+            .execute(&pool)
+            .await?;
+    }
+    let options = pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .options([("role", PROBE)]);
+    let probe = memory_postgres::scoped(PgPoolOptions::new().max_connections(2))
+        .connect_with(options)
+        .await?;
+    let owner = Scope::Viewer(Viewer::new(
+        Owner::new(testkit::OWNER.to_owned())?,
+        Vec::new(),
+    ));
+    let shutdown = CancellationToken::new();
+    let server = owner.clone().enter(|| {
+        mcp::Server::new(
+            Arc::new(memory_postgres::PostgresMemory::new(probe)),
+            false,
+            shutdown.clone(),
+        )
+    })?;
+    let (client_io, server_io) = tokio::io::duplex(65536);
+    let task = tokio::spawn(owner.run(mcp::transport::serve_io(
+        server,
+        server_io,
+        shutdown.clone(),
+    )));
+    let client = ClientConfig::default().serve(client_io).await?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        client.call_tool(CallToolRequestParams::new("memory_stats")),
+    )
+    .await??;
+    let text = &result
+        .content
+        .first()
+        .ok_or("content")?
+        .as_text()
+        .ok_or("text")?
+        .text;
+    assert!(text.contains("**Messages:** 20\n"), "{text}");
+    client.cancel().await?;
+    shutdown.cancel();
+    task.await??;
     Ok(())
 }
 
