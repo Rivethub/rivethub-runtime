@@ -40,6 +40,9 @@ pub(crate) async fn enqueue_job(
     conn: &mut PgConnection,
     job: &Job,
 ) -> Result<JobId, JobQueueError> {
+    if !crate::graphile::GraphileQueue::schema_present(&mut *conn).await? {
+        return Err(JobQueueError::Absent);
+    }
     let payload = sqlx::types::Json(&job.payload);
     let attempts = match job.max_attempts {
         Some(attempts) => attempts,

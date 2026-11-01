@@ -109,12 +109,12 @@ impl<'a> CaptureWriter<'a> {
         .fetch_one(&mut *tx)
         .await
         .map_err(|source| Error::operation("capture lock", source))?;
-        sqlx::query_scalar!(
-            "select set_config('rivet.defer_embed_enqueue',
-                     case when to_regclass('graphile_worker._private_jobs') is null
-                          then 'on' else 'off' end, true) as mode"
+        let queued = crate::graphile::GraphileQueue::schema_present(&mut *tx).await?;
+        sqlx::query(
+            "select set_config('rivet.defer_embed_enqueue', case when $1 then 'off' else 'on' end, true)",
         )
-        .fetch_one(&mut *tx)
+        .bind(queued)
+        .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("embed defer", source))?;
         Ok(Self { tx })

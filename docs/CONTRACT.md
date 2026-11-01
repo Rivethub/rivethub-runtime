@@ -1467,7 +1467,7 @@ another owner is refused; a capture naming none takes the pinned user), and cann
 `rh_elevate()`. The trigger and refresh functions that elevate (every function calling `rh_elevate()` and the four
 triggers that call `rh_refresh_*`) run SECURITY DEFINER as the migration's role with `search_path = pg_catalog,
 <schema>, pg_temp`, so a pinned login's own writes still refresh visibility across owners and keep `rh_message_counts`,
-and the three `rh_refresh_*` helpers are not callable by PUBLIC; `rh_scope_maintenance()` is false whenever
+and no SECURITY DEFINER function is callable by PUBLIC (note 123); `rh_scope_maintenance()` is false whenever
 `current_user` is a pinned role, and false for a pinned login unless `current_user` is the owner of `rh_elevate()`,
 so `SET ROLE` into some other role the login belongs to does not lift the pin and only the store's own code elevates. Two
 policies change: `rh_space_members` shows a login its own memberships (and everything under maintenance) rather than
@@ -1509,8 +1509,29 @@ suggestions, keeps, history marks and corrections (filing's correction examples 
 to these tables fails as a row-security error, a pinned node's flagged-jobs page and upkeep failure counts are empty
 since its jobs run on the store's workers, `rh memory merge-store` rewrites `rh_session_history` owners like the other
 owned tables, and a dump import needs a superuser or `BYPASSRLS` role for these tables as it already does for
-conversations. `memory_postgres::SCHEMA_VERSION` is 54. Not changed here: `rh_session_placements.topic_id` keeps
+conversations. `memory_postgres::SCHEMA_VERSION` is 55 (note 123). Not changed here: `rh_session_placements.topic_id` keeps
 `NO ACTION` and has the same hidden-row failure for a shared topic, and `rh_tag_owner_trigger` fills only a NULL owner.
+
+(123) A person login holds nothing in the job queue and calls no elevating function (Phil, 2026-11-01; tenancy plan
+section 7): a job in `graphile_worker` carries no owner and the store's workers run every job under maintenance, so a
+login that could add a job could have a worker read, send to a model and rewrite any owner's summary or wiki page, and
+one that could read or update the queue tables saw every owner's payloads and could stall or drop their jobs. A pinned
+role therefore gets no `USAGE` on `graphile_worker` and no policy on its tables (OPERATIONS.md, Person logins), and
+Postgres migration 0055 revokes both from every role already listed in `rh_role_principals`. 0055 also revokes
+`EXECUTE` from PUBLIC on every SECURITY DEFINER function in the schema (the trigger bodies and the two backfills of
+note 121, found by `pg_proc.prosecdef`, not by name), because a login that can call a definer function can run the
+backfills' maintenance writes directly and can attach the trigger bodies to its own tables to forge another owner's
+counts and read mappings; a trigger fires without an `EXECUTE` check, so the store's own tables keep refreshing, and
+the migrator owns the functions, so its backfills still run. The store's queue probe treats the queue as absent for a
+login without `USAGE` on the schema (one SQL expression behind `GraphileQueue::schema_present`, which a capture, a
+task enqueue and a topic page sync all consult, so none of them raises a permission error): a capture on such a login
+sets `rivet.defer_embed_enqueue` and leaves its messages for the embedding sweep, a topic write enqueues no page sync
+and the hourly sweep rebuilds the pages, `queue()` answers `QueueAbsent`, and a task submit answers
+`TaskError::QueueAbsent`; `tasks.enabled = false` is the setting for a person node. Every job a node would have queued
+is reached by a worker sweep (embeddings, chunks, summaries with filing and titles, wiki extraction, topic pages) with
+one difference: the embedding sweep skips messages of 20 characters or fewer, which the capture trigger used to queue.
+Unchanged for service logins and existing nodes, which keep their queue grants. `memory_postgres::SCHEMA_VERSION` is
+55.
 
 ## 4. Gaps to close before building the affected slice
 

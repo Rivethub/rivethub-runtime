@@ -102,16 +102,13 @@ impl GraphileQueue {
         listen(&self.pool).await
     }
 
-    pub(crate) async fn schema_present(pool: &PgPool) -> Result<bool, Error> {
-        let record = sqlx::query!(
-            "select to_regclass('graphile_worker._private_jobs') is not null
-              and to_regprocedure('graphile_worker.add_job(text,json,text,timestamptz,int,text,int,text[],text)')
-                is not null as \"present!\""
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|source| Error::operation("queue probe", source))?;
-        Ok(record.present)
+    pub(crate) async fn schema_present<'e>(
+        executor: impl sqlx::PgExecutor<'e>,
+    ) -> Result<bool, Error> {
+        sqlx::query_scalar(crate::graphile_sql::REACHABLE)
+            .fetch_one(executor)
+            .await
+            .map_err(|source| Error::operation("queue probe", source))
     }
     pub(crate) async fn enqueue(&self, job: &Job) -> Result<JobId, Error> {
         if job.key_mode == JobKeyMode::Arm {

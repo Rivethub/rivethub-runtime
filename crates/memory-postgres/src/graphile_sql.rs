@@ -1,3 +1,10 @@
+pub(crate) const REACHABLE: &str = "SELECT CASE
+    WHEN to_regnamespace('graphile_worker') IS NULL THEN false
+    WHEN NOT has_schema_privilege('graphile_worker', 'USAGE') THEN false
+    ELSE to_regclass('graphile_worker._private_jobs') IS NOT NULL
+     AND to_regprocedure('graphile_worker.add_job(text,json,text,timestamptz,int,text,int,text[],text)') IS NOT NULL
+    END";
+
 pub(crate) const CLAIM: &str = "WITH available AS MATERIALIZED (
     SELECT j.id, j.job_queue_id, j.priority, j.run_at FROM graphile_worker._private_jobs j
     JOIN graphile_worker._private_tasks t ON t.id = j.task_id

@@ -1,5 +1,6 @@
 use kernel::filing::conversation_keys;
 use kernel::owner::Owner;
+use kernel::queue::JobQueueError;
 use kernel::topics::Alias;
 use kernel::topics::MergePlan;
 use kernel::topics::Placement;
@@ -434,24 +435,15 @@ pub(super) async fn enqueue_syncs(
     conn: &mut PgConnection,
     syncs: Vec<SyncTopicPage>,
 ) -> Result<(), TopicError> {
-    let queued = sqlx::query_scalar!(
-        r#"SELECT to_regprocedure(
-                  'graphile_worker.add_job(text,json,text,timestamptz,int,text,int,text[],text)'
-              ) IS NOT NULL AS "present!""#
-    )
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(failed("topic page sync"))?;
-    if !queued {
-        return Ok(());
-    }
     for sync in syncs {
         let job = sync
             .job()
             .map_err(|source| TopicError::Unavailable(Box::new(source)))?;
-        crate::task_jobs::enqueue_job(conn, &job)
-            .await
-            .map_err(|source| TopicError::Unavailable(Box::new(source)))?;
+        match crate::task_jobs::enqueue_job(conn, &job).await {
+            Ok(_) => {}
+            Err(JobQueueError::Absent) => return Ok(()),
+            Err(source) => return Err(TopicError::Unavailable(Box::new(source))),
+        }
     }
     Ok(())
 }

@@ -223,12 +223,6 @@ CREATE ROLE rivet_rose LOGIN PASSWORD '...';
 GRANT USAGE ON SCHEMA public TO rivet_rose;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rivet_rose;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rivet_rose;
-GRANT USAGE ON SCHEMA graphile_worker TO rivet_rose;
-GRANT ALL ON ALL TABLES IN SCHEMA graphile_worker TO rivet_rose;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA graphile_worker TO rivet_rose;
-CREATE POLICY rivet_rose ON graphile_worker._private_jobs TO rivet_rose USING (true);
-CREATE POLICY rivet_rose ON graphile_worker._private_job_queues TO rivet_rose USING (true);
-CREATE POLICY rivet_rose ON graphile_worker._private_tasks TO rivet_rose USING (true);
 ALTER DEFAULT PRIVILEGES FOR ROLE rh_migrate IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO rivet_rose;
 ALTER DEFAULT PRIVILEGES FOR ROLE rh_migrate IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO rivet_rose;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -237,17 +231,25 @@ INSERT INTO rh_role_principals (role_name, user_id) VALUES ('rivet_rose', 'rose'
 
 Here `rh_migrate` stands for the role that runs the migrations: the two `ALTER DEFAULT PRIVILEGES` lines give the login
 the tables later migrations create, and the `REVOKE` (already the default on databases created under PostgreSQL 15 or
-later) keeps any login from planting functions the elevated trigger bodies could resolve. The three policies let the
-node's captures queue embedding jobs for the store's workers; graphile-worker keeps its tables under row-level
-security for everyone but their owner. An existing role is pinned with the `INSERT` alone
-(`('rivet_coco', 'coco')`), after `GRANT SELECT ON rh_role_principals` if it was granted its tables before 0053; the
-insert refuses a name that is not a role. Pin a role to one person only; never pin the role that ran the migrations, a
-superuser, or a role with `BYPASSRLS`, and do not make a pinned role a member of the migrating role (membership in
-any other role is harmless: a pinned login stays pinned under `SET ROLE`). The queue policies let the login read the
-job queue and add jobs the store's workers run; those workers run each job in its row owner's scope. Renaming or recreating a pinned role unpins it, since the mapping is by
-name: repeat the `INSERT` under the new name. The node then uses `postgres://rivet_rose:...@<host>/<database>` as its
-`RIVETHUB_PG_URL`; its `users.json` still names the person and spaces for the gateway, but the store, not the node,
-decides what the login sees.
+later) keeps any login from planting functions the elevated trigger bodies could resolve. An existing role is pinned
+with the `INSERT` alone (`('rivet_coco', 'coco')`), after `GRANT SELECT ON rh_role_principals` if it was granted its
+tables before 0053; the insert refuses a name that is not a role. Pin a role to one person only; never pin the role
+that ran the migrations, a superuser, or a role with `BYPASSRLS`, and do not make a pinned role a member of the
+migrating role (membership in any other role is harmless: a pinned login stays pinned under `SET ROLE`). Renaming or
+recreating a pinned role unpins it, since the mapping is by name: repeat the `INSERT` under the new name. The node
+then uses `postgres://rivet_rose:...@<host>/<database>` as its `RIVETHUB_PG_URL`; its `users.json` still names the
+person and spaces for the gateway, but the store, not the node, decides what the login sees.
+
+A person login gets nothing in the `graphile_worker` schema (CONTRACT note 123): the job queue carries no owner, so a
+login that could add a job could have the store's workers read and rewrite anyone's rows. Grant it no `USAGE` there and
+create no policies on the queue tables; migration 0055 takes both away from every role already listed in
+`rh_role_principals`. The node notices that the queue is out of reach and captures without queueing, and the store's
+workers find the rows on their own: the embedding sweep every 10 minutes (messages over 20 characters; the chunk sweep
+every 15 minutes), summaries every 5 minutes (which also file and title the conversation), wiki extraction every
+minute, and topic pages every hour. Set `tasks.enabled = false` on a person node; task delegation goes through the
+queue, so a submit on such a node answers that the queue is absent, and the runner would otherwise log a failed claim on
+every poll. `rh memory recompile`, `rh memory run` and the other queue commands answer the same way on a person login:
+run them from the store's operator node.
 
 Migration 0054 (CONTRACT note 122) puts the tables 0044 left open under row-level security, so the grants above stay
 as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Four tables

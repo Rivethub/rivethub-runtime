@@ -25,10 +25,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (52, 1));
+    assert_eq!((gapped.current, gapped.pending), (55, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (52, 0));
+    assert_eq!((migrated.current, migrated.pending), (55, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -44,12 +44,12 @@ async fn empty_database_reaches_the_recorded_shape(pool: PgPool) -> TestResult {
     let tracked = sqlx::query("SELECT count(*)::bigint AS n FROM _rivetos_migrations")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(tracked.try_get::<i64, _>("n").unwrap(), 50);
+    assert_eq!(tracked.try_get::<i64, _>("n").unwrap(), 51);
 
     let applied = sqlx::query("SELECT count(*)::bigint AS n FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(applied.try_get::<i64, _>("n").unwrap(), 50);
+    assert_eq!(applied.try_get::<i64, _>("n").unwrap(), 51);
 
     migrate::postgres_pool(&pool).await?;
 
@@ -228,8 +228,8 @@ async fn rivetos_migrated_database_gets_only_0021(pool: PgPool) -> TestResult {
         .await?;
     assert_eq!(
         tracked.try_get::<i64, _>("n").unwrap(),
-        50,
-        "0021 renames the tables, 0022 adds the summaries trigram index, 0023 rewrites legacy summary kinds, 0024 adds topics, 0025 adds topic suggestions, 0026 adds the hub state table, 0027 binds wiki pages to topics, 0028 keeps each session's startup context, 0029 records how it was delivered, 0030 adds topic decisions, 0031 records closed topics and sessions marked as history, 0032 adds topic kinds and entities, 0033 files conversations and keeps filing corrections, 0034 keeps tidy proposals and worker finishes, 0036 indexes the messages still waiting for an embedding, 0037 records the node that captured each conversation, 0039 adds the session tombstones, 0040 archives the old tasks, 0041 indexes summaries and wiki provenance by conversation, 0042 gives every row an owner, 0043 keeps sessions out of the trash review, 0044 adds visibility and row-level security, 0047 records flagged jobs, 0048 readies the family store, 0049 gives each person and space their own wiki pages, 0050 keeps message counts, access counts and said chunks, 0051 indexes capture event ids, 0052 creates the job queue, 0053 pins a database role to its person, and 0054 scopes the remaining tables to their owners"
+        51,
+        "0021 renames the tables, 0022 adds the summaries trigram index, 0023 rewrites legacy summary kinds, 0024 adds topics, 0025 adds topic suggestions, 0026 adds the hub state table, 0027 binds wiki pages to topics, 0028 keeps each session's startup context, 0029 records how it was delivered, 0030 adds topic decisions, 0031 records closed topics and sessions marked as history, 0032 adds topic kinds and entities, 0033 files conversations and keeps filing corrections, 0034 keeps tidy proposals and worker finishes, 0036 indexes the messages still waiting for an embedding, 0037 records the node that captured each conversation, 0039 adds the session tombstones, 0040 archives the old tasks, 0041 indexes summaries and wiki provenance by conversation, 0042 gives every row an owner, 0043 keeps sessions out of the trash review, 0044 adds visibility and row-level security, 0047 records flagged jobs, 0048 readies the family store, 0049 gives each person and space their own wiki pages, 0050 keeps message counts, access counts and said chunks, 0051 indexes capture event ids, 0052 creates the job queue, 0053 pins a database role to its person, 0054 scopes the remaining tables to their owners, and 0055 keeps the job queue and the elevating functions from person logins"
     );
     let summaries_trgm =
         sqlx::query("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_ros_summaries_trgm'")
