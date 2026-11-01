@@ -171,8 +171,8 @@ An empty `~/.rivethub/ca` directory does not start or refuse a local signer.
 Holders generate their own ECDSA P-256 keys and submit CSRs. Identity is a SPIFFE URI SAN:
 `spiffe://rivet.mesh/node/<node>`, `spiffe://rivet.mesh/agent/<node>/<agent>`, or
 `spiffe://rivet.mesh/device/<user>/<device>`. Node and agent names and IP SANs come from the operator roster. Device
-pairing uses the device SPIFFE URI as the token subject. `rh ca token device <name>` still uses that operator name as
-the subject and only SAN. Both paths call one minter.
+pairing and `rh ca token device <device> --user <user>` both use the device SPIFFE URI as the token subject and only
+SAN, through one minter.
 
 `POST /ca/v1/sign` forwards a bearer token, or mints one for the verified principal on renewal. `GET /ca/v1/chain` is
 the intermediate from the last sign plus step-ca roots. `GET /ca/v1/crl` is step-ca's CRL. Revoke records the decimal

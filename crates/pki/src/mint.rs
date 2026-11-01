@@ -49,7 +49,6 @@ pub struct Endpoint {
 pub enum CliToken {
     Node(String),
     Agent(String),
-    Device(String),
 }
 
 pub struct ProcessEnv {
@@ -128,7 +127,6 @@ pub fn plan_cli(kind: CliToken, roster: Option<&Roster>) -> Result<TokenPlan, Er
     match kind {
         CliToken::Node(name) => node_plan(&name, roster),
         CliToken::Agent(name) => agent_plan(&name, roster),
-        CliToken::Device(name) => device_name_plan(&name),
     }
 }
 
@@ -137,7 +135,7 @@ pub fn plan_principal(principal: &Principal, roster: Option<&Roster>) -> Result<
         Principal::Node { node } => node_plan(node, roster),
         Principal::Agent { agent, .. } => agent_plan(agent, roster),
         Principal::Device { .. } => {
-            let uri = principal.spiffe_uri().map_err(|_| Error::DeviceName)?;
+            let uri = principal.spiffe_uri().map_err(|_| Error::DevicePrincipal)?;
             Ok(TokenPlan {
                 subject: uri.clone(),
                 sans: vec![uri],
@@ -197,19 +195,6 @@ fn agent_plan(name: &str, roster: Option<&Roster>) -> Result<TokenPlan, Error> {
         subject: uri.clone(),
         sans: vec![uri],
         provisioner: Provisioner::Agents,
-    })
-}
-
-fn device_name_plan(name: &str) -> Result<TokenPlan, Error> {
-    Principal::Node {
-        node: name.to_owned(),
-    }
-    .spiffe_uri()
-    .map_err(|_| Error::DeviceName)?;
-    Ok(TokenPlan {
-        subject: name.to_owned(),
-        sans: vec![name.to_owned()],
-        provisioner: Provisioner::Devices,
     })
 }
 

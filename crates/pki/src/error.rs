@@ -32,8 +32,8 @@ pub enum Error {
     UnknownNode(String),
     #[error("agent `{0}` is not in the operator roster")]
     UnknownAgent(String),
-    #[error("device name is not a single unreserved name")]
-    DeviceName,
+    #[error("device user and device must each be a single unreserved name")]
+    DevicePrincipal,
     #[error("certificate serial is not a canonical decimal integer")]
     Serial,
     #[error("step ca {action} failed: {detail}")]

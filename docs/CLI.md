@@ -28,7 +28,7 @@ the existing service startup codes. Every visible command:
 | `rh service logs` | | Print the unit's journal |
 | `rh ca token node` | `NAME` | Mint a step-ca token for a node in the operator roster |
 | `rh ca token agent` | `NAME` | Mint a step-ca token for an agent in the operator roster |
-| `rh ca token device` | `NAME` | Mint a step-ca token for one device name |
+| `rh ca token device` | `DEVICE --user USER` | Mint a step-ca token for a user's device as `spiffe://rivet.mesh/device/USER/DEVICE` |
 | `rh ca revoke` | `SERIAL` | Revoke one certificate by decimal serial |
 | `rh ca crl` | | Print the certificate revocation list |
 | `rh ca status` | | Show the certificate authority roots |

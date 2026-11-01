@@ -85,13 +85,6 @@ async fn shared_minter_argv_matches_node_agent_and_device_plans() -> Result<(), 
         ],
     )
     .await?;
-    let cli_device = pki::plan_cli(
-        pki::CliToken::Device("handset.example.test".to_owned()),
-        None,
-    )?;
-    assert_eq!(cli_device.subject, "handset.example.test");
-    assert_eq!(cli_device.sans, vec!["handset.example.test".to_owned()]);
-    assert!(pki::plan_cli(pki::CliToken::Device("bad/name".to_owned()), None).is_err());
     Ok(())
 }
 

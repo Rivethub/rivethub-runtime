@@ -8,7 +8,7 @@ The PKI CLI implements the approved design in `docs/PKI.md` and the step-ca adde
 
 - `rh ca token node <name> --ca-url <url> --root <pem> --provisioner-password-file <file> --roster <file>` runs `step ca token`. Each roster line is `node:ip:agent`. The token subject is the node name, and the pinned names are that node's IP, `<name>`, and `<name>.rivet.mesh`.
 - `rh ca token agent <name>` uses the same flags. `<name>` must be the agent field of one roster line. The subject and only SAN are `spiffe://rivet.mesh/agent/<node>/<agent>`.
-- `rh ca token device <name>` does not read the roster. The subject and only SAN are `<name>`, one unreserved label.
+- `rh ca token device <device> --user <user>` does not read the roster. `--user` is required. The subject and only SAN are `spiffe://rivet.mesh/device/<user>/<device>`, the principal that device pairing mints, and each part is one unreserved label. The device redeems it with `rh cert renew`, passing that URI as `--principal` and the token as `--token-file`.
 - `rh ca revoke <serial>` runs `step ca revoke` for one canonical positive decimal serial.
 - `rh ca crl` prints the PEM CRL from `stepca::Authority::crl`. `--crl-out <path>` publishes that PEM atomically, mode 0644, and is ignored on the other commands.
 - `rh ca status` prints `Certificate authority ready.` and each root subject and expiry from `stepca::Authority::roots`.

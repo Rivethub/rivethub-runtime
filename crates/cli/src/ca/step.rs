@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use config::Environment;
+use kernel::ca::Principal;
 use tokio_util::sync::CancellationToken;
 
 use super::TokenKind;
@@ -29,7 +30,9 @@ pub(super) async fn issue(
             let roster = load_roster(roster_path).await?;
             pki::plan_cli(pki::CliToken::Agent(name), Some(&roster))?
         }
-        TokenKind::Device { name } => pki::plan_cli(pki::CliToken::Device(name), None)?,
+        TokenKind::Device { device, user } => {
+            pki::plan_principal(&Principal::Device { user, device }, None)?
+        }
     };
     let minted = pki::mint(
         &plan,
