@@ -209,6 +209,46 @@ WantedBy=timers.target
   only what the source gained.
 - Each person's wiki pages go to `WIKI_DIR/users/<user>/`, created on first write.
 
+### Person logins
+
+A personal node that writes to the store directly gets its own Postgres role, pinned to its person by the store
+(CONTRACT note 121). Whatever `rh.principal`, `rh.spaces` or `rh.maintenance` that login sets, it reads its own rows and
+the rows shared to spaces it belongs to, writes only its own, and never enters maintenance. Roles not listed in
+`rh_role_principals` keep the connection settings, so service logins and workers need nothing.
+
+Run once per person, in the store's database, as a superuser or as the role that ran the migrations (the table owner):
+
+```sql
+CREATE ROLE rivet_rose LOGIN PASSWORD '...';
+GRANT USAGE ON SCHEMA public TO rivet_rose;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rivet_rose;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rivet_rose;
+GRANT USAGE ON SCHEMA graphile_worker TO rivet_rose;
+GRANT ALL ON ALL TABLES IN SCHEMA graphile_worker TO rivet_rose;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA graphile_worker TO rivet_rose;
+CREATE POLICY rivet_rose ON graphile_worker._private_jobs TO rivet_rose USING (true);
+CREATE POLICY rivet_rose ON graphile_worker._private_job_queues TO rivet_rose USING (true);
+CREATE POLICY rivet_rose ON graphile_worker._private_tasks TO rivet_rose USING (true);
+ALTER DEFAULT PRIVILEGES FOR ROLE rh_migrate IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO rivet_rose;
+ALTER DEFAULT PRIVILEGES FOR ROLE rh_migrate IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO rivet_rose;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+INSERT INTO rh_role_principals (role_name, user_id) VALUES ('rivet_rose', 'rose');
+```
+
+Here `rh_migrate` stands for the role that runs the migrations: the two `ALTER DEFAULT PRIVILEGES` lines give the login
+the tables later migrations create, and the `REVOKE` (already the default on databases created under PostgreSQL 15 or
+later) keeps any login from planting functions the elevated trigger bodies could resolve. The three policies let the
+node's captures queue embedding jobs for the store's workers; graphile-worker keeps its tables under row-level
+security for everyone but their owner. An existing role is pinned with the `INSERT` alone
+(`('rivet_coco', 'coco')`), after `GRANT SELECT ON rh_role_principals` if it was granted its tables before 0053; the
+insert refuses a name that is not a role. Pin a role to one person only; never pin the role that ran the migrations, a
+superuser, or a role with `BYPASSRLS`, and do not make a pinned role a member of the migrating role (membership in
+any other role is harmless: a pinned login stays pinned under `SET ROLE`). The queue policies let the login read the
+job queue and add jobs the store's workers run; those workers run each job in its row owner's scope. Renaming or recreating a pinned role unpins it, since the mapping is by
+name: repeat the `INSERT` under the new name. The node then uses `postgres://rivet_rose:...@<host>/<database>` as its
+`RIVETHUB_PG_URL`; its `users.json` still names the person and spaces for the gateway, but the store, not the node,
+decides what the login sees.
+
 ## Standalone nodes
 
 `rh local` migrates its SQLite file itself before opening it; `rivethub-migrate sqlite --path <file>` does the same by

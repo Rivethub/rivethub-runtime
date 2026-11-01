@@ -1454,6 +1454,29 @@ provisioner whose subject and SAN are that URI, redeemed with `rh cert renew --p
 --once`, and `rh cert renew` without a token keeps renewing it. A batch the remote gateway does not take spools as (B3)
 capture does.
 
+(121) A database login pinned to one person (Phil, 2026-11-01; tenancy plan section 7, personal nodes): a personal node
+connects to the family store with its own Postgres role, and the store itself decides who that role is. Postgres
+migration 0053 adds `rh_role_principals (role_name, user_id)`, readable by every login and written only by the table's
+owner or a superuser. For a login listed there (the pinned role; `session_user`, so neither `SET ROLE` nor a SECURITY
+DEFINER body moves it) the three scope resolvers every policy and owner default already call return the mapped user as
+`rh_scope_principal()`, that user's rows of `rh_space_members` as `rh_scope_spaces()`, and false from
+`rh_scope_maintenance()`, whatever `rh.principal`, `rh.spaces` or `rh.maintenance` the connection set; a role not
+listed keeps note 89's settings unchanged, so service logins and workers behave as before. A pinned login therefore
+reads its own rows and the rows shared to spaces it really belongs to, writes only rows it owns (a capture naming
+another owner is refused; a capture naming none takes the pinned user), and cannot widen itself by calling
+`rh_elevate()`. The trigger and refresh functions that elevate (every function calling `rh_elevate()` and the four
+triggers that call `rh_refresh_*`) run SECURITY DEFINER as the migration's role with `search_path = pg_catalog,
+<schema>, pg_temp`, so a pinned login's own writes still refresh visibility across owners and keep `rh_message_counts`,
+and the three `rh_refresh_*` helpers are not callable by PUBLIC; `rh_scope_maintenance()` is false whenever
+`current_user` is a pinned role, and false for a pinned login unless `current_user` is the owner of `rh_elevate()`,
+so `SET ROLE` into some other role the login belongs to does not lift the pin and only the store's own code elevates. Two
+policies change: `rh_space_members` shows a login its own memberships (and everything under maintenance) rather than
+every member of its spaces, and `rh_message_access` and `rh_summary_access` take a write for any message or summary the
+writer can read, so a pinned node's search access counts land. A pinned node's `sync_spaces` is a no-op with one info
+line (the store's admin owns spaces), `rh` commands on it act as the pinned person, and a connection outside any scope
+sees that person's rows rather than nothing. Operator steps are in OPERATIONS.md, Person logins. Guardian access for
+children is not built; it will be a further policy term, not a change to the pin.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

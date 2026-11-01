@@ -86,6 +86,16 @@ SELECT k.key AS session, c.owner_user_id AS owner, m.visibility AS mark,
 #[async_trait]
 impl TenancyStore for PostgresTenancy {
     async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
+        let pinned: Option<String> = sqlx::query_scalar("SELECT rh_scope_pin()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(failed("space sync"))?;
+        if let Some(person) = pinned {
+            tracing::info!(
+                "this database login is pinned to {person}; the store's admin manages its spaces"
+            );
+            return Ok(());
+        }
         let mut tx = self.pool.begin().await.map_err(failed("space sync"))?;
         let ids: Vec<&str> = spaces.iter().map(|space| space.id.as_str()).collect();
         sqlx::query("DELETE FROM rh_spaces WHERE NOT (id = ANY ($1::text[]))")
