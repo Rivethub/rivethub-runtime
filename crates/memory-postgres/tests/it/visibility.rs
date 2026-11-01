@@ -14,6 +14,7 @@ use kernel::tenancy::SpaceKind;
 use kernel::tenancy::TenancyStore as _;
 use kernel::tenancy::Viewer;
 use kernel::tenancy::Visibility;
+use kernel::topics::HistoryMark;
 use kernel::topics::NewTopic;
 use kernel::topics::Placement;
 use kernel::topics::PlacementSource;
@@ -27,6 +28,7 @@ use memory_postgres::PostgresMemory;
 use memory_postgres::PostgresTenancy;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use uuid::Uuid;
 use wire::message::Role;
 use wire::session_id::SessionId;
 
@@ -565,6 +567,26 @@ async fn owned_by_an_ordinary_role(pool: &PgPool) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+async fn queue_access(pool: &PgPool, role: &str) -> Result<(), sqlx::Error> {
+    for grant in [
+        format!("GRANT USAGE ON SCHEMA graphile_worker TO {role}"),
+        format!("GRANT ALL ON ALL TABLES IN SCHEMA graphile_worker TO {role}"),
+        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA graphile_worker TO {role}"),
+        format!(
+            "DO $$ DECLARE t text; BEGIN
+                FOREACH t IN ARRAY ARRAY['_private_jobs', '_private_job_queues', '_private_tasks'] LOOP
+                    EXECUTE format('CREATE POLICY {role} ON graphile_worker.%I TO {role} USING (true)', t);
+                END LOOP;
+             END $$"
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(grant))
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::error::Error>> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE {PERSON} LOGIN PASSWORD '{PERSON}'; \
@@ -576,16 +598,6 @@ async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::e
         format!("GRANT USAGE ON SCHEMA public TO {PERSON}"),
         format!("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {PERSON}"),
         format!("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {PERSON}"),
-        format!("GRANT USAGE ON SCHEMA graphile_worker TO {PERSON}"),
-        format!("GRANT ALL ON ALL TABLES IN SCHEMA graphile_worker TO {PERSON}"),
-        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA graphile_worker TO {PERSON}"),
-        format!(
-            "DO $$ DECLARE t text; BEGIN
-                FOREACH t IN ARRAY ARRAY['_private_jobs', '_private_job_queues', '_private_tasks'] LOOP
-                    EXECUTE format('CREATE POLICY rh_rls_person ON graphile_worker.%I TO {PERSON} USING (true)', t);
-                END LOOP;
-             END $$"
-        ),
         format!(
             "DO $$ BEGIN CREATE ROLE {GROUP} NOLOGIN; \
              EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
@@ -597,6 +609,7 @@ async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::e
             .execute(pool)
             .await?;
     }
+    queue_access(pool, PERSON).await?;
     sqlx::query("INSERT INTO rh_role_principals (role_name, user_id) VALUES ($1, $2)")
         .bind(PERSON)
         .bind(principal)
@@ -711,6 +724,211 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
     assert_eq!(
         visible(&pool, Scope::Maintenance, "rh_space_members").await?,
         2
+    );
+    Ok(())
+}
+
+async fn work_topic(
+    store: &PostgresMemory,
+    owner: &Viewer,
+    name: &str,
+) -> Result<TopicId, Box<dyn std::error::Error>> {
+    let topic = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new(name)?,
+                aliases: Vec::new(),
+                parent: None,
+                directory: None,
+                owner: Some(owner.principal().clone()),
+            },
+            Utc::now(),
+        )?)
+        .await?;
+    Ok(topic.id)
+}
+
+async fn session_state_as(
+    probe: &PgPool,
+    owner: &Viewer,
+    session: &str,
+    conversation: Option<Uuid>,
+    topic: TopicId,
+) -> Result<(), sqlx::Error> {
+    let who = owner.principal().as_str();
+    let topic = topic.uuid();
+    let correction = match conversation {
+        Some(id) => format!("NULL, '{id}'"),
+        None => format!("'{session}', NULL"),
+    };
+    let sql = format!(
+        "INSERT INTO rh_session_startup (session_id, topic_id, tokens, sections, created_at)
+             VALUES ('{session}', '{topic}', 1, '[]', now());
+         INSERT INTO rh_session_suggestions (session_id, name, topic_id) VALUES ('{session}', 'Kitchen', '{topic}');
+         INSERT INTO rh_session_history (session_id, marked_at) VALUES ('{session}', now());
+         INSERT INTO rh_session_keeps (session_key, kept_at, kept_by) VALUES ('{session}', now(), '{who}');
+         INSERT INTO rh_session_tombstones (session_key, deleted_at, deleted_by) VALUES ('{session}', now(), '{who}');
+         INSERT INTO rh_filing_corrections (id, session_id, conversation_id, from_topic, corrected_at)
+             VALUES (gen_random_uuid(), {correction}, '{topic}', now());
+         INSERT INTO rh_hub_state (user_id, version, state) VALUES ('{who}', 1, '{{}}')"
+    );
+    Scope::Viewer(owner.clone())
+        .run(async { sqlx::raw_sql(sqlx::AssertSqlSafe(sql)).execute(probe).await })
+        .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_pinned_login_sees_its_own_session_state_and_no_one_elses(pool: PgPool) -> TestResult {
+    let (store, tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    store
+        .capture_batch(
+            &batch(LATER, "bob's session"),
+            &CaptureOptions::owned_by(bob.principal()),
+        )
+        .await?;
+    let kitchen = work_topic(&store, &alice, "Kitchen").await?;
+    let pantry = work_topic(&store, &alice, "Pantry").await?;
+    Scope::Viewer(alice.clone())
+        .run(tenancy.mark_topic(&alice, kitchen, Some(&Visibility::Space(household()?))))
+        .await?;
+    let hers: Uuid = sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
+        .bind(FIRST)
+        .fetch_one(&pool)
+        .await?;
+    let probe = probe(&pool).await?;
+    queue_access(&pool, PROBE).await?;
+    session_state_as(&probe, &alice, FIRST, Some(hers), kitchen).await?;
+    session_state_as(&probe, &bob, LATER, None, kitchen).await?;
+    Scope::Viewer(alice.clone())
+        .run(
+            sqlx::query(
+                "INSERT INTO rh_agent_presets (id, name, node, directory, system_prompt)
+                 VALUES ('helper', 'Helper', 'node-a', '/srv/helper', 'the household helper')",
+            )
+            .execute(&probe),
+        )
+        .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO rh_flagged_jobs (task, job_key, payload, priority, max_attempts, failures, last_error,
+             first_failed_at, last_failed_at, flagged_at)
+             VALUES ('file-conversation', 'file-1', '{{}}', 0, 3, 3, 'failed', now(), now(), now());
+         INSERT INTO rh_tasks_archive (goal, executor, agent_id, origin, conversation_id, session_key)
+             VALUES ('hers', 'chat-loop', 'rivet', 'chat', '{hers}', NULL),
+                    ('his', 'chat-loop', 'rivet', 'chat', NULL, '{LATER}'),
+                    ('nobody''s', 'chat-loop', 'rivet', 'chat', NULL, NULL);
+         INSERT INTO rh_delegation_runs_archive (from_agent, to_agent, task, status)
+             VALUES ('rivet', 'helper', 'an old delegation', 'completed');
+         INSERT INTO rh_topic_redirects (slug, topic_id, created_at)
+             VALUES ('cooking', '{}', now()), ('stores', '{}', now());
+         INSERT INTO rh_wiki_topics (slug, title, owner_user_id, visibility)
+             VALUES ('her-notes', 'Her notes', 'alice', 'private'), ('his-notes', 'His notes', 'bob', 'private');
+         INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at)
+             VALUES ('her-old-notes', 'her-notes', now()), ('his-old-notes', 'his-notes', now())",
+        kitchen.uuid(),
+        pantry.uuid()
+    )))
+    .execute(&pool)
+    .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let pinned = person(&pool, "bob").await?;
+
+    for (table, his, hers, all) in [
+        ("rh_session_startup", 1, 1, 2),
+        ("rh_session_suggestions", 1, 1, 2),
+        ("rh_session_history", 1, 1, 2),
+        ("rh_session_keeps", 1, 1, 2),
+        ("rh_filing_corrections", 1, 1, 2),
+        ("rh_hub_state", 1, 1, 2),
+        ("rh_agent_presets", 1, 1, 1),
+        ("rh_tasks_archive", 1, 1, 3),
+        ("ros_tasks", 1, 1, 3),
+        ("rh_delegation_runs_archive", 0, 0, 1),
+        ("rh_flagged_jobs", 0, 1, 1),
+        ("rh_topic_redirects", 1, 2, 2),
+        ("rh_wiki_redirects", 1, 1, 2),
+    ] {
+        for scope in [
+            Scope::Closed,
+            Scope::Viewer(alice.clone()),
+            Scope::Maintenance,
+        ] {
+            assert_eq!(
+                visible(&pinned, scope.clone(), table).await?,
+                his,
+                "{table} for the pinned login under {scope:?}"
+            );
+        }
+        assert_eq!(
+            visible(&probe, Scope::Viewer(alice.clone()), table).await?,
+            hers,
+            "{table} for a service login acting for alice"
+        );
+        assert_eq!(
+            visible(&probe, Scope::Maintenance, table).await?,
+            all,
+            "{table} under maintenance"
+        );
+        assert_eq!(
+            visible(&probe, Scope::Closed, table).await?,
+            0,
+            "{table} outside any scope"
+        );
+    }
+    for table in [
+        "rh_session_tombstones",
+        "rh_backfills",
+        "_rivetos_migrations",
+    ] {
+        assert_eq!(
+            visible(&pinned, Scope::Closed, table).await?,
+            unscoped(&pool, table).await?,
+            "{table} stays readable to every login"
+        );
+    }
+
+    let forged = sqlx::query(
+        "INSERT INTO rh_session_tombstones (session_key, deleted_at, deleted_by) VALUES ($1, now(), 'bob')",
+    )
+    .bind(SECOND)
+    .execute(&pinned)
+    .await;
+    assert!(
+        forged.is_err(),
+        "a pinned login tombstoned someone else's session"
+    );
+    let rewritten = sqlx::query("UPDATE rh_agent_presets SET system_prompt = 'changed'")
+        .execute(&pinned)
+        .await?;
+    assert_eq!(
+        rewritten.rows_affected(),
+        0,
+        "a pinned login rewrote someone else's preset"
+    );
+    let as_person = PostgresMemory::new(pinned.clone());
+    Scope::Closed
+        .run(as_person.mark_history(HistoryMark {
+            session: SessionId::try_from(UNCAPTURED.to_owned())?,
+            at: Utc::now(),
+        }))
+        .await?;
+    assert_eq!(
+        visible(&pinned, Scope::Closed, "rh_session_history").await?,
+        2,
+        "a done mark on a session with no transcript and no placement"
+    );
+    let as_service = PostgresMemory::new(probe.clone());
+    Scope::Viewer(alice)
+        .run(kernel::topics::TopicStore::delete(&as_service, kitchen))
+        .await?;
+    assert_eq!(
+        visible(&probe, Scope::Maintenance, "rh_session_suggestions").await?,
+        0,
+        "removing a topic removes every suggestion that pointed at it"
     );
     Ok(())
 }
