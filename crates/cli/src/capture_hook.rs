@@ -116,7 +116,15 @@ async fn writer(
 ) -> Result<(CaptureWriter<HttpCaptureTransport>, config::Paths), Error> {
     let loaded = db::load(env, None).await?;
     let paths = config::Paths::new(env)?;
-    let Endpoint { url, client } = status::gateway(env, &loaded.config, POST_TIMEOUT).await?;
+    let remote = loaded
+        .config
+        .memory
+        .as_ref()
+        .and_then(|memory| memory.capture.gateway.as_ref());
+    let Endpoint { url, client } = match remote {
+        Some(remote) => remote_gateway(remote).await?,
+        None => status::gateway(env, &loaded.config, POST_TIMEOUT).await?,
+    };
     let redaction = capture::redaction::resolve(Some(loaded.config.capture_redaction()), env);
     let writer = CaptureWriter::new(
         HttpCaptureTransport::new(url.as_str().trim_end_matches('/').to_owned(), client),
@@ -125,4 +133,22 @@ async fn writer(
         redaction,
     );
     Ok((writer, paths))
+}
+
+async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
+    let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(&remote.ca).await?)?;
+    let mut identity = tokio::fs::read(&remote.key).await?;
+    identity.push(b'\n');
+    identity.extend(tokio::fs::read(&remote.cert).await?);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .https_only(true)
+        .timeout(POST_TIMEOUT)
+        .tls_certs_only(roots)
+        .identity(reqwest::Identity::from_pem(&identity)?)
+        .build()?;
+    Ok(Endpoint {
+        url: url::Url::parse(&remote.url)?,
+        client,
+    })
 }

@@ -1442,6 +1442,18 @@ as the server comes back, spending no attempt and counting no failure, where bef
 a datahub network drop on 2026-10-31 failed and flagged 30 jobs (20 wiki extractions in one minute). A call that
 connected and then broke stays a transport failure and fails the job as before.
 
+(120) Remote capture with a device identity (Phil, 2026-11-01): `rh capture hook` posts to another machine's gateway when
+`memory.capture.gateway` is set: `url` (the gateway's `https://` address), `ca` (a PEM bundle that verifies the gateway's
+certificate), and `cert` and `key` (a PEM client certificate chain and its private key). All four are required. The hook
+trusts only `ca`, presents `cert` and `key` on every request, refuses a `url` that is not HTTPS, and does not use the
+node's own `gateway` section; without `memory.capture.gateway` it posts to its own gateway as (88) describes. The remote
+gateway attributes the batch to the user `users.json` maps the certificate's device to, as (88) describes for device
+certificates, so a machine that runs no node and holds no database credential captures as its user. The certificate
+carries one URI SAN, `spiffe://rivet.mesh/device/<user>/<device>`: it is issued for a one-time token on the `devices`
+provisioner whose subject and SAN are that URI, redeemed with `rh cert renew --principal <uri> --token-file <token>
+--once`, and `rh cert renew` without a token keeps renewing it. A batch the remote gateway does not take spools as (B3)
+capture does.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

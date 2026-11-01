@@ -211,6 +211,15 @@ pub struct SqliteSection {
 #[serde(default)]
 pub struct CaptureSection {
     pub redaction: RedactionSection,
+    pub gateway: Option<CaptureGateway>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CaptureGateway {
+    pub url: String,
+    pub ca: PathBuf,
+    pub cert: PathBuf,
+    pub key: PathBuf,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
