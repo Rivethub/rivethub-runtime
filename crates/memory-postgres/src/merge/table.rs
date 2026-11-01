@@ -118,6 +118,7 @@ impl Table {
                 | Self::WikiDeferred
                 | Self::Tasks
                 | Self::TidyBatches
+                | Self::SessionHistory
         )
     }
 }

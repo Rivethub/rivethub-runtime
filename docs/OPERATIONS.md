@@ -249,6 +249,15 @@ name: repeat the `INSERT` under the new name. The node then uses `postgres://riv
 `RIVETHUB_PG_URL`; its `users.json` still names the person and spaces for the gateway, but the store, not the node,
 decides what the login sees.
 
+Migration 0054 (CONTRACT note 122) puts the tables 0044 left open under row-level security, so the grants above stay
+as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Four tables
+stay readable and writable by every login (`rh_topic_tombstones`, `rh_tag_taxonomy`, `rh_worker_runs`,
+`rh_job_failures`), and `rh_session_tombstones`, `rh_backfills` and the two migration ledgers are readable by every
+login but written only under maintenance or, for tombstones, by the session's owner. On a store that already holds
+agent presets and conversations of more than one owner, 0054 stops until the connection names the person who owns the
+existing presets, as 0042 did: `postgres://…/memory?options=-c%20rh.store_owner%3D<user>`. Run it before you create
+the first person login.
+
 ## Standalone nodes
 
 `rh local` migrates its SQLite file itself before opening it; `rivethub-migrate sqlite --path <file>` does the same by

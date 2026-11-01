@@ -1477,6 +1477,41 @@ line (the store's admin owns spaces), `rh` commands on it act as the pinned pers
 sees that person's rows rather than nothing. Operator steps are in OPERATIONS.md, Person logins. Guardian access for
 children is not built; it will be a further policy term, not a change to the pin.
 
+(122) Owner-scoped rows in the tables 0044 and 0048 left open (Phil, 2026-11-01; tenancy plan section 7): a person
+login holds SELECT, INSERT, UPDATE and DELETE on every table, so Postgres migration 0054 puts each remaining table
+under forced row-level security through note 121's resolvers and note 89's policy shapes. A session row belongs to the
+session's owner: `rh_session_owner(session, conversation)` returns the owner of the conversation by id, else of the
+conversation whose key is the session's canonical key or its bare `claude-code:` form (the oldest when several), else
+of the session's placement. `rh_session_startup`, `rh_session_suggestions`, `rh_session_keeps` and
+`rh_filing_corrections` are read and written by that owner or under maintenance, and a row with no such anchor is
+maintenance-only. `rh_session_history` gains `owner_user_id DEFAULT rh_scope_principal()` (the store owner on a
+single-owner store), backfilled through the same helper, because a done mark can precede any transcript or placement.
+`rh_session_tombstones` stays readable by every login (a capture under any scope must see it) and is written only for
+a session the writer owns, so a login cannot tombstone another person's session and have the purge job erase it.
+`rh_hub_state` is its `user_id`'s. `rh_agent_presets` gains `owner_user_id DEFAULT rh_scope_principal()`: every
+identified login reads every preset (list, get, launch and task delegation read presets for any caller), the owner or
+maintenance writes one, existing presets go to the store owner, and 0054 stops on a store whose conversations have
+more than one owner until the connection names that owner with `rh.store_owner` (note 88's rule). `rh_tasks_archive`
+shows a person the tasks of its own conversations and is written under maintenance; `rh_delegation_runs_archive` and
+`rh_message_counts_pending` are maintenance-only. `rh_flagged_jobs` is read and written under maintenance and by any
+identified login that is not pinned (the operator's gateway keeps its page), so a pinned login sees none; any identified
+login may insert, because the job queue's fail path flags a job from whatever scope ran it. `rh_summary_sources`,
+`rh_topic_redirects` and `rh_wiki_redirects` show with the summary, topic or page they point at. `rh_backfills`,
+`_rivetos_migrations` and `_sqlx_migrations` are readable by every login and written under maintenance only (a planted
+row would skip a future migration; the migrator sets `rh.maintenance` on every connection it opens). Four tables stay
+open: `rh_topic_tombstones` (a global slug blocklist that every owner's topic removal upserts), `rh_tag_taxonomy` (one
+household vocabulary that the gateway and MCP tag routes edit for any caller), `rh_worker_runs` and `rh_job_failures`
+(task names, job keys and counters that the task runner's completion writes under owner scope on every node).
+`rh_session_suggestions.topic_id` becomes `ON DELETE CASCADE`, because foreign keys ignore row security and a topic
+removal by one owner would otherwise fail on another owner's hidden suggestion; a merge retargets only the suggestions
+the merger can see. What changes for a running node: a gateway request lists the caller's own startup rows,
+suggestions, keeps, history marks and corrections (filing's correction examples become per owner), a cross-owner write
+to these tables fails as a row-security error, a pinned node's flagged-jobs page and upkeep failure counts are empty
+since its jobs run on the store's workers, `rh memory merge-store` rewrites `rh_session_history` owners like the other
+owned tables, and a dump import needs a superuser or `BYPASSRLS` role for these tables as it already does for
+conversations. `memory_postgres::SCHEMA_VERSION` is 54. Not changed here: `rh_session_placements.topic_id` keeps
+`NO ACTION` and has the same hidden-row failure for a shared topic, and `rh_tag_owner_trigger` fills only a NULL owner.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
