@@ -146,42 +146,44 @@ async fn agent_token_pins_the_spiffe_uri() -> Result {
 }
 
 #[tokio::test]
-async fn device_token_uses_the_operator_name_without_a_roster() -> Result {
+async fn device_token_pins_the_user_device_spiffe_uri() -> Result {
     let fixture = Fixture::new()?;
     let report = fixture
         .run(command(
             &fixture,
             false,
-            &["token", "device", "handset.example.test"],
+            &["token", "device", "laptop", "--user", "alice"],
         )?)
         .await?;
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
-    let mut expected = vec![
-        "ca",
-        "token",
-        "handset.example.test",
-        "--provisioner",
-        "devices",
-        "--san",
-        "handset.example.test",
-    ];
+    assert_eq!(report.stdout, "one-time-token\n");
+    let uri = "spiffe://rivet.mesh/device/alice/laptop";
+    let mut expected = vec!["ca", "token", uri, "--provisioner", "devices", "--san", uri];
     let flags = endpoint(&fixture, "https://ca.example.test")?;
     expected.extend(flags.iter().map(String::as_str));
     assert_argv(&fixture.argv()?, &expected)?;
     assert!(!fixture.argv()?.iter().any(|arg| arg.contains("roster.txt")));
     std::fs::remove_file(&fixture.argv)?;
-    for name in ["..", "bad/name", "white space"] {
-        let refused = fixture
-            .run(command(&fixture, false, &["token", "device", name])?)
-            .await?;
-        assert_eq!(refused.exit, Exit::Failure, "{name}: {}", refused.stderr);
+    let missing = fixture
+        .run(command(&fixture, false, &["token", "device", "laptop"])?)
+        .await?;
+    assert_eq!(missing.exit, Exit::Failure, "{}", missing.stderr);
+    assert!(missing.stderr.contains("--user"), "{}", missing.stderr);
+    for (user, device) in [
+        ("alice", ".."),
+        ("bad/name", "laptop"),
+        ("alice", "white space"),
+    ] {
+        let tail = ["token", "device", device, "--user", user];
+        let refused = fixture.run(command(&fixture, false, &tail)?).await?;
+        assert_eq!(refused.exit, Exit::Failure, "{tail:?}: {}", refused.stderr);
         assert!(
-            refused.stderr.contains("device name"),
-            "{name}: {}",
+            refused.stderr.contains("unreserved"),
+            "{tail:?}: {}",
             refused.stderr
         );
-        assert!(!fixture.argv.exists(), "{name}");
     }
+    assert!(!fixture.argv.exists());
     Ok(())
 }
 
