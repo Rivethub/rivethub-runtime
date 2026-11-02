@@ -176,12 +176,9 @@ async fn recorded_memory_text(pool: PgPool) -> TestResult {
             "{}",
             call.note
         );
-        assert_eq!(
-            contract_stamp(result.meta.as_ref())?,
-            wire::contract::MEMORY_CONTRACT,
-            "{}",
-            call.note
-        );
+        let stamp = contract_stamp(result.meta.as_ref())
+            .map_err(|error| format!("{error} ({})", call.note))?;
+        assert_eq!(stamp, wire::contract::MEMORY_CONTRACT, "{}", call.note);
         assert_eq!(
             meta_without_contract(result.meta.as_ref())?,
             meta_without_contract(call.result.meta.as_ref())?,

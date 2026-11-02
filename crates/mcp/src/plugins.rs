@@ -78,9 +78,11 @@ pub(crate) async fn call(
         Ok(result) => {
             let mut answer = CallToolResult::success(vec![ContentBlock::text(result.text)]);
             answer.is_error = Some(result.is_error);
-            answer
+            crate::stamp(answer)
         }
-        Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
+        Err(error) => crate::stamp(CallToolResult::error(vec![ContentBlock::text(
+            error.to_string(),
+        )])),
     }
 }
 
