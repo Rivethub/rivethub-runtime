@@ -94,7 +94,8 @@ fn add_owners(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 }
 
 const ARCHIVE_TASKS: &str = "
-ALTER TABLE rh_tasks RENAME TO rh_tasks_archive;
+CREATE TABLE rh_tasks_archive AS SELECT * FROM rh_tasks;
+DROP TABLE rh_tasks;
 UPDATE rh_tasks_archive
    SET status = 'killed',
        completed_at = COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -220,6 +221,27 @@ fn add_conversation_filing(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(include_str!("schema/suggestion_parent_v21.sql"))
 }
 
+const UNBIND_KEEPING_OWNER: &str = "
+CREATE TABLE rh_topic_pages_v18 (
+    page_slug TEXT NOT NULL PRIMARY KEY REFERENCES ros_wiki_topics (slug) ON DELETE CASCADE,
+    topic_id TEXT UNIQUE REFERENCES rh_topics (id) ON DELETE SET NULL,
+    sections TEXT NOT NULL DEFAULT '[]',
+    owner_user_id TEXT
+);
+INSERT INTO rh_topic_pages_v18 (page_slug, topic_id, sections, owner_user_id)
+    SELECT page_slug, topic_id, sections, owner_user_id FROM rh_topic_pages;
+DROP TABLE rh_topic_pages;
+CREATE TABLE rh_topic_pages (
+    page_slug TEXT NOT NULL PRIMARY KEY REFERENCES ros_wiki_topics (slug) ON DELETE CASCADE,
+    topic_id TEXT UNIQUE REFERENCES rh_topics (id) ON DELETE SET NULL,
+    sections TEXT NOT NULL DEFAULT '[]',
+    owner_user_id TEXT
+);
+INSERT INTO rh_topic_pages (page_slug, topic_id, sections, owner_user_id)
+    SELECT page_slug, topic_id, sections, owner_user_id FROM rh_topic_pages_v18;
+DROP TABLE rh_topic_pages_v18;
+";
+
 fn unbind_topic_pages_on_delete(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     let keyed_by_page = tx
         .query_row(
@@ -232,7 +254,11 @@ fn unbind_topic_pages_on_delete(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     if keyed_by_page {
         return Ok(());
     }
-    tx.execute_batch(include_str!("schema/topic_page_unbind_v18.sql"))
+    if column_present(tx, "rh_topic_pages", "owner_user_id")? {
+        tx.execute_batch(UNBIND_KEEPING_OWNER)
+    } else {
+        tx.execute_batch(include_str!("schema/topic_page_unbind_v18.sql"))
+    }
 }
 
 fn add_tag_removal_columns(tx: &Transaction<'_>) -> rusqlite::Result<()> {
