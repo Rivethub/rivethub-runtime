@@ -51,6 +51,14 @@ impl Check {
             message: error.to_string(),
         }
     }
+
+    fn warn(name: CheckName, message: impl Into<String>) -> Self {
+        Self {
+            name,
+            status: CheckStatus::Warn,
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,19 +247,57 @@ fn find_herdr(env: &Environment) -> Result<Check, Error> {
 }
 
 async fn schema_check(config: &Config, env: &Environment) -> Check {
+    let foreign = foreign_note(config).await;
     match schema_status(config, env).await {
-        Ok(status) if status.current == status.required && status.pending == 0 => Check::pass(
-            CheckName::Memory,
-            format!("Schema {} is current.", status.current),
-        ),
-        Ok(status) => Check::fail(
-            CheckName::Memory,
-            format!(
-                "Schema {} is not current; required {}, pending {}. Run rivethub-migrate explicitly.",
-                status.current, status.required, status.pending
-            ),
-        ),
+        Ok(status) if status.current == status.required && status.pending == 0 => {
+            if let Some(foreign) = foreign {
+                Check::warn(
+                    CheckName::Memory,
+                    format!("Schema {} is current. {foreign}", status.current),
+                )
+            } else {
+                Check::pass(
+                    CheckName::Memory,
+                    format!("Schema {} is current.", status.current),
+                )
+            }
+        }
+        Ok(status) => {
+            let extra = foreign.map(|note| format!(" {note}")).unwrap_or_default();
+            Check::fail(
+                CheckName::Memory,
+                format!(
+                    "Schema {} is not current; required {}, pending {}. Run rivethub-migrate explicitly.{extra}",
+                    status.current, status.required, status.pending
+                ),
+            )
+        }
         Err(error) => Check::fail(CheckName::Memory, error),
+    }
+}
+
+async fn foreign_note(config: &Config) -> Option<String> {
+    if !config.sqlite_selected() {
+        return None;
+    }
+    let path = config
+        .memory
+        .as_ref()
+        .and_then(|memory| memory.sqlite.as_ref())
+        .and_then(|sqlite| sqlite.path.clone())?;
+    let objects = tokio::task::spawn_blocking(move || migrate::sqlite_foreign(&path))
+        .await
+        .ok()?
+        .ok()?;
+    if objects.is_empty() {
+        None
+    } else {
+        let body = objects
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(format!("Foreign schema: {body}."))
     }
 }
 

@@ -50,6 +50,8 @@ pub enum ConfigError {
     Validation { result: ValidationResult },
     #[error("HOME must be an absolute directory path without '..' components for RivetHub state")]
     Home,
+    #[error("RIVETHUB_HOME must be an absolute directory path without '..' components")]
+    StateHome,
     #[error(
         "a node name is required: set mesh.node_name or RIVETHUB_NODE_NAME, or provide a hostname"
     )]

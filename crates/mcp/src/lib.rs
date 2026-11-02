@@ -376,6 +376,12 @@ fn decode<T: DeserializeOwned>(arguments: rmcp::model::JsonObject) -> Result<T, 
 pub(crate) fn text(value: String) -> CallToolResult {
     let mut result = CallToolResult::success(vec![ContentBlock::text(value)]);
     result.is_error = None;
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "contractVersion".to_owned(),
+        serde_json::Value::from(wire::contract::MEMORY_CONTRACT),
+    );
+    result.meta = Some(rmcp::model::MetaObject(meta));
     result
 }
 

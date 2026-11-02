@@ -264,6 +264,12 @@ pub struct Gateway {
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    surface: Surface,
+}
+
+enum Surface {
+    Full,
+    Memory,
 }
 
 struct StartupMemory {
@@ -317,7 +323,14 @@ impl Gateway {
             plugins: None,
             summaries: None,
             deletions: None,
+            surface: Surface::Full,
         }
+    }
+
+    #[must_use]
+    pub fn with_memory_profile(mut self) -> Self {
+        self.surface = Surface::Memory;
+        self
     }
 
     #[must_use]
@@ -549,7 +562,7 @@ impl Gateway {
             gateway: Arc::clone(self),
             secure,
         };
-        let routed = Router::new()
+        let mut routed = Router::new()
             .route("/healthz", routing::any(routes::healthz))
             .route(
                 "/api/capture",
@@ -559,11 +572,18 @@ impl Gateway {
                         routes::capture_schema::body_limit(),
                     )),
             )
-            .nest("/api/memory", routes::memory::router())
-            .merge(routes::sessions::router())
-            .merge(routes::terminal::router())
-            .merge(routes::router());
-        let mounted = routes::mount(routed).with_state(Arc::clone(self));
+            .nest("/api/memory", routes::memory::router());
+        routed = if matches!(self.surface, Surface::Memory) {
+            routed.merge(routes::organizer())
+        } else {
+            routed
+                .merge(routes::sessions::router())
+                .merge(routes::terminal::router())
+                .merge(routes::router())
+        };
+        let mounted = routes::mount(routed)
+            .layer(middleware::from_fn(routes::contract_header))
+            .with_state(Arc::clone(self));
         let rewritten = ServiceBuilder::new()
             .layer(MapRequestLayer::new(routes::rewrite_request))
             .service(mounted);

@@ -181,6 +181,36 @@ fn search_rejections(app: &axum::Router) -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
+    let (gateway, _) = common::gateway();
+    let app = gateway.router(false);
+    let response = block_on(answer(
+        app,
+        recorded("GET", "/api/memory/contract", Vec::new()),
+    ))?;
+    assert_eq!(response.status, 200);
+    let body =
+        serde_json::from_slice::<wire::gateway::memory::MemoryContractResponse>(&response.body)
+            .map_err(|error| error.to_string())?;
+    assert_eq!(body.contract_version, wire::contract::MEMORY_CONTRACT);
+    assert!(response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("x-rivethub-contract")
+            && value == &wire::contract::MEMORY_CONTRACT.to_string()
+    }));
+    let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());
+    let narrowed = Arc::new(Gateway::new(store, common::settings()).with_memory_profile());
+    let app = narrowed.router(false);
+    let hidden = block_on(answer(
+        app.clone(),
+        recorded("GET", "/api/terminal/list", Vec::new()),
+    ))?;
+    assert_eq!(hidden.status, 404);
+    let sessions = block_on(answer(app, recorded("GET", "/sessions", Vec::new())))?;
+    assert_eq!(sessions.status, 404);
+    Ok(())
+}
+
 #[path = "memory_api/archive.rs"]
 mod archive;
 #[path = "memory_api/search_port.rs"]

@@ -74,6 +74,7 @@ fn absent_options_remain_absent_and_invalid_timeouts_are_rejected() {
             other @ (ConfigError::Io { .. }
             | ConfigError::Yaml(_)
             | ConfigError::Home
+            | ConfigError::StateHome
             | ConfigError::NodeName
             | ConfigError::Substitution(_)
             | ConfigError::EnvironmentText { .. }) => {

@@ -25,6 +25,7 @@ use wire::gateway::memory::MemoryAppendToolArgs;
 use wire::gateway::memory::MemoryBrowseMessage;
 use wire::gateway::memory::MemoryBrowseResponse;
 use wire::gateway::memory::MemoryBrowseToolArgs;
+use wire::gateway::memory::MemoryContractResponse;
 use wire::gateway::memory::MemoryGetFullToolArgs;
 use wire::gateway::memory::MemoryHealthResponse;
 use wire::gateway::memory::MemoryHealthStatus;
@@ -77,6 +78,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/health",
             routing::get(health).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/contract",
+            routing::get(contract).fallback(super::method_not_allowed),
         )
         .route(
             "/upkeep",
@@ -297,6 +302,12 @@ async fn stats(State(gateway): State<Arc<Gateway>>) -> Result<Json<MemoryStatsRe
     Ok(Json(memory_body::memory_stats_response_body(
         gateway.store().stats().await?,
     )))
+}
+
+async fn contract() -> Json<MemoryContractResponse> {
+    Json(MemoryContractResponse {
+        contract_version: wire::contract::MEMORY_CONTRACT,
+    })
 }
 
 async fn health(

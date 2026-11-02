@@ -122,7 +122,8 @@ pub fn scan(
     if owner.is_empty() {
         return Err(Error::OwnerUnset);
     }
-    if !covers(state_dir, config_home) {
+    let short = paths::is_short_runtime(state_dir, config_home);
+    if !covers(state_dir, config_home) && !short {
         return Err(escape(config_home, state_dir));
     }
     let namespace = namespace_id(config_home)?;
@@ -137,9 +138,10 @@ pub fn scan(
     }
     match std::fs::canonicalize(&sessions) {
         Ok(resolved) => {
-            let root = std::fs::canonicalize(state_dir)?;
+            let anchor = if short { config_home } else { state_dir };
+            let root = std::fs::canonicalize(anchor)?;
             if !resolved.starts_with(&root) {
-                return Err(escape(&sessions, state_dir));
+                return Err(escape(&sessions, anchor));
             }
             read_sessions(&sessions, &namespace, owner, &mut scan)?;
         }

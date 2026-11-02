@@ -371,7 +371,10 @@ impl Composition {
         gateway = devices::attach(gateway, config, env, &identity.owner, shutdown).await?;
         let tracker = tokio_util::task::TaskTracker::new();
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
-        if config.terminal_enabled() {
+        if config.memory_only() {
+            gateway = gateway.with_memory_profile();
+        }
+        if config.terminal_enabled() && !config.memory_only() {
             let owner = identity.tenancy.local_user().cloned().ok_or_else(|| {
                 ComposeError::Invalid("a local user is required for terminals".into())
             })?;
@@ -388,8 +391,10 @@ impl Composition {
         };
         let mesh = mesh::start(config, env, agents, identity.tenancy, shutdown);
         let mut background = Box::pin(owner_scope.clone().run(mesh)).await?;
-        let delegating = backing.tasks.is_some();
-        if let Some(ports) = backing.tasks {
+        let delegating = backing.tasks.is_some() && !config.memory_only();
+        if !config.memory_only()
+            && let Some(ports) = backing.tasks
+        {
             let files_root = gateway.settings().files_root.clone();
             gateway = tasks::attach(gateway, ports, config, env, files_root).await?;
         }
