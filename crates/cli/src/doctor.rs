@@ -247,7 +247,10 @@ fn find_herdr(env: &Environment) -> Result<Check, Error> {
 }
 
 async fn schema_check(config: &Config, env: &Environment) -> Check {
-    let foreign = foreign_note(config).await;
+    let foreign = match foreign_note(config).await {
+        Ok(note) => note,
+        Err(error) => return Check::fail(CheckName::Memory, error),
+    };
     match schema_status(config, env).await {
         Ok(status) if status.current == status.required && status.pending == 0 => {
             if let Some(foreign) = foreign {
@@ -263,7 +266,10 @@ async fn schema_check(config: &Config, env: &Environment) -> Check {
             }
         }
         Ok(status) => {
-            let extra = foreign.map(|note| format!(" {note}")).unwrap_or_default();
+            let extra = match &foreign {
+                Some(note) => format!(" {note}"),
+                None => String::new(),
+            };
             Check::fail(
                 CheckName::Memory,
                 format!(
@@ -276,28 +282,28 @@ async fn schema_check(config: &Config, env: &Environment) -> Check {
     }
 }
 
-async fn foreign_note(config: &Config) -> Option<String> {
+async fn foreign_note(config: &Config) -> Result<Option<String>, Error> {
     if !config.sqlite_selected() {
-        return None;
+        return Ok(None);
     }
-    let path = config
+    let Some(path) = config
         .memory
         .as_ref()
         .and_then(|memory| memory.sqlite.as_ref())
-        .and_then(|sqlite| sqlite.path.clone())?;
-    let objects = tokio::task::spawn_blocking(move || migrate::sqlite_foreign(&path))
-        .await
-        .ok()?
-        .ok()?;
+        .and_then(|sqlite| sqlite.path.clone())
+    else {
+        return Ok(None);
+    };
+    let objects = tokio::task::spawn_blocking(move || migrate::sqlite_foreign(&path)).await??;
     if objects.is_empty() {
-        None
+        Ok(None)
     } else {
         let body = objects
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; ");
-        Some(format!("Foreign schema: {body}."))
+        Ok(Some(format!("Foreign schema: {body}.")))
     }
 }
 

@@ -42,7 +42,7 @@ pub fn resolve_config_home(state_dir: &Path, port: u16) -> PathBuf {
     if session_socket(&nested, "d0123456789ab").is_ok() && client_socket(&nested).is_ok() {
         nested
     } else {
-        std::env::temp_dir().join(config_home_name(state_dir, port))
+        config::temporary_directory().join(config_home_name(state_dir, port))
     }
 }
 
@@ -60,7 +60,7 @@ pub fn is_short_runtime(state_dir: &Path, config_home: &Path) -> bool {
     let Some(parent) = config_home.parent() else {
         return false;
     };
-    if parent != std::env::temp_dir() {
+    if parent != config::temporary_directory() {
         return false;
     }
     (0..=u16::MAX).any(|port| hash8(state_dir, port) == id)
@@ -225,7 +225,7 @@ mod tests {
         let home = resolve_config_home(&state, 5174);
         assert!(client_socket(&home).is_ok());
         assert!(session_socket(&home, "d0123456789ab").is_ok());
-        assert!(home.starts_with(std::env::temp_dir()));
+        assert!(home.starts_with(config::temporary_directory()));
         assert!(super::is_short_runtime(&state, &home));
     }
 

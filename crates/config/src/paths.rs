@@ -8,6 +8,11 @@ const SESSION_OWNERS_DIR: &str = "den";
 pub const SESSION_OWNERS_FILE_NAME: &str = "session-owners.json";
 
 #[must_use]
+pub fn temporary_directory() -> PathBuf {
+    std::env::temp_dir()
+}
+
+#[must_use]
 pub fn session_owners_file(state_dir: &Path) -> PathBuf {
     state_dir
         .join(SESSION_OWNERS_DIR)

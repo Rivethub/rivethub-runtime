@@ -28,7 +28,7 @@ pub use model::{Config, HarnessSlot, RedactionSettings};
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{
     ConfigLocation, NodeClaim, Paths, StateError, adopt_legacy_state, claim_node, normalize,
-    shared_dir,
+    shared_dir, temporary_directory,
 };
 pub use provider::{ProviderType, RemovedProviderType};
 pub use report::{Finding, Severity, ValidationResult};
