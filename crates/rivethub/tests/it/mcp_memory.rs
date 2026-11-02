@@ -62,6 +62,35 @@ fn replay_exceptions_name_unique_known_calls_and_explain_each_difference() -> Te
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct ContractStamp {
+    #[serde(rename = "contractVersion")]
+    contract_version: u32,
+}
+
+fn contract_stamp(
+    meta: Option<&rmcp::model::MetaObject>,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let meta = meta.ok_or("memory tool result is missing contract meta")?;
+    let stamp: ContractStamp = wire::JsonObject::from_serialize(meta)?.deserialize()?;
+    Ok(stamp.contract_version)
+}
+
+fn meta_without_contract(
+    meta: Option<&rmcp::model::MetaObject>,
+) -> Result<Option<wire::JsonObject>, Box<dyn std::error::Error>> {
+    let Some(meta) = meta else {
+        return Ok(None);
+    };
+    let mut object = wire::JsonObject::from_serialize(meta)?;
+    object.retain(|key| key != "contractVersion");
+    if object.as_map().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(object))
+    }
+}
+
 fn recording() -> Result<Recording, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&std::fs::read(
         testkit::recording("mcp-memory/calls.json"),
@@ -147,7 +176,18 @@ async fn recorded_memory_text(pool: PgPool) -> TestResult {
             "{}",
             call.note
         );
-        assert_eq!(result.meta, call.result.meta, "{}", call.note);
+        assert_eq!(
+            contract_stamp(result.meta.as_ref())?,
+            wire::contract::MEMORY_CONTRACT,
+            "{}",
+            call.note
+        );
+        assert_eq!(
+            meta_without_contract(result.meta.as_ref())?,
+            meta_without_contract(call.result.meta.as_ref())?,
+            "{}",
+            call.note
+        );
         assert_eq!(
             result.content.len(),
             call.result.content.len(),
