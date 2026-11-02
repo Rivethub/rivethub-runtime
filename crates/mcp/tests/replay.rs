@@ -103,6 +103,19 @@ fn load<T: serde::de::DeserializeOwned>(name: &str) -> T {
     .expect("typed recording")
 }
 
+fn assert_recorded(actual: CallToolResult, expected: CallToolResult, note: &str) {
+    assert_eq!(
+        support::contract_version(&actual),
+        wire::contract::MEMORY_CONTRACT,
+        "{note}"
+    );
+    assert_eq!(
+        support::without_contract(actual),
+        support::without_contract(expected),
+        "{note}"
+    );
+}
+
 fn translate_schema_descriptions(schema: &mut schemars::Schema) {
     if let Some(description) = schema.get("description").and_then(|value| value.as_str()) {
         let translated = translate_recorded_product_names(description);
@@ -164,7 +177,7 @@ async fn recordings_over_stdio_framing() {
             let result = client.call_tool(call.request).await;
             match call.outcome {
                 Outcome::Result { result: expected } => {
-                    assert_eq!(result.expect("result"), expected, "{}", call.note);
+                    assert_recorded(result.expect("result"), expected, &call.note);
                 }
                 Outcome::ProtocolError { code, message } => {
                     let ServiceError::McpError(error) = result.expect_err("protocol error") else {
