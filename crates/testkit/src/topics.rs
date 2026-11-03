@@ -407,7 +407,7 @@ pub async fn merges_move_placements_aliases_and_slugs(store: &dyn TopicStore) ->
     same(
         "merged aliases",
         alias_texts(&merged),
-        vec!["electron", "rh-desktop", "Tauri"],
+        vec!["Desktop App", "electron", "rh-desktop", "Tauri"],
     )?;
     same("merged updated", merged.updated_at, at(5))?;
     same(

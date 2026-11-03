@@ -13,6 +13,8 @@ pub struct FlaggedJob {
     pub task: String,
     #[serde(default)]
     pub key: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
     pub payload: JsonObject,
     pub error: String,
     pub failures: u32,

@@ -49,8 +49,12 @@ pub enum TokenKind {
     Node { name: String },
     #[command(about = "Mint a token for an agent in the operator roster")]
     Agent { name: String },
-    #[command(about = "Mint a token for one device name")]
-    Device { name: String },
+    #[command(about = "Mint a token for a user's device")]
+    Device {
+        device: String,
+        #[arg(long)]
+        user: String,
+    },
 }
 
 pub(crate) async fn authority_root(root: PathBuf, url: Url) -> Result<PathBuf, Error> {

@@ -10,13 +10,13 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
-    #[error("connecting to postgres failed")]
+    #[error("connecting to postgres failed: {}", database_reason(.0))]
     PostgresConnect(#[source] sqlx::Error),
-    #[error("applying the postgres migrations failed")]
+    #[error("applying the postgres migrations failed{}", migration_reason(.0))]
     PostgresMigrate(#[source] sqlx::migrate::MigrateError),
-    #[error("reading the applied postgres schema version failed")]
+    #[error("reading the applied postgres schema version failed: {}", database_reason(.0))]
     PostgresVersion(#[source] sqlx::Error),
-    #[error("backfilling the postgres memory counts failed")]
+    #[error("backfilling the postgres memory counts failed: {}", database_reason(.0))]
     PostgresBackfill(#[source] sqlx::Error),
     #[error("missing _rivetos_migrations rows: {missing}")]
     TrackingMissing { missing: String },
@@ -53,6 +53,31 @@ pub enum Error {
     UnmappedSummaryKind,
     #[error("reading foreign schema objects failed: {0}")]
     SqliteForeign(#[source] rusqlite::Error),
+}
+
+fn migration_reason(error: &sqlx::migrate::MigrateError) -> String {
+    if let sqlx::migrate::MigrateError::ExecuteMigration(source, version) = error {
+        return format!(" at {version:04}: {}", database_reason(source));
+    }
+    if let sqlx::migrate::MigrateError::Execute(source) = error {
+        return format!(": {}", database_reason(source));
+    }
+    format!(": {error}")
+}
+
+fn database_reason(error: &sqlx::Error) -> String {
+    let Some(database) = error.as_database_error() else {
+        return error.to_string();
+    };
+    let mut reason = database.message().to_owned();
+    if let Some(postgres) = database.try_downcast_ref::<sqlx::postgres::PgDatabaseError>() {
+        reason.extend(
+            [("detail", postgres.detail()), ("hint", postgres.hint())]
+                .into_iter()
+                .filter_map(|(label, text)| text.map(|text| format!("\n{label}: {text}"))),
+        );
+    }
+    reason
 }
 
 pub(crate) fn relation_missing(source: &sqlx::Error) -> bool {

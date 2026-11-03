@@ -26,6 +26,11 @@ impl TerminalService {
         )
     }
 
+    pub(crate) fn holds(&self, session: &str) -> bool {
+        crate::sessions::session_key(session)
+            .is_ok_and(|key| self.live_chat(&key).is_some() || self.pty_running(&key))
+    }
+
     pub(crate) fn live_chat_of(&self, session: &str) -> Option<ChatHandle> {
         match crate::sessions::session_key(session) {
             Ok(key) => self.live_chat(&key),

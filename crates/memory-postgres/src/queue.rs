@@ -129,11 +129,11 @@ impl JobQueue for PostgresQueue {
     }
 
     async fn release(&self, id: JobId) -> Result<(), JobQueueError> {
-        match self.inner.release(id).await {
-            Ok(0) => Err(JobQueueError::Missing { id }),
-            Ok(_) => Ok(()),
-            Err(source) => Err(JobQueueError::Unavailable(Box::new(source))),
-        }
+        released(id, self.inner.release(id, None).await)
+    }
+
+    async fn postpone(&self, id: JobId, delay: std::time::Duration) -> Result<(), JobQueueError> {
+        released(id, self.inner.release(id, Some(delay)).await)
     }
 
     async fn flag_stuck(&self) -> Result<u64, JobQueueError> {
@@ -142,5 +142,13 @@ impl JobQueue for PostgresQueue {
 
     async fn read(&self, id: JobId) -> Result<Option<kernel::queue::StoredJob>, JobQueueError> {
         self.inner.read(id).await
+    }
+}
+
+fn released(id: JobId, result: Result<u64, crate::error::Error>) -> Result<(), JobQueueError> {
+    match result {
+        Ok(0) => Err(JobQueueError::Missing { id }),
+        Ok(_) => Ok(()),
+        Err(source) => Err(JobQueueError::Unavailable(Box::new(source))),
     }
 }

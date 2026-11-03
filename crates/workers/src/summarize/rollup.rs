@@ -75,12 +75,18 @@ async fn write_rollup(
     if count_of(available)? < spec.minimum {
         return Ok(0);
     }
-    let take = usize_of(spec.batch)?.min(available);
-    let user = rollup_prompt(window, spec.kind, take)?;
-    let response = chat(env, spec.system, &user, spec.max_tokens).await?;
-    if response.finish_reason == Some(FinishReason::Length) {
-        return Err(WorkerError::Truncated);
-    }
+    let mut take = usize_of(spec.batch)?.min(available);
+    let response = loop {
+        let user = rollup_prompt(window, spec.kind, take)?;
+        let response = chat(env, spec.system, &user, spec.max_tokens).await?;
+        if response.finish_reason != Some(FinishReason::Length) {
+            break response;
+        }
+        take = match take / 2 {
+            0 => return Err(WorkerError::Truncated),
+            fewer => fewer,
+        };
+    };
     let content = require_text(&response)?;
     let children = take_children(window, spec.kind, take)?;
     let summary = rollup_record(env, window, spec.kind, &children, content)?;

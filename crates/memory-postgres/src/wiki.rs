@@ -160,7 +160,7 @@ impl PostgresMemory {
     async fn wiki_redirect(&self, slug: &WikiSlug) -> Result<WikiLookup, Error> {
         let local = sqlx::query_scalar::<_, String>(
             "SELECT slug FROM rh_wiki_topics WHERE local_slug = $1
-              ORDER BY (owner_user_id = nullif(current_setting('rh.principal', true), '')) DESC, slug LIMIT 1",
+              ORDER BY (owner_user_id = rh_scope_principal()) DESC, slug LIMIT 1",
         )
         .bind(slug.as_ref())
         .fetch_optional(&self.pool)

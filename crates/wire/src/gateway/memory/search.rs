@@ -148,6 +148,7 @@ pub struct MemorySearchHit {
     pub tool_name: Option<String>,
     pub conversation_id: Option<String>,
     pub session_id: Option<String>,
+    pub title: Option<String>,
     pub fallback: Option<MemoryFallback>,
     pub tags: Option<Vec<TagWire>>,
 }

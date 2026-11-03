@@ -8,11 +8,11 @@ use kernel::memory::WindowMessage;
 
 use crate::error::WorkerError;
 
-pub const LEAF_SYSTEM_PROMPT: &str = "You summarize one batch of a conversation into a leaf summary. Keep the decisions, the names, and the constraints. Write prose.";
+pub const LEAF_SYSTEM_PROMPT: &str = "You summarize one batch of a conversation into a leaf summary. Write in the third person about the work: what was asked, done, found and decided. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batch: no batch or message numbers, ids, channel names, timestamps or tallies of tool calls. Write prose.";
 
-pub const BRANCH_SYSTEM_PROMPT: &str = "You summarize leaf summaries into one branch summary. Keep the decisions, the names, and the constraints. Write prose.";
+pub const BRANCH_SYSTEM_PROMPT: &str = "You summarize leaf summaries into one branch summary. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batches or the conversation: no batch, leaf or message numbers, ids, channel names or timestamps. Write prose.";
 
-pub const ROOT_SYSTEM_PROMPT: &str = "You summarize branch summaries into one root summary of the whole conversation. Keep the decisions, the names, and the constraints. Write prose.";
+pub const ROOT_SYSTEM_PROMPT: &str = "You summarize branch summaries into one root summary of the whole conversation. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batches or the conversation: no batch, branch or message numbers, ids, channel names or timestamps. Write prose.";
 
 const VALUE_COLUMN: usize = 13;
 
@@ -96,13 +96,27 @@ fn header(head: &ConversationHead, tail: &[(&str, String)]) -> String {
 
 fn message_block(index: usize, message: &WindowMessage) -> Result<String, WorkerError> {
     let shown = display_index(index)?;
-    Ok(format!(
+    let mut block = format!(
         "[#{shown:02} {} {}/{}]\n{}",
         prompt_time(message.created_at),
         message.agent,
         message.role,
         message.content
-    ))
+    );
+    if let Some(tool) = &message.tool {
+        push_tool_line(&mut block, "input", &tool.input);
+        push_tool_line(&mut block, "result", &tool.result);
+    }
+    Ok(block)
+}
+
+fn push_tool_line(block: &mut String, label: &str, text: &str) {
+    if !text.is_empty() {
+        block.push('\n');
+        block.push_str(label);
+        block.push_str(": ");
+        block.push_str(text);
+    }
 }
 
 fn node_block(index: usize, kind: &str, node: &SummaryNode) -> Result<String, WorkerError> {

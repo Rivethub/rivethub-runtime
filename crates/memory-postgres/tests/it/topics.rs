@@ -273,6 +273,14 @@ async fn an_approval_that_stopped_part_way_finishes_on_retry(pool: PgPool) -> Te
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn old_names_stay_findable_and_a_change_made_moot_is_skipped(pool: PgPool) -> TestResult {
+    testkit::tidy::old_names_stay_findable_and_a_change_made_moot_is_skipped(&PostgresMemory::new(
+        pool,
+    ))
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn samples_show_each_session_s_current_title(pool: PgPool) -> TestResult {
     testkit::tidy::samples_show_each_session_s_current_title(&PostgresMemory::new(pool)).await
 }

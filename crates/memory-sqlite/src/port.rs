@@ -22,6 +22,7 @@ use crate::job_rank::rank_key;
 use crate::queue::FailOutcome;
 use crate::queue::JobInsert;
 use crate::queue::JobPayload;
+use crate::queue::arm;
 use crate::queue::insert_job;
 use crate::queue::replace;
 use crate::queue::revive_one;
@@ -154,6 +155,7 @@ fn enqueue_atomically(
                     rank_key(&tx, key, job.priority)?;
                     revive_one(&tx, key, &job.payload, job.now)?
                 }
+                JobKeyMode::Arm => arm(&tx, key, job)?,
             };
             (id_for_key(&tx, key)?, wake)
         }

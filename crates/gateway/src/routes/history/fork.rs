@@ -4,6 +4,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use kernel::topics::DeliveredVia;
+use kernel::transcript::TranscriptWindow;
 use wire::gateway::sessions::HarnessSessionForkRequest;
 use wire::harness::{HarnessCode, HarnessSessionSummary};
 
@@ -36,7 +37,13 @@ pub(super) async fn fork(
             ),
         ));
     }
-    let read = gateway.history().transcript(&gateway, &resolved).await?;
+    let window = request
+        .from
+        .map_or(TranscriptWindow::Latest, TranscriptWindow::From);
+    let read = gateway
+        .history()
+        .transcript(&gateway, &resolved, window)
+        .await?;
     let prompts = usize::try_from(request.prompts)
         .map_err(|_| ApiError::BadRequest("prompts is out of range".into()))?;
     let kept = kernel::fork::kept(&read.read.turns, prompts)

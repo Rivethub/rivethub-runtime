@@ -304,7 +304,11 @@ fn settings() -> SummarySettings {
 }
 
 fn small_settings() -> SummarySettings {
-    SummarySettings::from_parts(SummaryParts {
+    SummarySettings::from_parts(small_parts()).expect("small settings")
+}
+
+fn small_parts() -> SummaryParts {
+    SummaryParts {
         model: "fake-chat".to_owned(),
         leaf_batch: 5,
         branch_batch: 2,
@@ -316,8 +320,7 @@ fn small_settings() -> SummarySettings {
         stale_min_batch: 2,
         max_leaf_rounds: 10,
         pipeline_version: 5,
-    })
-    .expect("small settings")
+    }
 }
 
 fn messages(start: DateTime<Utc>, count: usize) -> Vec<WindowMessage> {
@@ -331,6 +334,7 @@ fn messages(start: DateTime<Utc>, count: usize) -> Vec<WindowMessage> {
                 Role::Assistant
             },
             content: format!("message number {index} about deploying the AcmeKit service"),
+            tool: None,
             created_at: start
                 .checked_add_signed(Duration::minutes(i64::try_from(index).expect("index")))
                 .expect("message time"),

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use kernel::memory::MemoryStore as _;
-use kernel::wiki::builder::WikiWriteError;
+use kernel::wiki::builder::{WikiBuilderStore as _, WikiWriteError};
 use kernel::wiki::merge::{MergeInput, Merged, PageMerger};
 use kernel::wiki::page::bound::{ARCHIVED_TITLE, ARTICLE_BUDGET};
 use kernel::wiki::page::{
@@ -116,6 +116,25 @@ async fn a_rewrite_archives_what_it_dropped_behind_one_history_line() -> TestRes
     Ok(())
 }
 
+#[tokio::test]
+async fn an_unmerged_update_keeps_one_lead() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("wiki");
+    apply(&root, patch("acmekit", "Ships on Fridays.")?).await?;
+    let restated = PagePatch {
+        summary_delta: Some(
+            "AcmeKit ships on Fridays from the build box. Currently, 2.0 is out.".to_owned(),
+        ),
+        ..patch("acmekit", "Ships on Fridays.")?
+    };
+    let page = apply(&root, restated).await?.page;
+    assert_eq!(
+        page.current_state,
+        "AcmeKit ships on Fridays. Currently, 2.0 is out."
+    );
+    Ok(())
+}
+
 fn facts(count: usize) -> String {
     (0..count)
         .map(|index| {
@@ -208,7 +227,7 @@ async fn recompile_restores_pushed_out_history_and_archives_copies(pool: PgPool)
     page.extra_sections = vec![kernel::wiki::page::ArticleSection {
         heading: "Desktop".to_owned(),
         body: (0..80)
-            .map(|index| format!("### Note {index}\n\n{}", "y".repeat(120)))
+            .map(|index| format!("### Note {index}\n\n{index} {}", "y".repeat(120)))
             .collect::<Vec<_>>()
             .join("\n\n"),
     }];
@@ -360,5 +379,27 @@ async fn a_recompile_rebases_onto_a_write_that_landed_meanwhile(pool: PgPool) ->
     assert_eq!(memory.wiki_archive(&slug, None).await?, Some(month));
     assert_eq!(memory.wiki_archive(&slug, Some("2026-09")).await?, None);
     assert_eq!(memory.wiki_archive(&slug, Some("../x")).await?, None);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn one_writer_at_a_time_holds_a_page_route(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    let lease = store
+        .lease_route("rivethub#desktop")
+        .await?
+        .ok_or("a free route is leased")?;
+    assert!(store.lease_route("rivethub#desktop").await?.is_none());
+    assert!(store.lease_route("rivethub").await?.is_some());
+    drop(lease);
+    let freed = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(lease) = store.lease_route("rivethub#desktop").await? {
+                return Ok::<_, Box<dyn std::error::Error>>(lease);
+            }
+        }
+    })
+    .await??;
+    drop(freed);
     Ok(())
 }

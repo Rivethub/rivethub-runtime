@@ -189,7 +189,16 @@ impl LeadingInteger {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StoreTranscript {
     pub turns: Vec<HarnessTranscriptTurn>,
-    pub truncated: bool,
+    pub earlier: Option<u64>,
+    pub context: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TranscriptWindow {
+    #[default]
+    Latest,
+    From(u64),
+    Before(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -244,10 +253,19 @@ pub trait SessionLister: Send + Sync {
         Ok(None)
     }
 
+    async fn running_elsewhere(
+        &self,
+        _harness: HarnessId,
+        _native: &str,
+    ) -> Result<Option<u32>, TranscriptReaderError> {
+        Ok(None)
+    }
+
     async fn transcript(
         &self,
         harness: HarnessId,
         native: &str,
+        window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError>;
 
     async fn rename(

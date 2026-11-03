@@ -256,7 +256,7 @@ async fn stream(
             },
             event = events.recv() => match event {
                 Ok(event) => {
-                    let session = match &event { SessionBroadcast::Event(event) => Some(&event.session), SessionBroadcast::Removed(event) => Some(&event.session), SessionBroadcast::HubState(_) | SessionBroadcast::PluginChanged(_) | SessionBroadcast::PluginViews(_) => None, SessionBroadcast::Snapshot(_) => return Err(SocketError::Lagged) };
+                    let session = match &event { SessionBroadcast::Event(event) => Some(&event.session), SessionBroadcast::Removed(event) => Some(&event.session), SessionBroadcast::HubState(_) | SessionBroadcast::PluginChanged(_) | SessionBroadcast::PluginViews(_) | SessionBroadcast::TopicChanged(_) => None, SessionBroadcast::Snapshot(_) => return Err(SocketError::Lagged) };
                     let wanted = match (filter.as_ref(), session) { (None, _) => true, (Some(filter), Some(session)) => filter == session, (Some(_), None) => false };
                     if wanted { send(&mut socket, &event).await?; }
                 }

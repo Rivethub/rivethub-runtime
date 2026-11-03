@@ -60,6 +60,18 @@ struct HookPayloadWire {
     last_assistant_message: Option<String>,
 }
 
+impl HookPayload {
+    #[must_use]
+    pub fn claude_transcript(&self) -> bool {
+        match (&self.session_id, &self.transcript_path) {
+            (Some(session), Some(path)) => path
+                .file_stem()
+                .is_some_and(|stem| stem == session.native()),
+            _ => true,
+        }
+    }
+}
+
 impl From<HookPayloadWire> for HookPayload {
     fn from(wire: HookPayloadWire) -> Self {
         Self {
@@ -77,5 +89,26 @@ impl From<HookPayloadWire> for HookPayload {
             tool_use_id: wire.tool_use_id,
             last_assistant_message: wire.last_assistant_message,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HookPayload;
+
+    fn payload(session: &str, path: &str) -> HookPayload {
+        serde_json::from_str(&format!(
+            r#"{{"session_id":"{session}","transcript_path":"{path}","hook_event_name":"Stop"}}"#
+        ))
+        .unwrap_or_else(|error| unreachable!("fixture: {error}"))
+    }
+
+    #[test]
+    fn only_a_transcript_named_for_its_session_is_claude_s() {
+        let session = "0b1c3a52-5f7e-4b8e-9f36-0d6f1b2a9c41";
+        assert!(payload(session, &format!("/p/-home/{session}.jsonl")).claude_transcript());
+        assert!(
+            !payload(session, &format!("/g/sessions/{session}/updates.jsonl")).claude_transcript()
+        );
     }
 }

@@ -18,6 +18,7 @@ pub use error::Error;
 use kernel::memory::MemoryStore;
 use kernel::plugins::PluginTools;
 use kernel::tasks::Delegation;
+use kernel::tenancy::Scope;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -37,6 +38,7 @@ pub struct Server {
     shutdown: CancellationToken,
     zone: chrono_tz::Tz,
     plugins: Option<Arc<dyn PluginTools>>,
+    scope: Option<Scope>,
 }
 
 pub struct Builder {
@@ -277,6 +279,7 @@ impl Builder {
             shutdown: self.shutdown,
             zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
             plugins: self.plugins,
+            scope: Scope::current(),
         })
     }
 }
@@ -354,6 +357,13 @@ impl ServerHandler for Server {
         let cancel = self.shutdown.child_token();
         let tool_use = plugins::tool_use(&context.meta);
         let pending = self.dispatch(request, tool_use, cancel.clone());
+        let scope = self.scope.clone();
+        let pending = async move {
+            match scope {
+                Some(scope) => scope.run(pending).await,
+                None => pending.await,
+            }
+        };
         tokio::pin!(pending);
         tokio::select! {
             biased;

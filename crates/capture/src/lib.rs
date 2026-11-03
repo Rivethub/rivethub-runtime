@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod bundle;
 pub mod event_id;
 pub mod hook;
 pub mod listing;

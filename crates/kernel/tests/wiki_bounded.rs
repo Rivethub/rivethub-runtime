@@ -6,7 +6,7 @@ use kernel::wiki::page::archive::{
 };
 use kernel::wiki::page::bound::{
     ARCHIVED_TITLE, ARTICLE_BUDGET, Archived, HISTORY_LINE, SECTION_BUDGET, SECTIONS_BUDGET,
-    bound_page, dropped, fit, history_line, rebase, tail,
+    bound_page, bound_parts, dropped, fit, history_line, rebase, tail,
 };
 use kernel::wiki::page::{ArticleSection, WikiHistoryEntry, WikiPage, WikiSlug};
 use kernel::wiki::recompile::{rebase_recompiled, restore_history};
@@ -94,6 +94,43 @@ fn rebase_keeps_a_concurrent_writers_text_and_ours() {
     assert!(merged.contains("Our new fact."));
     assert!(!merged.contains("Old fact."));
     assert!(merged.starts_with("Lead."));
+}
+
+#[test]
+fn rebase_keeps_one_lead_when_a_concurrent_writer_reworded_it() {
+    let base = "Rivethub is the desktop app.\n\nRound 29 is deployed.";
+    let theirs = "Rivethub is the desktop app. Currently, round 30 with its six fixes in commit \
+        a65f94dc is deployed and QA is underway.\n\nRound 30 is deployed.";
+    let ours = "Rivethub is the desktop app. Currently, round 30 is deployed with six fixes in \
+        commit a65f94dc and QA is underway.\n\nRound 30 is deployed.\n\nHeadless QA started.";
+    let merged = rebase(base, ours, theirs);
+    assert_eq!(merged.matches("Rivethub is the desktop app").count(), 1);
+    assert_eq!(merged, ours);
+    let unrelated = format!("{theirs}\n\nThe Android build moved to the build box.");
+    assert!(rebase(base, ours, &unrelated).ends_with("The Android build moved to the build box."));
+}
+
+#[test]
+fn a_write_keeps_one_copy_of_a_repeated_paragraph() {
+    let repeated = "The gateway cutover covers the mesh TLS client and the certificate authority.";
+    let lead = "Rivethub is the desktop app spanning workspace, memory, chat and terminal \
+        integration across the runtime and desktop repositories.";
+    let newer = format!("{lead} Currently, round 30 is deployed with six docs fixes.");
+    let older = format!("{lead} Currently, round 29 is deployed.");
+    let listed = "- Rivethub spans workspace, memory, chat and terminal integration across the \
+        runtime and desktop repositories.";
+    let mut summary = String::new();
+    let mut article = format!("{repeated}\n\n### Status\n\nShipped.\n\n{repeated}");
+    let mut sections = vec![ArticleSection {
+        heading: "Desktop App".to_owned(),
+        body: format!("{newer}\n\n### Round 30\n\nDeployed.\n\n  {older}\n\n{listed}"),
+    }];
+    bound_parts(&mut summary, &mut article, &mut sections, &[]);
+    assert_eq!(article, format!("{repeated}\n\n### Status\n\nShipped."));
+    assert_eq!(
+        sections.first().map(|section| section.body.clone()),
+        Some(format!("{newer}\n\n### Round 30\n\nDeployed.\n\n{listed}"))
+    );
 }
 
 #[test]
@@ -375,6 +412,31 @@ fn a_currently_swap_archives_nothing() -> TestResult {
     let archived = bound_page(Some(&previous), &mut next);
     assert_eq!(unarchived(archived, &next, ""), Vec::<Archived>::new());
     Ok(())
+}
+
+#[test]
+fn a_section_lead_keeps_its_wording_until_its_facts_change() {
+    use kernel::wiki::page::lead::steady_lead;
+    let section =
+        "Rivethub is the desktop app. Currently, round 30 is deployed to every node.\n\nOld news.";
+    let reworded =
+        "RivetHub is the native desktop client. Currently, every node runs round 30.\n\nNew news.";
+    assert_eq!(
+        steady_lead(section, reworded),
+        "Rivethub is the desktop app. Currently, round 30 is deployed to every node.\n\nNew news."
+    );
+    let moved = "RivetHub is the desktop client. Currently, round 31 is deployed to every node.";
+    assert_eq!(
+        steady_lead(section, moved),
+        "Rivethub is the desktop app. Currently, round 31 is deployed to every node."
+    );
+    assert_eq!(steady_lead("### Note\n\nText.", reworded), reworded);
+    let doubled = "Rivethub is the desktop app for workspace and memory.\n\nRivethub is the desktop \
+        app for workspace, memory and chat. Currently, round 30 is out.";
+    assert_eq!(
+        kernel::wiki::page::lead::stable_summary(doubled, "Currently, round 31 is out."),
+        "Rivethub is the desktop app for workspace and memory. Currently, round 31 is out."
+    );
 }
 
 #[test]

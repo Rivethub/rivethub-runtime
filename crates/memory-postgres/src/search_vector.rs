@@ -28,8 +28,7 @@ fn chunk_pool(limit: u32) -> i64 {
 
 fn said_only(options: &SearchOptions) -> bool {
     Role::iter()
-        .filter(|role| options.role.is_none_or(|wanted| wanted == *role))
-        .filter(|role| !options.exclude_roles.contains(role))
+        .filter(|role| options.admits(*role))
         .all(|role| match role {
             Role::User | Role::Assistant => true,
             Role::System | Role::Tool => false,

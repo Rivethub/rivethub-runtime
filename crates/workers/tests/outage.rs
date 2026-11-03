@@ -79,7 +79,7 @@ async fn an_unreachable_provider_stops_claiming_until_it_recovers() {
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn auth_throttling_and_server_errors_hold_jobs_without_spending_attempts() {
+async fn provider_outages_hold_jobs_without_spending_attempts() {
     let cases = [
         (Fault::Status(401, None), OutageCause::Credentials),
         (Fault::Status(403, None), OutageCause::Credentials),
@@ -87,6 +87,7 @@ async fn auth_throttling_and_server_errors_hold_jobs_without_spending_attempts()
         (Fault::Status(429, None), OutageCause::Throttled),
         (Fault::Status(500, None), OutageCause::ServerError),
         (Fault::Status(503, None), OutageCause::ServerError),
+        (Fault::Unreachable, OutageCause::Unreachable),
     ];
     for (fault, cause) in cases {
         let flaky = Arc::new(Flaky::failing(fault));
@@ -351,6 +352,7 @@ enum Fault {
     Refused,
     Status(u16, Option<Duration>),
     Credentials,
+    Unreachable,
 }
 
 impl Fault {
@@ -364,6 +366,7 @@ impl Fault {
                 source,
             },
             Self::Credentials => ModelCallFailure::Credentials { source },
+            Self::Unreachable => ModelCallFailure::Unreachable { source },
         };
         ModelProviderError::Request {
             message: failure.to_string(),

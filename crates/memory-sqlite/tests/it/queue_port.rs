@@ -151,6 +151,48 @@ async fn the_store_implements_the_job_queue_port() -> TestResult {
 }
 
 #[tokio::test]
+async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it() -> TestResult {
+    let opened = open()?;
+    let store = &opened.store;
+    let arm = |target: &str, priority: i16| -> TestResult<Job> {
+        Ok(Job {
+            priority,
+            run_at: Some(chrono::Utc::now()),
+            ..keyed(target, "compact-c1", JobKeyMode::Arm)?
+        })
+    };
+    store.enqueue(arm("first", 10)?).await?;
+    let queued_at = cell(jobs(store).await?.first().ok_or("armed job")?, "run_at").clone();
+    store.enqueue(arm("later", 10)?).await?;
+    store.enqueue(arm("urgent", 0)?).await?;
+    store.enqueue(arm("demoted", 10)?).await?;
+    let rows = jobs(store).await?;
+    let [row] = rows.as_slice() else {
+        return Err("one armed job".into());
+    };
+    assert_eq!(cell(row, "run_at"), &queued_at);
+    assert!(
+        cell(row, "payload")
+            .as_str()
+            .is_some_and(|text| text.contains("urgent"))
+    );
+    let priority = store
+        .with_conn(|conn| {
+            Ok(testkit::query_json(
+                conn,
+                "SELECT COALESCE((SELECT priority FROM rh_job_priorities), 0) AS priority",
+                &[],
+            ))
+        })
+        .await??;
+    assert_eq!(
+        priority.first().map(|row| cell(row, "priority").clone()),
+        Some(Json::from(0_i64))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn complete_of_a_finished_claim_does_not_take_the_next_job() -> TestResult {
     let opened = open()?;
     let store = &opened.store;
@@ -298,4 +340,42 @@ async fn a_pending_sweep_is_queued_once() -> TestResult {
 async fn the_sweeps_run_before_an_older_backlog() -> TestResult {
     let opened = open()?;
     testkit::sweeps::the_sweeps_run_before_an_older_backlog(&opened.store).await
+}
+
+#[tokio::test]
+async fn a_dead_job_is_named_by_the_conversation_it_worked_on() -> TestResult {
+    use kernel::flagged::FlaggedJobs as _;
+    let opened = open()?;
+    let store = &opened.store;
+    store
+        .with_conn(|conn| {
+            Ok(conn.execute_batch(
+                "INSERT INTO ros_conversations (id, session_key, agent, title, created_at, updated_at)
+                 VALUES ('c1', 'claude-code:one', 'claude', 'Fix the flaky gate', '2026-10-30T10:00:00Z',
+                         '2026-10-30T10:00:00Z');
+                 INSERT INTO ros_jobs (id, task, job_key, payload, run_at, attempts, state, created_at, updated_at)
+                 VALUES ('j1', 'compact-conversation', 'named', '{\"conversationId\":\"c1\"}',
+                         '2026-10-30T10:00:00Z', 5, 'dead', '2026-10-30T10:00:00Z', '2026-10-30T10:02:00Z'),
+                        ('j2', 'embed-target', 'bare', 'null', '2026-10-30T10:00:00Z', 5, 'dead',
+                         '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z');",
+            ))
+        })
+        .await??;
+    let named: Vec<(Option<String>, Option<String>)> = store
+        .flagged()
+        .await?
+        .into_iter()
+        .map(|job| (job.key, job.subject))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            (
+                Some("named".to_owned()),
+                Some("Fix the flaky gate".to_owned())
+            ),
+            (Some("bare".to_owned()), None)
+        ]
+    );
+    Ok(())
 }

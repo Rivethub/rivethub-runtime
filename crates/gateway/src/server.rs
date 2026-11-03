@@ -56,7 +56,7 @@ pub struct BindSource {
 #[derive(Debug, Error)]
 pub enum BindError {
     #[error(
-        "[rivethub-gateway] refusing to bind {host}: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node cert from rivet-ca issue-node; enroll clients with rivet-ca issue-client). Or bind the gateway host to 127.0.0.1."
+        "[rivethub-gateway] refusing to bind {host}: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's holder certificate, ~/.rivethub/tls/holder.cert.pem and holder.key.pem from rh mesh enroll; devices enroll with rh cert renew). Or bind the gateway host to 127.0.0.1."
     )]
     TlsRequired { host: String },
     #[error(

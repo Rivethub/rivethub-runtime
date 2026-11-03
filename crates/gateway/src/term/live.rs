@@ -4,6 +4,7 @@ use strum::IntoEnumIterator as _;
 use tokio::sync::broadcast;
 use wire::harness::{
     HarnessEvent, HarnessId, HarnessSessionStatus, HarnessSessionSummary, RosterCommand,
+    SessionDriver,
 };
 
 use kernel::harness::ToolCallUpdate;
@@ -122,7 +123,10 @@ impl TerminalService {
         if matches!(event, HarnessEvent::Context { .. }) {
             self.contexts.write().insert(key.to_owned(), event.clone());
         }
-        if matches!(event, HarnessEvent::Driver { .. }) {
+        if let HarnessEvent::Driver { driver, busy, .. } = &event {
+            if *busy && *driver == Some(SessionDriver::Terminal) {
+                self.contexts.write().remove(key);
+            }
             self.drivers.write().insert(key.to_owned(), event.clone());
         }
         let sender = self.harness_events.read().get(key).cloned();

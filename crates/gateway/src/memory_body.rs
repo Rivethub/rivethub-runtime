@@ -106,6 +106,8 @@ pub(crate) fn memory_summary_node_body(
         created_at: value.created_at,
         source_message_ids: value.source_message_ids,
         vector: vector_state_body(value.vector),
+        truncated: value.truncated,
+        children: value.children,
     }
 }
 

@@ -20,7 +20,7 @@ async fn binary_dispatch_preserves_stdout_stderr_and_exit_codes() {
             vec!["config", "path"],
             1,
             "",
-            "No config found. Run: rh config init",
+            "No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG",
         ),
         (
             vec!["stop"],

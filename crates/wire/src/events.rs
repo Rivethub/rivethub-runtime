@@ -246,6 +246,7 @@ pub enum SessionBroadcast {
     HubState(crate::gateway::hub_state::HubStateChanged),
     PluginChanged(crate::plugin::host::PluginChangedNotice),
     PluginViews(crate::plugin::host::PluginViewsNotice),
+    TopicChanged(crate::gateway::topics::TopicChangedNotice),
     Event(AgentEvent),
 }
 
@@ -261,6 +262,8 @@ enum BroadcastKind {
     PluginChanged,
     #[serde(rename = "plugin.views")]
     PluginViews,
+    #[serde(rename = "topic.changed")]
+    TopicChanged,
     #[serde(other)]
     Event,
 }
@@ -282,6 +285,7 @@ impl TryFrom<crate::JsonObject> for SessionBroadcast {
             BroadcastKind::HubState => frame.deserialize().map(Self::HubState),
             BroadcastKind::PluginChanged => frame.deserialize().map(Self::PluginChanged),
             BroadcastKind::PluginViews => frame.deserialize().map(Self::PluginViews),
+            BroadcastKind::TopicChanged => frame.deserialize().map(Self::TopicChanged),
             BroadcastKind::Event => frame.deserialize().map(Self::Event),
         }
     }

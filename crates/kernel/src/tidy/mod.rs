@@ -17,6 +17,7 @@ use crate::topics::TopicError;
 
 pub use apply::BatchOutcome;
 pub use apply::Decision;
+pub use apply::Skipped;
 pub use apply::TidyPorts;
 pub use apply::approve;
 pub use apply::decide_batch;

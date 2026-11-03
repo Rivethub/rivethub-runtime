@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::SummarizeEnv;
 use super::llm::chat;
 use super::llm::require_text;
+use super::opening::work_first;
 use super::prompt::LEAF_SYSTEM_PROMPT;
 use super::prompt::leaf_user;
 use super::settings::SummaryTrigger;
@@ -45,7 +46,7 @@ pub(super) async fn write_leaves(
             batch = shrink_batch(batch)?;
             continue;
         }
-        let content = require_text(&response)?;
+        let content = work_first(&require_text(&response)?, &window.conversation.agent);
         let taken = take_front(&mut window.messages, usize_of(take)?)?;
         let summary = leaf_record(env, &window.conversation, &taken, content)?;
         let conversation_id = summary.conversation_id;

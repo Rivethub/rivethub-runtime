@@ -182,7 +182,7 @@ fn refused_local(error: Error) -> CaError {
         | Error::RosterAddress { .. }
         | Error::UnknownNode(_)
         | Error::UnknownAgent(_)
-        | Error::DeviceName
+        | Error::DevicePrincipal
         | Error::Serial
         | Error::StepToken
         | Error::MeshRegistry => CaError::Refused(message),

@@ -167,8 +167,17 @@ pub struct TidyFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct TidySkipped {
+    pub proposal_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TidyBatchDecision {
     pub decided: Vec<TidyProposal>,
+    #[serde(default)]
+    pub skipped: Vec<TidySkipped>,
     #[serde(default)]
     pub failed: Vec<TidyFailure>,
 }

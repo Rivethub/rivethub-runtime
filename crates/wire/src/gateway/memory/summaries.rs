@@ -38,6 +38,29 @@ pub struct MemorySummaryNode {
     pub created_at: DateTime<Utc>,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    #[serde(default)]
+    pub children: Option<u64>,
+}
+
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySummaryCounts {
+    pub leaves: u64,
+    pub branches: u64,
+    pub roots: u64,
+    pub embedded: u64,
+    pub top: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MemorySummaryChildren {
+    pub summaries: Vec<MemorySummaryNode>,
+    pub total: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -60,4 +83,6 @@ pub struct MemorySummaryDagResponse {
     pub session_id: String,
     pub summaries: Vec<MemorySummaryNode>,
     pub messages: MemoryMessageTally,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<MemorySummaryCounts>,
 }

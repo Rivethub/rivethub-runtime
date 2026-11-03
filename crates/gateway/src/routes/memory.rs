@@ -104,6 +104,14 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             routing::get(super::memory_archive::summaries).fallback(super::method_not_allowed),
         )
         .route(
+            "/summaries/{session}/{summary}",
+            routing::get(super::memory_archive::summary).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/summaries/{session}/{summary}/children",
+            routing::get(super::memory_archive::children).fallback(super::method_not_allowed),
+        )
+        .route(
             "/conversations/{id}/summaries",
             routing::get(super::memory_archive::conversation_summaries)
                 .fallback(super::method_not_allowed),
@@ -163,6 +171,7 @@ struct SearchParams {
     tool_name: Option<String>,
     tag: Option<TagFilter>,
     limit: Option<RawLimit>,
+    snippet: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -195,10 +204,10 @@ async fn search(
         expand: params.expand,
         synthesize: params.synthesize,
         text: text.clone(),
-        mode: memory_body::search_mode(match params.mode {
-            Some(mode) => mode,
-            None => SearchMode::Hybrid,
-        }),
+        mode: memory_body::search_mode(params.mode.unwrap_or(match scope {
+            MemoryScope::Messages => SearchMode::Fts,
+            MemoryScope::Summaries | MemoryScope::Both => SearchMode::Hybrid,
+        })),
         scope: memory_body::memory_scope(scope),
         agent: params.agent,
         role: params.role.map(RoleParam::get),
@@ -218,8 +227,8 @@ async fn search(
         .store()
         .search(query.resolve_window(chrono::Utc::now(), &chrono::Local))
         .await?;
+    let snippets = params.snippet == Some(true);
     Ok(Json(MemorySearchResponse {
-        query: text,
         scope,
         degraded: results.degraded.map(memory_body::memory_degraded_body),
         fallback: results.fallback.map(memory_body::memory_fallback_body),
@@ -229,7 +238,17 @@ async fn search(
             .map(memory_body::memory_entry_body)
             .collect(),
         synthesis: results.synthesis,
-        results: results.results.into_iter().map(search_hit).collect(),
+        results: results
+            .results
+            .into_iter()
+            .map(|mut hit| {
+                if snippets {
+                    hit.content = super::memory_snippet::snippet(&hit.content, &text);
+                }
+                search_hit(hit)
+            })
+            .collect(),
+        query: text,
     }))
 }
 
@@ -247,6 +266,7 @@ fn search_hit(result: kernel::memory::MemorySearchResult) -> MemorySearchHit {
         tool_name: None,
         conversation_id: None,
         session_id: result.session_id,
+        title: result.title,
         fallback: None,
         tags: None,
     }

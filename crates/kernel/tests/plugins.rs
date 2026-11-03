@@ -87,6 +87,15 @@ fn routes_need_the_permission_their_family_names() {
 }
 
 #[test]
+fn the_agent_catalog_needs_agents_read_and_its_old_root_is_gone() {
+    assert_eq!(
+        access(true, "/api/catalog/agents"),
+        PluginAccess::Needs(Permission::AgentsRead)
+    );
+    assert_eq!(access(true, "/api/catalog"), PluginAccess::Refused);
+}
+
+#[test]
 fn approval_names_exactly_the_pending_permissions() {
     let requested = [Permission::SessionsRead, Permission::TasksRead];
     assert_eq!(

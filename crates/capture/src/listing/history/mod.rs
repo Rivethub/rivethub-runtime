@@ -13,6 +13,7 @@ use kernel::transcript::ToolOutputRead;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
+use kernel::transcript::TranscriptWindow;
 use kernel::transcript::Turn;
 use wire::harness::HarnessId;
 use wire::message::Role;
@@ -26,6 +27,7 @@ pub(super) async fn transcript(
     roots: &StoreRoots,
     harness: HarnessId,
     native: &str,
+    window: TranscriptWindow,
 ) -> Result<TranscriptRead, TranscriptReaderError> {
     if matches!(harness, HarnessId::Cowork | HarnessId::Dsh) {
         return Ok(TranscriptRead::NoSource);
@@ -35,9 +37,12 @@ pub(super) async fn transcript(
     };
     let native = native.to_owned();
     if harness == HarnessId::ClaudeCode {
-        return blocking(move || claude::transcript(&root, &native))
+        return blocking(move || claude::transcript(&root, &native, window))
             .await
             .map(TranscriptRead::Read);
+    }
+    if matches!(window, TranscriptWindow::Before(_)) {
+        return Ok(TranscriptRead::Read(StoreTranscript::default()));
     }
     if harness == HarnessId::GrokBuild {
         return blocking(move || grok::transcript(&root, &native))
@@ -77,7 +82,8 @@ async fn text_turns(
     let turns = reader.read(&SessionId::new(harness, native)).await?;
     Ok(TranscriptRead::Read(StoreTranscript {
         turns: turns.into_iter().filter_map(text_turn).collect(),
-        truncated: false,
+        earlier: None,
+        context: None,
     }))
 }
 

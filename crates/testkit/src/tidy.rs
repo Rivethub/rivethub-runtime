@@ -21,6 +21,7 @@ use kernel::tidy::TidyPorts;
 use kernel::tidy::TidyStore;
 use kernel::tidy::TreeEdit;
 use kernel::tidy::UpkeepStore;
+use kernel::topics::Alias;
 use kernel::topics::NewTopic;
 use kernel::topics::Placement;
 use kernel::topics::PlacementSource;
@@ -254,6 +255,128 @@ where
         owner: &owner,
     };
     let outcome = kernel::tidy::decide_batch(&ports, stored.id, Decision::Approve, at(3)).await?;
+    finished_on_retry(&outcome)?;
+    let mut filed = Vec::new();
+    for member in &members {
+        filed.push(store.placement(member).await?.map(|placed| placed.topic));
+    }
+    same(
+        "the members left over are filed",
+        filed,
+        vec![Some(created); members.len()],
+    )?;
+    Ok(())
+}
+
+pub async fn old_names_stay_findable_and_a_change_made_moot_is_skipped<S>(store: &S) -> Outcome
+where
+    S: TidyStore + TopicStore + FilingStore + TopicPageStore,
+{
+    let jest = store.create(new_topic("Jest", &[], None)?).await?;
+    let vitest = store.create(new_topic("Vitest", &[], None)?).await?;
+    let gerty = store.create(new_topic("Gerty", &[], None)?).await?;
+    let stored = store.propose(moot_batch(&vitest, &jest, &gerty)?).await?;
+    let [merge, delete, rename] = stored
+        .proposals
+        .iter()
+        .map(|proposal| proposal.id)
+        .collect::<Vec<_>>()[..]
+    else {
+        return Err("three proposals were kept".into());
+    };
+    let owner = crate::owner()?;
+    let ports = TidyPorts {
+        tidy: store,
+        topics: store,
+        filing: store,
+        pages: Some(store),
+        owner: &owner,
+    };
+    let outcome = kernel::tidy::decide_batch(&ports, stored.id, Decision::Approve, at(2)).await?;
+    same(
+        "the merge and the rename are approved",
+        outcome
+            .decided
+            .iter()
+            .map(|proposal| (proposal.id, proposal.state))
+            .collect::<Vec<_>>(),
+        vec![
+            (merge, ProposalState::Approved),
+            (rename, ProposalState::Approved),
+        ],
+    )?;
+    same(
+        "the delete the merge made moot is skipped, with why",
+        outcome
+            .skipped
+            .iter()
+            .map(|skipped| (skipped.proposal.id, skipped.reason.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(delete, "the topic it changes is already gone")],
+    )?;
+    old_names_found(store, [("Vitest", &jest, "Jest"), ("Gerty", &gerty, "g9")]).await
+}
+
+async fn old_names_found<S>(store: &S, kept: [(&str, &Topic, &str); 2]) -> Outcome
+where
+    S: TopicStore,
+{
+    for (old, topic, name) in kept {
+        let found = store
+            .search(&kernel::topics::TopicQuery::new(old), 5)
+            .await?;
+        same(
+            "the old name finds the topic",
+            found
+                .iter()
+                .map(|listing| listing.topic.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![name],
+        )?;
+        let stored = store
+            .find(&TopicKey::Id(topic.id))
+            .await?
+            .ok_or("the topic stays")?;
+        same(
+            "the old name is an alias",
+            stored.aliases.iter().map(Alias::as_str).collect::<Vec<_>>(),
+            vec![old],
+        )?;
+    }
+    Ok(())
+}
+
+fn moot_batch(
+    vitest: &Topic,
+    jest: &Topic,
+    gerty: &Topic,
+) -> Result<Batch, kernel::tidy::TidyError> {
+    let mut batch = Batch::new(Proposer::Categorizer, at(1));
+    batch.add(
+        TreeEdit::Merge {
+            source: vitest.id,
+            into: jest.id,
+        },
+        Reason::new("one test runner")?,
+        evidence(2),
+    );
+    batch.add(
+        TreeEdit::Delete { topic: vitest.id },
+        Reason::new("not a tool we use")?,
+        evidence(0),
+    );
+    batch.add(
+        TreeEdit::Rename {
+            topic: gerty.id,
+            name: TopicName::new("g9")?,
+        },
+        Reason::new("the host is called g9")?,
+        evidence(1),
+    );
+    Ok(batch)
+}
+
+fn finished_on_retry(outcome: &kernel::tidy::BatchOutcome) -> Outcome {
     same(
         "nothing fails on the second approval",
         outcome
@@ -263,15 +386,19 @@ where
             .collect::<Vec<_>>(),
         Vec::new(),
     )?;
-    same("every change is approved", outcome.decided.len(), 3)?;
-    let mut filed = Vec::new();
-    for member in &members {
-        filed.push(store.placement(member).await?.map(|placed| placed.topic));
-    }
     same(
-        "the members left over are filed",
-        filed,
-        vec![Some(created); members.len()],
+        "the change still to make is approved",
+        outcome.decided.len(),
+        1,
+    )?;
+    same(
+        "the changes already made are skipped as gone",
+        outcome
+            .skipped
+            .iter()
+            .map(|skipped| skipped.reason.as_str())
+            .collect::<Vec<_>>(),
+        vec!["the topic it changes is already gone"; 2],
     )?;
     Ok(())
 }

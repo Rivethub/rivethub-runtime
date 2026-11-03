@@ -135,6 +135,8 @@ impl Listener<'_> {
                 status: super::tasks::status_out(task.status),
                 parent_session_id: task.parent.session,
                 child_session_id: task.child,
+                agent: Some(task.target.agent),
+                error: task.error,
                 ts: Utc::now(),
             },
         )

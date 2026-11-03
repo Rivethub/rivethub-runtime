@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::builder::WikiStoreError;
 use super::merge::PageMerger;
 use super::page::bound::{
-    ARCHIVED_TITLE, Archived, HISTORY_LINE, history_line, is_revision, rebase,
+    ARCHIVED_TITLE, Archived, HISTORY_LINE, added_since, history_line, is_revision, rebase,
 };
 use super::page::{ArticleSection, WikiHistoryEntry, WikiPage, WikiSlug};
 
@@ -214,7 +214,7 @@ fn rebase_sections(
 }
 
 fn newest_first(base: &str, ours: &str, current: &str) -> String {
-    let added = rebase(base, "", current);
+    let added = added_since(base, current, ours);
     [added.as_str(), ours.trim()]
         .into_iter()
         .filter(|text| !text.is_empty())

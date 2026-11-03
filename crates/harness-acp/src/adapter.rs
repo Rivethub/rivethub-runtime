@@ -269,7 +269,10 @@ impl AcpHarnessAdapter {
         if !launch.is_verified() {
             return Ok(None);
         }
-        let command = self.located(launch.command().clone())?;
+        let mut command = self.located(launch.command().clone())?;
+        command
+            .env
+            .push((config::MODEL_RUN_VARIABLE.to_owned(), "1".to_owned()));
         let cwd = self
             .discovery_dir
             .as_ref()

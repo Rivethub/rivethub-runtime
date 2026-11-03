@@ -44,6 +44,7 @@ const AGENT_CHARS: usize = 64;
 const MODEL_CHARS: usize = 80;
 const NAMING_MARKER: &str = "-title\"";
 const MODE_MARKER: &str = "\"permissionMode\"";
+const ASSISTANT_MARKER: &str = "\"type\":\"assistant\"";
 const MODE_WINDOW: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -75,7 +76,9 @@ impl Transcript {
             row.agent_name = non_empty(labels.agent_name);
             row.model = non_empty(labels.model);
         } else {
-            harness_titles(&self.path).apply(row);
+            let tail = tail(&self.path, HEAD_WINDOW);
+            harness_titles(&self.path, tail.as_deref()).apply(row);
+            row.model = tail.as_deref().and_then(answered_model);
         }
     }
 }
@@ -260,10 +263,14 @@ struct CustomTitleLine<'a> {
     session_id: &'a str,
 }
 
-fn harness_titles(path: &Path) -> HarnessTitles {
+fn harness_titles(path: &Path, tail: Option<&str>) -> HarnessTitles {
     let mut titles = HarnessTitles::default();
-    let windows = [head(path, HEAD_WINDOW), tail(path, HEAD_WINDOW)];
-    for line in windows.iter().flatten().flat_map(|text| text.lines()) {
+    let head = head(path, HEAD_WINDOW);
+    for line in [head.as_deref(), tail]
+        .into_iter()
+        .flatten()
+        .flat_map(str::lines)
+    {
         if !line.contains(NAMING_MARKER) {
             continue;
         }
@@ -274,6 +281,15 @@ fn harness_titles(path: &Path) -> HarnessTitles {
         }
     }
     titles
+}
+
+fn answered_model(tail: &str) -> Option<String> {
+    tail.lines()
+        .rev()
+        .filter(|line| line.contains(ASSISTANT_MARKER))
+        .filter_map(object_line::<LabelLine>)
+        .map(|line| line.line_model())
+        .find(|model| !model.is_empty() && !model.starts_with('<'))
 }
 
 pub(crate) fn rename(

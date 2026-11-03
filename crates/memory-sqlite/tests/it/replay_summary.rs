@@ -12,6 +12,7 @@ use kernel::memory::SummaryKind;
 use kernel::memory::SummarySource;
 use kernel::memory::SummaryStore;
 use kernel::memory::SummaryStoreError;
+use kernel::memory::ToolUse;
 use rusqlite::params;
 use testkit::Json;
 use uuid::Uuid;
@@ -214,6 +215,62 @@ fn recorded_content(scenario: &Scenario) -> TestResult<&str> {
         .and_then(|row| row.get("content"))
         .and_then(Json::as_str)
         .ok_or_else(|| "summary content".into())
+}
+
+#[tokio::test]
+async fn a_tool_row_shows_its_clipped_input_and_result() -> TestResult {
+    let fresh = fresh_store()?;
+    let conversation = "20000000-0000-4000-8000-000000000001";
+    seed_conversation(&fresh.store, conversation, "cli:tools", "rivet").await?;
+    message(
+        &fresh.store,
+        "20000000-0000-4000-8000-000000000002",
+        conversation,
+        body("rivet", "user", "run it", "2026-10-10T12:00:00.000Z"),
+    )
+    .await?;
+    let args = format!(r#"{{"command":"{}"}}"#, "\u{e9}".repeat(400));
+    let output = "line\n".repeat(200);
+    let row = (args.clone(), output.clone());
+    fresh
+        .store
+        .with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO ros_messages \
+                    (id, conversation_id, agent, channel, role, content, tool_name, tool_args, \
+                     tool_result, metadata, created_at) \
+                 VALUES ('20000000-0000-4000-8000-000000000003', ?1, 'rivet', 'cli', 'tool', \
+                         '[tool call] Bash', 'Bash', ?2, ?3, '{}', '2026-10-10T12:01:00.000Z')",
+                params![conversation, row.0, row.1],
+            )
+            .map_err(common::seed)?;
+            Ok(())
+        })
+        .await?;
+    let window = fresh
+        .store
+        .conversation(Uuid::parse_str(conversation)?)
+        .await?
+        .ok_or("conversation window")?;
+    let tools: Vec<Option<ToolUse>> = window
+        .messages
+        .into_iter()
+        .map(|message| message.tool)
+        .collect();
+    let [None, Some(tool)] = tools.as_slice() else {
+        return Err("one tool row after the user message".into());
+    };
+    let input = tool
+        .input
+        .strip_suffix(" \u{2026}")
+        .ok_or("clipped input")?;
+    assert!(input.len() <= ToolUse::INPUT_BYTES && args.starts_with(input));
+    let shown = tool
+        .result
+        .strip_suffix(" \u{2026}")
+        .ok_or("clipped result")?;
+    assert!(shown.len() <= ToolUse::RESULT_BYTES && output.starts_with(shown));
+    Ok(())
 }
 
 async fn seed_messages(store: &memory_sqlite::SqliteStore, scenario: &Scenario) -> TestResult {

@@ -7,6 +7,7 @@ use kernel::memory::MemoryStore as _;
 use kernel::memory::SummaryDag;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummaryOwner;
+use kernel::memory::TreeWindow;
 use kernel::memory::VectorState;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
@@ -171,6 +172,95 @@ async fn a_conversation_reads_its_own_summary_dag_by_id(pool: PgPool) -> TestRes
             .summary_dag(&SummaryOwner::Conversation(uuid::Uuid::nil()))
             .await?,
         SummaryDag::default()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_outline_previews_each_summary_and_one_summary_reads_whole(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let long = format!("{}abcdé{}", "word ".repeat(63), " tail".repeat(40));
+    sqlx::query(
+        "update rh_summaries set content = $1 where id = '00000000-0000-4000-8000-000000000011'",
+    )
+    .bind(&long)
+    .execute(&pool)
+    .await?;
+    let memory = PostgresMemory::new(pool);
+    let owner = SummaryOwner::Session("cli:dag".to_owned());
+    let full = memory.summary_dag(&owner).await?;
+    let outline = memory.summary_outline(&owner).await?;
+    assert_eq!(outline, full.clone().outline());
+    let first = outline.summaries.get(1).expect("first leaf");
+    assert!(
+        first.truncated && long.starts_with(&first.content) && first.content.len() < long.len()
+    );
+    assert_eq!(first.source_message_ids, Vec::<String>::new());
+    let whole = memory
+        .summary_node(&owner, "00000000-0000-4000-8000-000000000011")
+        .await?
+        .expect("first leaf");
+    assert_eq!(Some(&whole), full.summaries.get(1));
+    assert_eq!(
+        memory
+            .summary_node(&owner, "00000000-0000-4000-8000-000000000015")
+            .await?,
+        None
+    );
+    let latest = memory.summary_latest(&owner, 1).await?;
+    let [newest] = latest.summaries.as_slice() else {
+        return Err("one summary".into());
+    };
+    assert_eq!(newest.id, "00000000-0000-4000-8000-000000000012");
+    assert_eq!(newest.content, "second");
+    assert_eq!(
+        full.latest(1)
+            .summaries
+            .first()
+            .map(|node| node.id.as_str()),
+        Some(newest.id.as_str())
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tree_reads_one_level_at_a_time_as_the_outline_would(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let memory = PostgresMemory::new(pool);
+    let owner = SummaryOwner::Session("cli:dag".to_owned());
+    let outline = memory.summary_outline(&owner).await?;
+    let window = TreeWindow {
+        offset: 0,
+        limit: 1,
+    };
+    let top = memory.summary_tree(&owner, None, window).await?;
+    assert_eq!(top, outline.clone().tree(None, window));
+    let top = top.expect("the top");
+    assert_eq!(
+        (
+            top.total,
+            top.counts.top,
+            top.counts.leaves,
+            top.counts.embedded
+        ),
+        (1, 1, 2, 1)
+    );
+    let branch = "00000000-0000-4000-8000-000000000014";
+    assert_eq!(
+        memory
+            .summary_tree(&owner, Some(branch), TreeWindow::ALL)
+            .await?,
+        outline.tree(Some(branch), TreeWindow::ALL)
+    );
+    assert_eq!(
+        memory
+            .summary_tree(
+                &owner,
+                Some("00000000-0000-4000-8000-000000000099"),
+                TreeWindow::ALL
+            )
+            .await?,
+        None
     );
     Ok(())
 }

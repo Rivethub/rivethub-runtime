@@ -440,6 +440,7 @@ impl Candidate {
                 relevance_score,
                 created_at: self.created_at,
                 session_id,
+                title: None,
             },
             Kind::Summary { session_id, .. } => MemorySearchResult {
                 chunk: None,
@@ -451,6 +452,7 @@ impl Candidate {
                 relevance_score,
                 created_at: self.created_at,
                 session_id,
+                title: None,
             },
         }
     }

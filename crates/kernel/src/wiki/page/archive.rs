@@ -2,12 +2,11 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, NaiveDate, Utc};
 
-use super::bound::{ARCHIVED_TITLE, Archived, blocks, history_line, spill};
+use super::bound::{ARCHIVED_TITLE, Archived, blocks, covered, history_line, spill, words};
 use super::limits;
 use super::{WikiHistoryEntry, WikiPage};
 
 pub const ARCHIVE_DIRECTORY: &str = "archive";
-const COVERED_PERCENT: usize = 60;
 const MONTH: &str = "%Y-%m";
 pub const SEGMENT_BUDGET: usize = 64 * 1024;
 
@@ -137,21 +136,6 @@ pub fn unarchived(archived: Vec<Archived>, page: &WikiPage, archive: &str) -> Ve
         }
     }
     kept
-}
-
-fn words(text: &str) -> BTreeSet<String> {
-    text.split(|letter: char| !letter.is_alphanumeric() && !"_.#/-".contains(letter))
-        .map(|word| word.trim_matches(|letter: char| !letter.is_alphanumeric()))
-        .filter(|word| {
-            word.chars().count() >= 4 || word.chars().any(|letter| letter.is_ascii_digit())
-        })
-        .map(str::to_lowercase)
-        .collect()
-}
-
-fn covered(found: &BTreeSet<String>, pool: &BTreeSet<String>) -> bool {
-    let shared = found.iter().filter(|word| pool.contains(*word)).count();
-    shared.saturating_mul(100) >= found.len().saturating_mul(COVERED_PERCENT)
 }
 
 #[must_use]

@@ -17,6 +17,7 @@ use wire::events::{
     StateResponse,
 };
 use wire::gateway::hub_state::HubStateChanged;
+use wire::gateway::topics::TopicChangedNotice;
 
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -259,6 +260,13 @@ impl SessionRegistry {
                 version,
             }));
         }
+    }
+
+    pub(crate) fn topic_changed(&self, topic: &impl ToString) {
+        self.announce(&SessionBroadcast::TopicChanged(TopicChangedNotice {
+            v: ProtocolVersion::V1,
+            topic: topic.to_string(),
+        }));
     }
 
     pub(crate) fn announce(&self, notice: &SessionBroadcast) {

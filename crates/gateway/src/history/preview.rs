@@ -54,7 +54,11 @@ impl History {
             ))
         })?;
         let said = match lister
-            .transcript(resolved.harness, &resolved.native)
+            .transcript(
+                resolved.harness,
+                &resolved.native,
+                kernel::transcript::TranscriptWindow::Latest,
+            )
             .await?
         {
             TranscriptRead::Read(read) => Preview::from_transcript(&read.turns, updated),

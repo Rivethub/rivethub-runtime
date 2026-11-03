@@ -5,8 +5,9 @@ use crate::error::Error;
 use crate::search::ArmRow;
 use crate::search_sql::ArmContext;
 use crate::search_sql::ArmSqlRow;
-use crate::search_sql::push_contains;
+use crate::search_sql::LiteralText;
 use crate::search_sql::push_embedded_semantic;
+use crate::search_sql::push_held;
 use crate::search_sql::push_scope_conditions;
 use crate::search_sql::push_select_prefix;
 use crate::search_sql::push_time_conditions;
@@ -41,12 +42,10 @@ impl crate::PostgresMemory {
         } else {
             query.push("true");
         }
+        let text = LiteralText::of(context.options, true);
         for token in tokens {
-            query.push(" AND (");
-            push_contains(&mut query, "m.content", token);
-            query.push(" OR ");
-            push_contains(&mut query, "coalesce(m.tool_result, '')", token);
-            query.push(")");
+            query.push(" AND ");
+            push_held(&mut query, text, token);
         }
         push_time_conditions(&mut query, context.options, "m");
         push_scope_conditions(&mut query, context.options, true);

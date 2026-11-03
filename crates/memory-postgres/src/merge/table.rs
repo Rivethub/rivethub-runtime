@@ -118,6 +118,11 @@ impl Table {
                 | Self::WikiDeferred
                 | Self::Tasks
                 | Self::TidyBatches
+                | Self::SessionHistory
+                | Self::SessionSuggestions
+                | Self::SessionStartup
+                | Self::SessionTombstones
+                | Self::FilingCorrections
         )
     }
 }

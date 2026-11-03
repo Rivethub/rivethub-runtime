@@ -173,6 +173,7 @@ pub const MAINTENANCE_PRIORITY: i16 = -100;
 pub enum JobKeyMode {
     KeepRunAt,
     Replace,
+    Arm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
@@ -246,6 +247,11 @@ pub trait JobQueue: std::fmt::Debug + Send + Sync {
     async fn fail(&self, id: JobId, error: &str) -> Result<(), JobQueueError>;
 
     async fn release(&self, id: JobId) -> Result<(), JobQueueError>;
+
+    async fn postpone(&self, id: JobId, delay: std::time::Duration) -> Result<(), JobQueueError> {
+        let _: std::time::Duration = delay;
+        self.release(id).await
+    }
 
     async fn flag_stuck(&self) -> Result<u64, JobQueueError>;
 

@@ -169,10 +169,53 @@ fn like_escaped(token: &str) -> String {
     escaped
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiteralText {
+    Summary,
+    Message,
+    MessageAndResult,
+}
+
+impl LiteralText {
+    pub(crate) fn of(options: &SearchOptions, is_message: bool) -> Self {
+        match (is_message, options.admits(Role::Tool)) {
+            (false, _) => Self::Summary,
+            (true, true) => Self::MessageAndResult,
+            (true, false) => Self::Message,
+        }
+    }
+
+    const fn columns(self) -> &'static [&'static str] {
+        match self {
+            Self::Summary => &["s.content"],
+            Self::Message => &["m.content"],
+            Self::MessageAndResult => &["m.content", "coalesce(m.tool_result, '')"],
+        }
+    }
+}
+
+fn case_free(token: &str) -> bool {
+    token
+        .bytes()
+        .all(|byte| byte.is_ascii() && !byte.is_ascii_alphabetic())
+}
+
 pub(crate) fn push_contains(query: &mut QueryBuilder<sqlx::Postgres>, column: &str, token: &str) {
-    query.push(format!("{column} ILIKE '%' || "));
+    let operator = if case_free(token) { "LIKE" } else { "ILIKE" };
+    query.push(format!("{column} {operator} '%' || "));
     query.push_bind(like_escaped(token));
     query.push(" || '%' ESCAPE '\\'");
+}
+
+pub(crate) fn push_held(query: &mut QueryBuilder<sqlx::Postgres>, text: LiteralText, token: &str) {
+    query.push("(");
+    for (index, column) in text.columns().iter().enumerate() {
+        if index > 0 {
+            query.push(" OR ");
+        }
+        push_contains(query, column, token);
+    }
+    query.push(")");
 }
 
 fn push_any_contains(query: &mut QueryBuilder<sqlx::Postgres>, column: &str, tokens: &[String]) {
@@ -189,18 +232,12 @@ fn push_any_contains(query: &mut QueryBuilder<sqlx::Postgres>, column: &str, tok
 fn push_literal_score(
     query: &mut QueryBuilder<sqlx::Postgres>,
     tokens: &[String],
-    is_message: bool,
+    text: LiteralText,
 ) {
     query.push("((0");
     for token in tokens {
         query.push(" + (CASE WHEN ");
-        if is_message {
-            push_contains(query, "m.content", token);
-            query.push(" OR ");
-            push_contains(query, "coalesce(m.tool_result, '')", token);
-        } else {
-            push_contains(query, "s.content", token);
-        }
+        push_held(query, text, token);
         query.push(" THEN 1 ELSE 0 END)");
     }
     query.push(format!(")::float8 / {})", tokens.len()));
@@ -209,21 +246,35 @@ fn push_literal_score(
 fn push_literal_match(
     query: &mut QueryBuilder<sqlx::Postgres>,
     tokens: &[String],
-    is_message: bool,
+    text: LiteralText,
 ) {
-    if is_message {
-        query.push(" AND m.id IN (SELECT hit.id FROM rh_messages hit WHERE ");
-        push_any_contains(query, "hit.content", tokens);
+    if text == LiteralText::Summary {
+        query.push(" AND ");
+        push_any_contains(query, "s.content", tokens);
+        return;
+    }
+    query.push(" AND m.id IN (SELECT hit.id FROM rh_messages hit WHERE ");
+    push_any_contains(query, "hit.content", tokens);
+    if text == LiteralText::MessageAndResult {
         query.push(
             " UNION SELECT hit.id FROM rh_messages hit \
              WHERE hit.tool_result IS NOT NULL AND length(hit.tool_result) > 0 AND ",
         );
         push_any_contains(query, "hit.tool_result", tokens);
-        query.push(")");
-    } else {
-        query.push(" AND ");
-        push_any_contains(query, "s.content", tokens);
     }
+    query.push(")");
+}
+
+fn push_pattern_match(query: &mut QueryBuilder<sqlx::Postgres>, pattern: &str, text: LiteralText) {
+    query.push(" AND (");
+    for (index, column) in text.columns().iter().enumerate() {
+        if index > 0 {
+            query.push(" OR ");
+        }
+        query.push(format!("{column} ~* "));
+        query.push_bind(pattern.to_owned());
+    }
+    query.push(")");
 }
 
 pub(crate) fn push_fts_where(
@@ -260,7 +311,8 @@ pub(crate) fn push_fts_where(
 pub(crate) struct ArmSqlRow {
     chunk: Option<sqlx::types::Json<kernel::memory::MemoryChunkMatch>>,
     id: String,
-    content: String,
+    content_key: String,
+    reasoning: bool,
     role_or_kind: Option<String>,
     agent: Option<String>,
     tool_name: Option<String>,
@@ -286,12 +338,13 @@ impl ArmSqlRow {
         Ok(ArmRow {
             chunk: self.chunk.map(|chunk| chunk.0),
             id: self.id,
+            reasoning: self.reasoning,
             source: if is_message {
                 MemoryHitSource::Message
             } else {
                 MemoryHitSource::Summary
             },
-            content: self.content,
+            content_key: self.content_key,
             role,
             agent: self.agent,
             kind,
@@ -315,13 +368,15 @@ pub(crate) fn push_select_prefix(
 ) {
     query.push("SELECT ");
     query.push(if chunk {
-        "jsonb_build_object('index', c.idx, 'total', (SELECT count(*) FROM rh_message_chunks all_chunks WHERE all_chunks.message_id = c.message_id), 'charStart', c.char_start, 'charEnd', c.char_end, 'content', c.content) AS chunk, "
+        "jsonb_build_object('index', c.idx, 'total', (SELECT count(*) FROM rh_message_chunks all_chunks WHERE all_chunks.message_id = c.message_id), 'charStart', c.char_start, 'charEnd', c.char_end, 'content', '') AS chunk, "
     } else {
         "NULL::jsonb AS chunk, "
     });
     if is_message {
         query.push(
-            "m.id::text, m.content, m.role AS role_or_kind, m.agent, m.tool_name, \
+            "m.id::text, md5(m.content) AS content_key, \
+             (left(m.content, 10) = '[thinking]') AS reasoning, \
+             m.role AS role_or_kind, m.agent, m.tool_name, \
              m.conversation_id::text AS conversation_id, \
              (SELECT conv.session_key FROM rh_conversations conv WHERE conv.id = m.conversation_id) AS session_id, \
              (SELECT conv.channel FROM rh_conversations conv WHERE conv.id = m.conversation_id) AS session_channel, \
@@ -329,7 +384,8 @@ pub(crate) fn push_select_prefix(
         );
     } else {
         query.push(
-            "s.id::text, s.content, s.kind AS role_or_kind, NULL AS agent, \
+            "s.id::text, md5(s.content) AS content_key, false AS reasoning, \
+             s.kind AS role_or_kind, NULL AS agent, \
              NULL AS tool_name, s.conversation_id::text AS conversation_id, \
              (SELECT conv.session_key FROM rh_conversations conv WHERE conv.id = s.conversation_id) AS session_id, \
              (SELECT conv.channel FROM rh_conversations conv WHERE conv.id = s.conversation_id) AS session_channel, \
@@ -411,6 +467,7 @@ impl crate::PostgresMemory {
         let tag_filter = context.tag_filter;
         let pool = hybrid_pool(options.limit);
         let alias = if is_message { "m" } else { "s" };
+        let literal = LiteralText::of(options, is_message);
         let tokens = if kind == ArmKind::Trigram {
             literal_tokens(&options.text)
         } else {
@@ -427,8 +484,10 @@ impl crate::PostgresMemory {
         {
             return Ok(rows);
         }
-        let candidates = if kind == ArmKind::Fts {
-            self.capped_candidates(context, is_message).await?
+        let text_search = matches!(kind, ArmKind::Fts | ArmKind::FtsExplicit);
+        let candidates = if text_search {
+            self.capped_candidates(context, is_message, kind == ArmKind::Fts)
+                .await?
         } else {
             None
         };
@@ -446,7 +505,7 @@ impl crate::PostgresMemory {
                     "))::float8"
                 });
             }
-            ArmKind::Trigram => push_literal_score(&mut query, &tokens, is_message),
+            ArmKind::Trigram => push_literal_score(&mut query, &tokens, literal),
             ArmKind::Regex => {
                 query.push("1.0::float8");
             }
@@ -465,8 +524,8 @@ impl crate::PostgresMemory {
         } else {
             "rh_summaries s"
         });
-        if kind == ArmKind::Fts {
-            push_fts_where(&mut query, context, is_message, true);
+        if text_search {
+            push_fts_where(&mut query, context, is_message, kind == ArmKind::Fts);
             if let Some(candidates) = &candidates {
                 query.push(format!(" AND {alias}.id = ANY("));
                 query.push_bind(candidates.clone());
@@ -479,47 +538,27 @@ impl crate::PostgresMemory {
             } else {
                 query.push("true");
             }
-        }
-        match kind {
-            ArmKind::Fts => {}
-            ArmKind::FtsExplicit => {
-                query.push(" AND ");
-                query.push(format!(
-                    "{alias}.content_tsv @@ plainto_tsquery('english', "
-                ));
-                query.push_bind(options.text.clone());
-                query.push(")");
+            match kind {
+                ArmKind::Trigram => push_literal_match(&mut query, &tokens, literal),
+                ArmKind::Regex => push_pattern_match(&mut query, &options.text, literal),
+                ArmKind::Fts | ArmKind::FtsExplicit => {}
             }
-            ArmKind::Trigram => push_literal_match(&mut query, &tokens, is_message),
-            ArmKind::Regex => {
-                query.push(" AND ");
-                if is_message {
-                    query.push("(m.content ~* ");
-                    query.push_bind(options.text.clone());
-                    query.push(" OR coalesce(m.tool_result, '') ~* ");
-                    query.push_bind(options.text.clone());
-                    query.push(")");
-                } else {
-                    query.push("s.content ~* ");
-                    query.push_bind(options.text.clone());
-                }
-            }
-        }
-        if kind != ArmKind::Fts {
             push_time_conditions(&mut query, options, alias);
             push_scope_conditions(&mut query, options, is_message);
         }
+        query.push(" ORDER BY ");
+        if kind == ArmKind::FtsExplicit && is_message {
+            query.push("reasoning, ");
+        }
         if candidates.is_some() {
             query.push(format!(
-                " ORDER BY score DESC, {} DESC LIMIT {pool}",
+                "score DESC, {} DESC LIMIT {pool}",
                 crate::search_cap::newest_column(is_message)
             ));
         } else if kind == ArmKind::Trigram {
-            query.push(format!(
-                " ORDER BY score DESC, {alias}.created_at DESC LIMIT {pool}"
-            ));
+            query.push(format!("score DESC, {alias}.created_at DESC LIMIT {pool}"));
         } else {
-            query.push(format!(" ORDER BY score DESC LIMIT {pool}"));
+            query.push(format!("score DESC LIMIT {pool}"));
         }
         let fetched = if matches!(kind, ArmKind::Trigram | ArmKind::Regex) {
             let mut tx = self

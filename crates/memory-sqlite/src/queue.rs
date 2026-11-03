@@ -547,6 +547,32 @@ fn count_row(task: String, state: String, count: i64) -> Result<JobCount, Sqlite
     })
 }
 
+pub(crate) fn arm(conn: &Connection, key: &str, job: &JobInsert) -> Result<bool, SqliteError> {
+    let waiting: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT j.id, COALESCE(p.priority, 0) FROM ros_jobs j
+               LEFT JOIN rh_job_priorities p ON p.job_id = j.id
+              WHERE j.job_key = ?1 AND j.state = 'queued'",
+            [key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(SqliteError::query("job arm"))?;
+    let Some((id, priority)) = waiting else {
+        replace(conn, key, job)?;
+        return Ok(true);
+    };
+    if i64::from(job.priority) < priority {
+        conn.execute(
+            "UPDATE ros_jobs SET payload = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, job.payload, time::stamp(job.now)],
+        )
+        .map_err(SqliteError::query("job arm"))?;
+        rank(conn, &id, job.priority)?;
+    }
+    Ok(false)
+}
+
 pub(crate) fn replace(conn: &Connection, key: &str, job: &JobInsert) -> Result<(), SqliteError> {
     let changed = conn
         .execute(

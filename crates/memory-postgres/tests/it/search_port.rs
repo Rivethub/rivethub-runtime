@@ -139,6 +139,23 @@ async fn every_arm_filters_both_tables_before_limiting(pool: PgPool) -> TestResu
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_hit_names_its_session(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let title = |outcome: &kernel::memory::SearchOutcome| {
+        outcome.results.first().and_then(|hit| hit.title.clone())
+    };
+    let untitled = memory.search(query(SearchMode::Fts)).await?;
+    assert_eq!(title(&untitled), kernel::memory::summary_title(TEXT));
+    sqlx::query("UPDATE rh_conversations SET title = 'Release safety review'")
+        .execute(&pool)
+        .await?;
+    let titled = memory.search(query(SearchMode::Fts)).await?;
+    assert_eq!(title(&titled).as_deref(), Some("Release safety review"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn expansion_is_opt_out_and_retains_time_bounds(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     sqlx::query("INSERT INTO rh_summary_sources (summary_id, message_id) SELECT s.id, m.id FROM rh_summaries s CROSS JOIN rh_messages m ON CONFLICT DO NOTHING")

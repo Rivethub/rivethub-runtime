@@ -26,6 +26,12 @@ use crate::topics::TopicPageStore;
 use crate::topics::TopicStore;
 use crate::wiki::page::FoldMark;
 
+const GONE: &str = "the topic it changes is already gone";
+const TARGET_GONE: &str = "the topic it merges into is gone";
+const ALREADY_THERE: &str = "it is already there";
+const ALREADY_CLOSED: &str = "it is already closed";
+const TYPE_EXISTS: &str = "the type already exists";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
     Approve,
@@ -47,7 +53,19 @@ pub struct TidyPorts<'a> {
 #[derive(Debug)]
 pub struct BatchOutcome {
     pub decided: Vec<Proposal>,
+    pub skipped: Vec<Skipped>,
     pub failed: Vec<(ProposalId, TidyError)>,
+}
+
+#[derive(Debug)]
+pub struct Skipped {
+    pub proposal: Proposal,
+    pub reason: String,
+}
+
+enum Approval {
+    Applied(Proposal),
+    SetAside(Skipped),
 }
 
 pub async fn approve(
@@ -60,7 +78,13 @@ pub async fn approve(
         .proposal(id)
         .await?
         .ok_or(TidyError::UnknownProposal { id })?;
-    approve_pending(ports, &proposal, now).await
+    match approve_pending(ports, &proposal, now).await? {
+        Approval::Applied(approved) => Ok(approved),
+        Approval::SetAside(skipped) => Err(TidyError::Stale {
+            id: skipped.proposal.id,
+            reason: skipped.reason,
+        }),
+    }
 }
 
 pub async fn reject(
@@ -84,6 +108,7 @@ pub async fn decide_batch(
         .ok_or(TidyError::UnknownBatch { id })?;
     let mut outcome = BatchOutcome {
         decided: Vec::new(),
+        skipped: Vec::new(),
         failed: Vec::new(),
     };
     for proposal in batch
@@ -93,10 +118,13 @@ pub async fn decide_batch(
     {
         let decided = match decision {
             Decision::Approve => approve_pending(ports, &proposal, now).await,
-            Decision::Reject => reject(ports.tidy, proposal.id, now).await,
+            Decision::Reject => reject(ports.tidy, proposal.id, now)
+                .await
+                .map(Approval::Applied),
         };
         match decided {
-            Ok(done) => outcome.decided.push(done),
+            Ok(Approval::Applied(done)) => outcome.decided.push(done),
+            Ok(Approval::SetAside(skipped)) => outcome.skipped.push(skipped),
             Err(error) => outcome.failed.push((proposal.id, error)),
         }
     }
@@ -107,26 +135,70 @@ async fn approve_pending(
     ports: &TidyPorts<'_>,
     proposal: &Proposal,
     now: DateTime<Utc>,
-) -> Result<Proposal, TidyError> {
+) -> Result<Approval, TidyError> {
     proposal.pending()?;
-    match apply(ports, &proposal.change, now).await {
-        Ok(()) => {}
-        Err(error) if stale(&error) => {
-            ports
-                .tidy
-                .decide(proposal.id, ProposalState::Rejected, now)
-                .await?;
-            return Err(TidyError::Stale {
-                id: proposal.id,
-                reason: error.to_string(),
-            });
-        }
-        Err(error) => return Err(error),
-    }
-    ports
+    let outdated = match outdated(ports.topics, &proposal.change).await? {
+        Some(reason) => Some(reason),
+        None => match apply(ports, &proposal.change, now).await {
+            Ok(()) => None,
+            Err(error) if stale(&error) => Some(error.to_string()),
+            Err(error) => return Err(error),
+        },
+    };
+    let Some(reason) = outdated else {
+        return ports
+            .tidy
+            .decide(proposal.id, ProposalState::Approved, now)
+            .await
+            .map(Approval::Applied);
+    };
+    let proposal = ports
         .tidy
-        .decide(proposal.id, ProposalState::Approved, now)
-        .await
+        .decide(proposal.id, ProposalState::Rejected, now)
+        .await?;
+    Ok(Approval::SetAside(Skipped { proposal, reason }))
+}
+
+async fn outdated(topics: &dyn TopicStore, change: &TreeEdit) -> Result<Option<String>, TidyError> {
+    let found = |id: TopicId| async move { topics.find(&TopicKey::Id(id)).await };
+    Ok(match change {
+        TreeEdit::Merge { source, into } => {
+            if found(*source).await?.is_none() {
+                Some(GONE.to_owned())
+            } else if found(*into).await?.is_none() {
+                Some(TARGET_GONE.to_owned())
+            } else {
+                None
+            }
+        }
+        TreeEdit::Delete { topic } => found(*topic).await?.is_none().then(|| GONE.to_owned()),
+        TreeEdit::Rename { topic, name } => match found(*topic).await? {
+            None => Some(GONE.to_owned()),
+            Some(current) if current.name == *name => Some(format!(
+                "it is already named \u{201c}{}\u{201d}",
+                name.as_str()
+            )),
+            Some(_) => None,
+        },
+        TreeEdit::Move { topic, parent } => match found(*topic).await? {
+            None => Some(GONE.to_owned()),
+            Some(current) if current.parent == *parent => Some(ALREADY_THERE.to_owned()),
+            Some(_) => None,
+        },
+        TreeEdit::Close { topic } => match found(*topic).await? {
+            None => Some(GONE.to_owned()),
+            Some(current) if current.closed_at.is_some() => Some(ALREADY_CLOSED.to_owned()),
+            Some(_) => None,
+        },
+        TreeEdit::AddType { topic, .. } => found(*topic)
+            .await?
+            .is_some()
+            .then(|| TYPE_EXISTS.to_owned()),
+        TreeEdit::CreateTopic { .. }
+        | TreeEdit::FileInto { .. }
+        | TreeEdit::MergePage { .. }
+        | TreeEdit::RemovePage { .. } => None,
+    })
 }
 
 const fn stale(error: &TidyError) -> bool {
@@ -145,9 +217,7 @@ async fn apply(
     let topics = ports.topics;
     match change {
         TreeEdit::Merge { source, into } => {
-            if !merged(topics, *source, *into).await? {
-                topics.merge(*source, *into, now).await?;
-            }
+            topics.merge(*source, *into, now).await?;
         }
         TreeEdit::Move { topic, parent } => {
             let changes = TopicChanges {
@@ -166,11 +236,7 @@ async fn apply(
         TreeEdit::Close { topic } => {
             topics.set_closed(*topic, Some(now), now).await?;
         }
-        TreeEdit::Delete { topic } => {
-            if exists(topics, *topic).await? {
-                topics.delete(*topic).await?;
-            }
-        }
+        TreeEdit::Delete { topic } => topics.delete(*topic).await?,
         TreeEdit::CreateTopic {
             topic,
             name,
@@ -223,21 +289,6 @@ async fn apply(
 
 async fn exists(topics: &dyn TopicStore, id: TopicId) -> Result<bool, TidyError> {
     Ok(topics.find(&TopicKey::Id(id)).await?.is_some())
-}
-
-async fn merged(
-    topics: &dyn TopicStore,
-    source: TopicId,
-    into: TopicId,
-) -> Result<bool, TidyError> {
-    if exists(topics, source).await? || !exists(topics, into).await? {
-        return Ok(false);
-    }
-    Ok(topics
-        .redirects()
-        .await?
-        .iter()
-        .any(|redirect| redirect.topic == into))
 }
 
 async fn create(

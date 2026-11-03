@@ -287,18 +287,21 @@ pub async fn serve(
 
 pub fn load(env: &Environment) -> Result<Config, StartupError> {
     if let Some(location) = config::resolve_config_path(env)? {
-        let loaded = Config::load(env, &location, Profile::Node)?;
-        for finding in &loaded.warnings {
-            tracing::warn!("{}", finding_line(finding));
-        }
-        for notice in &loaded.notices {
-            tracing::warn!("{notice}");
-        }
-        return Ok(loaded.config);
+        return Ok(announce(Config::load(env, &location, Profile::Node)?));
     }
     warn_environment(env);
     tracing::warn!("no config file found — running with the built-in defaults");
     Ok(Config::default())
+}
+
+pub(crate) fn announce(loaded: config::Loaded) -> Config {
+    for finding in &loaded.warnings {
+        tracing::warn!("{}", finding_line(finding));
+    }
+    for notice in &loaded.notices {
+        tracing::warn!("{notice}");
+    }
+    loaded.config
 }
 
 fn warn_environment(env: &Environment) {

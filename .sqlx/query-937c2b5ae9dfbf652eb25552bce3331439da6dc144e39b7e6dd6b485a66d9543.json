@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.session_key FROM rh_session_tombstones t\n              WHERE EXISTS (SELECT 1 FROM rh_conversations c WHERE c.session_key = t.session_key\n                             AND (t.owner_user_id IS NULL OR c.owner_user_id = t.owner_user_id))\n                 OR EXISTS (SELECT 1 FROM rh_session_placements p WHERE p.session_id = t.session_key\n                             AND (t.owner_user_id IS NULL OR p.owner_user_id = t.owner_user_id))\n                 OR EXISTS (SELECT 1 FROM rh_session_suggestions s WHERE s.session_id = t.session_key\n                             AND (t.owner_user_id IS NULL OR s.owner_user_id = t.owner_user_id))\n                 OR EXISTS (SELECT 1 FROM rh_session_startup u WHERE u.session_id = t.session_key\n                             AND (t.owner_user_id IS NULL OR u.owner_user_id = t.owner_user_id))\n              ORDER BY t.deleted_at, t.session_key\n              LIMIT $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "session_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "session_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "937c2b5ae9dfbf652eb25552bce3331439da6dc144e39b7e6dd6b485a66d9543"
+}

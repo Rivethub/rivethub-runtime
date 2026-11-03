@@ -138,6 +138,11 @@ impl Alias {
     pub fn key(&self) -> String {
         self.0.to_lowercase()
     }
+
+    #[must_use]
+    pub fn of_name(name: &TopicName) -> Self {
+        Self(name.as_str().to_owned())
+    }
 }
 
 #[must_use]
@@ -326,7 +331,10 @@ impl Topic {
     pub fn apply(mut self, changes: TopicChanges, now: DateTime<Utc>) -> Result<Self, TopicError> {
         if let Some(name) = changes.name {
             self.slug = Slug::fold(name.as_str())?;
-            self.name = name;
+            let former = std::mem::replace(&mut self.name, name);
+            if changes.aliases.is_none() {
+                self.keep_alias(&former);
+            }
         }
         if let Some(aliases) = changes.aliases {
             self.aliases = distinct_aliases(aliases);
@@ -338,6 +346,14 @@ impl Topic {
         self.directory = changes.directory.applied_to(self.directory);
         self.updated_at = now;
         Ok(self)
+    }
+
+    fn keep_alias(&mut self, former: &TopicName) {
+        let alias = Alias::of_name(former);
+        if alias.key() != Alias::of_name(&self.name).key() {
+            self.aliases.push(alias);
+            self.aliases = distinct_aliases(std::mem::take(&mut self.aliases));
+        }
     }
 }
 

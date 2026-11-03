@@ -11,6 +11,7 @@ mod history;
 mod kimi;
 mod omp;
 mod roots;
+mod running;
 mod text;
 pub(crate) mod time;
 mod title;
@@ -28,6 +29,7 @@ use kernel::transcript::StoreSession;
 use kernel::transcript::ToolOutputRead;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptReaderError;
+use kernel::transcript::TranscriptWindow;
 use wire::harness::HarnessId;
 
 pub use ancestors::with_ancestors;
@@ -376,12 +378,34 @@ impl SessionLister for StoreSessionLister {
         blocking(move || permission_mode_of(&roots, harness, &native)).await
     }
 
+    async fn running_elsewhere(
+        &self,
+        harness: HarnessId,
+        native: &str,
+    ) -> Result<Option<u32>, TranscriptReaderError> {
+        let Some(root) = self
+            .roots
+            .single(harness)
+            .filter(|_| harness == HarnessId::ClaudeCode)
+            .map(Path::to_path_buf)
+        else {
+            return Ok(None);
+        };
+        let native = native.to_owned();
+        blocking(move || {
+            running::claude_running(&root, &native)
+                .map_err(|error| files::read_failure(&root.join("sessions"), error))
+        })
+        .await
+    }
+
     async fn transcript(
         &self,
         harness: HarnessId,
         native: &str,
+        window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError> {
-        history::transcript(&self.roots, harness, native).await
+        history::transcript(&self.roots, harness, native, window).await
     }
 
     async fn rename(

@@ -42,23 +42,6 @@ pub(super) struct RecordingQueue {
 
 impl RecordingQueue {
     pub(super) async fn new(pool: &PgPool) -> Self {
-        let mut tx = pool.begin().await.expect("transaction");
-        let path: String = sqlx::query_scalar("SHOW search_path")
-            .fetch_one(&mut *tx)
-            .await
-            .expect("path");
-        sqlx::raw_sql(include_str!(
-            "../../../../rivethub/tests/fixtures/graphile_worker.txt"
-        ))
-        .execute(&mut *tx)
-        .await
-        .expect("graphile fixture");
-        sqlx::query("SELECT set_config('search_path', $1, false)")
-            .bind(path)
-            .execute(&mut *tx)
-            .await
-            .expect("restore path");
-        tx.commit().await.expect("commit fixture");
         Self {
             inner: PostgresQueue::connect(pool.clone()).await.expect("queue"),
             jobs: Mutex::new(Vec::new()),

@@ -40,6 +40,9 @@ pub(crate) async fn enqueue_job(
     conn: &mut PgConnection,
     job: &Job,
 ) -> Result<JobId, JobQueueError> {
+    if !crate::graphile::GraphileQueue::schema_present(&mut *conn).await? {
+        return Err(JobQueueError::Absent);
+    }
     let payload = sqlx::types::Json(&job.payload);
     let attempts = match job.max_attempts {
         Some(attempts) => attempts,
@@ -222,7 +225,7 @@ where
 
 fn key_mode_text(mode: JobKeyMode) -> &'static str {
     match mode {
-        JobKeyMode::KeepRunAt => "preserve_run_at",
+        JobKeyMode::KeepRunAt | JobKeyMode::Arm => "preserve_run_at",
         JobKeyMode::Replace => "replace",
     }
 }

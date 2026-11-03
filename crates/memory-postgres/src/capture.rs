@@ -109,12 +109,12 @@ impl<'a> CaptureWriter<'a> {
         .fetch_one(&mut *tx)
         .await
         .map_err(|source| Error::operation("capture lock", source))?;
-        sqlx::query_scalar!(
-            "select set_config('rivet.defer_embed_enqueue',
-                     case when to_regclass('graphile_worker._private_jobs') is null
-                          then 'on' else 'off' end, true) as mode"
+        let queued = crate::graphile::GraphileQueue::schema_present(&mut *tx).await?;
+        sqlx::query(
+            "select set_config('rivet.defer_embed_enqueue', case when $1 then 'off' else 'on' end, true)",
         )
-        .fetch_one(&mut *tx)
+        .bind(queued)
+        .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("embed defer", source))?;
         Ok(Self { tx })
@@ -225,9 +225,13 @@ impl<'a> CaptureWriter<'a> {
             return Ok(Vec::new());
         }
         let seen = sqlx::query_scalar!(
-            "select m.metadata->>'event_id' from rh_messages m
-              where m.conversation_id = $1
-                and m.metadata->>'event_id' in (select unnest($2::text[]))",
+            "select seen.event_id
+               from unnest($2::text[]) as wanted(event_id)
+              cross join lateral (
+                  select m.metadata->>'event_id' as event_id from rh_messages m
+                   where m.conversation_id = $1 and m.metadata->>'event_id' = wanted.event_id
+                   limit 1
+              ) seen",
             conversation_id,
             event_ids
         )

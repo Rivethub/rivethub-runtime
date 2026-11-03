@@ -92,6 +92,7 @@ fn job(job: FlaggedJob) -> FlaggedJobBody {
         id: i64::from(job.id),
         task: job.task,
         key: job.key,
+        subject: job.subject,
         payload: job.payload,
         error: job.error,
         failures: job.failures,

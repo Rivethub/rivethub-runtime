@@ -55,6 +55,7 @@ pub(super) async fn add(
         .keep_decisions(std::slice::from_ref(&added))
         .await
         .map_err(map::error)?;
+    gateway.sessions().topic_changed(&topic);
     Ok((StatusCode::CREATED, Json(map::decision(added))))
 }
 
@@ -71,6 +72,7 @@ pub(super) async fn edit(
         .keep_decisions(std::slice::from_ref(&edited))
         .await
         .map_err(map::error)?;
+    gateway.sessions().topic_changed(&edited.topic);
     Ok(Json(map::decision(edited)))
 }
 
@@ -102,6 +104,7 @@ pub(super) async fn supersede(
         .chain([superseded.clone()])
         .collect();
     store.keep_decisions(&kept).await.map_err(map::error)?;
+    gateway.sessions().topic_changed(&superseded.topic);
     Ok(Json(DecisionSuperseded {
         superseded: map::decision(superseded),
         replacement: replacement.map(map::decision),

@@ -102,18 +102,18 @@ impl GraphileQueue {
         listen(&self.pool).await
     }
 
-    pub(crate) async fn schema_present(pool: &PgPool) -> Result<bool, Error> {
-        let record = sqlx::query!(
-            "select to_regclass('graphile_worker._private_jobs') is not null
-              and to_regprocedure('graphile_worker.add_job(text,json,text,timestamptz,int,text,int,text[],text)')
-                is not null as \"present!\""
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|source| Error::operation("queue probe", source))?;
-        Ok(record.present)
+    pub(crate) async fn schema_present<'e>(
+        executor: impl sqlx::PgExecutor<'e>,
+    ) -> Result<bool, Error> {
+        sqlx::query_scalar(crate::graphile_sql::REACHABLE)
+            .fetch_one(executor)
+            .await
+            .map_err(|source| Error::operation("queue probe", source))
     }
     pub(crate) async fn enqueue(&self, job: &Job) -> Result<JobId, Error> {
+        if job.key_mode == JobKeyMode::Arm {
+            return self.arm(job).await;
+        }
         let payload = sqlx::types::Json(&job.payload);
         let queued: QueuedJob = sqlx::query_as(
             "select (graphile_worker.add_job($1, $2::json, $8, $3, $4, $5, $6, null::text[], $7)).id",
@@ -132,6 +132,24 @@ impl GraphileQueue {
         .fetch_one(&self.pool)
         .await
         .map_err(|source| Error::operation("enqueue", source))?;
+        Ok(JobId::new(queued.id))
+    }
+
+    async fn arm(&self, job: &Job) -> Result<JobId, Error> {
+        let queued: QueuedJob = sqlx::query_as(crate::graphile_sql::ARM)
+            .bind(job.name.to_string())
+            .bind(sqlx::types::Json(&job.payload))
+            .bind(job.run_at)
+            .bind(match job.max_attempts {
+                Some(attempts) => attempts,
+                None => attempts_for(&job.name),
+            })
+            .bind(&job.key)
+            .bind(i32::from(job.priority))
+            .bind(single_flight(job))
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|source| Error::operation("enqueue", source))?;
         Ok(JobId::new(queued.id))
     }
 
@@ -191,10 +209,15 @@ impl GraphileQueue {
         count(removed.removed)
     }
 
-    pub(crate) async fn release(&self, id: JobId) -> Result<u64, Error> {
+    pub(crate) async fn release(
+        &self,
+        id: JobId,
+        delay: Option<std::time::Duration>,
+    ) -> Result<u64, Error> {
         let released: i64 = sqlx::query_scalar(crate::graphile_sql::RELEASE)
             .bind(i64::from(id))
             .bind(format!("{}-", self.worker))
+            .bind(delay.map(|delay| delay.as_secs_f64()))
             .fetch_one(&self.pool)
             .await
             .map_err(|source| Error::operation("release", source))?;
@@ -376,7 +399,7 @@ fn count(value: i64) -> Result<u64, Error> {
 fn key_mode(mode: JobKeyMode) -> &'static str {
     match mode {
         JobKeyMode::KeepRunAt => "preserve_run_at",
-        JobKeyMode::Replace => "replace",
+        JobKeyMode::Replace | JobKeyMode::Arm => "replace",
     }
 }
 

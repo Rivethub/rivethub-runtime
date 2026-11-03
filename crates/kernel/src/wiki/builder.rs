@@ -96,6 +96,24 @@ impl WikiRouting {
     }
 }
 
+#[derive(Debug)]
+#[must_use = "the route stays leased only while this is held"]
+pub struct RouteLease {
+    _held: Option<Box<dyn std::any::Any + Send>>,
+}
+
+impl RouteLease {
+    pub fn sole() -> Self {
+        Self { _held: None }
+    }
+
+    pub fn holding(guard: impl std::any::Any + Send) -> Self {
+        Self {
+            _held: Some(Box::new(guard)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeldEntity {
     pub key: Slug,
@@ -191,6 +209,11 @@ pub trait WikiBuilderStore: Send + Sync {
     ) -> Result<Vec<Coalescable>, WikiStoreError> {
         let _: (Uuid, TopicId, u32) = (lead, topic, limit);
         Ok(Vec::new())
+    }
+
+    async fn lease_route(&self, route: &str) -> Result<Option<RouteLease>, WikiStoreError> {
+        let _: &str = route;
+        Ok(Some(RouteLease::sole()))
     }
 }
 

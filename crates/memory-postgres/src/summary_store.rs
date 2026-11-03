@@ -10,6 +10,7 @@ use kernel::memory::SummaryNode;
 use kernel::memory::SummaryStore;
 use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
+use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use sqlx::PgPool;
 use sqlx::Row;
@@ -22,7 +23,13 @@ use crate::PostgresMemory;
 const HEAD_SQL: &str = "select id, session_key, agent, channel, title
     from rh_conversations where id = $1";
 
-const MESSAGES_SQL: &str = "select m.id, m.agent, m.role, m.content, m.created_at
+const MESSAGES_SQL: &str = "select m.id, m.agent, m.role, m.content, m.created_at,
+        case when m.role = 'tool'
+             then convert_to(substr(coalesce(m.tool_args::text, ''), 1, $2), 'SQL_ASCII')
+        end as tool_input,
+        case when m.role = 'tool'
+             then convert_to(substr(coalesce(m.tool_result, ''), 1, $3), 'SQL_ASCII')
+        end as tool_result
     from rh_messages m
     where m.conversation_id = $1
       and not exists (
@@ -284,6 +291,8 @@ async fn load_nodes(
 async fn load_messages(pool: &PgPool, id: Uuid) -> Result<Vec<WindowMessage>, SummaryStoreError> {
     let rows = sqlx::query(MESSAGES_SQL)
         .bind(id)
+        .bind(prefix_bytes(ToolUse::INPUT_BYTES)?)
+        .bind(prefix_bytes(ToolUse::RESULT_BYTES)?)
         .fetch_all(pool)
         .await
         .map_err(|source| query_err("load unsummarized messages", source))?;
@@ -309,10 +318,29 @@ fn message_from(row: &sqlx::postgres::PgRow) -> Result<WindowMessage, SummarySto
         content: row
             .try_get("content")
             .map_err(|source| query_err("read message content", source))?,
+        tool: tool_use(row)?,
         created_at: row
             .try_get("created_at")
             .map_err(|source| query_err("read message time", source))?,
     })
+}
+
+fn tool_use(row: &sqlx::postgres::PgRow) -> Result<Option<ToolUse>, SummaryStoreError> {
+    let input: Option<Vec<u8>> = row
+        .try_get("tool_input")
+        .map_err(|source| query_err("read tool input", source))?;
+    let result: Option<Vec<u8>> = row
+        .try_get("tool_result")
+        .map_err(|source| query_err("read tool result", source))?;
+    Ok(match (input, result) {
+        (Some(input), Some(result)) => ToolUse::from_prefixes(&input, &result),
+        _ => None,
+    })
+}
+
+fn prefix_bytes(budget: usize) -> Result<i32, SummaryStoreError> {
+    let bytes = i32::try_from(budget).map_err(|_| SummaryStoreError::Count)?;
+    Ok(bytes.saturating_add(1))
 }
 
 fn role_of(text: &str) -> Result<Role, SummaryStoreError> {

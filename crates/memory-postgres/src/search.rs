@@ -50,6 +50,10 @@ impl SearchOptions {
             ..*self
         }
     }
+
+    pub(crate) fn admits(&self, role: Role) -> bool {
+        self.role.is_none_or(|wanted| wanted == role) && !self.exclude_roles.contains(&role)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +72,8 @@ pub struct MemorySearchHit {
     pub session_id: Option<String>,
     pub fallback: Option<MemoryFallback>,
     pub tags: Option<Vec<TagWire>>,
+    pub title: Option<String>,
+    pub(crate) content_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,7 +88,8 @@ pub(crate) struct ArmRow {
     pub(crate) chunk: Option<kernel::memory::MemoryChunkMatch>,
     pub(crate) id: String,
     pub(crate) source: MemoryHitSource,
-    pub(crate) content: String,
+    pub(crate) content_key: String,
+    pub(crate) reasoning: bool,
     pub(crate) role: Option<Role>,
     pub(crate) agent: Option<String>,
     pub(crate) kind: Option<kernel::memory::SummaryKind>,
@@ -141,7 +148,7 @@ fn fuse(fts: &[ArmRow], vector: Option<&[ArmRow]>, trigram: Option<&[ArmRow]>) -
                     chunk: row.chunk.clone(),
                     id: row.id.clone(),
                     source: row.source,
-                    content: row.content.clone(),
+                    content: String::new(),
                     role: row.role,
                     agent: row.agent.clone(),
                     kind: row.kind,
@@ -152,6 +159,8 @@ fn fuse(fts: &[ArmRow], vector: Option<&[ArmRow]>, trigram: Option<&[ArmRow]>) -
                     fallback: None,
                     session_id: row.session_id.clone(),
                     tags: None,
+                    title: None,
+                    content_key: row.content_key.clone(),
                 },
             }
         })
@@ -181,7 +190,7 @@ impl From<&TagLiteral> for TagFilter {
 }
 
 fn finish_rows(rows: Vec<ArmRow>, limit: u32) -> Result<Vec<MemorySearchHit>, Error> {
-    let mut hits: Vec<MemorySearchHit> = rows
+    let hits: Vec<MemorySearchHit> = rows
         .into_iter()
         .map(|row| {
             let score =
@@ -190,7 +199,7 @@ fn finish_rows(rows: Vec<ArmRow>, limit: u32) -> Result<Vec<MemorySearchHit>, Er
                 chunk: row.chunk,
                 id: row.id,
                 source: row.source,
-                content: row.content,
+                content: String::new(),
                 role: row.role,
                 agent: row.agent,
                 kind: row.kind,
@@ -201,11 +210,33 @@ fn finish_rows(rows: Vec<ArmRow>, limit: u32) -> Result<Vec<MemorySearchHit>, Er
                 fallback: None,
                 session_id: row.session_id,
                 tags: None,
+                title: None,
+                content_key: row.content_key,
             }
         })
         .collect();
+    let mut hits = distinct(hits);
     hits.truncate(usize::try_from(limit.max(1))?);
     Ok(hits)
+}
+
+fn said_first(mut rows: Vec<ArmRow>) -> Vec<ArmRow> {
+    rows.sort_by_key(|row| row.reasoning);
+    rows
+}
+
+fn distinct(hits: Vec<MemorySearchHit>) -> Vec<MemorySearchHit> {
+    let mut seen = std::collections::BTreeSet::new();
+    hits.into_iter()
+        .filter(|hit| {
+            seen.insert((
+                hit.source == MemoryHitSource::Summary,
+                hit.session_id.clone(),
+                hit.created_at,
+                hit.content_key.clone(),
+            ))
+        })
+        .collect()
 }
 
 impl crate::PostgresMemory {
@@ -245,14 +276,16 @@ impl crate::PostgresMemory {
     ) -> Result<SearchOutcome, Error> {
         let options = &options.without_nul();
         let tag_filter = options.tag.as_ref().map(TagFilter::from);
-        match options.mode {
+        let mut outcome = match options.mode {
             SearchMode::Hybrid => self.hybrid_search(options, tag_filter.as_ref()).await,
             SearchMode::Vector => self.vector_search(options, tag_filter.as_ref()).await,
             SearchMode::Fts | SearchMode::Trigram | SearchMode::Regex => {
                 self.explicit_search(options, tag_filter.as_ref(), options.mode)
                     .await
             }
-        }
+        }?;
+        self.fill_contents(&mut outcome.hits).await?;
+        Ok(outcome)
     }
 
     async fn vector_search(
@@ -339,9 +372,10 @@ impl crate::PostgresMemory {
             .arm_rows(options, ArmKind::FtsExplicit, tag_filter, query.as_deref())
             .await?;
         let hits = if rows.is_empty() && should_trigram_fallback(&options.text) {
-            let recovered = self
-                .arm_rows(options, ArmKind::Trigram, tag_filter, query.as_deref())
-                .await?;
+            let recovered = said_first(
+                self.arm_rows(options, ArmKind::Trigram, tag_filter, query.as_deref())
+                    .await?,
+            );
             let recovered_nonempty = !recovered.is_empty();
             let mut converted = finish_rows(recovered, options.limit)?;
             if recovered_nonempty {
@@ -351,7 +385,7 @@ impl crate::PostgresMemory {
             }
             converted
         } else {
-            finish_rows(rows, options.limit)?
+            finish_rows(said_first(rows), options.limit)?
         };
         self.record_access(&hits)?;
         Ok(SearchOutcome {
@@ -424,13 +458,14 @@ impl crate::PostgresMemory {
 
         let fused = fuse(&fts_rows, vector_rows.as_deref(), trigram_rows.as_deref());
         let top = fused.first().map(|entry| entry.hit.score);
-        let mut hits: Vec<MemorySearchHit> = fused
+        let hits: Vec<MemorySearchHit> = fused
             .into_iter()
             .filter(|entry| {
                 top.is_some_and(|top| passes_fusion_gate(entry.arm_count, entry.hit.score, top))
             })
             .map(|entry| entry.hit)
             .collect();
+        let mut hits = distinct(hits);
         hits.truncate(usize::try_from(options.limit.max(1))?);
         self.record_access(&hits)?;
         Ok(SearchOutcome {

@@ -8,6 +8,7 @@ use kernel::memory::SummarySource;
 use kernel::memory::SummaryStore;
 use kernel::memory::SummaryWatch as _;
 use kernel::memory::SummaryWrite;
+use kernel::memory::ToolUse;
 use memory_postgres::PostgresMemory;
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -200,6 +201,53 @@ async fn pending_lists_the_most_recent_activity_first(pool: PgPool) -> TestResul
         .map(|(id, latest)| (id, Some(latest), 2))
         .collect();
     assert_eq!(pending, expected);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tool_row_shows_its_clipped_input_and_result(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    let conversation = seed_conversation(&pool, "cli:tools", "Session cli:tools").await?;
+    seed_message(&pool, conversation, "run it", at("2026-10-10T12:00:00Z")).await?;
+    let command = "\u{e9}".repeat(400);
+    let output = "line\n".repeat(200);
+    let mut tx = deferred(&pool).await?;
+    sqlx::query(
+        "insert into rh_messages (conversation_id, agent, channel, role, content, tool_name,
+                                  tool_args, tool_result, created_at, owner_user_id)
+         values ($1, 'rivet', 'cli', 'tool', '[tool call] Bash', 'Bash',
+                 jsonb_build_object('command', $2::text), $3, $4, 'owner')",
+    )
+    .bind(conversation)
+    .bind(&command)
+    .bind(&output)
+    .bind(at("2026-10-10T12:01:00Z"))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let window = memory
+        .conversation(conversation)
+        .await?
+        .ok_or("conversation window")?;
+    let tools: Vec<Option<ToolUse>> = window
+        .messages
+        .into_iter()
+        .map(|message| message.tool)
+        .collect();
+    let [None, Some(tool)] = tools.as_slice() else {
+        return Err("one tool row after the user message".into());
+    };
+    let args = format!("{{\"command\": \"{command}\"}}");
+    let input = tool
+        .input
+        .strip_suffix(" \u{2026}")
+        .ok_or("clipped input")?;
+    assert!(input.len() <= ToolUse::INPUT_BYTES && args.starts_with(input));
+    let shown = tool
+        .result
+        .strip_suffix(" \u{2026}")
+        .ok_or("clipped result")?;
+    assert!(shown.len() <= ToolUse::RESULT_BYTES && output.starts_with(shown));
     Ok(())
 }
 

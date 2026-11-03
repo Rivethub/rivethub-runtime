@@ -333,3 +333,48 @@ async fn a_kept_session_is_remembered_from_its_latest_keep(pool: PgPool) -> Test
     let memory = PostgresMemory::new(pool);
     session_delete::a_kept_session_is_remembered_from_its_latest_keep(&memory).await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_long_first_reply_is_read_as_its_opening_and_is_no_one_word_reply(
+    pool: PgPool,
+) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    let long = format!("{}é{}", "x".repeat(511), " and more");
+    let mut tx = testkit::capture_tx(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id) VALUES
+           ('00000000-0000-4000-8000-0000000000c1', 'cli:long-reply', 'acme', 'cli', 'owner'),
+           ('00000000-0000-4000-8000-0000000000c2', 'cli:short-reply', 'acme', 'cli', 'owner')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    for (id, conversation, role, content) in [
+        ("c3", "c1", "user", "hello"),
+        ("c4", "c1", "assistant", long.as_str()),
+        ("c5", "c2", "user", "hello"),
+        ("c6", "c2", "assistant", "Done."),
+    ] {
+        sqlx::query(
+            "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, owner_user_id, created_at)
+             VALUES ($1::uuid, $2::uuid, 'acme', 'cli', $3, $4, 'owner', now() + make_interval(secs => $5))",
+        )
+        .bind(format!("00000000-0000-4000-8000-0000000000{id}"))
+        .bind(format!("00000000-0000-4000-8000-0000000000{conversation}"))
+        .bind(role)
+        .bind(content)
+        .bind(f64::from(u8::from(role == "assistant")))
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    let activity = memory
+        .session_activity(&["cli:long-reply".to_owned(), "cli:short-reply".to_owned()])
+        .await?;
+    let reply = |key: &str| activity.get(key).and_then(|entry| entry.reply.clone());
+    assert_eq!(
+        reply("cli:long-reply"),
+        Some(format!("{} …", "x".repeat(511)))
+    );
+    assert_eq!(reply("cli:short-reply"), Some("Done.".to_owned()));
+    Ok(())
+}

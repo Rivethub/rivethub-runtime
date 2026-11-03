@@ -28,6 +28,11 @@ use axum::routing;
 use kernel::memory::MemoryStore;
 use tower::ServiceBuilder;
 use tower::util::MapRequestLayer;
+use tower_http::CompressionLevel;
+use tower_http::compression::CompressionLayer;
+use tower_http::compression::Predicate;
+use tower_http::compression::predicate::DefaultPredicate;
+use tower_http::compression::predicate::NotForContentType;
 use wire::harness::HarnessId;
 
 use crate::auth::DenialLog;
@@ -598,5 +603,22 @@ impl Gateway {
                 scope::scope_request,
             ))
             .layer(middleware::from_fn_with_state(guard_state, auth::guard))
+            .layer(
+                CompressionLayer::new()
+                    .gzip(true)
+                    .br(true)
+                    .quality(CompressionLevel::Fastest)
+                    .compress_when(compressible()),
+            )
     }
+}
+
+fn compressible() -> impl Predicate {
+    DefaultPredicate::new()
+        .and(NotForContentType::const_new("audio/"))
+        .and(NotForContentType::const_new("video/"))
+        .and(NotForContentType::const_new("application/gzip"))
+        .and(NotForContentType::const_new("application/zip"))
+        .and(NotForContentType::const_new("application/octet-stream"))
+        .and(NotForContentType::const_new("application/x-ndjson"))
 }

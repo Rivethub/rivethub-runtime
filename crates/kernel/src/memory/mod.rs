@@ -28,6 +28,7 @@ mod suggest;
 mod summary;
 mod tags;
 mod title;
+mod tree;
 
 pub use capture::{CaptureBatchRequest, CaptureMessage, CaptureResult};
 pub use deletion::DeletedSession;
@@ -87,6 +88,7 @@ pub use summary::SummaryStore;
 pub use summary::SummaryStoreError;
 pub use summary::SummaryWatch;
 pub use summary::SummaryWrite;
+pub use summary::ToolUse;
 pub use summary::WindowMessage;
 pub use summary::WrittenSummary;
 pub use tags::{
@@ -99,6 +101,7 @@ pub use title::needs_title;
 pub use title::spoken_title;
 pub use title::summary_title;
 pub use title::weak_title;
+pub use tree::{SummaryCounts, SummaryShape, SummaryTree, TreeCut, TreeWindow, cut};
 
 #[derive(Debug, Error)]
 pub enum MemoryStoreError {
@@ -257,6 +260,41 @@ pub struct SummaryDag {
     pub session_key: Option<String>,
     pub summaries: Vec<MemorySummaryNode>,
     pub messages: MemoryMessageTally,
+}
+
+pub const SUMMARY_PREVIEW_BYTES: usize = 320;
+
+impl SummaryDag {
+    #[must_use]
+    pub fn outline(mut self) -> Self {
+        for node in &mut self.summaries {
+            node.source_message_ids.clear();
+            if node.content.len() > SUMMARY_PREVIEW_BYTES {
+                let mut end = SUMMARY_PREVIEW_BYTES;
+                while !node.content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                node.content.truncate(end);
+                node.truncated = true;
+            }
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn latest(mut self, limit: usize) -> Self {
+        self.summaries.sort_by(|left, right| {
+            right
+                .latest_at
+                .cmp(&left.latest_at)
+                .then_with(|| {
+                    (right.kind == SummaryKind::Leaf).cmp(&(left.kind == SummaryKind::Leaf))
+                })
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.summaries.truncate(limit);
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -429,6 +467,40 @@ pub trait MemoryStore: Send + Sync {
     async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError>;
 
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError>;
+
+    async fn summary_outline(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {
+        Ok(self.summary_dag(owner).await?.outline())
+    }
+
+    async fn summary_latest(
+        &self,
+        owner: &SummaryOwner,
+        limit: usize,
+    ) -> Result<SummaryDag, MemoryStoreError> {
+        Ok(self.summary_dag(owner).await?.latest(limit))
+    }
+
+    async fn summary_tree(
+        &self,
+        owner: &SummaryOwner,
+        parent: Option<&str>,
+        window: TreeWindow,
+    ) -> Result<Option<SummaryTree>, MemoryStoreError> {
+        Ok(self.summary_outline(owner).await?.tree(parent, window))
+    }
+
+    async fn summary_node(
+        &self,
+        owner: &SummaryOwner,
+        id: &str,
+    ) -> Result<Option<MemorySummaryNode>, MemoryStoreError> {
+        Ok(self
+            .summary_dag(owner)
+            .await?
+            .summaries
+            .into_iter()
+            .find(|node| node.id == id))
+    }
 
     async fn list_tags(&self, query: TagListQuery) -> Result<Vec<TagWire>, MemoryStoreError>;
 

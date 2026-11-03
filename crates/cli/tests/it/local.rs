@@ -207,3 +207,53 @@ async fn an_existing_file_keeps_its_bytes_and_flags_apply_in_memory() {
     );
     prepared.release().expect("release");
 }
+
+fn without_tls(home: &tempfile::TempDir) -> config::Environment {
+    let shared = home.path().join("shared");
+    config::Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_SHARED_DIR".as_ref(), shared.as_os_str()),
+    ])
+}
+
+#[tokio::test]
+async fn a_first_run_without_tls_serves_loopback_only() {
+    let home = home();
+    let env = without_tls(&home);
+    let cli = Cli::parse_args(["rh", "local"].map(Into::into)).expect("parse");
+    let dispatch = cli::dispatch(cli, &env, &tokio_util::sync::CancellationToken::new()).await;
+    let Dispatch::Local(prepared) = dispatch else {
+        panic!("local did not prepare");
+    };
+    let text = std::fs::read_to_string(home.path().join(".rivethub/config.yaml")).expect("config");
+    assert!(text.contains("host: 127.0.0.1"), "{text}");
+    assert!(text.contains("port: 5174"), "{text}");
+    prepared.release().expect("release");
+}
+
+#[tokio::test]
+async fn a_lan_bind_without_tls_names_the_ways_out() {
+    let home = home();
+    let env = without_tls(&home);
+    let database = home.path().join(".rivethub/memory.sqlite");
+    std::fs::create_dir_all(home.path().join(".rivethub")).expect("state directory");
+    std::fs::write(
+        home.path().join(".rivethub/config.yaml"),
+        format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\ngateway:\n  host: 0.0.0.0\n  port: 5174\n",
+            database.display()
+        ),
+    )
+    .expect("config");
+    let report = run(&["local"], &env).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.contains(
+            "binds the gateway to 0.0.0.0, which needs TLS. Run `rh local --no-lan` to serve on 127.0.0.1 only"
+        ),
+        "{}",
+        report.stderr
+    );
+    assert!(!home.path().join(".rivethub/rivethub.pid").exists());
+    assert!(!database.exists());
+}

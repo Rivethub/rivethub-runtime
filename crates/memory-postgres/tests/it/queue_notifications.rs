@@ -6,12 +6,6 @@ use sqlx::PgPool;
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn subscribed_workers_observe_an_insert_from_another_connection(pool: PgPool) {
-    sqlx::raw_sql(include_str!(
-        "../../../rivethub/tests/fixtures/graphile_worker.txt"
-    ))
-    .execute(&pool)
-    .await
-    .expect("isolated recorded Graphile schema");
     let queue = PostgresQueue::connect(pool).await.expect("queue");
     let mut notifications = queue.subscribe().await.expect("LISTEN before claim");
     assert!(

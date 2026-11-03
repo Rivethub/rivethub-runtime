@@ -9,11 +9,14 @@ use kernel::topics::TopicName;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::builder::ExtractWiki;
 use kernel::wiki::builder::HeldEntity;
+use kernel::wiki::page::WikiPatch;
+use kernel::wiki::page::WikiSlug;
 
 use crate::topics::Outcome;
 use crate::topics::at;
 use crate::topics::new_topic;
 use crate::topics::same;
+use crate::wiki_routes::HOST;
 use crate::wiki_routes::RouteStores;
 use crate::wiki_routes::SESSION_KEY;
 use crate::wiki_routes::SESSION_TITLE;
@@ -37,7 +40,7 @@ pub async fn an_entity_page_names_the_sessions_that_cite_it(
     stores.mentioned_elsewhere(job, &host).await?;
     stores.route(job, vec![host]).await?;
     let entity = stores
-        .named(TopicKind::Entity, "AcmeKit build box")
+        .named(TopicKind::Entity, HOST)
         .await?
         .ok_or("the second mention creates the entity")?;
     let slug = stores.pages.slug(&entity).await?;
@@ -71,7 +74,7 @@ pub async fn an_entity_page_names_the_sessions_that_cite_it(
     same(
         "the topic mentions the entity",
         mentioned(&stores, acmekit.id).await?,
-        vec![(entity.id, "AcmeKit build box".to_owned())],
+        vec![(entity.id, HOST.to_owned())],
     )?;
     let elsewhere = stores
         .pages
@@ -86,8 +89,8 @@ pub async fn an_entity_page_names_the_sessions_that_cite_it(
         "owners",
         owners(&stores).await?,
         vec![
-            ("acmekit".to_owned(), Some(acmekit.id.to_string())),
             (slug.as_ref().to_owned(), Some(entity.id.to_string())),
+            ("acmekit".to_owned(), Some(acmekit.id.to_string())),
             ("billing".to_owned(), Some(elsewhere.id.to_string())),
         ],
     )?;
@@ -103,7 +106,7 @@ pub async fn a_mention_held_before_its_entity_existed_still_lands(
         .named(TopicKind::Type, "Hosts")
         .await?
         .ok_or("the Hosts type is seeded")?;
-    let key = Slug::fold("AcmeKit build box")?;
+    let key = Slug::fold(HOST)?;
     stores
         .wiki
         .hold_entity(HeldEntity {
@@ -120,7 +123,7 @@ pub async fn a_mention_held_before_its_entity_existed_still_lands(
             TopicId::random(),
             NewTopic {
                 kind: TopicKind::Entity,
-                name: TopicName::new("AcmeKit build box")?,
+                name: TopicName::new(HOST)?,
                 aliases: Vec::new(),
                 parent: Some(hosts.id),
                 directory: None,
@@ -184,6 +187,65 @@ pub async fn an_entity_type_is_found_by_its_whole_path(
         .ok_or("the second mention creates the entity")?;
     same("the type its path names", entity.parent, Some(apps.id))?;
     Ok(())
+}
+
+pub async fn an_entity_goes_by_its_names_never_by_a_description(
+    stores: RouteStores<'_>,
+    job: &ExtractWiki,
+) -> Outcome {
+    let activity = named_host(
+        "building-acmekit",
+        "Building AcmeKit on the build box",
+        "Built the nightly.",
+    )?;
+    let mut qualified = named_host(
+        HOST,
+        "acme-build (the lab build box)",
+        "Runs the nightly builds.",
+    )?;
+    qualified.aliases = vec![WikiSlug::try_from("buildbox".to_owned())?];
+    stores.mentioned_elsewhere(job, &activity).await?;
+    stores.mentioned_elsewhere(job, &qualified).await?;
+    let renamed = named_host("buildbox", "BuildBox", "Sits in the lab rack.")?;
+    let mut learned = named_host("lab-box", "lab-box", "Has 64 GB of memory.")?;
+    learned.aliases = vec![WikiSlug::try_from("buildbox".to_owned())?];
+    stores
+        .route(job, vec![activity, qualified, renamed, learned])
+        .await?;
+    let entities: Vec<(String, Vec<String>)> = stores
+        .pages
+        .topics
+        .list()
+        .await?
+        .into_iter()
+        .filter(|listing| listing.topic.kind == TopicKind::Entity)
+        .map(|listing| {
+            (
+                listing.topic.name.as_str().to_owned(),
+                listing
+                    .topic
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.as_str().to_owned())
+                    .collect(),
+            )
+        })
+        .collect();
+    same(
+        "one entity under its name, found by its aliases",
+        entities,
+        vec![(
+            HOST.to_owned(),
+            vec!["buildbox".to_owned(), "lab-box".to_owned()],
+        )],
+    )?;
+    Ok(())
+}
+
+fn named_host(slug: &str, title: &str, text: &str) -> Found<WikiPatch> {
+    let mut mention = patch(slug, title, text)?;
+    mention.entity_type = Some("Hosts".to_owned());
+    Ok(mention)
 }
 
 async fn mentioned(stores: &RouteStores<'_>, topic: TopicId) -> Found<Vec<(TopicId, String)>> {

@@ -14,6 +14,7 @@ mod outage;
 mod role;
 mod runner;
 mod scopes;
+mod settle;
 pub use scopes::OwnerScopes;
 pub mod schedule;
 mod summarize;

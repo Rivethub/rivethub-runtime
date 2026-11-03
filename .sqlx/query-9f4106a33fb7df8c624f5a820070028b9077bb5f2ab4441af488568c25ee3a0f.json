@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_session_placements (session_id, topic_id, placed_by, placed_at, owner_user_id)\n         VALUES ($1, $2, $3, $4,\n                 coalesce((SELECT c.owner_user_id FROM rh_conversations c WHERE c.session_key = ANY($6)\n                            ORDER BY c.created_at LIMIT 1), $5))\n         ON CONFLICT (session_id) DO UPDATE SET topic_id = EXCLUDED.topic_id,\n                                                placed_by = EXCLUDED.placed_by,\n                                                placed_at = EXCLUDED.placed_at,\n                                                owner_user_id = EXCLUDED.owner_user_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9f4106a33fb7df8c624f5a820070028b9077bb5f2ab4441af488568c25ee3a0f"
+}

@@ -214,3 +214,26 @@ async fn timeout_and_cancellation_bound_the_entire_model_call() {
     assert!(matches!(error, workers::WorkerError::Cancelled));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn a_sentence_ending_in_a_quoted_message_is_written() {
+    let quoted = "Sent a message with the content \"Sending it.\"";
+    let provider = testkit::FakeProvider::new(vec![testkit::Script::Chat(LlmResponse {
+        r#type: LlmResponseKind::Text,
+        content: Some(quoted.to_owned()),
+        tool_calls: None,
+        usage: None,
+        finish_reason: None,
+    })]);
+    let store = Store::new();
+    handle_synthesize_tool_call(
+        &store,
+        &provider,
+        "model",
+        &payload(),
+        &CancellationToken::new(),
+    )
+    .await
+    .expect("synthesized");
+    assert_eq!(store.0.lock().await.content, quoted);
+}

@@ -1,4 +1,8 @@
+use std::time::Duration;
+
 use axum::http::StatusCode;
+use gateway::tenancy::UserId;
+use wire::events::SessionBroadcast;
 use wire::gateway::topics::DecisionStatus;
 use wire::gateway::topics::DecisionSuperseded;
 use wire::gateway::topics::TopicDecision;
@@ -11,7 +15,10 @@ use super::TestResult;
 #[tokio::test]
 async fn decisions_are_added_edited_and_superseded() -> TestResult {
     let api = Api::new(true)?;
-    let _mesh: TopicRecord = api
+    let (_, mut live) = api
+        .sessions
+        .subscribe(&UserId::new("owner".to_owned())?, None)?;
+    let mesh: TopicRecord = api
         .json(
             "POST",
             "/api/topics",
@@ -61,6 +68,14 @@ async fn decisions_are_added_edited_and_superseded() -> TestResult {
         .json("GET", "/api/topics/mesh/decisions", "", StatusCode::OK)
         .await?;
     assert_eq!(listed.decisions, [swapped.superseded, replacement]);
+    let changed = format!(r#"{{"type":"topic.changed","v":1,"topic":"{}"}}"#, mesh.id);
+    for _ in 0..3 {
+        let frame = tokio::time::timeout(Duration::from_secs(2), live.recv()).await??;
+        assert!(
+            matches!(&frame, SessionBroadcast::TopicChanged(notice) if notice.topic == mesh.id)
+        );
+        assert_eq!(serde_json::to_string(&frame)?, changed);
+    }
     assert_eq!(
         api.error("PATCH", &path, r#"{"text":"again"}"#).await?.0,
         StatusCode::CONFLICT

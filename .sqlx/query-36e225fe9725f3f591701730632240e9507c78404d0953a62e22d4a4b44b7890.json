@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select seen.event_id\n               from unnest($2::text[]) as wanted(event_id)\n              cross join lateral (\n                  select m.metadata->>'event_id' as event_id from rh_messages m\n                   where m.conversation_id = $1 and m.metadata->>'event_id' = wanted.event_id\n                   limit 1\n              ) seen",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_id",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "36e225fe9725f3f591701730632240e9507c78404d0953a62e22d4a4b44b7890"
+}

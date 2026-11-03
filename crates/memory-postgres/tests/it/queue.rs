@@ -32,6 +32,13 @@ struct SummarizeConversationPayload<'a> {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompactPayload<'a> {
+    conversation_id: &'a str,
+    trigger_type: &'a str,
+}
+
+#[derive(serde::Serialize)]
 struct ExtractWikiPayload<'a> {
     #[serde(rename = "summaryId")]
     summary_id: &'a str,
@@ -146,6 +153,77 @@ async fn enqueue_claims_and_completes_through_the_public_api(pool: PgPool) -> Te
         .is_none(),
         "completion removes the job"
     );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_postponed_job_waits_its_turn_unless_claimed_by_id(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let jobs = queue(&pool).await?;
+    let any = kernel::queue::ClaimSelector::matching(jobs.task_names(WorkerRole::Embedder));
+    jobs.enqueue(embed_job()).await?;
+    let claimed = jobs.claim(&any).await?.ok_or("the only job is claimable")?;
+    jobs.postpone(claimed.id, std::time::Duration::from_secs(60))
+        .await?;
+    assert!(jobs.claim(&any).await?.is_none(), "a postponed job waits");
+    let by_id = kernel::queue::ClaimSelector {
+        only_id: Some(claimed.id),
+        ..any
+    };
+    let joined = jobs
+        .claim(&by_id)
+        .await?
+        .ok_or("a coalescing lead claims a postponed job by id")?;
+    assert_eq!(joined.attempt, 1, "postponing gave the attempt back");
+    jobs.complete(joined.id).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let jobs = queue(&pool).await?;
+    let arm = |priority: i16, trigger: &str| Job {
+        name: JobName::Fixed(FixedJob::SummarizeConversation),
+        payload: object(&CompactPayload {
+            conversation_id: "c1",
+            trigger_type: trigger,
+        }),
+        key: Some("compact-c1".to_owned()),
+        key_mode: JobKeyMode::Arm,
+        priority,
+        run_at: Some(chrono::Utc::now()),
+        max_attempts: Some(3),
+    };
+    let state = || {
+        sqlx::query_as::<_, (i16, bool, Option<String>)>(
+            "SELECT priority, run_at < now() - interval '6 days', payload->>'triggerType'
+               FROM graphile_worker._private_jobs WHERE key = 'compact-c1'",
+        )
+        .fetch_one(&pool)
+    };
+    jobs.enqueue(arm(10, "session_stale")).await?;
+    sqlx::query("UPDATE graphile_worker._private_jobs SET run_at = now() - interval '7 days'")
+        .execute(&pool)
+        .await?;
+    jobs.enqueue(arm(10, "session_stale")).await?;
+    assert_eq!(state().await?, (10, true, Some("session_stale".to_owned())));
+    jobs.enqueue(arm(0, "session_idle")).await?;
+    assert_eq!(state().await?, (0, true, Some("session_idle".to_owned())));
+    jobs.enqueue(arm(10, "session_stale")).await?;
+    assert_eq!(state().await?, (0, true, Some("session_idle".to_owned())));
+    let running = jobs
+        .claim(&kernel::queue::ClaimSelector::matching(
+            jobs.task_names(WorkerRole::Summarizer),
+        ))
+        .await?
+        .ok_or("the armed job runs first")?;
+    jobs.enqueue(arm(0, "session_idle")).await?;
+    let queued: i64 = sqlx::query_scalar("SELECT count(*) FROM graphile_worker._private_jobs")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(queued, 2, "arming a running job queues one behind it");
+    jobs.complete(running.id).await?;
     Ok(())
 }
 
@@ -312,7 +390,27 @@ async fn queue_health_reports_buckets(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn the_store_reports_the_queue_as_unavailable(pool: PgPool) -> TestResult {
+async fn the_migrations_create_the_queue(pool: PgPool) -> TestResult {
+    let jobs = queue(&pool).await?;
+    jobs.enqueue(embed_job()).await?;
+    let claimed = jobs
+        .claim(&kernel::queue::ClaimSelector::matching(
+            jobs.task_names(WorkerRole::Embedder),
+        ))
+        .await?;
+    assert_eq!(
+        claimed.map(|job| job.name),
+        Some(JobName::Fixed(FixedJob::EmbedTarget))
+    );
+    assert!(store(&pool).queue_available().await?);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_store_reports_a_missing_queue_as_unavailable(pool: PgPool) -> TestResult {
+    sqlx::query("DROP SCHEMA graphile_worker CASCADE")
+        .execute(&pool)
+        .await?;
     assert!(matches!(
         PostgresQueue::connect(pool.clone()).await,
         Err(memory_postgres::Error::QueueAbsent)
