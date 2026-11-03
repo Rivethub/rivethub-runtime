@@ -57,6 +57,8 @@ pub(super) async fn run(
         MemoryCommand::Export { out, since, sqlite } => {
             export(out, since, sqlite, env, shutdown, stdout_is_terminal).await
         }
+        MemoryCommand::Bundle { out, sqlite } => share_bundle(out, sqlite, env).await,
+        MemoryCommand::IngestBundle { path } => ingest_bundle(path, env, shutdown).await,
         MemoryCommand::Import {
             path,
             dry_run,
@@ -239,6 +241,40 @@ async fn consolidate_wiki(
     ));
     let text = format!("{}\n", lines.join("\n"));
     Ok(Report::success(text))
+}
+
+async fn share_bundle(
+    out: PathBuf,
+    sqlite: Option<PathBuf>,
+    env: &Environment,
+) -> Result<Report, Error> {
+    let Target::Sqlite(path) = resolve(env, sqlite, Kind::Either)? else {
+        return Err(Error::BundleSqlite);
+    };
+    let store = open_sqlite(&path).await?;
+    let bundle = store.session_bundle().await?;
+    let sessions = bundle.sessions.len();
+    let text = serde_json::to_string_pretty(&bundle).map_err(capture::bundle::BundleError::from)?;
+    tokio::fs::write(&out, format!("{text}\n")).await?;
+    Ok(Report::success(format!(
+        "wrote {sessions} session(s) to {}\n",
+        out.display()
+    )))
+}
+
+async fn ingest_bundle(
+    path: PathBuf,
+    env: &Environment,
+    _shutdown: &CancellationToken,
+) -> Result<Report, Error> {
+    let text = tokio::fs::read_to_string(&path).await?;
+    let bundle = capture::bundle::parse(&text)?;
+    let sessions = bundle.sessions.len();
+    let totals = crate::capture_hook::ingest_bundle(env, &bundle, Utc::now()).await?;
+    Ok(Report::success(format!(
+        "ingested {sessions} session(s): {} inserted, {} skipped\n",
+        totals.inserted, totals.skipped
+    )))
 }
 
 async fn export(

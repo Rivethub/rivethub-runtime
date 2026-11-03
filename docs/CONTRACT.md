@@ -1568,6 +1568,14 @@ the new columns, which `rh memory merge-store` rewrites like the other owned tab
 as before; a person node's topic removal and tag edits work as before except the household upsert above.
 `memory_postgres::SCHEMA_VERSION` is 56.
 
+(124) Session bundles (Phil, 2026-11-02): `rh memory bundle --out <file> [--sqlite <file>]` writes the sessions in a
+SQLite memory file as JSON of version 1 (`wire::capture::SessionBundle`: `version` and `sessions`, each session a
+`CaptureBatchRequest`). The file names no owner. A message's event id is the `event_id` stored in its metadata, else
+its row id, and that key is not copied back into the message metadata. `rh memory ingest-bundle <file>` posts each
+session through the capture writer this node already uses (the local gateway, or `memory.capture.gateway` when that is
+set), so the receiving node records every session as the user it authenticated and a second ingest skips event ids it
+already has. A bundle whose version is not 1 is refused. Postgres memory is not a bundle source yet.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

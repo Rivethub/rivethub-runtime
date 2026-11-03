@@ -1,4 +1,5 @@
 mod append;
+mod bundle;
 pub mod capture;
 mod context;
 mod conversation;

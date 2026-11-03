@@ -65,6 +65,13 @@ pub(super) enum MemoryCommand {
     RecompileWiki(super::recompile::RecompileArgs),
     Cleanup(super::cleanup::CleanupArgs),
     MergeStore(super::merge::MergeArgs),
+    Bundle {
+        out: PathBuf,
+        sqlite: Option<PathBuf>,
+    },
+    IngestBundle {
+        path: PathBuf,
+    },
 }
 
 enum Verb {
@@ -80,6 +87,8 @@ enum Verb {
     RecompileWiki,
     Cleanup,
     MergeStore,
+    Bundle,
+    IngestBundle,
 }
 
 fn verb(text: &str) -> Option<Verb> {
@@ -96,6 +105,8 @@ fn verb(text: &str) -> Option<Verb> {
         "recompile-wiki" => Some(Verb::RecompileWiki),
         "cleanup" => Some(Verb::Cleanup),
         "merge-store" => Some(Verb::MergeStore),
+        "bundle" => Some(Verb::Bundle),
+        "ingest-bundle" => Some(Verb::IngestBundle),
         _ => None,
     }
 }
@@ -132,6 +143,8 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
         Verb::MergeStore => super::merge::parse(rest)
             .map(MemoryCommand::MergeStore)
             .map(Some),
+        Verb::Bundle => bundle(rest).map(Some),
+        Verb::IngestBundle => ingest_bundle(rest).map(Some),
     }
 }
 
@@ -365,6 +378,57 @@ fn import(args: &[String]) -> Result<MemoryCommand, Error> {
         dry_run,
         sqlite,
     })
+}
+
+fn bundle(args: &[String]) -> Result<MemoryCommand, Error> {
+    let mut scan = Scan::new(args);
+    let mut out = None;
+    let mut sqlite = None;
+    while scan.current().is_some() {
+        match scan.option("--out", None) {
+            Taken::Value(value) => {
+                out = Some(nonempty(&value, Error::OutRequired)?);
+                continue;
+            }
+            Taken::Missing => return Err(Error::OutRequired),
+            Taken::Absent => {}
+        }
+        match scan.option("--sqlite", None) {
+            Taken::Value(value) => {
+                sqlite = Some(nonempty(&value, Error::SqliteRequired)?);
+                continue;
+            }
+            Taken::Missing => return Err(Error::SqliteRequired),
+            Taken::Absent => {}
+        }
+        return Err(reject(&scan));
+    }
+    let Some(out) = out else {
+        return Err(Error::OutRequired);
+    };
+    Ok(MemoryCommand::Bundle { out, sqlite })
+}
+
+fn ingest_bundle(args: &[String]) -> Result<MemoryCommand, Error> {
+    let mut scan = Scan::new(args);
+    let mut path = None;
+    while scan.current().is_some() {
+        let Some(token) = scan.current().map(str::to_owned) else {
+            break;
+        };
+        if token.starts_with('-') {
+            return Err(Error::UnknownOption(token));
+        }
+        if path.is_some() {
+            return Err(Error::ImportOne);
+        }
+        path = Some(PathBuf::from(token));
+        scan.bump();
+    }
+    let Some(path) = path else {
+        return Err(Error::ImportPath);
+    };
+    Ok(MemoryCommand::IngestBundle { path })
 }
 
 fn titles(args: &[String]) -> Result<MemoryCommand, Error> {

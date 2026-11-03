@@ -297,4 +297,10 @@ pub enum Error {
     Worker(#[from] workers::WorkerError),
     #[error(transparent)]
     ProviderBuild(#[from] providers::BuildError),
+    #[error(
+        "session bundles are read from a SQLite memory file; pass --sqlite <file> or set memory.sqlite.path"
+    )]
+    BundleSqlite,
+    #[error(transparent)]
+    Bundle(#[from] capture::bundle::BundleError),
 }

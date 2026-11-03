@@ -62,6 +62,14 @@ impl CaptureBatchRequest {
     }
 }
 
+pub const SESSION_BUNDLE_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionBundle {
+    pub version: u32,
+    pub sessions: Vec<CaptureBatchRequest>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CaptureResult {
     pub ok: bool,
