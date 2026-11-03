@@ -1,5 +1,3 @@
-use std::str::FromStr as _;
-
 use rusqlite::Connection;
 use serde::Deserialize;
 use wire::JsonObject;
@@ -27,7 +25,7 @@ struct StoredSession {
     created_at: String,
     updated_at: String,
     id: String,
-    role: String,
+    role: Role,
     content: String,
     tool_name: Option<String>,
     tool_args: Option<String>,
@@ -73,7 +71,7 @@ fn stored_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSession> {
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
         id: row.get(6)?,
-        role: row.get(7)?,
+        role: crate::message::stored_role(row, 7)?,
         content: row.get(8)?,
         tool_name: row.get(9)?,
         tool_args: row.get(10)?,
@@ -133,9 +131,7 @@ fn message_for(row: &StoredSession) -> Result<CaptureMessage, SqliteError> {
     };
     Ok(CaptureMessage {
         event_id,
-        role: Role::from_str(&row.role).map_err(|_| SqliteError::Invalid {
-            message: format!("stored role \"{}\" is not a message role", row.role),
-        })?,
+        role: row.role,
         content: row.content.clone(),
         tool_name: row.tool_name.clone(),
         tool_args: row
