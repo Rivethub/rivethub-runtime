@@ -3,6 +3,7 @@ pub(crate) mod identities;
 mod mesh;
 mod models;
 pub(crate) mod plugins;
+mod spool;
 mod tasks;
 mod terminals;
 
@@ -371,6 +372,7 @@ impl Composition {
         gateway = devices::attach(gateway, config, env, &identity.owner, shutdown).await?;
         let tracker = tokio_util::task::TaskTracker::new();
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
+        spool::replay_captures(&tracker, env, shutdown);
         if config.memory_only() {
             gateway = gateway.with_memory_profile();
         }

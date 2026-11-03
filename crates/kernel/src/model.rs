@@ -150,6 +150,11 @@ pub enum ModelCallFailure {
         #[source]
         source: BoxError,
     },
+    #[error("model server unreachable: {source}")]
+    Unreachable {
+        #[source]
+        source: BoxError,
+    },
     #[error("model credentials are unavailable: {source}")]
     Credentials {
         #[source]
@@ -174,7 +179,7 @@ impl ModelProviderError {
     pub fn retryable_transport(&self) -> bool {
         match self.failure() {
             Some(ModelCallFailure::Http { status, .. }) => *status >= 500,
-            Some(ModelCallFailure::Transport { .. }) => true,
+            Some(ModelCallFailure::Transport { .. } | ModelCallFailure::Unreachable { .. }) => true,
             Some(ModelCallFailure::Credentials { .. }) | None => false,
         }
     }

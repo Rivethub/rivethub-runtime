@@ -125,3 +125,30 @@ fn search_route_forwards_excluded_roles() {
         vec![wire::message::Role::Tool, wire::message::Role::System]
     );
 }
+
+#[test]
+fn a_messages_only_search_without_a_mode_searches_text() {
+    let (store, app) = seeded().expect("store");
+    for target in [
+        "/api/memory/search?q=pomodoro&scope=messages",
+        "/api/memory/search?q=pomodoro&scope=messages&mode=hybrid",
+        "/api/memory/search?q=pomodoro",
+    ] {
+        let http =
+            block_on(answer(app.clone(), recorded("GET", target, Vec::new()))).expect("http");
+        assert_eq!(http.status, 200, "{target}");
+    }
+    let requests = block_on(store.requests());
+    let modes: Vec<kernel::memory::SearchMode> = recorded_searches(&requests)
+        .iter()
+        .map(|query| query.mode)
+        .collect();
+    assert_eq!(
+        modes,
+        [
+            kernel::memory::SearchMode::Fts,
+            kernel::memory::SearchMode::Hybrid,
+            kernel::memory::SearchMode::Hybrid
+        ]
+    );
+}

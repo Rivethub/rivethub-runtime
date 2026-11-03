@@ -1,12 +1,12 @@
 # memory-sqlite
 
-`SqliteStore` is the standalone SQLite adapter for the kernel memory ports. It opens the schema v8 file created by `rivethub-migrate sqlite`. Every statement runs on `spawn_blocking` through `with_conn`.
+`SqliteStore` is the standalone SQLite adapter for the kernel memory ports. It opens a file that `rivethub-migrate sqlite` created or upgraded to `SCHEMA_VERSION` (30) and refuses an older one. Every statement runs on `spawn_blocking` through `with_conn`.
 
-The store implements `kernel::memory::MemoryStore`, `kernel::memory::EmbeddingStore`, and `kernel::memory::SummaryStore`. The job queue is the existing `JobQueue` impl in `port.rs`.
+The store implements `kernel::memory::MemoryStore`, `EmbeddingStore` and `SummaryStore`, the `JobQueue` (`port.rs`), and the topic, topic-page, decision, filing, tidy, wiki-builder, tenancy, session-deletion and task ports that `rh local` composes.
 
-## Storage schema v7 does not have
+## What the schema does not have
 
-`EmbeddingStore` accepts messages, summaries, and wiki topics. It refuses `EmbedTable::MessageChunks` and any `StoredEmbedding` whose `chunks` are not empty. Schema v7 has no `ros_message_chunks` table. Those calls return `SqliteError::MissingTable` (`schema v7 has no ros_message_chunks table`), which the port maps to `EmbeddingStoreError::Query`.
+`EmbeddingStore` accepts messages, summaries, and wiki topics. It refuses `EmbedTable::MessageChunks` and any `StoredEmbedding` whose `chunks` are not empty. The schema has no `ros_message_chunks` table. Those calls return `SqliteError::MissingTable` (`schema v7 has no ros_message_chunks table`), which the port maps to `EmbeddingStoreError::Query`.
 
 `StoredEmbedding.content_hash` is not stored. `ros_messages`, `ros_summaries`, and `ros_wiki_topics` have no `content_hash` column. A successful write still stores the little-endian `f32` vector, sets `embed_status` to `done`, clears `embed_error`, and sets `embed_failures` to 0.
 
@@ -31,7 +31,7 @@ REGEXP uses the Rust regex crate with a 1 MiB compiled-expression limit and boun
 ## One-time Postgres import
 
 `rivethub-migrate sqlite --path memory.sqlite --import-pg-dump memory.pg.sql`
-creates a new target schema, or opens an existing v8 target, then imports a data-only, plain pg_dump from
+creates a new target schema, or opens an existing target at the current schema, then imports a data-only, plain pg_dump from
 Postgres 16 or 18. The command prints a JSON report with row counts for every memory
 table. Import refuses non-empty targets and rolls back all data, index entries and
 the completion receipt on any error. Dump SQL is never executed. Only supported

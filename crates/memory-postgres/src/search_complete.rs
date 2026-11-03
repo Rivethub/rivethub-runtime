@@ -160,21 +160,7 @@ impl crate::PostgresMemory {
             tokio::try_join!(expand, self.summary_details(&outcome.hits, &query))?;
         let mut response = SearchOutcome {
             summaries,
-            results: outcome
-                .hits
-                .into_iter()
-                .map(|hit| kernel::memory::MemorySearchResult {
-                    chunk: hit.chunk,
-                    id: hit.id,
-                    source: hit.source,
-                    content: hit.content,
-                    role: hit.role,
-                    agent: hit.agent,
-                    relevance_score: hit.score,
-                    created_at: hit.created_at,
-                    session_id: hit.session_id,
-                })
-                .collect(),
+            results: outcome.hits.into_iter().map(search_result).collect(),
             degraded: reason.map(|reason| MemoryDegraded {
                 reason,
                 effect: "Keyword / FTS ranking only — not meaning-based.".to_owned(),
@@ -225,5 +211,20 @@ impl crate::PostgresMemory {
             .await
             .map_err(|source| Error::operation("summary expansion", source))?;
         Ok(crate::read::readable_entries(rows))
+    }
+}
+
+fn search_result(hit: crate::search::MemorySearchHit) -> kernel::memory::MemorySearchResult {
+    kernel::memory::MemorySearchResult {
+        chunk: hit.chunk,
+        id: hit.id,
+        source: hit.source,
+        content: hit.content,
+        role: hit.role,
+        agent: hit.agent,
+        relevance_score: hit.score,
+        created_at: hit.created_at,
+        session_id: hit.session_id,
+        title: hit.title,
     }
 }

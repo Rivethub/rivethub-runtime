@@ -2,8 +2,8 @@ use crate::topics::TopicId;
 use crate::topics::TopicName;
 use crate::topics::fold;
 
-const MAX_NAME_WORDS: usize = 4;
-const MAX_NAME_CHARS: usize = 40;
+pub(crate) const MAX_NAME_WORDS: usize = 4;
+pub(crate) const MAX_NAME_CHARS: usize = 40;
 const MIN_ID_CHARS: usize = 6;
 const MAX_VERSION_DIGITS: usize = 2;
 
@@ -118,7 +118,7 @@ enum FileExtension {
     Pdf,
 }
 
-fn file_name(word: &str) -> bool {
+pub(crate) fn file_name(word: &str) -> bool {
     word.trim_matches(|ch: char| !ch.is_alphanumeric())
         .rsplit_once('.')
         .is_some_and(|(left, right)| !left.is_empty() && right.parse::<FileExtension>().is_ok())
@@ -168,7 +168,7 @@ fn branch(words: &[&str]) -> bool {
     })
 }
 
-fn identifier(word: &str) -> bool {
+pub(crate) fn identifier(word: &str) -> bool {
     word.chars().count() >= MIN_ID_CHARS
         && word.chars().all(|ch| ch.is_ascii_hexdigit())
         && word.chars().any(|ch| ch.is_ascii_digit())

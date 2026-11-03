@@ -8,16 +8,24 @@ use super::builder::HeldEntity;
 use super::builder::WikiBuilderStore;
 use super::builder::WikiSummary;
 use super::page::WikiPatch;
+use crate::cleanup::EntityType;
+use crate::topics::Alias;
 use crate::topics::NewTopic;
 use crate::topics::Redirect;
 use crate::topics::Slug;
 use crate::topics::Topic;
+use crate::topics::TopicChanges;
+use crate::topics::TopicError;
 use crate::topics::TopicId;
 use crate::topics::TopicKind;
 use crate::topics::TopicName;
 use crate::topics::TopicPageError;
 use crate::topics::TopicStore;
 use crate::topics::TopicTree;
+
+mod name;
+
+use name::entity_name;
 
 const SESSIONS_TO_CREATE: usize = 2;
 const PATH_SEPARATOR: &str = " › ";
@@ -107,18 +115,16 @@ impl Catalog {
         patch: WikiPatch,
         now: DateTime<Utc>,
     ) -> Result<Option<Filed>, TopicPageError> {
+        let kind = patch
+            .entity_type
+            .as_deref()
+            .and_then(|named| self.type_named(named))
+            .map(|kind| kind.id);
         let names = names(&patch);
-        if let Some(entity) = self.known(&names).cloned() {
+        if let Some(entity) = self.known(&names, kind).cloned() {
+            let entity = self.learn(topics, entity, &patch, now).await?;
             let keys: BTreeSet<Slug> = names.into_iter().chain(self.keys(&entity)).collect();
-            let mut held = Vec::new();
-            for key in &keys {
-                held.extend(wiki.held_entities(key).await?);
-            }
-            held.sort_by(|left, right| {
-                left.at
-                    .cmp(&right.at)
-                    .then_with(|| left.source.cmp(&right.source))
-            });
+            let held = held_under(wiki, &keys).await?;
             return Ok(Some(Filed::of(entity, summary, patch, held)));
         }
         for name in &names {
@@ -126,18 +132,18 @@ impl Catalog {
                 return Ok(None);
             }
         }
-        let Some(key) = Slug::of_heading(&patch.title) else {
+        let Some(key) = self.name_of(&patch, kind).and_then(Slug::of_heading) else {
             return Ok(None);
         };
-        let held = wiki
-            .hold_entity(HeldEntity {
-                key,
-                source: source(summary),
-                summary_id: summary.id,
-                patch: patch.clone(),
-                at: now,
-            })
-            .await?;
+        wiki.hold_entity(HeldEntity {
+            key,
+            source: source(summary),
+            summary_id: summary.id,
+            patch: patch.clone(),
+            at: now,
+        })
+        .await?;
+        let held = held_under(wiki, &names).await?;
         let sources: BTreeSet<&str> = held.iter().map(|mention| mention.source.as_str()).collect();
         if sources.len() < SESSIONS_TO_CREATE {
             return Ok(None);
@@ -151,16 +157,22 @@ impl Catalog {
         else {
             return Ok(None);
         };
-        let Some(latest) = held.last() else {
+        let Some(name) = held
+            .iter()
+            .rev()
+            .find_map(|mention| self.name_of(&mention.patch, Some(parent)))
+        else {
             return Ok(None);
         };
+        let patches: Vec<&WikiPatch> = held.iter().map(|mention| &mention.patch).collect();
+        let aliases = self.new_aliases(name, BTreeSet::new(), parent, &patches)?;
         let created = topics
             .create(Topic::create(
                 TopicId::random(),
                 NewTopic {
                     kind: TopicKind::Entity,
-                    name: TopicName::new(&latest.patch.title)?,
-                    aliases: Vec::new(),
+                    name: TopicName::new(name)?,
+                    aliases,
                     parent: Some(parent),
                     directory: None,
                     owner: summary.owner.clone(),
@@ -172,10 +184,96 @@ impl Catalog {
         Ok(Some(Filed::of(created, summary, patch, held)))
     }
 
-    fn known(&self, names: &BTreeSet<Slug>) -> Option<&Topic> {
+    fn known(&self, names: &BTreeSet<Slug>, kind: Option<TopicId>) -> Option<&Topic> {
+        let compacted: BTreeSet<String> = names.iter().map(compact).collect();
         self.entities
             .iter()
-            .find(|entity| self.keys(entity).any(|key| names.contains(&key)))
+            .filter_map(|entity| {
+                let exact = self.keys(entity).any(|key| names.contains(&key));
+                let close = self
+                    .keys(entity)
+                    .any(|key| compacted.contains(&compact(&key)));
+                let other_type = kind.is_none_or(|kind| entity.parent != Some(kind));
+                (exact || close).then_some(((other_type, !exact), entity))
+            })
+            .min_by_key(|(rank, _)| *rank)
+            .map(|(_, entity)| entity)
+    }
+
+    fn name_of<'patch>(
+        &self,
+        patch: &'patch WikiPatch,
+        kind: Option<TopicId>,
+    ) -> Option<&'patch str> {
+        entity_name(&patch.title, self.entity_type(kind))
+    }
+
+    fn entity_type(&self, kind: Option<TopicId>) -> Option<EntityType> {
+        let kind = self.types.iter().find(|known| Some(known.id) == kind)?;
+        EntityType::named(kind.name.as_str())
+    }
+
+    async fn learn(
+        &mut self,
+        topics: &dyn TopicStore,
+        entity: Topic,
+        patch: &WikiPatch,
+        now: DateTime<Utc>,
+    ) -> Result<Topic, TopicPageError> {
+        let Some(kind) = entity.parent else {
+            return Ok(entity);
+        };
+        let own: BTreeSet<Slug> = self.keys(&entity).collect();
+        let learned = self.new_aliases(entity.name.as_str(), own, kind, &[patch])?;
+        if learned.is_empty() {
+            return Ok(entity);
+        }
+        let changes = TopicChanges {
+            aliases: Some(entity.aliases.iter().cloned().chain(learned).collect()),
+            ..TopicChanges::default()
+        };
+        let updated = topics.update(entity.id, changes, now).await?;
+        if let Some(slot) = self
+            .entities
+            .iter_mut()
+            .find(|known| known.id == updated.id)
+        {
+            updated.clone_into(slot);
+        }
+        Ok(updated)
+    }
+
+    fn new_aliases(
+        &self,
+        name: &str,
+        mut seen: BTreeSet<Slug>,
+        kind: TopicId,
+        patches: &[&WikiPatch],
+    ) -> Result<Vec<Alias>, TopicError> {
+        let kind = self.entity_type(Some(kind));
+        seen.extend(Slug::of_heading(name));
+        let mut aliases = Vec::new();
+        let texts = patches.iter().flat_map(|patch| {
+            std::iter::once(patch.title.as_str()).chain(patch.aliases.iter().map(AsRef::as_ref))
+        });
+        for text in texts {
+            let Some(alias) = entity_name(text, kind) else {
+                continue;
+            };
+            let Some(key) = Slug::of_heading(alias) else {
+                continue;
+            };
+            if !self.claimed(&key) && seen.insert(key) {
+                aliases.push(Alias::new(alias)?);
+            }
+        }
+        Ok(aliases)
+    }
+
+    fn claimed(&self, key: &Slug) -> bool {
+        self.entities
+            .iter()
+            .any(|entity| self.keys(entity).any(|known| known == *key))
     }
 
     fn type_named(&self, named: &str) -> Option<&Topic> {
@@ -230,9 +328,34 @@ impl Catalog {
 fn names(patch: &WikiPatch) -> BTreeSet<Slug> {
     [patch.title.as_str(), patch.slug.as_ref()]
         .into_iter()
+        .chain(entity_name(&patch.title, None))
         .chain(patch.aliases.iter().map(AsRef::as_ref))
         .filter_map(Slug::of_heading)
         .collect()
+}
+
+fn compact(slug: &Slug) -> String {
+    slug.as_str().replace('-', "")
+}
+
+async fn held_under(
+    wiki: &dyn WikiBuilderStore,
+    keys: &BTreeSet<Slug>,
+) -> Result<Vec<HeldEntity>, TopicPageError> {
+    let mut held: Vec<HeldEntity> = Vec::new();
+    for key in keys {
+        for mention in wiki.held_entities(key).await? {
+            if !held.contains(&mention) {
+                held.push(mention);
+            }
+        }
+    }
+    held.sort_by(|left, right| {
+        left.at
+            .cmp(&right.at)
+            .then_with(|| left.source.cmp(&right.source))
+    });
+    Ok(held)
 }
 
 fn source(summary: &WikiSummary) -> String {

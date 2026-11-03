@@ -561,3 +561,37 @@ async fn job_claims_follow_the_previous_priority_order_and_reclaim_stale_locks(
     assert_eq!(claimed, expected);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_message_captured_twice_is_one_hit(pool: PgPool) -> TestResult {
+    conversation(&pool).await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let first = message(
+        &pool,
+        1,
+        "the backup host rebooted after the nightly snapshot finished",
+        None,
+        None,
+    )
+    .await?;
+    let mut tx = testkit::capture_tx(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         SELECT $2, conversation_id, agent, channel, role, content, created_at, owner_user_id
+           FROM rh_messages WHERE id = $1",
+    )
+    .bind(first)
+    .bind(Uuid::from_u128(2))
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    for mode in [SearchMode::Hybrid, SearchMode::Trigram] {
+        assert_eq!(
+            hit_ids(&memory, &search("backup host", mode, MemoryScope::Messages))
+                .await?
+                .len(),
+            1
+        );
+    }
+    Ok(())
+}

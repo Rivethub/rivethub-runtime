@@ -8,6 +8,7 @@ use kernel::topics::StartupContext;
 use kernel::topics::render;
 use serde::Deserialize;
 use wire::gateway::term::{PtyList, TermConfig, TermSpawnRequest, TermSpawnResponse};
+use wire::session_id::SessionId;
 
 use super::sessions::Accepted;
 use crate::Gateway;
@@ -84,7 +85,26 @@ async fn spawn(
         .as_ref()
         .zip(context.as_ref())
         .and_then(|(topic, context)| render(context, topic.name.as_str()));
-    let spawned = service.spawn_from(&user, request, preset, rendered).await?;
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B1 (note 112): a resume that names no harness keeps the roster command's folder"
+        )
+    )]
+    let resumed = match (&preset, request.resume.as_deref()) {
+        (None, Some(resume)) => resume.parse::<SessionId>().ok(),
+        _ => None,
+    };
+    let workdir = if let Some(session) = resumed {
+        crate::history::refuse_elsewhere(&gateway, &session).await?;
+        crate::history::working_dir(&gateway, &session).await
+    } else {
+        None
+    };
+    let spawned = service
+        .spawn_from(&user, request, preset, rendered, workdir)
+        .await?;
     let mut response = spawned.response;
     if let Some(topic) = topic {
         super::topics::begin(

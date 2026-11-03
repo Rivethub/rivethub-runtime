@@ -73,6 +73,14 @@ pub struct CurrentText {
 }
 
 impl TopicTarget {
+    #[must_use]
+    pub fn route_key(&self) -> String {
+        match self.section {
+            Some(_) => format!("{}#{}", self.page_slug.as_ref(), self.topic),
+            None => self.page_slug.as_ref().to_owned(),
+        }
+    }
+
     fn claims(&self, patch: &WikiPatch) -> bool {
         patch.slug == self.page_slug || patch.aliases.contains(&self.page_slug)
     }
@@ -125,16 +133,28 @@ impl WikiRouter<'_> {
         &self,
         summary: &WikiSummary,
     ) -> Result<Option<TopicTarget>, TopicPageError> {
-        let target = match self.topics.waits_on(summary).await? {
-            Some(waits) => self.topics.filed_target(&waits, self.now).await?,
-            None => None,
-        };
-        match target {
-            Some(target) => NoteOrigin::run(summary.id, Box::pin(self.with_current(target)))
-                .await
-                .map(Some),
+        match self.route(summary).await? {
+            Some(target) => self.current(summary, target).await.map(Some),
             None => Ok(None),
         }
+    }
+
+    pub async fn route(
+        &self,
+        summary: &WikiSummary,
+    ) -> Result<Option<TopicTarget>, TopicPageError> {
+        match self.topics.waits_on(summary).await? {
+            Some(waits) => self.topics.filed_target(&waits, self.now).await,
+            None => Ok(None),
+        }
+    }
+
+    pub async fn current(
+        &self,
+        summary: &WikiSummary,
+        target: TopicTarget,
+    ) -> Result<TopicTarget, TopicPageError> {
+        NoteOrigin::run(summary.id, Box::pin(self.with_current(target))).await
     }
 
     pub async fn type_paths(&self) -> Result<Vec<String>, TopicPageError> {

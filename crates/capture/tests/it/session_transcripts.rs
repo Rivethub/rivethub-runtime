@@ -11,6 +11,7 @@ use kernel::transcript::StoreTranscript;
 use kernel::transcript::TranscriptBlock;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptToolStatus;
+use kernel::transcript::TranscriptWindow;
 use wire::harness::HarnessId;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -35,7 +36,20 @@ fn claude(root: &Path) -> StoreSessionLister {
 }
 
 async fn read(lister: &StoreSessionLister, harness: HarnessId, id: &str) -> StoreTranscript {
-    match lister.transcript(harness, id).await.expect("transcript") {
+    read_window(lister, harness, id, TranscriptWindow::Latest).await
+}
+
+async fn read_window(
+    lister: &StoreSessionLister,
+    harness: HarnessId,
+    id: &str,
+    window: TranscriptWindow,
+) -> StoreTranscript {
+    match lister
+        .transcript(harness, id, window)
+        .await
+        .expect("transcript")
+    {
         TranscriptRead::Read(read) => read,
         TranscriptRead::NoSource => panic!("{harness} has a transcript source"),
     }
@@ -45,12 +59,14 @@ async fn read(lister: &StoreSessionLister, harness: HarnessId, id: &str) -> Stor
 async fn dsh_has_no_transcript_source() {
     let lister = StoreSessionLister::new(StoreRoots::default());
     assert!(matches!(
-        lister.transcript(HarnessId::Dsh, U1).await,
+        lister
+            .transcript(HarnessId::Dsh, U1, TranscriptWindow::Latest)
+            .await,
         Ok(TranscriptRead::NoSource)
     ));
 }
 
-async fn claude_turns(lines: &[&str]) -> Vec<HarnessTranscriptTurn> {
+async fn claude_read(lines: &[&str]) -> StoreTranscript {
     let dir = tempfile::tempdir().expect("store");
     write(
         dir.path(),
@@ -58,9 +74,11 @@ async fn claude_turns(lines: &[&str]) -> Vec<HarnessTranscriptTurn> {
         &lines.join("\n"),
     )
     .expect("transcript file");
-    read(&claude(dir.path()), HarnessId::ClaudeCode, U1)
-        .await
-        .turns
+    read(&claude(dir.path()), HarnessId::ClaudeCode, U1).await
+}
+
+async fn claude_turns(lines: &[&str]) -> Vec<HarnessTranscriptTurn> {
+    claude_read(lines).await.turns
 }
 
 fn first_tool(turns: &[HarnessTranscriptTurn]) -> kernel::transcript::HarnessTranscriptTool {
@@ -188,6 +206,25 @@ async fn a_boundary_after_a_user_turn_or_inside_an_open_turn_is_skipped() {
 }
 
 #[tokio::test]
+async fn a_turn_counts_each_model_call_once_and_its_last_call_is_the_context() {
+    let call = |id: &str, block: &str, input: u64, output: u64| {
+        format!(
+            r#"{{"type":"assistant","message":{{"id":"{id}","role":"assistant","content":[{block}],"usage":{{"input_tokens":{input},"cache_read_input_tokens":40000,"output_tokens":{output}}}}}}}"#
+        )
+    };
+    let read = claude_read(&[
+        &user("q"),
+        &call("m1", r#"{"type":"thinking","thinking":"t"}"#, 2, 400),
+        &call("m1", r#"{"type":"text","text":"a"}"#, 2, 400),
+        &call("m2", r#"{"type":"text","text":"b"}"#, 9000, 250),
+    ])
+    .await;
+    let usage = read.turns.get(1).and_then(|turn| turn.usage.as_ref());
+    assert_eq!(usage.map(|usage| usage.completion_tokens), Some(650));
+    assert_eq!(read.context, Some(49_250));
+}
+
+#[tokio::test]
 async fn token_labels_use_k_and_m_suffixes() {
     let boundary = r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":1250000,"postTokens":900}}"#;
     let answer = assistant(r#""ok""#, "end_turn");
@@ -215,11 +252,23 @@ async fn b5_7_a_large_file_reads_its_tail_and_drops_parent_sidechains() -> TestR
     )?;
     writeln!(file, "{}", user("late"))?;
     drop(file);
-    let read = read(&claude(dir.path()), HarnessId::ClaudeCode, U1).await;
-    assert!(read.truncated);
+    let lister = claude(dir.path());
+    let read = read(&lister, HarnessId::ClaudeCode, U1).await;
     assert_eq!(
         serde_json::to_string(&read.turns)?,
         r#"[{"role":"user","text":"late"}]"#
+    );
+    let before = read.earlier.ok_or("a tail read leaves earlier turns")?;
+    let page = read_window(
+        &lister,
+        HarnessId::ClaudeCode,
+        U1,
+        TranscriptWindow::Before(before),
+    )
+    .await;
+    assert_eq!(
+        (serde_json::to_string(&page.turns)?, page.earlier),
+        (r#"[{"role":"user","text":"early"}]"#.to_owned(), None)
     );
     Ok(())
 }
@@ -366,7 +415,9 @@ async fn b5_11_a_missing_store_file_is_an_empty_transcript() -> TestResult {
 async fn cowork_has_no_transcript_source() -> TestResult {
     let lister = StoreSessionLister::new(StoreRoots::default());
     assert_eq!(
-        lister.transcript(HarnessId::Cowork, "c1").await?,
+        lister
+            .transcript(HarnessId::Cowork, "c1", TranscriptWindow::Latest)
+            .await?,
         TranscriptRead::NoSource
     );
     Ok(())

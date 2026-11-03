@@ -280,7 +280,10 @@ impl TerminalService {
         user: &UserId,
         request: TermSpawnRequest,
     ) -> Result<TermSpawnResponse, ApiError> {
-        Ok(self.spawn_from(user, request, None, None).await?.response)
+        Ok(self
+            .spawn_from(user, request, None, None, None)
+            .await?
+            .response)
     }
 
     pub(crate) async fn spawn_from(
@@ -289,6 +292,7 @@ impl TerminalService {
         request: TermSpawnRequest,
         preset: Option<AgentLaunch>,
         startup: Option<String>,
+        workdir: Option<PathBuf>,
     ) -> Result<Spawned, ApiError> {
         let session = match (&request.session, &request.resume) {
             (Some(session), Some(resume)) => {
@@ -304,10 +308,13 @@ impl TerminalService {
             (None, None) => format!("rivethub-{}", uuid::Uuid::new_v4()),
         };
         let session = self.registry.claim(user, &session)?;
-        let launch = Launch {
+        let mut launch = Launch {
             startup,
             ..self.launch(request, preset)?
         };
+        if let Some(workdir) = workdir {
+            launch.command.cwd = workdir;
+        }
         let port_session = Self::port_session(&launch.command, &session)?;
         let chat = self.chats.read().get(&session).cloned();
         if let Some(chat) = chat {

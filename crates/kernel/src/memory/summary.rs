@@ -26,7 +26,39 @@ pub struct WindowMessage {
     pub agent: String,
     pub role: Role,
     pub content: String,
+    pub tool: Option<ToolUse>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolUse {
+    pub input: String,
+    pub result: String,
+}
+
+impl ToolUse {
+    pub const INPUT_BYTES: usize = 600;
+    pub const RESULT_BYTES: usize = 300;
+
+    #[must_use]
+    pub fn from_prefixes(input: &[u8], result: &[u8]) -> Option<Self> {
+        let tool = Self {
+            input: clipped(input, Self::INPUT_BYTES),
+            result: clipped(result, Self::RESULT_BYTES),
+        };
+        (!tool.input.is_empty() || !tool.result.is_empty()).then_some(tool)
+    }
+}
+
+fn clipped(prefix: &[u8], budget: usize) -> String {
+    let head = prefix.get(..budget).unwrap_or(prefix);
+    let valid: String = head.utf8_chunks().map(|chunk| chunk.valid()).collect();
+    let text = valid.trim();
+    if prefix.len() > budget && !text.is_empty() {
+        format!("{text} …")
+    } else {
+        text.to_owned()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

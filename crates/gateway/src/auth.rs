@@ -299,7 +299,7 @@ fn html_unauthorized() -> Response {
         "<body>\n",
         "<h1>Device certificate required</h1>\n",
         "<p>RivetHub desktop needs a device certificate for this node. Enroll it with ",
-        "<code>rivet-ca.sh issue-client</code>.</p>\n",
+        "<code>rh cert renew</code> and a device token from the node's operator.</p>\n",
         "<p>Liveness is at <code>/healthz</code>.</p>\n",
         "</body>\n",
         "</html>\n",

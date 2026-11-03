@@ -181,7 +181,11 @@ async fn judged(
 ) -> Option<SessionTrashCandidate> {
     let read = gateway
         .history()
-        .transcript(gateway, &resolved(&row.session))
+        .transcript(
+            gateway,
+            &resolved(&row.session),
+            kernel::transcript::TranscriptWindow::Latest,
+        )
         .await;
     let turns = match read {
         Ok(transcript) => transcript.read.turns,

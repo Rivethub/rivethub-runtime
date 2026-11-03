@@ -222,7 +222,7 @@ where
 
 fn key_mode_text(mode: JobKeyMode) -> &'static str {
     match mode {
-        JobKeyMode::KeepRunAt => "preserve_run_at",
+        JobKeyMode::KeepRunAt | JobKeyMode::Arm => "preserve_run_at",
         JobKeyMode::Replace => "replace",
     }
 }

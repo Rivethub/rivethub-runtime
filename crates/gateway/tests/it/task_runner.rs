@@ -12,7 +12,7 @@ use gateway::term::Delegate;
 use kernel::harness::{PermissionRequest, SessionEvent};
 use kernel::transcript::{
     ListLimit, SessionLister, SessionRenameError, StoreSession, ToolOutputRead, TranscriptRead,
-    TranscriptReaderError,
+    TranscriptReaderError, TranscriptWindow,
 };
 use session_support::harness::Harness;
 use session_support::{Fixture, http, user};
@@ -307,8 +307,9 @@ impl SessionLister for PlanMode {
         &self,
         harness: HarnessId,
         native: &str,
+        window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError> {
-        NoParents.transcript(harness, native).await
+        NoParents.transcript(harness, native, window).await
     }
 
     async fn rename(

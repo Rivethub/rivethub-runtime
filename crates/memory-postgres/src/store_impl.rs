@@ -362,6 +362,38 @@ impl MemoryStore for crate::PostgresMemory {
         self.read_summary_dag(owner).await
     }
 
+    async fn summary_outline(
+        &self,
+        owner: &kernel::memory::SummaryOwner,
+    ) -> Result<kernel::memory::SummaryDag, MemoryStoreError> {
+        self.read_summary_outline(owner).await
+    }
+
+    async fn summary_latest(
+        &self,
+        owner: &kernel::memory::SummaryOwner,
+        limit: usize,
+    ) -> Result<kernel::memory::SummaryDag, MemoryStoreError> {
+        self.read_summary_latest(owner, limit).await
+    }
+
+    async fn summary_node(
+        &self,
+        owner: &kernel::memory::SummaryOwner,
+        id: &str,
+    ) -> Result<Option<kernel::memory::MemorySummaryNode>, MemoryStoreError> {
+        self.read_summary_node(owner, id).await
+    }
+
+    async fn summary_tree(
+        &self,
+        owner: &kernel::memory::SummaryOwner,
+        parent: Option<&str>,
+        window: kernel::memory::TreeWindow,
+    ) -> Result<Option<kernel::memory::SummaryTree>, MemoryStoreError> {
+        self.read_summary_tree(owner, parent, window).await
+    }
+
     async fn list_tags(&self, query: TagListQuery) -> Result<Vec<TagWire>, MemoryStoreError> {
         self.tags_list(&query).await
     }

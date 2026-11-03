@@ -23,6 +23,7 @@ pub mod read;
 pub mod search;
 mod search_cap;
 mod search_complete;
+mod search_content;
 mod search_details;
 mod search_recent;
 mod search_sql;
@@ -80,7 +81,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 50;
+pub const SCHEMA_VERSION: i64 = 52;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

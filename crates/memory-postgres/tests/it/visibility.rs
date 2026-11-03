@@ -453,3 +453,83 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
     }
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_categorizer_files_a_session_captured_under_its_bare_key(pool: PgPool) -> TestResult {
+    let (store, _) = seed(&pool).await?;
+    let bare = "00000000-0000-4000-8000-0000000000b5";
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id)
+         VALUES ('00000000-0000-4000-8000-0000000000c5', $1, 'rivet', 'claude-code', 'alice')",
+    )
+    .bind(bare)
+    .execute(&pool)
+    .await?;
+    let alice = viewer("alice")?;
+    let topic = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new("Garden")?,
+                aliases: Vec::new(),
+                parent: None,
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            Utc::now(),
+        )?)
+        .await?;
+    let categorizer = PostgresMemory::new(probe(&pool).await?);
+    Scope::Viewer(alice)
+        .run(categorizer.place(Placement {
+            session: SessionId::try_from(format!("claude-code:{bare}"))?,
+            topic: topic.id,
+            by: PlacementSource::Categorizer,
+            at: Utc::now(),
+            owner: None,
+        }))
+        .await?;
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_user_id FROM rh_session_placements WHERE session_id = $1")
+            .bind(format!("claude-code:{bare}"))
+            .fetch_optional(&pool)
+            .await?;
+    assert_eq!(owner.as_deref(), Some("alice"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capture_checks_event_ids_through_their_index_under_row_security(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let conversation: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
+            .bind(FIRST)
+            .fetch_one(&pool)
+            .await?;
+    let plan: Vec<String> = Scope::Viewer(viewer("alice")?)
+        .run(async {
+            sqlx::query_scalar(
+                "EXPLAIN SELECT seen.event_id FROM unnest($2::text[]) AS wanted(event_id)
+                  CROSS JOIN LATERAL (
+                      SELECT m.metadata->>'event_id' AS event_id FROM rh_messages m
+                       WHERE m.conversation_id = $1 AND m.metadata->>'event_id' = wanted.event_id
+                       LIMIT 1
+                  ) seen",
+            )
+            .bind(conversation)
+            .bind(vec!["a-new-event".to_owned()])
+            .fetch_all(&probe)
+            .await
+        })
+        .await?;
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("rh_messages_event_id")),
+        "{plan:#?}"
+    );
+    Ok(())
+}

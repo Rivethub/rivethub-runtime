@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use kernel::transcript::SessionRenameError;
 use kernel::transcript::TranscriptReaderError;
+use kernel::transcript::TranscriptWindow;
 use serde::Deserialize;
 
 use super::field::Field;
@@ -149,7 +150,19 @@ pub(crate) fn tail_window(path: &Path) -> Option<String> {
 }
 
 pub(crate) fn tail(path: &Path, limit: u64) -> Option<String> {
-    match tail_of(path, limit) {
+    let window = File::open(path)
+        .and_then(|file| Ok(file.metadata()?.len()))
+        .and_then(|length| {
+            read_span(
+                path,
+                Span {
+                    from: length.saturating_sub(limit),
+                    to: length,
+                    at_line: false,
+                },
+            )
+        });
+    match window {
         Ok(window) => Some(window.text),
         Err(error) => {
             unreadable(path, &error);
@@ -158,36 +171,58 @@ pub(crate) fn tail(path: &Path, limit: u64) -> Option<String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Span {
+    pub(crate) from: u64,
+    pub(crate) to: u64,
+    pub(crate) at_line: bool,
+}
+
+impl Span {
+    pub(crate) fn of(path: &Path, wanted: TranscriptWindow) -> io::Result<Self> {
+        let length = fs::metadata(path)?.len();
+        let (from, to, at_line) = match wanted {
+            TranscriptWindow::Latest => (length.saturating_sub(TAIL_WINDOW), length, false),
+            TranscriptWindow::From(start) => (start.min(length), length, true),
+            TranscriptWindow::Before(end) => {
+                let end = end.min(length);
+                (end.saturating_sub(TAIL_WINDOW), end, false)
+            }
+        };
+        Ok(Self { from, to, at_line })
+    }
+
+    pub(crate) fn widened(self) -> Self {
+        Self {
+            from: self.from.saturating_sub(TAIL_WINDOW),
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Window {
     pub(crate) text: String,
-    pub(crate) truncated: bool,
+    pub(crate) start: u64,
 }
 
-pub(crate) fn read_tail(path: &Path) -> io::Result<Window> {
-    tail_of(path, TAIL_WINDOW)
-}
-
-fn tail_of(path: &Path, limit: u64) -> io::Result<Window> {
+pub(crate) fn read_span(path: &Path, span: Span) -> io::Result<Window> {
     let mut file = File::open(path)?;
-    let length = file.metadata()?.len();
+    file.seek(SeekFrom::Start(span.from))?;
     let mut bytes = Vec::new();
-    if length <= limit {
-        file.read_to_end(&mut bytes)?;
-        return Ok(Window {
-            text: String::from_utf8_lossy(&bytes).into_owned(),
-            truncated: false,
-        });
-    }
-    file.seek(SeekFrom::Start(length - limit))?;
-    file.read_to_end(&mut bytes)?;
-    let start = bytes
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .map_or(bytes.len(), |newline| newline + 1);
+    file.take(span.to.saturating_sub(span.from))
+        .read_to_end(&mut bytes)?;
+    let skip = if span.from == 0 || span.at_line {
+        0
+    } else {
+        bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(bytes.len(), |newline| newline + 1)
+    };
     Ok(Window {
-        text: String::from_utf8_lossy(bytes.get(start..).unwrap_or_default()).into_owned(),
-        truncated: true,
+        text: String::from_utf8_lossy(bytes.get(skip..).unwrap_or_default()).into_owned(),
+        start: span.from + skip as u64,
     })
 }
 

@@ -23,7 +23,28 @@ struct ActivityRow {
     tool_rows: i64,
     attachments: i64,
     tasked: bool,
-    reply: Option<String>,
+    reply: Option<Vec<u8>>,
+    reply_bytes: Option<i32>,
+}
+
+const REPLY_BYTES: i32 = 512;
+
+fn reply_text(bytes: Vec<u8>, whole: Option<i32>) -> Result<String, Error> {
+    let cut =
+        whole.is_some_and(|whole| usize::try_from(whole).is_ok_and(|whole| whole > bytes.len()));
+    let mut text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => {
+            let valid = error.utf8_error().valid_up_to();
+            let mut bytes = error.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).map_err(|source| Error::stored("trash reply", source))?
+        }
+    };
+    if cut {
+        text.push_str(" …");
+    }
+    Ok(text)
 }
 
 fn count(value: i64) -> Result<u64, Error> {
@@ -241,7 +262,7 @@ impl PostgresMemory {
                           bool_or(task_id IS NOT NULL) AS tasked
                      FROM conv
                     GROUP BY session_key
-               ), talk AS (
+               ), talk AS MATERIALIZED (
                    SELECT conv.session_key,
                           count(*) FILTER (
                               WHERE m.role = 'user' AND m.content ~ '[^[:space:]]'
@@ -254,8 +275,11 @@ impl PostgresMemory {
                           count(*) FILTER (
                               WHERE m.metadata ? 'attachments' OR m.metadata ? 'images'
                           ) AS attachments,
-                          (array_agg(m.content ORDER BY m.created_at, m.id)
-                              FILTER (WHERE m.role = 'assistant'))[1] AS reply
+                          (array_agg(substring(convert_to(m.content, 'UTF8') from 1 for $3)
+                                     ORDER BY m.created_at, m.id)
+                              FILTER (WHERE m.role = 'assistant'))[1] AS reply,
+                          (array_agg(octet_length(m.content) ORDER BY m.created_at, m.id)
+                              FILTER (WHERE m.role = 'assistant'))[1] AS reply_bytes
                      FROM conv
                      JOIN sessions ON sessions.session_key = conv.session_key
                      JOIN rh_messages m ON m.conversation_id = conv.id
@@ -270,11 +294,13 @@ impl PostgresMemory {
                       coalesce(t.tool_rows, 0) AS "tool_rows!",
                       coalesce(t.attachments, 0) AS "attachments!",
                       s.tasked AS "tasked!",
-                      t.reply
+                      t.reply,
+                      t.reply_bytes
                  FROM sessions s
                  LEFT JOIN talk t ON t.session_key = s.session_key"#,
             keys,
-            most
+            most,
+            REPLY_BYTES
         )
         .fetch_all(&self.pool)
         .await
@@ -344,7 +370,10 @@ impl PostgresMemory {
                     messages: count(row.messages)?,
                     user_messages: count(row.user_messages)?,
                     assistant_messages: count(row.assistant_messages)?,
-                    reply: row.reply,
+                    reply: row
+                        .reply
+                        .map(|reply| reply_text(reply, row.reply_bytes))
+                        .transpose()?,
                     tool_rows: count(row.tool_rows)?,
                     attachments: count(row.attachments)?,
                     tasked: row.tasked,
@@ -358,8 +387,7 @@ impl PostgresMemory {
             .filter(|(_, entry)| !entry.kept())
             .map(|(key, _)| key.clone())
             .collect();
-        let placed = self.placed_keys(&open).await?;
-        let cited = self.cited_keys(&open).await?;
+        let (placed, cited) = tokio::try_join!(self.placed_keys(&open), self.cited_keys(&open))?;
         for (key, entry) in &mut activity {
             entry.placed = placed.contains(key);
             entry.cited = cited.contains(key);

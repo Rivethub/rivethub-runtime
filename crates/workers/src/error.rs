@@ -92,6 +92,8 @@ pub enum WorkerError {
     EmptySummary,
     #[error("the model truncated the summary")]
     Truncated,
+    #[error("another worker is rewriting this page route")]
+    RouteBusy,
     #[error("the model returned no title")]
     EmptyTitle,
     #[error("the title answer is not the title JSON: {0}")]

@@ -139,7 +139,7 @@ async fn idle_and_stale_floors_follow_the_recording() {
     assert_eq!(read_trigger(&job.payload), SummaryTrigger::SessionStale);
     assert_eq!(job.priority, 10);
     assert_eq!(job.max_attempts, Some(3));
-    assert_eq!(job.key_mode, JobKeyMode::Replace);
+    assert_eq!(job.key_mode, JobKeyMode::Arm);
     let outcome = handle_summarize(&stale, &job.payload)
         .await
         .expect("stale summarize");

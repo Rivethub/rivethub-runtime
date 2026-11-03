@@ -150,7 +150,8 @@ async fn replay_recorded(pool: &PgPool) -> TestResult {
                     let placeholder = namer.conv(&id.to_string());
                     object.insert("conversationId".to_string(), Value::String(placeholder));
                 }
-                if let Some(rows) = outcome.rows.as_mut()
+                if !queue
+                    && let Some(rows) = outcome.rows.as_mut()
                     && let Some(object) = rows.as_object_mut()
                 {
                     object.remove("graphile_jobs");

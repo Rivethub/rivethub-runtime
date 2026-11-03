@@ -92,8 +92,8 @@ async fn status_reports_a_migrated_postgres_database(pool: PgPool) -> TestResult
     let url = pool.connect_options().to_url_lossy().to_string();
     let stdout = run(&["status", "postgres", "--url", &url])?;
     assert!(
-        stdout.contains("current 50")
-            && stdout.contains("required 50")
+        stdout.contains("current 52")
+            && stdout.contains("required 52")
             && stdout.contains("pending 0"),
         "status must report the applied state: {stdout}"
     );
@@ -108,14 +108,14 @@ async fn status_reports_a_fresh_postgres_database_and_migrate_applies_the_chain(
     let stdout = run(&["status", "postgres", "--url", &url])?;
     assert!(
         stdout.contains("current 0")
-            && stdout.contains("required 50")
-            && stdout.contains("pending 46"),
+            && stdout.contains("required 52")
+            && stdout.contains("pending 48"),
         "a fresh database reads as version 0 with the whole chain pending: {stdout}"
     );
 
     let stdout = run(&["postgres", "--url", &url])?;
     assert!(
-        stdout.contains("current 50") && stdout.contains("pending 0"),
+        stdout.contains("current 52") && stdout.contains("pending 0"),
         "migrate must apply the chain and report the reached state: {stdout}"
     );
     let tables: i64 = sqlx::query_scalar(
@@ -140,7 +140,7 @@ async fn adopting_a_database_without_sqlx_history_changes_no_columns(pool: PgPoo
     let before = column_listing(&pool).await?;
     let stdout = run(&["postgres", "--url", &url])?;
     assert!(
-        stdout.contains("current 50") && stdout.contains("pending 0"),
+        stdout.contains("current 52") && stdout.contains("pending 0"),
         "adopting must succeed: {stdout}"
     );
     let after = column_listing(&pool).await?;
@@ -184,7 +184,7 @@ async fn config_warnings_print_once_and_config_parses_after_the_subcommand(
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("current 50") && stdout.contains("pending 0"),
+            stdout.contains("current 52") && stdout.contains("pending 0"),
             "the config's postgres url must be used: {stdout}"
         );
     }

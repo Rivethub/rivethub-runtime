@@ -259,6 +259,13 @@ async fn an_approval_that_stopped_part_way_finishes_on_retry() -> TestResult {
 }
 
 #[tokio::test]
+async fn old_names_stay_findable_and_a_change_made_moot_is_skipped() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::tidy::old_names_stay_findable_and_a_change_made_moot_is_skipped(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn samples_show_each_session_s_current_title() -> TestResult {
     let (_directory, store) = store()?;
     testkit::tidy::samples_show_each_session_s_current_title(&store).await?;

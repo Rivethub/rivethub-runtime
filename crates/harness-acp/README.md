@@ -1,10 +1,11 @@
 # ACP harness adapter
 
-Claude Code launches through `claude-agent-acp`, from
-`@agentclientprotocol/claude-agent-acp` 0.90.0. Its configured binary path is passed
-unchanged. Grok uses `grok agent stdio`. Other launch entries retain their explicit
-unverified status until their real invocation has been tested; setting a binary
-path alone does not establish that it speaks ACP.
+The launch table: Claude Code through the `claude-agent-acp` adapter (with
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`), Codex through `codex-acp`, Grok Build through
+`grok agent stdio`, and opencode, Hermes, Kimi Code, omp and dsh natively through
+`<binary> acp`. Cursor is terminal-only and Cowork is captured only.
+`tasks.harnesses.<id>.binary` and `cwd` replace the binary and the working
+directory; a configured binary path is passed unchanged.
 
 Model and effort selection use the agent's categorized session config options and
 `session/set_config_option`. Model offerings preserve the agent's display names

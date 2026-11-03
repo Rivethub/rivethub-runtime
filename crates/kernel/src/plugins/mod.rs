@@ -143,9 +143,7 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
             ],
         )
         | (true, ["api", "memory" | "wiki", ..]) => needs(Permission::MemoryRead),
-        (true, ["api", "harness-sessions" | "harnesses", ..] | ["api", "catalog"]) => {
-            needs(Permission::SessionsRead)
-        }
+        (true, ["api", "harness-sessions" | "harnesses", ..]) => needs(Permission::SessionsRead),
         (false, ["api", "harness-sessions", ..] | ["api", "sessions", _, "messages"]) => {
             needs(Permission::SessionsControl)
         }
@@ -160,7 +158,9 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
         }
         (true, ["api", "tasks", ..]) => needs(Permission::TasksRead),
         (false, ["api", "tasks"]) => needs(Permission::TasksDelegate),
-        (true, ["api", "agents", ..]) => needs(Permission::AgentsRead),
+        (true, ["api", "agents", ..] | ["api", "catalog", "agents"]) => {
+            needs(Permission::AgentsRead)
+        }
         _ => PluginAccess::Refused,
     }
 }

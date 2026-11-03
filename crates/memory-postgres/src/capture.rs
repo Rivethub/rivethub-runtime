@@ -225,9 +225,13 @@ impl<'a> CaptureWriter<'a> {
             return Ok(Vec::new());
         }
         let seen = sqlx::query_scalar!(
-            "select m.metadata->>'event_id' from rh_messages m
-              where m.conversation_id = $1
-                and m.metadata->>'event_id' in (select unnest($2::text[]))",
+            "select seen.event_id
+               from unnest($2::text[]) as wanted(event_id)
+              cross join lateral (
+                  select m.metadata->>'event_id' as event_id from rh_messages m
+                   where m.conversation_id = $1 and m.metadata->>'event_id' = wanted.event_id
+                   limit 1
+              ) seen",
             conversation_id,
             event_ids
         )

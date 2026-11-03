@@ -81,12 +81,15 @@ impl MergePlan {
         {
             return Err(TopicError::TooDeep { max: MAX_DEPTH });
         }
-        let taken: BTreeSet<String> = into.aliases.iter().map(Alias::key).collect();
-        let aliases = source
+        let taken: BTreeSet<String> = into
             .aliases
             .iter()
+            .chain(std::iter::once(&Alias::of_name(&into.name)))
+            .map(Alias::key)
+            .collect();
+        let aliases = std::iter::once(Alias::of_name(&source.name))
+            .chain(source.aliases.iter().cloned())
             .filter(|alias| !taken.contains(&alias.key()))
-            .cloned()
             .collect();
         Ok(Self {
             source: source.id,

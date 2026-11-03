@@ -126,3 +126,41 @@ async fn the_sweep_flags_jobs_that_already_ran_out_of_attempts(pool: PgPool) -> 
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_flagged_job_is_named_by_the_conversation_it_worked_on(pool: PgPool) -> TestResult {
+    let conversation: sqlx::types::Uuid = sqlx::query_scalar(
+        "INSERT INTO rh_conversations (session_key, agent, title, owner_user_id)
+         VALUES ('claude-code:one', 'claude', 'Fix the flaky gate', 'owner') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_flagged_jobs (task, job_key, payload, priority, max_attempts, failures,
+                                      last_error, first_failed_at, last_failed_at, flagged_at)
+         VALUES ('compact-conversation', 'named', jsonb_build_object('conversationId', $1::text),
+                 0, 5, 5, 'boom', now(), now(), now()),
+                ('synthesize-tool-call', 'torn', '{\"messageId\": \"not-a-uuid\"}',
+                 0, 5, 5, 'boom', now(), now() - interval '1 minute', now())",
+    )
+    .bind(conversation.to_string())
+    .execute(&pool)
+    .await?;
+    let named: Vec<(Option<String>, Option<String>)> = PostgresMemory::new(pool)
+        .flagged()
+        .await?
+        .into_iter()
+        .map(|job| (job.key, job.subject))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            (
+                Some("named".to_owned()),
+                Some("Fix the flaky gate".to_owned())
+            ),
+            (Some("torn".to_owned()), None)
+        ]
+    );
+    Ok(())
+}

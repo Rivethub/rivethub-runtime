@@ -291,6 +291,7 @@ async fn update(
         .update(id, changes, Utc::now())
         .await
         .map_err(map::error)?;
+    gateway.sessions().topic_changed(&updated.id);
     Ok(Json(map::record(updated)))
 }
 

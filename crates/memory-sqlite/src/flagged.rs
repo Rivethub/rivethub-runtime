@@ -23,6 +23,7 @@ struct DeadRow {
     id: i64,
     task: String,
     key: Option<String>,
+    subject: Option<String>,
     payload: String,
     error: Option<String>,
     attempts: i64,
@@ -92,8 +93,21 @@ impl FlaggedJobs for SqliteStore {
 fn dead_rows(conn: &mut Connection) -> Result<Vec<DeadRow>, SqliteError> {
     let mut statement = conn
         .prepare(
-            "SELECT rowid, task, job_key, payload, last_error, attempts, updated_at
-               FROM ros_jobs WHERE state = 'dead' ORDER BY updated_at DESC, rowid",
+            "SELECT j.id, j.task, j.job_key, COALESCE(c.title, w.title), j.payload,
+                    j.last_error, j.attempts, j.updated_at
+               FROM (SELECT rowid AS id, task, job_key, payload, last_error, attempts, updated_at,
+                            CASE WHEN json_valid(payload) THEN payload ELSE '{}' END AS body
+                       FROM ros_jobs WHERE state = 'dead') AS j
+               LEFT JOIN ros_messages m
+                      ON m.id = COALESCE(json_extract(j.body, '$.messageId'),
+                                         CASE WHEN json_extract(j.body, '$.targetTable') = 'ros_messages'
+                                              THEN json_extract(j.body, '$.targetId') END)
+               LEFT JOIN ros_conversations c
+                      ON c.id = COALESCE(json_extract(j.body, '$.conversationId'), m.conversation_id)
+               LEFT JOIN ros_wiki_topics w
+                      ON w.slug = CASE WHEN json_extract(j.body, '$.targetTable') = 'ros_wiki_topics'
+                                       THEN json_extract(j.body, '$.targetId') END
+              ORDER BY j.updated_at DESC, j.id",
         )
         .map_err(SqliteError::query("flagged jobs"))?;
     statement
@@ -102,10 +116,11 @@ fn dead_rows(conn: &mut Connection) -> Result<Vec<DeadRow>, SqliteError> {
                 id: row.get(0)?,
                 task: row.get(1)?,
                 key: row.get(2)?,
-                payload: row.get(3)?,
-                error: row.get(4)?,
-                attempts: row.get(5)?,
-                updated_at: row.get(6)?,
+                subject: row.get(3)?,
+                payload: row.get(4)?,
+                error: row.get(5)?,
+                attempts: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(SqliteError::query("flagged jobs"))?
@@ -129,6 +144,7 @@ fn job(row: DeadRow) -> Result<FlaggedJob, FlaggedError> {
         id,
         task: row.task,
         key: row.key,
+        subject: row.subject,
         payload,
         error: row.error.unwrap_or_default(),
         failures: u32::try_from(row.attempts).map_err(|error| invalid(error.to_string()))?,

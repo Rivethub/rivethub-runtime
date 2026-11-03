@@ -70,7 +70,7 @@ fn transcript_tool_input_keeps_source_order() {
 async fn occurrence_count_spans_hook_and_transcript_spellings()
 -> Result<(), Box<dyn std::error::Error>> {
     let inner = tempfile::tempdir()?;
-    let transcript_path = inner.path().join("transcript.jsonl");
+    let transcript_path = inner.path().join(format!("{SESSION}.jsonl"));
     std::fs::write(&transcript_path, format!("{TRANSCRIPT_LINE}\n"))?;
 
     let transport = FakeTransport::new();

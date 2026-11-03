@@ -89,19 +89,19 @@ pub(crate) use values::fold;
 
 #[derive(Debug, Error)]
 pub enum TopicError {
-    #[error("a topic name must not be empty")]
+    #[error("A topic needs a name.")]
     EmptyName,
     #[error("an alias must not be empty")]
     EmptyAlias,
-    #[error("\"{text}\" has no letters or digits to make a slug from")]
+    #[error("\"{text}\" has no letters or digits, so it can't name a topic.")]
     EmptySlug { text: String },
-    #[error("a topic with slug \"{slug}\" already exists")]
-    SlugTaken { slug: Slug },
-    #[error("alias \"{alias}\" belongs to another topic")]
+    #[error("There's already a topic called \"{name}\".")]
+    SlugTaken { slug: Slug, name: String },
+    #[error("\"{alias}\" is already another topic's name.")]
     AliasTaken { alias: String },
     #[error("unknown topic {key}")]
     NotFound { key: String },
-    #[error("a topic cannot be its own parent")]
+    #[error("A topic can't be its own parent.")]
     OwnParent,
     #[error("Work topics nest only under work topics")]
     WorkMisplaced,
@@ -119,7 +119,7 @@ pub enum TopicError {
     TooDeep { max: usize },
     #[error("A topic can't move under its own subtopic")]
     IntoOwnSubtree,
-    #[error("a topic cannot be merged into itself")]
+    #[error("A topic can't merge into itself.")]
     SelfMerge,
     #[error("a decision must not be empty")]
     EmptyDecision,
@@ -129,7 +129,7 @@ pub enum TopicError {
     DecisionSuperseded { id: DecisionId },
     #[error("a decision is superseded only by another decision of its topic")]
     ForeignReplacement,
-    #[error("topic \"{slug}\" has sub-topics; delete or move them first")]
+    #[error("\"{slug}\" still has subtopics; move or delete them first.")]
     SubtopicsRemain { slug: Slug },
     #[error("topic store is unavailable")]
     Unavailable(#[source] BoxError),

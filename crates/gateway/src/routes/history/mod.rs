@@ -10,7 +10,7 @@ use axum::extract::{Path, RawQuery, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use kernel::transcript::{ListLimit, SessionRenameError, StoreSession};
+use kernel::transcript::{ListLimit, SessionRenameError, StoreSession, TranscriptWindow};
 use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTitleRequest, HarnessSessionTranscriptResponse,
     HarnessToolOutput, SessionSwitches,
@@ -24,7 +24,9 @@ use super::terminal::require;
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Body;
-use crate::history::{Resolved, authorize, live_summary, offered, store_summary};
+use crate::history::{
+    Resolved, authorize, capabilities, live_summary, name_model, offered, store_summary,
+};
 use crate::tenancy::UserId;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
@@ -156,12 +158,15 @@ async fn plane(
         .unwrap_or_default();
     let mut sessions = Vec::with_capacity(rows.len() + live.len());
     let mut stored = HashSet::new();
+    let offered = capabilities(&gateway, harness).await;
     for row in &rows {
         let current = live
             .iter()
             .find(|(key, _)| *key == row.id)
             .map(|(_, summary)| summary);
-        sessions.push(store_summary(&gateway, row, current).await);
+        let mut summary = store_summary(&gateway, row, current).await;
+        name_model(offered.as_ref(), &mut summary);
+        sessions.push(summary);
         stored.insert(row.id.clone());
     }
     let live_keys: Vec<String> = live
@@ -192,10 +197,12 @@ async fn summary(
     let resolved = gateway.history().resolve(&gateway, &segment).await?;
     authorize(&gateway, &user, &resolved).await?;
     let summary = described(&gateway, &resolved).await?;
+    let elsewhere = crate::history::running_elsewhere(&gateway, &resolved.session).await?;
     Ok(Json(HarnessSessionResponse {
         summary,
         switches: switches(&gateway, &resolved.session),
         redirected_to: resolved.redirected_to,
+        running_elsewhere: elsewhere.map(|_| true),
     }))
 }
 
@@ -212,21 +219,28 @@ async fn described(
         }
         None => None,
     };
-    match (described, live) {
-        (Some(row), live) => Ok(store_summary(gateway, &row, live.as_ref()).await),
+    let mut summary = match (described, live) {
+        (Some(row), live) => store_summary(gateway, &row, live.as_ref()).await,
         (None, Some(live)) => {
             let now = Utc::now();
-            Ok(HarnessSessionSummary {
+            HarnessSessionSummary {
                 created_at: now,
                 updated_at: now,
                 ..live
-            })
+            }
         }
-        (None, None) => Err(ApiError::Missing(format!(
-            "unknown session {}",
-            resolved.session
-        ))),
-    }
+        (None, None) => {
+            return Err(ApiError::Missing(format!(
+                "unknown session {}",
+                resolved.session
+            )));
+        }
+    };
+    name_model(
+        capabilities(gateway, resolved.harness).await.as_ref(),
+        &mut summary,
+    );
+    Ok(summary)
 }
 
 fn switches(gateway: &Gateway, session: &wire::session_id::SessionId) -> Option<SessionSwitches> {
@@ -247,10 +261,15 @@ async fn transcript(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
     Path(segment): Path<String>,
+    RawQuery(query): RawQuery,
 ) -> Result<Json<HarnessSessionTranscriptResponse>, ApiError> {
+    let window = transcript_window(query.as_deref())?;
     let resolved = gateway.history().resolve(&gateway, &segment).await?;
     authorize(&gateway, &user, &resolved).await?;
-    let read = gateway.history().transcript(&gateway, &resolved).await?;
+    let read = gateway
+        .history()
+        .transcript(&gateway, &resolved, window)
+        .await?;
     Ok(Json(HarnessSessionTranscriptResponse {
         session_id: resolved.session,
         harness_id: resolved.harness,
@@ -259,7 +278,29 @@ async fn transcript(
         compact_at: read.stamp.compact_at,
         context_source: read.stamp.source,
         redirected_to: resolved.redirected_to,
+        earlier: read.read.earlier,
+        context_used: read.read.context,
     }))
+}
+
+fn transcript_window(query: Option<&str>) -> Result<TranscriptWindow, ApiError> {
+    let offset = |name: &str| -> Result<Option<u64>, ApiError> {
+        first_param(query, name)?
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|_| ApiError::BadRequest(format!("{name} must be a byte offset")))
+            })
+            .transpose()
+    };
+    match (offset("before")?, offset("from")?) {
+        (Some(_), Some(_)) => Err(ApiError::BadRequest(
+            "a transcript read takes before or from, not both".to_owned(),
+        )),
+        (Some(before), None) => Ok(TranscriptWindow::Before(before)),
+        (None, Some(from)) => Ok(TranscriptWindow::From(from)),
+        (None, None) => Ok(TranscriptWindow::Latest),
+    }
 }
 
 async fn rename(
@@ -300,6 +341,7 @@ async fn rename(
         summary,
         switches: switches(&gateway, &resolved.session),
         redirected_to: resolved.redirected_to,
+        running_elsewhere: None,
     }))
 }
 

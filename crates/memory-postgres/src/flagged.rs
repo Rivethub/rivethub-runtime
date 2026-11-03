@@ -95,6 +95,7 @@ struct FlaggedRow {
     id: i64,
     task: String,
     job_key: Option<String>,
+    subject: Option<String>,
     payload: sqlx::types::Json<JsonObject>,
     last_error: String,
     failures: i32,
@@ -151,17 +152,43 @@ pub(crate) async fn flag_stuck(pool: &PgPool, after: u32) -> Result<u64, Error> 
     Ok(u64::try_from(flagged)?)
 }
 
+const FLAGGED: &str = "
+    WITH open AS MATERIALIZED (
+        SELECT f.id, f.task, f.job_key, f.payload, f.last_error, f.failures, f.first_failed_at,
+               f.last_failed_at, f.flagged_at,
+               CASE WHEN target.message ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                    THEN target.message::uuid END AS message,
+               CASE WHEN target.conversation ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                    THEN target.conversation::uuid END AS conversation,
+               target.page
+          FROM rh_flagged_jobs f
+         CROSS JOIN LATERAL (
+               SELECT COALESCE(f.payload->>'messageId',
+                               CASE WHEN f.payload->>'targetTable' = 'ros_messages'
+                                    THEN f.payload->>'targetId' END) AS message,
+                      f.payload->>'conversationId' AS conversation,
+                      CASE WHEN f.payload->>'targetTable' = 'ros_wiki_topics'
+                           THEN f.payload->>'targetId' END AS page) AS target
+         WHERE f.dismissed_at IS NULL
+    ), placed AS MATERIALIZED (
+        SELECT o.*, COALESCE(o.conversation,
+                   (SELECT m.conversation_id FROM rh_messages m WHERE m.id = o.message)) AS owner
+          FROM open o
+    )
+    SELECT p.id, p.task, p.job_key,
+           COALESCE((SELECT c.title FROM rh_conversations c WHERE c.id = p.owner),
+                    (SELECT w.title FROM rh_wiki_topics w WHERE w.slug = p.page)) AS subject,
+           p.payload, p.last_error, p.failures, p.first_failed_at, p.last_failed_at, p.flagged_at
+      FROM placed p
+     ORDER BY p.last_failed_at DESC, p.id";
+
 #[async_trait]
 impl FlaggedJobs for PostgresMemory {
     async fn flagged(&self) -> Result<Vec<FlaggedJob>, FlaggedError> {
-        let rows: Vec<FlaggedRow> = sqlx::query_as(
-            "SELECT id, task, job_key, payload, last_error, failures, first_failed_at,
-                    last_failed_at, flagged_at
-             FROM rh_flagged_jobs WHERE dismissed_at IS NULL ORDER BY last_failed_at DESC, id",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(unavailable)?;
+        let rows: Vec<FlaggedRow> = sqlx::query_as(FLAGGED)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(unavailable)?;
         rows.into_iter().map(job).collect()
     }
 
@@ -196,6 +223,7 @@ fn job(row: FlaggedRow) -> Result<FlaggedJob, FlaggedError> {
         id,
         task: row.task,
         key: row.job_key,
+        subject: row.subject,
         payload: row.payload.0,
         error: row.last_error,
         failures: u32::try_from(row.failures).map_err(|error| FlaggedError::Invalid {

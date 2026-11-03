@@ -137,11 +137,13 @@ async fn sentence(
     }
 }
 
+const CLOSERS: [char; 7] = ['"', '\'', '\u{201d}', '\u{2019}', '`', ')', ']'];
+
 fn valid_sentence(text: &str) -> Option<&str> {
     let text = text.trim();
     ((10..=500).contains(&text.chars().count())
         && !text.to_lowercase().starts_with("the assistant")
-        && text.ends_with(['.', '!', '?']))
+        && text.trim_end_matches(CLOSERS).ends_with(['.', '!', '?']))
     .then_some(text)
 }
 

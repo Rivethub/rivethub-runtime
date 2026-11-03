@@ -145,7 +145,7 @@ async fn config_path_show_and_validate_use_config_ownership() {
     assert_eq!(absent.exit, Exit::Failure);
     assert_eq!(
         absent.stderr,
-        "Error: No config found. Run: rh config init\n"
+        "Error: No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG\n"
     );
     config(&home, "");
     let path = home.path().join(".rivethub/config.yaml");

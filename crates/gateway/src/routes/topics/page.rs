@@ -74,6 +74,14 @@ async fn answer(gateway: &Gateway, topic: Topic) -> Result<Json<TopicPage>, ApiE
         TopicKind::Work => mentions(gateway, store.as_ref(), &topic).await?,
         TopicKind::Type | TopicKind::Entity => Vec::new(),
     };
+    let subtopic = topic.kind == TopicKind::Work && topic.parent.is_some();
+    let page = page.map(|page| {
+        if subtopic {
+            page.section_view(&topic.id.to_string(), topic.name.as_str())
+        } else {
+            page
+        }
+    });
     Ok(Json(TopicPage {
         topic: map::record(topic),
         page: page.map(crate::memory_body::wiki_page_response_body),

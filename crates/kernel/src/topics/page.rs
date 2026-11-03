@@ -26,6 +26,7 @@ use crate::wiki::builder::WikiWriteError;
 use crate::wiki::page::FoldMark;
 use crate::wiki::page::WikiSlug;
 use crate::wiki::page::bound::rebase;
+use crate::wiki::page::lead::steady_lead;
 use crate::wiki::page::normalize_slug;
 
 const SLUG_ATTEMPTS: u32 = 1000;
@@ -90,7 +91,8 @@ impl TopicPage {
             .iter_mut()
             .find(|section| section.topic == Some(topic))
         {
-            section.body = rebase(base, body, &section.body);
+            let steady = steady_lead(&section.body, body);
+            section.body = rebase(base, &steady, &section.body);
             return;
         }
         self.sections.push(PageSection {

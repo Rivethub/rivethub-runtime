@@ -95,7 +95,7 @@ async fn bound_config(
         let adopted = config::adopt_legacy_state(&env)?;
         let mut config = match config::resolve_config_path(&env)? {
             Some(location) => Config::load(&env, &location, Profile::Standalone)?.config,
-            None => generated(port, no_lan),
+            None => generated(&env, port, no_lan)?,
         };
         apply_bind(&mut config, port, no_lan);
         Ok((config, adopted))
@@ -103,15 +103,15 @@ async fn bound_config(
     .await?
 }
 
-fn generated(port: Option<u16>, no_lan: bool) -> Config {
-    Config {
+fn generated(env: &Environment, port: Option<u16>, no_lan: bool) -> Result<Config, Error> {
+    Ok(Config {
         gateway: Some(GatewaySection {
-            host: Some(bind_host(no_lan).to_owned()),
+            host: Some(bind_host(env, no_lan)?.to_owned()),
             port: bind_port(port),
             ..GatewaySection::default()
         }),
         ..Config::default()
-    }
+    })
 }
 
 async fn answers(target: &Endpoint, timeout: Duration) -> Result<bool, Error> {

@@ -76,6 +76,7 @@ fn settings(root: &Path) -> Settings {
 
 struct Api {
     router: axum::Router,
+    sessions: Arc<SessionRegistry>,
     root: tempfile::TempDir,
     store: Arc<SqliteStore>,
 }
@@ -96,8 +97,10 @@ impl Api {
                 .with_startup_memory(store.clone(), store.clone())
                 .with_tidy(store.clone(), store.clone());
         }
+        let gateway = Arc::new(gateway);
         Ok(Self {
-            router: Arc::new(gateway).router(false),
+            sessions: Arc::clone(gateway.sessions()),
+            router: gateway.router(false),
             root,
             store,
         })
@@ -136,8 +139,10 @@ impl Api {
             .with_terminal(Arc::new(terminal))
             .with_topics(store.clone(), store.clone())
             .with_startup_memory(store.clone(), store.clone());
+        let gateway = Arc::new(gateway);
         Ok(Self {
-            router: Arc::new(gateway).router(false),
+            sessions: Arc::clone(gateway.sessions()),
+            router: gateway.router(false),
             root,
             store,
         })
@@ -422,7 +427,7 @@ async fn taken_names_unknown_topics_and_empty_names_are_refused() -> TestResult 
             .await?,
         (
             StatusCode::CONFLICT,
-            "a topic with slug \"rivethub-desktop\" already exists".to_owned()
+            "There's already a topic called \"rivethub desktop\".".to_owned()
         )
     );
     assert_eq!(
@@ -434,7 +439,7 @@ async fn taken_names_unknown_topics_and_empty_names_are_refused() -> TestResult 
         .await?,
         (
             StatusCode::CONFLICT,
-            "alias \"Tauri\" belongs to another topic".to_owned()
+            "\"Tauri\" is already another topic's name.".to_owned()
         )
     );
     assert_eq!(

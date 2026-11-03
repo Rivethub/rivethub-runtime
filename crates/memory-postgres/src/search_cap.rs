@@ -46,6 +46,7 @@ impl crate::PostgresMemory {
         &self,
         context: &ArmContext<'_>,
         is_message: bool,
+        long: bool,
     ) -> Result<Option<Vec<Uuid>>, Error> {
         let (alias, from) = source(is_message);
         let mut explain = QueryBuilder::new(format!("EXPLAIN (FORMAT JSON) SELECT 1 FROM {from}"));
@@ -61,7 +62,7 @@ impl crate::PostgresMemory {
             return Ok(None);
         }
         if estimate < f64::from(u32::try_from(RANK_CAP)?)
-            && !self.matches_beyond_cap(context, is_message).await?
+            && !self.matches_beyond_cap(context, is_message, long).await?
         {
             return Ok(None);
         }
@@ -75,7 +76,7 @@ impl crate::PostgresMemory {
             .chain(std::iter::once(None));
         for lower in bounds {
             let mut slice = QueryBuilder::new(format!("SELECT {alias}.id FROM {from}"));
-            push_fts_where(&mut slice, context, is_message, true);
+            push_fts_where(&mut slice, context, is_message, long);
             if let Some(upper) = upper {
                 slice.push(format!(" AND {newest} < ")).push_bind(upper);
             }
@@ -104,10 +105,11 @@ impl crate::PostgresMemory {
         &self,
         context: &ArmContext<'_>,
         is_message: bool,
+        long: bool,
     ) -> Result<bool, Error> {
         let (_, from) = source(is_message);
         let mut probe = QueryBuilder::new(format!("SELECT count(*) FROM (SELECT 1 FROM {from}"));
-        push_fts_where(&mut probe, context, is_message, true);
+        push_fts_where(&mut probe, context, is_message, long);
         probe.push(format!(" LIMIT {}) probe", RANK_CAP + 1));
         let matched: i64 = probe
             .build_query_scalar()

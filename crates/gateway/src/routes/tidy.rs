@@ -36,6 +36,7 @@ use wire::gateway::tidy::TidyFailure;
 use wire::gateway::tidy::TidyPending;
 use wire::gateway::tidy::TidyProposal;
 use wire::gateway::tidy::TidySample;
+use wire::gateway::tidy::TidySkipped;
 use wire::gateway::tidy::WikiUpkeep;
 use wire::gateway::tidy::WorkerActivity;
 use wire::gateway::tidy::WorkerUpkeep;
@@ -195,6 +196,14 @@ fn batch(batch: Batch) -> TidyBatch {
 fn outcome(outcome: BatchOutcome) -> TidyBatchDecision {
     TidyBatchDecision {
         decided: outcome.decided.into_iter().map(record).collect(),
+        skipped: outcome
+            .skipped
+            .into_iter()
+            .map(|skipped| TidySkipped {
+                proposal_id: skipped.proposal.id.to_string(),
+                reason: skipped.reason,
+            })
+            .collect(),
         failed: outcome
             .failed
             .into_iter()

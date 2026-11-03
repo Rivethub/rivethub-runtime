@@ -14,7 +14,7 @@ use kernel::transcript::{
 };
 use kernel::transcript::{
     ListLimit, SessionLister, SessionRenameError, StoreSession, StoreTranscript, ToolOutputRead,
-    TranscriptRead, TranscriptReaderError,
+    TranscriptRead, TranscriptReaderError, TranscriptWindow,
 };
 use session_support::harness::Harness;
 use session_support::{Fixture, http, user};
@@ -78,6 +78,7 @@ impl SessionLister for Stores {
         &self,
         _harness: HarnessId,
         native: &str,
+        _window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError> {
         if self.unreadable.contains(native) {
             return Err(TranscriptReaderError::Read {
@@ -87,7 +88,8 @@ impl SessionLister for Stores {
         }
         Ok(TranscriptRead::Read(StoreTranscript {
             turns: self.transcripts.get(native).cloned().unwrap_or_default(),
-            truncated: false,
+            earlier: None,
+            context: None,
         }))
     }
 

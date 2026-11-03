@@ -11,6 +11,8 @@ use crate::Error;
 pub(crate) use ensure::{Ensure, ensure};
 
 const DEFAULT_GATEWAY_PORT: u16 = 5174;
+const LOOPBACK_HOST: &str = "127.0.0.1";
+const LAN_HOST: &str = "0.0.0.0";
 
 #[derive(Debug)]
 pub struct Prepared {
@@ -47,7 +49,7 @@ fn prepare_blocking(env: &Environment, port: Option<u16>, no_lan: bool) -> Resul
     let guard = ClaimGuard { claim: Some(claim) };
     let location = match found {
         Some(location) => location,
-        None => write_generated(&state, port, no_lan)?,
+        None => write_generated(env, &state, port, no_lan)?,
     };
     let mut loaded = config::Config::load(env, &location, config::Profile::Standalone)?;
     for finding in &loaded.warnings {
@@ -57,6 +59,7 @@ fn prepare_blocking(env: &Environment, port: Option<u16>, no_lan: bool) -> Resul
         tracing::warn!("{notice}");
     }
     apply_bind(&mut loaded.config, port, no_lan);
+    refuse_plain_lan(&loaded.config, env, location.path())?;
     let database = sqlite_file(&loaded.config, env)?;
     migrate::sqlite(&database).map_err(Error::Migrate)?;
     let claim = guard.into_claim()?;
@@ -67,9 +70,20 @@ fn prepare_blocking(env: &Environment, port: Option<u16>, no_lan: bool) -> Resul
     })
 }
 
-fn write_generated(state: &Path, port: Option<u16>, no_lan: bool) -> Result<ConfigLocation, Error> {
+fn write_generated(
+    env: &Environment,
+    state: &Path,
+    port: Option<u16>,
+    no_lan: bool,
+) -> Result<ConfigLocation, Error> {
     let database = state.join("memory.sqlite");
-    let yaml = config::standalone_config_yaml(&database, bind_host(no_lan), bind_port(port))?;
+    let host = bind_host(env, no_lan)?;
+    if host == LOOPBACK_HOST && !no_lan {
+        tracing::info!(
+            "serving on {LOOPBACK_HOST} only: a LAN bind needs TLS (set gateway.host to {LAN_HOST} with gateway.tls_cert and gateway.tls_key)"
+        );
+    }
+    let yaml = config::standalone_config_yaml(&database, host, bind_port(port))?;
     let destination = state.join("config.yaml");
     refuse_existing(&destination)?;
     let partial = state.join(".config.yaml.partial");
@@ -115,7 +129,7 @@ fn apply_bind(config: &mut Config, port: Option<u16>, no_lan: bool) {
         section.port = DEFAULT_GATEWAY_PORT;
     }
     if no_lan {
-        section.host = Some("127.0.0.1".to_owned());
+        section.host = Some(LOOPBACK_HOST.to_owned());
     }
 }
 
@@ -141,8 +155,48 @@ fn sqlite_file(config: &Config, env: &Environment) -> Result<PathBuf, Error> {
     Ok(path)
 }
 
-fn bind_host(no_lan: bool) -> &'static str {
-    if no_lan { "127.0.0.1" } else { "0.0.0.0" }
+fn bind_host(env: &Environment, no_lan: bool) -> Result<&'static str, Error> {
+    if !no_lan && tls_ready(&Config::default(), env, LAN_HOST)? {
+        Ok(LAN_HOST)
+    } else {
+        Ok(LOOPBACK_HOST)
+    }
+}
+
+fn tls_ready(config: &Config, env: &Environment, host: &str) -> Result<bool, Error> {
+    let hostname = nix::unistd::gethostname()
+        .map_err(|_| Error::HostName)?
+        .into_string()
+        .map_err(|_| Error::HostName)?;
+    let node = config::resolve_node_name(config, env, hostname.trim())?;
+    let mut section = config.gateway.clone().unwrap_or_default();
+    section.host = Some(host.to_owned());
+    let source = gateway::server::BindSource::resolve_section(
+        Some(&section),
+        env,
+        &node,
+        &config::shared_dir(env),
+    );
+    Ok(!matches!(
+        gateway::tls::resolve_tls(&source),
+        Err(gateway::server::BindError::TlsRequired { .. })
+    ))
+}
+
+fn refuse_plain_lan(config: &Config, env: &Environment, path: &Path) -> Result<(), Error> {
+    let host = config
+        .gateway
+        .as_ref()
+        .and_then(|section| section.host.clone())
+        .unwrap_or_else(|| LOOPBACK_HOST.to_owned());
+    if gateway::server::is_bind_loopback(&host) || tls_ready(config, env, &host)? {
+        Ok(())
+    } else {
+        Err(Error::LanNeedsTls {
+            path: path.to_path_buf(),
+            host,
+        })
+    }
 }
 
 fn bind_port(port: Option<u16>) -> u16 {

@@ -333,6 +333,7 @@ impl MemoryStore for FakeMemoryStore {
                             message: "scripted memory entry requires a timestamp".to_owned(),
                         })?,
                     session_id: Some(e.session_id.clone()),
+                    title: None,
                 })
             })
             .collect::<Result<_, MemoryStoreError>>()?;

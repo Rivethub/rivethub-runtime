@@ -146,14 +146,19 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         }
     }
 
+    pub async fn replay(&self, now: DateTime<Utc>) -> Result<(), WriteError> {
+        self.spool
+            .replay(DEFAULT_REPLAY_MAX, now, |body| self.transport.post(body))
+            .await?;
+        Ok(())
+    }
+
     pub async fn write(
         &self,
         batch: &CaptureBatchRequest,
         now: DateTime<Utc>,
     ) -> Result<Totals, WriteError> {
-        self.spool
-            .replay(DEFAULT_REPLAY_MAX, now, |body| self.transport.post(body))
-            .await?;
+        self.replay(now).await?;
         let mut prepared = batch.clone();
         if let Some(redaction) = &self.redaction {
             let spans = redaction.redact_batch(&mut prepared);

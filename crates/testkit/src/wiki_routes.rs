@@ -18,6 +18,7 @@ use kernel::transcript::StoreSession;
 use kernel::transcript::ToolOutputRead;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptReaderError;
+use kernel::transcript::TranscriptWindow;
 use kernel::wiki::WikiLookup;
 use kernel::wiki::builder::ExtractWiki;
 use kernel::wiki::builder::HeldEntity;
@@ -86,6 +87,7 @@ impl SessionLister for NoParents {
         &self,
         _harness: HarnessId,
         _native: &str,
+        _window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError> {
         Ok(TranscriptRead::NoSource)
     }
@@ -226,8 +228,10 @@ pub(crate) fn patch(slug: &str, title: &str, summary: &str) -> Found<WikiPatch> 
     })
 }
 
+pub(crate) const HOST: &str = "acme-build";
+
 pub(crate) fn host(text: &str) -> Found<WikiPatch> {
-    let mut host = patch("acmekit-build-box", "AcmeKit build box", text)?;
+    let mut host = patch(HOST, HOST, text)?;
     host.entity_type = Some("Hosts".to_owned());
     Ok(host)
 }
@@ -323,7 +327,7 @@ pub async fn a_second_session_naming_an_entity_gives_it_its_own_page(
         .await?
         .ok_or("the Hosts type is seeded")?;
     let entity = stores
-        .named(TopicKind::Entity, "AcmeKit build box")
+        .named(TopicKind::Entity, HOST)
         .await?
         .ok_or("the second mention creates the entity")?;
     same("type", entity.parent, Some(hosts.id))?;
@@ -350,7 +354,7 @@ pub async fn an_unfiled_session_waits_until_it_is_filed(
         .await?;
     same(
         "held entity",
-        stores.named(TopicKind::Entity, "AcmeKit build box").await?,
+        stores.named(TopicKind::Entity, HOST).await?,
         None,
     )?;
     same(
@@ -484,7 +488,7 @@ pub async fn a_deleted_entity_is_not_recreated(
             TopicId::random(),
             NewTopic {
                 kind: TopicKind::Entity,
-                name: TopicName::new("AcmeKit build box")?,
+                name: TopicName::new(HOST)?,
                 aliases: Vec::new(),
                 parent: Some(hosts.id),
                 directory: None,
@@ -499,7 +503,7 @@ pub async fn a_deleted_entity_is_not_recreated(
     stores.route(job, vec![host]).await?;
     same(
         "tombstoned",
-        stores.named(TopicKind::Entity, "AcmeKit build box").await?,
+        stores.named(TopicKind::Entity, HOST).await?,
         None,
     )?;
     Ok(())

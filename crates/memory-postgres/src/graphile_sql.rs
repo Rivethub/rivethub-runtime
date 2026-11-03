@@ -5,7 +5,7 @@ pub(crate) const CLAIM: &str = "WITH available AS MATERIALIZED (
       AND ($2::bigint IS NULL OR j.id = $2)
       AND ($4::smallint IS NULL OR j.priority <= $4)
       AND j.is_available = true
-      AND j.run_at <= now()
+      AND (j.run_at <= now() OR $2::bigint IS NOT NULL)
       AND (j.job_queue_id IS NULL OR EXISTS (
           SELECT 1 FROM graphile_worker._private_job_queues q
           WHERE q.id = j.job_queue_id
@@ -68,6 +68,19 @@ pub(crate) const COMPLETE: &str = "WITH removed AS (
 )
 SELECT count(*)::bigint AS removed FROM removed";
 
+pub(crate) const ARM: &str = "WITH kept AS (
+    UPDATE graphile_worker._private_jobs j
+    SET priority = LEAST(j.priority, $6::smallint),
+        payload = CASE WHEN $6::smallint < j.priority THEN $2::json ELSE j.payload END,
+        updated_at = now()
+    WHERE j.key = $5 AND j.locked_at IS NULL AND j.attempts < j.max_attempts
+    RETURNING j.id
+)
+SELECT id FROM kept
+UNION ALL
+SELECT (graphile_worker.add_job($1, $2::json, $7, $3, $4, $5, $6, null::text[], 'replace')).id
+WHERE NOT EXISTS (SELECT 1 FROM kept)";
+
 pub(crate) const RELEASE: &str = "WITH owned AS MATERIALIZED (
     SELECT id, job_queue_id, locked_by FROM graphile_worker._private_jobs
     WHERE id = $1 AND starts_with(locked_by, $2)
@@ -75,7 +88,8 @@ pub(crate) const RELEASE: &str = "WITH owned AS MATERIALIZED (
 ), released AS (
     UPDATE graphile_worker._private_jobs j
     SET attempts = GREATEST(j.attempts - 1, 0),
-        locked_at = NULL, locked_by = NULL, updated_at = now()
+        locked_at = NULL, locked_by = NULL, updated_at = now(),
+        run_at = coalesce(now() + make_interval(secs => $3::float8), j.run_at)
     FROM owned WHERE j.id = owned.id
     RETURNING owned.job_queue_id, owned.locked_by
 ), unlocked AS (

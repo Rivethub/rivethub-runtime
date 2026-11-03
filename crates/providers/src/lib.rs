@@ -180,11 +180,19 @@ fn cancelled_provider() -> ModelProviderError {
 }
 
 pub(crate) fn request_error(source: reqwest::Error) -> ModelProviderError {
-    ModelProviderError::Request {
-        message: format!("the model server request failed: {source}"),
-        source: Box::new(kernel::model::ModelCallFailure::Transport {
+    let message = format!("the model server request failed: {source}");
+    let failure = if source.is_connect() {
+        kernel::model::ModelCallFailure::Unreachable {
             source: Box::new(source),
-        }),
+        }
+    } else {
+        kernel::model::ModelCallFailure::Transport {
+            source: Box::new(source),
+        }
+    };
+    ModelProviderError::Request {
+        message,
+        source: Box::new(failure),
     }
 }
 

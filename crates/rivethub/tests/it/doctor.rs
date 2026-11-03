@@ -221,7 +221,7 @@ async fn absent_memory_section_uses_the_environment_postgres_url(pool: sqlx::PgP
     ]);
     let (_, report) = doctor(&env).await;
     assert_eq!(memory(&report).status, CheckStatus::Pass);
-    assert_eq!(memory(&report).message, "Schema 50 is current.");
+    assert_eq!(memory(&report).message, "Schema 52 is current.");
 }
 
 #[tokio::test]

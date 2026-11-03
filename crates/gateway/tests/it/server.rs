@@ -309,7 +309,7 @@ fn bind_error_lines_carry_the_recorded_text() {
     };
     assert_eq!(
         error.to_string(),
-        "[rivethub-gateway] refusing to bind 0.0.0.0: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node cert from rivet-ca issue-node; enroll clients with rivet-ca issue-client). Or bind the gateway host to 127.0.0.1."
+        "[rivethub-gateway] refusing to bind 0.0.0.0: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's holder certificate, ~/.rivethub/tls/holder.cert.pem and holder.key.pem from rh mesh enroll; devices enroll with rh cert renew). Or bind the gateway host to 127.0.0.1."
     );
     let error = BindError::CaMissing {
         path: std::path::PathBuf::from("/tmp/golden/chain.pem"),

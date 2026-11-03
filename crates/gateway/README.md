@@ -1,4 +1,13 @@
-# Gateway CA routes
+# Gateway
+
+The `gateway` crate is the HTTP and WebSocket API (CONTRACT B1, B2, B17) and the services behind it: the session
+registry (`sessions`) with the harness, chat and terminal routes (`term`), capture and memory, topics, Tidy and the
+wiki, tenancy (`tenancy`, `scope`), uploads, devices, the mesh registry and agent channel (`mesh`), the task engine
+(`tasks`), and the plug-in host (`plugins`: registry, supervisor, the Landlock `launch`, the plug-in API socket,
+events, jobs, tools and the creator). Routes live under `routes/`. It calls kernel ports only; the `rivethub`
+composition root supplies the adapters.
+
+## CA routes
 
 `routes::ca::router()` serves the certificate authority on the gateway listener:
 

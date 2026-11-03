@@ -288,7 +288,7 @@ fn remote_browsers_get_the_html_gate_off_api_paths() -> Result<(), Box<dyn std::
     let text = String::from_utf8_lossy(&response.body);
     assert!(text.contains("Device certificate required"));
     assert!(text.contains("RivetHub desktop"));
-    assert!(text.contains("rivet-ca.sh issue-client"));
+    assert!(text.contains("<code>rh cert renew</code>"));
     assert!(text.contains("/healthz"));
     Ok(())
 }

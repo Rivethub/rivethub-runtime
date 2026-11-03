@@ -216,3 +216,40 @@ async fn summary_search_reads_legacy_string_tool_args_and_drops_nul(pool: PgPool
     assert_eq!(expanded, vec![("prune".to_owned(), true)]);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn text_search_ranks_reasoning_after_what_was_said(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    memory
+        .append(
+            &testkit::owner()?,
+            vec![
+                entry(
+                    "filters-think",
+                    "rivet",
+                    Role::Assistant,
+                    None,
+                    "[thinking] backup disk, backup disk: check the backup disk first",
+                )?,
+                entry(
+                    "filters-think",
+                    "rivet",
+                    Role::User,
+                    None,
+                    "why is the backup disk full again",
+                )?,
+            ],
+        )
+        .await?;
+    let mut search = query(SearchMode::Fts);
+    search.scope = MemoryScope::Messages;
+    let order: Vec<String> = memory
+        .search(search)
+        .await?
+        .results
+        .iter()
+        .map(|hit| first_word(&hit.content))
+        .collect();
+    assert_eq!(order, ["why", "[thinking]"]);
+    Ok(())
+}

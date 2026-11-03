@@ -14,10 +14,10 @@ Reference material that survives from the first attempt (read-only; `/rivet-shar
 
 | # | Boundary | Who observes it | Spec (inventory) | Pinned by (recording) | Acceptance test |
 |---|---|---|---|---|---|
-| B1 | Gateway HTTP + WS API (`/api/*`, `/files/*`, `/term`, `/event(s)`, `/sessions`, `/state`, `/healthz`, `/mesh.json`, static SPA, `/ws`; the Topics routes `GET/POST /api/topics`, `GET /api/topics/search?q=`, `GET/PATCH/DELETE /api/topics/{id}` (note 29), `POST /api/topics/{id}/merge`, `GET /api/topics/{id}/sessions`, `GET /api/topics/filing` and `GET /api/sessions/suggestions` (note 70), `GET/PUT /api/topics/{id}/page` (note 63), `GET/POST /api/topics/{id}/decisions`, `PATCH /api/topics/{id}/decisions/{decision}`, `POST /api/topics/{id}/decisions/{decision}/supersede` (note 27) and `GET/PUT/DELETE /api/sessions/{session}/placement`; `POST /api/harness-sessions` with optional `topicId` and `prompt`, answering with optional `startupContext`, and `GET /api/harness-sessions/{session}/startup-context` (note 24); `POST /term` and `POST /api/terminal` with optional `topicId` (note 25); the tool output route `GET /api/harness-sessions/{session}/tools/{tool}/output`; the hub state route `GET/PUT /api/hub/state` and its `hub.state` notice on `/api/events/ws`; session deletion `DELETE /api/sessions/{session}`, `POST /api/sessions/delete` and `GET /api/sessions/trash` (note 75) and `PUT /api/sessions/{session}/keep` (note 85); the task routes `GET/POST /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/wait`, `POST /api/tasks/{id}/kill` and `GET /api/catalog/agents` (note 74); the device update routes `GET /api/updates/manifest` and `GET /api/updates/{file}` (note 94)) | RivetHub web/Android/Electron, hooks, mesh peers, scripts | gateway-api.md §2–§17 (route table §4, aliases §5) | `golden/gateway/` (28 files, recorded traffic incl. startup refusals) + `golden/term/` (17) | replay every recorded exchange: same status, headers (names case-insensitive), body; WS frames in order |
+| B1 | Gateway HTTP + WS API (`/api/*`, `/files/*`, `/term`, `/event(s)`, `/sessions`, `/state`, `/healthz`, `/mesh.json`, static SPA, `/ws`; the Topics routes `GET/POST /api/topics`, `GET /api/topics/search?q=`, `GET/PATCH/DELETE /api/topics/{id}` (note 29), `POST /api/topics/{id}/merge`, `GET /api/topics/{id}/sessions`, `GET /api/topics/filing` and `GET /api/sessions/suggestions` (note 70), `GET/PUT /api/topics/{id}/page` (note 63), `GET/POST /api/topics/{id}/decisions`, `PATCH /api/topics/{id}/decisions/{decision}`, `POST /api/topics/{id}/decisions/{decision}/supersede` (note 27) and `GET/PUT/DELETE /api/sessions/{session}/placement`; `POST /api/harness-sessions` with optional `topicId` and `prompt`, answering with optional `startupContext`, and `GET /api/harness-sessions/{session}/startup-context` (note 24); `POST /term` and `POST /api/terminal` with optional `topicId` (note 25); the tool output route `GET /api/harness-sessions/{session}/tools/{tool}/output`; the hub state route `GET/PUT /api/hub/state` and its `hub.state` notice on `/api/events/ws`; the `topic.changed` notice (note 110); session deletion `DELETE /api/sessions/{session}`, `POST /api/sessions/delete` and `GET /api/sessions/trash` (note 75) and `PUT /api/sessions/{session}/keep` (note 85); the task routes `GET/POST /api/tasks`, `GET /api/tasks/{id}`, `GET /api/tasks/{id}/wait`, `POST /api/tasks/{id}/kill` and `GET /api/catalog/agents` (note 74); the device update routes `GET /api/updates/manifest` and `GET /api/updates/{file}` (note 94)) | RivetHub web/Android/Electron, hooks, mesh peers, scripts | gateway-api.md §2–§17 (route table §4, aliases §5) | `golden/gateway/` (28 files, recorded traffic incl. startup refusals) + `golden/term/` (17) | replay every recorded exchange: same status, headers (names case-insensitive), body; WS frames in order |
 | B2 | Session event stream v1 (`AgentEvent`, `v: 1`) and the room/session snapshot; a `POST /events` batch skips the elements of a kind this node doesn't know, keeps an unknown activity as `thinking`, and keeps the rest (note 73); `approval.wait` (note 81) | RivetHub clients `/ws` clients, `POST /event(s)` producers | gateway-api.md §6, core-domain.md §1.10 | gateway + term recordings (events and snapshots) | accept/reject decisions and emitted snapshots identical on recorded inputs |
 | B3 | Capture ingest: hook payloads from every harness → `POST /api/capture` batch body | 10 harness integration kits (claude, codex, grok, kimi, qwen, opencode, hermes, pi, cursor, cowork) | data-layer.md §3.1–§3.6; harness-control-plane.md §3 | `golden/capture/` (22: pg arms), `golden/capture-zod/` (batch validation) | same rows written for the same hook input; same validation errors |
-| B4 | Postgres schema and data (`rh_*` tables, migrations 0001–0020 including `0020_tag_removals`, then 0021 renames `ros_*` to `rh_*` with `ros_*` views over them, through 0028 `rh_session_startup` (note 24), 0029 `rh_session_startup.delivered_via` (note 25) and 0040 `rh_tasks_archive` and the new `rh_tasks` (note 74), views, triggers, graphile_worker jobs). Migrations are applied only by `rivethub-migrate postgres`, which then requires every migration file name in `_rivetos_migrations`; the runtime verifies one schema version (`memory_postgres::SCHEMA_VERSION`) at connect — equal ok, newer ok with one warning, no `_sqlx_migrations` table a `NotAdopted` error (one `rivethub-migrate postgres` adopts it, including a database whose history is only `_rivetos_migrations`), behind a `SchemaBehind` error naming the migrate command — and runs no DDL | the live datahub, the TypeScript workers during cutover, operators | data-layer.md §1–§2 | `golden/capture/pg/` (30 scenarios), `golden/memory/` | Rust migrates a 0001-era DB to the same schema; writes rows the TypeScript reads and vice versa; enqueues the same jobs with the same keys |
+| B4 | Postgres schema and data (`rh_*` tables, migrations 0001–0020 including `0020_tag_removals`, then 0021 renames `ros_*` to `rh_*` with `ros_*` views over them, through 0028 `rh_session_startup` (note 24), 0029 `rh_session_startup.delivered_via` (note 25) and 0040 `rh_tasks_archive` and the new `rh_tasks` (note 74), and 0052 the `graphile_worker` queue schema when it is absent (note 105), views, triggers, graphile_worker jobs). Migrations are applied only by `rivethub-migrate postgres`, which then requires every migration file name in `_rivetos_migrations`; the runtime verifies one schema version (`memory_postgres::SCHEMA_VERSION`) at connect — equal ok, newer ok with one warning, no `_sqlx_migrations` table a `NotAdopted` error (one `rivethub-migrate postgres` adopts it, including a database whose history is only `_rivetos_migrations`), behind a `SchemaBehind` error naming the migrate command — and runs no DDL | the live datahub, the TypeScript workers during cutover, operators | data-layer.md §1–§2 | `golden/capture/pg/` (30 scenarios), `golden/memory/` | Rust migrates a 0001-era DB to the same schema; writes rows the TypeScript reads and vice versa; enqueues the same jobs with the same keys |
 | B5 | SQLite memory file (`memory.sqlite`, schema v7 and its upgrade ladder through cutover; schema v8 adds a sqlite-vec index afterwards). Creation and upgrades run only through `rivethub-migrate sqlite`, which copies the original file to `<file>.v<N>.bak` before any read-write connection and returns `BackupExists` when that path is already there; the runtime reads `user_version` on a read-only connection (0 → `NotInitialised`, below 7 → `SchemaBehind` naming the file, above 7 → `UnsupportedSchema`), a refused open leaves the file unchanged, and it never creates the file | standalone nodes, TypeScript nodes during cutover | data-layer.md §3; sqlite plugin | `golden/memory-sqlite/` (20 files incl. fixture DBs, upgrades, search results) | same `sqlite_master`, same rows, same search ranks; files open both ways |
 | B6 | Memory read API: search / browse / stats / get_full / tags (HTTP and MCP); the per-session and per-conversation summary DAG (note 61) and the gzip memory export (HTTP) | RivetHub clients, MCP clients (Claude Code etc.), agents | data-layer.md §3.7–§3.11; gateway-api.md §11 | `golden/memory-sqlite/` search cases; gateway recordings | same results and ranking on the same data |
 | B7 | MCP sidecar: RivetHub's own tools only, exactly nine (`memory_search`, `memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`, `delegate_task`, `list_agents`); `echo`, `skill_list`, `skill_manage`, `internet_search` and `web_fetch` are removed (Phil, 2026-10-13). Their schemas, transports (stdio, streamable HTTP, unix socket) | Claude Code, codex, every MCP client | mcp-tools-providers.md §2–§3 | `golden/mcp/` (`tools-list.json`, `calls.json`) | `tools/list` for the nine equals the recording after the RivetOS→RivetHub name translation, compared as parsed values; recorded calls give the same results |
@@ -361,7 +361,7 @@ the categorizer, they leave the old topic's page for the new one (and so does th
 also patched the old page itself), and taken out of a topic they wait until it is
 filed again; a child follows its parent, and a delegated task its parent unless you placed it; an entity named by one session waits as a candidate until
 a second session names it. A candidate is dropped only after its patch is written to the entity's page and its summary
-cited there, so a session that names an existing entity also writes and cites the candidates still held for it. `WikiPatch.kind` (person, host or tool) is replaced by `type`, and the extraction input lists
+cited there, so a session that names an existing entity also writes and cites the candidates still held for it. An entity goes by its name, never a description (QA sweep, 2026-11-01): a trailing qualifier in parentheses is dropped, and a title over four words or 40 characters, or holding a file name, a path, a hex id, a code symbol, prose punctuation or a joining word (and, on, for, of, via…), names no entity; a host's name is a hostname, a domain's a domain name and a repository's `name` or `owner/name`. A patch finds its entity by name, alias or former name, ignoring case and punctuation and preferring an entity of its own type; candidates held under any of its names count together, a new entity keeps the other valid names its candidates went by as aliases, and an existing entity learns a patch's other valid names unless another entity goes by them. `WikiPatch.kind` (person, host or tool) is replaced by `type`, and the extraction input lists
 the type paths as `types`. Postgres migration `0032_entities.sql` and SQLite schema 20 add the kind, the tombstones and the
 candidate and deferred tables; they make People and Hosts types, rename Tools to Software, turn the topics under them into
 entities (dropping the filings that pointed at them and unbinding the type pages), and seed the types Agents, Hardware,
@@ -576,14 +576,14 @@ before the route sees it, so a plug-in cannot write into another conversation.
 at enable (note 55), and any later increase is approved again before the process runs with it. rh checks the B1
 permissions on every plug-in API call: `memory.read` (`GET /api/memory/*`, `POST /api/memory/tool/memory_search`,
 `memory_browse`, `memory_stats` and `memory_get_full`, `GET /api/wiki*`), `memory.write` (`POST
-/api/memory/tool/memory_append`, `POST /api/capture`), `sessions.read` (`GET` on `/api/harness-sessions*`,
-`/api/harnesses/*` and `/api/catalog`), `sessions.control` (`POST`, `PATCH` and `DELETE` on `/api/harness-sessions*`:
+/api/memory/tool/memory_append`, `POST /api/capture`), `sessions.read` (`GET` on `/api/harness-sessions*` and
+`/api/harnesses/*`), `sessions.control` (`POST`, `PATCH` and `DELETE` on `/api/harness-sessions*`:
 create, turn, steer, cancel, answer an approval, retitle, delete; and `POST /api/sessions/{session}/messages`, which
 sends a turn and can start a session), `topics.read` (`GET /api/topics*`, `GET /api/sessions/history`, `GET
 /api/sessions/suggestions` and `GET /api/sessions/{session}/placement`), `topics.write` (the other methods on `/api/topics*`, and `PUT` and `DELETE` on
 `/api/sessions/{session}/placement` and `/api/sessions/{session}/history`; no other `/api/sessions` route is open to
 a plug-in), `tasks.read` (`GET /api/tasks*`), `tasks.delegate`
-(`POST /api/tasks`), `agents.read` (`GET /api/agents*`) and `notifications.send` (`POST /api/plugin/notify`). Events
+(`POST /api/tasks`), `agents.read` (`GET /api/agents*` and `GET /api/catalog/agents`, note 116) and `notifications.send` (`POST /api/plugin/notify`). Events
 need the permission of what they reveal (note 56). On Linux the process is confined (note 50): it reads and writes its
 own `data/` and `run/` folders; reads its install directory, the program it runs (and the `lib` folder beside the `bin`
 folder it sits in, if it does), `/usr`, `/bin`, `/sbin`, `/lib`, `/lib32`, `/lib64`, `/etc`, `/proc`, `/sys`,
@@ -1141,7 +1141,7 @@ reviving dead `compact-conversation` jobs; `run-task` jobs are never flagged (ta
 backfill and `stale-wiki-sweep` skip summaries whose `wiki-ext-` key is flagged, dismissed or not. `GET
 /api/memory/flagged` answers `{ groups: [{ task, cause, count, lastFailedAt, sample }] }`, newest failure first: open
 records grouped by task and cause (the error's first line with uuids as `…` and digit runs as `N`), `sample` the group's
-newest record `{ id, task, key?, payload, error, failures, firstFailedAt?, lastFailedAt, flaggedAt }`. `POST
+newest record `{ id, task, key?, subject?, payload, error, failures, firstFailedAt?, lastFailedAt, flaggedAt }`, `subject` the title of what the job worked on: the conversation its payload's `conversationId` names, or that holds its `messageId` or `ros_messages` target, else the wiki page of a `ros_wiki_topics` target. `POST
 /api/memory/flagged/{id}/retry` deletes the record and its count and enqueues the job again with fresh attempts; `POST
 /api/memory/flagged/{id}/dismiss` hides it (a dismissed key stays flagged for the sweeps that skip it, and a new failure
 shows it again). Both answer `204`, `404` for a record that is not open, and the three routes are the node owner's
@@ -1240,6 +1240,207 @@ when none does. The
 claimed jobs are completed with it, or released (their attempt not counted) when the call or the write fails. A job
 whose summary is already extracted is completed; one that routes elsewhere is released. A summary that routes to no
 topic is extracted alone, as before. Each extraction call logs its summary count and prompt and completion tokens.
+
+(102) Lighter memory reads (Phil, 2026-10-31; desktop smoothness): `GET /api/memory/summaries/{session}` and
+`GET /api/memory/conversations/{id}/summaries` take `outline=true`, which answers the same DAG with each node's
+`content` cut to its first 320 bytes on a character boundary, `truncated: true` on a node that was cut and
+`sourceMessageIds` empty; without it the body is unchanged (`truncated` is left out when false). `GET
+/api/memory/summaries/{session}/{summary}` answers one summary of that session's DAG whole, as a
+`MemorySummaryNode`, and `404` for an id outside it. `GET /api/memory/search` takes `snippet=true`, which answers each
+hit's `content` as at most 480 characters around the first query word of three or more characters (or the first 480),
+marked with `…` where it was cut; a client that does not show `expanded` should also pass `expand=false`. Search no
+longer answers a message or summary twice when it was captured twice: hits with the same source, session, time and
+content keep the best-ranked one. `GET /api/topics/{topic}/page` for a sub-topic answers its root's page as a view of
+that sub-topic: `markdown` is the page title, its summary and the sub-topic's `##` section (the last one headed with its
+name, up to the next `##`), `citations` only those filed in the sub-topic, and `aliases`, `entities` and `sources` empty;
+`currentState` and `article` stay the root's, so an edit from the view still edits the whole page. The gateway compresses
+responses with gzip or brotli when the request accepts them, except event streams, audio, video, archives, octet streams
+and NDJSON.
+
+(103) Summary tree (Phil, 2026-10-31; monster sessions): `GET /api/memory/summaries/{session}?tree=true` answers the
+session's DAG a level at a time: `summaries` the top-level nodes (no parent in the DAG), earliest first by `earliestAt`
+(else `latestAt`) then id, cut as `outline=true` cuts them, each with `children` (how many nodes roll up into it);
+`offset` and `limit` take a window of them (absent, the first and all). `counts` is the whole DAG's
+`{ leaves, branches, roots, embedded, top }`, `top` the number of top-level nodes, and `messages` the tally as before.
+`GET /api/memory/summaries/{session}/{summary}/children` answers `{ summaries, total }`: that node's children in the
+same order, cut and counted the same way, with the same `offset` and `limit`, `total` all its children, and `404` for a
+summary outside the session's DAG. Without `tree` the route answers as note 102 says.
+(104) Capture event-id index (Phil, 2026-10-31): Postgres 0051 indexes each message's capture event id per conversation
+(`rh_messages_event_id` on `(conversation_id, (metadata ->> 'event_id'))` where the id is set), so capture's check for
+already-stored event ids probes the index instead of reading every message of a long session. Row-level security lets
+it use that index only when `jsonb_object_field_text` (the `->>` operator) is LEAKPROOF: the migration marks it when it
+runs as a superuser and otherwise refuses with the statement a superuser runs once per database (as 0044 does for the
+text-search operators). On a large store the index can be built first with `CREATE INDEX CONCURRENTLY` under the same
+name and definition; the migration then leaves it as it is.
+(105) Fresh installs (Phil, 2026-11-01): a new Postgres database needs only the superuser steps and
+`rivethub-migrate postgres`. Migration 0052 creates the job queue when the `graphile_worker` schema is absent: the
+schema graphile-worker 0.17.3 installs with `--schema-only` (the `job_spec` type; `_private_jobs`, `_private_job_queues`,
+`_private_tasks` and `_private_known_crontabs` with their identity sequences, constraints, indexes and row-level
+security enabled; the `jobs` view; `add_job`, `add_jobs`, `complete_jobs`, `force_unlock_workers`,
+`permanently_fail_jobs`, `remove_job` and `reschedule_jobs`; and its `migrations` rows 1 to 19), the version every
+existing install carries and the queue code reads and writes. An existing schema is left as it is, so the migration is a
+no-op where a TypeScript install or graphile-worker created the queue. `memory_postgres::SCHEMA_VERSION` is 52.
+graphile-worker is MIT licensed (copyright 2019 Benjie Gillam; notice in `crates/migrate/README.md`). A failed
+migration names its version and carries the database's message, detail and hint (`applying the postgres migrations
+failed at 0044: migration 0044 turns on row-level security, …`); connect, version and backfill failures carry the
+database's reason too. B9 and B16 texts that named retired commands: a missing config is `No config found. Write
+~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG` (`… or use --config <path>` from
+`rh start`) in place of `rh config init`; the off-loopback TLS refusal asks for the node's holder certificate
+(`~/.rivethub/tls/holder.cert.pem` and `holder.key.pem` from `rh mesh enroll`; devices enroll with `rh cert renew`) in
+place of `rivet-ca issue-node` and `issue-client`; and the device-certificate page names `rh cert renew` in place of
+`rivet-ca.sh issue-client`. The recorded refusal text is translated to the new wording by
+`testkit::translate_recorded_product_names`. `rh local`: with no config it writes `gateway.host: 0.0.0.0` only when TLS
+for that bind resolves (`RIVETHUB_TLS_CERT` and `RIVETHUB_TLS_KEY`, or an issued node pair under the shared
+directory) and `127.0.0.1` otherwise, logging that a LAN bind needs TLS, so a first run on a new machine serves on loopback;
+a config that binds off loopback without TLS stops before anything starts, naming the file and the three ways out
+(`rh local --no-lan`, `gateway.host: 127.0.0.1`, or the TLS settings). `rh mcp` on a SQLite config (memory backend
+`sqlite`) loads it as `rh local` does, opens the SQLite file it names (`memory.sqlite.path`) with the same query
+embedder, and serves B7 on stdio only (`rh local` serves the network transports); delegation and plug-in tools reach
+the running `rh local` as they reach a gateway.
+(106) Long transcripts read back a page at a time (Phil, 2026-11-01): a Claude Code transcript is read in windows of
+the JSONL file (`kernel::transcript::TranscriptWindow`): the latest part (its last 8 MiB), from a byte offset to the end,
+or the part ending at an offset. A window that starts partway through the file starts at the first prompt in it, read
+further back while it holds none, so a window never opens on half a turn; `StoreTranscript::earlier` (replacing
+`truncated`) is the offset it starts at, absent when it starts at the top. `GET /api/harness-sessions/{session}/transcript`
+takes `before=<offset>` (the page ending there) or `from=<offset>` (from there to the end) and answers `earlier`; the
+socket's `transcript` frame carries `earlier` beside `truncatedBefore`, and after its first read the socket keeps reading
+from where that read started, so the turns it sends only grow and pages read back before them stay contiguous. A fork's
+`from` (`HarnessSessionForkRequest`) is the offset its `prompts` are counted from, the start of the turns the client
+holds; without it they count from the latest part, as before. Other harnesses read whole transcripts: `earlier` stays
+absent and a `before` read is empty.
+(107) Sessions keep their model and follow the terminal (Phil, 2026-11-01): a top-level Claude Code session's listing
+names the model of its last reply, read from the 64 KiB tail the listing already reads, and a live chat's own model
+(the one it started on or was switched to) wins over it. `GET /api/harness-sessions/{session}`, the harness session list
+and a fork's source name a recorded model the way the harness offers it: the offered id that is one of its parts
+(`claude-haiku-5-5` is `haiku`), when exactly one is; so a fork starts on its source's model and a client shows it by its
+label. The socket's replayed context count (the chat harness's last `context` frame) is dropped once the terminal starts
+a turn, which that harness never counts, and the transcript's count stands. After each transcript it reads the socket
+replays a `session-updated` with `blocked` true while the session waits on you, as it replays approvals, context and
+driver, so a client opened then shows the wait rather than a running turn.
+
+(108) One writer per page route (Phil, 2026-11-01; QA memory sweep): an extract-wiki job whose summary routes to a
+topic page leases its route, the page or one sub-topic's section on it, before it reads the route's current text, and
+holds the lease through the extraction call and the write. On Postgres the lease is a session advisory lock (key pair
+`0x77696b69`, `hashtext(<page slug>[#<topic id>])`) on a connection that is closed when the lease ends, so a worker
+that dies frees it. A job whose route another writer holds goes back to the queue without spending an attempt, to run
+no sooner than 30 s later; while it waits it can join the next batch for its route, because note 101's coalescing
+takes queued jobs whatever their `run_at`, and claiming a job by id ignores `run_at`. A route's queued summaries are
+so extracted one batch at a time, each reading what the last one wrote, instead of several writers rewriting one
+section from the same text and rebasing onto each other. Rebase (note 100): a block the other write added is kept only
+when fewer than 60% of its words (the archive rule's words) are already in this rewrite, so another writer's rewording
+of a paragraph this rewrite also rewrote is replaced, not kept beside it; recompile's "their new blocks first" follows
+the same rule. Every page write (Postgres and SQLite) keeps one copy of a repeated paragraph in the article and in
+each section: a later exact repeat of 40 or more bytes is dropped, and so is a later prose paragraph of 12 or more words
+80% of whose words an earlier prose paragraph in the same part already holds (a lead repeated with another "Currently"
+sentence); headings are never dropped, and lists, tables, quotes and code only as exact repeats. Summaries: the summarizer's prompts ask for the work itself (the leaf prompt in the third person) and
+never a description of the batch: no batch, leaf or message numbers, ids, channel names, timestamps or tool-call
+tallies. The leaf summarizer's input shows each tool call's input (first 600 bytes) and output (first 300 bytes) under
+its "[tool call] <name>" line, so a batch of tool calls is summarized by what they did. A branch or root summary cut off
+at its token limit is retried over half as many children, and a summarize job whose conversation was deleted while it
+waited completes without a summary. Stores without concurrent writers (SQLite) take the lease at once. Leads stay put (QA pass 2): a sub-topic section's first paragraph is
+written the way a page summary is, keeping its existing description and replacing only its closing "Currently"
+sentence; a lead holds one paragraph (a later paragraph that 60% restates the first is dropped), and a "Currently"
+sentence that restates the one already there (80% of its words, every number among them) is kept as it was. On
+Postgres an update without a merge base no longer appends its summary to the page's (`merge_summary_text`); it goes
+through the same stable lead, as SQLite already did. Extraction and merge prompts keep durable knowledge (what was
+decided, built, changed, found, broken or fixed, and why) and leave out how a session went about it: clicks and screen
+coordinates, screenshot and scratch file names, test-run and wait-loop mechanics, single-run timings, temporary ports,
+throwaway hosts and credentials, and session, run, job or batch ids. A leaf summary that still opens with the batch
+("The batch began…", "In this batch, …") is reworded before it is stored: the agent's name becomes the subject, or "The
+work" when the batch is described rather than acting.
+
+(109) Search hits that hold the match (Phil, 2026-11-01; QA memory sweep): `GET /api/memory/search` with
+`scope=messages` and no `mode` is a transcript search and searches text (mode `fts`): every hit is a message that holds
+the query (a full-text match, or a literal match when full text finds none), ranked with the query's meaning as
+before; a message found by meaning alone is no longer answered there. Other scopes without a mode stay hybrid, and an
+explicit `mode` is honoured. On Postgres a text search (`mode=fts`) answers a message whose text is only reasoning (it
+starts `[thinking]`) after every message that holds what was said, and ranks only the 5,000 newest matches when
+Postgres estimates more, as hybrid's text arm does (note 98). A literal (trigram) match in a search that leaves out tool
+rows (`exclude_roles` holding `tool`, or a `role` other than `tool`) looks in message text only: only tool rows carry a
+result, and the few older rows that carry one repeat it in their text. A literal with no letters is matched with
+`LIKE`, the same match without case folding. Each search arm reads only a hit's identity and ranking columns; the hits
+answered read their text afterwards, one query per table. SQLite is unchanged.
+
+(110) Topic changes on the event stream (Phil, 2026-11-01; desktop QA): a decision added, edited or superseded
+through `/api/topics/{id}/decisions…`, and a topic changed through `PATCH /api/topics/{id}` (its name, aliases, parent
+or working directory), send `{type: "topic.changed", v: 1, topic}` to every unfiltered `/ws` and `/api/events/ws`
+socket on that node, `topic` being the topic's id. It names no content: a client reads the topic or its decisions again
+through the routes, under their own rules. Writes through another node's gateway to a shared database send nothing
+here. The body is `wire::gateway::topics::TopicChangedNotice` in `contract/sent.schema.json`.
+(111) Summary jobs keep their place in line (Phil, 2026-11-01; queue review): the idle and stale sweeps, which run when
+a summarizer starts and every 5 and 15 minutes, and a compaction that queues its own follow-up, arm
+`compact-<conversationId>` instead of replacing it (`JobKeyMode::Arm`). A waiting job is kept as it is: its `run_at`,
+attempts and last error stay, and its priority only rises, taking the new trigger with it, when the new arm is more urgent
+(an idle sweep lifts a stale job from 10 to 0 or -20; a stale sweep no longer drops an idle job to 10). A job that is
+running gets one queued behind it, and a dead one is revived, as before. A conversation queued since an older sweep
+therefore keeps its original `run_at` and is compacted before newer ones of the same priority, where every sweep used to
+re-date all of them to the sweep's time, newest conversation first, and the oldest never reached the front. A failing
+job keeps its attempts, so it reaches the flagged list instead of being reset by the next sweep. SQLite keeps a waiting
+row's `run_at` and raises its `rh_job_priorities` entry the same way. A compaction with nothing to take (fewer messages
+than its trigger's floor, too few leaves or branches to roll up) makes no model call, as before.
+
+(112) Sessions after QA pass 2 (Phil, 2026-11-01): a terminal that resumes a session (`POST /term` with `resume`, no
+agent) starts in the session's working directory, the live chat's or else the one its harness recorded, when that folder
+still exists; an agent launch keeps its agent's folder. The Claude Code capture hook captures only a transcript named
+for its session (`<session>.jsonl`, as Claude names them): Grok Build runs the hooks in Claude's settings too, and its
+sessions no longer leave a second `claude-code:` conversation of prompts and tool rows. rh's harness discovery starts
+each agent with `RIVETHUB_MODEL_RUN=1`, so its probe sessions capture nothing. A Claude turn's usage counts each model
+call's output once (Claude repeats a call's usage on every record of its content blocks), and a transcript read carries
+`contextUsed`, the context its last model call left (that call's prompt and reply), on the socket's `transcript` frame
+and the transcript route; a client's context meter shows it, falling back to the newest turn's prompt and reply.
+
+(113) Failed tasks are told (Phil, 2026-11-01): the `task.done` notification on `/api/notifications/ws` carries the
+task's `agent` and, when it has one, its `error`. A client following each node's notifications tells the person when a
+delegated task fails or runs out of time, with the agent and the reason, which shows even for a task that never
+started a session.
+
+(114) Tidy keeps old names and skips what is moot (Phil, 2026-11-01; QA pass 2): a merge keeps the source's name, with
+its aliases, as aliases of the topic it merges into, and a rename keeps the former name as an alias unless the same
+change sets the aliases outright (or the two names differ only in case), on Postgres and SQLite alike, so an entity or
+topic search, and the wiki's entity matching, still find it by the old name ("TVRT" finds gpubox after "Merge TVRT into
+gpubox"). Approving a proposal whose change has nothing left to do sets it aside instead of approving it: a merge whose
+topic is gone or whose target is gone, a delete of a topic already gone, a rename to the name it has, a move to the
+parent it has, a close of a closed topic, and a type that already exists. A set-aside proposal is stored rejected, so it
+is not proposed again, and is not listed as pending. `POST /api/tidy/batches/{batch}/approve` answers
+`{ decided, skipped: [{ proposalId, reason }], failed: [{ proposalId, error }] }` (`wire::gateway::tidy::TidySkipped`):
+`skipped` holds each set-aside proposal with why in plain words ("the topic it changes is already gone", "it is already
+named “g9”", "it is already there", "it is already closed", "the topic it merges into is gone", "the type already
+exists"); a proposal approved alone that has nothing left to do answers `409` with the same reason. An approval that
+stopped part way is finished by approving again: the changes it already made are skipped as done, the rest applied.
+
+(115) Search hits name their session; catch-up reads one summary (Phil, 2026-11-01; QA pass 2): every hit of
+`GET /api/memory/search` (and of the agent and MCP searches, which read the same store) carries `title`, the title of
+the hit's session: the conversation's title when it names the session (not a placeholder), else, for a conversation
+with no title, the title read from its newest summary, else from its first user message; absent when none names it.
+On Postgres the titles are read in one query beside the hits' text; SQLite answers no `title` yet. To open a hit at its
+match, a client opens `sessionId` and shows the transcript turn whose `startedAtMs`..`endedAtMs` holds the hit's
+`createdAt` (a message hit's `id` is its stored message id); when the transcript read answers `earlier` and the hit is
+older than its first turn, the client reads back with `before=<earlier>` (note 106) until a turn holds it.
+`GET /api/memory/summaries/{session}?latest=<n>` (`n` from 1 to 50; it takes precedence over `tree` and `outline`)
+answers the session's `n` summaries that end last, newest first and a leaf ahead of a rollup ending at the same time,
+each whole and without source message ids, with `messages` all zero (no tally is counted). It reads only those rows, so
+a session of 5,355 summaries answers in 11 to 26 ms where its outline took 376 to 583 ms and 3.5 MB; a topic's
+catch-up reads `latest=1` for each session it shows.
+
+(116) The agent catalog for plug-ins (Phil, 2026-11-01; plug-in QA): `GET /api/catalog/agents`, every agent a task can
+be delegated to (note 74), is open to a plug-in holding `agents.read`, so a plug-in that delegates can check an agent name
+before it runs. `sessions.read` no longer names `/api/catalog`, which note 74 removed; the bare `/api/catalog` is refused.
+
+(117) A session live in another process is never resumed (Phil, 2026-11-01): before rh resumes a Claude Code session it
+does not hold (a turn sent to `POST /api/harness-sessions/{session}/turn` with no live chat, or `POST /term` with
+`resume`), it reads Claude's process files (`<claude config>/sessions/<pid>.json`: `pid`, `sessionId`, `procStart`) and
+treats the session as running elsewhere when a file names it and its pid is alive with the same start time. Such a
+request is refused with 409 `session_running_elsewhere` ("This session is running in another terminal…") and starts no
+process. `GET /api/harness-sessions/{session}` answers `runningElsewhere: true` for it, and its socket follows the
+transcript as it does a terminal rh runs, so a client shows it read-only and live. A session rh holds (a live chat or
+its own terminal) is unaffected.
+
+(118) A model server that cannot be reached is an outage (Phil, 2026-11-01; failing-jobs triage): a model call that
+fails to connect at all (refused, no route to host, the name not resolving, the connection timing out) is
+`ModelCallFailure::Unreachable`, and every worker treats it as note 97's retry-later answer: the job is held and retried
+as the server comes back, spending no attempt and counting no failure, where before only a refused connection did and
+a datahub network drop on 2026-10-31 failed and flagged 30 jobs (20 wiki extractions in one minute). A call that
+connected and then broke stays a transport failure and fails the job as before.
 
 ## 4. Gaps to close before building the affected slice
 

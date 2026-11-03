@@ -1,7 +1,9 @@
+use super::bound::{blocks, covered, overlaps, prose, words};
 use super::summary::SUMMARY_LIMIT;
 
 pub const CURRENTLY: &str = "Currently";
 const CURRENTLY_LIMIT: usize = 300;
+const RESTATED_PERCENT: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lead {
@@ -53,15 +55,57 @@ pub fn stable_summary(existing: &str, proposed: &str) -> String {
     let old = split_lead(existing);
     let new = split_lead(proposed);
     let lead = if old.lead.is_empty() {
-        new.lead
+        one_lead(&new.lead)
     } else {
-        old.lead
+        one_lead(&old.lead)
     };
-    match new.currently.or(old.currently) {
+    let currently = match (new.currently, old.currently) {
+        (Some(new), Some(old)) if restates(&old, &new) => Some(old),
+        (new, old) => new.or(old),
+    };
+    match currently {
         Some(currently) if lead.is_empty() => currently,
         Some(currently) if fits(&lead, &currently) => format!("{lead} {currently}"),
         Some(_) | None => lead,
     }
+}
+
+#[must_use]
+pub fn steady_lead(existing: &str, proposed: &str) -> String {
+    let mut parts = blocks(proposed);
+    let old = blocks(existing)
+        .into_iter()
+        .next()
+        .filter(|block| prose(block));
+    match (old, parts.first_mut()) {
+        (Some(old), Some(new)) if prose(new) => {
+            *new = stable_summary(&old, new);
+            parts.join("\n\n")
+        }
+        _ => proposed.trim().to_owned(),
+    }
+}
+
+fn one_lead(text: &str) -> String {
+    let mut paragraphs = blocks(text).into_iter();
+    let Some(first) = paragraphs.next() else {
+        return String::new();
+    };
+    let said = words(&first);
+    std::iter::once(first)
+        .chain(paragraphs.filter(|paragraph| !covered(&words(paragraph), &said)))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn restates(old: &str, new: &str) -> bool {
+    let before = words(old);
+    let after = words(new);
+    overlaps(&after, &before, RESTATED_PERCENT)
+        && after
+            .iter()
+            .filter(|word| word.chars().any(|letter| letter.is_ascii_digit()))
+            .all(|word| before.contains(word))
 }
 
 fn fits(lead: &str, currently: &str) -> bool {

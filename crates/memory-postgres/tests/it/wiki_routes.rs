@@ -138,6 +138,16 @@ async fn an_entity_type_is_found_by_its_whole_path(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_entity_goes_by_its_names_never_by_a_description(pool: PgPool) -> TestResult {
+    let seeded = Seeded::new(pool).await?;
+    testkit::wiki_mentions::an_entity_goes_by_its_names_never_by_a_description(
+        seeded.stores(),
+        &seeded.job,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn an_unfiled_session_waits_until_it_is_filed(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
     wiki_routes::an_unfiled_session_waits_until_it_is_filed(seeded.stores(), &seeded.job).await
@@ -193,15 +203,11 @@ async fn a_sub_topic_summary_lands_in_its_section(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_sub_topic_rewrite_replaces_its_section(pool: PgPool) -> TestResult {
+async fn a_sub_topic_rewrite_keeps_its_lead(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool.clone()).await?;
     let second = another(&pool, &seeded.job).await?;
-    testkit::wiki_bounded::a_sub_topic_rewrite_replaces_its_section(
-        seeded.stores(),
-        &seeded.job,
-        &second,
-    )
-    .await
+    testkit::wiki_bounded::a_sub_topic_rewrite_keeps_its_lead(seeded.stores(), &seeded.job, &second)
+        .await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

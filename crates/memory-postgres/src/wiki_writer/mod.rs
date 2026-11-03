@@ -180,6 +180,13 @@ async fn apply_locked(
         patch.article = patch
             .article
             .map(|article| rebase(&base.article, &article, &current.article));
+    } else if let Some(current) = previous
+        .as_ref()
+        .filter(|page| !page.current_state.trim().is_empty())
+        && let Some(delta) = patch.summary_delta.take()
+    {
+        patch.current_state = Some(stable_summary(&current.current_state, &delta));
+        patch.allow_shrink = true;
     }
     let at = patch.verified_at;
     let prefix: String = provenance.chars().take(8).collect();

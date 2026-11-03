@@ -65,7 +65,14 @@ bounds, summary expansion, synthesis and agent-filtered stats have no correspond
 explicit requests for these features are refused. No expansion or synthesis is implied when absent.
 Taxonomy upsert is a full replacement through the kernel; aliases must be supplied explicitly.
 The enabled-write catalog describes replacement semantics and changes its annotation accordingly.
-There is no CLI/composition-root integration in this adapter slice.
+The `rivethub` composition root builds the server for `rh mcp` and `rh local`.
+
+`Server::builder(...).plugins(port)` takes a `kernel::plugins::PluginTools` and lists, after
+the B7 tools, the plug-in creator's four tools and every running plug-in's tools as
+`<id>-<tool>` (CONTRACT note 57); a call goes to the port and its result becomes one text
+content. The port changing its version sends `notifications/tools/list_changed`. `rh local`
+passes the gateway's plug-in host directly; `rh mcp` passes `plugins::SocketTools`, which
+reads `<state>/plugins/tools.sock` with the bearer in `tools.token`.
 
 Validation covers derived schemas and replay, wrong-type errors, read/write tag routing,
 unsupported-option refusal, conflicting browse filters, authenticated TCP and Unix client bridges,

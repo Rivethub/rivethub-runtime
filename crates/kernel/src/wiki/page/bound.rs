@@ -13,6 +13,10 @@ const SECTION_FLOOR: usize = 512;
 pub const ENTITIES: usize = 64;
 pub const ARCHIVED_TITLE: &str = "Archived";
 const ELLIPSIS: char = '…';
+const COVERED_PERCENT: usize = 60;
+const REPEAT_FLOOR: usize = 40;
+const REPEAT_WORDS: usize = 12;
+const REPEAT_PERCENT: usize = 80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Archived {
@@ -171,15 +175,12 @@ pub fn rebase(base: &str, ours: &str, current: &str) -> String {
     if normal(base) == normal(current) {
         return ours.trim().to_owned();
     }
-    let base_blocks: BTreeSet<String> = blocks(base).iter().map(|block| normal(block)).collect();
+    let since = Since::new(base, ours);
     let ours_blocks = blocks(ours);
     let ours_normal: BTreeSet<String> = ours_blocks.iter().map(|block| normal(block)).collect();
     let mut merged: Vec<String> = blocks(current)
         .into_iter()
-        .filter(|block| {
-            let key = normal(block);
-            !base_blocks.contains(&key) || ours_normal.contains(&key)
-        })
+        .filter(|block| ours_normal.contains(&normal(block)) || since.fresh(block))
         .collect();
     let mut anchor: Option<String> = None;
     for block in &ours_blocks {
@@ -194,6 +195,58 @@ pub fn rebase(base: &str, ours: &str, current: &str) -> String {
         anchor = Some(key);
     }
     merged.join("\n\n")
+}
+
+#[must_use]
+pub fn added_since(base: &str, current: &str, ours: &str) -> String {
+    let since = Since::new(base, ours);
+    blocks(current)
+        .into_iter()
+        .filter(|block| since.fresh(block))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+struct Since {
+    base: BTreeSet<String>,
+    said: BTreeSet<String>,
+}
+
+impl Since {
+    fn new(base: &str, ours: &str) -> Self {
+        Self {
+            base: blocks(base).iter().map(|block| normal(block)).collect(),
+            said: words(ours),
+        }
+    }
+
+    fn fresh(&self, block: &str) -> bool {
+        !self.base.contains(&normal(block)) && !covered(&words(block), &self.said)
+    }
+}
+
+pub(super) fn prose(block: &str) -> bool {
+    !block.starts_with(['#', '-', '*', '|', '>', '`'])
+        && !block.starts_with(|letter: char| letter.is_ascii_digit())
+}
+
+pub(super) fn words(text: &str) -> BTreeSet<String> {
+    text.split(|letter: char| !letter.is_alphanumeric() && !"_.#/-".contains(letter))
+        .map(|word| word.trim_matches(|letter: char| !letter.is_alphanumeric()))
+        .filter(|word| {
+            word.chars().count() >= 4 || word.chars().any(|letter| letter.is_ascii_digit())
+        })
+        .map(str::to_lowercase)
+        .collect()
+}
+
+pub(super) fn covered(found: &BTreeSet<String>, pool: &BTreeSet<String>) -> bool {
+    overlaps(found, pool, COVERED_PERCENT)
+}
+
+pub(super) fn overlaps(found: &BTreeSet<String>, pool: &BTreeSet<String>, percent: usize) -> bool {
+    let shared = found.iter().filter(|word| pool.contains(*word)).count();
+    shared.saturating_mul(100) >= found.len().saturating_mul(percent)
 }
 
 #[must_use]
@@ -280,6 +333,10 @@ pub fn bound_parts(
     let capped = cap_summary(summary, SUMMARY_LIMIT);
     *summary = capped.kept;
     keep(&mut archived, "Summary", &capped.overflow);
+    drop_repeats(article);
+    for section in sections.iter_mut() {
+        drop_repeats(&mut section.body);
+    }
     let fitted = fit(article, ARTICLE_BUDGET);
     *article = fitted.kept;
     keep(&mut archived, "Article", &fitted.overflow);
@@ -291,6 +348,49 @@ pub fn bound_parts(
         &mut archived,
     );
     archived
+}
+
+fn drop_repeats(text: &mut String) {
+    let found = blocks(text);
+    let mut seen = Repeats::default();
+    let kept: Vec<&str> = found
+        .iter()
+        .filter(|block| !seen.repeats(block))
+        .map(String::as_str)
+        .collect();
+    if kept.len() < found.len() {
+        *text = kept.join("\n\n");
+    }
+}
+
+#[derive(Default)]
+struct Repeats {
+    exact: BTreeSet<String>,
+    prose: Vec<BTreeSet<String>>,
+}
+
+impl Repeats {
+    fn repeats(&mut self, block: &str) -> bool {
+        if block.starts_with('#') || block.len() < REPEAT_FLOOR {
+            return false;
+        }
+        if !self.exact.insert(normal(block)) {
+            return true;
+        }
+        if !prose(block) {
+            return false;
+        }
+        let found = words(block);
+        let repeated = found.len() >= REPEAT_WORDS
+            && self
+                .prose
+                .iter()
+                .any(|earlier| overlaps(&found, earlier, REPEAT_PERCENT));
+        if !repeated {
+            self.prose.push(found);
+        }
+        repeated
+    }
 }
 
 pub fn bound_sections(

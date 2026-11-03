@@ -6,6 +6,7 @@ use kernel::transcript::StoreSession;
 use kernel::transcript::ToolOutputRead;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptReaderError;
+use kernel::transcript::TranscriptWindow;
 use kernel::wiki::builder::ExtractWiki;
 use wire::harness::HarnessId;
 use wire::session_id::SessionId;
@@ -64,8 +65,9 @@ impl SessionLister for Parents {
         &self,
         harness: HarnessId,
         native: &str,
+        window: TranscriptWindow,
     ) -> Result<TranscriptRead, TranscriptReaderError> {
-        NoParents.transcript(harness, native).await
+        NoParents.transcript(harness, native, window).await
     }
 
     async fn rename(

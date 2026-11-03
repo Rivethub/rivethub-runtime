@@ -4,6 +4,7 @@ use std::time::Duration;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{FromRequestParts, RawQuery, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
+use kernel::transcript::TranscriptWindow;
 use tokio::sync::broadcast;
 use tokio::time::{Instant, MissedTickBehavior};
 use wire::gateway::sessions::HarnessTranscriptTurn;
@@ -15,7 +16,7 @@ use wire::harness::{HarnessCode, HarnessEvent, RosterCommand, SessionDriver};
 use super::first_param;
 use crate::Gateway;
 use crate::error::ApiError;
-use crate::history::{Resolved, authorize};
+use crate::history::{Resolved, authorize, live_summary};
 use crate::routes::sessions::{SocketError, send};
 use crate::tenancy::UserId;
 
@@ -78,6 +79,7 @@ async fn attach(
         resolved: &resolved,
         rev: 0,
         last: None,
+        window: TranscriptWindow::Latest,
     }
     .stream(events)
     .await;
@@ -121,6 +123,7 @@ struct Attached<'a> {
     resolved: &'a Resolved,
     rev: u64,
     last: Option<Vec<HarnessTranscriptTurn>>,
+    window: TranscriptWindow,
 }
 
 struct Follow {
@@ -159,6 +162,11 @@ impl Follow {
         left
     }
 
+    fn elsewhere(&mut self) {
+        self.terminal = true;
+        self.busy = true;
+    }
+
     fn read(&mut self, changed: bool) {
         let slowest = if self.busy { FOLLOW_BUSY } else { FOLLOW_SLOW };
         self.gap = if changed {
@@ -194,6 +202,11 @@ impl Attached<'_> {
                 .and_then(|terminal| terminal.held_driver(&self.resolved.native))
                 .as_ref(),
         );
+        if let Ok(Some(_)) =
+            crate::history::running_elsewhere(self.gateway, &self.resolved.session).await
+        {
+            follow.elsewhere();
+        }
         loop {
             tokio::select! {
                 () = self.gateway.sessions().shutdown.cancelled() => {
@@ -253,7 +266,7 @@ impl Attached<'_> {
         let read = match self
             .gateway
             .history()
-            .transcript(self.gateway, resolved)
+            .transcript(self.gateway, resolved, self.window)
             .await
         {
             Ok(read) => read,
@@ -282,17 +295,16 @@ impl Attached<'_> {
                 return Ok(false);
             }
         };
+        if let Some(start) = read.read.earlier {
+            self.window = TranscriptWindow::From(start);
+        }
         let turns = crate::history::body::turns(read.read.turns);
         if follow && self.last.as_ref() == Some(&turns) {
             return Ok(false);
         }
         self.rev += 1;
         self.last = Some(turns.clone());
-        let waiting = self
-            .gateway
-            .terminal()
-            .map(|terminal| terminal.pending_approvals(&resolved.native))
-            .unwrap_or_default();
+        let held = self.held();
         send(
             &mut self.socket,
             &HarnessEvent::Transcript {
@@ -302,27 +314,41 @@ impl Attached<'_> {
                 total: turns.len() as u64,
                 turns,
                 command: RosterCommand::from(resolved.harness),
-                truncated_before: read.read.truncated.then_some(true),
+                truncated_before: read.read.earlier.map(|_| true),
+                earlier: read.read.earlier,
+                context_used: read.read.context,
                 context_window: Some(read.stamp.window),
                 compact_at: Some(read.stamp.compact_at),
                 context_source: Some(read.stamp.source),
             },
         )
         .await?;
-        for approval in &waiting {
-            send(&mut self.socket, approval).await?;
-        }
-        let held = self.gateway.terminal().map(|terminal| {
-            (
-                terminal.held_context(&resolved.native),
-                terminal.held_driver(&resolved.native),
-            )
-        });
-        if let Some((context, driver)) = held {
-            for event in context.iter().chain(driver.iter()) {
-                send(&mut self.socket, event).await?;
-            }
+        for event in &held {
+            send(&mut self.socket, event).await?;
         }
         Ok(true)
+    }
+
+    fn held(&self) -> Vec<HarnessEvent> {
+        let native = &self.resolved.native;
+        let Some(terminal) = self.gateway.terminal() else {
+            return Vec::new();
+        };
+        let mut held = terminal.pending_approvals(native);
+        held.extend(terminal.held_context(native));
+        held.extend(terminal.held_driver(native));
+        held.extend(self.waiting());
+        held
+    }
+
+    fn waiting(&self) -> Option<HarnessEvent> {
+        let live = live_summary(self.gateway, &self.resolved.native)?;
+        (live.blocked == Some(true)).then(|| HarnessEvent::SessionUpdated {
+            session_id: live.session_id,
+            status: live.status,
+            previous_session_id: None,
+            supersedes: None,
+            blocked: Some(true),
+        })
     }
 }

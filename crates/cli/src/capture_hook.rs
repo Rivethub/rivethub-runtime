@@ -93,6 +93,11 @@ pub async fn store_hook(
     report(stderr)
 }
 
+pub async fn replay_spool(env: &Environment, now: DateTime<Utc>) -> Result<(), Error> {
+    let (writer, _) = writer(env).await?;
+    Ok(writer.replay(now).await?)
+}
+
 fn report(stderr: String) -> Report {
     Report {
         stdout: String::new(),

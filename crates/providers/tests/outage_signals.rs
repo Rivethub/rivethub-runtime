@@ -115,6 +115,35 @@ async fn an_embedding_status_is_a_typed_http_failure() {
 }
 
 #[tokio::test]
+async fn a_server_that_cannot_be_reached_is_an_unreachable_failure() {
+    let closed = common::demand(
+        std::net::TcpListener::bind("127.0.0.1:0"),
+        "a free port binds",
+    );
+    let addr = common::demand(closed.local_addr(), "the port has an address");
+    drop(closed);
+    let config = OpenaiProvider {
+        model: Some("test-model".to_owned()),
+        base_url: Some(format!("http://{addr}")),
+        api_key: Some("static-key".to_owned()),
+        ..OpenaiProvider::default()
+    };
+    let built = common::demand(
+        OpenAiCompatible::build(ProviderType::Vllm, &config),
+        "the provider builds",
+    );
+    for error in [
+        built.embed(vec!["q".to_owned()]).await.expect_err("embed"),
+        built.chat(request()).await.expect_err("chat"),
+    ] {
+        assert!(
+            matches!(error.failure(), Some(ModelCallFailure::Unreachable { .. })),
+            "{error}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_failing_token_command_is_a_credentials_failure() {
     let stub = server(Answer {
         status: StatusCode::OK,

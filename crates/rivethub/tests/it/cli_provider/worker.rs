@@ -137,6 +137,12 @@ async fn composed_summarizer_runs_cli_model_without_embedder(pool: sqlx::PgPool)
 }
 
 async fn install_queue(pool: &sqlx::PgPool) -> TestResult {
+    let present: bool = sqlx::query_scalar("SELECT to_regnamespace('graphile_worker') IS NOT NULL")
+        .fetch_one(pool)
+        .await?;
+    if present {
+        return Ok(());
+    }
     let mut setup = pool.begin().await?;
     let search_path: String = sqlx::query_scalar("SHOW search_path")
         .fetch_one(&mut *setup)

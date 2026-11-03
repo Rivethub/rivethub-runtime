@@ -9,7 +9,7 @@ Design artifact (visual, authoritative): https://claude.ai/artifact/L7cAvh16cYEZ
 | foundation | `values` (the value types kernel and wire share: `SessionId`, `HarnessId`, the free-form JSON holders `Extra` and `JsonObject`, the `Millis` time format, a conversation's `Message`, `Role`, `ThinkingLevel` and `LlmUsage`, and the plug-in names `PluginId`, `ToolName` and `RouteName`), `wire` (serde types for every boundary payload; re-exports the `values` types at its own paths), `config` (config.yaml + env → `Config`) | external crates only; `wire` also uses `values`, and `config` uses `wire` for the shared closed sets (`HarnessId`, `ThinkingLevel`, effort) |
 | kernel | `kernel` (ports = traits, domain types; no I/O), `testkit` (dev-only: replayers, fakes, stubs) | values, config — NEVER wire: the kernel owns its domain types, the gateway and adapters translate to and from `wire`, and the cargo-deny ban on `wire` leaves the kernel out (PATTERNS `KERNELWIRE`) |
 | adapters | `memory-postgres`, `memory-sqlite`, `providers`, `harness-acp`, `terminal`, `mcp`, `capture`, `pki`, `stepca` | kernel, wire, config, externals — NEVER another adapter or a service, except `pki` → `stepca`: `stepca` cannot depend on kernel, so the certificate-authority port is implemented in `pki` |
-| services | `gateway` (with the session registry and mesh), `agent-loop`, `workers`, `tasks` (sessions over the gateway API) | kernel, wire, config — NEVER an adapter |
+| services | `gateway` (with the session registry, mesh, task engine and plug-in host), `agent-loop`, `workers` | kernel, wire, config — NEVER an adapter |
 | operations | `migrate` (every Postgres and SQLite schema change; `cli` owns the `rivethub-migrate` operator binary) | wire, config, externals (sqlx, rusqlite); depended on only by `cli` as a normal dependency and by tests as a dev-dependency — NEVER directly by a runtime crate (`rivethub` is checked transitively by the xtask MANIFEST rule, except for the direct `cli` → `migrate` edge used for schema verification) |
 | composition | `cli`, `rivethub` (binary; one composition root per service process) | everything |
 
@@ -20,7 +20,7 @@ The gate (`cargo xtask check`) fails any Cargo.toml that breaks this.
 | Port | Methods (shape) | Adapters | Callers |
 |---|---|---|---|
 | `MemoryStore` | capture(batch, owner, node) · append(owner, batch) · search(query) · browse(filter) · stats · get_full(id) · tags(action) · context(session) | memory-postgres, memory-sqlite | gateway, agent-loop, workers, mcp |
-| `EmbeddingStore` | load(target) · write(embedding) · mark_unembeddable(target, reason) · record_null(target) · mark_permanent(target) | memory-postgres (`rh_messages`, `rh_summaries`, `rh_message_chunks`, `rh_wiki_topics`); memory-sqlite is a later slice | workers |
+| `EmbeddingStore` | load(target) · write(embedding) · mark_unembeddable(target, reason) · record_null(target) · mark_permanent(target) | memory-postgres (`rh_messages`, `rh_summaries`, `rh_message_chunks`, `rh_wiki_topics`); memory-sqlite (`ros_messages`, `ros_summaries`, `ros_wiki_topics`; no chunks) | workers |
 | `TopicStore` | create(topic) · update(id, changes) · merge(source, into) · find(id or slug, following merge redirects) · list (with session count and last activity) · redirects · place(placement) · unplace(session) · placement(session) · sessions(topic) · suggest(suggestion) · suggestion(session); search is a provided method over list and redirects. The domain types and rules (slug folding, one placement per session, the categorizer never overrides your placement, sub-topics one level deep, merge plans, the first-leaf categorizer verdict) live in `kernel::topics`; adapters apply them inside one transaction, and a placement clears the session's suggestion | memory-postgres, memory-sqlite (`rh_topics`, `rh_topic_aliases`, `rh_topic_redirects`, `rh_session_placements`, `rh_session_suggestions`) | gateway, workers (the summarizer categorizes a session when its first leaf summary is stored) |
 | `TopicPageStore` | topic_page(slug) · page_taken(slug) · save_topic_page(topic, page) (writes and binds) · redirect_page(from, to) · fold_page(child, into, mark). The sync rules (page per root, sub-topic sections, hand-off on reparent, fold on merge) live in `kernel::topics::sync_topic_page`; the route's page lookup is `kernel::topics::bound_page` | memory-postgres (the wiki git page, frontmatter `sections`, `rh_wiki_topics.topic_id`), memory-sqlite (`ros_wiki_topics`, `rh_topic_pages.sections`) | workers (`sync-topic-page`; `extract-wiki` through `kernel::wiki::route`) |
 | `DecisionStore` | decisions(topic) · decision(id) · keep_decisions(batch) (upserts and queues `sync-topic-page` for each topic in one transaction). The `Decision` entity and its rules (non-empty text, only an active decision is edited or superseded, a replacement belongs to the same topic) live in `kernel::topics`; `sync_topic_page` renders a root's and its sub-topics' decisions as the page's `Decisions` section; a merge moves the source's decisions to the target | memory-postgres (`rh_topic_decisions`, migration 0030), memory-sqlite (`rh_topic_decisions`, schema v17) | gateway (`/api/topics/{topic}/decisions`), workers (`sync-topic-page`) |
@@ -43,12 +43,13 @@ A port exists only where several implementations exist or where it is the bounda
 reach sessions over the HTTP API), `Env` (config owns the environment), `Fs` (direct I/O; tests use temp directories),
 `Clock` (functions take `now: DateTime<Utc>` as an argument where time is data; timers use `tokio::time`, paused in tests).
 
-### SQLite store gaps on schema v7
+### SQLite store gaps
 
-`memory-sqlite` implements `MemoryStore`, `JobQueue`, `EmbeddingStore` and `SummaryStore` on schema v7. One gap remains:
-v7 has no message-chunk table, so `EmbeddingStore` refuses chunked embeddings (`EmbedTable::MessageChunks`, or a
-`StoredEmbedding` with chunks) with a typed error. Standalone nodes run the embedder with chunking disabled. Chunks
-arrive with schema v8, alongside the sqlite-vec index after cutover.
+`memory-sqlite` (schema v30) implements the memory, queue, embedding, summary, topic, wiki-builder, tidy, tenancy and task
+ports that `rh local` composes. It has no message-chunk table, so `EmbeddingStore` refuses chunked embeddings
+(`EmbedTable::MessageChunks`, or a `StoredEmbedding` with chunks) with a typed error and standalone nodes embed without
+chunking. Vector search scans the stored vectors; there is no approximate-nearest-neighbour index. It stores visibility
+marks but does not filter reads by them (one user per SQLite node, CONTRACT note 89), and keeps no wiki archive or History.
 `rh local` arms vector and hybrid search with a query embedder built from `memory.sqlite.embed_endpoint`,
 `embed_model` and `embed_api_key` (or the provider `embed_provider` names), falling back to `RIVETHUB_EMBED_URL` / `RIVETHUB_EMBED_MODEL`, the same
 endpoint the standalone embedder worker uses. Without an endpoint, those modes answer with keyword results and
@@ -93,13 +94,14 @@ move to the parent, the denser summary and article win, and the text not kept is
 included, and the removal of each child's page file land in one wiki git commit. A second run finds nothing to fold. A page bound to a topic is never folded as a child, and
 it is the survivor of its identity group.
 
-## Process shape (Phil 2026-10-12)
+## Process shape (Phil 2026-10-12; `rh agent` retired by CONTRACT note 74)
 
 One process per service, each with one tokio multi-thread runtime built in its own composition root:
-`rh gateway` (gateway with its session registry, terminal, devices, the certificate authority and the plug-in host),
-`rh agent` (the task engine), `rh worker --role <embedder|summarizer|categorizer|wiki-builder|all>`, and `rh mcp` (sidecar).
-In this checkout `rh start` supervises those roots as children of the same binary and stays hidden from help.
-`rh stop` signals that supervisor. `rh agent` is a composition root. `rh local` composes the gateway, the SQLite worker roles, and network MCP in one process on one SQLite store.
+`rh gateway` (gateway with its session registry, terminal, devices, the certificate authority, the plug-in host and the
+task engine, which claims its node's `run-task:<node>` jobs), `rh worker --role <embedder|summarizer|categorizer|wiki-builder|all>`,
+and `rh mcp` (sidecar). `rh start` supervises those roots as children of the same binary and stays hidden from help;
+`rh stop` signals that supervisor. `rh local` composes the gateway, the task engine, the SQLite worker roles and network
+MCP in one process on one SQLite store.
 Processes communicate only through contract boundaries (HTTP API B1,
 Postgres queue B4/B13). Inside a process: supervised tasks under one `CancellationToken` tree; `parking_lot` for short state,
 `tokio::sync` across awaits, `spawn_blocking` for blocking work; `tracing` for logs.
@@ -107,16 +109,16 @@ Postgres queue B4/B13). Inside a process: supervised tasks under one `Cancellati
 ## Session model (SESSION-MODEL.md, Phil 2026-10-12)
 
 One `SessionId` (serialized exactly as today's session-id strings). Lifecycle new/resume/prompt/cancel/end. One typed
-`SessionEvent` stream mapped to ACP `session/update` kinds and emitted to RivetHub clients clients in today's v1 wire shape. Chat runs over
-ACP only: natively (grok, hermes, kimi, opencode, omp, dsh, gemini, copilot) or through the codex-acp and claude-code-acp
-adapter binaries; cursor is terminal-only until it has ACP, and dsh is chat-only. Terminal = PTY under herdr attached to the same SessionId.
+`SessionEvent` stream mapped to ACP `session/update` kinds and emitted to clients in today's v1 wire shape. Chat runs over
+ACP only: natively (grok, hermes, kimi, opencode, omp, dsh) or through the codex-acp and claude-agent-acp
+adapter binaries; cursor is terminal-only until it has ACP, cowork is captured only, and dsh is chat-only. Terminal = PTY under herdr attached to the same SessionId.
 Multi-client harnesses share one agent session; single-client ones have one owner (Idle|Chat|Terminal) and switch by turn-end
 handoff (TurnEnded from the protocol or the harness's own Stop hook; queued chat messages delivered after the handoff; never
 keystroke injection, never screen scraping). Transcript stores are read only to capture sessions run outside RivetHub.
 
 ## Standard crates
 
-axum + hyper + tokio-tungstenite · reqwest (rustls) · sqlx + pgvector · rusqlite (bundled) + sqlite-vec · serde, serde_json, serde_yaml ·
+axum + hyper + tokio-tungstenite · reqwest (rustls) · sqlx + pgvector · rusqlite (bundled) · serde, serde_json, serde_yaml ·
 clap · agent-client-protocol (ACP) · rmcp (MCP) · chrono · regress (user-supplied ECMAScript regex) · tokio::process,
 portable-pty · rcgen + rustls-webpki · thiserror · tracing · tokio-util (CancellationToken) · parking_lot · schemars (tool schemas).
 
@@ -124,27 +126,27 @@ portable-pty · rcgen + rustls-webpki · thiserror · tracing · tokio-util (Can
 
 wire 3,000 · config 2,000 · kernel 800 · testkit 1,200 · gateway 8,200 · agent-loop 2,600 · workers 4,000 ·
 memory-postgres 5,000 · memory-sqlite 4,000 · providers 900 · harness-acp 1,600 · terminal 2,000 · mcp 2,400 ·
-capture 4,500 · pki 1,200 · tasks 2,000 · cli 4,900 · rivethub 500 · migrate 1,000. Total ≈ 50,000 against ≈ 120,000 lines of
+capture 4,500 · pki 1,200 · cli 4,900 · rivethub 500 · migrate 1,000. Total ≈ 50,000 against ≈ 120,000 lines of
 TypeScript. Not separate crates: hooks (agent-loop), agent presets (gateway), wiki builder (workers),
 harness store readers (capture). Certificate authority signing and policy are in the `pki` adapter behind
-`kernel::ca::CertificateAuthority`; CLI only hosts commands and holder renewal. No local-db: standalone runs on SQLite (sqlite-vec as schema v8
-after cutover). Workflows stays in the monorepo as a separate workspace package with its own binary (`rivethub-workflows`: depends on
-`wire` + an HTTP client only, drives sessions and tasks over the public API, never linked into `rivethub`). The RivetHub clients clients and
-sites stay under `apps/`. The chat-channel bots and CFO tooling live in their own private repos (rivethub-channels, rivet-cfo). No tools crate: the TypeScript's built-in shell/file/search/interaction/web tools are deleted (unused; every
+`kernel::ca::CertificateAuthority`; CLI only hosts commands and holder renewal. No local-db: standalone runs on SQLite.
+Workflows is a plug-in (rivethub-plugins `plugins/workflows`) and reaches rh only over B17. The clients live outside this
+repository: the native desktop in rivethub-desktop, and RivetHub web, Android and Electron and the sites under `apps/` in
+the rivetOS monorepo. The chat-channel bots and CFO tooling live in their own private repos (rivethub-channels, rivet-cfo). No tools crate: the TypeScript's built-in shell/file/search/interaction/web tools are deleted (unused; every
 harness has its own).
 
 ## Build order
 
 Wave 0 foundation (wire, config, kernel, testkit; Phil reviews the types) → Wave 1 memory path (memory-postgres, gateway
 skeleton, capture with its readers; B3 B4 B6) → Wave 2 sessions (gateway's session registry + session/term routes, harness-acp, terminal; B1 B2
-B12) → Wave 3 agent (providers, agent-loop, mcp; B7 B8 B15) → Wave 4 platform (workers, tasks, 
+B12) → Wave 3 agent (providers, agent-loop, mcp; B7 B8 B15) → Wave 4 platform (workers, tasks,
 mesh, memory-sqlite; B5 B13 B14) → Wave 5 operations (cli incl. CA, standalone on SQLite, update/doctor/service; B9 B10 B11
 B16) → cutover. Each wave's gate is a boundary working end to end against the recordings.
 
-Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the task engine on the SQLite store (task routes and MCP delegation share it; no mesh executor), and it refuses the wiki builder because that port is not implemented for SQLite. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them.
-Mesh (registry, heartbeat, agent channel) is a gateway module; ssh helpers are in cli; mesh.json types in wire. 19 crates.
+Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the task engine on the SQLite store (task routes and MCP delegation share it; no mesh executor), and the wiki builder when `memory.sqlite.wiki_dir` is set. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them.
+Mesh (registry, heartbeat, agent channel) is a gateway module; ssh helpers are in cli; mesh.json types in wire. 20 crates.
 Schema changes never run inside the runtime: `rivethub-migrate postgres|sqlite` applies them (Postgres from the
-`migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation and the v1→v7 upgrade ladder with a
+`migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation, the v1→v7 upgrade ladder and the steps to v30, with a
 `<file>.v<N>.bak` copy of the original file before any read-write connection), and the stores verify one schema version each
 (`memory_postgres::SCHEMA_VERSION`, `memory_sqlite::SCHEMA_VERSION`) and refuse to start behind it.
 `cli` owns the `rivethub-migrate` operator binary. Its Postgres-dump import composes

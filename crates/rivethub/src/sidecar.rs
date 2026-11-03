@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::Exit;
-use crate::service::{StartupError, load, postgres, report};
+use crate::service::{StartupError, announce, load, postgres, report};
 use memory_postgres::Pooling;
 
 #[derive(Debug, Error)]
@@ -30,6 +30,10 @@ pub(crate) enum SidecarError {
     Dial(#[from] dial::DialError),
     #[error(transparent)]
     Compose(#[from] crate::composition::ComposeError),
+    #[error(transparent)]
+    Sqlite(#[from] memory_sqlite::SqliteError),
+    #[error("memory.sqlite.path is not set; rh mcp reads the SQLite file rh local serves")]
+    SqlitePath,
 }
 
 impl SidecarError {
@@ -37,7 +41,12 @@ impl SidecarError {
         match self {
             Self::Startup(error) => error.exit(),
             Self::Mcp(error) => mcp_exit(error),
-            Self::Join(_) | Self::Invalid(_) | Self::Compose(_) | Self::Dial(_) => Exit::Failure,
+            Self::Join(_)
+            | Self::Invalid(_)
+            | Self::Compose(_)
+            | Self::Dial(_)
+            | Self::Sqlite(_)
+            | Self::SqlitePath => Exit::Failure,
         }
     }
 }
@@ -127,7 +136,9 @@ pub(crate) fn report_error(error: &SidecarError) {
         | SidecarError::Join(_)
         | SidecarError::Invalid(_)
         | SidecarError::Dial(_)
-        | SidecarError::Compose(_) => {
+        | SidecarError::Compose(_)
+        | SidecarError::Sqlite(_)
+        | SidecarError::SqlitePath => {
             tracing::error!("{error}");
         }
     }
@@ -147,10 +158,17 @@ async fn run(
 ) -> Result<(), SidecarError> {
     let _guard = shutdown.clone().drop_guard();
     let config = read_config(env).await?;
-    let selected = select(&config)?;
+    let selected = if config.sqlite_selected() {
+        Selected::Stdio
+    } else {
+        select(&config)?
+    };
     crate::identity::announce_resolved("mcp", &config, env).map_err(StartupError::from)?;
-    let memory = Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?)
-        as Arc<dyn MemoryStore>;
+    let memory: Arc<dyn MemoryStore> = if config.sqlite_selected() {
+        sqlite(&config, env, &shutdown, activities).await?
+    } else {
+        Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?)
+    };
     let scope = crate::composition::identities::load(&config, env)
         .await?
         .owner_scope();
@@ -245,9 +263,49 @@ fn surface(selected: &Selected) -> mcp::Surface {
     }
 }
 
+fn load_standalone_or_node(env: &Environment) -> Result<Config, StartupError> {
+    if let Some(location) = config::resolve_config_path(env)? {
+        let standalone = Config::load(env, &location, config::Profile::Standalone)?;
+        if standalone.config.sqlite_selected() {
+            return Ok(announce(standalone));
+        }
+    }
+    load(env)
+}
+
 async fn read_config(env: &Environment) -> Result<Config, SidecarError> {
     let owned = env.clone();
-    Ok(tokio::task::spawn_blocking(move || load(&owned)).await??)
+    Ok(tokio::task::spawn_blocking(move || load_standalone_or_node(&owned)).await??)
+}
+
+async fn sqlite(
+    config: &Config,
+    env: &Environment,
+    shutdown: &CancellationToken,
+    activities: &kernel::shutdown::Activities,
+) -> Result<Arc<dyn MemoryStore>, SidecarError> {
+    let path = config
+        .memory
+        .as_ref()
+        .and_then(|memory| memory.sqlite.as_ref())
+        .and_then(|sqlite| sqlite.path.clone())
+        .ok_or(SidecarError::SqlitePath)?;
+    let embed = crate::service::sqlite_query_embed(config, env, shutdown, activities)?;
+    let model = crate::service::sqlite_vector_model(config, env);
+    let store =
+        tokio::task::spawn_blocking(move || memory_sqlite::SqliteStore::open(path)).await??;
+    let store = match embed {
+        Some(embed) => {
+            let store = store.with_query_embed(embed);
+            store.arm_embed();
+            store
+        }
+        None => store,
+    };
+    Ok(Arc::new(match model {
+        Some(model) => store.with_embed_model(&model),
+        None => store,
+    }))
 }
 
 fn select(config: &Config) -> Result<Selected, SidecarError> {

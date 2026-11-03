@@ -3018,6 +3018,12 @@
           "additionalProperties": true,
           "type": "object"
         },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "task": {
           "type": "string"
         }
@@ -3210,7 +3216,8 @@
         "capability_unsupported",
         "unknown_approval",
         "unknown_prompt",
-        "turn_failed"
+        "turn_failed",
+        "session_running_elsewhere"
       ],
       "type": "string"
     },
@@ -3722,7 +3729,23 @@
                 }
               ]
             },
+            "contextUsed": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "contextWindow": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "earlier": {
               "format": "uint64",
               "minimum": 0,
               "type": [
@@ -4057,6 +4080,14 @@
     },
     "HarnessSessionForkRequest": {
       "properties": {
+        "from": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "prompts": {
           "format": "uint32",
           "minimum": 0,
@@ -4139,6 +4170,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "runningElsewhere": {
+          "type": [
+            "boolean",
+            "null"
           ]
         },
         "sessionId": {
@@ -4352,10 +4389,26 @@
         "contextSource": {
           "$ref": "#/$defs/ContextSource"
         },
+        "contextUsed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "contextWindow": {
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "earlier": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "harnessId": {
           "$ref": "#/$defs/HarnessId"
@@ -7328,6 +7381,12 @@
             "null"
           ]
         },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "toolName": {
           "type": [
             "string",
@@ -7627,8 +7686,75 @@
       ],
       "type": "object"
     },
+    "MemorySummaryChildren": {
+      "properties": {
+        "summaries": {
+          "items": {
+            "$ref": "#/$defs/MemorySummaryNode"
+          },
+          "type": "array"
+        },
+        "total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "summaries",
+        "total"
+      ],
+      "type": "object"
+    },
+    "MemorySummaryCounts": {
+      "properties": {
+        "branches": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "embedded": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaves": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "roots": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "top": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "leaves",
+        "branches",
+        "roots",
+        "embedded",
+        "top"
+      ],
+      "type": "object"
+    },
     "MemorySummaryDagResponse": {
       "properties": {
+        "counts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemorySummaryCounts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "messages": {
           "$ref": "#/$defs/MemoryMessageTally"
         },
@@ -7651,6 +7777,14 @@
     },
     "MemorySummaryNode": {
       "properties": {
+        "children": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "content": {
           "type": "string"
         },
@@ -7699,6 +7833,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
         },
         "vector": {
           "$ref": "#/$defs/VectorState"
@@ -10536,6 +10673,9 @@
           "$ref": "#/$defs/plugin.views"
         },
         {
+          "$ref": "#/$defs/topic.changed"
+        },
+        {
           "$ref": "#/$defs/AgentEvent"
         }
       ]
@@ -13112,10 +13252,18 @@
             "$ref": "#/$defs/TidyFailure"
           },
           "type": "array"
+        },
+        "skipped": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TidySkipped"
+          },
+          "type": "array"
         }
       },
       "required": [
         "decided",
+        "skipped",
         "failed"
       ],
       "type": "object"
@@ -13478,6 +13626,21 @@
       },
       "required": [
         "id"
+      ],
+      "type": "object"
+    },
+    "TidySkipped": {
+      "properties": {
+        "proposalId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposalId",
+        "reason"
       ],
       "type": "object"
     },
@@ -17002,7 +17165,19 @@
     },
     "task.done": {
       "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "childSessionId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
           "type": [
             "string",
             "null"
@@ -17029,6 +17204,21 @@
         "taskId",
         "status",
         "ts"
+      ],
+      "type": "object"
+    },
+    "topic.changed": {
+      "properties": {
+        "topic": {
+          "type": "string"
+        },
+        "v": {
+          "$ref": "#/$defs/ProtocolVersion"
+        }
+      },
+      "required": [
+        "v",
+        "topic"
       ],
       "type": "object"
     }

@@ -235,7 +235,7 @@ fn summarize_job(
         name: JobName::Fixed(FixedJob::SummarizeConversation),
         payload: JsonObject::from_serialize(&payload).map_err(WorkerError::summary_payload)?,
         key: Some(format!("compact-{id}")),
-        key_mode: JobKeyMode::Replace,
+        key_mode: JobKeyMode::Arm,
         priority,
         run_at: Some(now),
         max_attempts: Some(SUMMARIZE_ATTEMPTS),

@@ -225,7 +225,7 @@ async fn dump_jobs(
         return Ok(Json::Array(Vec::new()));
     }
     let fetched = sqlx::query(
-        "SELECT t.identifier AS task, q.name AS queue, j.payload::text AS payload, \
+        "SELECT t.identifier AS task, q.queue_name AS queue, j.payload::text AS payload, \
                 j.key::text AS key, j.priority::text AS priority, \
                 j.max_attempts::text AS max_attempts, j.attempts::text AS attempts \
            FROM graphile_worker._private_jobs j \

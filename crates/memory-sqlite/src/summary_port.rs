@@ -12,6 +12,7 @@ use kernel::memory::SummaryStore;
 use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWatch;
 use kernel::memory::SummaryWrite;
+use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
 use rusqlite::OptionalExtension as _;
@@ -266,43 +267,72 @@ fn load_window(
 fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMessage>, SqliteError> {
     let mut statement = conn
         .prepare(
-            "SELECT m.id, m.agent, m.role, m.content, m.created_at FROM ros_messages m \
+            "SELECT m.id, m.agent, m.role, m.content, m.created_at, \
+                    CASE WHEN m.role = 'tool' \
+                         THEN substr(CAST(coalesce(m.tool_args, '') AS BLOB), 1, ?2) END, \
+                    CASE WHEN m.role = 'tool' \
+                         THEN substr(CAST(coalesce(m.tool_result, '') AS BLOB), 1, ?3) END \
+               FROM ros_messages m \
               WHERE m.conversation_id = ?1 \
                 AND NOT EXISTS (SELECT 1 FROM ros_summary_sources s WHERE s.message_id = m.id) \
               ORDER BY m.created_at, m.id",
         )
         .map_err(SqliteError::query("load messages"))?;
     let rows = statement
-        .query_map(params_from_iter([Value::Text(id.to_owned())]), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })
+        .query_map(
+            params_from_iter([
+                Value::Text(id.to_owned()),
+                prefix_bytes(ToolUse::INPUT_BYTES)?,
+                prefix_bytes(ToolUse::RESULT_BYTES)?,
+            ]),
+            |row| {
+                Ok((
+                    (
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ),
+                    (
+                        row.get::<_, Option<Vec<u8>>>(5)?,
+                        row.get::<_, Option<Vec<u8>>>(6)?,
+                    ),
+                ))
+            },
+        )
         .map_err(SqliteError::query("load messages"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("load messages"))?;
     rows.into_iter()
-        .map(|(id, agent, role, content, created_at)| {
-            Ok(WindowMessage {
-                id: parse_id(&id)?,
-                agent,
-                role: role.parse::<Role>().map_err(|source| SqliteError::Query {
-                    operation: "message role",
-                    source: rusqlite::Error::FromSqlConversionFailure(
-                        2,
-                        rusqlite::types::Type::Text,
-                        Box::new(source),
-                    ),
-                })?,
-                content,
-                created_at: time::stored(&created_at, "created_at")?,
-            })
-        })
+        .map(
+            |((id, agent, role, content, created_at), (input, result))| {
+                Ok(WindowMessage {
+                    id: parse_id(&id)?,
+                    agent,
+                    role: role.parse::<Role>().map_err(|source| SqliteError::Query {
+                        operation: "message role",
+                        source: rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(source),
+                        ),
+                    })?,
+                    content,
+                    tool: match (input, result) {
+                        (Some(input), Some(result)) => ToolUse::from_prefixes(&input, &result),
+                        _ => None,
+                    },
+                    created_at: time::stored(&created_at, "created_at")?,
+                })
+            },
+        )
         .collect()
+}
+
+fn prefix_bytes(budget: usize) -> Result<Value, SqliteError> {
+    let bytes = i64::try_from(budget).map_err(SqliteError::Count)?;
+    Ok(Value::Integer(bytes.saturating_add(1)))
 }
 
 fn load_nodes(

@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use kernel::owner::Owner;
 use kernel::topics::Slug;
 use kernel::wiki::builder::{
-    BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, HeldEntity,
+    BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, HeldEntity, RouteLease,
     WIKI_PIPELINE_VERSION, WikiBuilderStore, WikiRouting, WikiStoreError, WikiSummary, WikiWork,
     WikiWriteError,
 };
@@ -188,6 +188,10 @@ impl WikiBuilderStore for PostgresMemory {
         limit: u32,
     ) -> Result<Vec<kernel::wiki::builder::Coalescable>, WikiStoreError> {
         coalesce::candidates(&self.pool, lead, topic, limit).await
+    }
+
+    async fn lease_route(&self, route: &str) -> Result<Option<RouteLease>, WikiStoreError> {
+        coalesce::lease(&self.pool, route).await
     }
 
     async fn uncite_wiki(&self, summary_id: Uuid, slug: &WikiSlug) -> Result<(), WikiStoreError> {

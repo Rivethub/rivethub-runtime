@@ -71,7 +71,7 @@ async fn a_full_window_summarizes_once() {
     assert_eq!(handle_enqueue_idle(&env).await.expect("sweep"), 1);
     let job = jobs.only().await;
     assert_eq!(job.key.as_deref(), Some(format!("compact-{id}").as_str()));
-    assert_eq!(job.key_mode, JobKeyMode::Replace);
+    assert_eq!(job.key_mode, JobKeyMode::Arm);
     assert_eq!(job.priority, -20);
     assert_eq!(read_trigger(&job.payload), SummaryTrigger::SessionIdle);
     assert_eq!(job.max_attempts, Some(3));
@@ -202,6 +202,61 @@ async fn a_truncated_leaf_shrinks_the_batch_and_sticks() {
     assert_rows(&store.written.lock().await, &recorded.tables.summaries);
     assert_sources(&store.written.lock().await, &seeded);
     assert_eq!(summarized_counts(&recorded.logs), vec![2]);
+}
+
+#[tokio::test]
+async fn a_truncated_rollup_takes_fewer_leaves_and_a_gone_conversation_is_dropped() {
+    let id = Uuid::new_v4();
+    let start = at("2026-10-28T12:00:00Z");
+    let mut leaves_only = window(id, "cli:s1", "Session cli:s1", Vec::new());
+    leaves_only.leaves = (0..4)
+        .map(|index| SummaryNode {
+            id: Uuid::new_v4(),
+            kind: SummaryKind::Leaf,
+            content: format!("leaf {index}: {LEAF_TEXT}"),
+            message_count: 10,
+            earliest_at: start,
+            latest_at: start,
+            depth: 0,
+        })
+        .collect();
+    let store = Arc::new(MemStore::new(vec![leaves_only]));
+    let script = Arc::new(Scripted::truncate_once());
+    let jobs = Arc::new(Seen::default());
+    let settings = SummarySettings::from_parts(SummaryParts {
+        branch_batch: 4,
+        ..small_parts()
+    })
+    .expect("settings");
+    let token = cancel();
+    let env = bind(&store, &script, &jobs, &settings, start, &token);
+    let outcome = handle_summarize(&env, &payload_of(id, SummaryTrigger::SessionIdle))
+        .await
+        .expect("a shorter rollup");
+    assert_eq!(outcome.summaries, 1);
+    let kinds: Vec<String> = script
+        .calls
+        .lock()
+        .await
+        .iter()
+        .map(|call| call.kind.clone())
+        .collect();
+    assert_eq!(kinds, ["BRANCH_SYSTEM_PROMPT", "BRANCH_SYSTEM_PROMPT"]);
+    let written = store.written.lock().await;
+    let branch = written.first().expect("branch");
+    assert_eq!(
+        (branch.kind, branch.child_ids.len()),
+        (SummaryKind::Branch, 2)
+    );
+    drop(written);
+    let gone = handle_summarize(
+        &env,
+        &payload_of(Uuid::new_v4(), SummaryTrigger::SessionStale),
+    )
+    .await
+    .expect("a deleted conversation's job completes");
+    assert_eq!(gone.summaries, 0);
+    assert_eq!(script.calls.lock().await.len(), 2);
 }
 
 #[tokio::test]

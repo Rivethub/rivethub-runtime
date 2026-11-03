@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+use crate::events::ProtocolVersion;
 use crate::gateway::wiki::WikiPageResponse;
 use crate::gateway::wiki::WikiSlug;
 use crate::session_id::SessionId;
@@ -121,6 +122,13 @@ pub struct TopicUpdate {
     #[serde(default, with = "::serde_with::rust::double_option")]
     #[schemars(with = "Option<Option<TopicDirectory>>")]
     pub directory: Option<Option<TopicDirectory>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename = "topic.changed", rename_all = "camelCase")]
+pub struct TopicChangedNotice {
+    pub v: ProtocolVersion,
+    pub topic: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

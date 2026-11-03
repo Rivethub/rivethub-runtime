@@ -10,6 +10,7 @@ use kernel::transcript::SessionLister;
 use kernel::transcript::SessionMessageRole;
 use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptToolStatus;
+use kernel::transcript::TranscriptWindow;
 use wire::harness::HarnessId;
 
 const SESSION: &str = "33333333-3333-3333-3333-333333333333";
@@ -78,7 +79,10 @@ async fn turns(root: &Path) -> Result<Vec<HarnessTranscriptTurn>, Box<dyn std::e
         grok: Some(root.to_path_buf()),
         ..StoreRoots::default()
     });
-    match lister.transcript(HarnessId::GrokBuild, SESSION).await? {
+    match lister
+        .transcript(HarnessId::GrokBuild, SESSION, TranscriptWindow::Latest)
+        .await?
+    {
         TranscriptRead::Read(read) => Ok(read.turns),
         TranscriptRead::NoSource => Err("grok has a transcript source".into()),
     }

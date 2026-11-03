@@ -45,7 +45,7 @@ async fn configured_database_missing_config_and_typed_flags() -> Result {
     assert_eq!(missing.exit, Exit::Failure);
     assert_eq!(
         missing.stderr,
-        "Error: No config found. Run: rh config init\n"
+        "Error: No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG\n"
     );
     let path = home.path().join("db.sqlite");
     config(

@@ -53,7 +53,7 @@ async fn start_refuses_a_missing_config_with_the_contract_text() {
     assert_eq!(report.stdout, "");
     assert_eq!(
         report.stderr,
-        "Error: No config found. Run `rh config init` or use --config <path>\n"
+        "Error: No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or use --config <path>\n"
     );
     let help = run(&["--help"], &env).await;
     assert_eq!(help.exit, Exit::Ok);
@@ -84,7 +84,7 @@ async fn an_explicit_missing_config_is_an_io_error() {
             "{flag}: {}",
             report.stderr
         );
-        assert!(!report.stderr.contains("rh config init"), "{flag}");
+        assert!(!report.stderr.contains("No config found"), "{flag}");
     }
 }
 

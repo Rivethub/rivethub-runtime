@@ -48,6 +48,7 @@ pub struct FlaggedJob {
     pub id: FlaggedId,
     pub task: String,
     pub key: Option<String>,
+    pub subject: Option<String>,
     pub payload: JsonObject,
     pub error: String,
     pub failures: u32,

@@ -418,6 +418,13 @@ struct ImportSummary {
 }
 
 async fn install_graphile(pool: &PgPool) {
+    let present: bool = sqlx::query_scalar("SELECT to_regnamespace('graphile_worker') IS NOT NULL")
+        .fetch_one(pool)
+        .await
+        .expect("queue schema lookup");
+    if present {
+        return;
+    }
     let mut transaction = pool.begin().await.expect("begin");
     let path: String = sqlx::query_scalar("SHOW search_path")
         .fetch_one(&mut *transaction)
@@ -803,6 +810,10 @@ async fn count_conversations(pool: &PgPool) -> i64 {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn queue_commands_fail_when_graphile_is_absent(pool: PgPool) {
+    sqlx::query("DROP SCHEMA graphile_worker CASCADE")
+        .execute(&pool)
+        .await
+        .expect("drop the queue schema");
     let (_home, environment) = env(&[("RIVETHUB_PG_URL", &url_of(&pool))]);
     let report = run(&["memory", "queue-status"], &environment).await;
     assert_eq!(report.exit, Exit::Failure);

@@ -160,6 +160,7 @@ pub(crate) fn provider_outage(error: &ModelProviderError) -> Option<WorkerError>
             ..
         } => (http_cause(*status)?, *retry_after),
         ModelCallFailure::Credentials { .. } => (OutageCause::Credentials, None),
+        ModelCallFailure::Unreachable { .. } => (OutageCause::Unreachable, None),
         ModelCallFailure::Transport { .. } => return None,
     };
     Some(WorkerError::ProviderOutage { cause, retry_after })

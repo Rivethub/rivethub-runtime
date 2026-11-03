@@ -60,15 +60,15 @@ fake `systemctl`, `journalctl` and `loginctl` executables in a temporary PATH. T
 check both scopes, unit serialization, overwrite refusal, path containment, quoting,
 status codes, subprocess errors and event-driven cancellation. No service scenario is
 skipped; the existing checked deferred list covers the remaining CLI commands in
-that same fixture README. `rh start` supervises `rh gateway`, `rh agent` when
-Postgres memory would start, `rh worker --role`, and `rh mcp` when its network
+that same fixture README. `rh start` supervises `rh gateway`, `rh worker --role`
+for the roles the configuration switches on, and `rh mcp` when its network
 transport is configured. It holds the state-directory pid lock, restarts children
 with backoff, and forwards SIGTERM. `Config::load` with `Profile::Node` and
 `rh config validate` still require `runtime`, `agents`, and `providers`. `rh local`
 does not invent those values. With no resolved file it writes the SQLite path and
 the gateway bind, loads that file through `Config::load` with `Profile::Standalone`,
-migrates it, and claims the state directory. The task engine is not part of that
-process.
+migrates it, and claims the state directory. The task engine runs in that process
+unless `tasks.enabled` is false.
 
 # RivetHub mesh commands
 

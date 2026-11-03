@@ -1,3 +1,4 @@
+use kernel::filing::conversation_keys;
 use kernel::owner::Owner;
 use kernel::topics::Alias;
 use kernel::topics::MergePlan;
@@ -31,6 +32,7 @@ fn written(operation: &'static str, topic: &Topic) -> impl FnOnce(sqlx::Error) -
         if violated(SLUG_INDEX) {
             TopicError::SlugTaken {
                 slug: topic.slug.clone(),
+                name: topic.name.as_str().to_owned(),
             }
         } else if violated(ALIAS_INDEX) {
             TopicError::AliasTaken {
@@ -60,6 +62,7 @@ pub(super) async fn claim_names(conn: &mut PgConnection, topic: &Topic) -> Resul
     if slug_taken {
         return Err(TopicError::SlugTaken {
             slug: topic.slug.clone(),
+            name: topic.name.as_str().to_owned(),
         });
     }
     let keys: Vec<String> = topic.aliases.iter().map(Alias::key).collect();
@@ -364,7 +367,7 @@ pub(super) async fn placement(
     sqlx::query!(
         "INSERT INTO rh_session_placements (session_id, topic_id, placed_by, placed_at, owner_user_id)
          VALUES ($1, $2, $3, $4,
-                 coalesce((SELECT c.owner_user_id FROM rh_conversations c WHERE c.session_key = $1
+                 coalesce((SELECT c.owner_user_id FROM rh_conversations c WHERE c.session_key = ANY($6)
                             ORDER BY c.created_at LIMIT 1), $5))
          ON CONFLICT (session_id) DO UPDATE SET topic_id = EXCLUDED.topic_id,
                                                 placed_by = EXCLUDED.placed_by,
@@ -374,7 +377,8 @@ pub(super) async fn placement(
         placement.topic.uuid(),
         placement.by.to_string(),
         placement.at,
-        placement.owner.as_ref().map(Owner::as_str)
+        placement.owner.as_ref().map(Owner::as_str),
+        &conversation_keys(&placement.session)
     )
     .execute(&mut *conn)
     .await
