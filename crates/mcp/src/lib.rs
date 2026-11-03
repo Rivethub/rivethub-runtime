@@ -189,9 +189,9 @@ impl Server {
         };
         match result {
             Ok(result) => Ok(result),
-            Err(error) => Ok(CallToolResult::error(vec![ContentBlock::text(
+            Err(error) => Ok(stamp(CallToolResult::error(vec![ContentBlock::text(
                 error.to_string(),
-            )])),
+            )]))),
         }
     }
 
@@ -376,6 +376,17 @@ fn decode<T: DeserializeOwned>(arguments: rmcp::model::JsonObject) -> Result<T, 
 pub(crate) fn text(value: String) -> CallToolResult {
     let mut result = CallToolResult::success(vec![ContentBlock::text(value)]);
     result.is_error = None;
+    stamp(result)
+}
+
+fn stamp(mut result: CallToolResult) -> CallToolResult {
+    let mut meta = wire::JsonObject::default();
+    if meta
+        .insert("contractVersion", wire::contract::MEMORY_CONTRACT)
+        .is_ok()
+    {
+        result.meta = Some(rmcp::model::MetaObject(meta.as_map().clone()));
+    }
     result
 }
 

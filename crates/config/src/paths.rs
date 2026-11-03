@@ -8,6 +8,11 @@ const SESSION_OWNERS_DIR: &str = "den";
 pub const SESSION_OWNERS_FILE_NAME: &str = "session-owners.json";
 
 #[must_use]
+pub fn temporary_directory() -> PathBuf {
+    std::env::temp_dir()
+}
+
+#[must_use]
 pub fn session_owners_file(state_dir: &Path) -> PathBuf {
     state_dir
         .join(SESSION_OWNERS_DIR)
@@ -74,6 +79,7 @@ pub fn normalize(path: &Path) -> PathBuf {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     home: PathBuf,
+    state: Option<PathBuf>,
 }
 
 impl Paths {
@@ -82,15 +88,22 @@ impl Paths {
             .get("HOME")
             .map(PathBuf::from)
             .ok_or(crate::ConfigError::Home)?;
-        if !home.is_absolute()
-            || home
-                .components()
-                .any(|component| component == Component::ParentDir)
-        {
+        if !absolute_without_parents(&home) {
             return Err(crate::ConfigError::Home);
         }
+        let state = match env.text("RIVETHUB_HOME") {
+            Some(text) => {
+                let path = PathBuf::from(text);
+                if !absolute_without_parents(&path) {
+                    return Err(crate::ConfigError::StateHome);
+                }
+                Some(normalize(&path))
+            }
+            None => None,
+        };
         Ok(Self {
             home: normalize(&home),
+            state,
         })
     }
 
@@ -99,7 +112,9 @@ impl Paths {
     }
 
     pub fn hub_home(&self) -> PathBuf {
-        self.home.join(".rivethub")
+        self.state
+            .clone()
+            .unwrap_or_else(|| self.home.join(".rivethub"))
     }
 
     pub fn legacy_home(&self) -> PathBuf {
@@ -139,6 +154,13 @@ impl Paths {
     }
 
     pub fn config_candidates(&self) -> Vec<ConfigLocation> {
+        if let Some(state) = &self.state {
+            return vec![
+                ConfigLocation::Current(state.join("config.yaml")),
+                ConfigLocation::Current(state.join("config.yml")),
+                ConfigLocation::Current(PathBuf::from("config.yaml")),
+            ];
+        }
         let base = &self.home;
         vec![
             ConfigLocation::Current(base.join(".rivethub").join("config.yaml")),
@@ -223,7 +245,17 @@ pub fn claim_node(directory: &Path, pid: u32) -> Result<NodeClaim, StateError> {
     state_owner::claim(directory, pid)
 }
 
+fn absolute_without_parents(path: &Path) -> bool {
+    path.is_absolute()
+        && !path
+            .components()
+            .any(|component| component == Component::ParentDir)
+}
+
 pub fn adopt_legacy_state(env: &Environment) -> Result<Option<String>, StateError> {
+    if env.text("RIVETHUB_HOME").is_some() {
+        return Ok(None);
+    }
     let paths = Paths::new(env)?;
     let hub = paths.hub_home();
     let legacy = paths.legacy_home();

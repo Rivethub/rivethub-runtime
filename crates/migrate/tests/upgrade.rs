@@ -177,3 +177,72 @@ fn schema_25_archives_the_tasks_the_adapter_kept() -> TestResult<()> {
     assert_eq!(shaped, 1);
     Ok(())
 }
+
+#[test]
+fn a_trigger_for_an_unloaded_module_does_not_block_renames() -> TestResult<()> {
+    let directory = tempdir()?;
+    let path = directory.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    {
+        let conn = rusqlite::Connection::open(&path)?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE rh_topic_pages;
+             CREATE TABLE rh_topic_pages (
+                 topic_id TEXT PRIMARY KEY,
+                 page_slug TEXT NOT NULL UNIQUE,
+                 sections TEXT NOT NULL DEFAULT '[]',
+                 owner_user_id TEXT
+             );
+             ALTER TABLE rh_tasks ADD COLUMN executor TEXT;
+             CREATE TABLE messages (id INTEGER PRIMARY KEY, body TEXT);
+             PRAGMA writable_schema = ON;
+             INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+             VALUES ('table', 'messages_vec', 'messages_vec', 0,
+                     'CREATE VIRTUAL TABLE messages_vec USING vec0(id float[4])');
+             INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+             VALUES ('trigger', 'messages_ad', 'messages', 0,
+                     'CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+                        DELETE FROM messages_vec WHERE id = OLD.id;
+                      END');
+             PRAGMA writable_schema = OFF;
+             PRAGMA user_version = 17;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+        )?;
+    }
+    migrate::sqlite(&path)?;
+    let conn = rusqlite::Connection::open(&path)?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    assert_eq!(version, migrate::SchemaVersion::V30.number());
+    let page_pk: i64 = conn.query_row(
+        "SELECT pk FROM pragma_table_info('rh_topic_pages') WHERE name = 'page_slug'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(page_pk, 1);
+    let archived: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'rh_tasks_archive'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(archived, 1);
+    let trigger: i64 = conn.query_row(
+        "SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'messages_ad'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(trigger, 1);
+    let page_owner: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('rh_topic_pages') WHERE name = 'owner_user_id'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(page_owner, 1);
+    let task_owner: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('rh_tasks_archive') WHERE name = 'owner_user_id'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(task_owner, 1);
+    Ok(())
+}

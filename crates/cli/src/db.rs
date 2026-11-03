@@ -92,7 +92,7 @@ pub(crate) async fn run(
     if shutdown.is_cancelled() {
         return Err(Error::Cancelled);
     }
-    let (label, status) = match target {
+    let (label, status, foreign) = match target {
         Target::Postgres(url) => {
             let status = match args.command {
                 DbCommand::Migrate => migrate::postgres(&url).await.map_err(Error::Migrate)?,
@@ -100,17 +100,22 @@ pub(crate) async fn run(
                     .await
                     .map_err(Error::Migrate)?,
             };
-            ("postgres".to_owned(), status)
+            ("postgres".to_owned(), status, String::new())
         }
         Target::Sqlite(path) => {
             let label = format!("sqlite {}", path.display());
+            let foreign_path = path.clone();
             let status = tokio::task::spawn_blocking(move || match args.command {
                 DbCommand::Migrate => migrate::sqlite(&path),
                 DbCommand::Status => migrate::sqlite_status(&path),
             })
             .await?
             .map_err(Error::Migrate)?;
-            (label, status)
+            let foreign = match args.command {
+                DbCommand::Status => sqlite_foreign_line(&foreign_path).await?,
+                DbCommand::Migrate => String::new(),
+            };
+            (label, status, foreign)
         }
     };
     if shutdown.is_cancelled() {
@@ -122,9 +127,18 @@ pub(crate) async fn run(
     );
     let stdout = match args.command {
         DbCommand::Migrate => format!("{label}: applied; {state}\n"),
-        DbCommand::Status => format!("{label}: {state}\n"),
+        DbCommand::Status if foreign.is_empty() => format!("{label}: {state}\n"),
+        DbCommand::Status => format!("{label}: {state}\n{foreign}\n"),
     };
     let mut report = Report::success(stdout);
     report.stderr = stderr;
     Ok(report)
+}
+
+async fn sqlite_foreign_line(path: &std::path::Path) -> Result<String, Error> {
+    let path = path.to_path_buf();
+    let objects = tokio::task::spawn_blocking(move || migrate::sqlite_foreign(&path))
+        .await?
+        .map_err(Error::Migrate)?;
+    Ok(migrate::foreign_line(&objects))
 }

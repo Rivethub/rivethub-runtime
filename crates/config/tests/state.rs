@@ -374,3 +374,49 @@ fn partial_mesh_tls_takes_the_den_defaults() -> Result<(), Box<dyn std::error::E
     );
     Ok(())
 }
+
+#[test]
+fn rivethub_home_is_the_state_directory_and_locks_stay_with_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = temp_home("hub-home")?;
+    let first = temp_home("hub-a")?;
+    let second = temp_home("hub-b")?;
+    let outcome = separate_homes(&home, &first, &second);
+    fs::remove_dir_all(&home)?;
+    fs::remove_dir_all(&first)?;
+    fs::remove_dir_all(&second)?;
+    outcome
+}
+
+fn separate_homes(
+    home: &Path,
+    first: &Path,
+    second: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let text = |path: &Path| {
+        path.to_str()
+            .ok_or("temp path is not utf-8")
+            .map(str::to_owned)
+    };
+    let env = Environment::from_vars([
+        ("HOME".to_owned(), text(home)?),
+        ("RIVETHUB_HOME".to_owned(), text(first)?),
+    ]);
+    let paths = config::Paths::new(&env)?;
+    assert_eq!(paths.state_dir(), first);
+    assert_ne!(paths.state_dir(), home.join(".rivethub"));
+    fs::create_dir_all(home.join(".rivetos"))?;
+    assert!(config::adopt_legacy_state(&env)?.is_none());
+    assert!(home.join(".rivetos").is_dir());
+    let held = config::claim_node(first, std::process::id())?;
+    let other = config::claim_node(second, std::process::id())?;
+    assert!(config::claim_node(first, std::process::id()).is_err());
+    other.release()?;
+    held.release()?;
+    let relative = Environment::from_vars([
+        ("HOME".to_owned(), text(home)?),
+        ("RIVETHUB_HOME".to_owned(), "relative".to_owned()),
+    ]);
+    assert!(config::Paths::new(&relative).is_err());
+    Ok(())
+}

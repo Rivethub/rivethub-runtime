@@ -36,9 +36,34 @@ pub fn config_home_name(state_dir: &Path, port: u16) -> String {
 
 #[must_use]
 pub fn resolve_config_home(state_dir: &Path, port: u16) -> PathBuf {
-    state_dir
+    let nested = state_dir
         .join("run")
-        .join(config_home_name(state_dir, port))
+        .join(config_home_name(state_dir, port));
+    if session_socket(&nested, "d0123456789ab").is_ok() && client_socket(&nested).is_ok() {
+        nested
+    } else {
+        config::temporary_directory().join(config_home_name(state_dir, port))
+    }
+}
+
+#[must_use]
+pub fn is_short_runtime(state_dir: &Path, config_home: &Path) -> bool {
+    let Some(name) = config_home.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(id) = name.strip_prefix("rivethub-") else {
+        return false;
+    };
+    if id.len() != 8 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return false;
+    }
+    let Some(parent) = config_home.parent() else {
+        return false;
+    };
+    if parent != config::temporary_directory() {
+        return false;
+    }
+    (0..=u16::MAX).any(|port| hash8(state_dir, port) == id)
 }
 
 #[must_use]
@@ -192,6 +217,16 @@ mod tests {
             client,
             std::path::PathBuf::from("/run/user/1000/rivethub-0123abcd/herdr-client.sock")
         );
+    }
+
+    #[test]
+    fn a_long_state_directory_keeps_sockets_under_the_path_limit() {
+        let state = long_dir();
+        let home = resolve_config_home(&state, 5174);
+        assert!(client_socket(&home).is_ok());
+        assert!(session_socket(&home, "d0123456789ab").is_ok());
+        assert!(home.starts_with(config::temporary_directory()));
+        assert!(super::is_short_runtime(&state, &home));
     }
 
     #[test]

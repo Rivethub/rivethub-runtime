@@ -3,6 +3,8 @@ use schemars::{Schema, SchemaGenerator, json_schema};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub const MEMORY_CONTRACT: u32 = 1;
+
 type Root = fn(&mut SchemaGenerator) -> Schema;
 
 const ROOTS: &[Root] = &[
@@ -100,6 +102,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::memory::EmbedStatus>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::EmbedHealth>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryHealthResponse>,
+    SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryContractResponse>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::QueueStatus>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::QueueHealth>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::SummarizerHealth>,

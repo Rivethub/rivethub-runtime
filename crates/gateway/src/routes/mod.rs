@@ -46,6 +46,25 @@ pub(crate) use surface::MeshCache;
 pub(crate) use surface::plain_get;
 pub(crate) use surface::rewrite_request;
 
+pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
+    wiki::router().merge(topics::router()).merge(tidy::router())
+}
+
+pub(crate) async fn contract_header(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let text = wire::contract::MEMORY_CONTRACT.to_string();
+    if let Ok(value) = axum::http::HeaderValue::try_from(text) {
+        response.headers_mut().insert(
+            axum::http::HeaderName::from_static("x-rivethub-contract"),
+            value,
+        );
+    }
+    response
+}
+
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
     harnesses::mount(files::mount(wiki::router()))
         .merge(voice::router())

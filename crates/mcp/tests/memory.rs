@@ -244,8 +244,13 @@ async fn browse_refuses_window_with_explicit_time_bounds_by_name() {
         r#"{"window":"today","before":"2026-10-13T00:00:00Z"}"#,
         r#"{"window":"today","since":"2026-10-12T00:00:00Z","before":"2026-10-13T00:00:00Z"}"#,
     ] {
+        let result = support::call(&server, "memory_browse", args).await;
         assert_eq!(
-            support::call(&server, "memory_browse", args).await,
+            support::contract_version(&result),
+            wire::contract::MEMORY_CONTRACT
+        );
+        assert_eq!(
+            support::without_contract(result),
             rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
                 "window cannot be combined with since or before"
             )])

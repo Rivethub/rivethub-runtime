@@ -1,4 +1,5 @@
 pub mod error;
+mod foreign;
 mod ids;
 mod postgres;
 mod schema;
@@ -6,6 +7,8 @@ mod upgrade;
 mod version;
 
 pub use error::Error;
+pub use foreign::foreign_line;
+pub use foreign::sqlite_foreign;
 pub use postgres::POSTGRES;
 pub use postgres::postgres;
 pub use postgres::postgres_pool;

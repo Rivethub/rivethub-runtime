@@ -5,7 +5,30 @@ use schemars::Schema;
 const CONTRACT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract");
 
 fn rendered(schema: &Schema) -> Result<String, serde_json::Error> {
-    Ok(format!("{}\n", serde_json::to_string_pretty(schema)?))
+    Ok(format!(
+        "{}\n",
+        serde_json::to_string_pretty(&sorted(serde_json::to_value(schema)?))?
+    ))
+}
+
+fn sorted(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(sorted).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<_> = map
+                .into_iter()
+                .map(|(key, item)| (key, sorted(item)))
+                .collect();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            serde_json::Value::Object(entries.into_iter().collect())
+        }
+        serde_json::Value::Null => serde_json::Value::Null,
+        serde_json::Value::Bool(item) => serde_json::Value::Bool(item),
+        serde_json::Value::Number(item) => serde_json::Value::Number(item),
+        serde_json::Value::String(item) => serde_json::Value::String(item),
+    }
 }
 
 fn current(name: &str, schema: &Schema) -> Result<(), String> {

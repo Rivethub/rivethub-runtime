@@ -61,6 +61,7 @@ pub struct RuntimeSection {
     pub safety: Option<SafetySection>,
     pub auto_actions: Option<AutoActionsSection>,
     pub experimental: Option<bool>,
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -395,6 +396,14 @@ pub struct DeploymentSection {
 }
 
 impl Config {
+    #[must_use]
+    pub fn memory_only(&self) -> bool {
+        self.runtime
+            .as_ref()
+            .and_then(|runtime| runtime.profile.as_deref())
+            == Some("memory")
+    }
+
     #[must_use]
     pub fn terminal_enabled(&self) -> bool {
         self.gateway
