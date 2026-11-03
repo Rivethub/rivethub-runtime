@@ -343,7 +343,7 @@ impl Attached<'_> {
 
     fn waiting(&self) -> Option<HarnessEvent> {
         let live = live_summary(self.gateway, &self.resolved.native)?;
-        (live.blocked == Some(true)).then(|| HarnessEvent::SessionUpdated {
+        (live.blocked == Some(true)).then_some(HarnessEvent::SessionUpdated {
             session_id: live.session_id,
             status: live.status,
             previous_session_id: None,
