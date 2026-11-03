@@ -308,6 +308,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::capture::CaptureBatchRequest>,
     SchemaGenerator::subschema_for::<crate::capture::CaptureMessage>,
     SchemaGenerator::subschema_for::<crate::capture::CaptureResult>,
+    SchemaGenerator::subschema_for::<crate::capture::SessionBundle>,
     SchemaGenerator::subschema_for::<crate::hooks::HookEventName>,
     SchemaGenerator::subschema_for::<crate::hooks::HookContextBase>,
     SchemaGenerator::subschema_for::<crate::hooks::ReflectionSource>,

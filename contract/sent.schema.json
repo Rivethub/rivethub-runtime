@@ -10680,6 +10680,26 @@
         }
       ]
     },
+    "SessionBundle": {
+      "properties": {
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/CaptureBatchRequest"
+          },
+          "type": "array"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "sessions"
+      ],
+      "type": "object"
+    },
     "SessionClientKind": {
       "enum": [
         "watch",
