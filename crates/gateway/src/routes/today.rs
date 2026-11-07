@@ -181,6 +181,7 @@ impl Titles {
                 ChangeActor::Categorizer => today::Actor::Categorizer,
             },
             source: change.source.as_ref().map(|session| today::SessionRef {
+                kind: today::SessionKind::Session,
                 id: session.clone(),
                 title: self.of(session),
             }),

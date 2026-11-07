@@ -8,30 +8,16 @@ use crate::harness::HarnessId;
 use crate::session_id::SessionId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename = "session")]
-#[schemars(rename = "SessionRef", transform = session_kind)]
 pub struct SessionRef {
+    pub kind: SessionKind,
     pub id: SessionId,
     pub title: String,
 }
 
-// schemars drops the tag serde writes on a struct.
-fn session_kind(schema: &mut schemars::Schema) {
-    if let Some(properties) = schema
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        properties.insert(
-            "kind".to_owned(),
-            serde_json::json!({"type": "string", "const": "session"}),
-        );
-    }
-    if let Some(required) = schema
-        .get_mut("required")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        required.insert(0, "kind".into());
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionKind {
+    Session,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

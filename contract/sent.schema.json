@@ -11836,6 +11836,12 @@
     "SessionId": {
       "type": "string"
     },
+    "SessionKind": {
+      "enum": [
+        "session"
+      ],
+      "type": "string"
+    },
     "SessionList": {
       "properties": {
         "sessions": {
@@ -12121,8 +12127,7 @@
           "$ref": "#/$defs/SessionId"
         },
         "kind": {
-          "const": "session",
-          "type": "string"
+          "$ref": "#/$defs/SessionKind"
         },
         "title": {
           "type": "string"
