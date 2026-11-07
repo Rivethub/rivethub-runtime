@@ -118,7 +118,7 @@ pub(super) async fn stage(
     Ok(release.tag_name)
 }
 
-fn unpack(archive: &[u8], directory: &Path) -> Result<(), UpdateError> {
+pub(super) fn unpack(archive: &[u8], directory: &Path) -> Result<(), UpdateError> {
     let mut unpacked = Vec::new();
     for entry in tar::Archive::new(flate2::read::GzDecoder::new(archive)).entries()? {
         let mut entry = entry?;

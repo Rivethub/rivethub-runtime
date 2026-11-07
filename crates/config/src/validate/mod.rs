@@ -9,6 +9,7 @@ mod agents;
 mod channels;
 mod deployment;
 mod gateway;
+mod hubs;
 mod memory;
 mod mesh;
 mod providers;
@@ -348,6 +349,12 @@ fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
     }
     if let Some(section) = &config.tasks {
         tasks::validate(out, section);
+    }
+    if let Some(entries) = &config.hubs {
+        hubs::validate(out, entries);
+    }
+    if let Some(section) = &config.cloud {
+        hubs::cloud(out, section);
     }
 }
 

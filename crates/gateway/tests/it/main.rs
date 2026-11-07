@@ -19,6 +19,7 @@ mod device_support;
 #[cfg(test)]
 mod session_support;
 
+mod account;
 mod agents;
 mod auth;
 mod ca;

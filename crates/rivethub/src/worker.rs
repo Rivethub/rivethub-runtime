@@ -133,6 +133,7 @@ async fn run(
     let owned = env.clone();
     let config = tokio::task::spawn_blocking(move || load(&owned)).await??;
     crate::identity::announce_resolved("worker", &config, env).map_err(StartupError::from)?;
+    crate::telemetry::arm(&config, env, crate::telemetry::worker_job(role));
     let memory = Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?);
     let result = async {
         let settings = workers::MemoryJobSettings::from_environment(env)?;

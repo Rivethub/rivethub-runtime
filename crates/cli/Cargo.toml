@@ -53,6 +53,7 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+aws-lc-rs = { workspace = true }
 rusqlite.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
 workers = { workspace = true }

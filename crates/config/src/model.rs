@@ -40,6 +40,30 @@ pub struct Config {
     pub mesh: Option<MeshSection>,
     pub gateway: Option<GatewaySection>,
     pub tasks: Option<TasksSection>,
+    pub hubs: Option<Vec<HubEntry>>,
+    pub telemetry: Option<TelemetrySection>,
+    pub cloud: Option<CloudSection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HubEntry {
+    pub name: String,
+    pub url: url::Url,
+    #[serde(default)]
+    pub kind: wire::gateway::account::HubKind,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct TelemetrySection {
+    pub disabled: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct CloudSection {
+    pub url: Option<url::Url>,
+    pub update_key: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

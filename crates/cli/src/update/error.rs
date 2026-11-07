@@ -50,4 +50,10 @@ pub enum UpdateError {
     Command(#[from] crate::service::ServiceError),
     #[error("update cancelled")]
     Cancelled,
+    #[error(transparent)]
+    Account(#[from] gateway::account::AccountError),
+    #[error("rivethub.cloud installs its latest release; pass --source github to install a tag")]
+    CloudVersion,
+    #[error("rivethub.cloud has no {0} release for this platform")]
+    NoCloudRelease(wire::gateway::account::ReleaseChannel),
 }

@@ -148,6 +148,7 @@ async fn validate(env: &Environment) -> Result<(), SidecarError> {
     let config = read_config(env).await?;
     let _selected = select(&config)?;
     crate::identity::announce_resolved("mcp", &config, env).map_err(StartupError::from)?;
+    crate::telemetry::arm(&config, env, gateway::account::CrashJob::Mcp);
     Ok(())
 }
 

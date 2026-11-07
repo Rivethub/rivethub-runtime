@@ -25,6 +25,97 @@
       ],
       "type": "object"
     },
+    "Account": {
+      "properties": {
+        "autoDownload": {
+          "type": "boolean"
+        },
+        "channel": {
+          "$ref": "#/$defs/ReleaseChannel"
+        },
+        "crashReports": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pendingUpdate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updateSource": {
+          "$ref": "#/$defs/UpdateSource"
+        },
+        "usageCounts": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "updateSource",
+        "channel",
+        "autoDownload",
+        "version",
+        "crashReports",
+        "usageCounts"
+      ],
+      "type": "object"
+    },
+    "AccountUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "autoDownload": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReleaseChannel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "crashReports": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "updateSource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UpdateSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usageCounts": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Activity": {
       "enum": [
         "idle",
@@ -6680,6 +6771,48 @@
       ],
       "type": "object"
     },
+    "Hub": {
+      "properties": {
+        "current": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/HubKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "url",
+        "online",
+        "detail",
+        "current"
+      ],
+      "type": "object"
+    },
+    "HubKind": {
+      "enum": [
+        "local",
+        "team"
+      ],
+      "type": "string"
+    },
     "HubLastSession": {
       "properties": {
         "at": {
@@ -9419,6 +9552,22 @@
       ],
       "type": "object"
     },
+    "PendingUpdate": {
+      "properties": {
+        "notesUrl": {
+          "format": "uri",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "notesUrl"
+      ],
+      "type": "object"
+    },
     "Permission": {
       "enum": [
         "memory.read",
@@ -10994,6 +11143,13 @@
       ],
       "type": "string"
     },
+    "ReleaseChannel": {
+      "enum": [
+        "stable",
+        "beta"
+      ],
+      "type": "string"
+    },
     "ReviewDecision": {
       "oneOf": [
         {
@@ -12489,6 +12645,61 @@
           "type": "object"
         }
       ]
+    },
+    "SignInProgress": {
+      "oneOf": [
+        {
+          "properties": {
+            "status": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "account": {
+              "$ref": "#/$defs/Account"
+            },
+            "status": {
+              "const": "signed-in",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "account"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SignInRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email"
+      ],
+      "type": "object"
+    },
+    "SignInStarted": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId"
+      ],
+      "type": "object"
     },
     "SignedCertificate": {
       "properties": {
@@ -15765,6 +15976,13 @@
         "uniqueTools"
       ],
       "type": "object"
+    },
+    "UpdateSource": {
+      "enum": [
+        "rivethub-cloud",
+        "github"
+      ],
+      "type": "string"
     },
     "UploadCreated": {
       "properties": {

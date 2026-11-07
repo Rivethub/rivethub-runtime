@@ -28,7 +28,7 @@ pub use load::{
 pub use memory_models::{
     EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
 };
-pub use model::{Config, HarnessSlot, RedactionSettings};
+pub use model::{CloudSection, Config, HarnessSlot, HubEntry, RedactionSettings, TelemetrySection};
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{
     ConfigLocation, NodeClaim, Paths, StateError, adopt_legacy_state, claim_node, normalize,

@@ -19,6 +19,7 @@ agent-client-protocol = "3.3"
 agent-loop = { path = "crates/agent-loop", version = "0.7.0" }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "alloc"] }
 base64 = "0.22"
 bytes = "1"
 capture = { path = "crates/capture", version = "0.7.0" }
