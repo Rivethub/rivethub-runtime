@@ -139,7 +139,9 @@ fn removed_provider_ids(input: &serde_yaml_ng::Value) -> Vec<(String, RemovedPro
 
 const DECISION_15_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
 
-const REMOVED_BY_DECISION_ROWS: usize = 26_817;
+const EXPOSED_TERMINAL: &str = "an exposed terminal without TLS";
+
+const REMOVED_BY_DECISION_ROWS: usize = 34_398;
 const REMOVED_BY_DECISION_CASES: usize = 5_823;
 
 fn decision_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
@@ -385,11 +387,12 @@ fn retired_section_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDelt
         else {
             continue;
         };
-        let used = value.as_mapping().is_none_or(|mapping| {
-            mapping
-                .keys()
-                .any(|key| key.as_str().is_none_or(|key| !retired.keeps.contains(&key)))
-        });
+        let used = retired.keeps.is_empty()
+            || value.as_mapping().is_none_or(|mapping| {
+                mapping
+                    .keys()
+                    .any(|key| key.as_str().is_none_or(|key| !retired.keeps.contains(&key)))
+            });
         if used {
             deltas.push(
                 retired.path,
@@ -568,12 +571,19 @@ fn replay_case(case: &Replay) -> Result<(), String> {
             .collect(),
         None => case.contract.clone(),
     };
+    let terminal_retired = case
+        .removed
+        .paths
+        .iter()
+        .any(|removed| removed == "gateway.terminal");
     expected_findings.retain(|finding| {
-        !case
+        let retired = case
             .removed
             .paths
             .iter()
-            .any(|removed| under(&finding.path, removed))
+            .any(|removed| under(&finding.path, removed));
+        let exposed = terminal_retired && finding.message.contains(EXPOSED_TERMINAL);
+        !(retired || exposed)
     });
     expected_findings.extend(
         case.removed

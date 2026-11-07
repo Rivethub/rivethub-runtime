@@ -10,7 +10,49 @@ pub struct Retired {
 
 const CERTIFICATES: &str = "rh no longer issues or checks client certificates; callers off this machine send a bearer token from the users file. Delete it";
 
+const LIVE: &str = "rh runs no live sessions, terminals or file browser. Delete it";
+
 pub const RETIRED: &[Retired] = &[
+    Retired {
+        path: "gateway.terminal",
+        keeps: &[],
+        why: LIVE,
+    },
+    Retired {
+        path: "gateway.commands_file",
+        keeps: &[],
+        why: LIVE,
+    },
+    Retired {
+        path: "gateway.files_root",
+        keeps: &[],
+        why: LIVE,
+    },
+    Retired {
+        path: "gateway.files_open",
+        keeps: &[],
+        why: LIVE,
+    },
+    Retired {
+        path: "gateway.allowed_harnesses",
+        keeps: &[],
+        why: LIVE,
+    },
+    Retired {
+        path: "gateway.advertise_mdns",
+        keeps: &[],
+        why: "rh no longer advertises itself on the local network. Delete it",
+    },
+    Retired {
+        path: "tasks.enabled",
+        keeps: &[],
+        why: "delegated tasks left rh; tasks.harnesses still names each harness binary. Delete it",
+    },
+    Retired {
+        path: "tasks.sqlite_path",
+        keeps: &[],
+        why: "delegated tasks left rh; tasks.harnesses still names each harness binary. Delete it",
+    },
     Retired {
         path: "runtime.profile",
         keeps: &[],

@@ -269,16 +269,10 @@ pub struct GatewaySection {
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
     pub users_file: Option<PathBuf>,
-    pub commands_file: Option<PathBuf>,
-    pub terminal: Option<TerminalSection>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
-    pub files_root: Option<PathBuf>,
-    pub files_open: bool,
-    pub advertise_mdns: Option<bool>,
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
-    pub allowed_harnesses: Option<Vec<HarnessSlot>>,
 }
 
 fn default_gateway_port() -> u16 {
@@ -287,20 +281,8 @@ fn default_gateway_port() -> u16 {
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
-pub struct TerminalSection {
-    pub enabled: Option<bool>,
-    pub open: Option<bool>,
-    pub idle_ttl_ms: Option<u64>,
-    pub trust_claude_launch_dirs: Option<bool>,
-    pub roots: Option<Vec<PathBuf>>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
 pub struct TasksSection {
-    pub enabled: Option<bool>,
     pub harnesses: Option<BTreeMap<HarnessSlot, HarnessEntry>>,
-    pub sqlite_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -340,14 +322,6 @@ pub struct DeploymentSection {
 }
 
 impl Config {
-    #[must_use]
-    pub fn terminal_enabled(&self) -> bool {
-        self.gateway
-            .as_ref()
-            .and_then(|gateway| gateway.terminal.as_ref())
-            .is_some_and(|terminal| terminal.enabled == Some(true))
-    }
-
     #[must_use]
     pub fn memory_postgres_url(&self, env: &Environment) -> Option<String> {
         self.memory

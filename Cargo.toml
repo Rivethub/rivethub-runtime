@@ -42,7 +42,6 @@ hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
 kernel = { path = "crates/kernel", version = "0.7.0" }
 landlock = "0.4.7"
-libc = "0.2"
 libtest-mimic = "0.8"
 mcp = { path = "crates/mcp", version = "0.7.0" }
 memory-postgres = { path = "crates/memory-postgres", version = "0.7.0" }

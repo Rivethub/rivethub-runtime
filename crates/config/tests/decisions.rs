@@ -480,26 +480,25 @@ fn decision_13_workflows_section_is_accepted_and_ignored() -> Result<(), Box<dyn
 }
 
 #[test]
-fn decision_2_tmux_is_ignored_and_treated_as_unset() {
-    let env = env_from(&[("RIVETHUB_TERM_MUX", "tmux")]);
-    assert_eq!(env.term_mux(), None);
-    assert!(
-        env.deprecation_warnings()
-            .iter()
-            .any(|warning| warning.contains("RIVETHUB_TERM_MUX=tmux"))
+fn decision_2_terminal_and_voice_variables_are_ignored_with_a_warning() {
+    for (name, value) in [
+        ("RIVETHUB_TERM_MUX", "tmux"),
+        ("RIVETOS_TERM_MUX", "herdr"),
+        ("RIVETHUB_UPLOAD_MAX_BYTES", "1"),
+        ("RIVETHUB_VOICE_STT_URL", "http://127.0.0.1:1"),
+    ] {
+        let warnings = env_from(&[(name, value)]).deprecation_warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.starts_with(&format!("{name} is no longer used"))),
+            "{name}: {warnings:?}"
+        );
+    }
+    assert_eq!(
+        env_from(&[]).deprecation_warnings(),
+        [] as [std::string::String; 0]
     );
-
-    let env = env_from(&[("RIVETOS_TERM_MUX", "tmux")]);
-    assert_eq!(env.term_mux(), None);
-    assert!(
-        env.deprecation_warnings()
-            .iter()
-            .any(|warning| warning.contains("RIVETOS_TERM_MUX=tmux"))
-    );
-
-    let env = env_from(&[("RIVETHUB_TERM_MUX", "herdr")]);
-    assert_eq!(env.term_mux(), Some("herdr"));
-    assert_eq!(env.deprecation_warnings(), [] as [std::string::String; 0]);
 }
 
 #[test]

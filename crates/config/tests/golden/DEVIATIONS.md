@@ -13,7 +13,12 @@ The memory-service cut retires whole sections (CONTRACT note 132), listed in
 read), and the client-certificate keys `gateway.certificate_authority`,
 `gateway.devices`, `gateway.tls_ca`, `gateway.tls_crl`,
 `gateway.tls_require_client`, `memory.capture.gateway.cert` and
-`memory.capture.gateway.key`. The replay drops recorded findings at or under a retired path and expects
+`memory.capture.gateway.key`, the live-session keys `gateway.terminal`,
+`gateway.commands_file`, `gateway.files_root`, `gateway.files_open`,
+`gateway.allowed_harnesses` and `gateway.advertise_mdns`, `runtime.profile`, and
+the delegation keys `tasks.enabled` and `tasks.sqlite_path` (`tasks.harnesses`
+still names each harness binary). A retired `gateway.terminal` also drops the
+recorded exposed-terminal error at `gateway.tls_cert`. The replay drops recorded findings at or under a retired path and expects
 the one warning that names it whenever the input sets a key there other than a
 kept one (a null section with kept keys sets nothing). Five `mesh` type-confused cases (`validate_config_mesh_channels_misc.jsonl`
 :373, :434, :598, :625 and :674) now deserialize, because the retired keys have no

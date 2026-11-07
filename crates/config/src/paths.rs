@@ -314,33 +314,4 @@ impl crate::Config {
         }
         shared_dir(env).join("wiki")
     }
-
-    pub fn terminal_roots(&self, env: &Environment) -> Vec<PathBuf> {
-        let gateway = self.gateway.as_ref();
-        if let Some(roots) = gateway
-            .and_then(|gateway| gateway.terminal.as_ref())
-            .and_then(|terminal| terminal.roots.clone())
-        {
-            return roots;
-        }
-        let files = gateway
-            .and_then(|gateway| gateway.files_root.clone())
-            .or_else(|| {
-                self.runtime
-                    .as_ref()
-                    .and_then(|runtime| runtime.workspace.clone())
-            });
-        let mut roots = Vec::new();
-        for root in files
-            .into_iter()
-            .chain(env.home().map(PathBuf::from))
-            .chain([shared_dir(env)])
-        {
-            let root = normalize(&root);
-            if !roots.contains(&root) {
-                roots.push(root);
-            }
-        }
-        roots
-    }
 }

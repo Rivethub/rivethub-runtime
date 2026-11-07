@@ -471,13 +471,6 @@ fn deployment_message(rest: &[Segment]) -> Option<String> {
 fn gateway_message(rest: &[Segment]) -> Option<String> {
     match rest {
         [Segment::Key(key)] => Some(format!("Unknown gateway key \"{key}\"")),
-        [Segment::Key(parent), Segment::Key(key)] => {
-            let parent: &str = parent.as_str();
-            match parent {
-                "terminal" => Some(format!("Unknown gateway.terminal key \"{key}\"")),
-                _ => None,
-            }
-        }
         _ => None,
     }
 }

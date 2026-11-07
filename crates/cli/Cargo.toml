@@ -21,7 +21,6 @@ kernel.workspace = true
 providers.workspace = true
 tar.workspace = true
 workers.workspace = true
-rcgen = { workspace = true, features = ["x509-parser"] }
 rustls-pki-types.workspace = true
 x509-parser.workspace = true
 chrono = { workspace = true }
@@ -48,6 +47,7 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+rcgen = { workspace = true, features = ["x509-parser"] }
 aws-lc-rs = { workspace = true }
 rusqlite.workspace = true
 sqlx = { workspace = true, features = ["macros"] }
