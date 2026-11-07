@@ -328,6 +328,12 @@ impl MemoryStore for crate::PostgresMemory {
             .map_err(MemoryStoreError::from)
     }
 
+    async fn capture_activity(
+        &self,
+    ) -> Result<Vec<kernel::harness_setup::CaptureActivity>, MemoryStoreError> {
+        self.read_capture_activity().await.map_err(Into::into)
+    }
+
     async fn stats(&self) -> Result<kernel::memory::MemoryStatsResponse, MemoryStoreError> {
         if let Some(answer) = self.stats_cache.fresh() {
             self.probe().await?;

@@ -54,6 +54,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Capture(#[from] capture::writer::WriteError),
+    #[error(transparent)]
+    Harness(#[from] kernel::harness_setup::SetupError),
     #[error("blocking command task failed: {0}")]
     Task(#[from] tokio::task::JoinError),
     #[error("invalid PID file: expected a single PID greater than 1")]

@@ -247,6 +247,7 @@ pub struct Gateway {
     terminal: Option<Arc<term::TerminalService>>,
     transcript: Option<Arc<dyn kernel::transcript::TranscriptReader>>,
     session_lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
+    harness_setup: Option<Arc<dyn kernel::harness_setup::HarnessSetup>>,
     history: history::History,
     uploads: Option<uploads::UploadService>,
     presets: routes::agents::AgentRegistry,
@@ -306,6 +307,7 @@ impl Gateway {
             terminal: None,
             transcript: None,
             session_lister: None,
+            harness_setup: None,
             history: history::History::default(),
             uploads: None,
             presets,
@@ -499,6 +501,23 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_harness_setup(
+        mut self,
+        setup: Arc<dyn kernel::harness_setup::HarnessSetup>,
+    ) -> Self {
+        self.harness_setup = Some(setup);
+        self
+    }
+
+    pub(crate) fn harness_setup(
+        &self,
+    ) -> Result<&Arc<dyn kernel::harness_setup::HarnessSetup>, error::ApiError> {
+        self.harness_setup
+            .as_ref()
+            .ok_or_else(|| error::ApiError::Unavailable("harness setup unavailable".into()))
+    }
+
+    #[must_use]
     pub fn session_lister(&self) -> Option<&Arc<dyn kernel::transcript::SessionLister>> {
         self.session_lister.as_ref()
     }
@@ -576,6 +595,14 @@ impl Gateway {
                     .layer(axum::extract::DefaultBodyLimit::max(
                         routes::capture_schema::body_limit(),
                     )),
+            )
+            .route(
+                "/api/capture/status",
+                routing::get(routes::capture_status::status).fallback(routes::method_not_allowed),
+            )
+            .route(
+                "/api/harnesses/{id}/connect",
+                routing::post(routes::capture_status::connect).fallback(routes::method_not_allowed),
             )
             .nest("/api/memory", routes::memory::router());
         routed = if matches!(self.surface, Surface::Memory) {

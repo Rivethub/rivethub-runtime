@@ -190,11 +190,28 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
 
 fn with_session_stores(gateway: Gateway, env: &Environment) -> Gateway {
     let roots = store_roots(env);
-    gateway
+    let gateway = gateway
         .with_transcript_reader(Arc::new(capture::listing::StoreTranscriptReader::new(
             roots.clone(),
         )))
-        .with_session_lister(Arc::new(capture::listing::StoreSessionLister::new(roots)))
+        .with_session_lister(Arc::new(capture::listing::StoreSessionLister::new(roots)));
+    match harness_setup(env) {
+        Ok(setup) => gateway.with_harness_setup(Arc::new(setup)),
+        Err(error) => {
+            tracing::warn!(%error, "harness setup is off: the node cannot name its own binary or state directory");
+            gateway
+        }
+    }
+}
+
+fn harness_setup(
+    env: &Environment,
+) -> Result<capture::harnesses::HarnessSetupService, ComposeError> {
+    let backups = config::Paths::new(env)?.hub_home().join("backups");
+    let executable = std::env::current_exe()?;
+    Ok(capture::harnesses::HarnessSetupService::new(
+        env, executable, backups,
+    ))
 }
 
 async fn session_registry(

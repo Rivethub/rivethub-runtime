@@ -2,6 +2,7 @@ pub mod agents;
 pub mod ca;
 pub mod capture;
 pub mod capture_schema;
+pub(crate) mod capture_status;
 pub mod chat;
 pub mod devices;
 pub mod files;

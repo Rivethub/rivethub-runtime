@@ -7,6 +7,7 @@ pub mod db;
 pub mod doctor;
 mod error;
 mod exit;
+mod harness;
 mod local;
 pub mod logs;
 pub mod memory;
@@ -171,6 +172,7 @@ async fn command_dispatch(
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,
+        Command::Harness { command } => harness::run(command, env).await,
         Command::Memory { args } => Ok(memory::execute(
             &args,
             env,

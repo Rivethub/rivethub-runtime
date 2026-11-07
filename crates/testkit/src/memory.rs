@@ -56,6 +56,7 @@ pub struct FakeMemoryStore {
     embeddings_armed: std::sync::atomic::AtomicBool,
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
+    capture_activity: Mutex<Vec<kernel::harness_setup::CaptureActivity>>,
 }
 
 impl FakeMemoryStore {
@@ -66,6 +67,13 @@ impl FakeMemoryStore {
 
     pub async fn script_embed_mismatch(&self, mismatch: EmbedModelMismatch) {
         *self.embed_mismatch.lock().await = Some(mismatch);
+    }
+
+    pub async fn script_capture_activity(
+        &self,
+        activity: Vec<kernel::harness_setup::CaptureActivity>,
+    ) {
+        *self.capture_activity.lock().await = activity;
     }
 
     pub async fn script_session_entity(&self, session: String, entity: Uuid) {
@@ -118,6 +126,12 @@ impl MemoryStore for FakeMemoryStore {
     fn embeddings_armed(&self) -> bool {
         self.embeddings_armed
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    async fn capture_activity(
+        &self,
+    ) -> Result<Vec<kernel::harness_setup::CaptureActivity>, MemoryStoreError> {
+        Ok(self.capture_activity.lock().await.clone())
     }
 
     async fn embed_model_mismatch(&self) -> Result<Option<EmbedModelMismatch>, MemoryStoreError> {

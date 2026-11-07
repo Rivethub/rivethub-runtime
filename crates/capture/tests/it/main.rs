@@ -4,6 +4,7 @@ mod cowork_reader;
 mod event_id;
 mod grok_transcript;
 mod grok_updates;
+mod harness_setup;
 mod hook_replay;
 mod listing_claude_grok;
 mod listing_stores;
