@@ -325,3 +325,10 @@ async fn digests_are_kept_per_day_and_owner(pool: PgPool) -> TestResult {
     testkit::changes::digests_are_kept_per_day_and_owner(&memory).await?;
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tag_on_a_bare_claude_conversation_is_its_sessions_change(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::a_tag_on_a_bare_claude_conversation_is_its_sessions_change(&memory).await?;
+    Ok(())
+}

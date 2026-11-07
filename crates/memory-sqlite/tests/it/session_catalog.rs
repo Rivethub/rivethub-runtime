@@ -92,3 +92,9 @@ async fn memory_state_follows_summaries_and_flagged_jobs() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn bare_claude_sessions_list_under_their_harness() -> TestResult {
+    let (_directory, store) = store()?;
+    session_catalog::lists_bare_claude_sessions_under_their_harness(&store, &store).await
+}

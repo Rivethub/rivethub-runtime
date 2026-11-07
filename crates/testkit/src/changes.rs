@@ -1,4 +1,6 @@
 use chrono::NaiveDate;
+use chrono::TimeDelta;
+use chrono::Utc;
 use kernel::changes::Change;
 use kernel::changes::ChangeActor;
 use kernel::changes::ChangeFeed;
@@ -14,6 +16,10 @@ use kernel::facts::FactStore;
 use kernel::facts::FactValue;
 use kernel::facts::NewClaim;
 use kernel::facts::Said;
+use kernel::memory::MemoryStore;
+use kernel::memory::TagAdd;
+use kernel::memory::TagEntity;
+use kernel::memory::TagEntityType;
 use kernel::owner::Owner;
 use kernel::topics::Decision;
 use kernel::topics::DecisionStore;
@@ -259,5 +265,47 @@ where
     store
         .request_digest(&DigestRequest::new(day, at(0), at(60), &owner))
         .await?;
+    Ok(())
+}
+
+pub async fn a_tag_on_a_bare_claude_conversation_is_its_sessions_change<S>(store: &S) -> Outcome
+where
+    S: MemoryStore + ChangeFeed,
+{
+    const BARE: &str = "00000000-0000-4000-8000-0000000000c7";
+    let conversation = crate::filing::capture(store, BARE, "claude-code", "Bare", None).await?;
+    let elsewhere = "00000000-0000-4000-8000-0000000000c8";
+    let other = crate::filing::capture(store, elsewhere, "cli", "Elsewhere", None).await?;
+    for entity in [conversation, other] {
+        store
+            .add_tag(TagAdd {
+                entity_type: TagEntityType::Conversation,
+                entity: TagEntity::Id(entity),
+                agent: None,
+                tag: "area:storage".parse()?,
+                display: None,
+                reason: None,
+                decided_by: None,
+            })
+            .await?;
+    }
+    let changes = store
+        .changes(&ChangeWindow::between(
+            at(0),
+            Utc::now() + TimeDelta::days(1),
+        ))
+        .await?;
+    same(
+        "a bare Claude Code key is its claude-code session; a bare key on another channel names none",
+        shown(&changes)
+            .into_iter()
+            .filter(|(kind, _, _)| *kind == ChangeKind::Tag)
+            .collect::<Vec<_>>(),
+        vec![(
+            ChangeKind::Tag,
+            "Tagged area: storage.".to_owned(),
+            Some(format!("claude-code:{BARE}")),
+        )],
+    )?;
     Ok(())
 }

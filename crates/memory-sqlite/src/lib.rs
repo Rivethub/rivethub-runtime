@@ -148,6 +148,7 @@ impl SqliteStore {
         conn.execute_batch(FILE_PRAGMAS)
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
+        session_catalog::register(&conn)?;
         let task_events = tokio::sync::watch::channel(0).0;
         let task_finished = tokio::sync::broadcast::channel(TASK_FINISHED_BUFFER).0;
         task_watch::register(&conn, task_events.clone(), task_finished.clone())?;

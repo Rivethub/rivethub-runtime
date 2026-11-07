@@ -396,3 +396,9 @@ async fn purge_tombstones_with_the_trash_mark(pool: PgPool) -> TestResult {
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn lists_bare_claude_sessions_under_their_harness(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_catalog::lists_bare_claude_sessions_under_their_harness(&memory, &memory).await
+}

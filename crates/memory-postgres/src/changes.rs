@@ -55,12 +55,15 @@ const PLACED_SQL: &str = "SELECT t.id, t.name, t.kind, p.session_id, p.placed_by
       WHERE WINDOW";
 
 const TAGGED_SQL: &str = "SELECT k.session_key, k.key, k.value, k.at FROM (
-         SELECT coalesce(c.session_key, sc.session_key) AS session_key, g.key, g.value,
+         SELECT CASE WHEN cs.channel = $4 AND cs.session_key ~* $5 THEN $4 || ':' || cs.session_key
+                     ELSE cs.session_key END AS session_key, g.key, g.value,
                 coalesce(g.decided_at, g.updated_at) AS at
            FROM rh_tags g
            LEFT JOIN rh_conversations c ON g.entity_type = 'conversation' AND c.id = g.entity_id
            LEFT JOIN rh_summaries s ON g.entity_type = 'summary' AND s.id = g.entity_id
            LEFT JOIN rh_conversations sc ON sc.id = s.conversation_id
+           CROSS JOIN LATERAL (SELECT coalesce(c.channel, sc.channel) AS channel,
+                                      coalesce(c.session_key, sc.session_key) AS session_key) cs
           WHERE g.state = 'accepted'
      ) k
       WHERE split_part(k.session_key, ':', 1) = ANY($3)
@@ -176,7 +179,10 @@ where
         .bind(window.from)
         .bind(window.to);
     let query = if sql.contains("$3") {
-        query.bind(harnesses)
+        query
+            .bind(harnesses)
+            .bind(HarnessId::ClaudeCode.to_string())
+            .bind(crate::session_catalog::BARE_UUID)
     } else {
         query
     };

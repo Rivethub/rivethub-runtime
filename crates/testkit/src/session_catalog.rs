@@ -533,3 +533,97 @@ pub async fn excludes_children_and_derives_titles(
     )?;
     Ok(())
 }
+
+pub const BARE: &str = "00000000-0000-4000-8000-0000000000c5";
+pub const CLI_UUID: &str = "00000000-0000-4000-8000-0000000000c6";
+
+async fn capture_stored(
+    memory: &dyn MemoryStore,
+    key: &str,
+    channel: &str,
+    title: &str,
+    minute: u32,
+) -> Outcome {
+    let word = title.to_lowercase().replace(' ', "-");
+    memory
+        .capture(
+            CaptureBatchRequest {
+                session_key: key.to_owned(),
+                agent: format!("agent-{word}"),
+                channel: Some(channel.to_owned()),
+                title: Some(title.to_owned()),
+                settings: None,
+                task_id: None,
+                finalize: Some(true),
+                created_at: Some(at(minute)),
+                updated_at: Some(at(minute + 1)),
+                messages: vec![
+                    turn(&format!("{word}-u"), Role::User, title, minute),
+                    turn(&format!("{word}-a"), Role::Assistant, "ok", minute),
+                ],
+            },
+            &crate::owner()?,
+            None,
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn lists_bare_claude_sessions_under_their_harness(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+) -> Outcome {
+    let seeded = seed(memory).await?;
+    let bare = SessionId::new(HarnessId::ClaudeCode, BARE);
+    capture_stored(memory, BARE, "claude-code", "Bare start", 60).await?;
+    capture_stored(memory, bare.as_str(), "claude-code", "Bare follow-up", 70).await?;
+    capture_stored(memory, CLI_UUID, "cli", "Not a session", 80).await?;
+    let all = catalog.list(&SessionQuery::new(SessionView::All)).await?;
+    same(
+        "a bare Claude Code key lists once as its claude-code session; a bare key on another channel names none",
+        ids(&all.items),
+        keys(&[
+            &bare,
+            &seeded.delta,
+            &seeded.gamma,
+            &seeded.beta,
+            &seeded.alpha,
+        ]),
+    )?;
+    let newest = all.items.first().ok_or("bare session missing")?;
+    same("both stored keys count", newest.message_count, 4)?;
+    same("started with the bare key", newest.started_at, at(60))?;
+    same(
+        "titled by the newest conversation",
+        newest.title.clone(),
+        "Bare follow-up".to_owned(),
+    )?;
+    let mut claude = SessionQuery::new(SessionView::All);
+    claude.harness = Some(HarnessId::ClaudeCode);
+    same(
+        "the harness filter keeps it",
+        listed(catalog, claude).await?.first().cloned(),
+        Some(bare.to_string()),
+    )?;
+    let mut text = SessionQuery::new(SessionView::All);
+    text.text = Some("follow-up".to_owned());
+    same(
+        "text search finds it",
+        listed(catalog, text).await?,
+        keys(&[&bare]),
+    )?;
+    let found = catalog
+        .get(&bare)
+        .await?
+        .ok_or("get misses the bare session")?;
+    same("get counts both stored keys", found.message_count, 4)?;
+    same(
+        "a bare key on another channel is no session",
+        catalog
+            .get(&SessionId::new(HarnessId::ClaudeCode, CLI_UUID))
+            .await?
+            .map(|record| record.id),
+        None,
+    )?;
+    Ok(())
+}

@@ -55,7 +55,8 @@ const PLACED_SQL: &str = "SELECT t.id, t.name, t.kind, p.session_id, p.placed_by
       WHERE WINDOW";
 
 const TAGGED_SQL: &str = "SELECT k.session_key, k.key, k.value, k.at FROM (
-         SELECT coalesce(c.session_key, sc.session_key) AS session_key, g.key, g.value,
+         SELECT coalesce(rh_session_key(c.channel, c.session_key),
+                         rh_session_key(sc.channel, sc.session_key)) AS session_key, g.key, g.value,
                 coalesce(g.decided_at, g.updated_at) AS at
            FROM ros_tags g
            LEFT JOIN ros_conversations c ON g.entity_type = 'conversation' AND c.id = g.entity_id

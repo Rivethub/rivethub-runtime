@@ -313,3 +313,10 @@ async fn digests_are_kept_per_day_and_owner() -> TestResult {
     testkit::changes::digests_are_kept_per_day_and_owner(&store).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_tag_on_a_bare_claude_conversation_is_its_sessions_change() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::a_tag_on_a_bare_claude_conversation_is_its_sessions_change(&store).await?;
+    Ok(())
+}

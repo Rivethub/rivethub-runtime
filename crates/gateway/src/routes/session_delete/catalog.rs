@@ -131,7 +131,11 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
     }
 }
 
-pub(crate) fn row(record: SessionRecord, visibility: SharedWith, lineage: &Lineage) -> SessionSummaryRow {
+pub(crate) fn row(
+    record: SessionRecord,
+    visibility: SharedWith,
+    lineage: &Lineage,
+) -> SessionSummaryRow {
     let key = record.id.to_string();
     let parent_id = lineage.parents.get(&key).cloned();
     let child_count = lineage

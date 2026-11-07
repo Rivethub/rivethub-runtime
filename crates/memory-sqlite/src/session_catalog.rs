@@ -1,6 +1,8 @@
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
+use kernel::filing::conversation_keys;
+use kernel::filing::session_key;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -14,6 +16,7 @@ use kernel::memory::session_title;
 use kernel::memory::snippet;
 use kernel::topics::TopicId;
 use rusqlite::Connection;
+use rusqlite::functions::FunctionFlags;
 use rusqlite::named_params;
 use strum::IntoEnumIterator as _;
 use wire::harness::HarnessId;
@@ -24,27 +27,37 @@ use crate::error::SqliteError;
 use crate::time;
 
 const SESSIONS: &str = "
-WITH sess AS (
-    SELECT c.session_key AS key,
+WITH conv AS (
+    SELECT c.id, c.created_at, c.updated_at, c.active,
+           rh_session_key(c.channel, c.session_key) AS skey
+      FROM ros_conversations c
+     WHERE c.task_id IS NULL
+       AND (:key IS NULL OR c.session_key IN (SELECT value FROM json_each(:keys)))
+), sess AS (
+    SELECT c.skey AS key,
            min(julianday(c.created_at)) AS started,
            max(julianday(c.updated_at)) AS updated,
            max(c.active) AS active,
+           json_group_array(c.id) AS conversations
+      FROM conv c
+     WHERE substr(c.skey, 1, instr(c.skey, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
+       AND (:key IS NULL OR c.skey = :key)
+       AND c.skey NOT IN (SELECT value FROM json_each(:exclude))
+     GROUP BY c.skey
+), titled AS (
+    SELECT s.*,
            (SELECT t.title FROM ros_conversations t
-             WHERE t.session_key = c.session_key AND trim(coalesce(t.title, '')) <> ''
+             WHERE t.id IN (SELECT value FROM json_each(s.conversations))
+               AND trim(coalesce(t.title, '')) <> ''
              ORDER BY julianday(t.updated_at) DESC, t.id LIMIT 1) AS title
-      FROM ros_conversations c
-     WHERE c.task_id IS NULL
-       AND substr(c.session_key, 1, instr(c.session_key, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
-       AND (:key IS NULL OR c.session_key = :key)
-       AND c.session_key NOT IN (SELECT value FROM json_each(:exclude))
-     GROUP BY c.session_key
+      FROM sess s
 ), page AS (
-    SELECT s.key, s.started, s.updated, s.active, s.title,
+    SELECT s.key, s.conversations, s.started, s.updated, s.active, s.title,
            substr(s.key, instr(s.key, ':') + 1) AS native,
            k.session_key IS NOT NULL AS kept,
            tr.session_key IS NOT NULL AS trashed,
            p.topic_id AS topic_id
-      FROM sess s
+      FROM titled s
       LEFT JOIN rh_session_keeps k ON k.session_key = s.key
       LEFT JOIN rh_session_trash tr ON tr.session_key = s.key
       LEFT JOIN rh_session_placements p ON p.session_id = s.key
@@ -65,16 +78,14 @@ SELECT g.key,
        strftime('%Y-%m-%dT%H:%M:%fZ', g.updated),
        g.active,
        (SELECT count(*) FROM ros_messages m
-          JOIN ros_conversations c ON c.id = m.conversation_id
-         WHERE c.session_key = g.key),
+         WHERE m.conversation_id IN (SELECT value FROM json_each(g.conversations))),
        g.kept,
        g.trashed,
        g.topic_id,
        (SELECT t.name FROM rh_topics t WHERE t.id = g.topic_id),
        (SELECT pt.name FROM rh_topics t JOIN rh_topics pt ON pt.id = t.parent_id WHERE t.id = g.topic_id),
        EXISTS (SELECT 1 FROM ros_summaries s
-                 JOIN ros_conversations c ON c.id = s.conversation_id
-                WHERE c.session_key = g.key),
+                WHERE s.conversation_id IN (SELECT value FROM json_each(g.conversations))),
        EXISTS (SELECT 1 FROM ros_jobs j
                  LEFT JOIN ros_messages m
                         ON m.id = coalesce(
@@ -85,18 +96,16 @@ SELECT g.key,
                    ON c.id = coalesce(
                           CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.conversationId') END,
                           m.conversation_id)
-                WHERE j.state = 'dead' AND c.session_key = g.key),
+                WHERE j.state = 'dead' AND c.id IN (SELECT value FROM json_each(g.conversations))),
        (SELECT s.content FROM ros_summaries s
-          JOIN ros_conversations c ON c.id = s.conversation_id
-         WHERE c.session_key = g.key
+         WHERE s.conversation_id IN (SELECT value FROM json_each(g.conversations))
          ORDER BY s.depth DESC, julianday(s.created_at) DESC LIMIT 1),
        (SELECT json_extract(c.settings, '$.cwd') FROM ros_conversations c
-         WHERE c.session_key = g.key AND json_valid(c.settings)
+         WHERE c.id IN (SELECT value FROM json_each(g.conversations)) AND json_valid(c.settings)
            AND json_type(c.settings, '$.cwd') = 'text'
          ORDER BY julianday(c.updated_at) DESC LIMIT 1),
        (SELECT substr(m.content, 1, 600) FROM ros_messages m
-          JOIN ros_conversations c ON c.id = m.conversation_id
-         WHERE c.session_key = g.key AND m.role = 'user' AND trim(m.content) <> ''
+         WHERE m.conversation_id IN (SELECT value FROM json_each(g.conversations)) AND m.role = 'user' AND trim(m.content) <> ''
          ORDER BY julianday(m.created_at), m.id LIMIT 1),
        g.native
   FROM page g
@@ -203,9 +212,9 @@ pub(crate) fn harnesses(only: Option<HarnessId>) -> Result<String, SqliteError> 
     })
 }
 
-fn excluded(keys: &[String]) -> Result<String, SqliteError> {
+fn keys_json(keys: &[String]) -> Result<String, SqliteError> {
     serde_json::to_string(keys).map_err(|source| SqliteError::Encode {
-        column: "excluded sessions",
+        column: "session keys",
         source,
     })
 }
@@ -215,6 +224,17 @@ struct Scope<'a> {
     harnesses: &'a str,
     exclude: &'a str,
     key: Option<&'a str>,
+    keys: Option<&'a str>,
+}
+
+pub(crate) fn register(conn: &Connection) -> Result<(), SqliteError> {
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    conn.create_scalar_function("rh_session_key", 2, flags, |ctx| {
+        let channel = ctx.get::<Option<String>>(0)?;
+        let key = ctx.get::<Option<String>>(1)?;
+        Ok(key.map(|key| session_key(channel.as_deref(), &key)))
+    })
+    .map_err(SqliteError::query("register session key"))
 }
 
 fn select(
@@ -243,6 +263,7 @@ fn select(
             named_params! {
                 ":harnesses": scope.harnesses,
                 ":key": scope.key,
+                ":keys": scope.keys,
                 ":topic": query.and_then(|query| query.topic).map(|topic| topic.to_string()),
                 ":text": query.and_then(|query| query.text.as_deref()),
                 ":after_key": after.map(|cursor| cursor.key.as_str()),
@@ -264,8 +285,9 @@ fn page(conn: &Connection, query: &SessionQuery) -> Result<SessionPage, SqliteEr
     let scope = Scope {
         view: Some(query.view),
         harnesses: &harnesses(query.harness)?,
-        exclude: &excluded(&query.exclude)?,
+        exclude: &keys_json(&query.exclude)?,
         key: None,
+        keys: None,
     };
     let mut items = select(conn, &scope, Some(query), wanted)?;
     let more = items.len() > usize::try_from(size).map_err(SqliteError::Count)?;
@@ -292,6 +314,7 @@ impl SessionCatalog for SqliteStore {
 
     async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
         let key = session.to_string();
+        let keys = keys_json(&conversation_keys(session))?;
         self.with_conn(move |conn| {
             let mut found = select(
                 conn,
@@ -300,6 +323,7 @@ impl SessionCatalog for SqliteStore {
                     harnesses: &harnesses(None)?,
                     exclude: "[]",
                     key: Some(&key),
+                    keys: Some(&keys),
                 },
                 None,
                 1,
