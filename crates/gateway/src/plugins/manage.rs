@@ -20,11 +20,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
             "the plug-in host is already started".into(),
         ));
     }
-    if let Some(terminal) = gateway.terminal.as_ref()
-        && host.terminal.set(Arc::downgrade(terminal)).is_err()
-    {
-        tracing::debug!("plug-in host already knows the terminal service");
-    }
     if let Some(owner) = gateway.tenancy.local_user()
         && host.owner.set(owner.clone()).is_err()
     {

@@ -52,7 +52,6 @@ fn scoped(rel: &str) -> bool {
                 | "capture"
                 | "providers"
                 | "harness-acp"
-                | "terminal"
                 | "memory-postgres"
                 | "memory-sqlite"
         )

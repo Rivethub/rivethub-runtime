@@ -10,7 +10,7 @@ use tokio::sync::broadcast;
 use tokio::time::{Instant, MissedTickBehavior};
 use wire::plugin::process::PluginNotification;
 
-use super::sessions::{SocketError, send};
+use super::notices::{SocketError, send};
 use crate::Gateway;
 use crate::tenancy::UserId;
 

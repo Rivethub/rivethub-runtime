@@ -43,17 +43,8 @@ fn plugin_id(raw: String) -> Result<PluginId, String> {
 }
 
 impl PluginHost {
-    pub(super) async fn create(
-        &self,
-        tool: &ToolName,
-        arguments: &JsonObject,
-        tool_use: Option<&str>,
-    ) -> PluginToolResult {
-        let answered = match self.owner_call(tool_use).await {
-            Ok(()) => self.run_creator(tool, arguments).await,
-            Err(refusal) => Err(refusal),
-        };
-        match answered {
+    pub(super) async fn create(&self, tool: &ToolName, arguments: &JsonObject) -> PluginToolResult {
+        match self.run_creator(tool, arguments).await {
             Ok(text) => PluginToolResult {
                 text,
                 is_error: false,
@@ -62,29 +53,6 @@ impl PluginHost {
                 text,
                 is_error: true,
             },
-        }
-    }
-
-    async fn owner_call(&self, tool_use: Option<&str>) -> Result<(), String> {
-        let Some(tool_use) = tool_use else {
-            return Ok(());
-        };
-        let Some(session) = self.calling_session(tool_use).await else {
-            return Ok(());
-        };
-        let sessions = self
-            .sessions
-            .get()
-            .ok_or_else(|| "the plug-in host has not started".to_owned())?;
-        let holder = sessions
-            .owner(session.as_str())
-            .map_err(|error| error.to_string())?;
-        if holder.is_some() && holder.as_ref() == self.owner.get() {
-            Ok(())
-        } else {
-            Err(format!(
-                "Only sessions of this node's owner can build plug-ins here, and {session} belongs to someone else. Nothing changed."
-            ))
         }
     }
 

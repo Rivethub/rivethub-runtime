@@ -13,11 +13,9 @@ pub mod session_catalog;
 pub mod session_delete;
 pub mod sessions;
 pub mod tenancy;
-pub mod term;
 pub mod tidy;
 pub mod today;
 pub mod topics;
-pub mod uploads;
 pub mod users;
 pub mod wiki;
 
@@ -130,11 +128,4 @@ impl GatewayError {
 #[serde(rename_all = "camelCase")]
 pub struct OkReply {
     pub ok: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EventsIngested {
-    pub ok: bool,
-    pub ingested: u64,
 }

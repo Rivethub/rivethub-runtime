@@ -3,7 +3,6 @@ pub mod agents;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
-pub mod chat;
 mod entities;
 pub mod files;
 mod flagged;
@@ -14,13 +13,12 @@ pub mod memory;
 mod memory_archive;
 mod memory_models;
 mod memory_snippet;
+pub(crate) mod notices;
 mod notifications;
 mod plugins;
 mod review;
 mod session_delete;
-pub mod sessions;
 pub mod tags;
-pub mod terminal;
 mod tidy;
 mod today;
 pub(crate) mod topics;
@@ -46,7 +44,6 @@ use crate::error::ApiError;
 
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 
-pub(crate) use surface::plain_get;
 pub(crate) use surface::rewrite_request;
 
 pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
@@ -107,7 +104,6 @@ pub(crate) fn join_task<T>(joined: Result<T, tokio::task::JoinError>) -> Result<
 }
 
 pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::response::Response {
-    let sessions = gateway.sessions().count() as u64;
     let name = gateway.settings().hostname.clone();
     let node = gateway.settings().node.clone();
     let degraded_providers = degraded_providers(gateway.provider_health());
@@ -116,7 +112,7 @@ pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::respon
             StatusCode::OK,
             Json(HealthzResponse {
                 ok: true,
-                sessions,
+                sessions: 0,
                 name,
                 node,
                 degraded: None,
@@ -130,7 +126,7 @@ pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::respon
             StatusCode::SERVICE_UNAVAILABLE,
             Json(HealthzResponse {
                 ok: false,
-                sessions,
+                sessions: 0,
                 name,
                 node,
                 degraded: Some(degraded_reason(&error)),

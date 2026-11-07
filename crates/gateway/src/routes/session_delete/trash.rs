@@ -17,10 +17,9 @@ use wire::session_id::SessionId;
 
 use futures::StreamExt as _;
 
-use super::{NOT_FOUND, deletions, hidden, known, live, resolved, segment_session, visible};
+use super::{NOT_FOUND, deletions, hidden, known, resolved, segment_session, visible};
 use crate::Gateway;
 use crate::error::ApiError;
-use crate::routes::terminal::require;
 use crate::tenancy::UserId;
 
 const TRANSCRIPT_READS: usize = 32;
@@ -88,7 +87,7 @@ pub(super) async fn trash(
     user: UserId,
 ) -> Result<Json<SessionTrashList>, ApiError> {
     let deletions = deletions(&gateway)?;
-    let roster = require(&gateway)?.roster();
+    let roster = crate::history::registered();
     let now = Utc::now();
     let (mut rows, empty) = tokio::join!(
         listed(&gateway, &roster),
@@ -102,7 +101,6 @@ pub(super) async fn trash(
     let rows: Vec<Considered> = crate::routes::history::visible_rows(&gateway, &user, rows)
         .into_iter()
         .filter_map(|row| considered(row, now))
-        .filter(|row| !live(&gateway, &row.session))
         .collect();
     let keys: Vec<String> = rows
         .iter()

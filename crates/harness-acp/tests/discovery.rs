@@ -149,7 +149,6 @@ async fn a_session_selection_updates_the_advertised_default() {
                 model: None,
                 effort: None,
                 working_dir: Some(cwd.path().to_path_buf()),
-                startup_context: None,
             })
             .await
             .expect("new session");

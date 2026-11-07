@@ -22,8 +22,6 @@ pub struct SessionDeleteRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SessionDeleteError {
-    #[serde(rename = "session is live")]
-    Live,
     #[serde(rename = "not found")]
     NotFound,
     #[serde(rename = "delete failed")]

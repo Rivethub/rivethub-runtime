@@ -129,18 +129,6 @@ impl HarnessAdapter for Harness {
         Ok(session)
     }
 
-    async fn resume(
-        &self,
-        session: &SessionId,
-        _cwd: Option<&std::path::Path>,
-    ) -> Result<(), HarnessAdapterError> {
-        if self.sessions.lock().contains_key(session) {
-            Ok(())
-        } else {
-            Err(HarnessAdapterError::UnknownSession(session.clone()))
-        }
-    }
-
     async fn prompt(
         &self,
         session: &SessionId,
@@ -277,10 +265,6 @@ impl HarnessAdapter for Harness {
     async fn offerings(&self) -> Result<Vec<HarnessOffering>, HarnessAdapterError> {
         self.check(Fault::Offerings)?;
         Ok(self.offerings.clone())
-    }
-
-    async fn commands(&self) -> Result<Vec<kernel::harness::HarnessCommands>, HarnessAdapterError> {
-        Ok(Vec::new())
     }
 }
 

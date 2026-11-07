@@ -3,13 +3,11 @@ use crate::session_delete::Stores;
 use crate::session_support;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use gateway::sessions::{SessionRegistry, owners_file};
 use kernel::memory::{MemoryState, SessionRecord, SessionTopic};
 use kernel::topics::TopicId;
-use session_support::harness::Harness;
 use session_support::{Fixture, http, user};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
 use wire::gateway::session_catalog::{SessionDetail, SessionSummaryPage, SharedWith};
@@ -44,28 +42,25 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
     }
 }
 
-async fn setup(stores: Stores, records: Vec<SessionRecord>) -> Setup {
+fn setup(stores: Stores, records: Vec<SessionRecord>) -> Setup {
     let state = tempfile::tempdir().expect("state");
     let path = owners_file(state.path());
     std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
     std::fs::write(&path, "{}").expect("owners");
-    let registry = SessionRegistry::new(Duration::from_secs(1))
+    let registry = SessionRegistry::default()
         .with_owners_file(path)
         .with_node_owner(user("owner"));
-    let harness = Arc::new(Harness::offering(&[HarnessId::ClaudeCode]));
     let deletion = Arc::new(FakeSessionDeletion::default());
     let catalog = records.into_iter().fold(
         FakeSessionCatalog::new(deletion.clone()),
         FakeSessionCatalog::with_record,
     );
     let fixture = Fixture::with_catalog(
-        Some(harness),
         registry,
         Some(Arc::new(stores)),
         deletion.clone(),
         Arc::new(catalog),
-    )
-    .await;
+    );
     Setup {
         fixture,
         deletion,
@@ -113,7 +108,7 @@ fn seeded() -> (Stores, Vec<SessionRecord>) {
 #[tokio::test]
 async fn the_list_leaves_child_sessions_out_unless_asked_and_counts_them_on_the_parent() {
     let (stores, records) = seeded();
-    let setup = setup(stores, records).await;
+    let setup = setup(stores, records);
     let (status, body) = call(&setup, "GET", "/api/sessions").await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert_eq!(titles(&body), ["Solo", "Parent"]);
@@ -138,7 +133,7 @@ async fn the_list_leaves_child_sessions_out_unless_asked_and_counts_them_on_the_
 #[tokio::test]
 async fn trash_restore_and_unkeep_move_a_session_between_views() {
     let (stores, records) = seeded();
-    let setup = setup(stores, records).await;
+    let setup = setup(stores, records);
     let solo = encode_segment(&claude("solo"));
     let (status, _) = call(&setup, "PUT", &format!("/api/sessions/{solo}/keep")).await;
     assert_eq!(status, 204);
@@ -154,7 +149,7 @@ async fn trash_restore_and_unkeep_move_a_session_between_views() {
     let trashed = page(&body);
     assert_eq!(trashed.items.len(), 1);
     assert!(trashed.items.iter().all(|row| row.trashed));
-    let (_, body) = call(&setup, "GET", "/api/terminal/harness-sessions").await;
+    let (_, body) = call(&setup, "GET", "/api/harnesses/claude-code/sessions").await;
     assert!(!String::from_utf8_lossy(&body).contains("solo"));
 
     let (status, _) = call(&setup, "POST", &format!("/api/sessions/{solo}/restore")).await;
@@ -176,7 +171,7 @@ async fn trash_restore_and_unkeep_move_a_session_between_views() {
 #[tokio::test]
 async fn the_detail_adds_cwd_and_a_resume_command() {
     let (stores, records) = seeded();
-    let setup = setup(stores, records).await;
+    let setup = setup(stores, records);
     let solo = encode_segment(&claude("solo"));
     let (status, body) = call(&setup, "GET", &format!("/api/sessions/{solo}")).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -205,7 +200,7 @@ async fn the_detail_adds_cwd_and_a_resume_command() {
 #[tokio::test]
 async fn a_bad_filter_is_a_bad_request() {
     let (stores, records) = seeded();
-    let setup = setup(stores, records).await;
+    let setup = setup(stores, records);
     for query in ["harness=nope", "cursor=garbage", "view=bogus"] {
         let (status, _) = call(&setup, "GET", &format!("/api/sessions?{query}")).await;
         assert_eq!(status, 400, "{query}");

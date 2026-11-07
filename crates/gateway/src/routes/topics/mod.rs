@@ -3,7 +3,6 @@ mod done;
 mod filing;
 mod map;
 mod page;
-mod startup;
 mod visibility;
 
 use std::sync::Arc;
@@ -48,9 +47,6 @@ use crate::tenancy::UserId;
 
 pub(super) use map::error as topic_error;
 pub(crate) use map::page_error;
-pub(super) use startup::Started;
-pub(super) use startup::begin;
-pub(crate) use startup::prepare;
 pub(crate) use visibility::error as visibility_error;
 
 const SEARCH_LIMIT_DEFAULT: usize = 10;
@@ -104,14 +100,6 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/topics/{topic}/sessions",
             routing::get(filing::sessions).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/api/topics/{topic}/startup",
-            routing::get(startup::preview).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/api/harness-sessions/{session}/startup-context",
-            routing::get(startup::kept).fallback(super::method_not_allowed),
         )
         .route(
             "/api/sessions/{session}/placement",

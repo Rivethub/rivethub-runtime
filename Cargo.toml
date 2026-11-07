@@ -52,7 +52,6 @@ nix = { version = "0.30", features = ["process", "signal", "fs", "user"] }
 parking_lot = "0.12"
 percent-encoding = "2"
 pgvector = { version = "0.4", features = ["sqlx"] }
-portable-pty = "0.9"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 providers = { path = "crates/providers", version = "0.7.0" }
 ra-ap-rustc_lexer = "0.177"
@@ -84,7 +83,6 @@ syn = { version = "2", features = ["full", "visit"] }
 tar = { version = "0.4", default-features = false }
 
 tempfile = "3"
-terminal = { path = "crates/terminal", version = "0.7.0" }
 testkit = { path = "crates/testkit", version = "0.7.0" }
 thiserror = "2"
 tokio = { version = "1" }

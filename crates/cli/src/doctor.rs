@@ -3,7 +3,6 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use config::{Config, Environment, Paths};
 use nix::sys::statvfs::{Statvfs, statvfs};
-use nix::unistd::{AccessFlags, access};
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, Exit, Report, configuration};
@@ -25,7 +24,6 @@ pub enum CheckName {
     StateDirectory,
     DiskSpace,
     Memory,
-    Herdr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,15 +140,7 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
                 message: validation.to_string(),
             });
             checks.extend(directories?);
-            let memory = schema_check(&loaded.config, env);
-            let terminal = terminal_check(loaded.config.terminal_enabled(), env.clone());
-            let (memory, terminal) = tokio::join!(memory, terminal);
-            checks.push(memory);
-            match terminal {
-                Ok(Some(terminal)) => checks.push(terminal),
-                Ok(None) => {}
-                Err(error) => checks.push(Check::fail(CheckName::Herdr, error)),
-            }
+            checks.push(schema_check(&loaded.config, env).await);
         }
         Err(error) => {
             checks.push(Check::fail(CheckName::Config, error));
@@ -206,44 +196,6 @@ fn disk_check(bytes: u64) -> Check {
         status,
         message: format!("{} MB available.", bytes / (1024 * 1024)),
     }
-}
-
-async fn terminal_check(enabled: bool, env: Environment) -> Result<Option<Check>, Error> {
-    if !enabled {
-        return Ok(None);
-    }
-    tokio::task::spawn_blocking(move || find_herdr(&env).map(Some)).await?
-}
-
-fn find_herdr(env: &Environment) -> Result<Check, Error> {
-    let Some(path) = env.get("PATH") else {
-        return Ok(Check::fail(
-            CheckName::Herdr,
-            "herdr is unavailable: PATH is unset.",
-        ));
-    };
-    for directory in std::env::split_paths(path) {
-        let executable = directory.join("herdr");
-        match std::fs::metadata(&executable) {
-            Ok(metadata) if metadata.is_file() => match access(&executable, AccessFlags::X_OK) {
-                Ok(()) => {
-                    return Ok(Check::pass(
-                        CheckName::Herdr,
-                        format!("herdr: {}", executable.display()),
-                    ));
-                }
-                Err(nix::errno::Errno::EACCES) => {}
-                Err(error) => return Err(error.into()),
-            },
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(Check::fail(
-        CheckName::Herdr,
-        "herdr was not found as an executable on PATH.",
-    ))
 }
 
 async fn schema_check(config: &Config, env: &Environment) -> Check {

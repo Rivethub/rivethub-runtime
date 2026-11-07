@@ -94,7 +94,7 @@ async fn starts_empty_at_version_zero() -> TestResult {
 async fn a_put_advances_the_version_and_tells_the_users_sockets() -> TestResult {
     let root = tempfile::tempdir()?;
     let gateway = opened(root.path())?;
-    let (_, mut live) = gateway.sessions().subscribe(&user("owner"), None)?;
+    let mut live = gateway.sessions().notices();
     let app = Arc::clone(&gateway).router(false);
     let state = format!(
         r#"{{"projects":[{{"id":"p1","name":"Code","order":0,"createdAt":1}}],"membership":{{"{KEY}":"p1"}},"names":{{"{KEY}":"Refactor"}},"lastSession":{{"key":"{KEY}","at":5}}}}"#
@@ -109,7 +109,9 @@ async fn a_put_advances_the_version_and_tells_the_users_sockets() -> TestResult 
     );
     assert_eq!(get(&app, None).await?, saved);
 
-    let frame = tokio::time::timeout(Duration::from_secs(2), live.recv()).await??;
+    let frame = tokio::time::timeout(Duration::from_secs(2), live.recv())
+        .await??
+        .body;
     assert!(matches!(&frame, SessionBroadcast::HubState(changed) if changed.version == 1));
     assert_eq!(
         serde_json::to_value(&frame)?,

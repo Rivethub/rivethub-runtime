@@ -29,9 +29,7 @@ use crate::options::SessionOptions;
 #[derive(Debug, Clone)]
 pub(crate) struct Advertisement {
     capabilities: acp::AgentCapabilities,
-    steering: bool,
     options: Arc<SessionOptions>,
-    context: Arc<crate::context::ContextWindows>,
     commands: Vec<Command>,
 }
 
@@ -39,15 +37,9 @@ impl Advertisement {
     pub(crate) fn from_agent(agent: &AgentConnection) -> Self {
         Self {
             capabilities: agent.capabilities.clone(),
-            steering: agent.steering,
             options: Arc::clone(&agent.options),
-            context: Arc::clone(&agent.context),
             commands: Vec::new(),
         }
-    }
-
-    pub(crate) fn context(&self) -> &crate::context::ContextWindows {
-        &self.context
     }
 
     pub(crate) fn options(&self) -> Arc<SessionOptions> {
@@ -88,7 +80,6 @@ impl Advertisement {
         offering.capabilities.control.resume = self.capabilities.load_session;
         offering.capabilities.control.interrupt = true;
         offering.capabilities.control.approvals = true;
-        offering.capabilities.control.steering = Some(self.steering);
         offering.capabilities.observation.live_stream = true;
         offering.capabilities.observation.drive = Some(true);
         offering.capabilities.observation.list_sessions =
@@ -165,10 +156,6 @@ impl Discoveries {
             .lock()
             .insert(harness, advertisement.commands().to_vec());
         self.remember(harness, advertisement);
-    }
-
-    pub(crate) fn commands(&self, harness: HarnessId) -> Option<Vec<Command>> {
-        self.commands.lock().get(&harness).cloned()
     }
 
     pub(crate) fn start_due(self: &Arc<Self>, pending: Vec<(HarnessId, AcpCommand, PathBuf)>) {
@@ -341,9 +328,7 @@ mod tests {
         ]);
         let advertisement = Advertisement {
             capabilities: acp::AgentCapabilities::new(),
-            steering: false,
             options,
-            context: Arc::default(),
             commands: Vec::new(),
         };
         for (mode, source, ids) in [

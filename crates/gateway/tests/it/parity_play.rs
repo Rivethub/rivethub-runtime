@@ -13,99 +13,33 @@ use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::Request;
 use axum::http::Uri;
-use chrono::DateTime;
-use chrono::Utc;
 use gateway::Settings;
 use gateway::tenancy::Tenancy;
 use gateway::tenancy::UserId;
 use serde::Deserialize;
 use testkit::http::HttpCase;
 use tower::ServiceExt;
-use wire::events::Activity;
-use wire::events::AgentEvent;
-use wire::events::AgentEventKind;
-use wire::events::ProtocolVersion;
 
 const OWN: &[&str] = &[
     "plain-failclosed/failclosed-healthz",
     "plain-failclosed/failclosed-options",
     "plain-failclosed/failclosed-static",
-    "plain-main/alias-api-events",
-    "plain-main/alias-api-events-event",
-    "plain-main/alias-api-events-sessions",
-    "plain-main/alias-api-events-state",
-    "plain-main/alias-api-terminal",
-    "plain-main/alias-api-terminal-config",
-    "plain-main/alias-api-terminal-harness-sessions",
-    "plain-main/alias-api-terminal-inject",
-    "plain-main/alias-api-terminal-list",
-    "plain-main/alias-api-terminal-prefix",
-    "plain-main/delete-session-again",
-    "plain-main/delete-session-canonical",
-    "plain-main/delete-session-known",
-    "plain-main/delete-session-missing-param",
-    "plain-main/event-canonical-uuid-room",
-    "plain-main/event-empty-body",
     "plain-main/event-get",
-    "plain-main/event-invalid-json",
-    "plain-main/event-valid-chunked",
-    "plain-main/event-valid-expect-continue",
-    "plain-main/event-valid-session-start",
-    "plain-main/events-100",
-    "plain-main/events-101",
-    "plain-main/events-bad-element-2",
-    "plain-main/events-empty-array",
-    "plain-main/events-not-array",
-    "plain-main/events-valid-batch",
-    "plain-main/host-allowed-env",
-    "plain-main/host-dot-localhost",
     "plain-main/host-empty",
     "plain-main/host-evil",
     "plain-main/host-evil-with-port",
-    "plain-main/host-ipv6-loopback",
-    "plain-main/host-localhost-upper",
-    "plain-main/healthz-after-ingest",
     "plain-main/host-rebinding-same-origin",
-    "plain-main/origin-allowed-env",
-    "plain-main/origin-allowed-env-default-port",
-    "plain-main/origin-app-bundle",
-    "plain-main/origin-app-bundle-upper",
-    "plain-main/origin-default-port",
     "plain-main/origin-disallowed",
     "plain-main/origin-disallowed-repeat",
     "plain-main/origin-empty",
     "plain-main/origin-mesh-peer-explicit-scheme-only",
-    "plain-main/origin-none",
     "plain-main/origin-null",
     "plain-main/origin-port-mismatch",
-    "plain-main/origin-same",
-    "plain-main/origin-same-other-scheme",
-    "plain-main/origin-same-uppercase",
-    "plain-main/origin-same-with-path",
     "plain-main/origin-unparseable",
     "plain-main/remote-plain-api",
     "plain-main/session-get",
-    "plain-main/sessions-after-delete",
-    "plain-main/sessions-list",
-    "plain-main/state-after-rejected-batch",
-    "plain-main/state-canonical-id",
-    "plain-main/state-duplicate-param",
-    "plain-main/state-empty-param",
-    "plain-main/state-known",
-    "plain-main/state-missing-param",
     "plain-main/state-post",
-    "plain-main/state-reserialized",
-    "plain-main/state-unknown",
-    "plain-main/static-term-nested",
-    "plain-main/term-config",
-    "plain-main/term-post-disabled",
     "plain-nostatic/nostatic-ws-get",
-    "plain-tenancy/tenancy-healthz",
-    "plain-tenancy/tenancy-ingest-alice-session",
-    "plain-tenancy/tenancy-ingest-owner-session",
-    "plain-tenancy/tenancy-sessions-owner",
-    "plain-tenancy/tenancy-state-own",
-    "plain-tenancy/tenancy-state-unknown",
     "plain-tenancy/tenancy-static",
     "tls-main/tls-api-no-cert",
     "tls-main/tls-api-node-leaf",
@@ -113,22 +47,14 @@ const OWN: &[&str] = &[
     "tls-main/tls-api-serverauth-only",
     "tls-main/tls-api-wrong-ca",
     "tls-main/tls-enroll-no-cert",
-    "tls-main/tls-healthz-no-cert",
-    "tls-main/tls-loopback-ingest",
-    "tls-main/tls-loopback-sessions",
     "tls-main/tls-options-no-cert",
     "tls-main/tls-origin-disallowed",
     "tls-main/tls-post-no-cert-html",
     "tls-main/tls-root-no-cert-json",
     "tls-optional/tls-optional-healthz",
-    "tls-tenancy/tt-alice-healthz",
-    "tls-tenancy/tt-ingest-alice-session",
-    "tls-tenancy/tt-ingest-owner-session",
     "tls-tenancy/tt-no-cert",
-    "tls-tenancy/tt-owner-loopback-sessions",
 ];
 
-const BATCH_ORIGIN_MS: i64 = 1_760_000_100_000;
 const RESPONSE_LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -247,83 +173,6 @@ fn seeded_owners(run: &str) -> Result<Vec<(String, String)>, String> {
     Ok(Vec::new())
 }
 
-fn reserialized_start() -> Result<String, String> {
-    let ts = DateTime::<Utc>::from_timestamp_millis(1_760_000_004_500)
-        .ok_or_else(|| "golden-raw timestamp".to_owned())?;
-    let event = AgentEvent {
-        v: ProtocolVersion::V1,
-        session: "golden-raw".to_owned(),
-        kind: AgentEventKind::SessionStart {
-            title: Some("café 😀 line\u{2028}sep".to_owned()),
-            name: Some("dup-final".to_owned()),
-            harness: Some(wire::harness::SessionHarness::Rivetos),
-            ts: Some(ts),
-        },
-        extra: wire::Extra::default(),
-    };
-    serde_json::to_string(&event).map_err(|error| format!("golden-raw event: {error}"))
-}
-
-async fn apply_reserialized(app: &axum::Router) -> Result<(), String> {
-    let request = testkit::Request {
-        method: "POST".to_owned(),
-        target: "/event".to_owned(),
-        headers: vec![
-            ("Host".to_owned(), "127.0.0.1:5174".to_owned()),
-            ("Content-Type".to_owned(), "application/json".to_owned()),
-        ],
-        body: reserialized_start()?.into_bytes(),
-        recipe: None,
-        via: Some("loopback (source 127.0.0.1)".to_owned()),
-    };
-    let actual = answer(app.clone(), request).await?;
-    if actual.status == 200 {
-        Ok(())
-    } else {
-        let body = String::from_utf8_lossy(&actual.body);
-        Err(format!("status {} {body}", actual.status))
-    }
-}
-
-fn activity_event(index: i64) -> Result<AgentEvent, String> {
-    let millis = BATCH_ORIGIN_MS
-        .checked_add(index)
-        .ok_or_else(|| format!("timestamp {index}"))?;
-    let ts = DateTime::<Utc>::from_timestamp_millis(millis)
-        .ok_or_else(|| format!("timestamp {millis}"))?;
-    let activity = if index % 2 == 1 {
-        Activity::Thinking
-    } else {
-        Activity::Idle
-    };
-    Ok(AgentEvent {
-        v: ProtocolVersion::V1,
-        session: "golden-batch".to_owned(),
-        kind: AgentEventKind::Activity {
-            activity,
-            ts: Some(ts),
-        },
-        extra: wire::Extra::default(),
-    })
-}
-
-fn activity_batch(count: i64) -> Result<String, String> {
-    let mut events = Vec::new();
-    for index in 0..count {
-        events.push(activity_event(index)?);
-    }
-    serde_json::to_string(&events).map_err(|error| format!("activity batch: {error}"))
-}
-
-fn activity_count(recipe: &str) -> Result<i64, String> {
-    let Some((count, _)) = recipe.split_once(' ') else {
-        return Err(format!("activity recipe {recipe}"));
-    };
-    count
-        .parse()
-        .map_err(|error| format!("activity count: {error}"))
-}
-
 fn chunked_bodies(path: &Path) -> Result<BTreeMap<String, String>, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|error| format!("read {}: {error}", path.display()))?;
@@ -349,14 +198,9 @@ fn prepare(case: &HttpCase, chunks: &BTreeMap<String, String>) -> Result<HttpCas
     if let Some(joined) = chunks.get(&prepared.id) {
         prepared.request.body = Some(joined.clone());
     }
-    let Some(recipe) = prepared.request.body_recipe.clone() else {
-        return Ok(prepared);
-    };
-    if !recipe.contains("activity") {
+    if let Some(recipe) = prepared.request.body_recipe.clone() {
         return Err(format!("{} recipe {recipe}", prepared.id));
     }
-    prepared.request.body = Some(activity_batch(activity_count(&recipe)?)?);
-    prepared.request.body_recipe = None;
     Ok(prepared)
 }
 
@@ -509,12 +353,6 @@ async fn replay_run(
     };
     for case in cases {
         if !case.id.starts_with(&prefix) {
-            continue;
-        }
-        if case.id == "plain-main/event-reserialize" {
-            if let Err(detail) = apply_reserialized(&app).await {
-                lane.failures.push(format!("{} :: {detail}", case.id));
-            }
             continue;
         }
         if !owned.contains(case.id.as_str()) {

@@ -230,7 +230,7 @@ pub(super) fn ports<'a>(gateway: &'a Gateway, user: &'a UserId) -> Result<TidyPo
         tidy: gateway.tidy()?.as_ref(),
         topics: gateway.topics()?.as_ref(),
         filing: gateway.filing()?.as_ref(),
-        pages: gateway.startup_memory().map(|(pages, _)| pages),
+        pages: gateway.topic_pages(),
         owner: user.owner(),
     })
 }

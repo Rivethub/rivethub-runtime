@@ -13,10 +13,8 @@ pub mod server;
 pub mod sessions;
 mod settings;
 pub mod tenancy;
-pub mod term;
 pub mod tls;
 mod tls_resolve;
-pub mod uploads;
 
 use std::sync::Arc;
 
@@ -63,12 +61,10 @@ pub struct Gateway {
     denials: DenialLog,
     tenancy: tenancy::Tenancy,
     sessions: Arc<sessions::SessionRegistry>,
-    terminal: Option<Arc<term::TerminalService>>,
     transcript: Option<Arc<dyn kernel::transcript::TranscriptReader>>,
     session_lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
     harness_setup: Option<Arc<dyn kernel::harness_setup::HarnessSetup>>,
     history: history::History,
-    uploads: Option<uploads::UploadService>,
     presets: routes::agents::AgentRegistry,
     hub_state: Arc<dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState>>,
     voice: VoiceProxy,
@@ -80,7 +76,7 @@ pub struct Gateway {
     decisions: Option<Arc<dyn kernel::topics::DecisionStore>>,
     facts: Option<Arc<dyn kernel::facts::FactStore>>,
     review: Option<Arc<dyn kernel::review::ReviewStore>>,
-    startup: Option<StartupMemory>,
+    pages: Option<Arc<dyn kernel::topics::TopicPageStore>>,
     tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     upkeep: Option<Arc<dyn kernel::tidy::UpkeepStore>>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
@@ -100,11 +96,6 @@ enum Surface {
     Memory,
 }
 
-struct StartupMemory {
-    pages: Arc<dyn kernel::topics::TopicPageStore>,
-    kept: Arc<dyn kernel::topics::StartupStore>,
-}
-
 impl Gateway {
     #[must_use]
     pub fn new(store: Arc<dyn MemoryStore>, settings: Settings) -> Self {
@@ -121,15 +112,11 @@ impl Gateway {
             policy,
             denials: DenialLog::default(),
             tenancy: tenancy::Tenancy::default(),
-            sessions: Arc::new(sessions::SessionRegistry::new(
-                std::time::Duration::from_secs(300),
-            )),
-            terminal: None,
+            sessions: Arc::new(sessions::SessionRegistry::default()),
             transcript: None,
             session_lister: None,
             harness_setup: None,
             history: history::History::default(),
-            uploads: None,
             presets,
             hub_state,
             voice: VoiceProxy::unconfigured(),
@@ -141,7 +128,7 @@ impl Gateway {
             decisions: None,
             facts: None,
             review: None,
-            startup: None,
+            pages: None,
             tidy: None,
             upkeep: None,
             flagged: None,
@@ -217,16 +204,6 @@ impl Gateway {
         self
     }
 
-    #[must_use]
-    pub fn with_terminal(mut self, terminal: Arc<term::TerminalService>) -> Self {
-        self.sessions = terminal.registry.clone();
-        if let Some(host) = &self.plugins {
-            terminal.attach_plugins(Arc::clone(host));
-        }
-        self.terminal = Some(terminal);
-        self
-    }
-
     pub fn with_voice(mut self, settings: VoiceSettings) -> Result<Self, VoiceConfigError> {
         self.voice = VoiceProxy::from_settings(settings)?;
         Ok(self)
@@ -234,21 +211,6 @@ impl Gateway {
 
     pub fn sessions(&self) -> &Arc<sessions::SessionRegistry> {
         &self.sessions
-    }
-
-    #[must_use]
-    pub fn terminal(&self) -> Option<&Arc<term::TerminalService>> {
-        self.terminal.as_ref()
-    }
-
-    #[must_use]
-    pub fn with_uploads(mut self, uploads: uploads::UploadService) -> Self {
-        self.uploads = Some(uploads);
-        self
-    }
-
-    pub(crate) fn uploads(&self) -> Option<&uploads::UploadService> {
-        self.uploads.as_ref()
     }
 
     #[must_use]
@@ -298,12 +260,6 @@ impl Gateway {
     pub async fn close(&self) {
         if let Some(host) = &self.plugins {
             host.close().await;
-        }
-        if let Some(terminal) = &self.terminal {
-            terminal.close().await;
-        }
-        if let Some(uploads) = &self.uploads {
-            uploads.close().await;
         }
         self.sessions.close().await;
     }
@@ -370,8 +326,7 @@ impl Gateway {
             routed.merge(routes::organizer())
         } else {
             routed
-                .merge(routes::sessions::router())
-                .merge(routes::terminal::router())
+                .merge(routes::notices::router())
                 .merge(routes::router())
         };
         let mounted = routes::mount(routed)

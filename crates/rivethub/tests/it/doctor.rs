@@ -128,49 +128,6 @@ async fn postgres_doctor_checks_current_and_behind_without_migrating(pool: sqlx:
 }
 
 #[tokio::test]
-async fn terminal_check_accepts_executable_paths_with_spaces_and_refuses_non_executables() {
-    use std::os::unix::fs::PermissionsExt;
-    let (home, _) = setup("gateway:\n  terminal:\n    enabled: true\n");
-    let bin = home.path().join("bin with spaces");
-    std::fs::create_dir(&bin).expect("bin");
-    let env = Environment::from_vars([
-        ("HOME".as_ref(), home.path().as_os_str()),
-        ("PATH".as_ref(), bin.as_os_str()),
-    ]);
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr").status,
-        CheckStatus::Fail
-    );
-    let executable = bin.join("herdr");
-    std::fs::write(&executable, "test executable marker").expect("herdr marker");
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600))
-        .expect("non-executable");
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr").status,
-        CheckStatus::Fail
-    );
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
-        .expect("executable");
-    let (_, report) = doctor(&env).await;
-    let check = report.checks.last().expect("herdr");
-    assert_eq!(check.name, CheckName::Herdr);
-    assert_eq!(check.status, CheckStatus::Pass);
-    let loop_path = home.path().join("loop");
-    std::os::unix::fs::symlink(&loop_path, &loop_path).expect("unreadable PATH entry");
-    let env = Environment::from_vars([
-        ("HOME".as_ref(), home.path().as_os_str()),
-        ("PATH".as_ref(), loop_path.as_os_str()),
-    ]);
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr error").status,
-        CheckStatus::Fail
-    );
-}
-
-#[tokio::test]
 async fn doctor_reports_missing_state_and_invalid_config_as_failures() {
     let (home, env) = setup("");
     std::fs::remove_dir_all(home.path().join(".rivethub")).expect("remove state");

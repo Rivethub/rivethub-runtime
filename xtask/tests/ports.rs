@@ -34,7 +34,6 @@ fn public_traits_fail_in_every_service_and_adapter() -> Result {
         "capture",
         "providers",
         "harness-acp",
-        "terminal",
         "memory-postgres",
         "memory-sqlite",
     ] {

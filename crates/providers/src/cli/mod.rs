@@ -120,7 +120,6 @@ impl ModelProvider for CliBacked {
                     .map(thinking)
             }),
             working_dir: self.config.cwd.clone(),
-            startup_context: None,
         };
         let (output, receiver) = tokio::sync::mpsc::channel(crate::sse::STREAM_CAPACITY);
         let tasks = self.tasks.lock();

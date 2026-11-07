@@ -22,7 +22,6 @@ use crate::history::{Resolved, authorize};
 use crate::tenancy::UserId;
 
 const MAX_BATCH: usize = 200;
-const LIVE: &str = "session is live";
 const NOT_FOUND: &str = "not found";
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
@@ -114,7 +113,6 @@ pub(super) fn hidden(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refusal {
-    Live,
     NotFound,
 }
 
@@ -144,26 +142,6 @@ fn resolved(session: &SessionId) -> Resolved {
         harness: session.harness(),
         native: session.native().to_owned(),
         redirected_to: None,
-    }
-}
-
-fn live(gateway: &Gateway, session: &SessionId) -> bool {
-    gateway
-        .terminal()
-        .is_some_and(|terminal| terminal.is_live(session.native()))
-}
-
-async fn ended_at_rest(
-    gateway: &Gateway,
-    user: &UserId,
-    session: &SessionId,
-) -> Result<bool, ApiError> {
-    match gateway.terminal() {
-        Some(terminal) if terminal.chat_at_rest(session.native()) => {
-            terminal.remove_session(user, session.as_str()).await?;
-            Ok(!live(gateway, session))
-        }
-        _ => Ok(false),
     }
 }
 
@@ -204,9 +182,6 @@ async fn erase(
     if !visible(gateway, user, session).await? {
         return Ok(Err(Refusal::NotFound));
     }
-    if live(gateway, session) && !ended_at_rest(gateway, user, session).await? {
-        return Ok(Err(Refusal::Live));
-    }
     if !known(gateway, deletions, session).await? {
         return Ok(Err(Refusal::NotFound));
     }
@@ -241,7 +216,6 @@ async fn delete_one(
     let session = segment_session(&segment)?;
     match erase(&gateway, &user, &session).await? {
         Ok(deleted) => Ok(Json(deleted_reply(session, deleted))),
-        Err(Refusal::Live) => Err(ApiError::Conflict(LIVE.to_owned())),
         Err(Refusal::NotFound) => Err(ApiError::NotFound(NOT_FOUND)),
     }
 }
@@ -276,7 +250,6 @@ async fn delete_many(
         let outcome = erase(&gateway, &user, &session).await;
         let result = match outcome {
             Ok(Ok(deleted)) => SessionDeleteResult::Deleted(deleted_reply(session, deleted)),
-            Ok(Err(Refusal::Live)) => refused(session, SessionDeleteError::Live),
             Ok(Err(Refusal::NotFound)) | Err(ApiError::BadRequest(_)) => {
                 refused(session, SessionDeleteError::NotFound)
             }

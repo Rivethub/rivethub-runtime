@@ -60,19 +60,6 @@ impl SessionOptions {
         select(&options, option)
     }
 
-    pub(crate) fn mode(&self) -> Option<String> {
-        let options = self.options.lock();
-        options
-            .iter()
-            .find_map(|option| match (&option.category, &option.kind) {
-                (
-                    Some(acp::SessionConfigOptionCategory::Mode),
-                    acp::SessionConfigKind::Select(select),
-                ) => Some(select.current_value.0.to_string()),
-                _ => None,
-            })
-    }
-
     pub(crate) fn switches(&self) -> SessionSwitches {
         let options = self.options.lock();
         let offers = |category: acp::SessionConfigOptionCategory| {

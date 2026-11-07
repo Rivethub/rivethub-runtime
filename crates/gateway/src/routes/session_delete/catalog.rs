@@ -17,7 +17,7 @@ use wire::gateway::session_catalog::{
 use wire::harness::HarnessId;
 use wire::session_id::SessionId;
 
-use super::{LIVE, NOT_FOUND, deletions, known, live, segment_session, visible};
+use super::{NOT_FOUND, deletions, known, segment_session, visible};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -62,11 +62,14 @@ pub(crate) struct Lineage {
 }
 
 pub(crate) async fn lineage(gateway: &Gateway) -> Lineage {
-    let (Some(lister), Some(terminal)) = (gateway.session_lister(), gateway.terminal()) else {
+    let Some(lister) = gateway.session_lister() else {
         return Lineage::default();
     };
     let mut lineage = Lineage::default();
-    for row in lister.list(&terminal.roster(), ListLimit::most()).await {
+    for row in lister
+        .list(&crate::history::registered(), ListLimit::most())
+        .await
+    {
         let Some(parent) = row.parent_session_id.as_deref() else {
             continue;
         };
@@ -265,9 +268,6 @@ pub(super) async fn trash(
 ) -> Result<StatusCode, ApiError> {
     let session = segment_session(&segment)?;
     reachable(&gateway, &user, &session).await?;
-    if live(&gateway, &session) {
-        return Err(ApiError::Conflict(LIVE.to_owned()));
-    }
     deletions(&gateway)?
         .trash_session(session.as_str(), Some(user.as_str()), Utc::now())
         .await?;

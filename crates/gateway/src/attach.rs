@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
 use crate::Gateway;
-use crate::StartupMemory;
 
 impl Gateway {
     #[must_use]
     pub fn with_plugins(mut self, host: Arc<crate::plugins::PluginHost>) -> Self {
-        if let Some(terminal) = &self.terminal {
-            terminal.attach_plugins(Arc::clone(&host));
-        }
         self.plugins = Some(host);
         self
     }
@@ -157,33 +153,21 @@ impl Gateway {
     }
 
     #[must_use]
-    pub fn with_startup_memory(
-        mut self,
-        pages: Arc<dyn kernel::topics::TopicPageStore>,
-        kept: Arc<dyn kernel::topics::StartupStore>,
-    ) -> Self {
-        self.startup = Some(StartupMemory { pages, kept });
+    pub fn with_topic_pages(mut self, pages: Arc<dyn kernel::topics::TopicPageStore>) -> Self {
+        self.pages = Some(pages);
         self
+    }
+
+    pub(crate) fn topic_pages(&self) -> Option<&dyn kernel::topics::TopicPageStore> {
+        self.pages.as_deref()
     }
 
     pub(crate) fn pages(
         &self,
     ) -> Result<&dyn kernel::topics::TopicPageStore, crate::error::ApiError> {
-        self.startup
-            .as_ref()
-            .map(|startup| startup.pages.as_ref())
+        self.pages
+            .as_deref()
             .ok_or_else(|| crate::error::ApiError::Unavailable("wiki pages unavailable".into()))
-    }
-
-    pub(crate) fn startup_memory(
-        &self,
-    ) -> Option<(
-        &dyn kernel::topics::TopicPageStore,
-        &dyn kernel::topics::StartupStore,
-    )> {
-        self.startup
-            .as_ref()
-            .map(|startup| (startup.pages.as_ref(), startup.kept.as_ref()))
     }
 
     #[must_use]

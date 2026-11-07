@@ -1,5 +1,4 @@
 use crate::BoxError;
-use crate::topics::DeliveredVia;
 use async_trait::async_trait;
 use thiserror::Error;
 use tokio::sync::mpsc::Receiver;
@@ -75,76 +74,6 @@ pub struct SessionSpec {
     pub model: Option<String>,
     pub effort: Option<ThinkingLevel>,
     pub working_dir: Option<std::path::PathBuf>,
-    pub startup_context: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemPromptSupport {
-    MetaAppend,
-    CliFlag(&'static str),
-    CliConfig(&'static str),
-    None,
-}
-
-impl SystemPromptSupport {
-    #[must_use]
-    pub fn delivered_via(self) -> DeliveredVia {
-        match self {
-            Self::MetaAppend => DeliveredVia::MetaAppend,
-            Self::CliFlag(_) | Self::CliConfig(_) => DeliveredVia::CliFlag,
-            Self::None => DeliveredVia::None,
-        }
-    }
-
-    #[must_use]
-    pub fn cli_args(self, text: &str) -> Option<[String; 2]> {
-        match self {
-            Self::CliFlag(flag) => Some([flag.to_owned(), text.to_owned()]),
-            Self::CliConfig(key) => Some(["-c".to_owned(), format!("{key}={}", toml_string(text))]),
-            Self::MetaAppend | Self::None => None,
-        }
-    }
-}
-
-fn toml_string(text: &str) -> String {
-    let mut quoted = String::with_capacity(text.len() + 2);
-    quoted.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            '\t' => quoted.push_str("\\t"),
-            '\r' => quoted.push_str("\\r"),
-            control if control.is_control() => {
-                quoted.push_str("\\u");
-                let code = u32::from(control);
-                for shift in [12, 8, 4, 0] {
-                    quoted.extend(char::from_digit((code >> shift) & 0xF, 16));
-                }
-            }
-            plain => quoted.push(plain),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
-#[must_use]
-pub fn cli_system_prompt(harness: HarnessId) -> SystemPromptSupport {
-    match harness {
-        HarnessId::ClaudeCode | HarnessId::Omp => {
-            SystemPromptSupport::CliFlag("--append-system-prompt")
-        }
-        HarnessId::GrokBuild => SystemPromptSupport::CliFlag("--rules"),
-        HarnessId::Codex => SystemPromptSupport::CliConfig("developer_instructions"),
-        HarnessId::Opencode
-        | HarnessId::Hermes
-        | HarnessId::KimiCode
-        | HarnessId::Dsh
-        | HarnessId::Cursor
-        | HarnessId::Cowork => SystemPromptSupport::None,
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,29 +216,11 @@ pub trait HarnessAdapter: Send + Sync {
     }
     async fn new_session(&self, spec: SessionSpec) -> Result<SessionId, HarnessAdapterError>;
 
-    fn system_prompt(&self, _harness: HarnessId) -> SystemPromptSupport {
-        SystemPromptSupport::None
-    }
-
-    async fn resume(
-        &self,
-        session: &SessionId,
-        cwd: Option<&std::path::Path>,
-    ) -> Result<(), HarnessAdapterError>;
-
     async fn prompt(
         &self,
         session: &SessionId,
         input: TurnInput,
     ) -> Result<(), HarnessAdapterError>;
-
-    async fn steer(
-        &self,
-        _session: &SessionId,
-        _input: TurnInput,
-    ) -> Result<SteerOutcome, HarnessAdapterError> {
-        Err(HarnessAdapterError::SteeringUnsupported)
-    }
 
     async fn cancel(&self, session: &SessionId) -> Result<(), HarnessAdapterError>;
 
@@ -326,30 +237,10 @@ pub trait HarnessAdapter: Send + Sync {
         option: SessionOption,
     ) -> Result<(), HarnessAdapterError>;
 
-    fn switches(&self, _session: &SessionId) -> SessionSwitches {
-        SessionSwitches::default()
-    }
-
-    fn mode(&self, _session: &SessionId) -> Option<String> {
-        None
-    }
-
-    fn admit(
-        &self,
-        _session: &SessionId,
-        option: &SessionOption,
-    ) -> Result<(), HarnessAdapterError> {
-        Err(HarnessAdapterError::OptionUnavailable {
-            option: option.name().to_owned(),
-        })
-    }
-
     async fn events(
         &self,
         session: &SessionId,
     ) -> Result<Receiver<SessionEvent>, HarnessAdapterError>;
 
     async fn offerings(&self) -> Result<Vec<HarnessOffering>, HarnessAdapterError>;
-
-    async fn commands(&self) -> Result<Vec<HarnessCommands>, HarnessAdapterError>;
 }

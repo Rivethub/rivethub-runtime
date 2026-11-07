@@ -49,18 +49,6 @@ impl HarnessAdapter for Harness {
         Ok(session)
     }
 
-    async fn resume(
-        &self,
-        session: &SessionId,
-        _cwd: Option<&std::path::Path>,
-    ) -> Result<(), HarnessAdapterError> {
-        if self.sessions.lock().await.contains_key(session) {
-            Ok(())
-        } else {
-            Err(HarnessAdapterError::UnknownSession(session.clone()))
-        }
-    }
-
     async fn prompt(
         &self,
         session: &SessionId,
@@ -88,7 +76,7 @@ impl HarnessAdapter for Harness {
     }
 
     async fn cancel(&self, session: &SessionId) -> Result<(), HarnessAdapterError> {
-        self.resume(session, None).await
+        self.known(session).await
     }
 
     async fn release(&self, session: &SessionId) -> Result<(), HarnessAdapterError> {
@@ -109,7 +97,7 @@ impl HarnessAdapter for Harness {
         decision: ApprovalDecision,
     ) -> Result<(), HarnessAdapterError> {
         assert_eq!(decision, ApprovalDecision::Deny);
-        self.resume(session, None).await
+        self.known(session).await
     }
 
     async fn set_option(
@@ -144,8 +132,14 @@ impl HarnessAdapter for Harness {
     async fn offerings(&self) -> Result<Vec<HarnessOffering>, HarnessAdapterError> {
         Ok(Vec::new())
     }
+}
 
-    async fn commands(&self) -> Result<Vec<kernel::harness::HarnessCommands>, HarnessAdapterError> {
-        Ok(Vec::new())
+impl Harness {
+    async fn known(&self, session: &SessionId) -> Result<(), HarnessAdapterError> {
+        if self.sessions.lock().await.contains_key(session) {
+            Ok(())
+        } else {
+            Err(HarnessAdapterError::UnknownSession(session.clone()))
+        }
     }
 }

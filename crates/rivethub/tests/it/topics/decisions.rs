@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use gateway::tenancy::UserId;
 use wire::events::SessionBroadcast;
 use wire::gateway::topics::DecisionStatus;
 use wire::gateway::topics::DecisionSuperseded;
@@ -15,9 +14,7 @@ use super::TestResult;
 #[tokio::test]
 async fn decisions_are_added_edited_and_superseded() -> TestResult {
     let api = Api::new(true)?;
-    let (_, mut live) = api
-        .sessions
-        .subscribe(&UserId::new("owner".to_owned())?, None)?;
+    let mut live = api.sessions.notices();
     let mesh: TopicRecord = api
         .json(
             "POST",
@@ -70,7 +67,9 @@ async fn decisions_are_added_edited_and_superseded() -> TestResult {
     assert_eq!(listed.decisions, [swapped.superseded, replacement]);
     let changed = format!(r#"{{"type":"topic.changed","v":1,"topic":"{}"}}"#, mesh.id);
     for _ in 0..3 {
-        let frame = tokio::time::timeout(Duration::from_secs(2), live.recv()).await??;
+        let frame = tokio::time::timeout(Duration::from_secs(2), live.recv())
+            .await??
+            .body;
         assert!(
             matches!(&frame, SessionBroadcast::TopicChanged(notice) if notice.topic == mesh.id)
         );

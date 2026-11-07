@@ -135,8 +135,7 @@ fn app(digests: Arc<Digests>) -> axum::Router {
     let gateway = Gateway::new(store, common::settings())
         .with_tenancy(gateway::tenancy::Tenancy::local(owner.clone()))
         .with_sessions(Arc::new(
-            gateway::sessions::SessionRegistry::new(std::time::Duration::from_secs(1))
-                .with_node_owner(owner),
+            gateway::sessions::SessionRegistry::default().with_node_owner(owner),
         ))
         .with_session_catalog(Arc::new(catalog))
         .with_changes(Arc::new(Feed(records())), digests);

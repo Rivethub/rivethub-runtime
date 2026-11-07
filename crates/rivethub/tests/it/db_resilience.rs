@@ -291,7 +291,7 @@ async fn gateway_starts_while_the_database_is_down(pool: PgPool) -> TestResult {
     let parsed: HealthzResponse = serde_json::from_str(&degraded)?;
     assert!(!parsed.ok);
     wait_http(&client, &format!("{base}/api/memory/stats"), 503).await?;
-    wait_http(&client, &format!("{base}/api/events/sessions"), 200).await?;
+    wait_http(&client, &format!("{base}/api/harnesses"), 200).await?;
     proxy.resume();
     wait_http(&client, &format!("{base}/healthz"), 200).await?;
     wait_http(&client, &format!("{base}/api/memory/stats"), 200).await?;

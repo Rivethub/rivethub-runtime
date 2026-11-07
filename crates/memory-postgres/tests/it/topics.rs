@@ -132,11 +132,6 @@ async fn suggestions_hold_until_the_session_is_placed(pool: PgPool) -> TestResul
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn startup_context_is_kept_per_session(pool: PgPool) -> TestResult {
-    topics::startup_context_is_kept_per_session(&PostgresMemory::new(pool)).await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn listings_count_sessions_and_take_last_activity_from_conversations(
     pool: PgPool,
 ) -> TestResult {

@@ -2,7 +2,6 @@ mod body;
 mod changes;
 mod check;
 mod error;
-mod launch;
 mod paths;
 mod registry;
 mod store;
@@ -42,7 +41,6 @@ use error::AgentError;
 use kernel::agent_presets::AgentPresetStore;
 use store::FilePresets;
 
-pub(crate) use launch::resolve as launch_preset;
 pub(crate) use registry::Registry as AgentRegistry;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {

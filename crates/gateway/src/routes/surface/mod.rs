@@ -18,10 +18,6 @@ use axum::routing;
 use crate::Gateway;
 use crate::error::ApiError;
 
-pub(crate) async fn plain_get(gateway: &Gateway, method: &Method, path: &str) -> Response {
-    assets::serve(gateway, method, path).await.into_response()
-}
-
 pub(super) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
     router
         .route(

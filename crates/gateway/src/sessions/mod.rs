@@ -1,21 +1,12 @@
-pub mod control;
-mod fanout;
 mod owners;
-mod view;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
 
-use chrono::Utc;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use wire::events::{
-    AgentEvent, AgentEventKind, ProtocolVersion, SessionBroadcast, SessionRemoved, Snapshot,
-    StateResponse,
-};
+use wire::events::{ProtocolVersion, SessionBroadcast};
 use wire::gateway::hub_state::HubStateChanged;
 use wire::gateway::topics::TopicChangedNotice;
 
@@ -23,32 +14,13 @@ use crate::error::ApiError;
 use crate::tenancy::UserId;
 use owners::OwnersFile;
 pub use owners::{OWNERS_FILE_NAME, owners_file};
-use view::Projection;
 
-struct Applied {
-    revision: u64,
-    ended: bool,
-}
+const NOTICE_BUFFER: usize = 256;
 
-#[derive(Debug)]
-struct Tenant {
-    views: Mutex<BTreeMap<String, Projection>>,
-    events: broadcast::Sender<SessionBroadcast>,
-}
-
-impl Tenant {
-    fn new() -> Self {
-        Self {
-            views: Mutex::new(BTreeMap::new()),
-            events: broadcast::channel(256).0,
-        }
-    }
-
-    fn publish(&self, event: SessionBroadcast) {
-        if self.events.send(event).is_err() {
-            tracing::trace!("session event retained in snapshot; no live subscribers");
-        }
-    }
+#[derive(Debug, Clone)]
+pub struct Notice {
+    pub audience: Option<UserId>,
+    pub body: SessionBroadcast,
 }
 
 #[derive(Debug)]
@@ -56,10 +28,29 @@ pub struct SessionRegistry {
     owners: RwLock<BTreeMap<String, UserId>>,
     file: Option<OwnersFile>,
     node_owner: Option<UserId>,
-    tenants: RwLock<BTreeMap<UserId, Arc<Tenant>>>,
+    notices: broadcast::Sender<Notice>,
     pub(crate) tasks: TaskTracker,
     pub(crate) shutdown: CancellationToken,
-    eviction: Duration,
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "a broadcast sender has no Default, so the notice channel is opened here"
+    )
+)]
+impl Default for SessionRegistry {
+    fn default() -> Self {
+        Self {
+            owners: RwLock::new(BTreeMap::new()),
+            file: None,
+            node_owner: None,
+            notices: broadcast::channel(NOTICE_BUFFER).0,
+            tasks: TaskTracker::new(),
+            shutdown: CancellationToken::new(),
+        }
+    }
 }
 
 impl SessionRegistry {
@@ -67,17 +58,6 @@ impl SessionRegistry {
     pub fn with_shutdown(mut self, shutdown: CancellationToken) -> Self {
         self.shutdown = shutdown;
         self
-    }
-    pub fn new(eviction: Duration) -> Self {
-        Self {
-            owners: RwLock::new(BTreeMap::new()),
-            file: None,
-            node_owner: None,
-            tenants: RwLock::new(BTreeMap::new()),
-            tasks: TaskTracker::new(),
-            shutdown: CancellationToken::new(),
-            eviction,
-        }
     }
 
     #[must_use]
@@ -253,13 +233,13 @@ impl SessionRegistry {
     }
 
     pub(crate) fn hub_state_changed(&self, user: &UserId, version: u64) {
-        let tenant = self.tenants.read().get(user).cloned();
-        if let Some(tenant) = tenant {
-            tenant.publish(SessionBroadcast::HubState(HubStateChanged {
+        self.publish(Notice {
+            audience: Some(user.clone()),
+            body: SessionBroadcast::HubState(HubStateChanged {
                 v: ProtocolVersion::V1,
                 version,
-            }));
-        }
+            }),
+        });
     }
 
     pub(crate) fn topic_changed(&self, topic: &impl ToString) {
@@ -270,21 +250,20 @@ impl SessionRegistry {
     }
 
     pub(crate) fn announce(&self, notice: &SessionBroadcast) {
-        let tenants: Vec<Arc<Tenant>> = self.tenants.read().values().cloned().collect();
-        for tenant in tenants {
-            tenant.publish(notice.clone());
+        self.publish(Notice {
+            audience: None,
+            body: notice.clone(),
+        });
+    }
+
+    fn publish(&self, notice: Notice) {
+        if self.notices.send(notice).is_err() {
+            tracing::trace!("notice dropped; no listening client");
         }
     }
 
-    fn tenant(&self, user: &UserId) -> Arc<Tenant> {
-        if let Some(tenant) = self.tenants.read().get(user) {
-            return tenant.clone();
-        }
-        self.tenants
-            .write()
-            .entry(user.clone())
-            .or_insert_with(|| Arc::new(Tenant::new()))
-            .clone()
+    pub fn notices(&self) -> broadcast::Receiver<Notice> {
+        self.notices.subscribe()
     }
 
     pub fn seed_owner(&self, user: &UserId, session: &str) -> Result<(), ApiError> {
@@ -303,222 +282,6 @@ impl SessionRegistry {
         drop(owners);
         self.persist_best_effort();
         Ok(())
-    }
-
-    pub fn ingest(
-        self: &Arc<Self>,
-        user: &UserId,
-        events: Vec<AgentEvent>,
-    ) -> Result<(), ApiError> {
-        self.ingest_inner(user, events, false)
-    }
-
-    pub fn ingest_as_local(
-        self: &Arc<Self>,
-        user: &UserId,
-        events: Vec<AgentEvent>,
-    ) -> Result<(), ApiError> {
-        self.ingest_inner(user, events, true)
-    }
-
-    fn ingest_inner(
-        self: &Arc<Self>,
-        user: &UserId,
-        events: Vec<AgentEvent>,
-        keep_foreign: bool,
-    ) -> Result<(), ApiError> {
-        if events.len() > 100 {
-            return Err(ApiError::BadRequest("at most 100 events".into()));
-        }
-        let keys = events
-            .iter()
-            .map(|event| session_key(&event.session))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (targets, tagged) = {
-            let mut owners = self.owners.write();
-            let mut targets = Vec::with_capacity(keys.len());
-            for key in &keys {
-                match owners.get(key) {
-                    Some(owner) if owner == user || keep_foreign => targets.push(owner.clone()),
-                    Some(_) => return Err(ApiError::SessionForbidden),
-                    None => targets.push(user.clone()),
-                }
-            }
-            let mut tagged = false;
-            for (key, target) in keys.iter().zip(&targets) {
-                if !owners.contains_key(key) {
-                    owners.insert(key.clone(), target.clone());
-                    tagged = true;
-                }
-            }
-            drop(owners);
-            (targets, tagged)
-        };
-        if tagged {
-            self.persist_best_effort();
-        }
-        if targets.iter().all(|target| target == user) {
-            self.apply_batch(user, events, keys);
-            return Ok(());
-        }
-        for ((event, key), target) in events.into_iter().zip(keys).zip(targets) {
-            self.apply_one(&target, event, key);
-        }
-        Ok(())
-    }
-
-    fn apply_batch(self: &Arc<Self>, user: &UserId, events: Vec<AgentEvent>, keys: Vec<String>) {
-        let tenant = self.tenant(user);
-        let mut views = tenant.views.lock();
-        for (event, key) in events.into_iter().zip(keys) {
-            let ended = Self::project(&tenant, &mut views, event, &key);
-            if ended.ended {
-                self.schedule_eviction(user.clone(), key, ended.revision);
-            }
-        }
-        drop(views);
-    }
-
-    fn apply_one(self: &Arc<Self>, user: &UserId, event: AgentEvent, key: String) {
-        let tenant = self.tenant(user);
-        let mut views = tenant.views.lock();
-        let ended = Self::project(&tenant, &mut views, event, &key);
-        drop(views);
-        if ended.ended {
-            self.schedule_eviction(user.clone(), key, ended.revision);
-        }
-    }
-
-    fn project(
-        tenant: &Tenant,
-        views: &mut BTreeMap<String, Projection>,
-        mut event: AgentEvent,
-        key: &str,
-    ) -> Applied {
-        key.clone_into(&mut event.session);
-        let projection = views
-            .entry(key.to_owned())
-            .or_insert_with(|| Projection::new(key.to_owned()));
-        projection.apply(&event.kind, Utc::now());
-        let applied = Applied {
-            revision: projection.revision,
-            ended: matches!(event.kind, AgentEventKind::SessionEnd { .. }),
-        };
-        tenant.publish(SessionBroadcast::Event(event));
-        applied
-    }
-
-    fn schedule_eviction(self: &Arc<Self>, user: UserId, key: String, revision: u64) {
-        let registry = Arc::clone(self);
-        self.tasks.spawn(async move {
-            tokio::select! {
-                () = registry.shutdown.cancelled() => {},
-                () = tokio::time::sleep(registry.eviction) => registry.evict(&user, &key, revision),
-            }
-        });
-    }
-
-    fn evict(&self, user: &UserId, key: &str, revision: u64) {
-        let tenant = self.tenant(user);
-        let mut views = tenant.views.lock();
-        if views
-            .get(key)
-            .is_some_and(|view| view.revision == revision && view.view.ended)
-        {
-            views.remove(key);
-            tenant.publish(SessionBroadcast::Removed(SessionRemoved {
-                v: ProtocolVersion::V1,
-                session: key.into(),
-            }));
-        }
-        drop(views);
-    }
-
-    pub fn remove(&self, user: &UserId, session: &str) -> Result<(), ApiError> {
-        let key = self.authorize(user, session)?;
-        let tenant = self.tenant(user);
-        let mut views = tenant.views.lock();
-        if views.remove(&key).is_none() {
-            drop(views);
-            return Err(ApiError::NotFound("unknown session"));
-        }
-        tenant.publish(SessionBroadcast::Removed(SessionRemoved {
-            v: ProtocolVersion::V1,
-            session: key,
-        }));
-        drop(views);
-        Ok(())
-    }
-
-    pub fn state(&self, user: &UserId, session: &str) -> Result<StateResponse, ApiError> {
-        let key = self.authorize(user, session)?;
-        let tenant = self.tenant(user);
-        let views = tenant.views.lock();
-        let state = views
-            .get(&key)
-            .ok_or(ApiError::NotFound("unknown session"))?
-            .view
-            .clone();
-        drop(views);
-        Ok(StateResponse {
-            session: session.to_owned(),
-            state,
-        })
-    }
-
-    pub fn subscribe(
-        &self,
-        user: &UserId,
-        filter: Option<&str>,
-    ) -> Result<(Snapshot, broadcast::Receiver<SessionBroadcast>), ApiError> {
-        let filter = filter.map(|key| self.authorize(user, key)).transpose()?;
-        let tenant = self.tenant(user);
-        let views = tenant.views.lock();
-        let receiver = tenant.events.subscribe();
-        let mut sessions: Vec<_> = views.values().map(|view| view.summary.clone()).collect();
-        sessions.sort_by(|a, b| {
-            b.last_event_ts
-                .cmp(&a.last_event_ts)
-                .then_with(|| a.id.cmp(&b.id))
-        });
-        let projected = views
-            .iter()
-            .filter(|(key, _)| filter.as_ref().is_none_or(|filter| filter == *key))
-            .map(|(key, value)| (key.clone(), value.view.clone()))
-            .collect();
-        drop(views);
-        Ok((
-            Snapshot {
-                v: ProtocolVersion::V1,
-                sessions,
-                views: projected,
-            },
-            receiver,
-        ))
-    }
-
-    pub fn bind_terminal(
-        &self,
-        user: &UserId,
-        session: &str,
-        terminal: &str,
-    ) -> Result<(), ApiError> {
-        let key = self.authorize(user, session)?;
-        let tenant = self.tenant(user);
-        let mut views = tenant.views.lock();
-        if let Some(view) = views.get_mut(&key) {
-            view.summary.pty = Some(terminal.into());
-        }
-        drop(views);
-        Ok(())
-    }
-
-    pub fn count(&self) -> usize {
-        self.tenants
-            .read()
-            .values()
-            .map(|tenant| tenant.views.lock().len())
-            .sum()
     }
 
     pub async fn close(&self) {

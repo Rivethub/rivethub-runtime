@@ -1,9 +1,3 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-
-use serde::Deserialize;
-use serde::Serialize;
-
 use crate::harness::HarnessId;
 
 pub const BUILTIN_DEFAULT_ID: &str = "claude";
@@ -119,29 +113,4 @@ pub fn resume_command(harness: HarnessId, native: &str) -> Option<String> {
         .find(|command| harness_for_roster_key(command.id) == Some(harness))
         .and_then(|command| command.argv.first())?;
     Some(format!("{program} {} {native}", flags.resume))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RosterFile {
-    pub default: String,
-    #[serde(default)]
-    pub cwd: Option<PathBuf>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    pub commands: BTreeMap<String, RosterEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RosterEntry {
-    pub label: String,
-    #[serde(rename = "cmd")]
-    pub argv: Vec<String>,
-    #[serde(default, rename = "room")]
-    pub session: Option<bool>,
-    #[serde(default)]
-    pub cwd: Option<PathBuf>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
 }

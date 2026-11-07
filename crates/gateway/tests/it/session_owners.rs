@@ -4,7 +4,6 @@ use crate::session_support;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use gateway::sessions::{SessionRegistry, owners_file};
 use session_support::{Fixture, http, user};
@@ -34,7 +33,7 @@ fn state() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn registry(path: &Path) -> SessionRegistry {
-    SessionRegistry::new(Duration::from_secs(1)).with_owners_file(path.to_path_buf())
+    SessionRegistry::default().with_owners_file(path.to_path_buf())
 }
 
 fn phil_node(path: &Path) -> SessionRegistry {
@@ -138,11 +137,14 @@ async fn a2_untagged_sessions_are_visible_to_the_node_owner_only() {
     let registry = phil_node(&path);
     assert!(registry.visible(&user("phil"), "aaa", None).expect("key"));
     assert!(!registry.visible(&user("other"), "aaa", None).expect("key"));
-    let fixture = Fixture::with_registry(None, registry_for_fixture(&path)).await;
+    let fixture = Fixture::with_registry(registry_for_fixture(&path));
     let (status, body) = http(
         &fixture.gateway,
         "GET",
-        "/api/terminal/harness-sessions/claude-code:aaa/transcript",
+        &format!(
+            "/api/harness-sessions/{}/transcript",
+            wire::session_id::encode_segment(&"claude-code:aaa".parse().expect("session id"))
+        ),
         Vec::new(),
         Some("alice-test-token"),
     )
@@ -152,13 +154,16 @@ async fn a2_untagged_sessions_are_visible_to_the_node_owner_only() {
     let (status, body) = http(
         &fixture.gateway,
         "GET",
-        "/api/terminal/harness-sessions/claude-code:aaa/transcript",
+        &format!(
+            "/api/harness-sessions/{}/transcript",
+            wire::session_id::encode_segment(&"claude-code:aaa".parse().expect("session id"))
+        ),
         Vec::new(),
         None,
     )
     .await;
-    assert_eq!(status, 503);
-    assert_eq!(error_text(&body), "transcript reader unavailable");
+    assert_eq!(status, 501);
+    assert_eq!(error_text(&body), "claude-code has no transcript source");
     assert!(!path.exists());
 }
 
@@ -240,32 +245,6 @@ fn a6_the_first_resumer_claims_an_untagged_session() {
     );
 }
 
-#[tokio::test]
-async fn a7_resuming_a_session_tagged_to_someone_else_is_forbidden() {
-    let (_directory, path) = state();
-    std::fs::write(&path, r#"{"aaa":"owner"}"#).expect("seed");
-    let fixture = Fixture::with_registry(None, registry_for_fixture(&path)).await;
-    assert_eq!(
-        fixture
-            .registry
-            .claim(&user("alice"), "aaa")
-            .expect_err("forbidden")
-            .to_string(),
-        "session is owned by another user"
-    );
-    let (status, body) = http(
-        &fixture.gateway,
-        "POST",
-        "/api/terminal",
-        r#"{"session":"aaa","resume":"aaa"}"#,
-        Some("alice-test-token"),
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert_eq!(error_text(&body), "session is owned by another user");
-    assert_eq!(stored(&path).get("aaa").map(String::as_str), Some("owner"));
-}
-
 #[test]
 fn a8_a_corrupt_file_starts_empty_and_is_rewritten_private() {
     let (_directory, path) = state();
@@ -330,36 +309,6 @@ fn a9_owners_survive_a_new_registry_over_the_same_file() {
     );
 }
 
-#[tokio::test]
-async fn a10_a_terminal_resume_claims_an_untagged_session() {
-    let (_directory, path) = state();
-    let fixture = Fixture::with_registry(None, registry_for_fixture(&path)).await;
-    let (status, body) = http(
-        &fixture.gateway,
-        "POST",
-        "/api/terminal",
-        r#"{"session":"aaa","resume":"aaa"}"#,
-        Some("alice-test-token"),
-    )
-    .await;
-    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(
-        fixture.registry.owner("aaa").expect("key"),
-        Some(user("alice"))
-    );
-    assert_eq!(stored(&path).get("aaa").map(String::as_str), Some("alice"));
-    let (status, body) = http(
-        &fixture.gateway,
-        "POST",
-        "/api/terminal",
-        r#"{"resume":"aaa"}"#,
-        None,
-    )
-    .await;
-    assert_eq!(status, 403);
-    assert_eq!(error_text(&body), "session is owned by another user");
-}
-
 #[test]
 fn without_a_node_owner_untagged_sessions_are_visible_to_nobody_but_claimable() {
     let (_directory, path) = state();
@@ -374,25 +323,4 @@ fn without_a_node_owner_untagged_sessions_are_visible_to_nobody_but_claimable() 
     assert!(listed.is_empty());
     registry.claim(&user("phil"), "aaa").expect("claim");
     assert!(registry.visible(&user("phil"), "aaa", None).expect("key"));
-}
-
-#[test]
-fn ingest_persists_new_owners() {
-    let (_directory, path) = state();
-    let registry = std::sync::Arc::new(registry(&path));
-    registry
-        .ingest(
-            &user("phil"),
-            vec![wire::events::AgentEvent {
-                v: wire::events::ProtocolVersion::V1,
-                session: "claude-code:iii".into(),
-                kind: wire::events::AgentEventKind::MessageUser {
-                    text: "hi".into(),
-                    ts: None,
-                },
-                extra: wire::Extra::default(),
-            }],
-        )
-        .expect("ingest");
-    assert_eq!(stored(&path).get("iii").map(String::as_str), Some("phil"));
 }

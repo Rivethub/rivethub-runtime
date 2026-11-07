@@ -4,12 +4,10 @@ pub(crate) mod identities;
 mod models;
 pub(crate) mod plugins;
 mod spool;
-mod terminals;
 
 pub use capture::listing::store_roots;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use cli::memory::MemoryExporter;
 use config::{Config, Environment};
@@ -23,7 +21,6 @@ use kernel::memory::MemoryStore;
 use kernel::tidy::TidyStore;
 use kernel::tidy::UpkeepStore;
 use kernel::topics::DecisionStore;
-use kernel::topics::StartupStore;
 use kernel::topics::TopicPageStore;
 use kernel::topics::TopicStore;
 use memory_postgres::PostgresMemory;
@@ -51,8 +48,6 @@ pub enum ComposeError {
     Invalid(String),
     #[error(transparent)]
     Api(#[from] gateway::error::ApiError),
-    #[error(transparent)]
-    Terminal(#[from] terminal::Error),
     #[error(transparent)]
     Provider(#[from] crate::models::ModelError),
     #[error("gateway configuration JSON is invalid: {0}")]
@@ -119,7 +114,7 @@ struct Backing {
     decisions: Option<Arc<dyn DecisionStore>>,
     facts: Option<Arc<dyn kernel::facts::FactStore>>,
     review: Option<Arc<dyn kernel::review::ReviewStore>>,
-    startup: Option<(Arc<dyn TopicPageStore>, Arc<dyn StartupStore>)>,
+    pages: Option<Arc<dyn TopicPageStore>>,
     tidy: Option<(Arc<dyn TidyStore>, Arc<dyn UpkeepStore>)>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
@@ -189,8 +184,8 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
         Some(store) => gateway.with_tenancy_store(store),
         None => gateway,
     };
-    match backing.startup.clone() {
-        Some((pages, kept)) => gateway.with_startup_memory(pages, kept),
+    match backing.pages.clone() {
+        Some(pages) => gateway.with_topic_pages(pages),
         None => gateway,
     }
 }
@@ -225,10 +220,9 @@ async fn session_registry(
     owners: std::path::PathBuf,
     node_owner: Option<gateway::tenancy::UserId>,
 ) -> Result<SessionRegistry, ComposeError> {
-    let registry = tokio::task::spawn_blocking(move || {
-        SessionRegistry::new(Duration::from_secs(300)).with_owners_file(owners)
-    })
-    .await?;
+    let registry =
+        tokio::task::spawn_blocking(move || SessionRegistry::default().with_owners_file(owners))
+            .await?;
     Ok(match node_owner {
         Some(owner) => registry.with_node_owner(owner),
         None => registry,
@@ -284,7 +278,7 @@ impl Composition {
             decisions: Some(memory.clone()),
             facts: Some(memory.clone()),
             review: Some(memory.clone()),
-            startup: Some((memory.clone(), memory.clone())),
+            pages: Some(memory.clone()),
             tidy: Some((memory.clone(), memory.clone())),
             flagged: Some(memory.clone()),
             deletions: Some(memory.clone()),
@@ -323,7 +317,7 @@ impl Composition {
             decisions: Some(store.clone()),
             facts: Some(store.clone()),
             review: Some(store.clone()),
-            startup: Some((store.clone(), store.clone())),
+            pages: Some(store.clone()),
             tidy: Some((store.clone(), store.clone())),
             flagged: Some(store.clone()),
             deletions: Some(store.clone()),
@@ -382,9 +376,8 @@ impl Composition {
             .with_shutdown(shutdown.child_token()),
         );
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
-            .with_uploads(crate::service::uploads(env)?)
             .with_tenancy(identity.tenancy.clone())
-            .with_sessions(sessions.clone());
+            .with_sessions(sessions);
         gateway = crate::service::with_voice(gateway, env)?;
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         let tracker = tokio_util::task::TaskTracker::new();
@@ -393,14 +386,6 @@ impl Composition {
         spool::replay_captures(&tracker, env, shutdown);
         if config.memory_only() {
             gateway = gateway.with_memory_profile();
-        }
-        if config.terminal_enabled() && !config.memory_only() {
-            let owner = identity.tenancy.local_user().cloned().ok_or_else(|| {
-                ComposeError::Invalid("a local user is required for terminals".into())
-            })?;
-            gateway = gateway.with_terminal(
-                terminals::build(config, env, sessions, &owner, shutdown, &tracker).await?,
-            );
         }
         let started = plugins::started(gateway, env, vec![bind.port]);
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;

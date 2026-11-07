@@ -28,7 +28,6 @@ libc = { workspace = true }
 nix = { workspace = true }
 parking_lot = { workspace = true }
 percent-encoding = { workspace = true }
-regex = { workspace = true }
 reqwest = { workspace = true, features = ["multipart"] }
 rustls = { workspace = true }
 serde = { workspace = true }
