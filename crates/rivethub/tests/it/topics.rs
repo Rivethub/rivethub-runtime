@@ -1,6 +1,7 @@
 mod bulk;
 mod decisions;
 mod done;
+mod entities;
 mod filing;
 mod pages;
 mod startup;
@@ -94,6 +95,8 @@ impl Api {
                 .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?))
                 .with_topics(store.clone(), store.clone())
                 .with_decisions(store.clone())
+                .with_facts(store.clone())
+                .with_tenancy_store(store.clone())
                 .with_startup_memory(store.clone(), store.clone())
                 .with_tidy(store.clone(), store.clone());
         }

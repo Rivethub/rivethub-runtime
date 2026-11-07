@@ -132,6 +132,7 @@ struct Backing {
     export: Option<Arc<dyn MemoryExport>>,
     topics: Option<(Arc<dyn TopicStore>, Arc<dyn FilingStore>)>,
     decisions: Option<Arc<dyn DecisionStore>>,
+    facts: Option<Arc<dyn kernel::facts::FactStore>>,
     startup: Option<(Arc<dyn TopicPageStore>, Arc<dyn StartupStore>)>,
     tidy: Option<(Arc<dyn TidyStore>, Arc<dyn UpkeepStore>)>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
@@ -160,6 +161,10 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     };
     let gateway = match backing.decisions.clone() {
         Some(decisions) => gateway.with_decisions(decisions),
+        None => gateway,
+    };
+    let gateway = match backing.facts.clone() {
+        Some(facts) => gateway.with_facts(facts),
         None => gateway,
     };
     let gateway = match backing.tidy.clone() {
@@ -266,6 +271,7 @@ impl Composition {
             export: Some(Arc::new(MemoryExporter::postgres(Arc::clone(memory), url))),
             topics: Some((memory.clone(), memory.clone())),
             decisions: Some(memory.clone()),
+            facts: Some(memory.clone()),
             startup: Some((memory.clone(), memory.clone())),
             tidy: Some((memory.clone(), memory.clone())),
             flagged: Some(memory.clone()),
@@ -303,6 +309,7 @@ impl Composition {
             export: Some(Arc::new(MemoryExporter::sqlite(Arc::clone(store)))),
             topics: Some((store.clone(), store.clone())),
             decisions: Some(store.clone()),
+            facts: Some(store.clone()),
             startup: Some((store.clone(), store.clone())),
             tidy: Some((store.clone(), store.clone())),
             flagged: Some(store.clone()),

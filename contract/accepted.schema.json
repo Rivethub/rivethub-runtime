@@ -1040,6 +1040,13 @@
       ],
       "type": "string"
     },
+    "AssignmentState": {
+      "enum": [
+        "applied",
+        "suggested"
+      ],
+      "type": "string"
+    },
     "BrowseWindow": {
       "enum": [
         "today",
@@ -2155,6 +2162,18 @@
       ],
       "type": "object"
     },
+    "ChangeKind": {
+      "enum": [
+        "fact",
+        "decision",
+        "new",
+        "filed",
+        "conflict",
+        "tag",
+        "merge"
+      ],
+      "type": "string"
+    },
     "ColorRole": {
       "enum": [
         "surface",
@@ -2181,6 +2200,27 @@
         "category6"
       ],
       "type": "string"
+    },
+    "ConnectedEntity": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sharedSessions": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "sharedSessions"
+      ],
+      "type": "object"
     },
     "ContentPart": {
       "oneOf": [
@@ -2764,6 +2804,135 @@
       ],
       "type": "object"
     },
+    "EntityArticle": {
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "connected": {
+          "items": {
+            "$ref": "#/$defs/ConnectedEntity"
+          },
+          "type": "array"
+        },
+        "facts": {
+          "items": {
+            "$ref": "#/$defs/Fact"
+          },
+          "type": "array"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lead": {
+          "type": "string"
+        },
+        "sessionCount": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/SessionSummaryRow"
+          },
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/TagAssignment"
+          },
+          "type": "array"
+        },
+        "timeline": {
+          "items": {
+            "$ref": "#/$defs/TimelineEntry"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicPath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "visibility": {
+          "$ref": "#/$defs/SharedWith"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type",
+        "sessionCount",
+        "aliases",
+        "visibility",
+        "lead",
+        "facts",
+        "timeline",
+        "connected",
+        "sessions",
+        "tags",
+        "freshness"
+      ],
+      "type": "object"
+    },
+    "EntitySummary": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sessionCount": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/EntityType"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type",
+        "sessionCount"
+      ],
+      "type": "object"
+    },
+    "EntityType": {
+      "enum": [
+        "person",
+        "agent",
+        "machine",
+        "hardware",
+        "model",
+        "service",
+        "software",
+        "repository",
+        "domain",
+        "database"
+      ],
+      "type": "string"
+    },
     "EntityTypeCount": {
       "properties": {
         "entities": {
@@ -2799,6 +2968,137 @@
       "required": [
         "ok",
         "ingested"
+      ],
+      "type": "object"
+    },
+    "Fact": {
+      "properties": {
+        "conflict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactConflict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "previous": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactPrevious"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "since": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/FactSource"
+          },
+          "type": "array"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "value",
+        "since",
+        "pinned",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "FactConflict": {
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/FactSource"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "FactEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "pinned"
+      ],
+      "type": "object"
+    },
+    "FactPrevious": {
+      "properties": {
+        "until": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "until"
+      ],
+      "type": "object"
+    },
+    "FactSource": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMention"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "at",
+        "value"
       ],
       "type": "object"
     },
@@ -3041,6 +3341,13 @@
         "groups"
       ],
       "type": "object"
+    },
+    "Freshness": {
+      "enum": [
+        "live",
+        "sample"
+      ],
+      "type": "string"
     },
     "GatewayError": {
       "properties": {
@@ -7599,6 +7906,15 @@
       ],
       "type": "object"
     },
+    "MemoryState": {
+      "enum": [
+        "capturing",
+        "queued",
+        "summarized",
+        "flagged"
+      ],
+      "type": "string"
+    },
     "MemoryStatsResponse": {
       "properties": {
         "conversations": {
@@ -10827,6 +11143,21 @@
       ],
       "type": "object"
     },
+    "SessionMention": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
     "SessionMessage": {
       "properties": {
         "durationMs": {
@@ -11147,6 +11478,75 @@
       ],
       "type": "object"
     },
+    "SessionSummaryRow": {
+      "properties": {
+        "endedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessId"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "kept": {
+          "type": "boolean"
+        },
+        "memoryState": {
+          "$ref": "#/$defs/MemoryState"
+        },
+        "messageCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicPath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trashed": {
+          "type": "boolean"
+        },
+        "visibility": {
+          "$ref": "#/$defs/SharedWith"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "harness",
+        "startedAt",
+        "messageCount",
+        "visibility",
+        "kept",
+        "trashed",
+        "memoryState"
+      ],
+      "type": "object"
+    },
     "SessionSwitches": {
       "properties": {
         "effort": {
@@ -11456,6 +11856,38 @@
           },
           "required": [
             "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SharedWith": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "private",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "space",
+              "type": "string"
+            },
+            "space": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "space"
           ],
           "type": "object"
         }
@@ -11811,6 +12243,25 @@
       },
       "required": [
         "tag"
+      ],
+      "type": "object"
+    },
+    "TagAssignment": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/AssignmentState"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "state"
       ],
       "type": "object"
     },
@@ -13604,6 +14055,36 @@
       ],
       "type": "object"
     },
+    "TimelineEntry": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionMention"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "text",
+        "kind"
+      ],
+      "type": "object"
+    },
     "ToolCall": {
       "properties": {
         "arguments": {
@@ -13960,6 +14441,24 @@
       },
       "required": [
         "topic"
+      ],
+      "type": "object"
+    },
+    "TopicPath": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "path"
       ],
       "type": "object"
     },

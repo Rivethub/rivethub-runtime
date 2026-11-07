@@ -4,6 +4,7 @@ pub mod capture;
 pub mod capture_schema;
 pub mod chat;
 pub mod devices;
+mod entities;
 pub mod files;
 mod flagged;
 pub mod harnesses;
@@ -48,7 +49,10 @@ pub(crate) use surface::plain_get;
 pub(crate) use surface::rewrite_request;
 
 pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
-    wiki::router().merge(topics::router()).merge(tidy::router())
+    wiki::router()
+        .merge(topics::router())
+        .merge(entities::router())
+        .merge(tidy::router())
 }
 
 pub(crate) async fn contract_header(
@@ -76,6 +80,7 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(history::router())
         .merge(notifications::router())
         .merge(topics::router())
+        .merge(entities::router())
         .merge(tidy::router())
         .merge(hub_state::router())
         .merge(plugins::router())
