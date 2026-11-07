@@ -17,6 +17,7 @@ mod memory_models;
 mod memory_snippet;
 mod notifications;
 mod plugins;
+mod review;
 mod session_delete;
 pub mod sessions;
 pub mod tags;
@@ -54,6 +55,7 @@ pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
     wiki::router()
         .merge(topics::router())
         .merge(entities::router())
+        .merge(review::router())
         .merge(tidy::router())
 }
 
@@ -83,6 +85,7 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(notifications::router())
         .merge(topics::router())
         .merge(entities::router())
+        .merge(review::router())
         .merge(tidy::router())
         .merge(hub_state::router())
         .merge(plugins::router())

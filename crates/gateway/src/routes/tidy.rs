@@ -225,7 +225,7 @@ fn batch_id(segment: &str) -> Result<BatchId, ApiError> {
         .map_err(|_| ApiError::BadRequest(format!("{segment} is not a batch id")))
 }
 
-fn ports<'a>(gateway: &'a Gateway, user: &'a UserId) -> Result<TidyPorts<'a>, ApiError> {
+pub(super) fn ports<'a>(gateway: &'a Gateway, user: &'a UserId) -> Result<TidyPorts<'a>, ApiError> {
     Ok(TidyPorts {
         tidy: gateway.tidy()?.as_ref(),
         topics: gateway.topics()?.as_ref(),

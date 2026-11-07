@@ -5,6 +5,7 @@ mod entities;
 mod filing;
 mod models;
 mod pages;
+mod review;
 mod startup;
 mod tidy;
 
@@ -97,6 +98,8 @@ impl Api {
                 .with_topics(store.clone(), store.clone())
                 .with_decisions(store.clone())
                 .with_facts(store.clone())
+                .with_review(store.clone())
+                .with_session_catalog(store.clone())
                 .with_tenancy_store(store.clone())
                 .with_startup_memory(store.clone(), store.clone())
                 .with_tidy(store.clone(), store.clone());

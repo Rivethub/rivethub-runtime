@@ -1483,3 +1483,53 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     assert!(!values.contains(&"192.0.2.1"), "{values:?}");
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_review_mark_is_read_and_written_only_by_its_owner(pool: PgPool) -> TestResult {
+    use kernel::memory::TagId;
+    use kernel::review::Mark;
+    use kernel::review::ReviewKey;
+    use kernel::review::ReviewMark;
+    use kernel::review::ReviewStore as _;
+
+    use chrono::SubsecRound as _;
+
+    let probe = probe(&pool).await?;
+    let store = PostgresMemory::new(probe.clone());
+    let alice = viewer("alice")?;
+    let owners = Scope::Viewer(alice.clone());
+    let members = Scope::Viewer(viewer("bob")?);
+    let mark = ReviewMark {
+        key: ReviewKey::Tag(TagId::from_uuid(Uuid::new_v4())),
+        mark: Mark::Decided {
+            at: Utc::now().trunc_subsecs(3),
+        },
+    };
+    owners
+        .clone()
+        .run(store.mark(alice.principal(), &mark))
+        .await?;
+    assert_eq!(
+        owners.clone().run(store.marks(alice.principal())).await?,
+        std::slice::from_ref(&mark)
+    );
+    assert!(
+        members
+            .clone()
+            .run(store.marks(alice.principal()))
+            .await?
+            .is_empty(),
+        "another person cannot read your review"
+    );
+    assert!(
+        members
+            .clone()
+            .run(store.mark(alice.principal(), &mark))
+            .await
+            .is_err(),
+        "another person cannot write your review"
+    );
+    assert_eq!(visible(&probe, members, "rh_review_marks").await?, 0);
+    assert_eq!(visible(&probe, owners, "rh_review_marks").await?, 1);
+    Ok(())
+}

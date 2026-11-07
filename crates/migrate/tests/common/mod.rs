@@ -333,7 +333,7 @@ impl PartialEq for Cell {
 }
 
 pub(crate) fn assert_upgraded_pragmas(actual: &Pragmas, legacy: &Pragmas) {
-    assert_eq!(actual.user_version, migrate::SchemaVersion::V32.number());
+    assert_eq!(actual.user_version, migrate::SchemaVersion::V33.number());
     assert_eq!(legacy.user_version, 7);
     assert_eq!(actual.journal_mode, legacy.journal_mode);
     assert_eq!(actual.foreign_keys, legacy.foreign_keys);

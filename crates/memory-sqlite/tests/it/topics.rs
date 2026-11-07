@@ -223,6 +223,13 @@ async fn facts_keep_claims_pins_and_merges() -> TestResult {
 }
 
 #[tokio::test]
+async fn review_marks_keep_each_owners_decisions() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::review::review_marks_keep_each_owners_decisions(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound() -> TestResult {
     let (_directory, store) = store()?;
     topic_pages::a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(pages(&store))

@@ -16,6 +16,7 @@ pub mod owner;
 pub mod plugins;
 pub mod preview;
 pub mod queue;
+pub mod review;
 pub mod shutdown;
 pub mod tasks;
 pub mod tenancy;

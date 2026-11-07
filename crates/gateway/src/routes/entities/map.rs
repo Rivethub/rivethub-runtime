@@ -19,7 +19,7 @@ use wire::session_id::SessionId;
 
 use crate::error::ApiError;
 
-pub(super) type Titles = BTreeMap<SessionId, String>;
+pub(crate) type Titles = BTreeMap<SessionId, String>;
 
 pub(super) fn entity_type(root: &str) -> Option<EntityType> {
     let seeded = SeededType::iter().find(|seeded| seeded.to_string() == root)?;
@@ -42,7 +42,7 @@ pub(super) fn entity_type(root: &str) -> Option<EntityType> {
     })
 }
 
-pub(super) fn error(error: FactError) -> ApiError {
+pub(crate) fn error(error: FactError) -> ApiError {
     match error {
         FactError::EmptyKey | FactError::EmptyValue | FactError::TooLong { .. } => {
             ApiError::BadRequest(error.to_string())
@@ -54,7 +54,7 @@ pub(super) fn error(error: FactError) -> ApiError {
     }
 }
 
-pub(super) fn mention(session: &SessionId, titles: &Titles) -> SessionMention {
+pub(crate) fn mention(session: &SessionId, titles: &Titles) -> SessionMention {
     SessionMention {
         id: session.clone(),
         title: titles
@@ -64,7 +64,7 @@ pub(super) fn mention(session: &SessionId, titles: &Titles) -> SessionMention {
     }
 }
 
-fn source(support: &Support, titles: &Titles) -> FactSource {
+pub(crate) fn source(support: &Support, titles: &Titles) -> FactSource {
     FactSource {
         session: mention(&support.session, titles),
         at: support.at,
