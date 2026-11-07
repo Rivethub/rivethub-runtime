@@ -28,8 +28,6 @@ pub enum Permission {
     TopicsRead,
     #[strum(serialize = "topics.write")]
     TopicsWrite,
-    #[strum(serialize = "agents.read")]
-    AgentsRead,
     #[strum(serialize = "notifications.send")]
     NotificationsSend,
     #[strum(serialize = "host.files.read")]
@@ -150,7 +148,6 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
         (false, ["api", "topics", ..] | ["api", "sessions", _, "placement" | "history"]) => {
             needs(Permission::TopicsWrite)
         }
-        (true, ["api", "agents", ..]) => needs(Permission::AgentsRead),
         _ => PluginAccess::Refused,
     }
 }

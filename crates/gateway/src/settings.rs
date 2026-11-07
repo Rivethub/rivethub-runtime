@@ -1,9 +1,4 @@
 use std::path::PathBuf;
-use std::time::Duration;
-
-use wire::harness::HarnessId;
-
-const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_millis(1_500);
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
@@ -17,14 +12,9 @@ pub struct Settings {
     pub node: String,
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
-    pub files_root: Option<PathBuf>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
     pub state_dir: PathBuf,
-    pub directory_root: PathBuf,
-    pub shared_dir: PathBuf,
-    pub allowed_harnesses: Option<Vec<HarnessId>>,
-    pub probe_timeout: Duration,
     pub private_ca: Option<PathBuf>,
 }
 
@@ -53,7 +43,6 @@ impl Settings {
             node,
             allowed_origins: section.allowed_origins,
             allowed_hosts: section.allowed_hosts,
-            files_root: configured_files_root(section.files_root),
             static_dir: match configured_path(env, "RIVETHUB_STATIC_DIR", "RIVETOS_DEN_STATIC_DIR")
             {
                 Some(path) => Some(path),
@@ -67,22 +56,9 @@ impl Settings {
                 Some(target) => Some(target),
                 None => section.root_redirect,
             },
-            directory_root: state_dir.join("agents"),
             state_dir,
-            shared_dir,
-            allowed_harnesses: section
-                .allowed_harnesses
-                .map(|entries| entries.iter().filter_map(known_harness).collect()),
-            probe_timeout: DEFAULT_PROBE_TIMEOUT,
             private_ca,
         })
-    }
-}
-
-fn known_harness(slot: &config::HarnessSlot) -> Option<HarnessId> {
-    match slot {
-        config::HarnessSlot::Known(id) => Some(*id),
-        config::HarnessSlot::Unknown(_) => None,
     }
 }
 
@@ -133,11 +109,4 @@ fn configured_text(env: &config::Environment, current: &str, legacy: &str) -> Op
 
 fn configured_path(env: &config::Environment, current: &str, legacy: &str) -> Option<PathBuf> {
     configured_text(env, current, legacy).map(PathBuf::from)
-}
-
-fn configured_files_root(root: Option<PathBuf>) -> Option<PathBuf> {
-    match root {
-        Some(path) if !path.as_os_str().is_empty() => Some(path),
-        Some(_) | None => None,
-    }
 }

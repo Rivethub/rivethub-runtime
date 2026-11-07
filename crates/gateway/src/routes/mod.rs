@@ -1,14 +1,11 @@
 mod account;
-pub mod agents;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
 mod entities;
-pub mod files;
 mod flagged;
 pub mod harnesses;
 mod history;
-pub(crate) mod hub_state;
 pub mod memory;
 mod memory_archive;
 mod memory_models;
@@ -22,8 +19,6 @@ pub mod tags;
 mod tidy;
 mod today;
 pub(crate) mod topics;
-mod updates;
-pub(crate) mod voice;
 pub mod wiki;
 
 mod surface;
@@ -72,11 +67,8 @@ pub(crate) async fn contract_header(
 }
 
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
-    harnesses::mount(files::mount(wiki::router()))
-        .merge(voice::router())
+    harnesses::mount(wiki::router())
         .merge(account::router())
-        .merge(updates::router())
-        .nest("/api/agents", agents::router())
         .merge(history::router())
         .merge(notifications::router())
         .merge(topics::router())
@@ -84,7 +76,6 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(review::router())
         .merge(tidy::router())
         .merge(today::router())
-        .merge(hub_state::router())
         .merge(plugins::router())
         .merge(session_delete::router())
 }

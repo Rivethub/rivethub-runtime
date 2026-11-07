@@ -78,9 +78,6 @@ pub enum Permission {
     #[serde(rename = "topics.write")]
     #[strum(serialize = "topics.write")]
     TopicsWrite,
-    #[serde(rename = "agents.read")]
-    #[strum(serialize = "agents.read")]
-    AgentsRead,
     #[serde(rename = "notifications.send")]
     #[strum(serialize = "notifications.send")]
     NotificationsSend,

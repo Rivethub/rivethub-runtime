@@ -163,14 +163,9 @@ fn settings(home: &Path) -> gateway::Settings {
         node: "golden-node".to_owned(),
         allowed_origins: Vec::new(),
         allowed_hosts: Vec::new(),
-        files_root: None,
         static_dir: None,
         root_redirect: None,
         state_dir: home.join("gateway"),
-        directory_root: home.join("agents"),
-        shared_dir: home.join("shared"),
-        allowed_harnesses: None,
-        probe_timeout: Duration::from_millis(200),
         private_ca: None,
     }
 }

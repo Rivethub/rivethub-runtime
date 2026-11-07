@@ -1,6 +1,5 @@
 mod access;
 pub mod admin;
-mod agent_presets;
 mod backfills;
 pub mod capture;
 mod changes;
@@ -15,7 +14,6 @@ mod facts;
 mod flagged;
 mod graphile;
 mod graphile_sql;
-mod hub_state;
 mod listen;
 mod loss;
 mod memory_jobs;
@@ -59,9 +57,7 @@ mod resilience;
 mod scope;
 pub use scope::scoped;
 
-pub use agent_presets::PostgresPresets;
 pub use cleanup::DatabaseIdentity;
-pub use hub_state::PostgresHubState;
 pub use tenancy::PostgresTenancy;
 pub use title::Untitled;
 
@@ -97,7 +93,6 @@ pub struct PostgresMemory {
     access: std::sync::Arc<access::AccessLog>,
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
-    unverified: bool,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
 
@@ -115,7 +110,6 @@ impl PostgresMemory {
             access: std::sync::Arc::default(),
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
-            unverified: false,
             summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
         }
     }
@@ -167,10 +161,7 @@ impl PostgresMemory {
                 let pool = lazy_pool(url, POOL_CONNECTIONS, Some(pooling.idle()))
                     .map_err(Error::Connection)?;
                 tokio::spawn(check_when_reachable(pool.clone()));
-                Ok(Self {
-                    unverified: true,
-                    ..Self::new(pool)
-                })
+                Ok(Self::new(pool))
             }
             Err(error) => Err(Error::Connection(error)),
         }

@@ -21,7 +21,6 @@
       "permissions": [
         "sessions.read",
         "sessions.control",
-        "agents.read",
         "memory.read",
         "memory.write",
         "notifications.send"

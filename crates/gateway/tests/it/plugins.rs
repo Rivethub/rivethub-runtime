@@ -302,7 +302,7 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
         &[
             Permission::SessionsRead,
             Permission::TopicsRead,
-            Permission::AgentsRead,
+            Permission::MemoryRead,
         ],
     )?;
     let (status, bytes) = host
@@ -311,12 +311,12 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
     assert_eq!(status, StatusCode::OK);
     let reloaded: PluginRecord = serde_json::from_slice(&bytes)?;
     assert_eq!(reloaded.state, PluginState::AwaitingApproval);
-    assert_eq!(reloaded.pending, [Permission::AgentsRead]);
+    assert_eq!(reloaded.pending, [Permission::MemoryRead]);
     let (status, _) = host
         .call(
             Method::POST,
             "/api/plugins/fixture/enable",
-            enable(&[Permission::AgentsRead])?,
+            enable(&[Permission::MemoryRead])?,
             true,
         )
         .await?;
@@ -325,8 +325,8 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
         record.state == PluginState::Running
     })
     .await?;
-    let agents = host.probe_body("GET", "/api/agents").await?;
-    assert!(agents.starts_with("200 "), "{agents}");
+    let probed = host.probe_body("GET", "/api/memory/stats").await?;
+    assert!(probed.starts_with("200 "), "{probed}");
     Ok(())
 }
 

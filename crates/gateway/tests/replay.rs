@@ -41,12 +41,6 @@ const CLAIMS: &[&str] = &[
     "plain-main/not-found-file",
     "plain-main/not-found-post",
     "plain-main/not-found-api",
-    "plain-main/static-files-nested",
-    "plain-main/alias-api-files-prefix",
-    "plain-main/files-disabled",
-    "plain-main/files-bare-path",
-    "plain-nostatic/files-root-missing",
-    "plain-nostatic/files-alias-root-missing",
     "plain-main/static-root",
     "plain-main/static-index",
     "plain-main/static-index-head",
@@ -320,6 +314,12 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
     ("plain-main", "pair-redeem-bogus", "cut"),
     ("plain-main", "pair-redeem-get", "cut"),
     ("plain-tenancy", "tenancy-phone-pairing-owner", "cut"),
+    ("plain-main", "static-files-nested", "cut"),
+    ("plain-main", "alias-api-files-prefix", "cut"),
+    ("plain-main", "files-disabled", "cut"),
+    ("plain-main", "files-bare-path", "cut"),
+    ("plain-nostatic", "files-root-missing", "cut"),
+    ("plain-nostatic", "files-alias-root-missing", "cut"),
 ];
 
 const SKIP_REASONS: &[(&str, &str)] = &[
@@ -495,13 +495,6 @@ fn push_case(
     if !CLAIMS.contains(&case.id.as_str()) {
         return;
     }
-    if matches!(
-        case.id.as_str(),
-        "plain-nostatic/files-root-missing" | "plain-nostatic/files-alias-root-missing"
-    ) {
-        trials.push(files_missing_trial(case, handle.clone()));
-        return;
-    }
     match fixture::kind(&case.id) {
         fixture::Kind::Static => {
             trials.push(shared_trial(case, apps.statik.clone(), handle.clone()));
@@ -523,33 +516,6 @@ fn shared_trial(
 ) -> Trial {
     let id = case.id.clone();
     Trial::test(format!("gateway {id}"), move || play(&case, &app, &handle))
-}
-
-fn files_missing_trial(case: testkit::http::HttpCase, handle: tokio::runtime::Handle) -> Trial {
-    let id = case.id.clone();
-    Trial::test(format!("gateway {id}"), move || {
-        let keep = tempfile::tempdir()
-            .map_err(|error| Failed::from(format!("private files root: {error}")))?;
-        let tmp = match keep.path().to_str() {
-            Some(text) => text.to_owned(),
-            None => return Err(Failed::from("private files root is not utf-8")),
-        };
-        let missing = PathBuf::from(&tmp).join("runs/plain-nostatic/missing-files-root");
-        let mut mask = masks();
-        mask.tmp = Some(tmp);
-        play_masked(
-            &case,
-            &app_for(files_root_settings(missing)),
-            &handle,
-            &mask,
-        )
-    })
-}
-
-fn files_root_settings(root: PathBuf) -> gateway::Settings {
-    let mut settings = common::settings();
-    settings.files_root = Some(root);
-    settings
 }
 
 fn play(

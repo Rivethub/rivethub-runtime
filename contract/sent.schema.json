@@ -178,320 +178,6 @@
         }
       ]
     },
-    "AgentListResponse": {
-      "properties": {
-        "agents": {
-          "items": {
-            "$ref": "#/$defs/AgentPreset"
-          },
-          "type": "array"
-        },
-        "backend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AgentStoreBackend"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "directoryRoot": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "node": {
-          "type": "string"
-        },
-        "sharedDir": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "agents",
-        "node"
-      ],
-      "type": "object"
-    },
-    "AgentPreset": {
-      "additionalProperties": true,
-      "properties": {
-        "color": {
-          "type": "string"
-        },
-        "createdAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effort": {
-          "type": "string"
-        },
-        "harnessId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HarnessId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "nodeBaseUrl": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sharedLink": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "sortOrder": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "systemPrompt": {
-          "type": "string"
-        },
-        "updatedAt": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "color",
-        "model",
-        "effort",
-        "systemPrompt",
-        "createdAt",
-        "updatedAt"
-      ],
-      "type": "object"
-    },
-    "AgentPresetCreateRequest": {
-      "additionalProperties": false,
-      "properties": {
-        "color": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effort": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/KnownHarness"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "default": "",
-          "type": "string"
-        },
-        "node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "nodeBaseUrl": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sharedLink": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "sortOrder": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "systemPrompt": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
-    "AgentPresetUpdate": {
-      "additionalProperties": false,
-      "properties": {
-        "color": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effort": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/KnownHarness"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "nodeBaseUrl": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sharedLink": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "sortOrder": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "systemPrompt": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "AgentResponse": {
-      "properties": {
-        "agent": {
-          "$ref": "#/$defs/AgentPreset"
-        }
-      },
-      "required": [
-        "agent"
-      ],
-      "type": "object"
-    },
-    "AgentStoreBackend": {
-      "enum": [
-        "postgres",
-        "file"
-      ],
-      "type": "string"
-    },
-    "AgentsFile": {
-      "additionalProperties": false,
-      "properties": {
-        "agents": {
-          "items": {
-            "$ref": "#/$defs/AgentPreset"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "agents"
-      ],
-      "type": "object"
-    },
     "ApprovalDecision": {
       "enum": [
         "allow",
@@ -1873,59 +1559,6 @@
       ],
       "type": "object"
     },
-    "DelegatedSessionLink": {
-      "properties": {
-        "agentName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harnessId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HarnessId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "owner": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "parentSessionId": {
-          "$ref": "#/$defs/SessionId"
-        },
-        "parentTaskId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "spawnedSessionId": {
-          "$ref": "#/$defs/SessionId"
-        },
-        "taskId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "taskId",
-        "spawnedSessionId",
-        "parentSessionId"
-      ],
-      "type": "object"
-    },
     "DelegationHookStatus": {
       "enum": [
         "completed",
@@ -1934,32 +1567,6 @@
         "cached"
       ],
       "type": "string"
-    },
-    "DeviceFileEntry": {
-      "properties": {
-        "mtime": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "size": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "type": {
-          "$ref": "#/$defs/FileEntryKind"
-        }
-      },
-      "required": [
-        "name",
-        "type",
-        "size",
-        "mtime"
-      ],
-      "type": "object"
     },
     "Effort": {
       "enum": [
@@ -2349,13 +1956,6 @@
       ],
       "type": "object"
     },
-    "FileEntryKind": {
-      "enum": [
-        "dir",
-        "file"
-      ],
-      "type": "string"
-    },
     "FileKind": {
       "enum": [
         "dir",
@@ -2368,28 +1968,6 @@
         "entries": {
           "items": {
             "$ref": "#/$defs/FileEntry"
-          },
-          "type": "array"
-        },
-        "path": {
-          "type": "string"
-        },
-        "root": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "path",
-        "root",
-        "entries"
-      ],
-      "type": "object"
-    },
-    "FilesListResponse": {
-      "properties": {
-        "entries": {
-          "items": {
-            "$ref": "#/$defs/DeviceFileEntry"
           },
           "type": "array"
         },
@@ -2746,17 +2324,6 @@
         "resume",
         "approvals"
       ],
-      "type": "object"
-    },
-    "HarnessDescriptor": {
-      "properties": {
-        "installed": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        }
-      },
       "type": "object"
     },
     "HarnessId": {
@@ -4844,231 +4411,6 @@
       ],
       "type": "string"
     },
-    "HubLastSession": {
-      "properties": {
-        "at": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "key": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "key",
-        "at"
-      ],
-      "type": "object"
-    },
-    "HubProject": {
-      "properties": {
-        "createdAt": {
-          "default": 0,
-          "format": "int64",
-          "type": "integer"
-        },
-        "defaults": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HubProjectDefaults"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "order": {
-          "default": 0.0,
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "order",
-        "createdAt"
-      ],
-      "type": "object"
-    },
-    "HubProjectDefaults": {
-      "properties": {
-        "agentId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "directory": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effort": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ThinkingLevel"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "harnessId": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HarnessId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "node": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "HubSessionMode": {
-      "enum": [
-        "chat",
-        "terminal"
-      ],
-      "type": "string"
-    },
-    "HubState": {
-      "properties": {
-        "archived": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "defaultProjectId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "hidden": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "lastSession": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/HubLastSession"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "membership": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "type": "object"
-        },
-        "modes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/HubSessionMode"
-          },
-          "default": {},
-          "type": "object"
-        },
-        "names": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "default": {},
-          "type": "object"
-        },
-        "pinned": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "projects": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/HubProject"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "projects",
-        "membership",
-        "names",
-        "archived",
-        "pinned",
-        "hidden",
-        "modes"
-      ],
-      "type": "object"
-    },
-    "HubStatePutRequest": {
-      "properties": {
-        "baseVersion": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "state": {
-          "$ref": "#/$defs/HubState"
-        }
-      },
-      "required": [
-        "baseVersion",
-        "state"
-      ],
-      "type": "object"
-    },
-    "HubStateResponse": {
-      "properties": {
-        "state": {
-          "$ref": "#/$defs/HubState"
-        },
-        "version": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "version",
-        "state"
-      ],
-      "type": "object"
-    },
-    "KnownHarness": {
-      "type": "string"
-    },
     "LogLevel": {
       "enum": [
         "debug",
@@ -7146,7 +6488,6 @@
         "sessions.control",
         "topics.read",
         "topics.write",
-        "agents.read",
         "notifications.send",
         "host.files.read",
         "host.files.write",
@@ -8710,22 +8051,8 @@
       ],
       "type": "string"
     },
-    "SendUserTurnResult": {
-      "properties": {
-        "dismissedDialog": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "SessionBroadcast": {
       "anyOf": [
-        {
-          "$ref": "#/$defs/hub.state"
-        },
         {
           "$ref": "#/$defs/plugin.changed"
         },
@@ -9577,36 +8904,6 @@
       ],
       "type": "object"
     },
-    "StagedUploadResponse": {
-      "properties": {
-        "expiresAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "mime": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "size": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "uri": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "uri",
-        "name",
-        "mime",
-        "size",
-        "expiresAt"
-      ],
-      "type": "object"
-    },
     "SteerOutcome": {
       "enum": [
         "steered",
@@ -10249,16 +9546,6 @@
         "tool"
       ],
       "type": "object"
-    },
-    "ThinkingLevel": {
-      "enum": [
-        "off",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
-      "type": "string"
     },
     "TidyBatch": {
       "properties": {
@@ -11725,77 +11012,6 @@
       },
       "required": [
         "defaultVisibility"
-      ],
-      "type": "object"
-    },
-    "UserTurn": {
-      "properties": {
-        "attachments": {
-          "items": {
-            "$ref": "#/$defs/UserTurnAttachment"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "bypassDialogGate": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "deliveryId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "effort": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "systemPrompt": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "type": "object"
-    },
-    "UserTurnAttachment": {
-      "properties": {
-        "mime": {
-          "type": "string"
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "pathOrUri": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "mime",
-        "pathOrUri"
       ],
       "type": "object"
     },
@@ -13379,40 +12595,6 @@
       ],
       "type": "object"
     },
-    "VoiceSpeakRequest": {
-      "properties": {
-        "input": {
-          "type": "string"
-        },
-        "instructions": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "voice": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "input"
-      ],
-      "type": "object"
-    },
-    "VoiceTranscribeResponse": {
-      "properties": {
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "text"
-      ],
-      "type": "object"
-    },
     "WikiCitation": {
       "properties": {
         "channel": {
@@ -13947,23 +13129,6 @@
         "summarizer",
         "categorizer",
         "wikiBuilder"
-      ],
-      "type": "object"
-    },
-    "hub.state": {
-      "properties": {
-        "v": {
-          "$ref": "#/$defs/ProtocolVersion"
-        },
-        "version": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "v",
-        "version"
       ],
       "type": "object"
     },

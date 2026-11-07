@@ -117,7 +117,6 @@ async fn node(root: &std::path::Path) -> Result<Node, Box<dyn std::error::Error 
         .await;
     let mut settings = common::settings();
     settings.state_dir = root.join("state");
-    settings.directory_root = root.join("agents");
     let setup = Arc::new(ScriptedSetup::default());
     let gateway = Gateway::new(store, settings)
         .with_tenancy(tenancy)

@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::http::HeaderName;
 use axum::http::HeaderValue;
@@ -40,24 +39,11 @@ pub(crate) fn settings() -> Settings {
         node: NODE.to_string(),
         allowed_origins: vec!["https://hub.example.test".to_string()],
         allowed_hosts: vec!["den.example.test".to_string()],
-        files_root: None,
         static_dir: None,
         root_redirect: None,
         state_dir: scratch.join("state"),
-        directory_root: scratch.join("agents"),
-        shared_dir: scratch.join("shared"),
-        allowed_harnesses: None,
-        probe_timeout: Duration::from_millis(200),
         private_ca: None,
     }
-}
-
-pub(crate) fn gateway_with_files(root: std::path::PathBuf) -> Arc<Gateway> {
-    let mut settings = settings();
-    settings.files_root = Some(root);
-    let store = Arc::new(FakeMemoryStore::default());
-    let handle: Arc<dyn MemoryStore> = store;
-    Arc::new(Gateway::new(handle, settings))
 }
 
 pub(crate) fn gateway() -> (Arc<Gateway>, Arc<FakeMemoryStore>) {

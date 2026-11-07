@@ -208,11 +208,6 @@ fn surface_paths_follow_the_environment_then_the_gateway_section() {
     );
     assert_eq!(settings.root_redirect.as_deref(), Some("/wiki"));
     assert_eq!(settings.state_dir, PathBuf::from("/tmp/golden/state"));
-    assert_eq!(settings.shared_dir, PathBuf::from("/tmp/golden/shared"));
-    assert_eq!(
-        settings.probe_timeout,
-        std::time::Duration::from_millis(1_500)
-    );
 }
 
 #[test]
@@ -275,8 +270,10 @@ fn hub_probes_trust_the_shared_rivet_ca_unless_the_environment_names_one() {
     assert_eq!(
         fallback.private_ca.as_deref(),
         Some(
-            fallback
-                .shared_dir
+            shared
+                .path()
+                .canonicalize()
+                .expect("shared dir")
                 .join("rivet-ca/intermediate/chain.pem")
                 .as_path()
         )

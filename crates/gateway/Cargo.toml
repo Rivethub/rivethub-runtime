@@ -24,7 +24,6 @@ http-body = { workspace = true }
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true }
 kernel = { workspace = true }
-libc = { workspace = true }
 nix = { workspace = true }
 parking_lot = { workspace = true }
 percent-encoding = { workspace = true }

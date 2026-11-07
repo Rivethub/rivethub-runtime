@@ -7,10 +7,10 @@ use axum::response::Response;
 use axum::routing::get;
 use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
+use wire::events::SessionBroadcast;
 
 use crate::Gateway;
 use crate::error::ApiError;
-use crate::sessions::Notice;
 use crate::tenancy::UserId;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
@@ -27,12 +27,12 @@ pub(crate) fn form_text(raw: &str) -> Result<String, ApiError> {
 
 async fn upgrade(
     State(gateway): State<Arc<Gateway>>,
-    user: UserId,
+    _user: UserId,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let notices = gateway.sessions.notices();
     upgrade.on_upgrade(move |socket| async move {
-        if let Err(error) = stream(socket, gateway, user, notices).await {
+        if let Err(error) = stream(socket, gateway, notices).await {
             tracing::debug!(%error, "notice websocket ended");
         }
     })
@@ -61,8 +61,7 @@ pub(crate) async fn send<T: Serialize>(
 async fn stream(
     mut socket: WebSocket,
     gateway: Arc<Gateway>,
-    user: UserId,
-    mut notices: tokio::sync::broadcast::Receiver<Notice>,
+    mut notices: tokio::sync::broadcast::Receiver<SessionBroadcast>,
 ) -> Result<(), SocketError> {
     loop {
         tokio::select! {
@@ -77,11 +76,7 @@ async fn stream(
                 Some(Ok(Message::Text(_) | Message::Binary(_) | Message::Pong(_))) => {}
             },
             notice = notices.recv() => match notice {
-                Ok(notice) => {
-                    if notice.audience.as_ref().is_none_or(|audience| *audience == user) {
-                        send(&mut socket, &notice.body).await?;
-                    }
-                }
+                Ok(notice) => send(&mut socket, &notice).await?,
                 Err(RecvError::Closed) => return Ok(()),
                 Err(RecvError::Lagged(_)) => {
                     socket

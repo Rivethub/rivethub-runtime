@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use gateway::tenancy::{Tenancy, UserId};
 
@@ -79,14 +78,9 @@ impl Fixture {
                 node: "golden-node".into(),
                 allowed_hosts: vec![],
                 allowed_origins: vec![],
-                files_root: None,
                 static_dir: None,
                 root_redirect: None,
                 state_dir: PathBuf::from("/tmp/rr-gateway-unused-agents/state"),
-                directory_root: PathBuf::from("/tmp/rr-gateway-unused-agents/agents"),
-                shared_dir: PathBuf::from("/tmp/rr-gateway-unused-agents/shared"),
-                allowed_harnesses: None,
-                probe_timeout: Duration::from_millis(200),
                 private_ca: None,
             },
         )

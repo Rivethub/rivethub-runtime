@@ -1846,5 +1846,29 @@
   {
     "id": "tls-tenancy/tt-owner-loopback-sessions",
     "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-files-prefix",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/files-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/static-files-nested",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/files-alias-root-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/files-root-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/files-bare-path",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
   }
 ]

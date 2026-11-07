@@ -218,7 +218,6 @@ async fn node(
     let tenancy = Tenancy::local(owner.clone()).with_token(OWNER_DEVICE, owner)?;
     let mut settings = common::settings();
     settings.state_dir = root.join("state");
-    settings.directory_root = root.join("agents");
     let cloud = CloudSettings {
         base: format!("http://{}/", fake.stub.addr).parse()?,
         update_key: fake.key,

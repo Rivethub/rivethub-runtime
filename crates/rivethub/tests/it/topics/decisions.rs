@@ -67,9 +67,7 @@ async fn decisions_are_added_edited_and_superseded() -> TestResult {
     assert_eq!(listed.decisions, [swapped.superseded, replacement]);
     let changed = format!(r#"{{"type":"topic.changed","v":1,"topic":"{}"}}"#, mesh.id);
     for _ in 0..3 {
-        let frame = tokio::time::timeout(Duration::from_secs(2), live.recv())
-            .await??
-            .body;
+        let frame = tokio::time::timeout(Duration::from_secs(2), live.recv()).await??;
         assert!(
             matches!(&frame, SessionBroadcast::TopicChanged(notice) if notice.topic == mesh.id)
         );

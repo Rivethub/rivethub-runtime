@@ -7,7 +7,6 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use wire::events::{ProtocolVersion, SessionBroadcast};
-use wire::gateway::hub_state::HubStateChanged;
 use wire::gateway::topics::TopicChangedNotice;
 
 use crate::error::ApiError;
@@ -17,18 +16,12 @@ pub use owners::{OWNERS_FILE_NAME, owners_file};
 
 const NOTICE_BUFFER: usize = 256;
 
-#[derive(Debug, Clone)]
-pub struct Notice {
-    pub audience: Option<UserId>,
-    pub body: SessionBroadcast,
-}
-
 #[derive(Debug)]
 pub struct SessionRegistry {
     owners: RwLock<BTreeMap<String, UserId>>,
     file: Option<OwnersFile>,
     node_owner: Option<UserId>,
-    notices: broadcast::Sender<Notice>,
+    notices: broadcast::Sender<SessionBroadcast>,
     pub(crate) tasks: TaskTracker,
     pub(crate) shutdown: CancellationToken,
 }
@@ -232,16 +225,6 @@ impl SessionRegistry {
         }
     }
 
-    pub(crate) fn hub_state_changed(&self, user: &UserId, version: u64) {
-        self.publish(Notice {
-            audience: Some(user.clone()),
-            body: SessionBroadcast::HubState(HubStateChanged {
-                v: ProtocolVersion::V1,
-                version,
-            }),
-        });
-    }
-
     pub(crate) fn topic_changed(&self, topic: &impl ToString) {
         self.announce(&SessionBroadcast::TopicChanged(TopicChangedNotice {
             v: ProtocolVersion::V1,
@@ -250,19 +233,12 @@ impl SessionRegistry {
     }
 
     pub(crate) fn announce(&self, notice: &SessionBroadcast) {
-        self.publish(Notice {
-            audience: None,
-            body: notice.clone(),
-        });
-    }
-
-    fn publish(&self, notice: Notice) {
-        if self.notices.send(notice).is_err() {
+        if self.notices.send(notice.clone()).is_err() {
             tracing::trace!("notice dropped; no listening client");
         }
     }
 
-    pub fn notices(&self) -> broadcast::Receiver<Notice> {
+    pub fn notices(&self) -> broadcast::Receiver<SessionBroadcast> {
         self.notices.subscribe()
     }
 

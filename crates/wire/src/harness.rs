@@ -360,3 +360,13 @@ pub struct StoreHarness {
 pub struct StoreHarnessList {
     pub harnesses: Vec<StoreHarness>,
 }
+
+#[must_use]
+pub fn model_id(value: &str) -> std::borrow::Cow<'_, str> {
+    match serde_json::from_str::<Vec<String>>(value) {
+        Ok(parts) if !parts.is_empty() && parts.iter().all(|part| !part.is_empty()) => {
+            std::borrow::Cow::Owned(parts.join("/"))
+        }
+        _ => std::borrow::Cow::Borrowed(value),
+    }
+}

@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -98,14 +97,9 @@ fn settings() -> Settings {
         node: "golden-node".to_owned(),
         allowed_origins: vec!["https://hub.example.test".to_owned()],
         allowed_hosts: vec!["den.example.test".to_owned()],
-        files_root: None,
         static_dir: None,
         root_redirect: None,
         state_dir: scratch.join("state"),
-        directory_root: scratch.join("agents"),
-        shared_dir: scratch.join("shared"),
-        allowed_harnesses: None,
-        probe_timeout: Duration::from_millis(200),
         private_ca: None,
     }
 }

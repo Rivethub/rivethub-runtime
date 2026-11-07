@@ -2,7 +2,7 @@ use agent_client_protocol::schema::v1 as acp;
 use kernel::harness::SessionOption;
 use kernel::harness::SessionSwitches;
 use parking_lot::Mutex;
-use wire::gateway::agents::model_id;
+use wire::harness::model_id;
 
 use crate::error::AcpError;
 

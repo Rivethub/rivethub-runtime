@@ -32,11 +32,8 @@ use tower_http::compression::predicate::DefaultPredicate;
 use tower_http::compression::predicate::NotForContentType;
 
 use crate::auth::DenialLog;
-use crate::routes::voice::VoiceProxy;
 
 pub use crate::models::ModelAssignment;
-pub use crate::routes::voice::VoiceConfigError;
-pub use crate::routes::voice::VoiceSettings;
 pub use crate::settings::{Settings, SettingsError, state_dir};
 pub use crate::tls_resolve::private_ca;
 
@@ -65,9 +62,6 @@ pub struct Gateway {
     session_lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
     harness_setup: Option<Arc<dyn kernel::harness_setup::HarnessSetup>>,
     history: history::History,
-    presets: routes::agents::AgentRegistry,
-    hub_state: Arc<dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState>>,
-    voice: VoiceProxy,
     providers: Vec<kernel::model::ProviderHealth>,
     memory_export: Option<Arc<dyn kernel::memory::MemoryExport>>,
     topics: Option<Arc<dyn kernel::topics::TopicStore>>,
@@ -103,8 +97,6 @@ impl Gateway {
             settings.allowed_origins.clone(),
             settings.allowed_hosts.clone(),
         );
-        let presets = routes::agents::open(&settings);
-        let hub_state = routes::hub_state::open(&settings);
         Self {
             store,
             settings,
@@ -117,9 +109,6 @@ impl Gateway {
             session_lister: None,
             harness_setup: None,
             history: history::History::default(),
-            presets,
-            hub_state,
-            voice: VoiceProxy::unconfigured(),
             providers: Vec::new(),
             memory_export: None,
             topics: None,
@@ -151,30 +140,6 @@ impl Gateway {
     }
 
     #[must_use]
-    pub fn with_agent_presets(
-        mut self,
-        store: Arc<dyn kernel::agent_presets::AgentPresetStore>,
-    ) -> Self {
-        self.presets = routes::agents::backed_by(&self.settings, store);
-        self
-    }
-
-    #[must_use]
-    pub fn with_hub_state(
-        mut self,
-        store: Arc<dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState>>,
-    ) -> Self {
-        self.hub_state = store;
-        self
-    }
-
-    pub(crate) fn hub_state(
-        &self,
-    ) -> &dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState> {
-        self.hub_state.as_ref()
-    }
-
-    #[must_use]
     pub fn with_memory_export(mut self, export: Arc<dyn kernel::memory::MemoryExport>) -> Self {
         self.memory_export = Some(export);
         self
@@ -202,11 +167,6 @@ impl Gateway {
     pub fn with_sessions(mut self, sessions: Arc<sessions::SessionRegistry>) -> Self {
         self.sessions = sessions;
         self
-    }
-
-    pub fn with_voice(mut self, settings: VoiceSettings) -> Result<Self, VoiceConfigError> {
-        self.voice = VoiceProxy::from_settings(settings)?;
-        Ok(self)
     }
 
     pub fn sessions(&self) -> &Arc<sessions::SessionRegistry> {
@@ -264,10 +224,6 @@ impl Gateway {
         self.sessions.close().await;
     }
 
-    pub(crate) fn voice(&self) -> &VoiceProxy {
-        &self.voice
-    }
-
     #[must_use]
     pub fn settings(&self) -> &Settings {
         &self.settings
@@ -292,10 +248,6 @@ impl Gateway {
 
     pub(crate) fn denials(&self) -> &DenialLog {
         &self.denials
-    }
-
-    pub(crate) fn presets(&self) -> &routes::agents::AgentRegistry {
-        &self.presets
     }
 
     pub fn router(self: &Arc<Self>, secure: bool) -> Router {

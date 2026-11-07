@@ -13,9 +13,7 @@ use cli::memory::MemoryExporter;
 use config::{Config, Environment};
 use gateway::Gateway;
 use gateway::sessions::SessionRegistry;
-use kernel::agent_presets::AgentPresetStore;
 use kernel::filing::FilingStore;
-use kernel::hub_state::HubStateStore;
 use kernel::memory::MemoryExport;
 use kernel::memory::MemoryStore;
 use kernel::tidy::TidyStore;
@@ -28,7 +26,6 @@ use memory_sqlite::SqliteStore;
 use thiserror::Error;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use wire::gateway::hub_state::HubState;
 
 #[derive(Debug, Error)]
 pub enum ComposeError {
@@ -36,8 +33,6 @@ pub enum ComposeError {
     Config(#[from] config::ConfigError),
     #[error(transparent)]
     Node(#[from] crate::NodeError),
-    #[error(transparent)]
-    Voice(#[from] gateway::VoiceConfigError),
     #[error(transparent)]
     Settings(#[from] gateway::SettingsError),
     #[error("gateway composition I/O failed: {0}")]
@@ -60,27 +55,6 @@ pub enum ComposeError {
     Memory(#[from] memory_postgres::Error),
     #[error(transparent)]
     Account(#[from] gateway::account::AccountError),
-}
-
-pub async fn agent_presets(
-    memory: &PostgresMemory,
-) -> Result<Option<Arc<dyn AgentPresetStore>>, ComposeError> {
-    Ok(memory
-        .agent_presets()
-        .await?
-        .map(|store| Arc::new(store) as Arc<dyn AgentPresetStore>))
-}
-
-pub async fn hub_state(
-    memory: &PostgresMemory,
-) -> Result<Option<Arc<dyn HubStateStore<HubState>>>, ComposeError> {
-    let store = memory.hub_state().await?;
-    if store.is_none() {
-        tracing::warn!(
-            "rh_hub_state is missing on the memory database; hub state stays on this node until `rh db migrate` runs"
-        );
-    }
-    Ok(store.map(|store| Arc::new(store) as Arc<dyn HubStateStore<HubState>>))
 }
 
 #[expect(
@@ -107,8 +81,6 @@ fn gateway_settings(config: &Config, env: &Environment) -> Result<gateway::Setti
 
 #[derive(Default)]
 struct Backing {
-    presets: Option<Arc<dyn AgentPresetStore>>,
-    hub_state: Option<Arc<dyn HubStateStore<HubState>>>,
     export: Option<Arc<dyn MemoryExport>>,
     topics: Option<(Arc<dyn TopicStore>, Arc<dyn FilingStore>)>,
     decisions: Option<Arc<dyn DecisionStore>>,
@@ -128,14 +100,6 @@ struct Backing {
 }
 
 fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
-    let gateway = match backing.presets.clone() {
-        Some(presets) => gateway.with_agent_presets(presets),
-        None => gateway,
-    };
-    let gateway = match backing.hub_state.clone() {
-        Some(store) => gateway.with_hub_state(store),
-        None => gateway,
-    };
     let gateway = match backing.export.clone() {
         Some(export) => gateway.with_memory_export(export),
         None => gateway,
@@ -271,8 +235,6 @@ impl Composition {
             ComposeError::Invalid("no Postgres URL for the memory database".into())
         })?;
         let backing = Backing {
-            presets: agent_presets(memory).await?,
-            hub_state: hub_state(memory).await?,
             export: Some(Arc::new(MemoryExporter::postgres(Arc::clone(memory), url))),
             topics: Some((memory.clone(), memory.clone())),
             decisions: Some(memory.clone()),
@@ -310,8 +272,6 @@ impl Composition {
         activities: &kernel::shutdown::Activities,
     ) -> Result<Self, ComposeError> {
         let backing = Backing {
-            presets: None,
-            hub_state: None,
             export: Some(Arc::new(MemoryExporter::sqlite(Arc::clone(store)))),
             topics: Some((store.clone(), store.clone())),
             decisions: Some(store.clone()),
@@ -378,7 +338,6 @@ impl Composition {
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
             .with_sessions(sessions);
-        gateway = crate::service::with_voice(gateway, env)?;
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         let tracker = tokio_util::task::TaskTracker::new();
         gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;

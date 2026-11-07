@@ -82,7 +82,6 @@ pub(crate) fn redirect_settings(static_dir: &Path, scratch: &Path) -> Result<Set
     std::fs::create_dir_all(&shared).map_err(|error| format!("shared: {error}"))?;
     let mut settings = static_settings(static_dir);
     settings.root_redirect = Some("/wiki".to_owned());
-    settings.shared_dir = shared;
     settings.state_dir = scratch.join("state");
     Ok(settings)
 }
@@ -92,7 +91,6 @@ pub(crate) fn nostatic_settings(scratch: &Path) -> Result<Settings, String> {
     std::fs::create_dir_all(&shared).map_err(|error| format!("shared: {error}"))?;
     let mut settings = common::settings();
     settings.static_dir = None;
-    settings.shared_dir = shared;
     settings.state_dir = scratch.join("state");
     Ok(settings)
 }

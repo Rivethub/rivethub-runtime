@@ -47,7 +47,6 @@ pub enum ContextUsageSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged, try_from = "crate::JsonObject")]
 pub enum SessionBroadcast {
-    HubState(crate::gateway::hub_state::HubStateChanged),
     PluginChanged(crate::plugin::host::PluginChangedNotice),
     PluginViews(crate::plugin::host::PluginViewsNotice),
     TopicChanged(crate::gateway::topics::TopicChangedNotice),
@@ -55,8 +54,6 @@ pub enum SessionBroadcast {
 
 #[derive(Deserialize)]
 enum BroadcastKind {
-    #[serde(rename = "hub.state")]
-    HubState,
     #[serde(rename = "plugin.changed")]
     PluginChanged,
     #[serde(rename = "plugin.views")]
@@ -77,7 +74,6 @@ impl TryFrom<crate::JsonObject> for SessionBroadcast {
     fn try_from(frame: crate::JsonObject) -> Result<Self, Self::Error> {
         let BroadcastTag { kind } = frame.deserialize()?;
         match kind {
-            BroadcastKind::HubState => frame.deserialize().map(Self::HubState),
             BroadcastKind::PluginChanged => frame.deserialize().map(Self::PluginChanged),
             BroadcastKind::PluginViews => frame.deserialize().map(Self::PluginViews),
             BroadcastKind::TopicChanged => frame.deserialize().map(Self::TopicChanged),

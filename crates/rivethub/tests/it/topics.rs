@@ -11,7 +11,6 @@ mod tidy;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -48,14 +47,9 @@ fn settings(root: &Path) -> Settings {
         node: "node-a".to_owned(),
         allowed_origins: Vec::new(),
         allowed_hosts: Vec::new(),
-        files_root: None,
         static_dir: None,
         root_redirect: None,
         state_dir: root.join("state"),
-        directory_root: root.join("agents"),
-        shared_dir: root.join("shared"),
-        allowed_harnesses: None,
-        probe_timeout: Duration::from_millis(200),
         private_ca: None,
     }
 }
