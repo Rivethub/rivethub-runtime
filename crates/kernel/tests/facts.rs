@@ -124,7 +124,10 @@ fn a_newer_source_a_day_later_supersedes_and_keeps_the_previous_value() -> TestR
 #[test]
 fn agreeing_sources_support_the_value_from_its_first_claim() -> TestResult {
     let os = Key::new("os")?;
-    let claims = [os.writer("Arch", 1, 0)?, os.writer("Arch", 2, 30)?];
+    let claims = [
+        os.writer("Debian 12", 1, 0)?,
+        os.writer("Debian 12", 2, 30)?,
+    ];
     let state = only(&claims, None);
     assert_eq!(state.since, hours(0));
     let supporting: Vec<&SessionId> = state.sources.iter().map(|source| &source.session).collect();
@@ -135,17 +138,17 @@ fn agreeing_sources_support_the_value_from_its_first_claim() -> TestResult {
 #[test]
 fn two_sessions_disagreeing_within_a_day_are_a_conflict() -> TestResult {
     let ip = Key::new("address")?;
-    let claims = [ip.writer("10.0.0.4", 1, 0)?, ip.writer("10.0.0.9", 2, 3)?];
+    let claims = [ip.writer("192.0.2.4", 1, 0)?, ip.writer("192.0.2.9", 2, 3)?];
     let state = only(&claims, None);
-    assert_eq!(state.value.as_str(), "10.0.0.9");
-    assert_eq!(values(&state), ["10.0.0.9", "10.0.0.4"]);
+    assert_eq!(state.value.as_str(), "192.0.2.9");
+    assert_eq!(values(&state), ["192.0.2.9", "192.0.2.4"]);
     Ok(())
 }
 
 #[test]
 fn one_session_correcting_itself_is_no_conflict() -> TestResult {
     let ip = Key::new("address")?;
-    let claims = [ip.writer("10.0.0.4", 1, 0)?, ip.writer("10.0.0.9", 1, 3)?];
+    let claims = [ip.writer("192.0.2.4", 1, 0)?, ip.writer("192.0.2.9", 1, 3)?];
     assert_eq!(only(&claims, None).candidates.len(), 0);
     Ok(())
 }
@@ -154,27 +157,27 @@ fn one_session_correcting_itself_is_no_conflict() -> TestResult {
 fn your_edit_resolves_a_conflict_and_later_sources_supersede_it_unless_pinned() -> TestResult {
     let ip = Key::new("address")?;
     let mut claims = vec![
-        ip.writer("10.0.0.4", 1, 0)?,
-        ip.writer("10.0.0.9", 2, 3)?,
-        ip.you("10.0.0.9", false, 4)?,
+        ip.writer("192.0.2.4", 1, 0)?,
+        ip.writer("192.0.2.9", 2, 3)?,
+        ip.you("192.0.2.9", false, 4)?,
     ];
     let state = only(&claims, None);
     assert!(state.candidates.is_empty(), "resolved");
     assert!(!state.pinned);
-    claims.push(ip.writer("10.0.0.12", 3, 60)?);
-    assert_eq!(only(&claims, None).value.as_str(), "10.0.0.12");
-    claims.push(ip.you("10.0.0.9", true, 61)?);
-    claims.push(ip.writer("10.0.0.12", 4, 90)?);
+    claims.push(ip.writer("192.0.2.12", 3, 60)?);
+    assert_eq!(only(&claims, None).value.as_str(), "192.0.2.12");
+    claims.push(ip.you("192.0.2.9", true, 61)?);
+    claims.push(ip.writer("192.0.2.12", 4, 90)?);
     let pinned = only(&claims, None);
     assert_eq!(
         pinned.value.as_str(),
-        "10.0.0.9",
+        "192.0.2.9",
         "the writer never overwrites a pin"
     );
     assert!(pinned.pinned);
     assert_eq!(
         values(&pinned),
-        ["10.0.0.12"],
+        ["192.0.2.12"],
         "it adds a candidate instead"
     );
     Ok(())
@@ -215,10 +218,10 @@ fn as_of_shows_the_state_as_it_stood() -> TestResult {
 fn the_timeline_lists_changes_pins_and_conflicts_newest_first() -> TestResult {
     let ip = Key::new("address")?;
     let claims = [
-        ip.writer("10.0.0.4", 1, 0)?,
-        ip.writer("10.0.0.4", 2, 1)?,
-        ip.writer("10.0.0.9", 3, 2)?,
-        ip.you("10.0.0.9", true, 5)?,
+        ip.writer("192.0.2.4", 1, 0)?,
+        ip.writer("192.0.2.4", 2, 1)?,
+        ip.writer("192.0.2.9", 3, 2)?,
+        ip.you("192.0.2.9", true, 5)?,
     ];
     let events: Vec<(DateTime<Utc>, FactChange)> = timeline(&claims, None)
         .into_iter()
@@ -231,27 +234,27 @@ fn the_timeline_lists_changes_pins_and_conflicts_newest_first() -> TestResult {
             (
                 hours(5),
                 FactChange::Pinned {
-                    value: value("10.0.0.9")
+                    value: value("192.0.2.9")
                 }
             ),
             (
                 hours(2),
                 FactChange::Became {
-                    value: value("10.0.0.9"),
+                    value: value("192.0.2.9"),
                     session: Some(session(3)),
                 }
             ),
             (
                 hours(2),
                 FactChange::Disputed {
-                    values: vec![value("10.0.0.9"), value("10.0.0.4")],
+                    values: vec![value("192.0.2.9"), value("192.0.2.4")],
                     session: Some(session(3)),
                 }
             ),
             (
                 hours(0),
                 FactChange::Became {
-                    value: value("10.0.0.4"),
+                    value: value("192.0.2.4"),
                     session: Some(session(1)),
                 }
             ),

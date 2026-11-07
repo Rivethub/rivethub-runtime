@@ -1436,10 +1436,10 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     };
     store
         .assert_facts(&[
-            claim("10.0.0.1", writer(FIRST)?)?,
-            claim("10.0.0.2", writer(SECOND)?)?,
+            claim("192.0.2.1", writer(FIRST)?)?,
+            claim("192.0.2.2", writer(SECOND)?)?,
             claim(
-                "10.0.0.3",
+                "192.0.2.3",
                 Said::You {
                     by: alice.principal().clone(),
                     pinned: true,
@@ -1480,6 +1480,6 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     let read = members.run(bob_store.claims(host.id)).await?;
     let values: Vec<&str> = read.iter().map(|claim| claim.value.as_str()).collect();
     assert_eq!(values.len(), 2);
-    assert!(!values.contains(&"10.0.0.1"), "{values:?}");
+    assert!(!values.contains(&"192.0.2.1"), "{values:?}");
     Ok(())
 }

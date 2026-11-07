@@ -125,7 +125,7 @@ where
     store
         .assert_facts(&[
             writer(&host, "OS", "Ubuntu 22.04", &first, one, 0)?,
-            writer(&host, "address", "10.0.0.4", &first, one, 0)?,
+            writer(&host, "address", "192.0.2.4", &first, one, 0)?,
             writer(&person, "role", "maintainer", &first, one, 0)?,
         ])
         .await?;
@@ -138,17 +138,17 @@ where
         2,
     )?;
     store
-        .assert_facts(&[you(&host, "address", "10.0.0.9", true, 5)?])
+        .assert_facts(&[you(&host, "address", "192.0.2.9", true, 5)?])
         .await?;
     store
-        .assert_facts(&[writer(&host, "address", "10.0.0.12", &second, two, 10)?])
+        .assert_facts(&[writer(&host, "address", "192.0.2.12", &second, two, 10)?])
         .await?;
     let facts = facts_as_of(&store.claims(host.id).await?, None);
     same(
         "the pin holds and the newer source is a candidate",
         shown(&facts),
         vec![
-            ("address", "10.0.0.9", true, vec!["10.0.0.12"]),
+            ("address", "192.0.2.9", true, vec!["192.0.2.12"]),
             ("os", "Ubuntu 22.04 LTS", false, Vec::new()),
         ],
     )?;

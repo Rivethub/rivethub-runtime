@@ -93,11 +93,11 @@ async fn seeded(api: &Api) -> TestResult<TopicRecord> {
     api.store
         .assert_facts(&[
             said(&host, "os", "Ubuntu 22.04", FIRST, 0)?,
-            said(&host, "address", "10.0.0.4", FIRST, 0)?,
+            said(&host, "address", "192.0.2.4", FIRST, 0)?,
             said(&person, "role", "maintainer", FIRST, 0)?,
             said(&host, "os", "Ubuntu 24.04", SECOND, 48)?,
-            said(&host, "address", "10.0.0.9", SECOND, 50)?,
-            said(&host, "address", "10.0.0.12", FIRST, 51)?,
+            said(&host, "address", "192.0.2.9", SECOND, 50)?,
+            said(&host, "address", "192.0.2.12", FIRST, 51)?,
         ])
         .await?;
     Ok(host)
@@ -159,7 +159,7 @@ async fn an_article_shows_facts_sources_conflicts_and_connections() -> TestResul
         .iter()
         .map(|candidate| candidate.value.as_str())
         .collect();
-    assert_eq!(candidates, ["10.0.0.12", "10.0.0.9"]);
+    assert_eq!(candidates, ["192.0.2.12", "192.0.2.9"]);
     let titles: Vec<&str> = address
         .sources
         .iter()
@@ -213,8 +213,8 @@ async fn disputed(api: &Api) -> TestResult<(TopicRecord, String)> {
     let host = entity(api, "web01", "Hosts").await?;
     api.store
         .assert_facts(&[
-            said(&host, "address", "10.0.0.4", FIRST, 0)?,
-            said(&host, "address", "10.0.0.9", SECOND, 1)?,
+            said(&host, "address", "192.0.2.4", FIRST, 0)?,
+            said(&host, "address", "192.0.2.9", SECOND, 1)?,
         ])
         .await?;
     let path = format!("/api/entities/{}/facts", host.id);
@@ -229,19 +229,19 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
         .json(
             "PUT",
             &path,
-            r#"{"key":"Address","value":"10.0.0.9","pinned":true}"#,
+            r#"{"key":"Address","value":"192.0.2.9","pinned":true}"#,
             StatusCode::OK,
         )
         .await?;
     assert_eq!(
         (pinned.key.as_str(), pinned.value.as_str(), pinned.pinned),
-        ("address", "10.0.0.9", true)
+        ("address", "192.0.2.9", true)
     );
     assert!(pinned.conflict.is_none(), "your fact resolves the conflict");
     api.store
         .assert_facts(&[NewClaim {
             at: Utc::now() + TimeDelta::hours(1),
-            ..said(&host, "address", "10.0.0.77", FIRST, 0)?
+            ..said(&host, "address", "192.0.2.77", FIRST, 0)?
         }])
         .await?;
     let shown: EntityArticle = api
@@ -254,7 +254,7 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
         .await?;
     let address = fact(&shown, "address")?;
     assert_eq!(
-        address.value, "10.0.0.9",
+        address.value, "192.0.2.9",
         "the writer never overwrites a pin"
     );
     assert_eq!(
@@ -269,7 +269,7 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
             "PUT",
             &path,
             &format!(
-                r#"{{"id":"{}","key":"address","value":"10.0.0.77","pinned":false}}"#,
+                r#"{{"id":"{}","key":"address","value":"192.0.2.77","pinned":false}}"#,
                 address.id
             ),
             StatusCode::OK,
@@ -296,7 +296,7 @@ async fn a_fact_edit_names_a_fact_of_its_entity_and_needs_a_value() -> TestResul
         .await?;
     let address = fact(&shown, "address")?;
     let other_key = format!(
-        r#"{{"id":"{}","key":"os","value":"Arch","pinned":false}}"#,
+        r#"{{"id":"{}","key":"os","value":"Debian 12","pinned":false}}"#,
         address.id
     );
     assert_eq!(
@@ -304,7 +304,7 @@ async fn a_fact_edit_names_a_fact_of_its_entity_and_needs_a_value() -> TestResul
         StatusCode::CONFLICT
     );
     let unknown = format!(
-        r#"{{"id":"{}","key":"os","value":"Arch","pinned":false}}"#,
+        r#"{{"id":"{}","key":"os","value":"Debian 12","pinned":false}}"#,
         Uuid::new_v4()
     );
     assert_eq!(
