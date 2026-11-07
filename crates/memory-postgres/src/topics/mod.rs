@@ -182,7 +182,7 @@ impl TopicStore for PostgresMemory {
                 let topic = rows::topic(row.topic, own)?;
                 Ok(TopicListing {
                     topic,
-                    session_count: u64::try_from(row.session_count).map_err(|source| {
+                    session_count: u64::try_from(row.placed_sessions).map_err(|source| {
                         TopicError::Unavailable(Box::new(crate::Error::Integer(source)))
                     })?,
                     last_active: row.last_active,

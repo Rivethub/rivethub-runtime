@@ -187,20 +187,17 @@ async fn the_detail_adds_cwd_and_a_resume_command() {
         Some("claude --resume solo")
     );
     assert_eq!(detail.row.message_count, 4);
-    let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(
-        json.pointer("/memoryState"),
-        Some(&serde_json::json!("summarized"))
+        detail.row.memory_state,
+        wire::gateway::session_catalog::SessionMemoryState::Summarized
     );
+    let path = detail.row.topic.map(|topic| topic.path);
     assert_eq!(
-        json.pointer("/topic/path/1"),
-        Some(&serde_json::json!("Deploys"))
+        path,
+        Some(vec!["Platform".to_owned(), "Deploys".to_owned()])
     );
-    assert_eq!(
-        json.pointer("/visibility"),
-        Some(&serde_json::json!("private"))
-    );
-    assert_eq!(json.pointer("/changed"), Some(&serde_json::json!([])));
+    assert_eq!(detail.row.visibility, "private");
+    assert_eq!(detail.changed.len(), 0);
     let (status, _) = call(&setup, "GET", "/api/sessions/bm90aGVyZQ").await;
     assert_eq!(status, 400);
 }

@@ -10649,6 +10649,17 @@
       ],
       "type": "object"
     },
+    "SessionChange": {
+      "properties": {
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "type": "object"
+    },
     "SessionClientKind": {
       "enum": [
         "watch",
@@ -10758,7 +10769,9 @@
     "SessionDetail": {
       "properties": {
         "changed": {
-          "items": true,
+          "items": {
+            "$ref": "#/$defs/SessionChange"
+          },
           "type": "array"
         },
         "childCount": {
@@ -10783,7 +10796,9 @@
           ]
         },
         "entities": {
-          "items": true,
+          "items": {
+            "$ref": "#/$defs/SessionEntity"
+          },
           "type": "array"
         },
         "gist": {
@@ -10830,7 +10845,9 @@
           "type": "string"
         },
         "tags": {
-          "items": true,
+          "items": {
+            "$ref": "#/$defs/SessionTag"
+          },
           "type": "array"
         },
         "title": {
@@ -10875,6 +10892,21 @@
         "terminal"
       ],
       "type": "string"
+    },
+    "SessionEntity": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
     },
     "SessionHarness": {
       "type": "string"
@@ -11389,6 +11421,25 @@
       "required": [
         "model",
         "effort"
+      ],
+      "type": "object"
+    },
+    "SessionTag": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "state"
       ],
       "type": "object"
     },

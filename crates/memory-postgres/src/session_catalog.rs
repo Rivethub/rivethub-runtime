@@ -165,15 +165,6 @@ impl Row {
     }
 }
 
-const fn view_name(view: SessionView) -> &'static str {
-    match view {
-        SessionView::All => "all",
-        SessionView::Unfiled => "unfiled",
-        SessionView::Kept => "kept",
-        SessionView::Trash => "trash",
-    }
-}
-
 fn harnesses(only: Option<HarnessId>) -> Vec<String> {
     match only {
         Some(harness) => vec![harness.to_string()],
@@ -228,7 +219,7 @@ impl PostgresMemory {
             .bind(harnesses(select.harness))
             .bind(select.key)
             .bind(select.exclude)
-            .bind(select.view.map(view_name))
+            .bind(select.view.map(|view| view.to_string()))
             .bind(select.topic.map(TopicId::uuid))
             .bind(select.text)
             .bind(select.after.map(|cursor| cursor.started_at))

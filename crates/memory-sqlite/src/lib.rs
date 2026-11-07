@@ -21,6 +21,7 @@ mod read;
 mod reembed;
 mod search;
 mod session_catalog;
+mod session_marks;
 pub use search::embed::QueryEmbed;
 mod stats;
 mod summary_dag;

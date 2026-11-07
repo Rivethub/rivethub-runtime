@@ -85,11 +85,11 @@ async fn summarize(
     Ok(())
 }
 
-async fn flag(pool: &PgPool, key: &str, payload: serde_json::Value) -> Result<(), sqlx::Error> {
+async fn flag(pool: &PgPool, key: &str, payload: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO rh_flagged_jobs (task, job_key, payload, priority, max_attempts, failures,
                                       last_error, first_failed_at, last_failed_at, flagged_at)
-         VALUES ('embed-target', $1, $2, 0, 5, 5, 'boom', now(), now(), now())",
+         VALUES ('embed-target', $1, $2::jsonb, 0, 5, 5, 'boom', now(), now(), now())",
     )
     .bind(key)
     .bind(payload)
@@ -135,7 +135,7 @@ async fn memory_state_follows_summaries_and_open_flagged_jobs(pool: PgPool) -> T
     flag(
         &pool,
         "gamma-conversation",
-        serde_json::json!({ "conversationId": gamma.to_string() }),
+        &format!(r#"{{"conversationId":"{gamma}"}}"#),
     )
     .await?;
     assert_eq!(state(&memory, &seeded.gamma).await?, MemoryState::Flagged);
@@ -148,7 +148,7 @@ async fn memory_state_follows_summaries_and_open_flagged_jobs(pool: PgPool) -> T
     flag(
         &pool,
         "delta-message",
-        serde_json::json!({ "targetTable": "ros_messages", "targetId": message.to_string() }),
+        &format!(r#"{{"targetTable":"ros_messages","targetId":"{message}"}}"#),
     )
     .await?;
     assert_eq!(state(&memory, &seeded.delta).await?, MemoryState::Flagged);
@@ -164,7 +164,10 @@ async fn memory_state_follows_summaries_and_open_flagged_jobs(pool: PgPool) -> T
     flag(
         &pool,
         "beta-flag",
-        serde_json::json!({ "conversationId": conversation(&pool, &seeded.beta).await?.to_string() }),
+        &format!(
+            r#"{{"conversationId":"{}"}}"#,
+            conversation(&pool, &seeded.beta).await?
+        ),
     )
     .await?;
     assert_eq!(

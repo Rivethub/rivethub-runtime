@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::str::FromStr as _;
 use std::sync::Arc;
 
 use axum::Json;
@@ -50,7 +49,7 @@ impl ViewParam {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ListParams {
     view: Option<ViewParam>,
-    harness: Option<String>,
+    harness: Option<HarnessId>,
     topic: Option<String>,
     text: Option<String>,
     cursor: Option<String>,
@@ -60,7 +59,7 @@ pub(super) struct ListParams {
 
 #[derive(Debug, Default)]
 struct Lineage {
-    parents: BTreeMap<String, String>,
+    parents: BTreeMap<String, SessionId>,
     children: BTreeMap<String, u64>,
 }
 
@@ -74,8 +73,8 @@ async fn lineage(gateway: &Gateway) -> Lineage {
             continue;
         };
         let child = SessionId::new(row.harness, &row.id).to_string();
-        let parent = SessionId::new(row.harness, parent).to_string();
-        *lineage.children.entry(parent.clone()).or_default() += 1;
+        let parent = SessionId::new(row.harness, parent);
+        *lineage.children.entry(parent.to_string()).or_default() += 1;
         lineage.parents.insert(child, parent);
     }
     lineage
@@ -109,14 +108,7 @@ async fn query(
     lineage: &Lineage,
 ) -> Result<SessionQuery, ApiError> {
     let mut query = SessionQuery::new(params.view.unwrap_or_default().get());
-    query.harness = params
-        .harness
-        .filter(|text| !text.is_empty())
-        .map(|text| {
-            HarnessId::from_str(&text)
-                .map_err(|_| ApiError::BadRequest(format!("unknown harness: {text}")))
-        })
-        .transpose()?;
+    query.harness = params.harness;
     if let Some(key) = params.topic.filter(|text| !text.is_empty()) {
         let topics = gateway.topics()?;
         query.topic = Some(crate::routes::topics::resolve_id(topics.as_ref(), &key).await?);
@@ -143,10 +135,7 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
 
 fn row(record: SessionRecord, visibility: String, lineage: &Lineage) -> SessionSummaryRow {
     let key = record.id.to_string();
-    let parent_id = lineage
-        .parents
-        .get(&key)
-        .and_then(|parent| parent.parse::<SessionId>().ok());
+    let parent_id = lineage.parents.get(&key).cloned();
     let child_count = lineage
         .children
         .get(&key)

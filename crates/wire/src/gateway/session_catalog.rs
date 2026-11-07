@@ -56,7 +56,28 @@ pub struct SessionDetail {
     pub row: SessionSummaryRow,
     pub cwd: Option<String>,
     pub resume_command: Option<String>,
-    pub changed: Vec<serde_json::Value>,
-    pub entities: Vec<serde_json::Value>,
-    pub tags: Vec<serde_json::Value>,
+    pub changed: Vec<SessionChange>,
+    pub entities: Vec<SessionEntity>,
+    pub tags: Vec<SessionTag>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionChange {
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEntity {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTag {
+    pub key: String,
+    pub value: String,
+    pub state: String,
 }

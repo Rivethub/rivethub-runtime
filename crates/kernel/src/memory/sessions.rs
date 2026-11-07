@@ -12,7 +12,8 @@ pub const SESSION_PAGE_DEFAULT: u32 = 50;
 pub const SESSION_PAGE_MAX: u32 = 200;
 const SESSION_SNIPPET_CHARS: usize = 240;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, strum::Display)]
+#[strum(serialize_all = "lowercase")]
 pub enum SessionView {
     #[default]
     All,

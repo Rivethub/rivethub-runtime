@@ -50,7 +50,7 @@ pub(super) const LISTING: &str =
        (SELECT count(*) FROM rh_session_placements p
          WHERE p.topic_id = t.id
            AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id))
-         AS session_count,
+         AS placed_sessions,
        (SELECT max(c.updated_at)
           FROM rh_session_placements p
           JOIN rh_conversations c ON c.session_key = p.session_id
@@ -76,7 +76,7 @@ pub(super) const PLACED: &str =
 pub(super) struct ListingRow {
     #[sqlx(flatten)]
     pub(super) topic: TopicRow,
-    pub(super) session_count: i64,
+    pub(super) placed_sessions: i64,
     pub(super) last_active: Option<DateTime<Utc>>,
 }
 
