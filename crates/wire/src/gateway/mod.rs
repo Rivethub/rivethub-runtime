@@ -1,3 +1,4 @@
+pub mod account;
 pub mod agents;
 pub mod catalog;
 pub mod devices;

@@ -1621,6 +1621,40 @@ for a patch with a `type`; each becomes a writer claim on the patch's entity, so
 (a held candidate's facts to its session, once the entity exists); a fact without a usable key or value is
 dropped, a later fact of the same key in one patch wins, and a summary whose session is not a canonical id writes none. Postgres migration 0058 and SQLite schema v32 add
 the tables.
+(NEW-account) Account, updates, privacy and hubs (proposed 2026-11-07): the standalone app's Settings page, Welcome
+screen and hub switcher read the node's account and hubs. Routes (B1, new, no TypeScript recording; bodies are the
+`wire::gateway::account` types, which match the RivetHub web contracts `Account` and `Hub`): `GET /api/account` answers
+`Account` (`email` only when signed in, `updateSource`, `channel` `stable` or `beta`, `autoDownload`, `version`,
+`pendingUpdate` `{version, notesUrl}` when a background check found a newer signed release, `crashReports`,
+`usageCounts`); `PATCH /api/account` takes any of `updateSource`, `channel`, `autoDownload`, `crashReports` and
+`usageCounts` (an unknown key is `400`) and answers `Account`; `POST /api/account/signin` with `{email}` starts the
+rivethub.cloud email sign-in and answers `{requestId}` (`409` while already signed in); `POST /api/account/signin/poll` answers `{status: "pending"}` or
+`{status: "signed-in", account}`, `409` with no sign-in started and `410` when the link expired; `POST
+/api/account/signout` revokes the install token at the cloud (a cloud failure is logged, the token is deleted here
+either way) and answers `Account`; `DELETE /api/account` deletes the cloud account first (a cloud failure is `502` and
+keeps the sign-in) and then signs out. Every account route answers only the node's owner on a loopback connection
+(`403` otherwise), checked before the body is read. `GET /api/hubs` answers `Hub[]` to any authenticated caller: the
+serving node first (`id` `this-node`, `kind` `local`, `current: true`), then each `hubs:` entry of config.yaml (`name`,
+`url`, `kind` `team` (default) or `local`; `id` is the name folded to lowercase words joined by `-`), `online` from a
+`GET <url>/healthz` probe with a 1.5 s timeout cached for 15 s, trusting the system roots and the mesh CA. State: the
+node's state directory holds `account/install.json` (mode 0600, folder 0700): a random UUID v4 install id, the privacy
+and update settings (`crashReports`, `usageCounts` and `autoDownload` default on, `channel` stable), the sign-in state
+and the install token. The token is never part of a response. `updateSource` is `github` while signed out, and the saved
+choice (default `rivethub-cloud`) once signed in. Telemetry: `rh gateway`, `rh local`, `rh worker` and `rh mcp` install
+a panic hook that, with crash reports on, writes a crash report under `account/crashes/` (at most 20 waiting). The
+report carries the schema version, install id, rh version, OS, job, `panic`, the panic site as `<crate>::<module>:<line>`
+and up to 40 backtrace frames as demangled symbols with their line numbers; the panic message, file paths, hostnames,
+user names and memory text are never read into it, and a frame that holds a path separator is dropped. The gateway
+sends waiting reports to `POST /v1/telemetry/crash` every ten minutes (the first 20 s after start) and deletes each
+once the cloud answers `202` or `422`, or at once while crash reports are off. With usage counts on it keeps the day's
+counts of searches and app opens in `install.json` and sends them to `POST /v1/telemetry/usage` once the day is over.
+`telemetry: {disabled: true}` in config.yaml is the hub's policy: no hook, nothing sent, both settings read `false` and
+turning either on is `409`. Updates: while signed in with `updateSource` `rivethub-cloud`, the gateway asks
+`GET /v1/updates/latest?channel=&os=` at start and every six hours; a newer version whose signature verifies becomes
+`pendingUpdate`, and with `autoDownload` the archive is downloaded, checked against the signed SHA-256 and kept under
+`account/updates/` for `rh update`. A `401` from the cloud signs this install out. The release signature is Ed25519 over the 32 raw bytes of the archive's SHA-256,
+standard base64; the public key is compiled in and `cloud.update_key` (standard base64 of the 32-byte key) replaces it.
+`cloud.url` (default `https://rivethub.cloud/`) is the cloud's base URL. No table is added.
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

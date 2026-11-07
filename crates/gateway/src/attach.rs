@@ -201,4 +201,24 @@ impl Gateway {
     pub(crate) fn memory_export(&self) -> Option<&Arc<dyn kernel::memory::MemoryExport>> {
         self.memory_export.as_ref()
     }
+
+    #[must_use]
+    pub fn with_account(mut self, account: Arc<crate::account::AccountService>) -> Self {
+        self.account = Some(account);
+        self
+    }
+
+    pub(crate) fn account(
+        &self,
+    ) -> Result<&Arc<crate::account::AccountService>, crate::error::ApiError> {
+        self.account
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("account unavailable".into()))
+    }
+
+    pub(crate) fn count(&self, event: crate::account::UsageEvent) {
+        if let Some(account) = &self.account {
+            account.count(event);
+        }
+    }
 }

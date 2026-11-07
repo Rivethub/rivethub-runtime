@@ -95,6 +95,7 @@ async fn root_get(State(gateway): State<Arc<Gateway>>) -> Response {
     if let Some(target) = gateway.settings().root_redirect.clone() {
         return redirect(&target).into_response();
     }
+    gateway.count(crate::account::UsageEvent::AppOpen);
     assets::serve(&gateway, &Method::GET, "/")
         .await
         .into_response()

@@ -658,6 +658,7 @@ name = "cli"
 version = "0.7.0"
 dependencies = [
  "async-trait",
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "capture",
@@ -784,6 +785,7 @@ dependencies = [
  "similar-asserts",
  "strum 0.27.2",
  "thiserror 2.0.21",
+ "url",
  "wire",
 ]
 
@@ -1504,7 +1506,9 @@ name = "gateway"
 version = "0.7.0"
 dependencies = [
  "async-trait",
+ "aws-lc-rs",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "config",
@@ -1528,10 +1532,12 @@ dependencies = [
  "reqwest",
  "rustls",
  "schemars 1.2.3",
+ "semver",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
+ "serde_with",
  "serde_yaml_ng",
  "sha2 0.10.9",
  "similar-asserts",

@@ -19,7 +19,7 @@ the existing service startup codes. Every visible command:
 | `rh worker` | `--role embedder\|summarizer\|categorizer\|wiki-builder\|all [--check] [-c, --config FILE]` | Run a memory worker for one role |
 | `rh mcp` | `[--check] [-c, --config FILE]` | Run the MCP sidecar |
 | `rh local` | `[--port N] [--no-lan] [--ensure [--wait SECONDS]]` | Run a standalone node on SQLite, or start one in the background with `--ensure` |
-| `rh update` | `[--channel stable\|beta\|nightly] [--version TAG] [--no-restart] [--mesh] [--ssh-user USER]` | Update this node or the mesh |
+| `rh update` | `[--channel stable\|beta\|nightly] [--source rivethub-cloud\|github] [--version TAG] [--no-restart] [--mesh] [--ssh-user USER]` | Update this node or the mesh |
 | `rh db migrate` | `[-c, --config FILE] [--url URL \| --path FILE]` | Apply database migrations |
 | `rh db status` | `[-c, --config FILE] [--url URL \| --path FILE]` | Report schema status read-only |
 | `rh service init` | | Write the systemd unit (system unit as root, user unit otherwise) |
@@ -120,7 +120,7 @@ real binary dispatch, the compatibility alias, the existing gateway's health rou
 PID files and symlink boundaries, real signal delivery, and read-only doctor checks against both backends. Schema
 tests assert unchanged database state. Timing tests await events with deadlines.
 
-`rh update [--channel stable|beta|nightly] [--version TAG] [--no-restart] [--mesh] [--ssh-user USER]`
+`rh update [--channel stable|beta|nightly] [--source rivethub-cloud|github] [--version TAG] [--no-restart] [--mesh] [--ssh-user USER]`
 updates Linux x86_64 and aarch64 and macOS installations. Stable is the default and resolves the latest published
 stable GitHub release, or the exact tag supplied with `--version`; it refuses prereleases. Beta resolves the highest
 semantic version among published releases, prereleases included, or the exact tag supplied with `--version`. The
@@ -148,6 +148,21 @@ Every merge to `main` tags the next patch version (one past the highest `vX.Y.Z`
 if that is higher) and publishes it as a beta prerelease with all three archives. The Promote workflow turns a beta into
 the latest stable release without rebuilding. A pushed `v<version>` tag must match the workspace package version and
 publishes that release. Published archives are never rebuilt or replaced, so a pinned URL and SHA-256 stay valid.
+
+Stable and beta come from one of two sources. Without `--source`, the updater uses the install's update source:
+`rivethub-cloud` once this install is signed in to rivethub.cloud (Settings, Account, updates and privacy), unless
+the owner chose `github` there, and `github` while it is signed out. `--source` overrides that choice for one run.
+The `github` source is the release flow above. The `rivethub-cloud` source asks
+`GET <cloud.url>/v1/updates/latest?channel=<channel>&os=<os>` with the install token from
+`<state>/account/install.json`, where `<os>` is `linux-x86_64`, `linux-aarch64`, `macos-x86_64` or `macos-aarch64`.
+It verifies the manifest's Ed25519 signature over the raw SHA-256 of the archive before it downloads anything, and
+then checks the archive against that SHA-256. Only then does it unpack `rh` and `rivethub-migrate`, migrate, swap and
+restart as above. An archive the gateway already downloaded and verified under `<state>/account/updates/` is reused
+after the same SHA-256 check. The release public key is compiled in. `cloud.update_key` in config.yaml (standard
+base64 of the 32-byte key) replaces it, and `cloud.url` (default `https://rivethub.cloud/`) names the cloud. The cloud
+source installs the latest release of the channel, so `--version` with it is refused. A signed-out install, a missing
+release, a signature or checksum failure exits 1 and leaves the installed executables untouched. Nightly ignores the
+source.
 
 Nightly requires `RIVETHUB_INSTALL_ROOT` to name an absolute, clean source checkout on `main`. The deprecated
 install-root alias remains in `config` and emits its existing warning. The updater runs

@@ -1,3 +1,4 @@
+mod account;
 mod devices;
 pub(crate) mod identities;
 mod mesh;
@@ -78,6 +79,8 @@ pub enum ComposeError {
     Plugins(#[from] gateway::plugins::HostError),
     #[error(transparent)]
     Memory(#[from] memory_postgres::Error),
+    #[error(transparent)]
+    Account(#[from] gateway::account::AccountError),
 }
 
 pub async fn agent_presets(
@@ -401,6 +404,7 @@ impl Composition {
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         gateway = devices::attach(gateway, config, env, &identity.owner, shutdown).await?;
         let tracker = tokio_util::task::TaskTracker::new();
+        gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
         spool::replay_captures(&tracker, env, shutdown);
         if config.memory_only() {

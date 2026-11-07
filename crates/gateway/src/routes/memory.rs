@@ -198,6 +198,7 @@ async fn search(
         .q
         .filter(|q| !q.is_empty())
         .ok_or_else(|| ApiError::BadRequest("q required".to_owned()))?;
+    gateway.count(crate::account::UsageEvent::Search);
     let scope = params.scope.map_or(MemoryScope::Both, ScopeParam::get);
     let query = SearchQuery {
         since: params.since.map(SinceParam::get),

@@ -3,6 +3,8 @@
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 
+#[path = "update/cloud.rs"]
+mod cloud;
 #[path = "update/source.rs"]
 mod source;
 #[path = "update_support/mod.rs"]

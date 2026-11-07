@@ -1,3 +1,4 @@
+mod account;
 pub mod agents;
 pub mod ca;
 pub mod capture;
@@ -52,6 +53,7 @@ pub(crate) use surface::rewrite_request;
 
 pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
     wiki::router()
+        .merge(account::router())
         .merge(topics::router())
         .merge(entities::router())
         .merge(tidy::router())
@@ -75,6 +77,7 @@ pub(crate) async fn contract_header(
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
     harnesses::mount(files::mount(wiki::router()))
         .merge(voice::router())
+        .merge(account::router())
         .merge(updates::router())
         .nest("/api/agents", agents::router())
         .merge(devices::router())

@@ -197,6 +197,7 @@ pub(crate) fn args() -> UpdateArgs {
         no_restart: false,
         mesh: false,
         ssh_user: None,
+        source: None,
     }
 }
 
@@ -228,7 +229,7 @@ fn archive_name(tag: &str) -> String {
     )
 }
 
-fn archive(published: Published) -> Result<Vec<u8>> {
+pub(crate) fn archive(published: Published) -> Result<Vec<u8>> {
     let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
         Vec::new(),
         flate2::Compression::default(),
