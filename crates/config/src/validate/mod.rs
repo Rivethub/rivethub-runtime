@@ -433,6 +433,9 @@ fn memory_message(rest: &[Segment]) -> Option<String> {
                 "postgres" => Some(format!("Unknown memory.postgres key \"{key}\"")),
                 "sqlite" => Some(format!("Unknown memory.sqlite key \"{key}\"")),
                 "capture" => Some(format!("Unknown memory.capture key \"{key}\"")),
+                "models" => Some(format!(
+                    "Unknown memory.models key \"{key}\" — supported: default, summarizer, categorizer, wiki_writer, embedder"
+                )),
                 _ => None,
             }
         }
@@ -440,6 +443,9 @@ fn memory_message(rest: &[Segment]) -> Option<String> {
             if parent == "postgres" && grand == "embedded" =>
         {
             Some(format!("Unknown memory.postgres.embedded key \"{key}\""))
+        }
+        [Segment::Key(parent), Segment::Key(role), Segment::Key(key)] if parent == "models" => {
+            Some(format!("Unknown memory.models.{role} key \"{key}\""))
         }
         [Segment::Key(parent), Segment::Key(grand), Segment::Key(key)]
             if parent == "capture" && grand == "redaction" =>
@@ -527,6 +533,9 @@ fn cross_references(config: &Config, out: &mut ValidationResult) {
     }
     if let Some(memory) = &config.memory {
         memory::embed_provider_references(out, memory, config.providers.as_ref());
+        if let Some(models) = &memory.models {
+            memory::model_references(out, models, config.providers.as_ref());
+        }
     }
 }
 

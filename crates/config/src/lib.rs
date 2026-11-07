@@ -1,6 +1,7 @@
 pub mod enums;
 mod environment;
 mod load;
+pub mod memory_models;
 pub mod model;
 mod node_name;
 pub mod paths;
@@ -23,6 +24,9 @@ pub use environment::{
 pub use load::{
     ConfigError, Loaded, Typed, resolve_config_path, standalone_config_yaml, type_document,
     validate_document,
+};
+pub use memory_models::{
+    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
 };
 pub use model::{Config, HarnessSlot, RedactionSettings};
 pub use node_name::resolve as resolve_node_name;

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use config::provider::{ProviderBody, ProviderSlot};
-use config::{Config, Environment, MemoryBackend};
+use config::{Config, EmbedderChoice, Environment, ModelChoice, ModelsError, ResolvedModels};
 use harness_acp::{HeadlessLaunch, Retry, Supervisor};
 use kernel::harness::HarnessAdapter;
 use kernel::model::{ModelProvider, ProviderHealth};
@@ -71,6 +71,37 @@ pub struct ModelBinding {
     pub embeddings: bool,
 }
 
+struct EmbedExtras {
+    api_key: Option<String>,
+    expected_dims: Option<u32>,
+    timeout_ms: Option<u64>,
+    query_instruction: Option<String>,
+}
+
+impl EmbedExtras {
+    fn of(config: &Config) -> Self {
+        let memory = config.memory.as_ref();
+        if config.sqlite_selected() {
+            let section = memory.and_then(|memory| memory.sqlite.as_ref());
+            Self {
+                api_key: section.and_then(|section| section.embed_api_key.clone()),
+                expected_dims: None,
+                timeout_ms: None,
+                query_instruction: None,
+            }
+        } else {
+            let section = memory.and_then(|memory| memory.postgres.as_ref());
+            Self {
+                api_key: section.and_then(|section| section.embed_api_key.clone()),
+                expected_dims: section.and_then(|section| section.embed_expected_dims),
+                timeout_ms: section.and_then(|section| section.embed_timeout_ms),
+                query_instruction: section
+                    .and_then(|section| section.embed_query_instruction.clone()),
+            }
+        }
+    }
+}
+
 impl ModelFactory {
     fn with_embedding(env: &Environment) -> Self {
         Self {
@@ -81,68 +112,67 @@ impl ModelFactory {
     }
 
     fn embedder(&self, config: &Config) -> Result<Option<providers::embed::Embedder>, ModelError> {
-        let Some(memory) = &config.memory else {
-            return Ok(None);
+        self.derived_embedder(config)
+            .map(|choice| Self::embedder_for(config, &choice).map(|(embedder, _)| embedder))
+            .transpose()
+    }
+
+    fn derived_embedder(&self, config: &Config) -> Option<EmbedderChoice> {
+        config.derived_embedder(self.embed_endpoint.clone(), self.embed_model.clone())
+    }
+
+    pub fn resolve_models(&self, config: &Config) -> Result<ResolvedModels, ModelsError> {
+        config.memory_models_from(self.embed_endpoint.clone(), self.embed_model.clone())
+    }
+
+    fn embedder_for(
+        config: &Config,
+        choice: &EmbedderChoice,
+    ) -> Result<(providers::embed::Embedder, String), ModelError> {
+        let provider = match &choice.provider {
+            Some(id) => match &slot(config, id)?.body {
+                ProviderBody::Openai(provider) => Some(provider.as_ref()),
+                ProviderBody::Cli(_) | ProviderBody::Unknown(_) | ProviderBody::Removed(_) => {
+                    return Err(ModelError::Type(id.clone()));
+                }
+            },
+            None => None,
         };
-        let text = |value: Option<&String>| {
+        let text = |value: Option<&str>| {
             value
-                .map(|text| text.trim())
+                .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(str::to_owned)
         };
-        let backend = if config.sqlite_selected() {
-            MemoryBackend::Sqlite
-        } else {
-            MemoryBackend::Postgres
+        let endpoint = text(provider.and_then(|provider| provider.base_url.as_deref()))
+            .or_else(|| text(choice.endpoint.as_deref()))
+            .ok_or(providers::BuildError::MissingEmbedEndpoint)?;
+        let model = text(choice.model.as_deref())
+            .or_else(|| text(provider.and_then(|provider| provider.model.as_deref())))
+            .ok_or(providers::BuildError::MissingEmbedModel)?;
+        let extras = EmbedExtras::of(config);
+        let embedder = providers::embed::Embedder::build(providers::embed::EmbedConfig {
+            endpoint,
+            model: model.clone(),
+            api_key: extras.api_key.filter(|_| provider.is_none()),
+            api_prefix: provider.and_then(|provider| provider.api_prefix.clone()),
+            expected_dims: extras.expected_dims,
+            timeout_ms: extras.timeout_ms,
+            query_instruction: extras.query_instruction,
+        })?;
+        let embedder = match provider {
+            Some(provider) => embedder.with_provider_auth(provider)?,
+            None => embedder,
         };
-        let provider = config.embed_provider(backend);
-        let api_prefix = provider.and_then(|provider| provider.api_prefix.clone());
-        let settings = if config.sqlite_selected() {
-            let section = memory.sqlite.as_ref();
-            let endpoint = text(section.and_then(|section| section.embed_endpoint.as_ref()))
-                .or_else(|| config.embed_provider_url(backend))
-                .or_else(|| self.embed_endpoint.clone());
-            let model = text(section.and_then(|section| section.embed_model.as_ref()))
-                .or_else(|| self.embed_model.clone());
-            endpoint.map(|endpoint| {
-                Ok::<_, providers::BuildError>(providers::embed::EmbedConfig {
-                    endpoint,
-                    model: model.ok_or(providers::BuildError::MissingEmbedModel)?,
-                    api_key: section.and_then(|section| section.embed_api_key.clone()),
-                    api_prefix,
-                    expected_dims: None,
-                    timeout_ms: None,
-                    query_instruction: None,
-                })
-            })
-        } else {
-            let section = memory.postgres.as_ref();
-            let endpoint = text(section.and_then(|section| section.embed_endpoint.as_ref()))
-                .or_else(|| config.embed_provider_url(backend))
-                .or_else(|| self.embed_endpoint.clone());
-            let model = text(section.and_then(|section| section.embed_model.as_ref()))
-                .or_else(|| self.embed_model.clone());
-            endpoint.map(|endpoint| {
-                Ok::<_, providers::BuildError>(providers::embed::EmbedConfig {
-                    endpoint,
-                    model: model.ok_or(providers::BuildError::MissingEmbedModel)?,
-                    api_key: section.and_then(|section| section.embed_api_key.clone()),
-                    api_prefix,
-                    expected_dims: section.and_then(|section| section.embed_expected_dims),
-                    timeout_ms: section.and_then(|section| section.embed_timeout_ms),
-                    query_instruction: section
-                        .and_then(|section| section.embed_query_instruction.clone()),
-                })
-            })
-        };
-        let embedder = settings
-            .transpose()?
-            .map(providers::embed::Embedder::build)
-            .transpose()?;
-        match (embedder, provider) {
-            (Some(embedder), Some(provider)) => Ok(Some(embedder.with_provider_auth(provider)?)),
-            (embedder, _) => Ok(embedder),
-        }
+        Ok((embedder, model))
+    }
+
+    pub fn embedding_provider(
+        config: &Config,
+        choice: &EmbedderChoice,
+    ) -> Result<Arc<dyn ModelProvider>, ModelError> {
+        let (embedder, model) = Self::embedder_for(config, choice)?;
+        Ok(Arc::new(providers::EmbedProvider::new(embedder, model)))
     }
 
     pub(crate) fn tasks(&self) -> ModelTasks {
@@ -182,14 +212,14 @@ impl ModelFactory {
         self.install(config, env, ids, shutdown).await
     }
 
-    pub async fn for_provider(
+    pub async fn for_providers(
         config: &Config,
         env: &Environment,
-        id: &str,
+        ids: BTreeSet<&str>,
         shutdown: &CancellationToken,
     ) -> Result<Self, ModelError> {
         Self::with_embedding(env)
-            .install(config, env, BTreeSet::from([id]), shutdown)
+            .install(config, env, ids, shutdown)
             .await
     }
 
@@ -254,6 +284,32 @@ impl ModelFactory {
         model: Option<&str>,
         shutdown: &CancellationToken,
     ) -> Result<ModelBinding, ModelError> {
+        self.build_with(config, id, model, None, shutdown)
+    }
+
+    pub fn build_choice(
+        &self,
+        config: &Config,
+        choice: &ModelChoice,
+        shutdown: &CancellationToken,
+    ) -> Result<ModelBinding, ModelError> {
+        self.build_with(
+            config,
+            &choice.provider,
+            choice.model.as_deref(),
+            choice.effort,
+            shutdown,
+        )
+    }
+
+    fn build_with(
+        &self,
+        config: &Config,
+        id: &str,
+        model: Option<&str>,
+        effort: Option<config::Effort>,
+        shutdown: &CancellationToken,
+    ) -> Result<ModelBinding, ModelError> {
         let slot = slot(config, id)?;
         let kind = slot.kind.ok_or_else(|| ModelError::Type(id.into()))?;
         match &slot.body {
@@ -285,6 +341,7 @@ impl ModelFactory {
                     .get(id)
                     .ok_or_else(|| ModelError::Harness(id.into()))?;
                 let mut options = body.as_ref().clone();
+                options.reasoning_effort = effort.or(options.reasoning_effort);
                 options.cwd = options.cwd.or_else(|| {
                     config
                         .runtime

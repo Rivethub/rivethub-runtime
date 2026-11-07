@@ -33,12 +33,14 @@ pub struct TaskActivity {
     pub task: String,
     pub last_finished: Option<DateTime<Utc>>,
     pub failing: u64,
+    pub queued: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RoleActivity {
     pub last_finished: Option<DateTime<Utc>>,
     pub failing: u64,
+    pub queued: u64,
 }
 
 impl RoleActivity {
@@ -51,6 +53,7 @@ impl RoleActivity {
             .fold(Self::default(), |role, activity| Self {
                 last_finished: role.last_finished.max(activity.last_finished),
                 failing: role.failing + activity.failing,
+                queued: role.queued + activity.queued,
             })
     }
 }

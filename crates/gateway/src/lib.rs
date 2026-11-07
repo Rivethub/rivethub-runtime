@@ -5,6 +5,7 @@ pub mod extract;
 mod history;
 mod memory_body;
 pub mod mesh;
+mod models;
 pub mod plugins;
 pub mod routes;
 mod scope;
@@ -38,6 +39,7 @@ use wire::harness::HarnessId;
 use crate::auth::DenialLog;
 use crate::routes::voice::VoiceProxy;
 
+pub use crate::models::ModelAssignment;
 pub use crate::routes::voice::VoiceConfigError;
 pub use crate::routes::voice::VoiceSettings;
 
@@ -266,6 +268,7 @@ pub struct Gateway {
     tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     upkeep: Option<Arc<dyn kernel::tidy::UpkeepStore>>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
+    model_assignments: Vec<ModelAssignment>,
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
@@ -325,6 +328,7 @@ impl Gateway {
             tidy: None,
             upkeep: None,
             flagged: None,
+            model_assignments: Vec::new(),
             plugins: None,
             summaries: None,
             deletions: None,

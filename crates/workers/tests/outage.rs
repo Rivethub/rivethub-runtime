@@ -286,7 +286,12 @@ fn deps(
     WorkerDeps {
         targets,
         summaries: Arc::new(IdleSummaries),
-        provider,
+        summarizer: provider.clone(),
+        categorizer: workers::RoleModel {
+            provider: provider.clone(),
+            model: "fake-chat".to_owned(),
+        },
+        embedder: provider,
         embed: settings(),
         summary: SummarySettings::standard("fake-chat").expect("summary settings"),
         scopes: None,

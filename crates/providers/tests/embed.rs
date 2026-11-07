@@ -349,3 +349,36 @@ async fn the_chat_provider_embeds_without_auth_when_no_key_is_set() {
     assert_eq!(call.authorization, None);
     assert_eq!(call.target, "/v1/embeddings");
 }
+
+#[tokio::test]
+async fn an_embed_provider_embeds_and_refuses_chat() {
+    let server = fixed_status_server(200, EIGHT_DIMS.to_owned()).await;
+    let provider =
+        providers::EmbedProvider::new(embedder(base_config(&server)), "bge-m3".to_owned());
+    let out = within(provider.embed(vec!["hello world".to_owned()]))
+        .await
+        .expect("the embed succeeds");
+    assert_eq!(
+        out,
+        vec![Embedding {
+            vector: RECORDED_VECTOR.to_vec()
+        }]
+    );
+    assert_eq!(
+        provider.list_models().await.expect("the model list"),
+        vec!["bge-m3".to_owned()]
+    );
+    let request = kernel::model::ModelRequest {
+        options: kernel::model::ModelOptions::default(),
+        model: "bge-m3".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        thinking: None,
+        max_tokens: None,
+    };
+    let refused = provider.chat(request).await.expect_err("chat is refused");
+    assert!(
+        refused.to_string().contains("only serves embeddings"),
+        "{refused}"
+    );
+}

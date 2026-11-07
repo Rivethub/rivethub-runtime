@@ -25,7 +25,9 @@ pub(crate) struct JobEnv {
     pub(crate) wiki: Option<WikiBuilderDeps>,
     pub(crate) targets: Arc<dyn EmbeddingStore>,
     pub(crate) summaries: Arc<dyn SummaryStore>,
-    pub(crate) provider: Arc<dyn ModelProvider>,
+    pub(crate) summarizer: Arc<dyn ModelProvider>,
+    pub(crate) categorizer: crate::RoleModel,
+    pub(crate) embedder: Arc<dyn ModelProvider>,
     pub(crate) embed: EmbedSettings,
     pub(crate) summary: SummarySettings,
     pub(crate) topics: Option<SessionTopics>,
@@ -43,7 +45,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
 ) -> Result<(), WorkerError> {
     let summarize = SummarizeEnv {
         store: env.summaries.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: env.summarizer.as_ref(),
         queue,
         settings: &env.summary,
         now: Utc::now(),
@@ -56,7 +58,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::EmbedTarget) => {
             handle_embed(
                 env.targets.as_ref(),
-                env.provider.as_ref(),
+                env.embedder.as_ref(),
                 env.embed,
                 &job.payload,
                 cancel,
@@ -79,7 +81,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
                 .ok_or(WorkerError::MissingMemoryJobs)?;
             crate::tool_synthesis::handle_synthesize_tool_call(
                 store.as_ref(),
-                env.provider.as_ref(),
+                env.summarizer.as_ref(),
                 &env.summary.model,
                 &job.payload,
                 cancel,
@@ -126,8 +128,8 @@ async fn dispatch_file(
         })?;
     let filing = FilingEnv {
         topics,
-        provider: env.provider.as_ref(),
-        model: &env.summary.model,
+        provider: env.categorizer.provider.as_ref(),
+        model: &env.categorizer.model,
         now: Utc::now(),
         cancel,
     };
@@ -158,8 +160,8 @@ async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), W
     let run = crate::tidy::TidyEnv {
         topics,
         tidy: tidy.as_ref(),
-        provider: env.provider.as_ref(),
-        model: &env.summary.model,
+        provider: env.categorizer.provider.as_ref(),
+        model: &env.categorizer.model,
         now: Utc::now(),
         cancel,
     };
@@ -211,7 +213,7 @@ async fn dispatch_wiki<Q: JobQueue>(
     };
     let wiki_env = WikiBuilderEnv {
         store: wiki.store.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
         now: Utc::now(),
@@ -257,7 +259,7 @@ async fn dispatch_recompile<Q: JobQueue>(
         })?;
     let recompile = crate::wiki_builder::RecompileEnv {
         store: store.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
         now: Utc::now(),

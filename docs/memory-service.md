@@ -23,6 +23,37 @@ Recall tools stamp the same number on `_meta.contractVersion`.
 A client compares that number before it renders a response.
 The number moves independently of the crate version.
 
+## Models per job
+
+Each memory job can run on its own model. Set them under `memory.models`:
+
+```yaml
+memory:
+  models:
+    default:
+      provider: main
+      model: big-model
+    summarizer:
+      provider: local
+      model: small-model
+    wiki_writer:
+      provider: main
+      model: big-model
+      effort: high
+    embedder:
+      provider: embeddings
+```
+
+`default` is required. `summarizer`, `categorizer` and `wiki_writer` inherit
+it when they have no entry. `embedder` takes either a `provider` or an
+`endpoint` with a `model`. Without `memory.models` every job uses the default
+agent's provider and model, as before, and the node logs one notice.
+
+`GET /api/memory/models` lists the five roles with the assigned provider and
+model, whether the role inherits `default`, a health of `healthy`, `slow` or
+`failing`, and the number of jobs waiting. On a team hub only the owner can
+read it.
+
 ## Shared database files
 
 `rh db status` prints a `foreign:` line. A file RivetHub created alone

@@ -32,6 +32,16 @@ use crate::settle::settle;
 use crate::summarize::SummarySettings;
 use crate::wiki_builder::WikiBuilderDeps;
 
+#[derive(Clone)]
+#[expect(
+    missing_debug_implementations,
+    reason = "the model provider is a trait object"
+)]
+pub struct RoleModel {
+    pub provider: Arc<dyn ModelProvider>,
+    pub model: String,
+}
+
 pub const EMBED_CONCURRENCY: u32 = 4;
 pub const POLL_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -71,7 +81,9 @@ impl RunnerConfig {
 pub struct WorkerDeps {
     pub targets: Arc<dyn EmbeddingStore>,
     pub summaries: Arc<dyn SummaryStore>,
-    pub provider: Arc<dyn ModelProvider>,
+    pub summarizer: Arc<dyn ModelProvider>,
+    pub categorizer: RoleModel,
+    pub embedder: Arc<dyn ModelProvider>,
     pub embed: EmbedSettings,
     pub summary: SummarySettings,
     pub scopes: Option<crate::OwnerScopes>,
@@ -97,7 +109,9 @@ pub struct Runner<Q> {
     queue: Arc<Q>,
     targets: Arc<dyn EmbeddingStore>,
     summaries: Arc<dyn SummaryStore>,
-    provider: Arc<dyn ModelProvider>,
+    summarizer: Arc<dyn ModelProvider>,
+    categorizer: RoleModel,
+    embedder: Arc<dyn ModelProvider>,
     config: RunnerConfig,
     embed: EmbedSettings,
     summary: SummarySettings,
@@ -132,7 +146,9 @@ where
             queue,
             targets: deps.targets,
             summaries: deps.summaries,
-            provider: deps.provider,
+            summarizer: deps.summarizer,
+            categorizer: deps.categorizer,
+            embedder: deps.embedder,
             config,
             embed: deps.embed,
             summary: deps.summary,
@@ -411,7 +427,9 @@ where
             wiki: self.wiki.clone(),
             targets: Arc::clone(&self.targets),
             summaries: Arc::clone(&self.summaries),
-            provider: Arc::clone(&self.provider),
+            summarizer: Arc::clone(&self.summarizer),
+            categorizer: self.categorizer.clone(),
+            embedder: Arc::clone(&self.embedder),
             embed: self.embed,
             summary: self.summary.clone(),
             topics: self.topics.clone(),

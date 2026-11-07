@@ -1,6 +1,7 @@
 pub mod body;
 pub mod cli;
 pub mod embed;
+mod embed_provider;
 pub mod error;
 mod retry_after;
 pub mod sse;
@@ -28,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 use wire::message::ToolCall;
 use wire::stream::LlmUsage;
 
+pub use crate::embed_provider::EmbedProvider;
 pub use crate::error::BuildError;
 use crate::error::StatusError;
 use crate::error::StreamFault;

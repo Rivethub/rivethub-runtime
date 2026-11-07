@@ -88,6 +88,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             routing::get(super::tidy::upkeep).fallback(super::method_not_allowed),
         )
         .route(
+            "/models",
+            routing::get(super::memory_models::list).fallback(super::method_not_allowed),
+        )
+        .route(
             "/flagged",
             routing::get(super::flagged::list).fallback(super::method_not_allowed),
         )

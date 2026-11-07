@@ -94,6 +94,7 @@ fn tasks(conn: &Connection) -> Result<Vec<TaskActivity>, TidyError> {
                 task,
                 last_finished: Some(at(&finished_at, "finished_at")?),
                 failing: 0,
+                queued: 0,
             },
         );
     }
@@ -111,8 +112,27 @@ fn tasks(conn: &Connection) -> Result<Vec<TaskActivity>, TidyError> {
             task,
             last_finished: None,
             failing: 0,
+            queued: 0,
         });
         activity.failing = count(failed_jobs)?;
+    }
+    let mut waiting = conn
+        .prepare("SELECT task, count(*) FROM ros_jobs WHERE state = 'queued' GROUP BY task")
+        .map_err(failed("queued jobs"))?;
+    let rows = waiting
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(failed("queued jobs"))?;
+    for row in rows {
+        let (task, queued_jobs) = row.map_err(failed("queued jobs"))?;
+        let activity = tasks.entry(task.clone()).or_insert(TaskActivity {
+            task,
+            last_finished: None,
+            failing: 0,
+            queued: 0,
+        });
+        activity.queued = count(queued_jobs)?;
     }
     Ok(tasks.into_values().collect())
 }

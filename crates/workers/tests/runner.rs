@@ -455,7 +455,12 @@ fn deps(
     WorkerDeps {
         targets,
         summaries: Arc::new(IdleSummaries),
-        provider,
+        summarizer: provider.clone(),
+        categorizer: workers::RoleModel {
+            provider: provider.clone(),
+            model: "fake-chat".to_owned(),
+        },
+        embedder: provider,
         embed: settings(),
         summary: SummarySettings::standard("fake-chat").expect("summary settings"),
         scopes: None,
@@ -539,6 +544,7 @@ async fn all_claims_every_role_that_has_a_handler() {
             store: Arc::new(wiki::WikiStore::default()),
             consolidate: None,
             recompile: None,
+            provider: fnv_provider(),
             model: "wiki-model".to_owned(),
             load: None,
         }),
@@ -592,4 +598,51 @@ async fn all_claims_every_role_that_has_a_handler() {
     );
     assert_eq!(rig.queue.claims(), 4);
     finish(cancel, run).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn embed_jobs_use_the_embedder_provider_and_not_the_summarizer() {
+    let embedder = Arc::new(FakeProvider::fnv_embeddings(width()));
+    let summarizer = Arc::new(FakeProvider::fnv_embeddings(width()));
+    let queue = Arc::new(Queue::new());
+    let store = Arc::new(Store::new());
+    let runner = Arc::new(Runner::new(
+        Arc::clone(&queue),
+        RunnerConfig::new(ProcessRole::Embedder, 1).expect("concurrency"),
+        WorkerDeps {
+            targets: Arc::clone(&store) as Arc<dyn kernel::memory::EmbeddingStore>,
+            summaries: Arc::new(IdleSummaries),
+            summarizer: summarizer.clone(),
+            categorizer: workers::RoleModel {
+                provider: summarizer.clone(),
+                model: "categorizer-model".to_owned(),
+            },
+            embedder: embedder.clone(),
+            embed: settings(),
+            summary: SummarySettings::standard("summarizer-model").expect("summary settings"),
+            scopes: None,
+        },
+    ));
+    let rig = Rig {
+        queue,
+        store,
+        runner,
+    };
+    rig.store
+        .insert(EmbedTable::Messages, "m", "hello", None)
+        .await
+        .expect("seed");
+    let embed = rig
+        .queue
+        .push(
+            fixed(FixedJob::EmbedTarget),
+            target_payload("ros_messages", "m"),
+            5,
+        )
+        .await;
+    let (cancel, run) = spawn(&rig);
+    rig.queue.wait_phase(embed, Phase::Done).await;
+    finish(cancel, run).await;
+    assert_eq!(embedder.embed_requests().await.len(), 1);
+    assert_eq!(summarizer.embed_requests().await.len(), 0);
 }
