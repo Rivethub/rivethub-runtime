@@ -86,7 +86,10 @@ impl CloudSettings {
             let path = format!("{}/", base.path());
             base.set_path(&path);
         }
-        let update_key = UpdateKey::parse(section.update_key.as_deref().unwrap_or(RELEASE_KEY))?;
+        let update_key = match section.update_key.as_deref() {
+            Some(text) => UpdateKey::parse(text)?,
+            None => RELEASE_KEY,
+        };
         Ok(Self {
             base,
             update_key,

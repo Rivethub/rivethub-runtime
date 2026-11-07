@@ -295,6 +295,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::review::ReviewEvidence>,
     SchemaGenerator::subschema_for::<crate::gateway::review::ReviewItem>,
     SchemaGenerator::subschema_for::<crate::gateway::review::ReviewDecision>,
+    SchemaGenerator::subschema_for::<crate::gateway::today::SessionKind>,
     SchemaGenerator::subschema_for::<crate::gateway::today::SessionRef>,
     SchemaGenerator::subschema_for::<crate::gateway::today::Actor>,
     SchemaGenerator::subschema_for::<crate::gateway::today::Change>,

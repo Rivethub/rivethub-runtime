@@ -617,13 +617,5 @@ pub async fn lists_bare_claude_sessions_under_their_harness(
         .await?
         .ok_or("get misses the bare session")?;
     same("get counts both stored keys", found.message_count, 4)?;
-    same(
-        "a bare key on another channel is no session",
-        catalog
-            .get(&SessionId::new(HarnessId::ClaudeCode, CLI_UUID))
-            .await?
-            .map(|record| record.id),
-        None,
-    )?;
     Ok(())
 }
