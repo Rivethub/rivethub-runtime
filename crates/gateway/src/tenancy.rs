@@ -9,6 +9,7 @@ use axum::http::request::Parts;
 use kernel::owner::Owner;
 use kernel::tenancy::Space;
 use kernel::tenancy::Viewer;
+use kernel::tenancy::Visibility;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -257,3 +258,13 @@ fn anonymous_owner(tenancy: &Tenancy, error: ApiError) -> Result<UserId, ApiErro
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn shared_with(visibility: &Visibility) -> wire::gateway::session_catalog::SharedWith {
+    use wire::gateway::session_catalog::SharedWith;
+    match visibility {
+        Visibility::Private => SharedWith::Private,
+        Visibility::Space(space) => SharedWith::Space {
+            space: space.as_str().to_owned(),
+        },
+    }
+}

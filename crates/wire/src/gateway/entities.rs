@@ -3,8 +3,9 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::gateway::session_catalog::SessionMemoryState;
-use crate::harness::HarnessId;
+use crate::gateway::session_catalog::SessionSummaryRow;
+use crate::gateway::session_catalog::SharedWith;
+use crate::gateway::session_catalog::TopicPath;
 use crate::session_id::SessionId;
 
 #[derive(
@@ -88,20 +89,6 @@ pub struct EntitySummary {
     pub session_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum SharedWith {
-    Private,
-    Space { space: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TopicPath {
-    pub id: String,
-    pub path: Vec<String>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {
@@ -131,28 +118,6 @@ pub struct ConnectedEntity {
     pub id: String,
     pub title: String,
     pub shared_sessions: usize,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-#[schemars(rename = "EntitySessionRow")]
-pub struct SessionSummaryRow {
-    pub id: SessionId,
-    pub title: String,
-    pub harness: HarnessId,
-    pub started_at: DateTime<Utc>,
-    #[serde(default)]
-    pub ended_at: Option<DateTime<Utc>>,
-    pub message_count: u64,
-    #[serde(default)]
-    pub topic: Option<TopicPath>,
-    pub visibility: SharedWith,
-    pub kept: bool,
-    pub trashed: bool,
-    pub memory_state: SessionMemoryState,
-    #[serde(default)]
-    pub gist: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

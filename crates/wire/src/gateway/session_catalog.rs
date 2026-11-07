@@ -15,9 +15,16 @@ pub enum SessionMemoryState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct SessionTopicRef {
+pub struct TopicPath {
     pub id: String,
     pub path: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SharedWith {
+    Private,
+    Space { space: String },
 }
 
 #[serde_with::skip_serializing_none]
@@ -30,8 +37,8 @@ pub struct SessionSummaryRow {
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub message_count: u64,
-    pub topic: Option<SessionTopicRef>,
-    pub visibility: String,
+    pub topic: Option<TopicPath>,
+    pub visibility: SharedWith,
     pub kept: bool,
     pub trashed: bool,
     pub memory_state: SessionMemoryState,

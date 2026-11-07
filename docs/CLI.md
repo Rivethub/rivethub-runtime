@@ -44,7 +44,7 @@ the existing service startup codes. Every visible command:
 | `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store` | Administer memory; `rh memory --help` lists each command's flags |
 | `rh capture hook` | `[--harness claude-code\|grok-build\|opencode\|codex\|dsh]` | Capture one harness hook payload read from stdin |
 | `rh harness status` | `[--json]` | Show which harnesses are found, how they capture and whether recall is wired |
-| `rh harness connect` | `<id> [--capture \| --recall] [--dry-run]` | Add rh's hook or plug-in and its MCP entry to a harness, printing the diff and backing the file up first |
+| `rh harness connect` | `<id> [--capture \| --recall] [--dry-run]` | Add rh's hook or plug-in and its MCP entry to a harness, printing the diff and backing the file up first; for `opencode --capture` the plug-in is copied from the file named by `RIVETHUB_OPENCODE_PLUGIN` |
 | `rh harness disconnect` | `<id> [--capture \| --recall] [--dry-run]` | Remove rh's hook and MCP entry from a harness |
 | `rh logs` | `[agent] [-f, --follow \| --no-follow] [-n, --lines N] [--since TIME] [--level NAME] [-g, --grep TEXT] [--json] [--bare-metal]` | Read the service journal |
 

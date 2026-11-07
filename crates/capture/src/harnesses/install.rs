@@ -21,7 +21,8 @@ use super::registry::Location;
 const OPENCODE_MARKER: &str = "capture hook --harness opencode";
 const DSH_MARKER: &str = "capture hook --harness dsh";
 const OPENCODE_PLUGIN: &str = "rivethub-capture.ts";
-const OPENCODE_TEMPLATE: &str = include_str!("../../assets/opencode-capture.ts");
+const OPENCODE_PLACEHOLDER: &str = "'__COMMAND__'";
+const OPENCODE_MISSING: &str = "opencode plug-in not available; build it from the rivethub repo and set RIVETHUB_OPENCODE_PLUGIN to its capture.ts";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InstallView {
@@ -257,7 +258,9 @@ pub(super) fn plan_connect(
 ) -> Result<Vec<FileEdit>, SetupError> {
     match install {
         CaptureInstall::HookFile(hooks) => connect_hooks(locator, id, hooks, rh),
-        CaptureInstall::OpencodePlugin { directory } => connect_opencode(locator, *directory, rh),
+        CaptureInstall::OpencodePlugin { directory } => {
+            connect_opencode(locator, id, *directory, rh)
+        }
         CaptureInstall::DshPlugin { .. } => Err(SetupError::Unsupported {
             id: id.to_owned(),
             part: kernel::harness_setup::ConnectPart::Capture,
@@ -303,8 +306,27 @@ fn connect_hooks(
     }])
 }
 
+fn opencode_template(locator: &Locator, id: &str) -> Result<String, SetupError> {
+    let unavailable = || SetupError::Unsupported {
+        id: id.to_owned(),
+        part: kernel::harness_setup::ConnectPart::Capture,
+        reason: OPENCODE_MISSING,
+    };
+    let source = locator.opencode_plugin().ok_or_else(unavailable)?;
+    let template = fs::read_to_string(source).map_err(|_| unavailable())?;
+    if template.contains(OPENCODE_PLACEHOLDER) {
+        Ok(template)
+    } else {
+        Err(config(
+            source,
+            format!("the plug-in has no {OPENCODE_PLACEHOLDER} placeholder for rh's command"),
+        ))
+    }
+}
+
 fn connect_opencode(
     locator: &Locator,
+    id: &str,
     directory: Location,
     rh: &Path,
 ) -> Result<Vec<FileEdit>, SetupError> {
@@ -314,6 +336,7 @@ fn connect_opencode(
     if plugin_with_marker(&target, PluginKind::Opencode)?.is_some() {
         return Ok(Vec::new());
     }
+    let template = opencode_template(locator, id)?;
     let quoted = shlex::try_quote(&rh.to_string_lossy())
         .map_err(|error| config(rh, error.to_string()))?
         .into_owned();
@@ -322,7 +345,7 @@ fn connect_opencode(
     let path = target.join(OPENCODE_PLUGIN);
     Ok(vec![FileEdit {
         before: read_optional(&path)?,
-        after: Some(OPENCODE_TEMPLATE.replace("__COMMAND__", &literal)),
+        after: Some(template.replace(OPENCODE_PLACEHOLDER, &literal)),
         path,
     }])
 }

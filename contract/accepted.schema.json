@@ -2840,7 +2840,7 @@
         },
         "sessions": {
           "items": {
-            "$ref": "#/$defs/EntitySessionRow"
+            "$ref": "#/$defs/SessionSummaryRow"
           },
           "type": "array"
         },
@@ -2890,75 +2890,6 @@
         "sessions",
         "tags",
         "freshness"
-      ],
-      "type": "object"
-    },
-    "EntitySessionRow": {
-      "properties": {
-        "endedAt": {
-          "format": "date-time",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "gist": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "harness": {
-          "$ref": "#/$defs/HarnessId"
-        },
-        "id": {
-          "$ref": "#/$defs/SessionId"
-        },
-        "kept": {
-          "type": "boolean"
-        },
-        "memoryState": {
-          "$ref": "#/$defs/SessionMemoryState"
-        },
-        "messageCount": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "startedAt": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "topic": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TopicPath"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "trashed": {
-          "type": "boolean"
-        },
-        "visibility": {
-          "$ref": "#/$defs/SharedWith"
-        }
-      },
-      "required": [
-        "id",
-        "title",
-        "harness",
-        "startedAt",
-        "messageCount",
-        "visibility",
-        "kept",
-        "trashed",
-        "memoryState"
       ],
       "type": "object"
     },
@@ -11291,7 +11222,7 @@
         "topic": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SessionTopicRef"
+              "$ref": "#/$defs/TopicPath"
             },
             {
               "type": "null"
@@ -11302,7 +11233,7 @@
           "type": "boolean"
         },
         "visibility": {
-          "type": "string"
+          "$ref": "#/$defs/SharedWith"
         }
       },
       "required": [
@@ -11832,7 +11763,7 @@
         "topic": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SessionTopicRef"
+              "$ref": "#/$defs/TopicPath"
             },
             {
               "type": "null"
@@ -11843,7 +11774,7 @@
           "type": "boolean"
         },
         "visibility": {
-          "type": "string"
+          "$ref": "#/$defs/SharedWith"
         }
       },
       "required": [
@@ -11909,24 +11840,6 @@
       "required": [
         "prompt",
         "completion"
-      ],
-      "type": "object"
-    },
-    "SessionTopicRef": {
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "path": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "id",
-        "path"
       ],
       "type": "object"
     },

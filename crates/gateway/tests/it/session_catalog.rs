@@ -12,7 +12,7 @@ use kernel::topics::TopicId;
 use session_support::harness::Harness;
 use session_support::{Fixture, http, user};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
-use wire::gateway::session_catalog::{SessionDetail, SessionSummaryPage};
+use wire::gateway::session_catalog::{SessionDetail, SessionSummaryPage, SharedWith};
 use wire::harness::HarnessId;
 use wire::session_id::{SessionId, encode_segment};
 
@@ -196,7 +196,7 @@ async fn the_detail_adds_cwd_and_a_resume_command() {
         path,
         Some(vec!["Platform".to_owned(), "Deploys".to_owned()])
     );
-    assert_eq!(detail.row.visibility, "private");
+    assert_eq!(detail.row.visibility, SharedWith::Private);
     assert_eq!(detail.changed.len(), 0);
     let (status, _) = call(&setup, "GET", "/api/sessions/bm90aGVyZQ").await;
     assert_eq!(status, 400);

@@ -16,6 +16,7 @@ pub struct Locator {
     claude_json_dir: Option<PathBuf>,
     roots: StoreRoots,
     path_dirs: Vec<PathBuf>,
+    opencode_plugin: Option<PathBuf>,
 }
 
 impl Locator {
@@ -43,7 +44,17 @@ impl Locator {
             claude_json_dir,
             roots: store_roots(env),
             path_dirs,
+            opencode_plugin: env
+                .text("RIVETHUB_OPENCODE_PLUGIN")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
         }
+    }
+
+    #[must_use]
+    pub fn opencode_plugin(&self) -> Option<&Path> {
+        self.opencode_plugin.as_deref()
     }
 
     fn bases(&self, base: Base) -> Vec<PathBuf> {

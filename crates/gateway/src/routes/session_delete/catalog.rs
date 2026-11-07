@@ -12,7 +12,7 @@ use kernel::transcript::ListLimit;
 use serde::Deserialize;
 use wire::gateway::roster::resume_command;
 use wire::gateway::session_catalog::{
-    SessionDetail, SessionMemoryState, SessionSummaryPage, SessionSummaryRow, SessionTopicRef,
+    SessionDetail, SessionMemoryState, SessionSummaryPage, SessionSummaryRow, SharedWith, TopicPath,
 };
 use wire::harness::HarnessId;
 use wire::session_id::SessionId;
@@ -21,8 +21,6 @@ use super::{LIVE, NOT_FOUND, deletions, known, live, segment_session, visible};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
-
-const PRIVATE: &str = "private";
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -133,7 +131,7 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
     }
 }
 
-fn row(record: SessionRecord, visibility: String, lineage: &Lineage) -> SessionSummaryRow {
+fn row(record: SessionRecord, visibility: SharedWith, lineage: &Lineage) -> SessionSummaryRow {
     let key = record.id.to_string();
     let parent_id = lineage.parents.get(&key).cloned();
     let child_count = lineage
@@ -148,7 +146,7 @@ fn row(record: SessionRecord, visibility: String, lineage: &Lineage) -> SessionS
         started_at: record.started_at,
         ended_at: record.ended_at,
         message_count: record.message_count,
-        topic: record.topic.map(|topic| SessionTopicRef {
+        topic: record.topic.map(|topic| TopicPath {
             id: topic.id.to_string(),
             path: topic.path,
         }),
@@ -166,7 +164,7 @@ async fn visibilities(
     gateway: &Gateway,
     user: &UserId,
     sessions: &[SessionId],
-) -> Result<BTreeMap<SessionId, String>, ApiError> {
+) -> Result<BTreeMap<SessionId, SharedWith>, ApiError> {
     let Some(store) = gateway.tenancy_store.as_ref() else {
         return Ok(BTreeMap::new());
     };
@@ -180,7 +178,7 @@ async fn visibilities(
         .map_err(|error| ApiError::Unavailable(error.to_string()))?;
     Ok(found
         .into_iter()
-        .map(|(session, state)| (session, state.effective.as_str().to_owned()))
+        .map(|(session, state)| (session, crate::tenancy::shared_with(&state.effective)))
         .collect())
 }
 
@@ -212,7 +210,7 @@ pub(super) async fn list(
             let visibility = marks
                 .get(&record.id)
                 .cloned()
-                .unwrap_or_else(|| PRIVATE.to_owned());
+                .unwrap_or(SharedWith::Private);
             row(record, visibility, &lineage)
         })
         .collect();
@@ -235,10 +233,7 @@ pub(super) async fn detail(
         .filter(|record| shown(&gateway, &user, record))
         .ok_or(ApiError::NotFound(NOT_FOUND))?;
     let marks = visibilities(&gateway, &user, std::slice::from_ref(&session)).await?;
-    let visibility = marks
-        .get(&session)
-        .cloned()
-        .unwrap_or_else(|| PRIVATE.to_owned());
+    let visibility = marks.get(&session).cloned().unwrap_or(SharedWith::Private);
     let cwd = record.cwd.clone();
     Ok(Json(SessionDetail {
         resume_command: resume_command(session.harness(), session.native()),

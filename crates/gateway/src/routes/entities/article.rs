@@ -21,9 +21,9 @@ use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Freshness;
-use wire::gateway::entities::SessionSummaryRow;
 use wire::gateway::entities::TimelineEntry;
 use wire::gateway::session_catalog::SessionMemoryState;
+use wire::gateway::session_catalog::SessionSummaryRow;
 use wire::session_id::SessionId;
 
 use super::Known;
@@ -78,7 +78,7 @@ pub(super) async fn build(
             .map(|alias| alias.as_str().to_owned())
             .collect(),
         topic: None,
-        visibility: map::shared_with(&entity.visibility),
+        visibility: crate::tenancy::shared_with(&entity.visibility),
         lead: lead(gateway, entity).await?,
         facts: facts_as_of(&claims, None)
             .iter()
@@ -213,7 +213,9 @@ async fn rows(
             ended_at: None,
             message_count: session.messages,
             topic: None,
-            visibility: map::shared_with(effective(visibility.get(&session.session))),
+            parent_id: None,
+            child_count: None,
+            visibility: crate::tenancy::shared_with(effective(visibility.get(&session.session))),
             kept: kept.contains_key(session.session.as_str()),
             trashed: false,
             memory_state: SessionMemoryState::Summarized,

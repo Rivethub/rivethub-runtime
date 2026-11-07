@@ -25,14 +25,30 @@ struct Machine {
     service: HarnessSetupService,
 }
 
+const PLUGIN_TEMPLATE: &str =
+    "export default { id: 'rivethub-capture' }\nconst COMMAND: string = '__COMMAND__'\n";
+
 fn machine() -> Result<Machine, Box<dyn std::error::Error>> {
+    machine_with_plugin(true)
+}
+
+fn machine_with_plugin(plugin: bool) -> Result<Machine, Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let bin = home.path().join("bin");
     fs::create_dir_all(&bin)?;
-    let env = Environment::from_vars([
+    let source = home.path().join("plugin-source.ts");
+    fs::write(&source, PLUGIN_TEMPLATE)?;
+    let mut vars = vec![
         (OsString::from("HOME"), home.path().as_os_str().to_owned()),
         (OsString::from("PATH"), bin.as_os_str().to_owned()),
-    ]);
+    ];
+    if plugin {
+        vars.push((
+            OsString::from("RIVETHUB_OPENCODE_PLUGIN"),
+            source.into_os_string(),
+        ));
+    }
+    let env = Environment::from_vars(vars);
     let service = HarnessSetupService::new(
         &env,
         PathBuf::from(RH),
@@ -408,6 +424,52 @@ fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult
     assert!(machine.probe("opencode")?.capture_installed);
     let again = machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
     assert_eq!(again.diff, "");
+    Ok(())
+}
+
+#[test]
+fn an_oddly_formatted_config_is_backed_up_exactly_and_rewritten_as_two_space_json() -> TestResult {
+    let machine = machine()?;
+    let odd = "{\"zeta\":1,\n\t\"mcpServers\":{\"other\":{\"command\":\"x\"}},   \"alpha\":[1,2]}";
+    machine.write(".cursor/mcp.json", odd)?;
+    let connected = machine.connect("cursor", Some(ConnectPart::Recall), false)?;
+    assert_eq!(fs::read_to_string(&connected.backup_path)?, odd);
+    let after = machine.read(".cursor/mcp.json")?;
+    assert!(after.starts_with("{\n  \"zeta\": 1,\n  \"mcpServers\": {\n    \"other\""));
+    assert!(after.ends_with("\n}\n"));
+    assert!(after.contains("\"rivethub\""));
+    let again = machine.connect("cursor", Some(ConnectPart::Recall), false)?;
+    assert_eq!(again.diff, "");
+    let now = Utc
+        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
+        .single()
+        .unwrap_or_default();
+    machine
+        .service
+        .disconnect_now("cursor", Some(ConnectPart::Recall), false, now)?;
+    let restored = machine.read(".cursor/mcp.json")?;
+    assert_eq!(
+        restored,
+        "{\n  \"zeta\": 1,\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"x\"\n    }\n  },\n  \"alpha\": [\n    1,\n    2\n  ]\n}\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn opencode_capture_without_the_plugin_source_says_where_to_build_it() -> TestResult {
+    let machine = machine_with_plugin(false)?;
+    machine.write(".config/opencode/.keep", "")?;
+    let error = machine
+        .connect("opencode", Some(ConnectPart::Capture), false)
+        .err()
+        .ok_or("connect should refuse")?;
+    assert!(matches!(error, SetupError::Unsupported { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("opencode plug-in not available; build it from the rivethub repo")
+    );
+    assert!(!machine.path(".config/opencode/plugins").exists());
     Ok(())
 }
 

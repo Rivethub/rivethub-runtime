@@ -6,7 +6,6 @@ use kernel::facts::FactError;
 use kernel::facts::FactEvent;
 use kernel::facts::FactState;
 use kernel::facts::Support;
-use kernel::tenancy::Visibility;
 use strum::IntoEnumIterator as _;
 use wire::gateway::entities::ChangeKind;
 use wire::gateway::entities::EntityType;
@@ -15,7 +14,6 @@ use wire::gateway::entities::FactConflict;
 use wire::gateway::entities::FactPrevious;
 use wire::gateway::entities::FactSource;
 use wire::gateway::entities::SessionMention;
-use wire::gateway::entities::SharedWith;
 use wire::gateway::entities::TimelineEntry;
 use wire::session_id::SessionId;
 
@@ -53,15 +51,6 @@ pub(super) fn error(error: FactError) -> ApiError {
             tracing::error!("fact store failed: {source}");
             ApiError::Unavailable("fact store unavailable".into())
         }
-    }
-}
-
-pub(super) fn shared_with(visibility: &Visibility) -> SharedWith {
-    match visibility {
-        Visibility::Private => SharedWith::Private,
-        Visibility::Space(space) => SharedWith::Space {
-            space: space.as_str().to_owned(),
-        },
     }
 }
 
