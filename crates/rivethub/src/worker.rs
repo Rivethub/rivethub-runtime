@@ -110,15 +110,14 @@ async fn check_role(env: &Environment, role: ProcessRole) -> Result<(), RootErro
     postgres_url(&config, env)?;
     let shutdown = CancellationToken::new();
     let factory = model_factory(&config, env, &shutdown).await?;
-    let binding = model_binding(&config, &factory, &shutdown);
+    let bindings = role_bindings(&config, &factory, &shutdown);
     factory.tasks().close().await;
-    let binding = binding?;
-    check_embeddings(role, &binding)?;
-    let model = binding.model;
+    let bindings = bindings?;
+    check_embeddings(role, &bindings)?;
     workers::tuned_embed(EmbedSettings::from_config(&config)?, env)?;
     workers::MemoryJobSettings::from_environment(env)?;
     workers::worker_concurrency(env)?;
-    workers::tuned_summary(SummarySettings::standard(model)?, env)?;
+    workers::tuned_summary(SummarySettings::standard(bindings.summarizer.model)?, env)?;
     crate::identity::announce_resolved("worker", &config, env).map_err(StartupError::from)?;
     Ok(())
 }
@@ -275,17 +274,26 @@ pub fn with_models<Q: JobQueue + 'static>(
 ) -> Result<ComposedRunner<Q>, RootError> {
     role.claim_roles()?;
     let cancel = shutdown.child_token();
-    let binding = model_binding(config, factory, &cancel)?;
-    check_embeddings(role, &binding)?;
-    let crate::models::ModelBinding {
-        provider, model, ..
-    } = binding;
+    let bindings = role_bindings(config, factory, &cancel)?;
+    check_embeddings(role, &bindings)?;
+    let RoleBindings {
+        summarizer,
+        categorizer,
+        wiki_writer,
+        embedder,
+        ..
+    } = bindings;
     let deps = WorkerDeps {
         targets: ports.targets,
         summaries: ports.summaries,
-        provider,
+        summary: SummarySettings::standard(summarizer.model)?,
+        summarizer: summarizer.provider,
+        categorizer: workers::RoleModel {
+            provider: categorizer.provider,
+            model: categorizer.model,
+        },
+        embedder,
         embed: EmbedSettings::from_config(config)?,
-        summary: SummarySettings::standard(model.clone())?,
         scopes: ports.scopes,
     };
     let runner = Runner::new(
@@ -297,7 +305,8 @@ pub fn with_models<Q: JobQueue + 'static>(
         store: ports.wiki,
         consolidate: ports.consolidate,
         recompile: ports.recompile,
-        model,
+        provider: wiki_writer.provider,
+        model: wiki_writer.model,
         load: ports.load,
     })
     .with_topic_pages(Arc::clone(&ports.topics), ports.pages, ports.decisions)
@@ -353,11 +362,20 @@ async fn drive<Q: JobQueue + 'static>(
     Ok(())
 }
 
-fn check_embeddings(
-    role: ProcessRole,
-    binding: &crate::models::ModelBinding,
-) -> Result<(), RootError> {
-    if matches!(role, ProcessRole::Embedder | ProcessRole::All) && !binding.embeddings {
+#[expect(
+    missing_debug_implementations,
+    reason = "role bindings hold kernel model ports without Debug"
+)]
+pub struct RoleBindings {
+    pub summarizer: crate::models::ModelBinding,
+    pub categorizer: crate::models::ModelBinding,
+    pub wiki_writer: crate::models::ModelBinding,
+    pub embedder: Arc<dyn kernel::model::ModelProvider>,
+    pub embeddings: bool,
+}
+
+fn check_embeddings(role: ProcessRole, bindings: &RoleBindings) -> Result<(), RootError> {
+    if matches!(role, ProcessRole::Embedder | ProcessRole::All) && !bindings.embeddings {
         return Err(
             crate::models::ModelError::Cli(providers::cli::CliError::MissingEmbedder).into(),
         );
@@ -365,51 +383,56 @@ fn check_embeddings(
     Ok(())
 }
 
+fn resolved_models(
+    config: &Config,
+    env: &Environment,
+) -> Result<config::ResolvedModels, RootError> {
+    config
+        .memory_models(env)
+        .map_err(|error| RootError::Invalid(error.to_string()))
+}
+
 async fn model_factory(
     config: &Config,
     env: &Environment,
     shutdown: &CancellationToken,
 ) -> Result<crate::models::ModelFactory, RootError> {
-    Ok(
-        crate::models::ModelFactory::for_provider(config, env, provider_id(config)?, shutdown)
-            .await?,
-    )
+    let models = resolved_models(config, env)?;
+    let ids = [
+        &models.default,
+        &models.summarizer.choice,
+        &models.categorizer.choice,
+        &models.wiki_writer.choice,
+    ]
+    .into_iter()
+    .map(|choice| choice.provider.as_str())
+    .collect();
+    Ok(crate::models::ModelFactory::for_providers(config, env, ids, shutdown).await?)
 }
 
-fn model_binding(
+pub fn role_bindings(
     config: &Config,
     factory: &crate::models::ModelFactory,
     shutdown: &CancellationToken,
-) -> Result<crate::models::ModelBinding, RootError> {
-    Ok(factory.build(
-        config,
-        provider_id(config)?,
-        default_agent(config)?.model.as_deref(),
-        shutdown,
-    )?)
-}
-
-fn provider_id(config: &Config) -> Result<&str, RootError> {
-    default_agent(config)?
-        .provider
-        .as_deref()
-        .ok_or_else(|| RootError::Invalid("the default agent requires a provider".into()))
-}
-
-fn default_agent(config: &Config) -> Result<&config::model::AgentEntry, RootError> {
-    let runtime = config
-        .runtime
-        .as_ref()
-        .ok_or_else(|| RootError::Invalid("runtime is required for providers".into()))?;
-    let name = runtime
-        .default_agent
-        .as_ref()
-        .ok_or_else(|| RootError::Invalid("default_agent is required".into()))?;
-    let agents = config
-        .agents
-        .as_ref()
-        .ok_or_else(|| RootError::Invalid("agents are required for providers".into()))?;
-    agents
-        .get(name)
-        .ok_or_else(|| RootError::Invalid(format!("default agent {name} is missing")))
+) -> Result<RoleBindings, RootError> {
+    let models = factory
+        .resolve_models(config)
+        .map_err(|error| RootError::Invalid(error.to_string()))?;
+    let (embedder, embeddings) = match &models.embedder.choice {
+        Some(choice) if !models.embedder.inherits_default => (
+            crate::models::ModelFactory::embedding_provider(config, choice)?,
+            true,
+        ),
+        Some(_) | None => {
+            let default = factory.build_choice(config, &models.default, shutdown)?;
+            (default.provider, default.embeddings)
+        }
+    };
+    Ok(RoleBindings {
+        summarizer: factory.build_choice(config, &models.summarizer.choice, shutdown)?,
+        categorizer: factory.build_choice(config, &models.categorizer.choice, shutdown)?,
+        wiki_writer: factory.build_choice(config, &models.wiki_writer.choice, shutdown)?,
+        embedder,
+        embeddings,
+    })
 }

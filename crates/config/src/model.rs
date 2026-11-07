@@ -152,6 +152,7 @@ pub struct MemorySection {
     pub postgres: Option<PostgresSection>,
     pub sqlite: Option<SqliteSection>,
     pub capture: CaptureSection,
+    pub models: Option<crate::memory_models::MemoryModels>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]

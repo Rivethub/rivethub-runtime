@@ -69,7 +69,7 @@ pub(super) fn router() -> Router<Arc<Gateway>> {
         )
 }
 
-fn error(error: TidyError) -> ApiError {
+pub(super) fn error(error: TidyError) -> ApiError {
     match error {
         TidyError::UnknownProposal { .. } | TidyError::UnknownBatch { .. } => {
             ApiError::Missing(error.to_string())

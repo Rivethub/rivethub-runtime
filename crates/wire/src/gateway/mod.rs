@@ -5,6 +5,7 @@ pub mod files;
 pub mod flagged;
 pub mod hub_state;
 pub mod memory;
+pub mod memory_models;
 pub mod notifications;
 pub mod roster;
 pub mod session_delete;

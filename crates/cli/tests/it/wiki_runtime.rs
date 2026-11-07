@@ -54,7 +54,12 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
         WorkerDeps {
             targets: store.clone(),
             summaries: store.clone(),
-            provider: model.clone(),
+            summarizer: model.clone(),
+            categorizer: workers::RoleModel {
+                provider: model.clone(),
+                model: "fake-chat".to_owned(),
+            },
+            embedder: model.clone(),
             embed: EmbedSettings::standard(),
             summary: SummarySettings::standard("fake-chat")?,
             scopes: None,
@@ -64,6 +69,7 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
         store: store.clone(),
         consolidate: None,
         recompile: None,
+        provider: model.clone(),
         model: "fake-chat".to_owned(),
         load: None,
     })

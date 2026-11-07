@@ -2,6 +2,7 @@ mod bulk;
 mod decisions;
 mod done;
 mod filing;
+mod models;
 mod pages;
 mod startup;
 mod tidy;

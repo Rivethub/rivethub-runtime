@@ -12,6 +12,7 @@ mod history;
 pub(crate) mod hub_state;
 pub mod memory;
 mod memory_archive;
+mod memory_models;
 mod memory_snippet;
 mod notifications;
 mod plugins;

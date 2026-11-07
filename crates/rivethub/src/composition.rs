@@ -377,8 +377,7 @@ impl Composition {
             .await?
             .with_shutdown(shutdown.child_token()),
         );
-        let mut gateway = Gateway::new(store, settings)
-            .with_provider_health(factory.health())
+        let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_uploads(crate::service::uploads(env)?)
             .with_tenancy(identity.tenancy.clone())
             .with_identity_required()

@@ -85,6 +85,16 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_model_assignments(mut self, assignments: Vec<crate::ModelAssignment>) -> Self {
+        self.model_assignments = assignments;
+        self
+    }
+
+    pub(crate) fn model_assignments(&self) -> &[crate::ModelAssignment] {
+        &self.model_assignments
+    }
+
+    #[must_use]
     pub fn with_flagged(mut self, flagged: Arc<dyn kernel::flagged::FlaggedJobs>) -> Self {
         self.flagged = Some(flagged);
         self

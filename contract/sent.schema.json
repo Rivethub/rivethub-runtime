@@ -8387,6 +8387,65 @@
       "format": "date-time",
       "type": "string"
     },
+    "ModelHealth": {
+      "enum": [
+        "healthy",
+        "slow",
+        "failing"
+      ],
+      "type": "string"
+    },
+    "ModelJob": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "health": {
+          "$ref": "#/$defs/ModelHealth"
+        },
+        "inheritsDefault": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queued": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/ModelRole"
+        }
+      },
+      "required": [
+        "role",
+        "inheritsDefault",
+        "health",
+        "detail",
+        "queued"
+      ],
+      "type": "object"
+    },
+    "ModelRole": {
+      "enum": [
+        "default",
+        "summarizer",
+        "categorizer",
+        "wiki-writer",
+        "embedder"
+      ],
+      "type": "string"
+    },
     "Mux": {
       "enum": [
         "tmux",

@@ -45,6 +45,7 @@ pub struct WikiBuilderDeps {
     pub store: Arc<dyn WikiBuilderStore>,
     pub consolidate: Option<Arc<dyn WikiConsolidateStore>>,
     pub recompile: Option<Arc<dyn WikiRecompileStore>>,
+    pub provider: Arc<dyn ModelProvider>,
     pub model: String,
     pub load: Option<Arc<dyn ModelLoadProbe>>,
 }
