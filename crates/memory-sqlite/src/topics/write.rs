@@ -159,6 +159,11 @@ pub(super) fn fold_into(
     )
     .map_err(failed("topic merge decisions"))?;
     conn.execute(
+        "UPDATE rh_entity_facts SET topic_id = ?2 WHERE topic_id = ?1",
+        params![source, into],
+    )
+    .map_err(failed("topic merge facts"))?;
+    conn.execute(
         "DELETE FROM rh_topic_aliases WHERE topic_id = ?1",
         params![source],
     )

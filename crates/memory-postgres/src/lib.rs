@@ -10,6 +10,7 @@ pub mod dump;
 pub mod embed;
 mod embedding_store;
 pub mod error;
+mod facts;
 mod flagged;
 mod graphile;
 mod graphile_sql;
@@ -85,7 +86,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 57;
+pub const SCHEMA_VERSION: i64 = 58;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

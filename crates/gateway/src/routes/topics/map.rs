@@ -59,7 +59,7 @@ pub(crate) fn error(error: TopicError) -> ApiError {
     }
 }
 
-pub(super) fn page_error(error: TopicPageError) -> ApiError {
+pub(crate) fn page_error(error: TopicPageError) -> ApiError {
     match error {
         TopicPageError::Topic(error) => self::error(error),
         TopicPageError::Memory(error) => ApiError::Store(error),

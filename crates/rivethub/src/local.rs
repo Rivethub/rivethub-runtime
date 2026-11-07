@@ -470,6 +470,7 @@ async fn build_runners(
             filing: Arc::clone(store) as Arc<dyn FilingStore>,
             pages: Arc::clone(store) as Arc<dyn TopicPageStore>,
             decisions: Arc::clone(store) as Arc<dyn DecisionStore>,
+            facts: Arc::clone(store) as Arc<dyn kernel::facts::FactStore>,
             tidy: Arc::clone(store) as Arc<dyn TidyStore>,
             lineage: worker::session_lineage(env),
             load: None,

@@ -211,6 +211,7 @@ async fn dispatch_wiki<Q: JobQueue>(
         (Some(sessions), Some(pages)) => Some(kernel::wiki::route::TopicPorts {
             topics: sessions.store.as_ref(),
             pages: pages.pages.as_ref(),
+            facts: pages.facts.as_ref(),
             filing: sessions.filing.as_ref(),
             lineage: sessions.lineage.as_ref(),
         }),

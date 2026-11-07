@@ -92,7 +92,7 @@ pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<Stri
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note NEW-sessions)"
+            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note 127)"
         )
     )]
     let found = read.unwrap_or_else(|error| {

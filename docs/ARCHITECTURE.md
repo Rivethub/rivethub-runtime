@@ -46,7 +46,7 @@ reach sessions over the HTTP API), `Env` (config owns the environment), `Fs` (di
 
 ### SQLite store gaps
 
-`memory-sqlite` (schema v30) implements the memory, queue, embedding, summary, topic, wiki-builder, tidy, tenancy and task
+`memory-sqlite` (schema v32) implements the memory, queue, embedding, summary, topic, wiki-builder, tidy, tenancy and task
 ports that `rh local` composes. It has no message-chunk table, so `EmbeddingStore` refuses chunked embeddings
 (`EmbedTable::MessageChunks`, or a `StoredEmbedding` with chunks) with a typed error and standalone nodes embed without
 chunking. Vector search scans the stored vectors; there is no approximate-nearest-neighbour index. It stores visibility
@@ -147,7 +147,7 @@ B16) → cutover. Each wave's gate is a boundary working end to end against the 
 Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the task engine on the SQLite store (task routes and MCP delegation share it; no mesh executor), and the wiki builder when `memory.sqlite.wiki_dir` is set. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them.
 Mesh (registry, heartbeat, agent channel) is a gateway module; ssh helpers are in cli; mesh.json types in wire. 20 crates.
 Schema changes never run inside the runtime: `rivethub-migrate postgres|sqlite` applies them (Postgres from the
-`migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation, the v1→v7 upgrade ladder and the steps to v30, with a
+`migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation, the v1→v7 upgrade ladder and the steps to v32, with a
 `<file>.v<N>.bak` copy of the original file before any read-write connection), and the stores verify one schema version each
 (`memory_postgres::SCHEMA_VERSION`, `memory_sqlite::SCHEMA_VERSION`) and refuse to start behind it.
 `cli` owns the `rivethub-migrate` operator binary. Its Postgres-dump import composes

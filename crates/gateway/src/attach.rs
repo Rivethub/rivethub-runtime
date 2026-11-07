@@ -129,6 +129,20 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_facts(mut self, store: Arc<dyn kernel::facts::FactStore>) -> Self {
+        self.facts = Some(store);
+        self
+    }
+
+    pub(crate) fn facts(
+        &self,
+    ) -> Result<&Arc<dyn kernel::facts::FactStore>, crate::error::ApiError> {
+        self.facts
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("fact store unavailable".into()))
+    }
+
+    #[must_use]
     pub fn with_startup_memory(
         mut self,
         pages: Arc<dyn kernel::topics::TopicPageStore>,

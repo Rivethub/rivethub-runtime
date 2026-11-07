@@ -18,7 +18,7 @@ fn the_newest_postgres_migration_is_the_version_the_adapter_verifies() {
 #[test]
 fn the_sqlite_target_is_the_version_the_adapter_verifies() {
     assert_eq!(
-        migrate::SchemaVersion::V31.number(),
+        migrate::SchemaVersion::V32.number(),
         memory_sqlite::SCHEMA_VERSION,
         "a schema step must not land without moving memory_sqlite::SCHEMA_VERSION, and the other way round"
     );

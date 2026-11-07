@@ -47,9 +47,11 @@ use crate::extract::Query;
 use crate::tenancy::UserId;
 
 pub(super) use map::error as topic_error;
+pub(crate) use map::page_error;
 pub(super) use startup::Started;
 pub(super) use startup::begin;
 pub(crate) use startup::prepare;
+pub(crate) use visibility::error as visibility_error;
 
 const SEARCH_LIMIT_DEFAULT: usize = 10;
 const SEARCH_LIMIT_MAX: usize = 50;

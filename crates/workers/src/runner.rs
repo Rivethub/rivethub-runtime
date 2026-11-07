@@ -249,11 +249,13 @@ where
         topics: Arc<dyn TopicStore>,
         pages: Arc<dyn TopicPageStore>,
         decisions: Arc<dyn DecisionStore>,
+        facts: Arc<dyn kernel::facts::FactStore>,
     ) -> Self {
         self.topic_pages = Some(crate::topic_page::TopicPages {
             topics,
             pages,
             decisions,
+            facts,
         });
         self
     }

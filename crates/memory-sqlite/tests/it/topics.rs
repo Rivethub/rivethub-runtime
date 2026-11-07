@@ -216,6 +216,13 @@ async fn decisions_are_the_topic_page_decisions_section() -> TestResult {
 }
 
 #[tokio::test]
+async fn facts_keep_claims_pins_and_merges() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::facts::facts_keep_claims_pins_and_merges(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound() -> TestResult {
     let (_directory, store) = store()?;
     topic_pages::a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(pages(&store))

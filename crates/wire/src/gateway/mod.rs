@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod catalog;
 pub mod devices;
+pub mod entities;
 pub mod files;
 pub mod flagged;
 pub mod hub_state;

@@ -153,6 +153,7 @@ async fn run(
         let filing: Arc<dyn FilingStore> = memory.clone();
         let pages: Arc<dyn TopicPageStore> = memory.clone();
         let decisions: Arc<dyn DecisionStore> = memory.clone();
+        let facts: Arc<dyn kernel::facts::FactStore> = memory.clone();
         let tidy: Arc<dyn TidyStore> = memory.clone();
         let mut runner = build_runner(
             role,
@@ -167,6 +168,7 @@ async fn run(
                 filing,
                 pages,
                 decisions,
+                facts,
                 tidy,
                 lineage: session_lineage(env),
                 load: model_load(env)?,
@@ -238,6 +240,7 @@ pub struct WorkerPorts<Q> {
     pub filing: Arc<dyn FilingStore>,
     pub pages: Arc<dyn TopicPageStore>,
     pub decisions: Arc<dyn DecisionStore>,
+    pub facts: Arc<dyn kernel::facts::FactStore>,
     pub tidy: Arc<dyn TidyStore>,
     pub lineage: Arc<dyn SessionLister>,
     pub load: Option<Arc<dyn kernel::model::ModelLoadProbe>>,
@@ -309,7 +312,12 @@ pub fn with_models<Q: JobQueue + 'static>(
         model: wiki_writer.model,
         load: ports.load,
     })
-    .with_topic_pages(Arc::clone(&ports.topics), ports.pages, ports.decisions)
+    .with_topic_pages(
+        Arc::clone(&ports.topics),
+        ports.pages,
+        ports.decisions,
+        ports.facts,
+    )
     .with_tidy(ports.tidy)
     .with_session_topics(workers::SessionTopics {
         store: ports.topics,

@@ -79,6 +79,9 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
         SchemaVersion::V31 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/session_trash_v31.sql"))
         }),
+        SchemaVersion::V32 => in_transaction(conn, to, |tx| {
+            tx.execute_batch(include_str!("schema/entity_facts_v32.sql"))
+        }),
     }
 }
 

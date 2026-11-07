@@ -222,6 +222,13 @@ async fn decisions_are_the_topic_page_decisions_section(pool: PgPool) -> TestRes
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn facts_keep_claims_pins_and_merges(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::facts::facts_keep_claims_pins_and_merges(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(
     pool: PgPool,
 ) -> TestResult {
