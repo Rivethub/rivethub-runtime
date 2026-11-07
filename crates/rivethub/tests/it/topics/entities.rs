@@ -187,6 +187,12 @@ async fn an_article_shows_facts_sources_conflicts_and_connections() -> TestResul
             .iter()
             .any(|entry| entry.text == "os: Ubuntu 24.04")
     );
+    assert!(
+        now.timeline
+            .windows(2)
+            .all(|pair| pair.first().map(|entry| entry.at) >= pair.last().map(|entry| entry.at)),
+        "the timeline is newest first"
+    );
     Ok(())
 }
 
