@@ -16,7 +16,7 @@ async fn sqlite_status_is_read_only_and_migrate_is_idempotent() -> Result {
     assert_eq!(before.exit, Exit::Ok);
     assert_eq!(
         before.stdout,
-        format!("sqlite {path_text}: current 0, required 34, pending 33\nforeign: none\n")
+        format!("sqlite {path_text}: current 0, required 34, pending 34\nforeign: none\n")
     );
     assert!(!path.exists());
     for _ in 0..2 {

@@ -69,7 +69,7 @@ fn status_reports_the_sqlite_ladder_position() -> TestResult {
     assert!(
         stdout.contains("current 5")
             && stdout.contains("required 34")
-            && stdout.contains("pending 28"),
+            && stdout.contains("pending 29"),
         "status must report the current, required and pending steps: {stdout}"
     );
     assert!(
@@ -80,7 +80,7 @@ fn status_reports_the_sqlite_ladder_position() -> TestResult {
     let missing = dir.path().join("absent.sqlite");
     let stdout = run(&["status", "sqlite", "--path", &missing.to_string_lossy()])?;
     assert!(
-        stdout.contains("current 0") && stdout.contains("pending 33"),
+        stdout.contains("current 0") && stdout.contains("pending 34"),
         "a missing file reads as version 0 with the whole ladder pending: {stdout}"
     );
     assert!(!missing.exists(), "status must not create the file");
@@ -109,7 +109,7 @@ async fn status_reports_a_fresh_postgres_database_and_migrate_applies_the_chain(
     assert!(
         stdout.contains("current 0")
             && stdout.contains("required 60")
-            && stdout.contains("pending 55"),
+            && stdout.contains("pending 56"),
         "a fresh database reads as version 0 with the whole chain pending: {stdout}"
     );
 
