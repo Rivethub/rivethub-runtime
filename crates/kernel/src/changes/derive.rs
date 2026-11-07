@@ -53,21 +53,35 @@ pub fn changes(records: Vec<ChangeRecord>, window: &ChangeWindow) -> Vec<Change>
 
 #[must_use]
 pub fn fact_change(subject: Subject, event: &FactEvent) -> Change {
+    let (kind, text) = fact_text(event);
+    let (actor, source) = match &event.change {
+        FactChange::Became { session, .. } | FactChange::Disputed { session, .. } => {
+            (said_by(session.is_some()), session.clone())
+        }
+        FactChange::Pinned { .. } => (ChangeActor::You, None),
+    };
+    Change {
+        kind,
+        subject,
+        text,
+        at: event.at,
+        actor,
+        source,
+    }
+}
+
+#[must_use]
+pub fn fact_text(event: &FactEvent) -> (ChangeKind, String) {
     let key = event.key.as_str();
-    let (kind, text, actor, source) = match &event.change {
-        FactChange::Became { value, session } => (
-            ChangeKind::Fact,
-            format!("{key}: {}", value.as_str()),
-            said_by(session.is_some()),
-            session.clone(),
-        ),
+    match &event.change {
+        FactChange::Became { value, .. } => {
+            (ChangeKind::Fact, format!("{key}: {}", value.as_str()))
+        }
         FactChange::Pinned { value } => (
             ChangeKind::Fact,
             format!("You pinned {key}: {}", value.as_str()),
-            ChangeActor::You,
-            None,
         ),
-        FactChange::Disputed { values, session } => (
+        FactChange::Disputed { values, .. } => (
             ChangeKind::Conflict,
             format!(
                 "Sources disagree on {key}: {}",
@@ -77,17 +91,7 @@ pub fn fact_change(subject: Subject, event: &FactEvent) -> Change {
                     .collect::<Vec<_>>()
                     .join(" or ")
             ),
-            said_by(session.is_some()),
-            session.clone(),
         ),
-    };
-    Change {
-        kind,
-        subject,
-        text,
-        at: event.at,
-        actor,
-        source,
     }
 }
 

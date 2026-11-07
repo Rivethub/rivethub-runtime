@@ -275,6 +275,8 @@ pub struct Gateway {
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
     session_catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
+    changes: Option<Arc<dyn kernel::changes::ChangeFeed>>,
+    digests: Option<Arc<dyn kernel::changes::DigestStore>>,
     surface: Surface,
 }
 
@@ -338,6 +340,8 @@ impl Gateway {
             summaries: None,
             deletions: None,
             session_catalog: None,
+            changes: None,
+            digests: None,
             surface: Surface::Full,
         }
     }

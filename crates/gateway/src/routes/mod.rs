@@ -23,6 +23,7 @@ pub mod tags;
 pub mod tasks;
 pub mod terminal;
 mod tidy;
+mod today;
 pub(crate) mod topics;
 mod updates;
 pub(crate) mod voice;
@@ -55,6 +56,7 @@ pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
         .merge(topics::router())
         .merge(entities::router())
         .merge(tidy::router())
+        .merge(today::router())
 }
 
 pub(crate) async fn contract_header(
@@ -84,6 +86,7 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(topics::router())
         .merge(entities::router())
         .merge(tidy::router())
+        .merge(today::router())
         .merge(hub_state::router())
         .merge(plugins::router())
         .merge(session_delete::router())

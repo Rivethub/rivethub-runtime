@@ -16,6 +16,7 @@ pub enum SubjectRef {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename = "session")]
+#[schemars(rename = "SessionRef")]
 pub struct SessionRef {
     pub id: SessionId,
     pub title: String,

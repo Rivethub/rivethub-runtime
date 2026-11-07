@@ -60,6 +60,7 @@ mod tasks_http;
 mod term_agents;
 mod term_owner_device;
 mod tls_resolve;
+mod today;
 mod updates;
 mod upgrade;
 mod voice;

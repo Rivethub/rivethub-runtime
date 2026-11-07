@@ -16,6 +16,7 @@ use crate::topics::TopicKind;
 
 pub use self::derive::changes;
 pub use self::derive::fact_change;
+pub use self::derive::fact_text;
 pub use self::digest::DIGEST_MAX_CHARS;
 pub use self::digest::DIGEST_SYSTEM_PROMPT;
 pub use self::digest::DailyDigest;

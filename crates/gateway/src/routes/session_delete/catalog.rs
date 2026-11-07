@@ -22,7 +22,7 @@ use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
 
-const PRIVATE: &str = "private";
+pub(crate) const PRIVATE: &str = "private";
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,12 +58,12 @@ pub(super) struct ListParams {
 }
 
 #[derive(Debug, Default)]
-struct Lineage {
-    parents: BTreeMap<String, SessionId>,
+pub(crate) struct Lineage {
+    pub(crate) parents: BTreeMap<String, SessionId>,
     children: BTreeMap<String, u64>,
 }
 
-async fn lineage(gateway: &Gateway) -> Lineage {
+pub(crate) async fn lineage(gateway: &Gateway) -> Lineage {
     let (Some(lister), Some(terminal)) = (gateway.session_lister(), gateway.terminal()) else {
         return Lineage::default();
     };
@@ -80,7 +80,7 @@ async fn lineage(gateway: &Gateway) -> Lineage {
     lineage
 }
 
-fn catalog(gateway: &Gateway) -> Result<&dyn SessionCatalog, ApiError> {
+pub(crate) fn catalog(gateway: &Gateway) -> Result<&dyn SessionCatalog, ApiError> {
     gateway
         .session_catalog()
         .ok_or_else(|| ApiError::Unavailable("session catalog unavailable".to_owned()))
@@ -133,7 +133,11 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
     }
 }
 
-fn row(record: SessionRecord, visibility: String, lineage: &Lineage) -> SessionSummaryRow {
+pub(crate) fn row(
+    record: SessionRecord,
+    visibility: String,
+    lineage: &Lineage,
+) -> SessionSummaryRow {
     let key = record.id.to_string();
     let parent_id = lineage.parents.get(&key).cloned();
     let child_count = lineage
@@ -162,7 +166,7 @@ fn row(record: SessionRecord, visibility: String, lineage: &Lineage) -> SessionS
     }
 }
 
-async fn visibilities(
+pub(crate) async fn visibilities(
     gateway: &Gateway,
     user: &UserId,
     sessions: &[SessionId],
@@ -184,7 +188,7 @@ async fn visibilities(
         .collect())
 }
 
-fn shown(gateway: &Gateway, user: &UserId, record: &SessionRecord) -> bool {
+pub(crate) fn shown(gateway: &Gateway, user: &UserId, record: &SessionRecord) -> bool {
     matches!(
         gateway.sessions().visible(user, record.id.native(), None),
         Ok(true)

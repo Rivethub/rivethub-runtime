@@ -8,7 +8,6 @@ use kernel::facts::FactState;
 use kernel::facts::Support;
 use kernel::tenancy::Visibility;
 use strum::IntoEnumIterator as _;
-use wire::gateway::entities::ChangeKind;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Fact;
 use wire::gateway::entities::FactConflict;
@@ -110,31 +109,14 @@ pub(super) fn fact(state: &FactState, titles: &Titles) -> Fact {
 }
 
 pub(super) fn event(event: &FactEvent, titles: &Titles) -> TimelineEntry {
-    let key = event.key.as_str();
-    let (text, kind, session) = match &event.change {
-        FactChange::Became { value, session } => (
-            format!("{key}: {}", value.as_str()),
-            ChangeKind::Fact,
-            session.as_ref(),
-        ),
-        FactChange::Pinned { value } => (
-            format!("You pinned {key}: {}", value.as_str()),
-            ChangeKind::Fact,
-            None,
-        ),
-        FactChange::Disputed { values, session } => (
-            format!(
-                "Sources disagree on {key}: {}",
-                values
-                    .iter()
-                    .map(kernel::facts::FactValue::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            ),
-            ChangeKind::Conflict,
-            session.as_ref(),
-        ),
+    let (kind, text) = kernel::changes::fact_text(event);
+    let session = match &event.change {
+        FactChange::Became { session, .. } | FactChange::Disputed { session, .. } => {
+            session.as_ref()
+        }
+        FactChange::Pinned { .. } => None,
     };
+    let kind = crate::routes::today::kind(kind);
     TimelineEntry {
         at: event.at,
         text,

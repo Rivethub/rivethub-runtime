@@ -1,6 +1,6 @@
 pub mod cleanup;
 mod deleted_sessions;
-mod digest;
+pub mod digest;
 mod dispatch;
 mod embed;
 pub mod embedding_sweep;

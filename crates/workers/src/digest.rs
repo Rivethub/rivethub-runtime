@@ -20,20 +20,28 @@ use crate::WorkerError;
 
 const DIGEST_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[expect(
+    missing_debug_implementations,
+    reason = "the digest ports are trait objects without Debug"
+)]
 #[derive(Clone)]
-pub(crate) struct DailyDigests {
-    pub(crate) changes: Arc<dyn ChangeFeed>,
-    pub(crate) digests: Arc<dyn DigestStore>,
+pub struct DailyDigests {
+    pub changes: Arc<dyn ChangeFeed>,
+    pub digests: Arc<dyn DigestStore>,
 }
 
-pub(crate) struct DigestEnv<'a> {
-    pub(crate) deps: &'a DailyDigests,
-    pub(crate) provider: &'a dyn ModelProvider,
-    pub(crate) model: &'a str,
-    pub(crate) cancel: &'a CancellationToken,
+#[expect(
+    missing_debug_implementations,
+    reason = "the model provider is a trait object without Debug"
+)]
+pub struct DigestEnv<'a> {
+    pub deps: &'a DailyDigests,
+    pub provider: &'a dyn ModelProvider,
+    pub model: &'a str,
+    pub cancel: &'a CancellationToken,
 }
 
-pub(crate) async fn handle_digest_day(
+pub async fn handle_digest_day(
     env: &DigestEnv<'_>,
     request: &DigestRequest,
 ) -> Result<(), WorkerError> {
@@ -86,6 +94,6 @@ pub(crate) async fn handle_digest_day(
     Ok(())
 }
 
-pub(crate) fn digest_request(payload: &JsonObject) -> Result<DigestRequest, WorkerError> {
+pub fn digest_request(payload: &JsonObject) -> Result<DigestRequest, WorkerError> {
     DigestRequest::from_payload(payload).map_err(WorkerError::from)
 }
