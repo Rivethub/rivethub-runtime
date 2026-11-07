@@ -436,3 +436,93 @@ async fn wiki_extraction_constrains_the_model_and_reads_loose_slugs_and_dates(
     assert!(system.contains(&serde_json::to_string(constraint)?));
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_wiki_writer_records_an_entity_s_facts_under_the_summary_s_session(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::facts::FactStore as _;
+    use kernel::topics::TopicStore as _;
+    use kernel::topics::{NewTopic, Slug, Topic, TopicId, TopicKey, TopicKind, TopicName};
+
+    let wiki = tempfile::tempdir()?;
+    let store = PostgresMemory::new(pool.clone()).with_wiki_directory(wiki.path().to_path_buf());
+    let job = seed(&pool).await?;
+    wiki_support::filed(&store, &job).await?;
+    let hosts = store
+        .find(&TopicKey::Slug(TopicKind::Type, Slug::fold("Hosts")?))
+        .await?
+        .ok_or("the Hosts type is seeded")?;
+    let host = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Entity,
+                name: TopicName::new("acme-build")?,
+                aliases: Vec::new(),
+                parent: Some(hosts.id),
+                directory: None,
+                owner: Some(testkit::owner()?),
+            },
+            now(),
+        )?)
+        .await?;
+    let answer = r#"[{"action":"update","slug":"acme-build","title":"acme-build","aliases":[],"tags":[],"entities":[],"summary":"The AcmeKit build box.","article":null,"related":null,"history_entry":null,"type":"Hosts","facts":[{"key":"OS","value":"Ubuntu 24.04","evidence":"acme-build was moved to Ubuntu 24.04"},{"key":"role","value":"","evidence":"unclear"}]}]"#;
+    let model = wiki_support::raw_provider(answer, FinishReason::Stop);
+    let queue = FakeJobQueue::default();
+    let cancel = CancellationToken::new();
+    let env = WikiBuilderEnv {
+        store: &store,
+        provider: &model,
+        queue: &queue,
+        model: "fake-chat",
+        now: now(),
+        cancel: &cancel,
+        topics: Some(wiki_support::ports(&store)),
+    };
+    handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await?;
+    let claims = store.claims(host.id).await?;
+    let conversation = job.conversation_id.ok_or("a seeded conversation")?;
+    let written: Vec<(&str, &str, Option<String>, Option<&str>)> = claims
+        .iter()
+        .map(|claim| {
+            let (session, evidence) = match &claim.said {
+                kernel::facts::Said::Writer {
+                    session, evidence, ..
+                } => (
+                    Some(session.as_str().to_owned()),
+                    evidence.as_ref().map(kernel::facts::Evidence::as_str),
+                ),
+                kernel::facts::Said::You { .. } => (None, None),
+            };
+            (claim.key.as_str(), claim.value.as_str(), session, evidence)
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [(
+            "os",
+            "Ubuntu 24.04",
+            Some(format!("claude-code:{conversation}")),
+            Some("acme-build was moved to Ubuntu 24.04"),
+        )],
+        "one claim, sourced to the summary's session, with its quoted evidence; the empty fact is dropped"
+    );
+    let calls = model.chat_requests().await;
+    let request = calls.first().ok_or("one request")?;
+    let MessageContent::Text(system) = &request.messages.first().ok_or("system")?.content else {
+        return Err("a text system prompt".into());
+    };
+    assert!(system.contains("list in facts what this summary says is now true"));
+    assert!(
+        system.contains(r#""PatchFact""#),
+        "the response schema carries facts"
+    );
+    handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await?;
+    assert_eq!(
+        store.claims(host.id).await?.len(),
+        1,
+        "a finished job writes no new claim"
+    );
+    Ok(())
+}

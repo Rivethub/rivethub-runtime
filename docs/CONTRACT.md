@@ -1607,7 +1607,8 @@ article; `PUT /api/entities/{id}/facts` with `{id?, key, value, pinned}` records
 (`id`, when given, must name a fact of this entity with that key: `404` otherwise, `409` on another key). `{id}` is an
 entity topic id; anything else is `404`. The wiki builder's extraction patch gains `facts` (`[{key, value, evidence}]`)
 for a patch with a `type`; each becomes a writer claim on the patch's entity, sourced to the patch's own session
-(a held candidate's facts to its session, once the entity exists). Postgres migration 0057 and SQLite schema v31 add
+(a held candidate's facts to its session, once the entity exists); a fact without a usable key or value is
+dropped, a later fact of the same key in one patch wins, and a summary whose session is not a canonical id writes none. Postgres migration 0057 and SQLite schema v31 add
 the tables.
 ## 4. Gaps to close before building the affected slice
 

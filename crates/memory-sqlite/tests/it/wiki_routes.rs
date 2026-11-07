@@ -56,6 +56,7 @@ fn stores_in<'a>(store: &'a SqliteStore, lineage: &'a dyn SessionLister) -> Rout
             wiki: store,
             queue: store,
         },
+        facts: store,
         wiki: store,
         filing: store,
         lineage,
@@ -272,5 +273,24 @@ async fn updates_keep_the_lead_and_replace_only_the_currently_sentence() -> Test
         [&job, &next, &last],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin() -> TestResult {
+    let (_directory, store, job) = seeded().await?;
+    testkit::wiki_facts::an_entity_patch_records_its_facts_and_never_overwrites_a_pin(
+        stores(&store),
+        &job,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_held_candidate_keeps_its_own_session_for_its_facts() -> TestResult {
+    let (_directory, store, job) = seeded().await?;
+    testkit::wiki_facts::a_held_candidate_keeps_its_own_session_for_its_facts(stores(&store), &job)
+        .await?;
     Ok(())
 }

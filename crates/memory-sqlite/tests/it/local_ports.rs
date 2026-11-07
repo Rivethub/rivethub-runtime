@@ -65,6 +65,7 @@ fn patch() -> TestResult<WikiPatch> {
         related: None,
         history_entry: None,
         entity_type: None,
+        facts: None,
     })
 }
 
