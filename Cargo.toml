@@ -78,6 +78,7 @@ serde_with = { version = "3", default-features = false, features = ["macros", "s
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
 shlex = "2"
+similar = "3"
 similar-asserts = "2"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-aws-lc-rs", "postgres", "uuid", "chrono", "json", "migrate"] }
 stepca = { path = "crates/stepca", version = "0.7.0" }

@@ -29,6 +29,7 @@ mod devices;
 mod extract;
 mod files;
 mod harness_registry;
+mod harness_setup;
 mod harnesses;
 mod hub_state;
 mod memory_api;

@@ -105,6 +105,11 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::capture_hook::CaptureCommand,
     },
+    #[command(about = "Show and wire the coding harnesses on this machine")]
+    Harness {
+        #[command(subcommand)]
+        command: crate::harness::HarnessCommand,
+    },
     #[command(about = "Read the service journal", disable_help_flag = true)]
     Logs {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

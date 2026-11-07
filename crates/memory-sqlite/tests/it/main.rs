@@ -6,6 +6,7 @@ mod common;
 mod search_support;
 
 mod bundle;
+mod capture_activity;
 mod capture_rules;
 mod close;
 mod embed_store;

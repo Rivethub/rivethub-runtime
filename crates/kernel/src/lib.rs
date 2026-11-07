@@ -6,6 +6,7 @@ pub mod filing;
 pub mod flagged;
 pub mod fork;
 pub mod harness;
+pub mod harness_setup;
 pub mod hub_state;
 pub mod memory;
 pub mod memory_core;

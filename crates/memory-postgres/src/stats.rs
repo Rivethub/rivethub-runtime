@@ -33,6 +33,16 @@ const COUNTED_RECENT: &str = "select c.id::text as session_id, c.title, c.agent,
           where n.conversation_id = c.id) as messages
    from rh_conversations c order by c.updated_at desc limit 12";
 
+const CAPTURE_ACTIVITY: &str =
+    "select split_part(session_key, ':', 1) as key_prefix, max(updated_at) as last_at
+   from rh_conversations where position(':' in session_key) > 1 group by 1";
+
+#[derive(sqlx::FromRow)]
+struct ActivityRow {
+    key_prefix: String,
+    last_at: DateTime<Utc>,
+}
+
 #[derive(Default, sqlx::FromRow)]
 struct ToolGroup {
     tool_name: Option<String>,
@@ -65,6 +75,22 @@ fn count(value: i64) -> Result<u64, Error> {
 }
 
 impl crate::PostgresMemory {
+    pub async fn read_capture_activity(
+        &self,
+    ) -> Result<Vec<kernel::harness_setup::CaptureActivity>, Error> {
+        let rows = sqlx::query_as::<_, ActivityRow>(CAPTURE_ACTIVITY)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|source| Error::operation("capture activity", source))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| kernel::harness_setup::CaptureActivity {
+                key_prefix: row.key_prefix,
+                last_at: row.last_at,
+            })
+            .collect())
+    }
+
     pub async fn memory_stats(&self) -> Result<MemoryStatsResponse, Error> {
         let counted = self
             .backfills

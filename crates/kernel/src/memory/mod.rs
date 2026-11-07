@@ -462,6 +462,12 @@ pub trait MemoryStore: Send + Sync {
 
     async fn stats(&self) -> Result<MemoryStatsResponse, MemoryStoreError>;
 
+    async fn capture_activity(
+        &self,
+    ) -> Result<Vec<crate::harness_setup::CaptureActivity>, MemoryStoreError> {
+        Ok(Vec::new())
+    }
+
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError>;
 
     async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError>;
