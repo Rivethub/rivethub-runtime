@@ -208,17 +208,28 @@ fn an_empty_hostname_with_nothing_configured_is_an_error() -> Result<(), config:
 }
 
 #[test]
-fn whitespace_mesh_name_is_rejected_when_mesh_is_enabled() {
-    let error = Config::from_str(
+fn a_mesh_block_loads_with_one_warning_and_keeps_the_node_name() {
+    let loaded = Config::from_str(
         &Environment::default(),
-        &skeleton("mesh:\n  enabled: true\n  node_name: \"   \"\n"),
+        &skeleton("mesh:\n  enabled: true\n  node_name: edge-node\n  tls: true\n  agent_channel_port: 3000\n"),
     )
-    .expect_err("blank mesh name");
-    assert!(
-        error.to_string().contains(
-            "mesh.node_name is required when mesh.enabled is true (used as CN for node cert)"
-        ),
-        "{error}"
+    .expect("a retired mesh block still loads");
+    let mesh: Vec<_> = loaded
+        .warnings
+        .iter()
+        .filter(|finding| finding.path.starts_with("mesh"))
+        .collect();
+    let [warning] = mesh.as_slice() else {
+        panic!("one mesh warning: {mesh:?}");
+    };
+    assert!(warning.message.contains("is no longer used"), "{mesh:?}");
+    assert_eq!(
+        loaded
+            .config
+            .mesh
+            .and_then(|mesh| mesh.node_name)
+            .as_deref(),
+        Some("edge-node")
     );
 }
 

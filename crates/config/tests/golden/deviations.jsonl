@@ -168,16 +168,11 @@
 {"id":"validate_config_mesh_channels_misc.jsonl:304","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:320","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:352","class":"rejected"}
-{"id":"validate_config_mesh_channels_misc.jsonl:373","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:383","class":"rejected"}
-{"id":"validate_config_mesh_channels_misc.jsonl:434","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:447","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:564","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:584","class":"rejected"}
-{"id":"validate_config_mesh_channels_misc.jsonl:598","class":"rejected"}
-{"id":"validate_config_mesh_channels_misc.jsonl:625","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:643","class":"rejected"}
-{"id":"validate_config_mesh_channels_misc.jsonl:674","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:769","class":"rejected"}
 {"id":"validate_config_mesh_channels_misc.jsonl:787","class":"rejected"}
 {"id":"validate_config_runtime.jsonl:164","class":"order","findings":[{"severity":"error","path":"providers.anthropic.type","message":"Provider \"anthropic\" type \"anthropic\" is not built — reach anthropic models through the claude-code harness instead."},{"severity":"error","path":"providers.xai.type","message":"Provider \"xai\" type \"xai\" is not built — reach xai models through the grok-build harness instead."},{"severity":"error","path":"runtime.default_agent","message":"Default agent \"inherit\" is not defined in [agents]. Available: coder, local, main"},{"severity":"warning","path":"runtime.token_command","message":"Unknown runtime key \"token_command\""}]}

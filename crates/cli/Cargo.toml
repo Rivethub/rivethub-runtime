@@ -12,7 +12,6 @@ async-trait = { workspace = true }
 memory-postgres.workspace = true
 sha2.workspace = true
 hex.workspace = true
-shlex.workspace = true
 memory-sqlite.workspace = true
 base64.workspace = true
 capture.workspace = true

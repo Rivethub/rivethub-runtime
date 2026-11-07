@@ -1,38 +1,6 @@
-use crate::events::Activity;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-
-#[serde_as]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct MeshOverview {
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub updated_at: DateTime<Utc>,
-    pub nodes: Vec<MeshOverviewNode>,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct MeshOverviewNode {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "denUrl")]
-    pub url: String,
-    pub online: bool,
-    pub sessions: Option<u64>,
-    pub latest: Option<MeshLatest>,
-    pub version: Option<String>,
-    pub revision: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct MeshLatest {
-    pub activity: Activity,
-    pub title: String,
-}
 
 #[serde_as]
 #[serde_with::skip_serializing_none]

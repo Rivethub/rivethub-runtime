@@ -1,7 +1,3 @@
-#[cfg(target_os = "linux")]
-#[path = "node_name/mesh_registry.rs"]
-mod mesh_registry;
-
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;

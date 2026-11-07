@@ -295,12 +295,6 @@ impl Environment {
         self.setting(Alias::EmbedModel).map(str::to_owned)
     }
 
-    pub(crate) fn advertised_host(&self) -> Option<String> {
-        self.setting(Alias::Host)
-            .map(str::to_owned)
-            .or_else(|| self.trimmed("HOSTNAME").map(str::to_owned))
-    }
-
     pub(crate) fn configured_shared_dir(&self) -> Option<&str> {
         self.setting(Alias::SharedDir)
     }

@@ -179,13 +179,10 @@ fn settings(home: &Path) -> gateway::Settings {
         root_redirect: None,
         state_dir: home.join("gateway"),
         directory_root: home.join("agents"),
-        mesh_file: None,
         shared_dir: home.join("shared"),
-        legacy_mesh_dir: home.join("legacy"),
         allowed_harnesses: None,
         devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_cache_ttl: Duration::ZERO,
         mesh_ca: None,
     }
 }

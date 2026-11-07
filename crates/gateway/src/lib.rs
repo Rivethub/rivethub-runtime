@@ -5,7 +5,6 @@ pub mod error;
 pub mod extract;
 mod history;
 mod memory_body;
-pub mod mesh;
 mod models;
 pub mod plugins;
 pub mod routes;
@@ -75,7 +74,6 @@ pub struct Gateway {
     hub_state: Arc<dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState>>,
     certificate_authority: Option<Arc<dyn kernel::ca::CertificateAuthority>>,
     devices: routes::devices::DeviceRuntime,
-    mesh_cache: routes::MeshCache,
     voice: VoiceProxy,
     providers: Vec<kernel::model::ProviderHealth>,
     memory_export: Option<Arc<dyn kernel::memory::MemoryExport>>,
@@ -141,7 +139,6 @@ impl Gateway {
             hub_state,
             certificate_authority: None,
             devices: routes::devices::DeviceRuntime::unconfigured(),
-            mesh_cache: routes::MeshCache::default(),
             voice: VoiceProxy::unconfigured(),
             providers: Vec::new(),
             memory_export: None,
@@ -393,10 +390,6 @@ impl Gateway {
 
     pub(crate) fn devices(&self) -> &routes::devices::DeviceRuntime {
         &self.devices
-    }
-
-    pub(crate) fn mesh_cache(&self) -> &routes::MeshCache {
-        &self.mesh_cache
     }
 
     pub fn router(self: &Arc<Self>, secure: bool) -> Router {

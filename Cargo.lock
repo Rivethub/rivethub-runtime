@@ -51,26 +51,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-loop"
-version = "0.7.0"
-dependencies = [
- "async-trait",
- "chrono",
- "kernel",
- "parking_lot",
- "regex",
- "rmcp",
- "serde",
- "serde_json",
- "tempfile",
- "testkit",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "wire",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -692,7 +672,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "shlex",
  "sqlx",
  "stepca",
  "strum 0.27.2",
@@ -3136,7 +3115,6 @@ dependencies = [
 name = "rivethub"
 version = "0.7.0"
 dependencies = [
- "agent-loop",
  "async-trait",
  "axum",
  "capture",

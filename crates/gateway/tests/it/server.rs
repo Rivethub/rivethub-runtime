@@ -206,11 +206,9 @@ fn surface_paths_follow_the_environment_then_the_gateway_section() {
     let legacy = config::Environment::from_vars([
         ("HOME", "/tmp/golden/home"),
         ("RIVETOS_SHARED_DIR", "/tmp/golden/shared"),
-        ("RIVETOS_DEN_MESH_FILE", "/tmp/golden/mesh.json"),
         ("RIVETOS_DEN_STATE_DIR", "/tmp/golden/state"),
         ("RIVETOS_DEN_STATIC_DIR", "/tmp/golden/static"),
         ("RIVETOS_DEN_ROOT_REDIRECT", "/wiki"),
-        ("RIVETOS_DEN_MESH_CACHE_MS", "0"),
     ]);
     let settings = gateway::Settings::from_config_in(
         &config,
@@ -225,17 +223,8 @@ fn surface_paths_follow_the_environment_then_the_gateway_section() {
     );
     assert_eq!(settings.root_redirect.as_deref(), Some("/wiki"));
     assert_eq!(settings.state_dir, PathBuf::from("/tmp/golden/state"));
-    assert_eq!(
-        settings.mesh_file.as_deref(),
-        Some(std::path::Path::new("/tmp/golden/mesh.json"))
-    );
     assert_eq!(settings.shared_dir, PathBuf::from("/tmp/golden/shared"));
-    assert_eq!(
-        settings.legacy_mesh_dir,
-        PathBuf::from("/tmp/golden/home/.rivetos")
-    );
     assert!(settings.devices_enabled);
-    assert_eq!(settings.mesh_cache_ttl, std::time::Duration::ZERO);
     assert_eq!(
         settings.probe_timeout,
         std::time::Duration::from_millis(1_500)
@@ -243,44 +232,9 @@ fn surface_paths_follow_the_environment_then_the_gateway_section() {
 }
 
 #[test]
-fn mesh_cache_duration_rejects_a_bad_count_and_defaults_when_unset() {
+fn surface_paths_default_when_the_environment_is_unset() {
     let document = "gateway:\n  static_dir: /yaml/static\n  root_redirect: /yaml\n  devices:\n    enabled: true\n";
     let config: config::Config = serde_yaml_ng::from_str(document).expect("config");
-    let current = config::Environment::from_vars([
-        ("HOME", "/tmp/golden/home"),
-        ("RIVETHUB_MESH_FILE", "/tmp/golden/current.json"),
-        ("RIVETOS_DEN_MESH_FILE", "/tmp/golden/legacy.json"),
-        ("RIVETHUB_MESH_CACHE_MS", "0"),
-    ]);
-    let settings = gateway::Settings::from_config_in(
-        &config,
-        &current,
-        "gold-host".to_string(),
-        "golden-node".to_string(),
-    )
-    .expect("current settings");
-    assert_eq!(
-        settings.mesh_file.as_deref(),
-        Some(std::path::Path::new("/tmp/golden/current.json"))
-    );
-    assert_eq!(settings.mesh_cache_ttl, std::time::Duration::ZERO);
-
-    let bad_cache = config::Environment::from_vars([
-        ("HOME", "/tmp/golden/home"),
-        ("RIVETHUB_MESH_CACHE_MS", "nope"),
-    ]);
-    let error = gateway::Settings::from_config_in(
-        &config,
-        &bad_cache,
-        "gold-host".to_string(),
-        "golden-node".to_string(),
-    )
-    .expect_err("bad cache duration");
-    assert_eq!(
-        error.to_string(),
-        "RIVETHUB_MESH_CACHE_MS=nope is not a millisecond count"
-    );
-
     let bare = config::Environment::from_vars([("HOME", "/tmp/golden/home")]);
     let settings = gateway::Settings::from_config_in(
         &config,
@@ -289,7 +243,6 @@ fn mesh_cache_duration_rejects_a_bad_count_and_defaults_when_unset() {
         "golden-node".to_string(),
     )
     .expect("bare settings");
-    assert_eq!(settings.mesh_cache_ttl, std::time::Duration::from_secs(10));
     assert_eq!(
         settings.static_dir.as_deref(),
         Some(std::path::Path::new("/yaml/static"))
@@ -299,7 +252,6 @@ fn mesh_cache_duration_rejects_a_bad_count_and_defaults_when_unset() {
         settings.state_dir,
         PathBuf::from("/tmp/golden/home/.rivethub")
     );
-    assert!(settings.mesh_file.is_none());
 }
 
 #[test]

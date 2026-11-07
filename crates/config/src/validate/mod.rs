@@ -11,8 +11,8 @@ mod deployment;
 mod gateway;
 mod hubs;
 mod memory;
-mod mesh;
 mod providers;
+pub mod retired;
 mod runtime;
 mod tasks;
 
@@ -292,7 +292,8 @@ pub fn validate(
     profile: Profile,
 ) -> ValidationResult {
     let mut out = ValidationResult::default();
-    ignored_findings(config, ignored, &mut out);
+    let ignored = retired::findings(ignored, &mut out);
+    ignored_findings(config, &ignored, &mut out);
     if presence.plugins {
         out.warning("plugins", PLUGINS_IGNORED);
     }
@@ -340,9 +341,6 @@ fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
     }
     if let Some(section) = &config.deployment {
         deployment::validate(out, *section);
-    }
-    if let Some(section) = &config.mesh {
-        mesh::validate(out, section);
     }
     if let Some(section) = &config.gateway {
         gateway::validate(out, section);

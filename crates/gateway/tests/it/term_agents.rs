@@ -83,13 +83,10 @@ impl Lab {
                     root_redirect: None,
                     state_dir: root.path().join("state"),
                     directory_root: root.path().join("agents"),
-                    mesh_file: Some(root.path().join("absent-mesh.json")),
                     shared_dir: root.path().join("shared"),
-                    legacy_mesh_dir: root.path().join("legacy"),
                     allowed_harnesses: None,
                     devices_enabled: false,
                     probe_timeout: Duration::from_millis(200),
-                    mesh_cache_ttl: Duration::ZERO,
                     mesh_ca: None,
                 },
             )

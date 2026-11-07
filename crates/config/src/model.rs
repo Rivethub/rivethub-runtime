@@ -257,59 +257,7 @@ pub struct RedactionSection {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshSection {
-    pub enabled: Option<bool>,
     pub node_name: Option<String>,
-    #[serde(default = "mesh_tls_disabled")]
-    pub tls: MeshTls,
-    pub advertise_host: Option<String>,
-    pub agent_channel_port: Option<u16>,
-    pub secret: Option<String>,
-}
-
-fn mesh_tls_disabled() -> MeshTls {
-    MeshTls::Enabled(false)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
-pub enum MeshTls {
-    Enabled(bool),
-    Paths(MeshTlsPaths),
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
-#[serde(default)]
-pub struct MeshTlsPaths {
-    pub ca_path: Option<PathBuf>,
-    pub cert_path: Option<PathBuf>,
-    pub key_path: Option<PathBuf>,
-    pub crl_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedMeshTls {
-    pub ca: PathBuf,
-    pub cert: PathBuf,
-    pub key: PathBuf,
-    pub crl: Option<PathBuf>,
-}
-
-impl MeshTlsPaths {
-    #[must_use]
-    pub fn resolve(&self, node: &str, shared: &std::path::Path) -> ResolvedMeshTls {
-        let paths = self.clone();
-        let authority = shared.join("rivet-ca");
-        let present = |path: Option<PathBuf>| path.filter(|path| !path.as_os_str().is_empty());
-        ResolvedMeshTls {
-            ca: present(paths.ca_path)
-                .unwrap_or_else(|| authority.join("intermediate").join("ca-chain.pem")),
-            cert: present(paths.cert_path)
-                .unwrap_or_else(|| authority.join("issued").join(format!("{node}.crt"))),
-            key: present(paths.key_path)
-                .unwrap_or_else(|| authority.join("issued").join(format!("{node}.key"))),
-            crl: present(paths.crl_path),
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -456,18 +404,6 @@ impl Config {
             .filter(|url| !url.is_empty())
             .map(str::to_owned)
             .or_else(|| env.postgres_url())
-    }
-
-    #[must_use]
-    pub fn mesh_advertise_host(&self, env: &Environment) -> String {
-        self.mesh
-            .as_ref()
-            .and_then(|mesh| mesh.advertise_host.as_deref())
-            .map(str::trim)
-            .filter(|host| !host.is_empty())
-            .map(str::to_owned)
-            .or_else(|| env.advertised_host())
-            .unwrap_or_else(|| "127.0.0.1".to_owned())
     }
 
     #[must_use]

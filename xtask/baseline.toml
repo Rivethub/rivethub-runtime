@@ -36,12 +36,6 @@ count = 1
 
 [[entry]]
 check = "FALLBACK"
-file = "crates/gateway/src/mesh/channel.rs"
-text = "Err(..) => value"
-count = 1
-
-[[entry]]
-check = "FALLBACK"
 file = "crates/gateway/src/server.rs"
 text = "Err(..) => value"
 count = 1

@@ -17,7 +17,6 @@ mod logs;
 mod memory;
 mod memory_jobs;
 mod memory_titles;
-mod mesh;
 mod migrate_binary;
 mod pg_import;
 mod pki_scope;

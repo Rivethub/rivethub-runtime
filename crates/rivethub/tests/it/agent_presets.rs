@@ -37,13 +37,10 @@ fn settings(root: &Path) -> Settings {
         root_redirect: None,
         state_dir: root.join("state"),
         directory_root: root.join("agents"),
-        mesh_file: Some(root.join("absent-mesh.json")),
         shared_dir: root.join("shared"),
-        legacy_mesh_dir: root.join("legacy"),
         allowed_harnesses: None,
         devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_cache_ttl: Duration::ZERO,
         mesh_ca: None,
     }
 }

@@ -29,7 +29,6 @@ fn findings(root: &Path) -> Result<Vec<String>> {
 fn public_traits_fail_in_every_service_and_adapter() -> Result {
     for name in [
         "gateway",
-        "agent-loop",
         "workers",
         "mcp",
         "capture",

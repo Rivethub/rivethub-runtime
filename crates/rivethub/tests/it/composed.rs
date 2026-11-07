@@ -132,9 +132,8 @@ async fn composed_binary_serves_tls_memory_and_websocket(pool: sqlx::PgPool) -> 
     let provider = process::provider::Provider::start().await?;
     let model_address = provider.address;
     let port = testkit::ports::claim()?;
-    let channel_port = testkit::ports::claim()?;
     let config = format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: test\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://{model_address}\n    model: test\nmemory:\n  backend: postgres\n  postgres:\n    connection_string: {url}\ngateway:\n  host: 127.0.0.1\n  port: {port}\n  tls_cert: {}/node.pem\n  tls_key: {}/node.key\n  tls_ca: {}/ca.pem\n  users_file: {}/users.json\n  tls_crl: {}/revoked.pem\nmesh:\n  enabled: true\n  node_name: test-node\n  tls: true\n  advertise_host: 127.0.0.1\n  agent_channel_port: {channel_port}\n",
+        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: test\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://{model_address}\n    model: test\nmemory:\n  backend: postgres\n  postgres:\n    connection_string: {url}\ngateway:\n  host: 127.0.0.1\n  port: {port}\n  tls_cert: {}/node.pem\n  tls_key: {}/node.key\n  tls_ca: {}/ca.pem\n  users_file: {}/users.json\n  tls_crl: {}/revoked.pem\nmesh:\n  node_name: test-node\n",
         home.path().display(),
         state.display(),
         state.display(),
@@ -195,15 +194,6 @@ async fn composed_binary_serves_tls_memory_and_websocket(pool: sqlx::PgPool) -> 
         .await?;
     assert_eq!(legacy_stats.messages, 0);
     drop(legacy);
-    process::provider::channel_turn(&client, channel_port.number()).await?;
-    let agent_list: wire::mesh_channel::AgentList = client
-        .get(format!("https://127.0.0.1:{channel_port}/agents"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    assert_eq!(agent_list.agents, vec!["main"]);
     let revoked = reqwest::Client::builder()
         .no_proxy()
         .add_root_certificate(reqwest::Certificate::from_pem(
@@ -236,14 +226,6 @@ async fn composed_binary_serves_tls_memory_and_websocket(pool: sqlx::PgPool) -> 
         reqwest::StatusCode::UNAUTHORIZED
     );
     let mut roots = rustls::RootCertStore::empty();
-    assert_eq!(
-        unknown
-            .get(format!("https://127.0.0.1:{channel_port}/agents"))
-            .send()
-            .await?
-            .status(),
-        reqwest::StatusCode::UNAUTHORIZED
-    );
     roots.add(material.root.der().clone())?;
     let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::aws_lc_rs::default_provider(),

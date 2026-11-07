@@ -57,20 +57,6 @@ pub enum TokenKind {
     },
 }
 
-pub(crate) async fn authority_root(root: PathBuf, url: Url) -> Result<PathBuf, Error> {
-    let material = paths::load(root, url).await?;
-    Ok(material.root)
-}
-
-pub(crate) async fn password_file(path: PathBuf) -> Result<PathBuf, Error> {
-    tokio::task::spawn_blocking(move || paths::password_file(&path)).await?
-}
-
-pub(crate) async fn roster(path: PathBuf) -> Result<pki::Roster, Error> {
-    let text = tokio::task::spawn_blocking(move || paths::roster_text(&path)).await??;
-    Ok(pki::parse_roster(&text)?)
-}
-
 pub(crate) async fn run(
     args: CaArgs,
     env: &Environment,

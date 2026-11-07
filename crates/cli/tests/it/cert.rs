@@ -1,8 +1,5 @@
 use crate::stepca_support as support;
 
-#[path = "stepca_support/mesh_issue.rs"]
-mod mesh_issue;
-
 use cli::Exit;
 use rustls_pki_types::pem::PemObject;
 use std::os::unix::fs::PermissionsExt;

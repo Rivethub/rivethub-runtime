@@ -91,7 +91,6 @@
     "id": "plain-main/remote-plain-html",
     "reason": "The HTML response headers do not match the recording's CORS or content-type pins."
   },
-
   {
     "id": "plain-main/static-dotdot",
     "reason": "Parent segments are refused by component-wise path containment; the recording serves the SPA after a JavaScript path collapse of dot-dot."
@@ -1323,5 +1322,37 @@
   {
     "id": "ws-main/upgrade-alias-audio-mic",
     "reason": "B1: note 90 removed this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-flat-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-invalid-json",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-no-file",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-nodes-number",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-post",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-root-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-valid-before-ingest",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-redirect/mesh-default-path-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
   }
 ]

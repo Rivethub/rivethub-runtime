@@ -1,7 +1,7 @@
 mod account;
 mod devices;
 pub(crate) mod identities;
-mod mesh;
+
 mod models;
 pub(crate) mod plugins;
 mod spool;
@@ -56,16 +56,8 @@ pub enum ComposeError {
     Terminal(#[from] terminal::Error),
     #[error(transparent)]
     Provider(#[from] crate::models::ModelError),
-    #[error(transparent)]
-    Agent(#[from] agent_loop::Error),
-    #[error(transparent)]
-    Hook(#[from] agent_loop::hooks::HookError),
     #[error("gateway configuration JSON is invalid: {0}")]
     Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    Mesh(#[from] gateway::mesh::RegistryError),
-    #[error(transparent)]
-    Channel(#[from] gateway::mesh::ChannelError),
     #[error(transparent)]
     Bind(#[from] gateway::server::BindError),
     #[error(transparent)]
@@ -107,8 +99,6 @@ pub async fn hub_state(
 )]
 pub struct Composition {
     gateway: Arc<Gateway>,
-    audit_tasks: JoinSet<Result<(), agent_loop::hooks::HookError>>,
-    audit_cancel: CancellationToken,
     tasks: JoinSet<Result<(), ComposeError>>,
     background: tokio_util::task::TaskTracker,
     model_tasks: crate::models::ModelTasks,
@@ -263,14 +253,7 @@ impl Composition {
                 if self.cancel.is_cancelled() {
                     return std::future::pending().await;
                 }
-                Err(ComposeError::Invalid("mesh task stopped unexpectedly".into()))
-            }
-            result = self.audit_tasks.join_next(), if !self.audit_tasks.is_empty() => {
-                if let Some(result) = result { result??; }
-                if self.audit_cancel.is_cancelled() {
-                    return std::future::pending().await;
-                }
-                Err(ComposeError::Invalid("audit task stopped unexpectedly".into()))
+                Err(ComposeError::Invalid("gateway task stopped unexpectedly".into()))
             }
             else => std::future::pending().await,
         }
@@ -427,22 +410,11 @@ impl Composition {
                 terminals::build(config, env, sessions, &owner, shutdown, &tracker).await?,
             );
         }
-        let audit_cancel = shutdown.child_token();
-        let mut audit_tasks = JoinSet::new();
-        let agents = if mesh::enabled(config) {
-            models::build(config, env, factory, &audit_cancel, &mut audit_tasks).await?
-        } else {
-            std::collections::BTreeMap::new()
-        };
-        let mesh = mesh::start(config, env, agents, identity.tenancy, shutdown);
-        let background = Box::pin(owner_scope.clone().run(mesh)).await?;
-        let started = plugins::started(gateway, env, plugins::node_ports(config, bind.port));
+        let started = plugins::started(gateway, env, vec![bind.port]);
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;
         Ok(Self {
             gateway,
-            audit_tasks,
-            audit_cancel,
-            tasks: background,
+            tasks: JoinSet::new(),
             background: tracker,
             model_tasks: factory.tasks(),
             cancel: shutdown.clone(),
@@ -461,10 +433,6 @@ impl Composition {
     pub async fn close(mut self) -> Result<(), ComposeError> {
         self.cancel.cancel();
         self.gateway.close().await;
-        self.audit_cancel.cancel();
-        while let Some(result) = self.audit_tasks.join_next().await {
-            result??;
-        }
         while let Some(result) = self.tasks.join_next().await {
             result??;
         }

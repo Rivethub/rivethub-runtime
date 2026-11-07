@@ -1,5 +1,4 @@
 mod assets;
-mod mesh;
 
 use std::sync::Arc;
 
@@ -19,8 +18,6 @@ use axum::routing;
 use crate::Gateway;
 use crate::error::ApiError;
 
-pub(crate) use mesh::Cache as MeshCache;
-
 pub(crate) async fn plain_get(gateway: &Gateway, method: &Method, path: &str) -> Response {
     assets::serve(gateway, method, path).await.into_response()
 }
@@ -32,10 +29,6 @@ pub(super) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
             routing::get(root_get)
                 .head(root_head)
                 .fallback(super::not_found),
-        )
-        .route(
-            "/mesh.json",
-            routing::get(mesh::overview).fallback(super::not_found),
         )
         .fallback(fallback)
 }
@@ -76,7 +69,6 @@ fn aliased(path: &str) -> Option<String> {
         "/api/events/sessions" => Some("/sessions"),
         "/api/events/state" => Some("/state"),
         "/api/events/ws" => Some("/ws"),
-        "/api/mesh" => Some("/mesh.json"),
         "/api/terminal" | "/api/terminal/ws" => Some("/term"),
         "/api/terminal/config" => Some("/term/config"),
         "/api/terminal/list" => Some("/term/list"),
@@ -135,9 +127,7 @@ async fn fallback(State(gateway): State<Arc<Gateway>>, request: Request) -> Resp
 
 pub(super) fn static_blocked(path: &str) -> bool {
     match path {
-        "/event" | "/events" | "/sessions" | "/state" | "/session" | "/layout" | "/mesh.json" => {
-            true
-        }
+        "/event" | "/events" | "/sessions" | "/state" | "/session" | "/layout" => true,
         _ => {
             blocked_prefix(path, "/api")
                 || blocked_prefix(path, "/term")
@@ -171,7 +161,6 @@ mod tests {
             aliased("/api/terminal/session/1").as_deref(),
             Some("/term/session/1")
         );
-        assert_eq!(aliased("/api/mesh").as_deref(), Some("/mesh.json"));
         assert_eq!(aliased("/api/events/ws").as_deref(), Some("/ws"));
         assert_eq!(aliased("/api/events").as_deref(), Some("/events"));
     }
@@ -182,18 +171,8 @@ mod tests {
         assert_eq!(aliased("/api/events/foo"), None);
         assert_eq!(aliased("/API/EVENTS/SESSIONS"), None);
         assert_eq!(aliased("/mesh"), None);
+        assert_eq!(aliased("/api/mesh"), None);
         assert_eq!(aliased("/api/audio"), None);
         assert_eq!(aliased("/api/files/list"), None);
-    }
-
-    #[test]
-    fn rewrite_request_sends_api_mesh_to_mesh_json() {
-        let request = axum::http::Request::builder()
-            .uri("/api/mesh?x=1")
-            .body(axum::body::Body::empty())
-            .expect("request");
-        let rewritten = super::rewrite_request(request);
-        assert_eq!(rewritten.uri().path(), "/mesh.json");
-        assert_eq!(rewritten.uri().query(), Some("x=1"));
     }
 }

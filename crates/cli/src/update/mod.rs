@@ -1,7 +1,6 @@
 mod cloud;
 mod error;
 mod files;
-mod mesh;
 mod release;
 mod source;
 
@@ -35,10 +34,6 @@ pub struct UpdateArgs {
     pub version: Option<String>,
     #[arg(long)]
     pub no_restart: bool,
-    #[arg(long)]
-    pub mesh: bool,
-    #[arg(long, requires = "mesh")]
-    pub ssh_user: Option<String>,
     #[arg(long, value_name = "rivethub-cloud|github")]
     pub source: Option<wire::gateway::account::UpdateSource>,
 }
@@ -156,12 +151,6 @@ impl Updater {
             target,
         } = self.prepare(args, env, shutdown, report).await?;
         let result = async {
-            let peers = if args.mesh {
-                report.stdout.push_str("Checking mesh nodes...\n");
-                mesh::preflight(args, &config, env, shutdown, report).await?
-            } else {
-                Vec::new()
-            };
             report
                 .stdout
                 .extend(["Updating this node (", &args.channel.to_string(), ")...\n"]);
@@ -212,7 +201,6 @@ impl Updater {
             } else {
                 self.restart(env, shutdown, report).await?;
             }
-            mesh::update(peers, args, &version, env, shutdown, report).await?;
             Ok::<_, Error>(())
         }
         .await;

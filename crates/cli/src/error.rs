@@ -111,36 +111,6 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("command cancelled")]
     Cancelled,
-    #[error("--name <node> is required")]
-    NameRequired,
-    #[error(
-        "invalid node name \"{name}\" — must match [a-z0-9]([a-z0-9-]*[a-z0-9])? and be at most 63 characters"
-    )]
-    NodeName { name: String },
-    #[error("expected user@host, got \"{spec}\"")]
-    Target { spec: String },
-    #[error("refusing unsafe user@host")]
-    UnsafeTarget,
-    #[error("refusing unsafe --hub-cmd")]
-    UnsafeHub,
-    #[error("refusing unsafe --advertise")]
-    UnsafeAdvertise,
-    #[error("refusing unsafe host")]
-    UnsafeHost,
-    #[error("--advertise <host|ip> is required")]
-    AdvertiseRequired,
-    #[error("no mesh file")]
-    NoMesh,
-    #[error("no mesh nodes")]
-    NoNodes,
-    #[error("mesh node \"{id}\" is not in the registry")]
-    UnknownMeshNode { id: String },
-    #[error("refusing to forget local node \"{name}\" without --force")]
-    ForgetLocal { name: String },
-    #[error("port must be between 1 and 65535")]
-    MeshPort,
-    #[error("ping timeout must be a positive number of milliseconds")]
-    MeshTimeout,
     #[error(
         "step-ca enrollment needs --ca-url, --root, and --provisioner-password-file. Mint with rh ca token node <name> against roster {roster}; the holder key stays in the state directory and POST /1.0/sign issues the certificate. rivet-ca.sh is retired"
     )]
@@ -149,28 +119,12 @@ pub enum Error {
         "step-ca renewal needs --ca-url and --root. rh cert renew uses mTLS against step-ca. rivet-ca.sh is retired"
     )]
     StepCaRenew,
-    #[error("join response was not a mesh registry")]
-    JoinBody,
-    #[error("seed node did not return a mesh registry")]
-    SeedBody,
-    #[error("hub mesh.json was not a mesh registry")]
-    HubBody,
-    #[error("cannot reach hub mesh: {0}")]
-    HubReach(String),
-    #[error("hub mesh responded with HTTP {code}")]
-    HubStatus { code: u16 },
     #[error("refusing to write holder keys under /rivet-shared")]
     SharedKey,
-    #[error("mesh file must be an absolute path inside a directory")]
-    MeshPath,
     #[error("the operating-system hostname is not Unicode")]
     HostName,
-    #[error("mesh HTTP body was not UTF-8")]
-    MeshBody,
     #[error("holder state must be an absolute path")]
     StatePath,
-    #[error(transparent)]
-    Registry(#[from] gateway::mesh::RegistryError),
     #[error("RIVETHUB_PG_URL is required.")]
     PostgresUrlRequired,
     #[error("Unknown option: {0}")]

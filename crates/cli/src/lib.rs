@@ -11,7 +11,6 @@ mod harness;
 mod local;
 pub mod logs;
 pub mod memory;
-pub mod mesh;
 mod process;
 mod roots;
 pub mod service;
@@ -95,7 +94,6 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
             | Command::Db(_)
             | Command::Ca(_)
             | Command::Cert { .. }
-            | Command::Mesh(_)
             | Command::Service { .. }
             | Command::Start { .. }
             | Command::Local { .. }
@@ -168,7 +166,6 @@ async fn command_dispatch(
             .map_err(Error::from),
         Command::Ca(args) => ca::run(args, env, shutdown).await,
         Command::Cert { command } => cert::run(command, env, shutdown).await,
-        Command::Mesh(args) => mesh::run(args, env, shutdown).await,
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,

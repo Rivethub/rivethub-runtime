@@ -102,63 +102,6 @@ async fn explicit_version_and_no_restart_still_migrate() -> Result {
 }
 
 #[tokio::test]
-async fn mesh_preflight_local_first_ssh_user_and_partial_failures() -> Result {
-    let fixture = Fixture::new()?;
-    fixture.mesh(&[
-        "local.example.com",
-        "reachable.example.com",
-        "unreachable.example.com",
-        "failed.example.com",
-        "last.example.com",
-    ])?;
-    let mut args = args();
-    args.mesh = true;
-    args.ssh_user = Some("deploy".to_owned());
-    args.version = Some("v0.9.0".to_owned());
-    args.no_restart = true;
-    let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
-    assert_eq!(report.exit, Exit::Failure);
-    assert!(report.stderr.contains("Unreachable: node-2"));
-    assert!(report.stderr.contains("Update failed: node-3"));
-    let calls = std::fs::read_to_string(&fixture.calls)?;
-    assert!(!calls.contains("local.example.com"));
-    let lines: Vec<_> = calls.lines().collect();
-    assert!(lines.first().ok_or("preflight")?.ends_with("|true"));
-    assert!(lines.get(4).ok_or("migration")?.starts_with("migrate|"));
-    assert!(lines.last().ok_or("last peer")?.ends_with(
-        "|-l|deploy|--|last.example.com|rh update --channel stable --version v0.9.0 --no-restart"
-    ));
-    assert!(!calls.contains("update --mesh"));
-    assert_eq!(calls.matches("unreachable.example.com").count(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn beta_installs_the_highest_published_version_and_pins_mesh_peers() -> Result {
-    let fixture = Fixture::new()?;
-    fixture.mesh(&["local.example.com", "peer.example.com"])?;
-    let mut args = args();
-    args.channel = Channel::Beta;
-    args.mesh = true;
-    args.no_restart = true;
-    let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
-    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
-    assert!(
-        report.stdout.contains("Installed v0.10.0;"),
-        "{}",
-        report.stdout
-    );
-    assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
-    let calls = std::fs::read_to_string(&fixture.calls)?;
-    assert!(
-        calls.lines().last().ok_or("peer")?.ends_with(
-            "|--|peer.example.com|rh update --channel beta --version v0.10.0 --no-restart"
-        )
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn only_beta_accepts_prerelease_tags_and_drafts_are_refused() -> Result {
     for (channel, tag, exit) in [
         (Channel::Stable, "v0.10.0", Exit::Failure),
@@ -174,27 +117,6 @@ async fn only_beta_accepts_prerelease_tags_and_drafts_are_refused() -> Result {
         assert_eq!(report.exit, exit, "{}", report.stderr);
         let installed = std::fs::read(&fixture.binary)? == BINARY;
         assert_eq!(installed, exit == Exit::Ok);
-    }
-    Ok(())
-}
-
-#[tokio::test]
-async fn malicious_mesh_input_fails_before_network_or_local_changes() -> Result {
-    for host in [
-        "-oProxyCommand=touch",
-        "user@host",
-        "host; touch marker",
-        "$(touch marker)",
-    ] {
-        let fixture = Fixture::new()?;
-        fixture.mesh(&["local.example.com", host])?;
-        let mut args = args();
-        args.mesh = true;
-        let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
-        assert_eq!(report.exit, Exit::Failure);
-        assert!(report.stderr.contains("invalid SSH"));
-        assert_eq!(std::fs::read(&fixture.calls)?, b"");
-        assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
     }
     Ok(())
 }

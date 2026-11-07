@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,8 +30,6 @@ use tokio::sync::Semaphore;
 use tokio::sync::watch;
 use tower::ServiceExt;
 
-pub(crate) mod roster;
-
 const HOSTNAME: &str = "gold-host";
 const NODE: &str = "golden-node";
 
@@ -48,13 +45,10 @@ pub(crate) fn settings() -> Settings {
         root_redirect: None,
         state_dir: scratch.join("state"),
         directory_root: scratch.join("agents"),
-        mesh_file: Some(PathBuf::from("/no-such-gateway-mesh/mesh.json")),
         shared_dir: scratch.join("shared"),
-        legacy_mesh_dir: PathBuf::from("/no-such-gateway-legacy"),
         allowed_harnesses: None,
         devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_cache_ttl: Duration::ZERO,
         mesh_ca: None,
     }
 }

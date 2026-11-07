@@ -74,13 +74,10 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
             root_redirect: None,
             state_dir: home.path().join("state"),
             directory_root: home.path().join("agents"),
-            mesh_file: Some(home.path().join("mesh.json")),
             shared_dir: home.path().join("shared"),
-            legacy_mesh_dir: home.path().join("legacy"),
             allowed_harnesses: None,
             devices_enabled: false,
             probe_timeout: Duration::from_millis(200),
-            mesh_cache_ttl: Duration::ZERO,
             mesh_ca: None,
         },
     ));

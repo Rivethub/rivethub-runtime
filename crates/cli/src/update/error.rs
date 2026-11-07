@@ -34,14 +34,6 @@ pub enum UpdateError {
     Branch(&'static str),
     #[error("source checkout does not match the requested version")]
     Revision,
-    #[error("mesh registry was not found")]
-    MeshMissing,
-    #[error("invalid SSH host or user for node {0}")]
-    SshDestination(String),
-    #[error("remote argument contains a NUL byte")]
-    ShellArgument,
-    #[error("mesh registry: {0}")]
-    Registry(#[from] gateway::mesh::RegistryError),
     #[error("update I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("update task failed: {0}")]

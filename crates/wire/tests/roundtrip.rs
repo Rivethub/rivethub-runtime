@@ -117,11 +117,6 @@ fn success_payload(
         }
         "/sessions" => errors.push_result(roundtrip_as::<wire::events::SessionList>(label, body)),
         "/state" => errors.push_result(roundtrip_as::<wire::events::StateResponse>(label, body)),
-        "/mesh.json" | "/api/mesh" => {
-            errors.push_result(roundtrip_as::<wire::gateway::devices::MeshOverview>(
-                label, body,
-            ));
-        }
         "/term/config" | "/api/terminal/config" => {
             errors.push_result(roundtrip_as::<wire::gateway::term::TermConfig>(label, body));
         }

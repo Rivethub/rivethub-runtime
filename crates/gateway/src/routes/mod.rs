@@ -48,7 +48,6 @@ use crate::error::ApiError;
 
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 
-pub(crate) use surface::MeshCache;
 pub(crate) use surface::plain_get;
 pub(crate) use surface::rewrite_request;
 

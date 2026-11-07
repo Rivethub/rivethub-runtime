@@ -47,7 +47,6 @@ fn scoped(rel: &str) -> bool {
         name.to_str(),
         Some(
             "gateway"
-                | "agent-loop"
                 | "workers"
                 | "mcp"
                 | "capture"

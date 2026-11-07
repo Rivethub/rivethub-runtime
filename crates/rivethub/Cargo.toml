@@ -23,7 +23,6 @@ path = "src/bin/rivetos.rs"
 [dependencies]
 chrono-tz = { workspace = true }
 cli = { workspace = true }
-agent-loop.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 capture.workspace = true

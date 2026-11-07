@@ -25,7 +25,6 @@ const PIXEL_PNG: &[u8] = &[
 pub(crate) enum Kind {
     Plain,
     Static,
-    Mesh,
     Redirect,
     NoStatic,
 }
@@ -35,17 +34,11 @@ pub(crate) fn kind(id: &str) -> Kind {
         Kind::Redirect
     } else if id.starts_with("plain-nostatic/") {
         Kind::NoStatic
-    } else if is_mesh(id) {
-        Kind::Mesh
     } else if is_static_surface(id) {
         Kind::Static
     } else {
         Kind::Plain
     }
-}
-
-fn is_mesh(id: &str) -> bool {
-    id.starts_with("plain-main/mesh-")
 }
 
 fn is_static_surface(id: &str) -> bool {
@@ -86,72 +79,22 @@ pub(crate) fn static_settings(static_dir: &Path) -> Settings {
 
 pub(crate) fn redirect_settings(static_dir: &Path, scratch: &Path) -> Result<Settings, String> {
     let shared = scratch.join("shared");
-    let legacy = scratch.join("legacy");
     std::fs::create_dir_all(&shared).map_err(|error| format!("shared: {error}"))?;
-    std::fs::create_dir_all(&legacy).map_err(|error| format!("legacy: {error}"))?;
     let mut settings = static_settings(static_dir);
     settings.root_redirect = Some("/wiki".to_owned());
-    settings.mesh_file = None;
     settings.shared_dir = shared;
-    settings.legacy_mesh_dir = legacy;
     settings.state_dir = scratch.join("state");
     Ok(settings)
 }
 
 pub(crate) fn nostatic_settings(scratch: &Path) -> Result<Settings, String> {
     let shared = scratch.join("shared");
-    let legacy = scratch.join("legacy");
     std::fs::create_dir_all(&shared).map_err(|error| format!("shared: {error}"))?;
-    std::fs::create_dir_all(&legacy).map_err(|error| format!("legacy: {error}"))?;
     let mut settings = common::settings();
     settings.static_dir = None;
-    settings.mesh_file = None;
     settings.shared_dir = shared;
-    settings.legacy_mesh_dir = legacy;
     settings.state_dir = scratch.join("state");
     Ok(settings)
-}
-
-pub(crate) fn mesh_settings(
-    id: &str,
-    scratch: &Path,
-    local_port: Option<u16>,
-) -> Result<Settings, String> {
-    let mut settings = common::settings();
-    let path = scratch.join("mesh.json");
-    match mesh_body(id, local_port)? {
-        MeshBody::Missing => {
-            settings.mesh_file = Some(scratch.join("absent.json"));
-        }
-        MeshBody::Bytes(bytes) => {
-            write(&path, &bytes)?;
-            settings.mesh_file = Some(path);
-        }
-    }
-    Ok(settings)
-}
-
-enum MeshBody {
-    Missing,
-    Bytes(Vec<u8>),
-}
-
-fn mesh_body(id: &str, local_port: Option<u16>) -> Result<MeshBody, String> {
-    let body = match id {
-        "plain-main/mesh-valid-before-ingest" => {
-            let port = local_port.ok_or_else(|| {
-                "mesh-valid-before-ingest needs a listener for the local gateway url".to_owned()
-            })?;
-            MeshBody::Bytes(super::common::roster::recorded(port)?)
-        }
-        "plain-main/mesh-invalid-json" => MeshBody::Bytes(b"{".to_vec()),
-        "plain-main/mesh-root-array" => MeshBody::Bytes(br#"[{"id":"x"}]"#.to_vec()),
-        "plain-main/mesh-flat-array" => MeshBody::Bytes(super::common::roster::flat()?),
-        "plain-main/mesh-nodes-number" => MeshBody::Bytes(br#"{"nodes":1}"#.to_vec()),
-        "plain-main/mesh-empty-object" => MeshBody::Bytes(b"{}".to_vec()),
-        _ => MeshBody::Missing,
-    };
-    Ok(body)
 }
 
 pub(crate) fn expand(mut request: testkit::Request) -> Result<testkit::Request, String> {

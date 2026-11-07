@@ -78,8 +78,7 @@ impl From<ApiError> for CaRouteError {
             | ApiError::Forbidden(_)
             | ApiError::Conflict(_)
             | ApiError::NotFound(_)
-            | ApiError::Missing(_)
-            | ApiError::MeshParse(_) => Self::Forbidden,
+            | ApiError::Missing(_) => Self::Forbidden,
         }
     }
 }
