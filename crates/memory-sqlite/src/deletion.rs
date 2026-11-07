@@ -141,6 +141,11 @@ fn purge(conn: &Connection, session_key: &str) -> Result<DeletedSession, SqliteE
         )
         .map_err(SqliteError::query(operation))?;
     }
+    conn.execute(
+        "DELETE FROM rh_session_trash WHERE session_key = ?1",
+        [session_key],
+    )
+    .map_err(SqliteError::query("session trash delete"))?;
     let conversations = conn
         .execute(
             "DELETE FROM ros_conversations WHERE session_key = ?1",
@@ -496,6 +501,131 @@ impl SessionDeletion for SqliteStore {
             .await
             .map_err(Into::into)
     }
+
+    async fn unkeep_session(&self, session_key: &str) -> Result<(), MemoryStoreError> {
+        let session_key = session_key.to_owned();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM rh_session_keeps WHERE session_key = ?1",
+                [session_key],
+            )
+            .map_err(SqliteError::query("session unkeep"))?;
+            Ok(())
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn trash_session(
+        &self,
+        session_key: &str,
+        trashed_by: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), MemoryStoreError> {
+        let session_key = session_key.to_owned();
+        let trashed_by = trashed_by.map(str::to_owned);
+        self.with_conn(move |conn| {
+            conn.execute(
+                "INSERT INTO rh_session_trash (session_key, trashed_at, trashed_by)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT (session_key) DO NOTHING",
+                params![session_key, time::stamp(now), trashed_by],
+            )
+            .map_err(SqliteError::query("session trash"))?;
+            Ok(())
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn restore_session(&self, session_key: &str) -> Result<(), MemoryStoreError> {
+        let session_key = session_key.to_owned();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM rh_session_trash WHERE session_key = ?1",
+                [session_key],
+            )
+            .map_err(SqliteError::query("session restore"))?;
+            Ok(())
+        })
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn trashed(
+        &self,
+        session_keys: &[String],
+    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+        let keys = json_keys(session_keys)?;
+        self.with_conn(move |conn| trashed_at(conn, &keys))
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn purge_trashed(
+        &self,
+        older_than: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<DeletedSession, MemoryStoreError> {
+        self.with_conn(move |conn| {
+            let now = Utc::now();
+            let mut total = DeletedSession::default();
+            for session_key in due_trash(conn, older_than, limit)? {
+                total += erase(conn, &session_key, Some((now, None)))?;
+            }
+            Ok(total)
+        })
+        .await
+        .map_err(Into::into)
+    }
+}
+
+fn trashed_at(
+    conn: &Connection,
+    keys: &str,
+) -> Result<BTreeMap<String, DateTime<Utc>>, SqliteError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT session_key, trashed_at FROM rh_session_trash
+              WHERE session_key IN (SELECT value FROM json_each(?1))",
+        )
+        .map_err(SqliteError::query("session trash"))?;
+    let rows = statement
+        .query_map([keys], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(SqliteError::query("session trash"))?;
+    let mut trashed = BTreeMap::new();
+    for row in rows {
+        let (session_key, stored) = row.map_err(SqliteError::query("session trash"))?;
+        trashed.insert(
+            session_key,
+            time::stored(&stored, "rh_session_trash.trashed_at")?,
+        );
+    }
+    Ok(trashed)
+}
+
+fn due_trash(
+    conn: &Connection,
+    older_than: DateTime<Utc>,
+    limit: u32,
+) -> Result<Vec<String>, SqliteError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT session_key FROM rh_session_trash
+              WHERE julianday(trashed_at) <= julianday(?1)
+              ORDER BY julianday(trashed_at), session_key
+              LIMIT ?2",
+        )
+        .map_err(SqliteError::query("trash sweep"))?;
+    let rows = statement
+        .query_map(params![time::stamp(older_than), limit], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(SqliteError::query("trash sweep"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(SqliteError::query("trash sweep"))
 }
 
 fn kept_at(conn: &Connection, keys: &str) -> Result<BTreeMap<String, DateTime<Utc>>, SqliteError> {

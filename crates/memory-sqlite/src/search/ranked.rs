@@ -348,12 +348,14 @@ const MESSAGE_CANDIDATES: &str = "SELECT id, content, created_at, conversation_i
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = m.conversation_id)
          FROM ros_messages m WHERE (?1 IS NULL OR agent = ?1) AND (?2 IS NULL OR created_at >= ?2) AND (?3 IS NULL OR created_at < ?3)
          AND (?4 IS NULL OR role = ?4) AND (?5 IS NULL OR tool_name = ?5)
-         AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))";
+         AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))
+         AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = m.conversation_id)";
 
 const SUMMARY_CANDIDATES: &str = "SELECT id, content, created_at, conversation_id, NULL, NULL, embedding, access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
          FROM ros_summaries s WHERE (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
-         AND (?2 IS NULL OR created_at >= ?2) AND (?3 IS NULL OR created_at < ?3)";
+         AND (?2 IS NULL OR created_at >= ?2) AND (?3 IS NULL OR created_at < ?3)
+         AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = s.conversation_id)";
 
 fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRow>, SqliteError> {
     let sql = if message {

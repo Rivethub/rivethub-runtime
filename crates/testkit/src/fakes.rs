@@ -1,6 +1,8 @@
+mod catalog;
 mod deletion;
 mod provider;
 mod reader;
+pub use catalog::FakeSessionCatalog;
 pub use deletion::FakeSessionDeletion;
 pub use provider::{FakeProvider, Script};
 pub use reader::FakeReader;

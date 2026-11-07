@@ -290,6 +290,8 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         | SqliteError::InsertRejected
         | SqliteError::InvertedRange
         | SqliteError::StoredTagType { .. }
+        | SqliteError::StoredSession { .. }
+        | SqliteError::StoredTopic { .. }
         | SqliteError::Regex(_)
         | SqliteError::StoredEmbedding
         | SqliteError::SearchCancelled

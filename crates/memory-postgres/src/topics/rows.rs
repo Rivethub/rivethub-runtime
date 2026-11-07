@@ -25,6 +25,7 @@ use wire::session_id::SessionId;
 
 use crate::error::Error;
 
+#[derive(sqlx::FromRow)]
 pub(super) struct TopicRow {
     pub(super) id: Uuid,
     pub(super) kind: String,
@@ -40,6 +41,43 @@ pub(super) struct TopicRow {
     pub(super) owner_user_id: Option<String>,
     pub(super) visibility: String,
     pub(super) visibility_mark: Option<String>,
+}
+
+pub(super) const LISTING: &str =
+    "SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind,
+       t.directory_node, t.directory_path, t.created_at, t.updated_at, t.closed_at, t.owner_user_id,
+       t.visibility, t.visibility_mark,
+       (SELECT count(*) FROM rh_session_placements p
+         WHERE p.topic_id = t.id
+           AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id))
+         AS session_count,
+       (SELECT max(c.updated_at)
+          FROM rh_session_placements p
+          JOIN rh_conversations c ON c.session_key = p.session_id
+         WHERE p.topic_id = t.id
+           AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id))
+         AS last_active
+  FROM rh_topics t";
+
+pub(super) const PLACED: &str =
+    "SELECT p.session_id, p.topic_id, p.placed_by, p.placed_at, p.owner_user_id,
+       c.last_active
+  FROM rh_session_placements p
+  LEFT JOIN LATERAL (
+      SELECT max(updated_at) AS last_active
+        FROM rh_conversations
+       WHERE session_key = p.session_id
+  ) c ON true
+ WHERE p.topic_id = $1
+   AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id)
+ ORDER BY c.last_active DESC NULLS LAST, p.session_id";
+
+#[derive(sqlx::FromRow)]
+pub(super) struct ListingRow {
+    #[sqlx(flatten)]
+    pub(super) topic: TopicRow,
+    pub(super) session_count: i64,
+    pub(super) last_active: Option<DateTime<Utc>>,
 }
 
 pub(super) struct AliasRow {
@@ -62,6 +100,7 @@ pub(super) struct SuggestionRow {
     pub(super) parent_id: Option<Uuid>,
 }
 
+#[derive(sqlx::FromRow)]
 pub(super) struct PlacedRow {
     pub(super) session_id: String,
     pub(super) topic_id: Uuid,

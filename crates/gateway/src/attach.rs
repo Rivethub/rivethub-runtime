@@ -157,6 +157,19 @@ impl Gateway {
         self
     }
 
+    #[must_use]
+    pub fn with_session_catalog(
+        mut self,
+        catalog: Arc<dyn kernel::memory::SessionCatalog>,
+    ) -> Self {
+        self.session_catalog = Some(catalog);
+        self
+    }
+
+    pub(crate) fn session_catalog(&self) -> Option<&dyn kernel::memory::SessionCatalog> {
+        self.session_catalog.as_deref()
+    }
+
     pub(crate) fn session_deletion(&self) -> Option<&dyn kernel::memory::SessionDeletion> {
         self.deletions.as_deref()
     }

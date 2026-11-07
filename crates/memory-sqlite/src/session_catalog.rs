@@ -1,0 +1,312 @@
+use std::str::FromStr as _;
+
+use async_trait::async_trait;
+use kernel::memory::MemoryStoreError;
+use kernel::memory::SessionCatalog;
+use kernel::memory::SessionCursor;
+use kernel::memory::SessionPage;
+use kernel::memory::SessionQuery;
+use kernel::memory::SessionRecord;
+use kernel::memory::SessionTopic;
+use kernel::memory::SessionView;
+use kernel::memory::memory_state;
+use kernel::memory::session_title;
+use kernel::memory::snippet;
+use kernel::topics::TopicId;
+use rusqlite::Connection;
+use rusqlite::named_params;
+use strum::IntoEnumIterator as _;
+use wire::harness::HarnessId;
+use wire::session_id::SessionId;
+
+use crate::SqliteStore;
+use crate::error::SqliteError;
+use crate::time;
+
+const SESSIONS: &str = "
+WITH sess AS (
+    SELECT c.session_key AS key,
+           min(julianday(c.created_at)) AS started,
+           max(julianday(c.updated_at)) AS updated,
+           max(c.active) AS active,
+           (SELECT t.title FROM ros_conversations t
+             WHERE t.session_key = c.session_key AND trim(coalesce(t.title, '')) <> ''
+             ORDER BY julianday(t.updated_at) DESC, t.id LIMIT 1) AS title
+      FROM ros_conversations c
+     WHERE c.task_id IS NULL
+       AND substr(c.session_key, 1, instr(c.session_key, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
+       AND (:key IS NULL OR c.session_key = :key)
+       AND c.session_key NOT IN (SELECT value FROM json_each(:exclude))
+     GROUP BY c.session_key
+), page AS (
+    SELECT s.key, s.started, s.updated, s.active, s.title,
+           substr(s.key, instr(s.key, ':') + 1) AS native,
+           k.session_key IS NOT NULL AS kept,
+           tr.session_key IS NOT NULL AS trashed,
+           p.topic_id AS topic_id
+      FROM sess s
+      LEFT JOIN rh_session_keeps k ON k.session_key = s.key
+      LEFT JOIN rh_session_trash tr ON tr.session_key = s.key
+      LEFT JOIN rh_session_placements p ON p.session_id = s.key
+     WHERE VIEW_CONDITION
+       AND (:topic IS NULL OR p.topic_id = :topic
+            OR p.topic_id IN (SELECT id FROM rh_topics WHERE parent_id = :topic))
+       AND (:text IS NULL
+            OR instr(lower(coalesce(s.title, substr(s.key, instr(s.key, ':') + 1))), lower(:text)) > 0
+            OR instr(lower(s.key), lower(:text)) > 0)
+       AND (:after_key IS NULL OR s.started < :after_started
+            OR (s.started = :after_started AND s.key < :after_key))
+     ORDER BY s.started DESC, s.key DESC
+     LIMIT :limit
+)
+SELECT g.key,
+       g.title,
+       strftime('%Y-%m-%dT%H:%M:%fZ', g.started),
+       strftime('%Y-%m-%dT%H:%M:%fZ', g.updated),
+       g.active,
+       (SELECT count(*) FROM ros_messages m
+          JOIN ros_conversations c ON c.id = m.conversation_id
+         WHERE c.session_key = g.key),
+       g.kept,
+       g.trashed,
+       g.topic_id,
+       (SELECT t.name FROM rh_topics t WHERE t.id = g.topic_id),
+       (SELECT pt.name FROM rh_topics t JOIN rh_topics pt ON pt.id = t.parent_id WHERE t.id = g.topic_id),
+       EXISTS (SELECT 1 FROM ros_summaries s
+                 JOIN ros_conversations c ON c.id = s.conversation_id
+                WHERE c.session_key = g.key),
+       EXISTS (SELECT 1 FROM ros_jobs j
+                 LEFT JOIN ros_messages m
+                        ON m.id = coalesce(
+                               CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.messageId') END,
+                               CASE WHEN json_valid(j.payload) AND json_extract(j.payload, '$.targetTable') = 'ros_messages'
+                                    THEN json_extract(j.payload, '$.targetId') END)
+                 JOIN ros_conversations c
+                   ON c.id = coalesce(
+                          CASE WHEN json_valid(j.payload) THEN json_extract(j.payload, '$.conversationId') END,
+                          m.conversation_id)
+                WHERE j.state = 'dead' AND c.session_key = g.key),
+       (SELECT s.content FROM ros_summaries s
+          JOIN ros_conversations c ON c.id = s.conversation_id
+         WHERE c.session_key = g.key
+         ORDER BY s.depth DESC, julianday(s.created_at) DESC LIMIT 1),
+       (SELECT json_extract(c.settings, '$.cwd') FROM ros_conversations c
+         WHERE c.session_key = g.key AND json_valid(c.settings)
+           AND json_type(c.settings, '$.cwd') = 'text'
+         ORDER BY julianday(c.updated_at) DESC LIMIT 1),
+       (SELECT substr(m.content, 1, 600) FROM ros_messages m
+          JOIN ros_conversations c ON c.id = m.conversation_id
+         WHERE c.session_key = g.key AND m.role = 'user' AND trim(m.content) <> ''
+         ORDER BY julianday(m.created_at), m.id LIMIT 1),
+       g.native
+  FROM page g
+ ORDER BY g.started DESC, g.key DESC";
+
+struct Row {
+    key: String,
+    title: Option<String>,
+    started: String,
+    updated: String,
+    active: i64,
+    messages: i64,
+    kept: i64,
+    trashed: i64,
+    topic: Option<String>,
+    topic_name: Option<String>,
+    parent_name: Option<String>,
+    summarized: i64,
+    flagged: i64,
+    summary: Option<String>,
+    cwd: Option<String>,
+    first_user: Option<String>,
+    native: String,
+}
+
+impl Row {
+    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            key: row.get(0)?,
+            title: row.get(1)?,
+            started: row.get(2)?,
+            updated: row.get(3)?,
+            active: row.get(4)?,
+            messages: row.get(5)?,
+            kept: row.get(6)?,
+            trashed: row.get(7)?,
+            topic: row.get(8)?,
+            topic_name: row.get(9)?,
+            parent_name: row.get(10)?,
+            summarized: row.get(11)?,
+            flagged: row.get(12)?,
+            summary: row.get(13)?,
+            cwd: row.get(14)?,
+            first_user: row.get(15)?,
+            native: row.get(16)?,
+        })
+    }
+
+    fn record(self) -> Result<SessionRecord, SqliteError> {
+        let id = SessionId::from_str(&self.key).map_err(|_| SqliteError::StoredSession {
+            value: self.key.clone(),
+        })?;
+        let topic = match (self.topic, self.topic_name) {
+            (Some(raw), Some(name)) => {
+                let id = TopicId::from_str(&raw)
+                    .map_err(|_| SqliteError::StoredTopic { value: raw.clone() })?;
+                let path = self.parent_name.into_iter().chain([name]).collect();
+                Some(SessionTopic { id, path })
+            }
+            _ => None,
+        };
+        let updated = time::stored(&self.updated, "ros_conversations.updated_at")?;
+        Ok(SessionRecord {
+            id,
+            title: session_title(
+                self.title.as_deref(),
+                self.summary.as_deref(),
+                self.first_user.as_deref(),
+                &self.native,
+            ),
+            started_at: time::stored(&self.started, "ros_conversations.created_at")?,
+            ended_at: (self.active == 0).then_some(updated),
+            message_count: u64::try_from(self.messages).map_err(SqliteError::Count)?,
+            topic,
+            kept: self.kept != 0,
+            trashed: self.trashed != 0,
+            memory: memory_state(self.active != 0, self.flagged != 0, self.summarized != 0),
+            gist: self.summary.as_deref().and_then(snippet),
+            cwd: self.cwd,
+        })
+    }
+}
+
+fn view_condition(view: Option<SessionView>) -> &'static str {
+    match view {
+        None => "1",
+        Some(SessionView::All) => "tr.session_key IS NULL",
+        Some(SessionView::Unfiled) => "tr.session_key IS NULL AND p.topic_id IS NULL",
+        Some(SessionView::Kept) => "tr.session_key IS NULL AND k.session_key IS NOT NULL",
+        Some(SessionView::Trash) => "tr.session_key IS NOT NULL",
+    }
+}
+
+fn harnesses(only: Option<HarnessId>) -> Result<String, SqliteError> {
+    let names: Vec<String> = match only {
+        Some(harness) => vec![harness.to_string()],
+        None => HarnessId::iter()
+            .map(|harness| harness.to_string())
+            .collect(),
+    };
+    serde_json::to_string(&names).map_err(|source| SqliteError::Encode {
+        column: "harness names",
+        source,
+    })
+}
+
+fn excluded(keys: &[String]) -> Result<String, SqliteError> {
+    serde_json::to_string(keys).map_err(|source| SqliteError::Encode {
+        column: "excluded sessions",
+        source,
+    })
+}
+
+struct Scope<'a> {
+    view: Option<SessionView>,
+    harnesses: &'a str,
+    exclude: &'a str,
+    key: Option<&'a str>,
+}
+
+fn select(
+    conn: &Connection,
+    scope: &Scope<'_>,
+    query: Option<&SessionQuery>,
+    limit: i64,
+) -> Result<Vec<SessionRecord>, SqliteError> {
+    let sql = SESSIONS.replace("VIEW_CONDITION", view_condition(scope.view));
+    let mut statement = conn
+        .prepare(&sql)
+        .map_err(SqliteError::query("session list"))?;
+    let after = query.and_then(|query| query.after.as_ref());
+    let after_started = after
+        .map(|cursor| {
+            conn.query_row(
+                "SELECT julianday(?1)",
+                [time::stamp(cursor.started_at)],
+                |row| row.get::<_, f64>(0),
+            )
+        })
+        .transpose()
+        .map_err(SqliteError::query("session cursor"))?;
+    let rows = statement
+        .query_map(
+            named_params! {
+                ":harnesses": scope.harnesses,
+                ":key": scope.key,
+                ":topic": query.and_then(|query| query.topic).map(|topic| topic.to_string()),
+                ":text": query.and_then(|query| query.text.as_deref()),
+                ":after_key": after.map(|cursor| cursor.key.as_str()),
+                ":after_started": after_started,
+                ":exclude": scope.exclude,
+                ":limit": limit,
+            },
+            Row::read,
+        )
+        .map_err(SqliteError::query("session list"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SqliteError::query("session list"))?;
+    rows.into_iter().map(Row::record).collect()
+}
+
+fn page(conn: &Connection, query: &SessionQuery) -> Result<SessionPage, SqliteError> {
+    let size = query.page_size();
+    let wanted = i64::from(size) + 1;
+    let scope = Scope {
+        view: Some(query.view),
+        harnesses: &harnesses(query.harness)?,
+        exclude: &excluded(&query.exclude)?,
+        key: None,
+    };
+    let mut items = select(conn, &scope, Some(query), wanted)?;
+    let more = items.len() > usize::try_from(size).map_err(SqliteError::Count)?;
+    items.truncate(usize::try_from(size).map_err(SqliteError::Count)?);
+    let next = if more {
+        items.last().map(|last| SessionCursor {
+            started_at: last.started_at,
+            key: last.id.to_string(),
+        })
+    } else {
+        None
+    };
+    Ok(SessionPage { items, next })
+}
+
+#[async_trait]
+impl SessionCatalog for SqliteStore {
+    async fn list(&self, query: &SessionQuery) -> Result<SessionPage, MemoryStoreError> {
+        let query = query.clone();
+        self.with_conn(move |conn| page(conn, &query))
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
+        let key = session.to_string();
+        self.with_conn(move |conn| {
+            let mut found = select(
+                conn,
+                &Scope {
+                    view: None,
+                    harnesses: &harnesses(None)?,
+                    exclude: "[]",
+                    key: Some(&key),
+                },
+                None,
+                1,
+            )?;
+            Ok(found.pop())
+        })
+        .await
+        .map_err(Into::into)
+    }
+}

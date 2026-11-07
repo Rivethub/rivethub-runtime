@@ -17,6 +17,7 @@ fn unconfigured_sweeps_use_the_datahub_defaults() -> Result<(), WorkerError> {
         flag_after: 5,
         backfill_max: 6,
         model_slots: 8,
+        trash_days: 30,
         claim_ceiling: None,
         backfill_enabled: false,
     };
@@ -48,6 +49,7 @@ fn environment_overrides_are_typed_and_the_wiki_cap_is_clamped() -> Result<(), W
         9
     );
     assert_eq!(with("RIVETHUB_FLAG_AFTER_FAILURES", "3")?.flag_after, 3);
+    assert_eq!(with("RIVETHUB_TRASH_DAYS", "7")?.trash_days, 7);
     assert_eq!(
         with("RIVETHUB_CLAIM_MAX_PRIORITY", "49")?.claim_ceiling,
         Some(49)

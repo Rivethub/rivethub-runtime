@@ -144,9 +144,14 @@ async fn dispatch_purge(env: &JobEnv, cancel: &CancellationToken) -> Result<(), 
         .ok_or(WorkerError::MissingDependencies {
             role: ProcessRole::Summarizer,
         })?;
-    crate::deleted_sessions::handle_purge(deletions.as_ref(), cancel)
-        .await
-        .map(|_| ())
+    crate::deleted_sessions::handle_purge(
+        deletions.as_ref(),
+        env.settings.trash_days,
+        Utc::now(),
+        cancel,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), WorkerError> {

@@ -348,6 +348,7 @@ impl Fixture {
         let ports = Ports {
             lister,
             deletion: None,
+            catalog: None,
             tasks,
         };
         Self::build(harness, registry, ports, extra, delegates).await
@@ -363,9 +364,26 @@ impl Fixture {
         let ports = Ports {
             lister,
             deletion: Some(deletion),
+            catalog: None,
             tasks: None,
         };
         Self::build(harness, registry, ports, extra, BTreeMap::new()).await
+    }
+
+    pub(crate) async fn with_catalog(
+        harness: Option<Arc<dyn kernel::harness::HarnessAdapter>>,
+        registry: gateway::sessions::SessionRegistry,
+        lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
+        deletion: Arc<dyn kernel::memory::SessionDeletion>,
+        catalog: Arc<dyn kernel::memory::SessionCatalog>,
+    ) -> Self {
+        let ports = Ports {
+            lister,
+            deletion: Some(deletion),
+            catalog: Some(catalog),
+            tasks: None,
+        };
+        Self::build(harness, registry, ports, &[], BTreeMap::new()).await
     }
 
     async fn build(
@@ -525,6 +543,7 @@ pub(crate) async fn frame(socket: &mut Socket) -> tokio_tungstenite::tungstenite
 struct Ports {
     lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
     deletion: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
     tasks: Option<Arc<gateway::tasks::Tasks>>,
 }
 
@@ -536,6 +555,10 @@ impl Ports {
         };
         let gateway = match self.deletion {
             Some(deletion) => gateway.with_session_deletion(deletion),
+            None => gateway,
+        };
+        let gateway = match self.catalog {
+            Some(catalog) => gateway.with_session_catalog(catalog),
             None => gateway,
         };
         match self.tasks {

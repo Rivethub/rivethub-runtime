@@ -1,0 +1,62 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::harness::HarnessId;
+use crate::session_id::SessionId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionMemoryState {
+    Capturing,
+    Queued,
+    Summarized,
+    Flagged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTopicRef {
+    pub id: String,
+    pub path: Vec<String>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummaryRow {
+    pub id: SessionId,
+    pub title: String,
+    pub harness: HarnessId,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub message_count: u64,
+    pub topic: Option<SessionTopicRef>,
+    pub visibility: String,
+    pub kept: bool,
+    pub trashed: bool,
+    pub memory_state: SessionMemoryState,
+    pub gist: Option<String>,
+    pub parent_id: Option<SessionId>,
+    pub child_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummaryPage {
+    pub items: Vec<SessionSummaryRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetail {
+    #[serde(flatten)]
+    pub row: SessionSummaryRow,
+    pub cwd: Option<String>,
+    pub resume_command: Option<String>,
+    pub changed: Vec<serde_json::Value>,
+    pub entities: Vec<serde_json::Value>,
+    pub tags: Vec<serde_json::Value>,
+}

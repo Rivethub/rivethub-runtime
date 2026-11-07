@@ -20,6 +20,7 @@ mod queue;
 mod read;
 mod reembed;
 mod search;
+mod session_catalog;
 pub use search::embed::QueryEmbed;
 mod stats;
 mod summary_dag;
@@ -97,7 +98,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 30;
+pub const SCHEMA_VERSION: i64 = 31;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -347,7 +348,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 70));
+        assert_eq!(state, (crate::SCHEMA_VERSION, 71));
     }
 
     #[tokio::test]

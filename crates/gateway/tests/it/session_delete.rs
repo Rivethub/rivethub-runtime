@@ -32,11 +32,11 @@ use wire::session_id::{SessionId, encode_segment};
 const ALICE: Option<&str> = Some("alice-test-token");
 
 #[derive(Default)]
-struct Stores {
-    rows: Vec<StoreSession>,
-    hidden: Vec<StoreSession>,
-    transcripts: BTreeMap<String, Vec<HarnessTranscriptTurn>>,
-    unreadable: BTreeSet<String>,
+pub(crate) struct Stores {
+    pub(crate) rows: Vec<StoreSession>,
+    pub(crate) hidden: Vec<StoreSession>,
+    pub(crate) transcripts: BTreeMap<String, Vec<HarnessTranscriptTurn>>,
+    pub(crate) unreadable: BTreeSet<String>,
 }
 
 #[async_trait]

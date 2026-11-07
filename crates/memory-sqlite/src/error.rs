@@ -76,6 +76,10 @@ pub enum SqliteError {
     },
     #[error("since must precede before")]
     InvertedRange,
+    #[error("stored session key \"{value}\" is not a session id")]
+    StoredSession { value: String },
+    #[error("stored topic id \"{value}\" is not a topic id")]
+    StoredTopic { value: String },
     #[error("stored tag entity type \"{value}\" is not conversation or summary")]
     StoredTagType { value: String },
     #[error("invalid search regular expression: {0}")]
@@ -136,6 +140,8 @@ impl From<SqliteError> for MemoryStoreError {
             | SqliteError::InsertRejected
             | SqliteError::StoredPayload { .. }
             | SqliteError::StoredTagType { .. }
+            | SqliteError::StoredSession { .. }
+            | SqliteError::StoredTopic { .. }
             | SqliteError::MissingHit { .. }
             | SqliteError::MissingTable { .. } => Self::Query {
                 message: error.to_string(),
