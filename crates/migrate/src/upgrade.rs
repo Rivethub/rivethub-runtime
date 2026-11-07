@@ -76,6 +76,9 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
             tx.execute_batch(include_str!("schema/session_keeps_v29.sql"))
         }),
         SchemaVersion::V30 => in_transaction(conn, to, add_visibility),
+        SchemaVersion::V31 => in_transaction(conn, to, |tx| {
+            tx.execute_batch(include_str!("schema/session_trash_v31.sql"))
+        }),
     }
 }
 

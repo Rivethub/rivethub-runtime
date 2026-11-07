@@ -108,15 +108,17 @@ pub(super) async fn trash(
         .iter()
         .map(|row| row.session.as_str().to_owned())
         .collect();
-    let (deleted, kept, activity) = tokio::join!(
+    let (deleted, kept, activity, trashed) = tokio::join!(
         deletions.tombstones(&keys),
         deletions.kept(&keys),
-        deletions.session_activity(&keys)
+        deletions.session_activity(&keys),
+        deletions.trashed(&keys)
     );
-    let (deleted, kept, activity) = (deleted?, kept?, activity?);
+    let (deleted, kept, activity, trashed) = (deleted?, kept?, activity?, trashed?);
     let open: Vec<(Considered, SessionActivity)> = rows
         .into_iter()
         .filter(|row| !deleted.contains_key(row.session.as_str()))
+        .filter(|row| !trashed.contains_key(row.session.as_str()))
         .filter(|row| !hidden(&kept, row.session.as_str(), Some(row.updated_at)))
         .filter_map(|row| {
             let memory = activity.get(row.session.as_str())?;

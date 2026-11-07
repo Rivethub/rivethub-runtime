@@ -38,7 +38,6 @@ use rows::AliasRow;
 use rows::PlacedRow;
 use rows::PlacementRow;
 use rows::SuggestionRow;
-use rows::TopicRow;
 use rows::failed;
 use rows::not_found;
 
@@ -160,21 +159,10 @@ impl TopicStore for PostgresMemory {
     }
 
     async fn list(&self) -> Result<Vec<TopicListing>, TopicError> {
-        let topics = sqlx::query!(
-            r#"SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind, t.directory_node,
-                      t.directory_path, t.created_at, t.updated_at, t.closed_at, t.owner_user_id,
-                      t.visibility, t.visibility_mark,
-                      (SELECT count(*) FROM rh_session_placements p WHERE p.topic_id = t.id)
-                        AS "session_count!",
-                      (SELECT max(c.updated_at)
-                         FROM rh_session_placements p
-                         JOIN rh_conversations c ON c.session_key = p.session_id
-                        WHERE p.topic_id = t.id) AS last_active
-                 FROM rh_topics t"#
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(failed("topic list"))?;
+        let topics: Vec<rows::ListingRow> = sqlx::query_as(rows::LISTING)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(failed("topic list"))?;
         let aliases = sqlx::query_as!(
             AliasRow,
             "SELECT topic_id, alias FROM rh_topic_aliases ORDER BY alias_key"
@@ -186,29 +174,15 @@ impl TopicStore for PostgresMemory {
         let mut listings = topics
             .into_iter()
             .map(|row| {
-                let own = aliases.remove(&row.id).into_iter().flatten().collect();
-                let topic = rows::topic(
-                    TopicRow {
-                        id: row.id,
-                        kind: row.kind,
-                        slug: row.slug,
-                        name: row.name,
-                        parent_id: row.parent_id,
-                        directory_kind: row.directory_kind,
-                        directory_node: row.directory_node,
-                        directory_path: row.directory_path,
-                        created_at: row.created_at,
-                        updated_at: row.updated_at,
-                        closed_at: row.closed_at,
-                        owner_user_id: row.owner_user_id,
-                        visibility: row.visibility,
-                        visibility_mark: row.visibility_mark,
-                    },
-                    own,
-                )?;
+                let own = aliases
+                    .remove(&row.topic.id)
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let topic = rows::topic(row.topic, own)?;
                 Ok(TopicListing {
                     topic,
-                    session_count: u64::try_from(row.session_count).map_err(|source| {
+                    session_count: u64::try_from(row.placed_sessions).map_err(|source| {
                         TopicError::Unavailable(Box::new(crate::Error::Integer(source)))
                     })?,
                     last_active: row.last_active,
@@ -284,25 +258,14 @@ impl TopicStore for PostgresMemory {
     }
 
     async fn sessions(&self, topic: TopicId) -> Result<Vec<PlacedSession>, TopicError> {
-        sqlx::query_as!(
-            PlacedRow,
-            "SELECT p.session_id, p.topic_id, p.placed_by, p.placed_at, p.owner_user_id, c.last_active
-               FROM rh_session_placements p
-               LEFT JOIN LATERAL (
-                   SELECT max(updated_at) AS last_active
-                     FROM rh_conversations
-                    WHERE session_key = p.session_id
-               ) c ON true
-              WHERE p.topic_id = $1
-              ORDER BY c.last_active DESC NULLS LAST, p.session_id",
-            topic.uuid()
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(failed("topic sessions"))?
-        .into_iter()
-        .map(rows::placed)
-        .collect()
+        sqlx::query_as::<_, PlacedRow>(rows::PLACED)
+            .bind(topic.uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(failed("topic sessions"))?
+            .into_iter()
+            .map(rows::placed)
+            .collect()
     }
 
     async fn mark_history(&self, mark: HistoryMark) -> Result<HistoryMark, TopicError> {

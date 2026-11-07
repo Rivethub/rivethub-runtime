@@ -6,7 +6,6 @@ use crate::search::TagFilter;
 use chrono::Utc;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
-use kernel::memory_core::HYBRID_MIN_CONTENT_LEN;
 use kernel::memory_core::hybrid_pool;
 use kernel::memory_core::recency_boost;
 use kernel::memory_core::should_trigram_fallback;
@@ -17,15 +16,6 @@ use wire::message::Role;
 
 pub(crate) fn semantic_floor(alias: &str) -> String {
     format!("least(length(btrim({alias}.content)) / 1000.0, 1.0)")
-}
-
-const LENGTH_PREFIX: i64 = 1000;
-
-fn long_enough(body: &str) -> String {
-    format!(
-        "(length(btrim(left({body}, {LENGTH_PREFIX}))) >= {HYBRID_MIN_CONTENT_LEN} \
-         OR (octet_length({body}) > {LENGTH_PREFIX} AND length(btrim({body})) >= {HYBRID_MIN_CONTENT_LEN}))"
-    )
 }
 
 pub(crate) fn recency_columns(alias: &str, is_message: bool) -> String {
@@ -103,6 +93,19 @@ pub(crate) fn push_time_conditions(
 }
 
 pub(crate) fn push_scope_conditions(
+    query: &mut QueryBuilder<sqlx::Postgres>,
+    options: &SearchOptions,
+    is_message: bool,
+) {
+    query.push(crate::session_marks::not_trashed(alias_of(is_message)));
+    push_option_conditions(query, options, is_message);
+}
+
+pub(crate) const fn alias_of(is_message: bool) -> &'static str {
+    if is_message { "m" } else { "s" }
+}
+
+pub(crate) fn push_option_conditions(
     query: &mut QueryBuilder<sqlx::Postgres>,
     options: &SearchOptions,
     is_message: bool,
@@ -275,36 +278,6 @@ fn push_pattern_match(query: &mut QueryBuilder<sqlx::Postgres>, pattern: &str, t
         query.push_bind(pattern.to_owned());
     }
     query.push(")");
-}
-
-pub(crate) fn push_fts_where(
-    query: &mut QueryBuilder<sqlx::Postgres>,
-    context: &ArmContext<'_>,
-    is_message: bool,
-    long: bool,
-) {
-    let alias = if is_message { "m" } else { "s" };
-    query.push(" WHERE ");
-    if let Some(filter) = context.tag_filter {
-        filter.push_condition(query, is_message);
-    } else {
-        query.push("true");
-    }
-    query.push(format!(
-        " AND {alias}.content_tsv @@ plainto_tsquery('english', "
-    ));
-    query.push_bind(context.options.text.clone());
-    query.push(")");
-    if long {
-        query.push(" AND ");
-        query.push(long_enough(if is_message {
-            "CASE WHEN m.role = 'tool' THEN coalesce(m.tool_result, '') ELSE m.content END"
-        } else {
-            "s.content"
-        }));
-    }
-    push_time_conditions(query, context.options, alias);
-    push_scope_conditions(query, context.options, is_message);
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -525,7 +498,12 @@ impl crate::PostgresMemory {
             "rh_summaries s"
         });
         if text_search {
-            push_fts_where(&mut query, context, is_message, kind == ArmKind::Fts);
+            crate::search_fts::push_fts_where(
+                &mut query,
+                context,
+                is_message,
+                kind == ArmKind::Fts,
+            );
             if let Some(candidates) = &candidates {
                 query.push(format!(" AND {alias}.id = ANY("));
                 query.push_bind(candidates.clone());

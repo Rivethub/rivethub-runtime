@@ -143,6 +143,7 @@ impl crate::PostgresMemory {
              m.metadata::text as metadata, m.created_at \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id where true",
         );
+        query.push(crate::session_marks::not_trashed("m"));
         if !filter.include_tools {
             query.push(" and m.role <> 'tool'");
         }

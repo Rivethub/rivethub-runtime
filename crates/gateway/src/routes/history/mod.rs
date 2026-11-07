@@ -85,14 +85,16 @@ async fn listed(gateway: &Gateway, harnesses: &[HarnessId], limit: ListLimit) ->
         .map(|row| SessionId::new(row.harness, &row.id).as_str().to_owned())
         .collect();
     let deleted = super::session_delete::tombstoned(gateway, &keys).await;
+    let trashed = super::session_delete::trashed(gateway, &keys).await;
     rows.into_iter()
         .zip(keys)
         .filter(|(row, key)| {
-            !super::session_delete::hidden(
-                &deleted,
-                key,
-                DateTime::from_timestamp_millis(row.updated_at),
-            )
+            !trashed.contains(key)
+                && !super::session_delete::hidden(
+                    &deleted,
+                    key,
+                    DateTime::from_timestamp_millis(row.updated_at),
+                )
         })
         .map(|(row, _)| row)
         .collect()
@@ -174,8 +176,10 @@ async fn plane(
         .map(|(_, summary)| summary.session_id.as_str().to_owned())
         .collect();
     let deleted = super::session_delete::tombstoned(&gateway, &live_keys).await;
+    let trashed = super::session_delete::trashed(&gateway, &live_keys).await;
     for (key, summary) in live {
         if !stored.contains(&key)
+            && !trashed.contains(summary.session_id.as_str())
             && !super::session_delete::hidden(
                 &deleted,
                 summary.session_id.as_str(),

@@ -111,6 +111,16 @@ pub fn session_flags(harness: HarnessId) -> Option<SessionFlags> {
     Some(SessionFlags { pin, resume })
 }
 
+#[must_use]
+pub fn resume_command(harness: HarnessId, native: &str) -> Option<String> {
+    let flags = session_flags(harness)?;
+    let program = BUILTIN
+        .iter()
+        .find(|command| harness_for_roster_key(command.id) == Some(harness))
+        .and_then(|command| command.argv.first())?;
+    Some(format!("{program} {} {native}", flags.resume))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RosterFile {

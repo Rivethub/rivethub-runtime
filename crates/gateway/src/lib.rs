@@ -273,6 +273,7 @@ pub struct Gateway {
     plugins: Option<Arc<plugins::PluginHost>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    session_catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
     surface: Surface,
 }
 
@@ -334,6 +335,7 @@ impl Gateway {
             plugins: None,
             summaries: None,
             deletions: None,
+            session_catalog: None,
             surface: Surface::Full,
         }
     }

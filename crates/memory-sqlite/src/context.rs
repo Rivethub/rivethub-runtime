@@ -106,6 +106,7 @@ fn recent_lines(
            JOIN ros_conversations c ON c.id = m.conversation_id \
           WHERE c.agent = ?1 AND c.active = 1 AND c.session_key NOT LIKE 'heartbeat:%' \
             AND m.created_at <= ?2 \
+            AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key) \
           ORDER BY m.created_at DESC, m.id DESC LIMIT ?3",
         agent,
         stamp,
@@ -126,7 +127,8 @@ fn relevant_lines(
     let mut sql = String::from(
         "SELECT m.id, m.role, m.agent, m.content FROM ros_messages m \
            JOIN ros_conversations c ON c.id = m.conversation_id \
-          WHERE c.agent = ? AND m.created_at <= ?",
+          WHERE c.agent = ? AND m.created_at <= ? \
+            AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key)",
     );
     let mut params = vec![Value::Text(agent.to_owned()), Value::Text(stamp.to_owned())];
     if !recent.is_empty() {

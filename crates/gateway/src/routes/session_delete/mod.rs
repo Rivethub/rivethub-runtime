@@ -1,10 +1,11 @@
+mod catalog;
 mod trash;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use kernel::memory::{DeletedSession, SessionActivity, SessionDeletion};
@@ -27,6 +28,10 @@ const NOT_FOUND: &str = "not found";
 pub(crate) fn router() -> Router<Arc<Gateway>> {
     Router::new()
         .route(
+            "/api/sessions",
+            get(catalog::list).fallback(super::method_not_allowed),
+        )
+        .route(
             "/api/sessions/delete",
             post(delete_many).fallback(super::method_not_allowed),
         )
@@ -36,11 +41,23 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
         .route(
             "/api/sessions/{session}",
-            delete(delete_one).fallback(super::method_not_allowed),
+            get(catalog::detail)
+                .delete(delete_one)
+                .fallback(super::method_not_allowed),
         )
         .route(
             "/api/sessions/{session}/keep",
-            put(trash::keep).fallback(super::method_not_allowed),
+            put(trash::keep)
+                .delete(catalog::unkeep)
+                .fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/trash",
+            post(catalog::trash).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/restore",
+            post(catalog::restore).fallback(super::method_not_allowed),
         )
 }
 
@@ -64,6 +81,25 @@ pub(super) async fn tombstoned(
         BTreeMap::new()
     });
     found
+}
+
+pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<String> {
+    let Some(deletions) = gateway.session_deletion() else {
+        return BTreeSet::new();
+    };
+    let read = deletions.trashed(keys).await;
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note NEW-sessions)"
+        )
+    )]
+    let found = read.unwrap_or_else(|error| {
+        tracing::warn!(%error, "session trash is unreadable; listing every session");
+        BTreeMap::new()
+    });
+    found.into_keys().collect()
 }
 
 pub(super) fn hidden(

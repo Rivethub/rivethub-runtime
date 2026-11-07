@@ -137,6 +137,7 @@ struct Backing {
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
     summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
     tasks: Option<tasks::TaskPorts>,
     tenancy: Option<Arc<dyn kernel::tenancy::TenancyStore>>,
 }
@@ -176,6 +177,10 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     };
     let gateway = match backing.deletions.clone() {
         Some(deletions) => gateway.with_session_deletion(deletions),
+        None => gateway,
+    };
+    let gateway = match backing.catalog.clone() {
+        Some(catalog) => gateway.with_session_catalog(catalog),
         None => gateway,
     };
     let gateway = match backing.tenancy.clone() {
@@ -287,6 +292,7 @@ impl Composition {
             tidy: Some((memory.clone(), memory.clone())),
             flagged: Some(memory.clone()),
             deletions: Some(memory.clone()),
+            catalog: Some(memory.clone()),
             summaries: Some(memory.clone()),
             tasks: Some(ports),
             tenancy: Some(Arc::new(memory_postgres::PostgresTenancy::new(
@@ -324,6 +330,7 @@ impl Composition {
             tidy: Some((store.clone(), store.clone())),
             flagged: Some(store.clone()),
             deletions: Some(store.clone()),
+            catalog: Some(store.clone()),
             summaries: Some(store.clone()),
             tasks: Some(tasks::TaskPorts::of(store.as_ref())),
             tenancy: Some(store.clone()),

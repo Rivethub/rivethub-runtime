@@ -10708,6 +10708,17 @@
       ],
       "type": "object"
     },
+    "SessionChange": {
+      "properties": {
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "type": "object"
+    },
     "SessionClientKind": {
       "enum": [
         "watch",
@@ -10814,12 +10825,147 @@
       ],
       "type": "object"
     },
+    "SessionDetail": {
+      "properties": {
+        "changed": {
+          "items": {
+            "$ref": "#/$defs/SessionChange"
+          },
+          "type": "array"
+        },
+        "childCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/SessionEntity"
+          },
+          "type": "array"
+        },
+        "gist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessId"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "kept": {
+          "type": "boolean"
+        },
+        "memoryState": {
+          "$ref": "#/$defs/SessionMemoryState"
+        },
+        "messageCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resumeCommand": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/SessionTag"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionTopicRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trashed": {
+          "type": "boolean"
+        },
+        "visibility": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "harness",
+        "startedAt",
+        "messageCount",
+        "visibility",
+        "kept",
+        "trashed",
+        "memoryState",
+        "changed",
+        "entities",
+        "tags"
+      ],
+      "type": "object"
+    },
     "SessionDriver": {
       "enum": [
         "chat",
         "terminal"
       ],
       "type": "string"
+    },
+    "SessionEntity": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
     },
     "SessionHarness": {
       "type": "string"
@@ -10885,6 +11031,15 @@
         "text"
       ],
       "type": "object"
+    },
+    "SessionMemoryState": {
+      "enum": [
+        "capturing",
+        "queued",
+        "summarized",
+        "flagged"
+      ],
+      "type": "string"
     },
     "SessionMessage": {
       "properties": {
@@ -11206,6 +11361,113 @@
       ],
       "type": "object"
     },
+    "SessionSummaryPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SessionSummaryRow"
+          },
+          "type": "array"
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "SessionSummaryRow": {
+      "properties": {
+        "childCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gist": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessId"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "kept": {
+          "type": "boolean"
+        },
+        "memoryState": {
+          "$ref": "#/$defs/SessionMemoryState"
+        },
+        "messageCount": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionTopicRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trashed": {
+          "type": "boolean"
+        },
+        "visibility": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "harness",
+        "startedAt",
+        "messageCount",
+        "visibility",
+        "kept",
+        "trashed",
+        "memoryState"
+      ],
+      "type": "object"
+    },
     "SessionSwitches": {
       "properties": {
         "effort": {
@@ -11218,6 +11480,25 @@
       "required": [
         "model",
         "effort"
+      ],
+      "type": "object"
+    },
+    "SessionTag": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "state"
       ],
       "type": "object"
     },
@@ -11237,6 +11518,24 @@
       "required": [
         "prompt",
         "completion"
+      ],
+      "type": "object"
+    },
+    "SessionTopicRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "path"
       ],
       "type": "object"
     },

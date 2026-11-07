@@ -213,7 +213,7 @@ fn a_trigger_for_an_unloaded_module_does_not_block_renames() -> TestResult<()> {
     migrate::sqlite(&path)?;
     let conn = rusqlite::Connection::open(&path)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(version, migrate::SchemaVersion::V30.number());
+    assert_eq!(version, migrate::SchemaVersion::V31.number());
     let page_pk: i64 = conn.query_row(
         "SELECT pk FROM pragma_table_info('rh_topic_pages') WHERE name = 'page_slug'",
         [],

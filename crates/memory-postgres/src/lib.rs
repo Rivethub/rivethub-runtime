@@ -25,9 +25,13 @@ mod search_cap;
 mod search_complete;
 mod search_content;
 mod search_details;
+mod search_fts;
 mod search_recent;
 mod search_sql;
 mod search_vector;
+mod session_activity;
+mod session_catalog;
+mod session_marks;
 mod stats;
 pub use search_complete::SearchSynthesis;
 mod stats_cache;
@@ -81,7 +85,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 56;
+pub const SCHEMA_VERSION: i64 = 57;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

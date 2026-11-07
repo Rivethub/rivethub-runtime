@@ -46,6 +46,9 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
        AND (?6 IS NULL OR m.role = ?6) \
        AND (?7 IS NULL OR m.tool_name = ?7) \
        AND (?8 IS NULL OR m.role NOT IN (SELECT value FROM json_each(?8))) \
+       AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr \
+             JOIN ros_conversations tc ON tc.session_key = tr.session_key \
+            WHERE tc.id = m.conversation_id) \
      ORDER BY ros_messages_fts.rank ASC \
      LIMIT ?5";
 
@@ -61,6 +64,9 @@ const SUMMARY_SQL: &str = "SELECT s.id, s.content, s.created_at, s.conversation_
               WHERE c.id = s.conversation_id AND c.agent = ?2)) \
        AND (?3 IS NULL OR s.created_at >= ?3) \
        AND (?4 IS NULL OR s.created_at < ?4) \
+       AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr \
+             JOIN ros_conversations tc ON tc.session_key = tr.session_key \
+            WHERE tc.id = s.conversation_id) \
      ORDER BY ros_summaries_fts.rank ASC \
      LIMIT ?5";
 
