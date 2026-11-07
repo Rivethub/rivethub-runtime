@@ -21,9 +21,9 @@ use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Freshness;
-use wire::gateway::entities::MemoryState;
 use wire::gateway::entities::SessionSummaryRow;
 use wire::gateway::entities::TimelineEntry;
+use wire::gateway::session_catalog::SessionMemoryState;
 use wire::session_id::SessionId;
 
 use super::Known;
@@ -216,7 +216,7 @@ async fn rows(
             visibility: map::shared_with(effective(visibility.get(&session.session))),
             kept: kept.contains_key(session.session.as_str()),
             trashed: false,
-            memory_state: MemoryState::Summarized,
+            memory_state: SessionMemoryState::Summarized,
             gist: None,
             id: session.session,
         })

@@ -275,7 +275,6 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::entities::ChangeKind>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::TimelineEntry>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::ConnectedEntity>,
-    SchemaGenerator::subschema_for::<crate::gateway::entities::MemoryState>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::SessionSummaryRow>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::AssignmentState>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::TagAssignment>,

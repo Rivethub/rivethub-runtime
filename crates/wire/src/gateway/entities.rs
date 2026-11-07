@@ -3,6 +3,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::gateway::session_catalog::SessionMemoryState;
 use crate::harness::HarnessId;
 use crate::session_id::SessionId;
 
@@ -132,15 +133,6 @@ pub struct ConnectedEntity {
     pub shared_sessions: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum MemoryState {
-    Capturing,
-    Queued,
-    Summarized,
-    Flagged,
-}
-
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -158,7 +150,7 @@ pub struct SessionSummaryRow {
     pub visibility: SharedWith,
     pub kept: bool,
     pub trashed: bool,
-    pub memory_state: MemoryState,
+    pub memory_state: SessionMemoryState,
     #[serde(default)]
     pub gist: Option<String>,
 }

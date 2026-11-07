@@ -2929,7 +2929,7 @@
           "type": "boolean"
         },
         "memoryState": {
-          "$ref": "#/$defs/MemoryState"
+          "$ref": "#/$defs/SessionMemoryState"
         },
         "messageCount": {
           "format": "uint64",
@@ -7998,15 +7998,6 @@
         "query"
       ],
       "type": "object"
-    },
-    "MemoryState": {
-      "enum": [
-        "capturing",
-        "queued",
-        "summarized",
-        "flagged"
-      ],
-      "type": "string"
     },
     "MemoryStatsResponse": {
       "properties": {
