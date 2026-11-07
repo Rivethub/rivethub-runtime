@@ -100,18 +100,13 @@ fn spaces(users: &UsersRegistry, owner: &UserId) -> Result<Vec<Space>, ComposeEr
 fn registry(users: UsersRegistry) -> Result<Identity, ComposeError> {
     let owner = UserId::new(users.owner_user_id.clone())?;
     let mut tenancy = Tenancy::local(owner.clone()).with_spaces(spaces(&users, &owner)?);
-    if users.unmapped_is_owner {
-        tenancy = tenancy.with_unmapped_device_owner(owner.clone());
-    }
     for (id, record) in users.users {
         let user = UserId::new(id)?;
         if record.admin == Some(true) {
             tenancy = tenancy.with_admin(user.clone());
         }
-        if let Some(devices) = record.devices {
-            for device in devices {
-                tenancy = tenancy.with_device(&device, user.clone())?;
-            }
+        for digest in record.tokens.iter().flatten() {
+            tenancy = tenancy.with_token_digest(digest, user.clone())?;
         }
     }
     Ok(Identity { tenancy, owner })

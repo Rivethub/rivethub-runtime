@@ -87,11 +87,7 @@ fn get<'a>(value: &'a Value, key: &str) -> &'a Value {
 }
 
 fn error_payload(label: &str, body: &str, parsed: &Value, errors: &mut Vec<String>) {
-    if parsed.get("available").is_some() {
-        errors.push_result(roundtrip_as::<
-            wire::gateway::devices::PhonePairingAvailability,
-        >(label, body));
-    } else if parsed.get("error").is_some() {
+    if parsed.get("error").is_some() {
         errors.push_result(roundtrip_as::<wire::gateway::GatewayError>(label, body));
     }
 }
@@ -142,16 +138,6 @@ fn success_payload(
                 label, body,
             ));
         }
-        "/api/phone-pairing" => {
-            errors.push_result(roundtrip_as::<
-                wire::gateway::devices::PhonePairingAvailability,
-            >(label, body));
-        }
-        "/api/devices/pair" => {
-            if parsed.get("error").is_some() {
-                errors.push_result(roundtrip_as::<wire::gateway::GatewayError>(label, body));
-            }
-        }
         "/session" => {
             if status == 200 && ok_body {
                 errors.push_result(roundtrip_as::<wire::gateway::OkReply>(label, body));
@@ -163,10 +149,6 @@ fn success_payload(
                     || path.starts_with("/api/terminal/harness-sessions/"));
             if transcript && status == 200 {
                 errors.push_result(roundtrip_as::<wire::gateway::sessions::TranscriptResponse>(
-                    label, body,
-                ));
-            } else if path.starts_with("/api/phone-pairing/") {
-                errors.push_result(roundtrip_as::<wire::gateway::devices::PhonePairingStatus>(
                     label, body,
                 ));
             }
@@ -199,12 +181,6 @@ fn roundtrip_request(label: &str, method: &str, path: &str, body: &str) -> Resul
         }
         ("POST", "/term/inject" | "/api/terminal/inject") => {
             roundtrip_as::<wire::gateway::term::TermInjectRequest>(label, body)
-        }
-        ("POST", "/api/devices/pair") => {
-            roundtrip_as::<wire::gateway::PairRedeemRequest>(label, body)
-        }
-        ("POST", "/api/phone-pairing") => {
-            roundtrip_as::<wire::gateway::devices::PhonePairingRequest>(label, body)
         }
         _ => Ok(()),
     }

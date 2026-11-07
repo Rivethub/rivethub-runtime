@@ -85,9 +85,8 @@ impl Lab {
                     directory_root: root.path().join("agents"),
                     shared_dir: root.path().join("shared"),
                     allowed_harnesses: None,
-                    devices_enabled: false,
                     probe_timeout: Duration::from_millis(200),
-                    mesh_ca: None,
+                    private_ca: None,
                 },
             )
             .with_tenancy(Tenancy::local(user("owner")))

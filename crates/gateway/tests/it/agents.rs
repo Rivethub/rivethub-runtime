@@ -69,9 +69,8 @@ fn gateway_at(root: &Path, allowed: Option<Vec<HarnessId>>) -> Arc<Gateway> {
                 directory_root: root.join("agents"),
                 shared_dir: root.join("shared"),
                 allowed_harnesses: allowed,
-                devices_enabled: false,
                 probe_timeout: Duration::from_millis(200),
-                mesh_ca: None,
+                private_ca: None,
             },
         )
         .with_tenancy(Tenancy::local(

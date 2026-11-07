@@ -23,7 +23,7 @@ pub(super) async fn attach(
         &settings.node,
         serving_url(bind, &settings.hostname),
         config.hubs.clone().unwrap_or_default(),
-        mesh_roots(settings.mesh_ca.as_deref()).await,
+        private_roots(settings.private_ca.as_deref()).await,
     )?;
     let service = Arc::new(
         AccountService::open(
@@ -54,7 +54,7 @@ fn serving_url(bind: &BindSource, hostname: &str) -> String {
     format!("{scheme}://{host}:{}", bind.port)
 }
 
-async fn mesh_roots(path: Option<&std::path::Path>) -> Vec<reqwest::Certificate> {
+async fn private_roots(path: Option<&std::path::Path>) -> Vec<reqwest::Certificate> {
     let Some(path) = path else {
         return Vec::new();
     };

@@ -10,9 +10,12 @@ expects the one warning that names each retired key.
 
 The memory-service cut retires whole sections (CONTRACT note 132), listed in
 `config::validate::retired::RETIRED`: `mesh` (only `mesh.node_name` is still
-read). The replay drops recorded findings at or under a retired path and expects
+read), and the client-certificate keys `gateway.certificate_authority`,
+`gateway.devices`, `gateway.tls_ca`, `gateway.tls_crl`,
+`gateway.tls_require_client`, `memory.capture.gateway.cert` and
+`memory.capture.gateway.key`. The replay drops recorded findings at or under a retired path and expects
 the one warning that names it whenever the input sets a key there other than a
-kept one. Five `mesh` type-confused cases (`validate_config_mesh_channels_misc.jsonl`
+kept one (a null section with kept keys sets nothing). Five `mesh` type-confused cases (`validate_config_mesh_channels_misc.jsonl`
 :373, :434, :598, :625 and :674) now deserialize, because the retired keys have no
 type, and their `rejected` rows left the table.
 

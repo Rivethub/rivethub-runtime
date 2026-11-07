@@ -50,13 +50,6 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::service::ServiceCommand,
     },
-    #[command(about = "Manage the certificate authority")]
-    Ca(crate::ca::CaArgs),
-    #[command(about = "Manage holder certificates")]
-    Cert {
-        #[command(subcommand)]
-        command: crate::cert::CertCommand,
-    },
     #[command(about = "Print the RivetHub version")]
     Version,
     #[command(about = "Inspect and validate configuration")]

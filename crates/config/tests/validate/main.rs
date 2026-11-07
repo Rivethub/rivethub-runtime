@@ -139,7 +139,7 @@ fn removed_provider_ids(input: &serde_yaml_ng::Value) -> Vec<(String, RemovedPro
 
 const DECISION_15_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
 
-const REMOVED_BY_DECISION_ROWS: usize = 25_754;
+const REMOVED_BY_DECISION_ROWS: usize = 26_817;
 const REMOVED_BY_DECISION_CASES: usize = 5_823;
 
 fn decision_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
@@ -380,7 +380,9 @@ fn dotted<'a>(input: &'a serde_yaml_ng::Value, path: &str) -> Option<&'a serde_y
 
 fn retired_section_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas) {
     for retired in config::validate::retired::RETIRED {
-        let Some(value) = dotted(input, retired.path).filter(|value| !value.is_null()) else {
+        let Some(value) = dotted(input, retired.path)
+            .filter(|value| retired.keeps.is_empty() || !value.is_null())
+        else {
             continue;
         };
         let used = value.as_mapping().is_none_or(|mapping| {

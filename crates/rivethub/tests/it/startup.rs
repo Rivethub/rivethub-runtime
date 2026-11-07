@@ -21,7 +21,6 @@ struct Settings {
     host: String,
     tls_cert: Option<String>,
     tls_key: Option<String>,
-    tls_ca: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -64,7 +63,6 @@ async fn binary_replays_recorded_startup_refusals() -> TestResult {
         for (key, value) in [
             ("tls_cert", refusal.env.tls_cert),
             ("tls_key", refusal.env.tls_key),
-            ("tls_ca", refusal.env.tls_ca),
         ] {
             if let Some(value) = value {
                 use std::fmt::Write as _;
@@ -106,11 +104,7 @@ async fn binary_replays_recorded_startup_refusals() -> TestResult {
 fn every_recorded_startup_scenario_is_replayed_or_has_a_named_reason() -> TestResult {
     let recording = recording()?;
     let skipped = skips()?;
-    let mut inventory = BTreeSet::from([
-        "refuse-offloopback-no-tls".to_owned(),
-        "tls-missing-ca-default".to_owned(),
-        "tls-missing-ca-explicit".to_owned(),
-    ]);
+    let mut inventory = BTreeSet::from(["refuse-offloopback-no-tls".to_owned()]);
     for skip in skipped {
         assert_ne!(skip.reason.trim(), "");
         assert!(inventory.insert(skip.scenario));

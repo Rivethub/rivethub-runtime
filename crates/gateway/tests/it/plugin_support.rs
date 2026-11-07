@@ -11,7 +11,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::plugins::{HostSettings, PluginHost};
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 use serde::Serialize;
 use tower::ServiceExt as _;
 use wire::JsonObject;
@@ -107,10 +107,10 @@ impl Harness {
             .header("content-type", "application/json")
             .body(body.map_or_else(Body::empty, Body::from))?;
         if device {
-            request.extensions_mut().insert(PeerCertificate::Device {
-                user: Some("owner".to_owned()),
-                device: OWNER_DEVICE.to_owned(),
-            });
+            request.headers_mut().insert(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_str(&format!("Bearer {}", OWNER_DEVICE.to_owned()))?,
+            );
         }
         let answer = self.send(request).await?;
         Ok((answer.status, answer.body))
@@ -255,7 +255,7 @@ pub(crate) fn owner() -> Result<UserId, Failure> {
 
 pub(crate) fn tenancy() -> Result<Tenancy, Failure> {
     let owner = owner()?;
-    Ok(Tenancy::local(owner.clone()).with_device(OWNER_DEVICE, owner)?)
+    Ok(Tenancy::local(owner.clone()).with_token(OWNER_DEVICE, owner)?)
 }
 
 pub(crate) async fn harness(root: &Path) -> Result<Harness, Failure> {

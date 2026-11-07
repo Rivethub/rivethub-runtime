@@ -1,7 +1,5 @@
 mod argv;
-pub mod ca;
 pub mod capture_hook;
-pub mod cert;
 mod configuration;
 pub mod db;
 pub mod doctor;
@@ -92,8 +90,6 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
         command,
         Command::Update(_)
             | Command::Db(_)
-            | Command::Ca(_)
-            | Command::Cert { .. }
             | Command::Service { .. }
             | Command::Start { .. }
             | Command::Local { .. }
@@ -164,8 +160,6 @@ async fn command_dispatch(
             .run(command, env, shutdown)
             .await
             .map_err(Error::from),
-        Command::Ca(args) => ca::run(args, env, shutdown).await,
-        Command::Cert { command } => cert::run(command, env, shutdown).await,
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,

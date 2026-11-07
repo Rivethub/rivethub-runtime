@@ -55,7 +55,6 @@ fn scoped(rel: &str) -> bool {
                 | "terminal"
                 | "memory-postgres"
                 | "memory-sqlite"
-                | "pki"
         )
     )
 }

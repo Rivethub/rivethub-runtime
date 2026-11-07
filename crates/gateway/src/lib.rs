@@ -40,6 +40,7 @@ pub use crate::models::ModelAssignment;
 pub use crate::routes::voice::VoiceConfigError;
 pub use crate::routes::voice::VoiceSettings;
 pub use crate::settings::{Settings, SettingsError, state_dir};
+pub use crate::tls_resolve::private_ca;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&str> = option_env!("RIVETHUB_BUILD_REVISION");
@@ -61,8 +62,6 @@ pub struct Gateway {
     policy: auth::OriginPolicy,
     denials: DenialLog,
     tenancy: tenancy::Tenancy,
-    identity_required: bool,
-    client_certificate_required: bool,
     sessions: Arc<sessions::SessionRegistry>,
     terminal: Option<Arc<term::TerminalService>>,
     transcript: Option<Arc<dyn kernel::transcript::TranscriptReader>>,
@@ -72,8 +71,6 @@ pub struct Gateway {
     uploads: Option<uploads::UploadService>,
     presets: routes::agents::AgentRegistry,
     hub_state: Arc<dyn kernel::hub_state::HubStateStore<wire::gateway::hub_state::HubState>>,
-    certificate_authority: Option<Arc<dyn kernel::ca::CertificateAuthority>>,
-    devices: routes::devices::DeviceRuntime,
     voice: VoiceProxy,
     providers: Vec<kernel::model::ProviderHealth>,
     memory_export: Option<Arc<dyn kernel::memory::MemoryExport>>,
@@ -124,8 +121,6 @@ impl Gateway {
             policy,
             denials: DenialLog::default(),
             tenancy: tenancy::Tenancy::default(),
-            identity_required: false,
-            client_certificate_required: true,
             sessions: Arc::new(sessions::SessionRegistry::new(
                 std::time::Duration::from_secs(300),
             )),
@@ -137,8 +132,6 @@ impl Gateway {
             uploads: None,
             presets,
             hub_state,
-            certificate_authority: None,
-            devices: routes::devices::DeviceRuntime::unconfigured(),
             voice: VoiceProxy::unconfigured(),
             providers: Vec::new(),
             memory_export: None,
@@ -207,48 +200,9 @@ impl Gateway {
     }
 
     #[must_use]
-    pub fn with_devices(mut self, devices: routes::devices::DeviceRuntime) -> Self {
-        self.devices = devices;
-        self
-    }
-
-    #[must_use]
-    pub fn with_certificate_authority(
-        mut self,
-        authority: Arc<dyn kernel::ca::CertificateAuthority>,
-    ) -> Self {
-        self.certificate_authority = Some(Arc::clone(&authority));
-        self.devices = self.devices.with_authority(authority);
-        self
-    }
-
-    pub(crate) fn certificate_authority(
-        &self,
-    ) -> Option<&Arc<dyn kernel::ca::CertificateAuthority>> {
-        self.certificate_authority.as_ref()
-    }
-
-    #[must_use]
     pub fn with_embed_provider(mut self) -> Self {
         self.embed_provider = true;
         self
-    }
-
-    #[must_use]
-    pub fn with_identity_required(mut self) -> Self {
-        self.identity_required = true;
-        self
-    }
-
-    #[must_use]
-    pub fn with_client_certificate_required(mut self, required: bool) -> Self {
-        self.client_certificate_required = required;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn client_certificate_required(&self) -> bool {
-        self.client_certificate_required
     }
 
     #[must_use]
@@ -386,10 +340,6 @@ impl Gateway {
 
     pub(crate) fn presets(&self) -> &routes::agents::AgentRegistry {
         &self.presets
-    }
-
-    pub(crate) fn devices(&self) -> &routes::devices::DeviceRuntime {
-        &self.devices
     }
 
     pub fn router(self: &Arc<Self>, secure: bool) -> Router {

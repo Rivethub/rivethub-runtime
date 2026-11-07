@@ -2,5 +2,13 @@
   {
     "scenario": "refuse-empty-host",
     "reason": "The composed binary rejects an empty host during typed configuration validation before reaching the recorded socket-bind refusal. The gateway library still replays the bind refusal."
+  },
+  {
+    "scenario": "tls-missing-ca-default",
+    "reason": "CONTRACT note 132: rh checks no client certificate CA, so a missing chain no longer stops the gateway, and gateway.tls_ca is ignored with a warning."
+  },
+  {
+    "scenario": "tls-missing-ca-explicit",
+    "reason": "CONTRACT note 132: rh checks no client certificate CA, so a missing chain no longer stops the gateway, and gateway.tls_ca is ignored with a warning."
   }
 ]

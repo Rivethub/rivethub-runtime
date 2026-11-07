@@ -1,11 +1,9 @@
 mod account;
 pub mod agents;
-pub mod ca;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
 pub mod chat;
-pub mod devices;
 mod entities;
 pub mod files;
 mod flagged;
@@ -82,8 +80,6 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(account::router())
         .merge(updates::router())
         .nest("/api/agents", agents::router())
-        .merge(devices::router())
-        .merge(ca::router())
         .merge(history::router())
         .merge(notifications::router())
         .merge(topics::router())

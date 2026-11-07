@@ -1354,5 +1354,61 @@
   {
     "id": "plain-redirect/mesh-default-path-missing",
     "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/remote-plain-pair-redeem",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/remote-plain-enroll",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-enroll-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-delete-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-get",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-post",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-status",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-bad-escape",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-bad-name",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/pair-redeem-bogus",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/pair-redeem-get",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-phone-pairing-owner",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-main/tls-pair-redeem-no-cert",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
   }
 ]

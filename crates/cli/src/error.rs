@@ -6,38 +6,12 @@ pub enum Error {
     Update(#[from] crate::update::UpdateError),
     #[error("no memory backend configured")]
     MemoryBackend,
+    #[error("memory.capture.gateway.token is not a valid header value")]
+    CaptureToken,
+    #[error("{0}")]
+    GatewayCertificate(&'static str),
     #[error(transparent)]
     Service(#[from] crate::service::ServiceError),
-    #[error(transparent)]
-    Ca(#[from] kernel::ca::CaError),
-    #[error("PKI: {0}")]
-    PkiInput(&'static str),
-    #[error("rh ca requires --ca-url")]
-    CaUrlRequired,
-    #[error("rh ca requires --root")]
-    RootRequired,
-    #[error("rh ca token and rh ca revoke require --provisioner-password-file")]
-    PasswordRequired,
-    #[error("rh ca token node and rh ca token agent require --roster")]
-    RosterRequired,
-    #[error("certificate authority file is not a regular file")]
-    CaFile,
-    #[error("certificate authority path escapes its directory")]
-    CaEscape,
-    #[error("certificate authority path contains traversal")]
-    CaTraversal,
-    #[error("certificate authority file is not UTF-8")]
-    CaEncoding,
-    #[error("the operator roster cannot be mesh.json, because that registry is self-registered")]
-    MeshRegistry,
-    #[error(transparent)]
-    Pki(#[from] pki::Error),
-    #[error("certificate authority root is not an X.509 certificate")]
-    CaCertificate,
-    #[error("holder cryptography failed: {0}")]
-    Crypto(#[from] rcgen::Error),
-    #[error(transparent)]
-    StepCa(#[from] stepca::Error),
     #[error(
         "No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG"
     )]
@@ -111,20 +85,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("command cancelled")]
     Cancelled,
-    #[error(
-        "step-ca enrollment needs --ca-url, --root, and --provisioner-password-file. Mint with rh ca token node <name> against roster {roster}; the holder key stays in the state directory and POST /1.0/sign issues the certificate. rivet-ca.sh is retired"
-    )]
-    StepCaEnroll { roster: String },
-    #[error(
-        "step-ca renewal needs --ca-url and --root. rh cert renew uses mTLS against step-ca. rivet-ca.sh is retired"
-    )]
-    StepCaRenew,
-    #[error("refusing to write holder keys under /rivet-shared")]
-    SharedKey,
     #[error("the operating-system hostname is not Unicode")]
     HostName,
-    #[error("holder state must be an absolute path")]
-    StatePath,
     #[error("RIVETHUB_PG_URL is required.")]
     PostgresUrlRequired,
     #[error("Unknown option: {0}")]

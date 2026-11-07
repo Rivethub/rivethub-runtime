@@ -6,7 +6,7 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
 use gateway::Gateway;
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 use tower::ServiceExt as _;
 use wire::gateway::GatewayError;
 
@@ -20,14 +20,13 @@ const OTHER_DEVICE: &str = "win-other";
 fn node(root: &std::path::Path) -> Result<Router, Box<dyn std::error::Error + Send + Sync>> {
     let owner = UserId::new("owner".to_owned())?;
     let tenancy = Tenancy::local(owner.clone())
-        .with_device(OWNER_DEVICE, owner)?
-        .with_device(OTHER_DEVICE, UserId::new("other".to_owned())?)?;
+        .with_token(OWNER_DEVICE, owner)?
+        .with_token(OTHER_DEVICE, UserId::new("other".to_owned())?)?;
     let mut settings = common::settings();
     settings.state_dir = root.join("state");
     settings.directory_root = root.join("agents");
-    let gateway = Gateway::new(Arc::new(testkit::FakeMemoryStore::default()), settings)
-        .with_tenancy(tenancy)
-        .with_identity_required();
+    let gateway =
+        Gateway::new(Arc::new(testkit::FakeMemoryStore::default()), settings).with_tenancy(tenancy);
     Ok(Arc::new(gateway).router(true))
 }
 
@@ -47,10 +46,10 @@ async fn send(
     request
         .extensions_mut()
         .insert(ConnectInfo("192.0.2.7:41000".parse::<SocketAddr>()?));
-    request.extensions_mut().insert(PeerCertificate::Device {
-        user: None,
-        device: device.to_owned(),
-    });
+    request.headers_mut().insert(
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderValue::from_str(&format!("Bearer {}", device.to_owned()))?,
+    );
     let response = app.clone().oneshot(request).await?;
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await?;

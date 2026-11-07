@@ -118,7 +118,6 @@ const OWN: &[&str] = &[
     "tls-main/tls-loopback-sessions",
     "tls-main/tls-options-no-cert",
     "tls-main/tls-origin-disallowed",
-    "tls-main/tls-pair-redeem-no-cert",
     "tls-main/tls-post-no-cert-html",
     "tls-main/tls-root-no-cert-json",
     "tls-optional/tls-optional-healthz",
@@ -180,9 +179,8 @@ fn settings() -> Settings {
         directory_root: scratch.join("agents"),
         shared_dir: scratch.join("shared"),
         allowed_harnesses: None,
-        devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_ca: None,
+        private_ca: None,
     }
 }
 

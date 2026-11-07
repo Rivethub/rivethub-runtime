@@ -47,9 +47,8 @@ pub(crate) fn settings() -> Settings {
         directory_root: scratch.join("agents"),
         shared_dir: scratch.join("shared"),
         allowed_harnesses: None,
-        devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_ca: None,
+        private_ca: None,
     }
 }
 
@@ -71,49 +70,6 @@ fn owned(served: Gateway) -> Gateway {
     match gateway::tenancy::UserId::new(testkit::OWNER.to_owned()) {
         Ok(owner) => served.with_tenancy(gateway::tenancy::Tenancy::local(owner)),
         Err(_) => served,
-    }
-}
-
-pub(crate) fn spawn_healthz() -> Result<u16, FailedHealthz> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| FailedHealthz(format!("healthz bind: {error}")))?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| FailedHealthz(format!("healthz addr: {error}")))?
-        .port();
-    std::thread::spawn(move || answer_healthz(&listener));
-    Ok(port)
-}
-
-fn answer_healthz(listener: &std::net::TcpListener) {
-    for _ in 0..16 {
-        let Ok((mut stream, _)) = listener.accept() else {
-            break;
-        };
-        let mut buf = [0_u8; 2048];
-        if std::io::Read::read(&mut stream, &mut buf).is_err() {
-            continue;
-        }
-        let body = br#"{"ok":true,"sessions":0,"name":"gold-host","node":"golden-node"}"#;
-        let head = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        if std::io::Write::write_all(&mut stream, head.as_bytes()).is_err() {
-            continue;
-        }
-        if std::io::Write::write_all(&mut stream, body).is_err() {
-            break;
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct FailedHealthz(String);
-
-impl std::fmt::Display for FailedHealthz {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
     }
 }
 

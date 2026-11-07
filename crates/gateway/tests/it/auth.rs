@@ -286,9 +286,8 @@ fn remote_browsers_get_the_html_gate_off_api_paths() -> Result<(), Box<dyn std::
         .ok_or("the html gate carries no content-type")?;
     assert_eq!(content_type, "text/html; charset=utf-8");
     let text = String::from_utf8_lossy(&response.body);
-    assert!(text.contains("Device certificate required"));
-    assert!(text.contains("RivetHub desktop"));
-    assert!(text.contains("<code>rh cert renew</code>"));
+    assert!(text.contains("Sign-in required"));
+    assert!(text.contains("bearer token"));
     assert!(text.contains("/healthz"));
     Ok(())
 }

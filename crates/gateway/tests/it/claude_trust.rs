@@ -146,9 +146,8 @@ fn settings(root: &Path) -> gateway::Settings {
         directory_root: root.join("agents"),
         shared_dir: root.join("shared"),
         allowed_harnesses: None,
-        devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_ca: None,
+        private_ca: None,
     }
 }
 

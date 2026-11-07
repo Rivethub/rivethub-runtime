@@ -1,6 +1,3 @@
-mod certificate;
-
-use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
 use axum::extract::ConnectInfo;
@@ -35,52 +32,10 @@ impl UserId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum PeerCertificate {
-    Device {
-        user: Option<String>,
-        device: String,
-    },
-    Node {
-        node: String,
-    },
-    Agent {
-        node: String,
-        agent: String,
-    },
-    Unrecognized,
-}
-
-impl PeerCertificate {
-    pub(crate) fn verified_principal(
-        &self,
-    ) -> Result<Option<kernel::ca::Principal>, kernel::ca::CaError> {
-        let principal = match self {
-            Self::Node { node } => kernel::ca::Principal::Node { node: node.clone() },
-            Self::Agent { node, agent } => kernel::ca::Principal::Agent {
-                node: node.clone(),
-                agent: agent.clone(),
-            },
-            Self::Device {
-                user: Some(user),
-                device,
-            } => kernel::ca::Principal::Device {
-                user: user.clone(),
-                device: device.clone(),
-            },
-            Self::Device { user: None, .. } | Self::Unrecognized => return Ok(None),
-        };
-        principal.spiffe_uri()?;
-        Ok(Some(principal))
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct Tenancy {
     local: Option<UserId>,
     tokens: Vec<([u8; 32], UserId)>,
-    devices: BTreeMap<String, UserId>,
-    unmapped_device_owner: Option<UserId>,
     spaces: Vec<Space>,
     admins: Vec<UserId>,
 }
@@ -137,26 +92,16 @@ impl Tenancy {
         Ok(self)
     }
 
-    pub fn with_device(mut self, name: &str, user: UserId) -> Result<Self, ApiError> {
-        let device = match name.strip_prefix("device:") {
-            Some(name) => name,
-            None => name,
-        };
-        if device.is_empty() || device.chars().any(char::is_control) {
-            return Err(ApiError::BadRequest("invalid registry device name".into()));
+    pub fn with_token_digest(mut self, digest: &str, user: UserId) -> Result<Self, ApiError> {
+        let mut secret = [0_u8; 32];
+        hex::decode_to_slice(digest.trim(), &mut secret).map_err(|_| {
+            ApiError::BadRequest("a users-file token must be the hex SHA-256 of the secret".into())
+        })?;
+        if self.tokens.iter().any(|(known, _)| *known == secret) {
+            return Err(ApiError::BadRequest("duplicate users-file token".into()));
         }
-        if self.devices.insert(device.to_owned(), user).is_some() {
-            return Err(ApiError::BadRequest(
-                "duplicate registry device name".into(),
-            ));
-        }
+        self.tokens.push((secret, user));
         Ok(self)
-    }
-
-    #[must_use]
-    pub fn with_unmapped_device_owner(mut self, owner: UserId) -> Self {
-        self.unmapped_device_owner = Some(owner);
-        self
     }
 
     pub(crate) fn owner(&self, user: &UserId) -> Result<(), ApiError> {
@@ -165,27 +110,6 @@ impl Tenancy {
         } else {
             Err(ApiError::OwnerRequired)
         }
-    }
-
-    pub(crate) fn device_user(&self, peer: &PeerCertificate) -> Result<UserId, ApiError> {
-        let (user, device) = match peer {
-            PeerCertificate::Device { user, device } => (user, device),
-            PeerCertificate::Node { .. }
-            | PeerCertificate::Agent { .. }
-            | PeerCertificate::Unrecognized => return Err(ApiError::Unauthorized),
-        };
-        let mapped = self
-            .devices
-            .get(device)
-            .or(self.unmapped_device_owner.as_ref());
-        let mapped = mapped.ok_or(ApiError::Unauthorized)?;
-        if user
-            .as_ref()
-            .is_some_and(|claimed| claimed != mapped.as_str())
-        {
-            return Err(ApiError::Unauthorized);
-        }
-        Ok(mapped.clone())
     }
 
     pub(crate) fn resolve(&self, parts: &Parts) -> Result<UserId, ApiError> {
@@ -200,9 +124,6 @@ impl Tenancy {
                 }
             }
             return found.ok_or(ApiError::Unauthorized);
-        }
-        if let Some(peer) = parts.extensions.get::<PeerCertificate>() {
-            return self.device_user(peer);
         }
         if let Some(ConnectInfo(remote)) = parts.extensions.get::<ConnectInfo<SocketAddr>>()
             && crate::auth::is_loopback_remote(*remote)
@@ -236,24 +157,7 @@ pub(crate) fn caller(gateway: &crate::Gateway, parts: &Parts) -> Result<UserId, 
             .cloned()
             .ok_or(ApiError::Unauthorized);
     }
-    if gateway.client_certificate_required()
-        || parts
-            .headers
-            .contains_key(axum::http::header::AUTHORIZATION)
-    {
-        return gateway.tenancy.resolve(parts);
-    }
-    match gateway.tenancy.resolve(parts) {
-        Ok(user) => Ok(user),
-        Err(error) => anonymous_owner(&gateway.tenancy, error),
-    }
-}
-
-fn anonymous_owner(tenancy: &Tenancy, error: ApiError) -> Result<UserId, ApiError> {
-    match tenancy.local_user() {
-        Some(user) => Ok(user.clone()),
-        None => Err(error),
-    }
+    gateway.tenancy.resolve(parts)
 }
 
 #[cfg(test)]

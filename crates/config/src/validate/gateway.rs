@@ -1,7 +1,5 @@
-use std::path::Path;
-
 use crate::enums::{HarnessId, listed};
-use crate::model::{CertificateAuthoritySection, GatewaySection, HarnessSlot};
+use crate::model::{GatewaySection, HarnessSlot};
 use crate::report::ValidationResult;
 
 fn is_loopback(host: &str) -> bool {
@@ -47,7 +45,6 @@ pub(super) fn validate(out: &mut ValidationResult, section: &GatewaySection) {
     allowed_harnesses(out, section);
     terminal_roots(out, section);
     exposed_terminal_gate(section, out);
-    certificate_authority(out, section.certificate_authority.as_ref());
 }
 
 fn allowed_harnesses(out: &mut ValidationResult, section: &GatewaySection) {
@@ -90,69 +87,6 @@ fn terminal_roots(out: &mut ValidationResult, section: &GatewaySection) {
             "\"gateway.terminal.roots\" must be a non-empty list of absolute paths (omit the key for the defaults)",
         );
     }
-}
-
-fn certificate_authority(
-    out: &mut ValidationResult,
-    section: Option<&CertificateAuthoritySection>,
-) {
-    let Some(section) = section else {
-        return;
-    };
-    match section.url.as_deref() {
-        Some(url) if https_origin(url) => {}
-        Some(_) => out.error(
-            "gateway.certificate_authority.url",
-            "\"gateway.certificate_authority.url\" must be an https origin with no userinfo, path, query, or fragment",
-        ),
-        None => out.error(
-            "gateway.certificate_authority.url",
-            "\"gateway.certificate_authority.url\" is required when gateway.certificate_authority is set",
-        ),
-    }
-    required_path(
-        out,
-        "gateway.certificate_authority.root",
-        section.root.as_deref(),
-    );
-    required_path(
-        out,
-        "gateway.certificate_authority.provisioner_password_file",
-        section.provisioner_password_file.as_deref(),
-    );
-    if let Some(roster) = section.roster.as_deref() {
-        if roster.as_os_str().is_empty() {
-            out.error(
-                "gateway.certificate_authority.roster",
-                "\"gateway.certificate_authority.roster\" must be a non-empty path",
-            );
-        } else if roster.file_name().is_some_and(|name| name == "mesh.json") {
-            out.error(
-                "gateway.certificate_authority.roster",
-                "\"gateway.certificate_authority.roster\" cannot be mesh.json, because that registry is self-registered",
-            );
-        }
-    }
-}
-
-fn required_path(out: &mut ValidationResult, path: &str, value: Option<&Path>) {
-    if value.is_none_or(|value| value.as_os_str().is_empty()) {
-        out.error(
-            path,
-            format!("\"{path}\" is required when gateway.certificate_authority is set"),
-        );
-    }
-}
-
-fn https_origin(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("https://") else {
-        return false;
-    };
-    let rest = match rest.strip_suffix('/') {
-        Some(stripped) => stripped,
-        None => rest,
-    };
-    !rest.is_empty() && !rest.contains(['/', '?', '#', '@', ' ', '\\'])
 }
 
 fn exposed_terminal_gate(section: &GatewaySection, out: &mut ValidationResult) {

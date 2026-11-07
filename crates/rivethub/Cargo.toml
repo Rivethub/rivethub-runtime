@@ -40,7 +40,6 @@ kernel = { workspace = true }
 mcp = { workspace = true }
 memory-postgres = { workspace = true }
 memory-sqlite = { workspace = true }
-pki = { workspace = true }
 workers = { workspace = true }
 nix = { workspace = true, features = ["hostname", "inotify", "signal"] }
 thiserror = { workspace = true }

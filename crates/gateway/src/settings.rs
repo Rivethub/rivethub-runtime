@@ -24,9 +24,8 @@ pub struct Settings {
     pub directory_root: PathBuf,
     pub shared_dir: PathBuf,
     pub allowed_harnesses: Option<Vec<HarnessId>>,
-    pub devices_enabled: bool,
     pub probe_timeout: Duration,
-    pub mesh_ca: Option<PathBuf>,
+    pub private_ca: Option<PathBuf>,
 }
 
 pub fn state_dir(env: &config::Environment) -> Result<PathBuf, config::ConfigError> {
@@ -48,7 +47,7 @@ impl Settings {
         let section = config.gateway.clone().unwrap_or_default();
         let state_dir = state_dir(env)?;
         let shared_dir = canonical_dir(config::shared_dir(env));
-        let mesh_ca = crate::tls_resolve::mesh_ca(Some(&section), env, &shared_dir);
+        let private_ca = crate::tls_resolve::private_ca(env, &shared_dir);
         Ok(Self {
             hostname,
             node,
@@ -74,9 +73,8 @@ impl Settings {
             allowed_harnesses: section
                 .allowed_harnesses
                 .map(|entries| entries.iter().filter_map(known_harness).collect()),
-            devices_enabled: section.devices.enabled == Some(true),
             probe_timeout: DEFAULT_PROBE_TIMEOUT,
-            mesh_ca,
+            private_ca,
         })
     }
 }

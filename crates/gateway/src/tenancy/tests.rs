@@ -1,222 +1,83 @@
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
+use sha2::{Digest, Sha256};
 
-use super::{PeerCertificate, Tenancy, UserId};
+use super::{Tenancy, UserId};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn leaf(name: &str, unit: Option<&str>, uris: &[&str]) -> TestResult<PeerCertificate> {
-    let mut params = CertificateParams::default();
-    params.distinguished_name = DistinguishedName::new();
-    params.distinguished_name.push(DnType::CommonName, name);
-    if let Some(unit) = unit {
-        params
-            .distinguished_name
-            .push(DnType::OrganizationalUnitName, unit);
+fn resolve(tenancy: &Tenancy, token: Option<&str>, remote: &str) -> TestResult<String> {
+    let mut request = Request::new(());
+    if let Some(token) = token {
+        request.headers_mut().insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse()?,
+        );
     }
-    for uri in uris {
-        params
-            .subject_alt_names
-            .push(SanType::URI((*uri).try_into()?));
-    }
-    let key = KeyPair::generate()?;
-    let cert = params.self_signed(&key)?;
-    Ok(PeerCertificate::from_verified_leaf(cert.der()))
-}
-
-fn resolve(tenancy: &Tenancy, peer: Option<PeerCertificate>, remote: &str) -> TestResult<String> {
-    let (mut parts, ()) = Request::new(()).into_parts();
+    let (mut parts, ()) = request.into_parts();
     parts
         .extensions
         .insert(ConnectInfo(remote.parse::<std::net::SocketAddr>()?));
-    if let Some(peer) = peer {
-        parts.extensions.insert(peer);
-    }
     Ok(tenancy.resolve(&parts)?.as_str().to_owned())
+}
+
+fn digest(secret: &str) -> String {
+    hex::encode(Sha256::digest(secret.as_bytes()))
 }
 
 fn registry() -> TestResult<Tenancy> {
     Ok(Tenancy::local(UserId::new("owner".into())?)
-        .with_device("device:laptop", UserId::new("alice".into())?)?)
+        .with_token_digest(&digest("alice-secret"), UserId::new("alice".into())?)?)
 }
 
 #[test]
-fn registry_maps_legacy_names_and_spiffe_user_device_pairs() -> TestResult {
+fn a_users_file_token_names_its_user_from_any_address() -> TestResult {
     let tenancy = registry()?;
-    for peer in [
-        leaf("device:laptop", None, &[])?,
-        leaf("laptop", Some("client"), &[])?,
-        leaf(
-            "ignored",
-            None,
-            &["spiffe://rivet.mesh/device/alice/laptop"],
-        )?,
-    ] {
-        assert_eq!(resolve(&tenancy, Some(peer), "127.0.0.2:1234")?, "alice");
-    }
+    assert_eq!(
+        resolve(&tenancy, Some("alice-secret"), "192.0.2.7:1234")?,
+        "alice"
+    );
+    assert_eq!(
+        resolve(&tenancy, Some("alice-secret"), "127.0.0.1:1234")?,
+        "alice"
+    );
+    Ok(())
+}
+
+#[test]
+fn loopback_without_a_token_is_the_owner_and_elsewhere_is_refused() -> TestResult {
+    let tenancy = registry()?;
     assert_eq!(resolve(&tenancy, None, "127.0.0.1:1234")?, "owner");
-    assert!(resolve(&tenancy, None, "127.0.0.2:1234").is_err());
+    assert!(resolve(&tenancy, None, "192.0.2.7:1234").is_err());
     Ok(())
 }
 
 #[test]
-fn unknown_or_mismatched_leaf_never_inherits_loopback_owner() -> TestResult {
+fn an_unknown_token_is_refused_even_on_loopback() -> TestResult {
     let tenancy = registry()?;
-    for (name, unit, uris) in [
-        ("device:stranger", None, vec![]),
-        ("laptop", None, vec![]),
-        ("laptop", Some("server"), vec![]),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://rivet.mesh/device/bob/laptop"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://rivet.mesh/node/laptop"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://wrong.mesh/device/alice/laptop"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://rivet.mesh/device/alice/../laptop"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://rivet.mesh/device/alice/%6captop"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec!["spiffe://rivet.mesh/device/alice/laptop?x=1"],
-        ),
-        (
-            "device:laptop",
-            None,
-            vec![
-                "spiffe://rivet.mesh/device/alice/laptop",
-                "spiffe://rivet.mesh/device/bob/laptop",
-            ],
-        ),
-    ] {
-        assert!(resolve(&tenancy, Some(leaf(name, unit, &uris)?), "127.0.0.1:1234").is_err());
-    }
+    assert!(resolve(&tenancy, Some("not-a-token"), "127.0.0.1:1234").is_err());
+    assert!(resolve(&tenancy, Some(""), "127.0.0.1:1234").is_err());
     Ok(())
 }
 
 #[test]
-fn explicit_unmapped_policy_applies_only_to_verified_device_names() -> TestResult {
-    let tenancy = registry()?.with_unmapped_device_owner(UserId::new("owner".into())?);
-    assert_eq!(
-        resolve(
-            &tenancy,
-            Some(leaf("device:unknown", None, &[])?),
-            "127.0.0.2:1234"
-        )?,
-        "owner"
-    );
-    assert_eq!(
-        resolve(
-            &tenancy,
-            Some(leaf(
-                "ignored",
-                None,
-                &["spiffe://rivet.mesh/device/owner/unknown"]
-            )?),
-            "127.0.0.2:1234"
-        )?,
-        "owner"
-    );
+fn a_digest_must_be_hex_sha256_and_unique() -> TestResult {
+    let owner = UserId::new("owner".into())?;
+    let alice = UserId::new("alice".into())?;
     assert!(
-        resolve(
-            &tenancy,
-            Some(leaf(
-                "ignored",
-                None,
-                &["spiffe://rivet.mesh/device/bob/unknown"]
-            )?),
-            "127.0.0.2:1234"
-        )
-        .is_err()
-    );
-    assert!(
-        resolve(
-            &tenancy,
-            Some(PeerCertificate::Unrecognized),
-            "127.0.0.1:1234"
-        )
-        .is_err()
-    );
-    assert!(resolve(&tenancy, None, "127.0.0.2:1234").is_err());
-    Ok(())
-}
-
-#[test]
-fn spiffe_parse_feeds_device_identity_and_refuses_other_principals() -> TestResult {
-    let tenancy = registry()?;
-    let device = leaf(
-        "ignored",
-        None,
-        &["spiffe://rivet.mesh/device/alice/laptop"],
-    )?;
-    assert!(matches!(
-        device.verified_principal()?,
-        Some(kernel::ca::Principal::Device { user, device })
-            if user == "alice" && device == "laptop"
-    ));
-    assert_eq!(resolve(&tenancy, Some(device), "127.0.0.2:1234")?, "alice");
-    let node = leaf("ignored", None, &["spiffe://rivet.mesh/node/laptop"])?;
-    assert!(matches!(
-        node.verified_principal()?,
-        Some(kernel::ca::Principal::Node { node }) if node == "laptop"
-    ));
-    let agent = leaf(
-        "ignored",
-        None,
-        &["spiffe://rivet.mesh/agent/laptop/worker"],
-    )?;
-    assert!(matches!(
-        agent.verified_principal()?,
-        Some(kernel::ca::Principal::Agent { node, agent })
-            if node == "laptop" && agent == "worker"
-    ));
-    let legacy = leaf("device:laptop", None, &[])?;
-    assert!(legacy.verified_principal()?.is_none());
-    assert_eq!(resolve(&tenancy, Some(legacy), "127.0.0.2:1234")?, "alice");
-    for peer in [
-        node,
-        agent,
-        leaf("ignored", None, &["spiffe://rivet.mesh/agent/only-one"])?,
-        PeerCertificate::Unrecognized,
-    ] {
-        assert!(resolve(&tenancy, Some(peer), "127.0.0.1:1234").is_err());
-    }
-    Ok(())
-}
-
-#[test]
-fn ambiguous_and_invalid_device_mappings_are_refused() -> TestResult {
-    assert!(
-        registry()?
-            .with_device("laptop", UserId::new("bob".into())?)
+        Tenancy::local(owner.clone())
+            .with_token_digest("plaintext-token", alice.clone())
             .is_err()
     );
     assert!(
         registry()?
-            .with_device("device:", UserId::new("alice".into())?)
+            .with_token_digest(&digest("alice-secret"), owner)
             .is_err()
     );
     assert!(
         registry()?
-            .with_device("device:bad\nname", UserId::new("alice".into())?)
-            .is_err()
+            .with_token_digest(&digest("other"), alice)
+            .is_ok()
     );
     Ok(())
 }

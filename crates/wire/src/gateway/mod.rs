@@ -138,11 +138,3 @@ pub struct EventsIngested {
     pub ok: bool,
     pub ingested: u64,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PairRedeemRequest {
-    pub token: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub csr: Option<String>,
-}

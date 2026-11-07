@@ -25,6 +25,6 @@ pub fn translate_recorded_product_names(text: &str) -> String {
         .replace("rivet-den-", "rivethub-")
         .replace(
             "to the node cert from rivet-ca issue-node; enroll clients with rivet-ca issue-client",
-            "to the node's holder certificate, ~/.rivethub/tls/holder.cert.pem and holder.key.pem from rh mesh enroll; devices enroll with rh cert renew",
+            "to the node's TLS certificate and key",
         )
 }

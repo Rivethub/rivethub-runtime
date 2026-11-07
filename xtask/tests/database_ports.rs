@@ -35,7 +35,6 @@ fn database_wrappers_are_limited_to_authorized_crates() -> Result {
         let mut expected = vec![
             "memory-postgres",
             "memory-sqlite",
-            "pki",
             "migrate",
             "testkit",
             "rivethub",
@@ -98,9 +97,7 @@ fn vector_codec_exception_is_exclusive_to_the_postgres_adapter() -> Result {
     for caller in [
         "memory-postgres",
         "gateway",
-        "agent-loop",
         "workers",
-        "tasks",
         "mcp",
         "capture",
         "providers",
@@ -127,14 +124,7 @@ fn vector_codec_exception_is_exclusive_to_the_postgres_adapter() -> Result {
 
 #[test]
 fn cargo_deny_refuses_direct_database_access_from_services() -> Result {
-    for service in [
-        "gateway",
-        "agent-loop",
-        "workers",
-        "tasks",
-        "mcp",
-        "capture",
-    ] {
+    for service in ["gateway", "workers", "mcp", "capture"] {
         for database in ["sqlx", "rusqlite"] {
             if service == "capture" && database == "rusqlite" {
                 continue;
@@ -157,7 +147,6 @@ fn cargo_deny_accepts_database_access_from_adapters_and_composition() -> Result 
     for caller in [
         "memory-postgres",
         "memory-sqlite",
-        "pki",
         "migrate",
         "testkit",
         "rivethub",

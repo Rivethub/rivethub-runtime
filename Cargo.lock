@@ -658,7 +658,6 @@ dependencies = [
  "migrate",
  "nix 0.30.1",
  "parking_lot",
- "pki",
  "providers",
  "rcgen",
  "regex",
@@ -667,19 +666,16 @@ dependencies = [
  "rusqlite",
  "rustls",
  "rustls-pki-types",
- "rustls-webpki",
  "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
- "stepca",
  "strum 0.27.2",
  "tar",
  "tempfile",
  "testkit",
  "thiserror 2.0.21",
- "time",
  "tokio",
  "tokio-rustls",
  "tokio-util",
@@ -1458,12 +1454,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
 
 [[package]]
-name = "futures-timer"
-version = "3.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
-
-[[package]]
 name = "futures-util"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1494,7 +1484,6 @@ dependencies = [
  "croner",
  "futures",
  "getrandom 0.4.3",
- "governor",
  "hex",
  "http-body",
  "hyper",
@@ -1535,7 +1524,6 @@ dependencies = [
  "url",
  "uuid",
  "wire",
- "x509-parser",
 ]
 
 [[package]]
@@ -1585,26 +1573,6 @@ dependencies = [
  "r-efi 6.0.0",
  "rand_core 0.10.1",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "governor"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9efcab3c1958580ff1f25a2a41be1668f7603d849bb63af523b208a3cc1223b8"
-dependencies = [
- "cfg-if",
- "futures-sink",
- "futures-timer",
- "futures-util",
- "hashbrown 0.16.1",
- "nonzero_ext",
- "parking_lot",
- "portable-atomic",
- "quanta",
- "smallvec",
- "spinning_top",
- "web-time",
 ]
 
 [[package]]
@@ -2471,12 +2439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nonzero_ext"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2669,34 +2631,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
-name = "pki"
-version = "0.7.0"
-dependencies = [
- "async-trait",
- "axum",
- "hyper",
- "hyper-util",
- "kernel",
- "nix 0.30.1",
- "num-bigint",
- "parking_lot",
- "rcgen",
- "rustls",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "stepca",
- "tempfile",
- "testkit",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "url",
- "x509-parser",
-]
-
-[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2805,21 +2739,6 @@ dependencies = [
  "url",
  "uuid",
  "wire",
-]
-
-[[package]]
-name = "quanta"
-version = "0.12.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3ab5a9d756f0d97bdc89019bd2e4ea098cf9cde50ee7564dde6b81ccc8f06c7"
-dependencies = [
- "crossbeam-utils",
- "libc",
- "once_cell",
- "raw-cpuid",
- "wasi",
- "web-sys",
- "winapi",
 ]
 
 [[package]]
@@ -2964,15 +2883,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "raw-cpuid"
-version = "11.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
-dependencies = [
- "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -3132,7 +3042,6 @@ dependencies = [
  "memory-sqlite",
  "migrate",
  "nix 0.30.1",
- "pki",
  "providers",
  "rcgen",
  "reqwest",
@@ -3749,15 +3658,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spinning_top"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
-dependencies = [
- "lock_api",
-]
-
-[[package]]
 name = "sqlx"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3956,29 +3856,6 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
-
-[[package]]
-name = "stepca"
-version = "0.7.0"
-dependencies = [
- "axum",
- "hyper",
- "hyper-util",
- "parking_lot",
- "rcgen",
- "reqwest",
- "rustls",
- "rustls-pki-types",
- "rustls-webpki",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls",
- "tokio-util",
- "url",
- "x509-parser",
-]
 
 [[package]]
 name = "stringprep"

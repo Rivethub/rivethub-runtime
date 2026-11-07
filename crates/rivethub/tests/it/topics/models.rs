@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode, header};
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 use gateway::{Gateway, ModelAssignment};
 use kernel::memory::MemoryStore;
 use kernel::model::{Degradation, ProviderHealth, ProviderRecovery, ProviderStatus};
@@ -89,11 +89,10 @@ fn node_with(
     let memory: Arc<dyn MemoryStore> = store.clone();
     let owner = UserId::new("owner".to_owned())?;
     let tenancy = Tenancy::local(owner.clone())
-        .with_device(OWNER_DEVICE, owner)?
-        .with_device(OTHER_DEVICE, UserId::new("other".to_owned())?)?;
+        .with_token(OWNER_DEVICE, owner)?
+        .with_token(OTHER_DEVICE, UserId::new("other".to_owned())?)?;
     let gateway = Gateway::new(memory, settings(root.path()))
         .with_tenancy(tenancy)
-        .with_identity_required()
         .with_tidy(store.clone(), store.clone())
         .with_provider_health(providers)
         .with_model_assignments(assignments);
@@ -113,10 +112,10 @@ async fn models(node: &Node, device: &str) -> TestResult<(StatusCode, Vec<u8>)> 
     request
         .extensions_mut()
         .insert(ConnectInfo("192.0.2.7:41000".parse::<SocketAddr>()?));
-    request.extensions_mut().insert(PeerCertificate::Device {
-        user: None,
-        device: device.to_owned(),
-    });
+    request.headers_mut().insert(
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderValue::from_str(&format!("Bearer {}", device.to_owned()))?,
+    );
     let response = node.router.clone().oneshot(request).await?;
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await?;

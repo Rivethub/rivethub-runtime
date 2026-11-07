@@ -9,7 +9,6 @@ use axum::http::Method;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::http::header;
-use gateway::tenancy::PeerCertificate;
 use kernel::memory::MemoryStore;
 use rivethub::composition::Composition;
 use tokio_util::sync::CancellationToken;
@@ -18,7 +17,7 @@ use tower::ServiceExt;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const REMOTE: &str = "192.0.2.7:41000";
-const USERS: &str = r#"{"ownerUserId":"owner","unmappedIsOwner":false,"users":{"owner":{"devices":["known-phone"]}}}"#;
+const USERS: &str = r#"{"ownerUserId":"owner","unmappedIsOwner":false,"users":{"alice":{"tokens":["49e2e40e591e61357758299c8cee170fb9fa7da160ec8acf110a4a409d905aaf"]}}}"#;
 
 struct Composed {
     router: axum::Router,
@@ -89,7 +88,7 @@ fn write_config(state: &Path, work: &Path, users: Option<&str>) -> TestResult {
 struct Call<'a> {
     method: Method,
     path: &'a str,
-    peer: Option<PeerCertificate>,
+    token: Option<&'a str>,
     headers: &'a [(header::HeaderName, &'a str)],
 }
 
@@ -98,7 +97,7 @@ impl<'a> Call<'a> {
         Self {
             method: Method::GET,
             path,
-            peer: None,
+            token: None,
             headers: &[],
         }
     }
@@ -111,37 +110,26 @@ impl<'a> Call<'a> {
         for (name, value) in self.headers {
             builder = builder.header(name, *value);
         }
+        if let Some(token) = self.token {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
         let mut request = builder.body(Body::empty())?;
         request
             .extensions_mut()
             .insert(ConnectInfo(REMOTE.parse::<SocketAddr>()?));
-        if let Some(peer) = self.peer {
-            request.extensions_mut().insert(peer);
-        }
         Ok(router.clone().oneshot(request).await?)
     }
 }
 
-fn device(name: &str) -> PeerCertificate {
-    PeerCertificate::Device {
-        user: Some("owner".to_owned()),
-        device: name.to_owned(),
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn open_routes_answer_a_caller_without_a_client_certificate() -> TestResult {
+async fn health_and_a_preflight_answer_a_caller_without_a_token() -> TestResult {
     let composed = Composed::build(None).await?;
     let healthz = Call::get("/healthz").send(&composed.router).await?;
     assert_eq!(healthz.status(), StatusCode::OK);
-    for path in ["/ca/v1/chain", "/ca/v1/crl", "/api/devices/pair"] {
-        let answered = Call::get(path).send(&composed.router).await?;
-        assert_ne!(answered.status(), StatusCode::UNAUTHORIZED, "{path}");
-    }
     let preflight = Call {
         method: Method::OPTIONS,
-        path: "/sessions",
-        peer: None,
+        path: "/api/sessions",
+        token: None,
         headers: &[
             (header::ORIGIN, "app://bundle"),
             (header::ACCESS_CONTROL_REQUEST_METHOD, "GET"),
@@ -154,13 +142,13 @@ async fn open_routes_answer_a_caller_without_a_client_certificate() -> TestResul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_caller_without_a_certificate_gets_the_guards_refusal() -> TestResult {
+async fn a_caller_without_a_token_gets_the_guards_refusal() -> TestResult {
     let composed = Composed::build(None).await?;
-    for path in ["/sessions", "/api/agents", "/api/memory/search?q=x"] {
+    for path in ["/api/sessions", "/api/memory/search?q=x"] {
         let refused = Call {
             method: Method::GET,
             path,
-            peer: None,
+            token: None,
             headers: &[(header::ORIGIN, "app://bundle")],
         }
         .send(&composed.router)
@@ -176,7 +164,7 @@ async fn a_caller_without_a_certificate_gets_the_guards_refusal() -> TestResult 
     let browser = Call {
         method: Method::GET,
         path: "/",
-        peer: None,
+        token: None,
         headers: &[(header::ACCEPT, "text/html")],
     }
     .send(&composed.router)
@@ -192,32 +180,27 @@ async fn a_caller_without_a_certificate_gets_the_guards_refusal() -> TestResult 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn without_a_users_registry_a_verified_device_is_the_owner() -> TestResult {
-    let composed = Composed::build(None).await?;
-    let mut call = Call::get("/sessions");
-    call.peer = Some(device("any-phone"));
-    assert_eq!(call.send(&composed.router).await?.status(), StatusCode::OK);
-    let mut node = Call::get("/sessions");
-    node.peer = Some(PeerCertificate::Node {
-        node: "node-a".to_owned(),
-    });
+async fn a_users_file_token_admits_its_user_and_an_unknown_one_is_refused() -> TestResult {
+    let composed = Composed::build(Some(USERS)).await?;
+    let mut known = Call::get("/api/memory/stats");
+    known.token = Some("known-token");
+    assert_eq!(known.send(&composed.router).await?.status(), StatusCode::OK);
+    let mut unknown = Call::get("/api/memory/stats");
+    unknown.token = Some("stranger-token");
     assert_eq!(
-        node.send(&composed.router).await?.status(),
+        unknown.send(&composed.router).await?.status(),
         StatusCode::UNAUTHORIZED
     );
     composed.close().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn with_a_users_registry_an_unknown_device_is_refused() -> TestResult {
-    let composed = Composed::build(Some(USERS)).await?;
-    let mut known = Call::get("/sessions");
-    known.peer = Some(device("known-phone"));
-    assert_eq!(known.send(&composed.router).await?.status(), StatusCode::OK);
-    let mut unknown = Call::get("/sessions");
-    unknown.peer = Some(device("stranger-phone"));
+async fn without_a_users_file_no_token_is_known() -> TestResult {
+    let composed = Composed::build(None).await?;
+    let mut call = Call::get("/api/memory/stats");
+    call.token = Some("known-token");
     assert_eq!(
-        unknown.send(&composed.router).await?.status(),
+        call.send(&composed.router).await?.status(),
         StatusCode::UNAUTHORIZED
     );
     composed.close().await

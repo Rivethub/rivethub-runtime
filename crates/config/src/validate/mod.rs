@@ -475,10 +475,6 @@ fn gateway_message(rest: &[Segment]) -> Option<String> {
             let parent: &str = parent.as_str();
             match parent {
                 "terminal" => Some(format!("Unknown gateway.terminal key \"{key}\"")),
-                "devices" => Some(format!("Unknown gateway.devices key \"{key}\"")),
-                "certificate_authority" => Some(format!(
-                    "Unknown gateway.certificate_authority key \"{key}\""
-                )),
                 _ => None,
             }
         }

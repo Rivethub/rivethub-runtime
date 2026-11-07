@@ -2639,131 +2639,6 @@
       ],
       "type": "string"
     },
-    "DeviceCreateRequest": {
-      "properties": {
-        "name": {
-          "default": null,
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
-    "DeviceCreateResponse": {
-      "properties": {
-        "pending": {
-          "$ref": "#/$defs/PendingEnrollment"
-        },
-        "qr": {
-          "$ref": "#/$defs/rivet-mesh-enroll"
-        }
-      },
-      "required": [
-        "pending",
-        "qr"
-      ],
-      "type": "object"
-    },
-    "DeviceEnrollConfig": {
-      "properties": {
-        "embedUrl": {
-          "type": "string"
-        },
-        "homeSubnet": {
-          "type": "string"
-        },
-        "pgUrl": {
-          "type": "string"
-        },
-        "sharedExport": {
-          "type": "string"
-        },
-        "sharedHost": {
-          "type": "string"
-        },
-        "wgAddress": {
-          "type": "string"
-        },
-        "wgAllowedIps": {
-          "type": "string"
-        },
-        "wgEndpoint": {
-          "type": "string"
-        },
-        "wgPeerPublicKey": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "sharedHost",
-        "sharedExport",
-        "pgUrl",
-        "embedUrl",
-        "wgEndpoint",
-        "wgPeerPublicKey",
-        "wgAddress",
-        "wgAllowedIps",
-        "homeSubnet"
-      ],
-      "type": "object"
-    },
-    "DeviceEnrollRequest": {
-      "properties": {
-        "csr": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "publicKey": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "token": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "DeviceEnrollResponse": {
-      "properties": {
-        "certificate": {
-          "$ref": "#/$defs/SignedCertificate"
-        },
-        "config": {
-          "$ref": "#/$defs/DeviceEnrollConfig"
-        },
-        "device": {
-          "$ref": "#/$defs/EnrolledDevice"
-        },
-        "ok": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "ok",
-        "device",
-        "config",
-        "certificate"
-      ],
-      "type": "object"
-    },
     "DeviceFileEntry": {
       "properties": {
         "mtime": {
@@ -2790,31 +2665,6 @@
       ],
       "type": "object"
     },
-    "DeviceListResponse": {
-      "properties": {
-        "devices": {
-          "items": {
-            "$ref": "#/$defs/MeshDevice"
-          },
-          "type": "array"
-        },
-        "pending": {
-          "items": {
-            "$ref": "#/$defs/PendingEnrollment"
-          },
-          "type": "array"
-        },
-        "relayConfigured": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "devices",
-        "pending",
-        "relayConfigured"
-      ],
-      "type": "object"
-    },
     "DeviceOwner": {
       "properties": {
         "device": {
@@ -2829,33 +2679,6 @@
       },
       "required": [
         "self"
-      ],
-      "type": "object"
-    },
-    "DeviceRosterFile": {
-      "properties": {
-        "devices": {
-          "items": {
-            "$ref": "#/$defs/MeshDevice"
-          },
-          "type": "array"
-        },
-        "pending": {
-          "items": {
-            "$ref": "#/$defs/StoredPending"
-          },
-          "type": "array"
-        },
-        "v": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "v",
-        "devices",
-        "pending"
       ],
       "type": "object"
     },
@@ -2924,25 +2747,6 @@
         "unavailable"
       ],
       "type": "string"
-    },
-    "EnrolledDevice": {
-      "properties": {
-        "address": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "address"
-      ],
-      "type": "object"
     },
     "EntityArticle": {
       "properties": {
@@ -8638,54 +8442,6 @@
       ],
       "type": "object"
     },
-    "MeshDevice": {
-      "properties": {
-        "address": {
-          "type": "string"
-        },
-        "createdAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "enrolledAt": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "lastHandshake": {
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "name": {
-          "type": "string"
-        },
-        "pgRole": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "publicKey": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "publicKey",
-        "address",
-        "createdAt"
-      ],
-      "type": "object"
-    },
     "Message": {
       "properties": {
         "content": {
@@ -8844,82 +8600,6 @@
       ],
       "type": "string"
     },
-    "Notification": {
-      "oneOf": [
-        {
-          "properties": {
-            "agent_id": {
-              "type": "string"
-            },
-            "href": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "escalation",
-              "type": "string"
-            },
-            "summary": {
-              "type": "string"
-            },
-            "task_id": {
-              "type": "string"
-            },
-            "ts": {
-              "format": "int64",
-              "type": "integer"
-            }
-          },
-          "required": [
-            "kind",
-            "task_id",
-            "agent_id",
-            "summary",
-            "href",
-            "ts"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "href": {
-              "type": "string"
-            },
-            "kind": {
-              "const": "workflow.gate",
-              "type": "string"
-            },
-            "label": {
-              "type": "string"
-            },
-            "prompt": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "runId": {
-              "type": "string"
-            },
-            "ts": {
-              "format": "int64",
-              "type": "integer"
-            },
-            "workflowId": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "runId",
-            "workflowId",
-            "label",
-            "href",
-            "ts"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "OkReply": {
       "properties": {
         "ok": {
@@ -8928,64 +8608,6 @@
       },
       "required": [
         "ok"
-      ],
-      "type": "object"
-    },
-    "PairRedeemRequest": {
-      "properties": {
-        "csr": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "token"
-      ],
-      "type": "object"
-    },
-    "PairRedeemResponse": {
-      "properties": {
-        "certificate": {
-          "$ref": "#/$defs/SignedCertificate"
-        },
-        "deviceId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "deviceId",
-        "certificate"
-      ],
-      "type": "object"
-    },
-    "PairingRecord": {
-      "properties": {
-        "deviceId": {
-          "type": "string"
-        },
-        "expiresAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "name": {
-          "type": "string"
-        },
-        "v": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "v",
-        "deviceId",
-        "name",
-        "expiresAt"
       ],
       "type": "object"
     },
@@ -9209,35 +8831,6 @@
       ],
       "type": "object"
     },
-    "PendingEnrollment": {
-      "properties": {
-        "address": {
-          "type": "string"
-        },
-        "createdAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "expiresAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "address",
-        "createdAt",
-        "expiresAt"
-      ],
-      "type": "object"
-    },
     "PendingTagAction": {
       "enum": [
         "add",
@@ -9408,99 +9001,6 @@
         "host.exec"
       ],
       "type": "string"
-    },
-    "PhonePairingAvailability": {
-      "properties": {
-        "available": {
-          "type": "boolean"
-        },
-        "gateway": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reason": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "available"
-      ],
-      "type": "object"
-    },
-    "PhonePairingCode": {
-      "properties": {
-        "addedToUsers": {
-          "type": "boolean"
-        },
-        "deviceId": {
-          "type": "string"
-        },
-        "expiresAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "gateway": {
-          "type": "string"
-        },
-        "qrText": {
-          "type": "string"
-        },
-        "reshown": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "deviceId",
-        "gateway",
-        "expiresAt",
-        "qrText",
-        "reshown",
-        "addedToUsers"
-      ],
-      "type": "object"
-    },
-    "PhonePairingRequest": {
-      "properties": {
-        "host": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
-    "PhonePairingState": {
-      "enum": [
-        "pending",
-        "paired",
-        "expired"
-      ],
-      "type": "string"
-    },
-    "PhonePairingStatus": {
-      "properties": {
-        "state": {
-          "$ref": "#/$defs/PhonePairingState"
-        }
-      },
-      "required": [
-        "state"
-      ],
-      "type": "object"
     },
     "PlacedBy": {
       "enum": [
@@ -12540,24 +12040,6 @@
       ],
       "type": "object"
     },
-    "SignedCertificate": {
-      "properties": {
-        "chain": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "leaf": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "leaf",
-        "chain"
-      ],
-      "type": "object"
-    },
     "SpaceConfig": {
       "properties": {
         "kind": {
@@ -12786,39 +12268,6 @@
         "promptRequired"
       ],
       "type": "string"
-    },
-    "StoredPending": {
-      "properties": {
-        "address": {
-          "type": "string"
-        },
-        "createdAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "expiresAt": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "id": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "token": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "token",
-        "address",
-        "createdAt",
-        "expiresAt"
-      ],
-      "type": "object"
     },
     "StreamEvent": {
       "properties": {
@@ -15531,6 +14980,15 @@
             "string",
             "null"
           ]
+        },
+        "tokens": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -17893,31 +17351,6 @@
         "v",
         "plugin",
         "views"
-      ],
-      "type": "object"
-    },
-    "rivet-mesh-enroll": {
-      "properties": {
-        "config": {
-          "$ref": "#/$defs/DeviceEnrollConfig"
-        },
-        "gateway": {
-          "type": "string"
-        },
-        "token": {
-          "type": "string"
-        },
-        "v": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "v",
-        "gateway",
-        "token",
-        "config"
       ],
       "type": "object"
     },

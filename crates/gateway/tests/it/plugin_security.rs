@@ -1,19 +1,17 @@
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use wire::JsonObject;
 use wire::capture::{CaptureBatchRequest, CaptureMessage};
 use wire::gateway::memory::MemoryAppendToolArgs;
 use wire::message::Role;
-use wire::plugin::host::{PluginInstallRequest, PluginLogs, PluginState};
-use wire::plugin::manifest::{Permission, PluginManifest};
+use wire::plugin::host::{PluginInstallRequest, PluginState};
+use wire::plugin::manifest::Permission;
 
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 
 use crate::plugin_support::{
-    Failure, Harness, OWNER_DEVICE, POLL, TestResult, enable, harness, harness_with, owner,
-    refused, tenancy, write_manifest, write_manifest_with,
+    Failure, OWNER_DEVICE, TestResult, enable, harness, harness_with, owner, refused, tenancy,
+    write_manifest,
 };
 
 const BASE: [Permission; 2] = [Permission::SessionsRead, Permission::TopicsRead];
@@ -54,77 +52,6 @@ async fn a_plugin_page_is_kept_off_the_gateway_origin() -> TestResult {
             "{path}"
         );
     }
-    host.gateway.close().await;
-    Ok(())
-}
-
-async fn stopping(host: &Harness) -> TestResult {
-    let mut poll = tokio::time::interval(POLL);
-    for _ in 0..200 {
-        poll.tick().await;
-        let (_, bytes) = host
-            .call(Method::GET, "/api/plugins/fixture/logs", None, false)
-            .await?;
-        let logs: PluginLogs = serde_json::from_slice(&bytes)?;
-        if logs
-            .lines
-            .iter()
-            .any(|line| line.text.contains("ignored SIGTERM"))
-        {
-            return Ok(());
-        }
-    }
-    Err("the reload never stopped the plug-in".into())
-}
-
-fn slow_to_stop(manifest: &mut PluginManifest) {
-    manifest
-        .run
-        .env
-        .insert("FIXTURE_IGNORE_SIGTERM".to_owned(), "1".to_owned());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_reload_queued_ahead_of_enable_cannot_slip_a_permission_past_the_device_check()
--> TestResult {
-    let root = tempfile::tempdir()?;
-    let source = root.path().join("source");
-    write_manifest_with(&source, &BASE, slow_to_stop)?;
-    let host = Arc::new(harness(root.path()).await?);
-    host.install_and_enable(&source).await?;
-    let wider = [BASE[0], BASE[1], Permission::AgentsRead];
-    write_manifest_with(&source, &wider, slow_to_stop)?;
-    let reloading = tokio::spawn({
-        let host = Arc::clone(&host);
-        async move {
-            host.call(Method::POST, "/api/plugins/fixture/reload", None, false)
-                .await
-        }
-    });
-    stopping(&host).await?;
-    let (status, bytes) = host
-        .call(
-            Method::POST,
-            "/api/plugins/fixture/enable",
-            enable(&[Permission::AgentsRead])?,
-            false,
-        )
-        .await?;
-    let (reloaded, _) = reloading.await??;
-    assert_eq!(reloaded, StatusCode::OK);
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        String::from_utf8_lossy(&bytes)
-    );
-    assert_eq!(
-        refused(&bytes)?.code.as_deref(),
-        Some("device_certificate_required")
-    );
-    let record = host.record().await?;
-    assert!(!record.granted.contains(&Permission::AgentsRead));
-    assert_eq!(record.state, PluginState::AwaitingApproval);
     host.gateway.close().await;
     Ok(())
 }
@@ -171,10 +98,10 @@ fn forged(device: &str) -> Result<Request<Body>, Failure> {
         .header("x-rivethub-user", "owner")
         .header("x-rivethub-forged", "yes")
         .body(Body::empty())?;
-    request.extensions_mut().insert(PeerCertificate::Device {
-        user: None,
-        device: device.to_owned(),
-    });
+    request.headers_mut().insert(
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderValue::from_str(&format!("Bearer {}", device.to_owned()))?,
+    );
     Ok(request)
 }
 
@@ -185,8 +112,8 @@ async fn a_caller_cannot_forge_the_headers_rh_names_it_with() -> TestResult {
     write_manifest(&source, &BASE)?;
     let owner = owner()?;
     let tenancy = Tenancy::local(owner.clone())
-        .with_device(OWNER_DEVICE, owner)?
-        .with_device("phone", UserId::new("zoë".to_owned())?)?;
+        .with_token(OWNER_DEVICE, owner)?
+        .with_token("phone", UserId::new("zoë".to_owned())?)?;
     let host = harness_with(root.path(), tenancy, Vec::new()).await?;
     host.install_and_enable(&source).await?;
     let answer = host.send(forged(OWNER_DEVICE)?).await?;

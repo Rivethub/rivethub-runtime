@@ -9,7 +9,7 @@ use axum::http::{Method, Request, StatusCode};
 use chrono::Duration;
 use chrono::Utc;
 use gateway::Gateway;
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 use kernel::harness_setup::CaptureActivity;
 use kernel::harness_setup::CaptureMethod;
 use kernel::harness_setup::ConnectOutcome;
@@ -95,8 +95,8 @@ struct Node {
 async fn node(root: &std::path::Path) -> Result<Node, Box<dyn std::error::Error + Send + Sync>> {
     let owner = UserId::new("owner".to_owned())?;
     let tenancy = Tenancy::local(owner.clone())
-        .with_device("desk", owner)?
-        .with_device("other", UserId::new("other".to_owned())?)?;
+        .with_token("desk", owner)?
+        .with_token("other", UserId::new("other".to_owned())?)?;
     let store = Arc::new(testkit::FakeMemoryStore::default());
     let now = Utc::now();
     store
@@ -121,7 +121,6 @@ async fn node(root: &std::path::Path) -> Result<Node, Box<dyn std::error::Error 
     let setup = Arc::new(ScriptedSetup::default());
     let gateway = Gateway::new(store, settings)
         .with_tenancy(tenancy)
-        .with_identity_required()
         .with_harness_setup(setup.clone());
     Ok(Node {
         app: Arc::new(gateway).router(true),
@@ -146,10 +145,10 @@ async fn send(
     request
         .extensions_mut()
         .insert(ConnectInfo(remote.parse::<SocketAddr>()?));
-    request.extensions_mut().insert(PeerCertificate::Device {
-        user: None,
-        device: device.to_owned(),
-    });
+    request.headers_mut().insert(
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderValue::from_str(&format!("Bearer {}", device.to_owned()))?,
+    );
     let response = app.clone().oneshot(request).await?;
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await?;

@@ -31,7 +31,6 @@ struct RefusalEnv {
     host: String,
     tls_cert: Option<String>,
     tls_key: Option<String>,
-    tls_ca: Option<String>,
 }
 
 #[test]
@@ -60,12 +59,13 @@ fn recorded_startup_refusals_reproduce_the_error_lines() {
             port: 5174,
             tls_cert: material(&run.env.tls_cert),
             tls_key: material(&run.env.tls_key),
-            tls_ca: material(&run.env.tls_ca),
-            tls_crl: None,
-            require_client: true,
             notices: Vec::new(),
         };
         let outcome = resolve_tls(&source);
+        if name.starts_with("tls-missing-ca") {
+            assert!(outcome.is_ok(), "run {name}: rh checks no client CA");
+            continue;
+        }
         let expected = testkit::substitute(
             &testkit::translate_recorded_product_names(&run.error),
             &masks(),
@@ -90,17 +90,14 @@ fn tls_paths_resolve_when_the_files_exist() {
     let source = BindSource {
         host: "0.0.0.0".to_string(),
         port: 5174,
-        tls_cert: Some(cert),
-        tls_key: Some(key),
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
+        tls_cert: Some(cert.clone()),
+        tls_key: Some(key.clone()),
         notices: Vec::new(),
     };
     let paths = resolve_tls(&source)
         .expect("tls resolves")
         .expect("tls paths present");
-    assert!(paths.ca.is_none());
+    assert_eq!((paths.cert, paths.key), (cert, key));
 }
 #[test]
 fn missing_cert_file_refuses_before_listen() {
@@ -109,9 +106,6 @@ fn missing_cert_file_refuses_before_listen() {
         port: 5174,
         tls_cert: Some(std::path::PathBuf::from("/nonexistent/no-such-cert.pem")),
         tls_key: Some(std::path::PathBuf::from("/nonexistent/no-such-key.pem")),
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     };
     let error = resolve_tls(&source).expect_err("missing cert refuses");
@@ -135,9 +129,6 @@ async fn bind_loopback_hosts_and_the_recorded_refusal_hosts() {
         port,
         tls_cert: None,
         tls_key: None,
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     };
     assert!(gateway::server::bind(&source).await.is_ok());
@@ -146,9 +137,6 @@ async fn bind_loopback_hosts_and_the_recorded_refusal_hosts() {
         port,
         tls_cert: None,
         tls_key: None,
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     };
     assert!(gateway::server::bind(&source).await.is_ok());
@@ -162,9 +150,6 @@ async fn bind_loopback_hosts_and_the_recorded_refusal_hosts() {
         port,
         tls_cert: None,
         tls_key: None,
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     };
     let error = gateway::server::bind(&source)
@@ -224,7 +209,6 @@ fn surface_paths_follow_the_environment_then_the_gateway_section() {
     assert_eq!(settings.root_redirect.as_deref(), Some("/wiki"));
     assert_eq!(settings.state_dir, PathBuf::from("/tmp/golden/state"));
     assert_eq!(settings.shared_dir, PathBuf::from("/tmp/golden/shared"));
-    assert!(settings.devices_enabled);
     assert_eq!(
         settings.probe_timeout,
         std::time::Duration::from_millis(1_500)
@@ -261,19 +245,12 @@ fn bind_error_lines_carry_the_recorded_text() {
     };
     assert_eq!(
         error.to_string(),
-        "[rivethub-gateway] refusing to bind 0.0.0.0: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's holder certificate, ~/.rivethub/tls/holder.cert.pem and holder.key.pem from rh mesh enroll; devices enroll with rh cert renew). Or bind the gateway host to 127.0.0.1."
-    );
-    let error = BindError::CaMissing {
-        path: std::path::PathBuf::from("/tmp/golden/chain.pem"),
-    };
-    assert_eq!(
-        error.to_string(),
-        "[rivethub-gateway] TLS CA chain missing at /tmp/golden/chain.pem — cannot verify device client certs"
+        "[rivethub-gateway] refusing to bind 0.0.0.0: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's TLS certificate and key). Or bind the gateway host to 127.0.0.1."
     );
 }
 
 #[test]
-fn mesh_peers_are_probed_against_the_shared_rivet_ca_when_the_gateway_names_none() {
+fn hub_probes_trust_the_shared_rivet_ca_unless_the_environment_names_one() {
     let shared = tempdir().expect("shared dir");
     let chain = shared.path().join("rivet-ca").join("intermediate");
     std::fs::create_dir_all(&chain).expect("ca dir");
@@ -296,7 +273,7 @@ fn mesh_peers_are_probed_against_the_shared_rivet_ca_when_the_gateway_names_none
         ("RIVETHUB_SHARED_DIR", shared_text),
     ]);
     assert_eq!(
-        fallback.mesh_ca.as_deref(),
+        fallback.private_ca.as_deref(),
         Some(
             fallback
                 .shared_dir
@@ -313,11 +290,11 @@ fn mesh_peers_are_probed_against_the_shared_rivet_ca_when_the_gateway_names_none
         ("RIVETHUB_SHARED_DIR", shared_text),
         ("RIVET_CA_CHAIN", named_text),
     ]);
-    assert_eq!(chosen.mesh_ca.as_deref(), Some(named.as_path()));
+    assert_eq!(chosen.private_ca.as_deref(), Some(named.as_path()));
 
     let missing = settings(vec![
         ("HOME", "/tmp/golden/home"),
         ("RIVETHUB_SHARED_DIR", "/tmp/golden/no-such-shared"),
     ]);
-    assert_eq!(missing.mesh_ca, None);
+    assert_eq!(missing.private_ca, None);
 }

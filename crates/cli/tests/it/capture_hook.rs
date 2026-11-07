@@ -9,7 +9,7 @@ use gateway::server::BindSource;
 use gateway::tenancy::{Tenancy, UserId};
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
-    KeyUsagePurpose, SanType,
+    KeyUsagePurpose,
 };
 use support::{config, environment, home, run};
 use testkit::{FakeMemoryStore, MemoryRequest};
@@ -77,7 +77,7 @@ async fn the_capture_command_lists_the_hook_subcommand() {
 }
 
 #[tokio::test]
-async fn a_device_identity_captures_through_a_remote_gateway_as_its_mapped_user()
+async fn a_users_file_token_captures_through_a_remote_gateway_as_its_user()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let home = home();
     let env = environment(&home);
@@ -92,16 +92,10 @@ async fn a_device_identity_captures_through_a_remote_gateway_as_its_mapped_user(
     let mut host = CertificateParams::new(vec!["127.0.0.1".to_owned()])?;
     host.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     leaf(&tls, "server", &host, &issuer)?;
-    let mut device = CertificateParams::default();
-    device.subject_alt_names = vec![SanType::URI(
-        "spiffe://rivet.mesh/device/member/member-laptop".try_into()?,
-    )];
-    device.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
-    leaf(&tls, "device", &device, &issuer)?;
 
     let store = Arc::new(FakeMemoryStore::default());
     let tenancy = Tenancy::local(UserId::new("owner".to_owned())?)
-        .with_device("member-laptop", UserId::new("member".to_owned())?)?;
+        .with_token("member-token", UserId::new("member".to_owned())?)?;
     let gateway =
         gateway::Gateway::new(Arc::clone(&store) as _, settings(home.path())).with_tenancy(tenancy);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
@@ -111,9 +105,6 @@ async fn a_device_identity_captures_through_a_remote_gateway_as_its_mapped_user(
         port,
         tls_cert: Some(tls.join("server.pem")),
         tls_key: Some(tls.join("server.key")),
-        tls_ca: Some(tls.join("ca.pem")),
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     })?;
     let stop = CancellationToken::new();
@@ -128,10 +119,8 @@ async fn a_device_identity_captures_through_a_remote_gateway_as_its_mapped_user(
     config(
         &home,
         &format!(
-            "gateway:\n  host: 127.0.0.1\n  port: {own}\nmemory:\n  capture:\n    gateway:\n      url: https://127.0.0.1:{port}\n      ca: {}\n      cert: {}\n      key: {}\n",
+            "gateway:\n  host: 127.0.0.1\n  port: {own}\nmemory:\n  capture:\n    gateway:\n      url: https://127.0.0.1:{port}\n      ca: {}\n      token: member-token\n",
             tls.join("ca.pem").display(),
-            tls.join("device.pem").display(),
-            tls.join("device.key").display(),
         ),
     );
     let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
@@ -181,8 +170,7 @@ fn settings(home: &Path) -> gateway::Settings {
         directory_root: home.join("agents"),
         shared_dir: home.join("shared"),
         allowed_harnesses: None,
-        devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_ca: None,
+        private_ca: None,
     }
 }

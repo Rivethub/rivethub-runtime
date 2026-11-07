@@ -8,7 +8,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-x509-parser.workspace = true
 futures.workspace = true
 tempfile.workspace = true
 async-trait = { workspace = true }
@@ -27,7 +26,6 @@ hyper-util = { workspace = true }
 kernel = { workspace = true }
 libc = { workspace = true }
 nix = { workspace = true }
-governor = { workspace = true }
 parking_lot = { workspace = true }
 percent-encoding = { workspace = true }
 regex = { workspace = true }

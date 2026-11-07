@@ -76,9 +76,8 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
             directory_root: home.path().join("agents"),
             shared_dir: home.path().join("shared"),
             allowed_harnesses: None,
-            devices_enabled: false,
             probe_timeout: Duration::from_millis(200),
-            mesh_ca: None,
+            private_ca: None,
         },
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

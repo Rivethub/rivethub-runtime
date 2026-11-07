@@ -24,8 +24,7 @@ struct FileProbe<'a> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_installed_plugin_is_approved_from_a_device_and_served_through_the_proxy() -> TestResult
-{
+async fn an_installed_plugin_is_approved_by_the_owner_and_served_through_the_proxy() -> TestResult {
     let root = tempfile::tempdir()?;
     let source = root.path().join("source");
     write_manifest(&source, &[Permission::SessionsRead, Permission::TopicsRead])?;
@@ -62,19 +61,6 @@ async fn install_and_approve(host: &Harness, source: &Path) -> TestResult {
         .await?;
     assert_eq!(status, StatusCode::CONFLICT);
     let everything = [Permission::SessionsRead, Permission::TopicsRead];
-    let (status, bytes) = host
-        .call(
-            Method::POST,
-            "/api/plugins/fixture/enable",
-            enable(&everything)?,
-            false,
-        )
-        .await?;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(
-        refused(&bytes)?.code.as_deref(),
-        Some("device_certificate_required")
-    );
     let (status, bytes) = host
         .call(
             Method::POST,

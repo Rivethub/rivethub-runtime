@@ -34,9 +34,8 @@ fn settings() -> Settings {
         directory_root: scratch.join("agents"),
         shared_dir: scratch.join("shared"),
         allowed_harnesses: None,
-        devices_enabled: false,
         probe_timeout: Duration::from_millis(200),
-        mesh_ca: None,
+        private_ca: None,
     }
 }
 

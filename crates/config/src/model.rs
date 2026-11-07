@@ -243,8 +243,7 @@ pub struct CaptureSection {
 pub struct CaptureGateway {
     pub url: String,
     pub ca: PathBuf,
-    pub cert: PathBuf,
-    pub key: PathBuf,
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -270,9 +269,6 @@ pub struct GatewaySection {
     pub token: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
-    pub tls_ca: Option<PathBuf>,
-    pub tls_crl: Option<PathBuf>,
-    pub tls_require_client: Option<bool>,
     pub users_file: Option<PathBuf>,
     pub commands_file: Option<PathBuf>,
     pub terminal: Option<TerminalSection>,
@@ -280,8 +276,6 @@ pub struct GatewaySection {
     pub root_redirect: Option<String>,
     pub files_root: Option<PathBuf>,
     pub files_open: bool,
-    pub devices: DevicesSection,
-    pub certificate_authority: Option<CertificateAuthoritySection>,
     pub advertise_mdns: Option<bool>,
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
@@ -294,43 +288,12 @@ fn default_gateway_port() -> u16 {
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
-pub struct CertificateAuthoritySection {
-    pub url: Option<String>,
-    pub root: Option<PathBuf>,
-    pub provisioner_password_file: Option<PathBuf>,
-    pub roster: Option<PathBuf>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
 pub struct TerminalSection {
     pub enabled: Option<bool>,
     pub open: Option<bool>,
     pub idle_ttl_ms: Option<u64>,
     pub trust_claude_launch_dirs: Option<bool>,
     pub roots: Option<Vec<PathBuf>>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
-pub struct DevicesSection {
-    pub enabled: Option<bool>,
-    pub relay_ssh: Option<String>,
-    pub relay_sudo: Option<bool>,
-    pub wg_interface: Option<String>,
-    pub pool: Option<String>,
-    pub wg_endpoint: Option<String>,
-    pub wg_public_key: Option<String>,
-    pub allowed_ips: Option<String>,
-    pub home_subnet: Option<String>,
-    pub relay_forward_src: Option<String>,
-    pub relay_forward_dest: Option<String>,
-    pub shared_host: Option<String>,
-    pub shared_export: Option<String>,
-    pub roster_path: Option<PathBuf>,
-    pub gateway_url: Option<String>,
-    pub pg_admin_url: Option<String>,
-    pub pg_device_group: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]

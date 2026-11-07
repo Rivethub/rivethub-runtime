@@ -8,10 +8,7 @@ use wire::plugin::host::{PluginLogStream, PluginRecord, PluginState};
 use wire::plugin::manifest::Permission;
 use wire::plugin::process::PluginEvent;
 
-use super::{
-    Entry, HostError, Live, PairedDevice, PluginHost, Supervisor, events, jobs, registry,
-    supervisor,
-};
+use super::{Entry, HostError, Live, PluginHost, Supervisor, events, jobs, registry, supervisor};
 use crate::Gateway;
 
 pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
@@ -177,27 +174,17 @@ impl PluginHost {
         self: &Arc<Self>,
         plugin: &PluginId,
         approved: &[Permission],
-        device: Result<PairedDevice, HostError>,
     ) -> Result<PluginRecord, HostError> {
         let _operation = self.operations.lock().await;
         let requested = self.read(plugin, |entry| entry.stored.manifest.permissions.clone())?;
         self.refuse_unconfinable(&requested)?;
-        let (granted, widened) = self.read(plugin, |entry| {
+        let granted = self.read(plugin, |entry| {
             super::rules::approve(
                 &entry.stored.manifest.permissions,
                 &entry.stored.granted,
                 approved,
             )
-            .map(|granted| {
-                let widened = granted
-                    .iter()
-                    .any(|permission| !entry.stored.granted.contains(permission));
-                (granted, widened)
-            })
         })??;
-        if widened {
-            device?;
-        }
         let running = self.update(plugin, |entry| {
             entry.stored.granted = granted;
             entry.stored.enabled = true;

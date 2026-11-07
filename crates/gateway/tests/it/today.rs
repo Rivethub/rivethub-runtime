@@ -138,7 +138,6 @@ fn app(digests: Arc<Digests>) -> axum::Router {
             gateway::sessions::SessionRegistry::new(std::time::Duration::from_secs(1))
                 .with_node_owner(owner),
         ))
-        .with_client_certificate_required(false)
         .with_session_catalog(Arc::new(catalog))
         .with_changes(Arc::new(Feed(records())), digests);
     Arc::new(gateway).router(false)

@@ -429,9 +429,8 @@ impl Fixture {
                 directory_root: PathBuf::from("/tmp/rr-gateway-unused-agents/agents"),
                 shared_dir: PathBuf::from("/tmp/rr-gateway-unused-agents/shared"),
                 allowed_harnesses: None,
-                devices_enabled: false,
                 probe_timeout: Duration::from_millis(200),
-                mesh_ca: None,
+                private_ca: None,
             },
         )
         .with_tenancy(tenancy)

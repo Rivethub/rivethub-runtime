@@ -18,16 +18,12 @@ capture.workspace = true
 flate2 = { workspace = true }
 futures = { workspace = true }
 kernel.workspace = true
-pki.workspace = true
 providers.workspace = true
-stepca.workspace = true
 tar.workspace = true
 workers.workspace = true
 rcgen = { workspace = true, features = ["x509-parser"] }
 rustls-pki-types.workspace = true
-webpki.workspace = true
 x509-parser.workspace = true
-time.workspace = true
 chrono = { workspace = true }
 clap = { workspace = true }
 config = { workspace = true }

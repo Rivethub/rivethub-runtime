@@ -157,15 +157,19 @@ async fn writer(
 
 async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
     let roots = reqwest::Certificate::from_pem_bundle(&tokio::fs::read(&remote.ca).await?)?;
-    let mut identity = tokio::fs::read(&remote.key).await?;
-    identity.push(b'\n');
-    identity.extend(tokio::fs::read(&remote.cert).await?);
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(token) = &remote.token {
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| Error::CaptureToken)?;
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
     let client = reqwest::Client::builder()
         .no_proxy()
         .https_only(true)
         .timeout(POST_TIMEOUT)
         .tls_certs_only(roots)
-        .identity(reqwest::Identity::from_pem(&identity)?)
+        .default_headers(headers)
         .build()?;
     Ok(Endpoint {
         url: url::Url::parse(&remote.url)?,

@@ -40,6 +40,7 @@ impl Default for UsersRegistry {
 pub struct UserRecord {
     pub id: Option<String>,
     pub devices: Option<Vec<String>>,
+    pub tokens: Option<Vec<String>>,
     pub pg_url: Option<String>,
     pub env_file: Option<String>,
     pub persona: Option<String>,

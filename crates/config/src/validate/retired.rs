@@ -8,11 +8,50 @@ pub struct Retired {
     pub why: &'static str,
 }
 
-pub const RETIRED: &[Retired] = &[Retired {
-    path: "mesh",
-    keeps: &["node_name"],
-    why: "rh has no mesh; peer discovery, heartbeats and the agent channel were removed, and only mesh.node_name is still read, as this node's name. Delete the other mesh keys",
-}];
+const CERTIFICATES: &str = "rh no longer issues or checks client certificates; callers off this machine send a bearer token from the users file. Delete it";
+
+pub const RETIRED: &[Retired] = &[
+    Retired {
+        path: "mesh",
+        keeps: &["node_name"],
+        why: "rh has no mesh; peer discovery, heartbeats and the agent channel were removed, and only mesh.node_name is still read, as this node's name. Delete the other mesh keys",
+    },
+    Retired {
+        path: "gateway.certificate_authority",
+        keeps: &[],
+        why: CERTIFICATES,
+    },
+    Retired {
+        path: "gateway.devices",
+        keeps: &[],
+        why: CERTIFICATES,
+    },
+    Retired {
+        path: "gateway.tls_ca",
+        keeps: &[],
+        why: CERTIFICATES,
+    },
+    Retired {
+        path: "gateway.tls_crl",
+        keeps: &[],
+        why: CERTIFICATES,
+    },
+    Retired {
+        path: "gateway.tls_require_client",
+        keeps: &[],
+        why: CERTIFICATES,
+    },
+    Retired {
+        path: "memory.capture.gateway.cert",
+        keeps: &[],
+        why: "the capture gateway is reached with memory.capture.gateway.token, not a client certificate. Delete it",
+    },
+    Retired {
+        path: "memory.capture.gateway.key",
+        keeps: &[],
+        why: "the capture gateway is reached with memory.capture.gateway.token, not a client certificate. Delete it",
+    },
+];
 
 impl Retired {
     #[must_use]
