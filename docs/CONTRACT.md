@@ -1576,6 +1576,39 @@ session through the capture writer this node already uses (the local gateway, or
 set), so the receiving node records every session as the user it authenticated and a second ingest skips event ids it
 already has. A bundle whose version is not 1 is refused. Postgres memory is not a bundle source yet.
 
+(NEW-entities) Entity facts (proposed 2026-11-06): an entity page shows the entity's last known state as facts, each a
+key and a value with the date it became true, the sessions that support it, a pinned flag, the value before it and a
+conflict when sources disagree. A fact is one key of one entity (`rh_entity_facts`: `id`, `topic_id` an entity topic,
+`key`, `created_at`; unique `(topic_id, key)`); a key is trimmed, its spaces collapsed and lowercased, 1 to 64
+characters. What anyone said about it is a claim (`rh_entity_fact_claims`: `id`, `fact_id`, `value` (1 to 400
+characters), `actor` `you` or `wiki-writer`, `pinned` (only a `you` claim pins), `session_id` and `summary_id` (both set
+exactly for a `wiki-writer` claim), `evidence` (the quoted words, at most 300 characters), `at` (when it was true: the
+summary's time, or the moment you set it), `recorded_at`, `owner_user_id`). Claims are never updated or deleted, except
+that a summary claims a fact once: extracting the same summary again replaces its claim, so a retried job converges.
+The fact's state is derived from its claims at read time by `kernel::facts`, oldest first by `at`. The newest `you`
+claim is the base. A pinned base holds the value: no later writer claim changes it, and each later writer claim with
+another value is a conflict candidate. Otherwise the newest claim holds the value, and a writer claim after the base
+with another value, from another session, less than 24 hours older than the newest, is a candidate too
+(`CONFLICT_WINDOW`; a claim at least a day newer supersedes). `since` is the first claim of the unbroken run of the
+current value, `previous` the value before that run with `until` the run's start, and `sources` the writer claims of the
+run (and, under a pin, the later writer claims that agree), newest first. A `you` claim resolves every earlier
+conflict. `asOf` drops the claims after it, so the slider shows the state and timeline as they stood. The timeline
+lists each change of a key's value, each pin and each new conflict. An entity's sessions are the sessions of its
+writer claims, its connected entities those that share a session with it, and its session count that number.
+Visibility: a fact row is visible with its entity topic (as decisions are); a claim is visible to its owner, and to
+another viewer only while its entity is visible to them and, for a writer claim, its session's conversation is shared
+with them (as session placements are). A `you` claim is owned by the caller, a writer claim by its summary's owner. A
+topic merge moves the source's facts to the target, joining claims of keys both have; deleting an entity deletes its
+facts. Routes (B1, new, no TypeScript recording; bodies are the `wire::gateway::entities` types, which match the
+RivetHub web contracts `EntitySummary`, `EntityArticle`, `Fact` and `FactSource`): `GET /api/entities?type=<type>`
+lists entities whose root type is one of `person` (People), `agent` (Agents), `machine` (Hosts), `hardware`, `model`,
+`service`, `software`, `repository` (Repos), `domain`, `database`; `GET /api/entities/{id}?asOf=<RFC 3339>` answers the
+article; `PUT /api/entities/{id}/facts` with `{id?, key, value, pinned}` records your claim and answers the fact
+(`id`, when given, must name a fact of this entity with that key: `404` otherwise, `409` on another key). `{id}` is an
+entity topic id; anything else is `404`. The wiki builder's extraction patch gains `facts` (`[{key, value, evidence}]`)
+for a patch with a `type`; each becomes a writer claim on the patch's entity, sourced to the patch's own session
+(a held candidate's facts to its session, once the entity exists). Postgres migration 0057 and SQLite schema v31 add
+the tables.
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
