@@ -61,6 +61,14 @@ pub fn resolve_window<Tz: TimeZone>(
     }
 }
 
+#[must_use]
+pub fn day_window<Tz: TimeZone>(date: NaiveDate, zone: &Tz) -> TimeRange {
+    TimeRange {
+        since: Some(midnight_utc(date, zone)),
+        before: date.succ_opt().map(|next| midnight_utc(next, zone)),
+    }
+}
+
 fn midnight_utc<Tz: TimeZone>(date: NaiveDate, zone: &Tz) -> DateTime<Utc> {
     let naive = NaiveDateTime::new(date, NaiveTime::MIN);
     match zone.from_local_datetime(&naive) {

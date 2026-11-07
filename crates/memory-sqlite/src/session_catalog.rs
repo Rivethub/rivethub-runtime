@@ -190,7 +190,7 @@ fn view_condition(view: Option<SessionView>) -> &'static str {
     }
 }
 
-fn harnesses(only: Option<HarnessId>) -> Result<String, SqliteError> {
+pub(crate) fn harnesses(only: Option<HarnessId>) -> Result<String, SqliteError> {
     let names: Vec<String> = match only {
         Some(harness) => vec![harness.to_string()],
         None => HarnessId::iter()

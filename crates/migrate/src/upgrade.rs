@@ -82,7 +82,16 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
         SchemaVersion::V32 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/entity_facts_v32.sql"))
         }),
+        SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
     }
+}
+
+fn add_daily_digest(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(include_str!("schema/daily_digest_v34.sql"))?;
+    if column_present(tx, "rh_topic_redirects", "merged_from")? {
+        return Ok(());
+    }
+    tx.execute_batch(include_str!("schema/merged_from_v34.sql"))
 }
 
 fn add_visibility(tx: &Transaction<'_>) -> rusqlite::Result<()> {

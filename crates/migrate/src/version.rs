@@ -34,6 +34,7 @@ pub enum SchemaVersion {
     V30 = 30,
     V31 = 31,
     V32 = 32,
+    V34 = 34,
 }
 
 impl SchemaVersion {
@@ -76,7 +77,8 @@ impl SchemaVersion {
             Self::V29 => Some(Self::V30),
             Self::V30 => Some(Self::V31),
             Self::V31 => Some(Self::V32),
-            Self::V32 => None,
+            Self::V32 => Some(Self::V34),
+            Self::V34 => None,
         }
     }
 }
@@ -118,6 +120,7 @@ impl TryFrom<i64> for SchemaVersion {
             30 => Ok(Self::V30),
             31 => Ok(Self::V31),
             32 => Ok(Self::V32),
+            34 => Ok(Self::V34),
             other => Err(Error::Unsupported { found: other }),
         }
     }
@@ -128,9 +131,9 @@ mod tests {
     use super::SchemaVersion;
     use crate::error::Error;
 
-    const LADDER: [i64; 32] = [
+    const LADDER: [i64; 33] = [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32,
+        26, 27, 28, 29, 30, 31, 32, 34,
     ];
 
     #[test]

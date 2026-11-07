@@ -292,3 +292,17 @@ async fn every_topic_s_filing_reads_at_once() -> TestResult {
     testkit::filing_bulk::every_topic_s_filing_reads_at_once(&store).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn changes_list_what_the_day_recorded() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::changes_list_what_the_day_recorded(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn digests_are_kept_per_day_and_owner() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::digests_are_kept_per_day_and_owner(&store).await?;
+    Ok(())
+}

@@ -105,6 +105,7 @@ pub struct Runner<Q> {
     topic_pages: Option<crate::topic_page::TopicPages>,
     tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    digests: Option<crate::digest::DailyDigests>,
     scopes: Option<crate::OwnerScopes>,
     queue: Arc<Q>,
     targets: Arc<dyn EmbeddingStore>,
@@ -142,6 +143,7 @@ where
             topic_pages: None,
             tidy: None,
             deletions: None,
+            digests: None,
             scopes: deps.scopes,
             queue,
             targets: deps.targets,
@@ -240,6 +242,16 @@ where
     #[must_use]
     pub fn with_session_topics(mut self, topics: crate::SessionTopics) -> Self {
         self.topics = Some(topics);
+        self
+    }
+
+    #[must_use]
+    pub fn with_daily_digests(
+        mut self,
+        changes: Arc<dyn kernel::changes::ChangeFeed>,
+        digests: Arc<dyn kernel::changes::DigestStore>,
+    ) -> Self {
+        self.digests = Some(crate::digest::DailyDigests { changes, digests });
         self
     }
 
@@ -438,6 +450,7 @@ where
             topic_pages: self.topic_pages.clone(),
             tidy: self.tidy.clone(),
             deletions: self.deletions.clone(),
+            digests: self.digests.clone(),
             scopes: self.scopes.clone(),
         };
         let wake = Arc::clone(&self.wake);

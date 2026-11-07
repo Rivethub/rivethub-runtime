@@ -54,7 +54,7 @@ const SESSION_SQL: &str = "SELECT (SELECT c.title FROM ros_conversations c
        FROM ros_conversations c
       WHERE c.session_key IN (SELECT value FROM json_each(?1))";
 
-struct ClaimRow {
+pub(crate) struct ClaimRow {
     fact: String,
     key: String,
     value: String,
@@ -68,7 +68,7 @@ struct ClaimRow {
     owner: String,
 }
 
-fn read_claim(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRow> {
+pub(crate) fn read_claim(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRow> {
     Ok(ClaimRow {
         fact: row.get(0)?,
         key: row.get(1)?,
@@ -114,7 +114,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
     }
 }
 
-fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
+pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
     Ok(Claim {
         fact: FactId::from_str(&row.fact).map_err(|error| invalid("fact id", error))?,
         key: FactKey::new(&row.key)?,

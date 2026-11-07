@@ -15,6 +15,7 @@ pub mod sessions;
 pub mod tenancy;
 pub mod term;
 pub mod tidy;
+pub mod today;
 pub mod topics;
 pub mod uploads;
 pub mod users;

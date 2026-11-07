@@ -280,12 +280,14 @@ pub(super) async fn fold_into(
         .await
         .map_err(failed("topic merge delete"))?;
     sqlx::query!(
-        "INSERT INTO rh_topic_redirects (slug, topic_id, created_at) VALUES ($1, $2, $3)
+        "INSERT INTO rh_topic_redirects (slug, topic_id, created_at, merged_from) VALUES ($1, $2, $3, $4)
          ON CONFLICT (slug) DO UPDATE SET topic_id = EXCLUDED.topic_id,
-                                          created_at = EXCLUDED.created_at",
+                                          created_at = EXCLUDED.created_at,
+                                          merged_from = EXCLUDED.merged_from",
         plan.redirect.slug.as_str(),
         plan.redirect.topic.uuid(),
-        merged.updated_at
+        merged.updated_at,
+        plan.source_name.as_str()
     )
     .execute(&mut *conn)
     .await
@@ -342,7 +344,8 @@ pub(super) async fn rename_redirect(
     sqlx::query!(
         "INSERT INTO rh_topic_redirects (slug, topic_id, created_at) VALUES ($1, $2, $3)
          ON CONFLICT (slug) DO UPDATE SET topic_id = EXCLUDED.topic_id,
-                                          created_at = EXCLUDED.created_at",
+                                          created_at = EXCLUDED.created_at,
+                                          merged_from = NULL",
         old.as_str(),
         renamed.id.uuid(),
         renamed.updated_at

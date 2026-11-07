@@ -180,13 +180,15 @@ pub(super) fn fold_into(
     conn.execute("DELETE FROM rh_topics WHERE id = ?1", params![source])
         .map_err(failed("topic merge delete"))?;
     conn.execute(
-        "INSERT INTO rh_topic_redirects (slug, topic_id, created_at) VALUES (?1, ?2, ?3)
+        "INSERT INTO rh_topic_redirects (slug, topic_id, created_at, merged_from) VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT (slug) DO UPDATE SET topic_id = excluded.topic_id,
-                                          created_at = excluded.created_at",
+                                          created_at = excluded.created_at,
+                                          merged_from = excluded.merged_from",
         params![
             plan.redirect.slug.as_str(),
             plan.redirect.topic.to_string(),
-            now
+            now,
+            plan.source_name.as_str()
         ],
     )
     .map_err(failed("topic merge redirect"))?;
@@ -240,7 +242,8 @@ pub(super) fn rename_redirect(
     conn.execute(
         "INSERT INTO rh_topic_redirects (slug, topic_id, created_at) VALUES (?1, ?2, ?3)
          ON CONFLICT (slug) DO UPDATE SET topic_id = excluded.topic_id,
-                                          created_at = excluded.created_at",
+                                          created_at = excluded.created_at,
+                                          merged_from = NULL",
         params![
             old.as_str(),
             renamed.id.to_string(),

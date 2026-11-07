@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::upgrade;
 use crate::version::SchemaVersion;
 
-const CURRENT: SchemaVersion = SchemaVersion::V32;
+const CURRENT: SchemaVersion = SchemaVersion::V34;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 
@@ -86,13 +86,9 @@ fn current() -> Status {
 }
 
 fn steps(from: i64) -> usize {
-    let mut count = 0usize;
-    let mut current = from;
-    while current < CURRENT.number() {
-        count += 1;
-        current += 1;
-    }
-    count
+    (from + 1..=CURRENT.number())
+        .filter(|number| SchemaVersion::try_from(*number).is_ok())
+        .count()
 }
 
 fn open_writing(path: &Path) -> Result<Connection, Error> {
@@ -215,6 +211,10 @@ fn create_fresh(conn: &mut Connection) -> Result<(), Error> {
     tx.execute_batch(include_str!("schema/session_trash_v31.sql"))
         .map_err(Error::SqliteCreate)?;
     tx.execute_batch(include_str!("schema/entity_facts_v32.sql"))
+        .map_err(Error::SqliteCreate)?;
+    tx.execute_batch(include_str!("schema/daily_digest_v34.sql"))
+        .map_err(Error::SqliteCreate)?;
+    tx.execute_batch(include_str!("schema/merged_from_v34.sql"))
         .map_err(Error::SqliteCreate)?;
     apply_tail_indexes(&tx)?;
     stamp_current(&tx)?;

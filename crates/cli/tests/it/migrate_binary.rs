@@ -55,7 +55,7 @@ fn migrating_a_v5_copy_reports_v8_and_leaves_a_byte_equal_backup() -> TestResult
 
     let conn = rusqlite::Connection::open(&path)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(version, 32);
+    assert_eq!(version, 34);
     Ok(())
 }
 

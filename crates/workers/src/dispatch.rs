@@ -34,6 +34,7 @@ pub(crate) struct JobEnv {
     pub(crate) topic_pages: Option<crate::topic_page::TopicPages>,
     pub(crate) tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     pub(crate) deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    pub(crate) digests: Option<crate::digest::DailyDigests>,
     pub(crate) scopes: Option<crate::OwnerScopes>,
 }
 
@@ -106,6 +107,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         }
         JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
+        JobName::Fixed(FixedJob::DigestDay) => dispatch_digest(env, job, cancel).await,
         JobName::Fixed(FixedJob::RunTask)
         | JobName::Heartbeat { .. }
         | JobName::RunTaskOn { .. } => Err(WorkerError::Unhandled {
@@ -137,6 +139,29 @@ async fn dispatch_file(
     crate::scopes::within(scope, handle_file(&filing, conversation))
         .await
         .map(|_| ())
+}
+
+async fn dispatch_digest(
+    env: &JobEnv,
+    job: &ClaimedJob,
+    cancel: &CancellationToken,
+) -> Result<(), WorkerError> {
+    let deps = env
+        .digests
+        .as_ref()
+        .ok_or(WorkerError::MissingDependencies {
+            role: ProcessRole::Summarizer,
+        })?;
+    let request = crate::digest::digest_request(&job.payload)?;
+    let owner = request.owner()?;
+    let digest = crate::digest::DigestEnv {
+        deps,
+        provider: env.summarizer.as_ref(),
+        model: &env.summary.model,
+        cancel,
+    };
+    let scope = crate::scopes::owner_scope(env.scopes.as_ref(), &owner).await?;
+    crate::scopes::within(scope, crate::digest::handle_digest_day(&digest, &request)).await
 }
 
 async fn dispatch_purge(env: &JobEnv, cancel: &CancellationToken) -> Result<(), WorkerError> {
