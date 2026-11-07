@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use kernel::memory::SessionRecord;
 use kernel::review::FilingTarget;
 use kernel::review::ReviewKey;
 use kernel::topics::Slug;
@@ -38,9 +41,19 @@ pub(super) async fn items(gateway: &Gateway, topics: &Topics) -> Result<Vec<Item
     let catalog = gateway
         .session_catalog()
         .ok_or_else(|| ApiError::Unavailable("session catalog unavailable".into()))?;
+    let sessions: Vec<SessionId> = suggestions
+        .iter()
+        .map(|suggestion| suggestion.session.clone())
+        .collect();
+    let records: BTreeMap<SessionId, SessionRecord> = catalog
+        .records(&sessions)
+        .await?
+        .into_iter()
+        .map(|record| (record.id.clone(), record))
+        .collect();
     let mut items = Vec::new();
     for suggestion in suggestions {
-        let Some(record) = catalog.get(&suggestion.session).await? else {
+        let Some(record) = records.get(&suggestion.session) else {
             continue;
         };
         if record.trashed || record.topic.is_some() {

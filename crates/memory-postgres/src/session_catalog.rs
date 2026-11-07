@@ -47,7 +47,7 @@ WITH conv AS (
      WHERE split_part(c.session_key, ':', 1) = ANY($1)
        AND strpos(c.session_key, ':') > 0
        AND substr(c.session_key, strpos(c.session_key, ':') + 1) <> ''
-       AND ($2::text IS NULL OR c.session_key = $2)
+       AND ($2::text[] IS NULL OR c.session_key = ANY($2))
        AND c.session_key <> ALL($3)
      GROUP BY c.session_key
 ), page AS (
@@ -76,19 +76,21 @@ WITH conv AS (
        AND ($7::timestamptz IS NULL OR (s.started_at, s.session_key) < ($7, $8::text))
      ORDER BY s.started_at DESC, s.session_key DESC
      LIMIT $9
-), flagged AS MATERIALIZED (
-    SELECT coalesce(
-               CASE WHEN f.payload->>'conversationId' ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
-                    THEN (f.payload->>'conversationId')::uuid END,
-               (SELECT m.conversation_id FROM rh_messages m
-                 WHERE m.id = CASE WHEN target.message ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
-                                   THEN target.message::uuid END)) AS conversation_id
+), flag_targets AS MATERIALIZED (
+    SELECT CASE WHEN f.payload->>'conversationId' ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                THEN (f.payload->>'conversationId')::uuid END AS conversation_id,
+           CASE WHEN target.message ~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+                THEN target.message::uuid END AS message_id
       FROM rh_flagged_jobs f
      CROSS JOIN LATERAL (
            SELECT coalesce(f.payload->>'messageId',
                            CASE WHEN f.payload->>'targetTable' = 'ros_messages'
                                 THEN f.payload->>'targetId' END) AS message) AS target
      WHERE f.dismissed_at IS NULL
+), flagged AS MATERIALIZED (
+    SELECT coalesce(t.conversation_id, m.conversation_id) AS conversation_id
+      FROM flag_targets t
+      LEFT JOIN rh_messages m ON m.id = t.message_id
 )
 SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.trashed, g.native,
        g.topic_id,
@@ -107,9 +109,12 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
        (SELECT c.settings->>'cwd' FROM rh_conversations c
          WHERE c.id = ANY(g.conversations) AND jsonb_typeof(c.settings->'cwd') = 'string'
          ORDER BY c.updated_at DESC, c.id LIMIT 1) AS cwd,
-       (SELECT left(m.content, 600) FROM rh_messages m
-         WHERE m.conversation_id = ANY(g.conversations) AND m.role = 'user' AND m.content ~ '[^[:space:]]'
-         ORDER BY m.created_at, m.id LIMIT 1) AS first_user
+       (SELECT u.content FROM unnest(g.conversations) AS gc(id)
+         CROSS JOIN LATERAL (
+               SELECT left(m.content, 600) AS content, m.created_at, m.id FROM rh_messages m
+                WHERE m.conversation_id = gc.id AND m.role = 'user' AND m.content ~ '[^[:space:]]'
+                ORDER BY m.created_at, m.id LIMIT 1) AS u
+         ORDER BY u.created_at, u.id LIMIT 1) AS first_user
   FROM page g
  ORDER BY g.started_at DESC, g.session_key DESC";
 
@@ -180,7 +185,7 @@ fn harnesses(only: Option<HarnessId>) -> Vec<String> {
 }
 
 struct Select<'a> {
-    key: Option<&'a str>,
+    keys: Option<&'a [String]>,
     view: Option<SessionView>,
     harness: Option<HarnessId>,
     exclude: &'a [String],
@@ -193,7 +198,7 @@ struct Select<'a> {
 impl<'a> Select<'a> {
     fn page(query: &'a SessionQuery) -> Self {
         Self {
-            key: None,
+            keys: None,
             view: Some(query.view),
             harness: query.harness,
             exclude: &query.exclude,
@@ -204,17 +209,17 @@ impl<'a> Select<'a> {
         }
     }
 
-    fn one(session: &'a SessionId) -> Self {
-        Self {
-            key: Some(session.as_str()),
+    fn some(keys: &'a [String]) -> Result<Self, Error> {
+        Ok(Self {
+            keys: Some(keys),
             view: None,
             harness: None,
             exclude: &[],
             topic: None,
             text: None,
             after: None,
-            limit: 1,
-        }
+            limit: i64::try_from(keys.len())?,
+        })
     }
 }
 
@@ -222,7 +227,7 @@ impl PostgresMemory {
     async fn sessions(&self, select: Select<'_>) -> Result<Vec<SessionRecord>, Error> {
         let rows: Vec<Row> = sqlx::query_as(SESSIONS)
             .bind(harnesses(select.harness))
-            .bind(select.key)
+            .bind(select.keys)
             .bind(select.exclude)
             .bind(select.view.map(|view| view.to_string()))
             .bind(select.topic.map(TopicId::uuid))
@@ -230,7 +235,11 @@ impl PostgresMemory {
             .bind(select.after.map(|cursor| cursor.started_at))
             .bind(select.after.map(|cursor| cursor.key.as_str()))
             .bind(select.limit)
-            .bind(select.key.map(stored_keys))
+            .bind(select.keys.map(|keys| {
+                keys.iter()
+                    .flat_map(|key| stored_keys(key))
+                    .collect::<Vec<_>>()
+            }))
             .bind(HarnessId::ClaudeCode.to_string())
             .bind(BARE_UUID)
             .fetch_all(&self.pool)
@@ -261,8 +270,14 @@ impl SessionCatalog for PostgresMemory {
         self.session_page(query).await.map_err(Into::into)
     }
 
-    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
-        let mut found = self.sessions(Select::one(session)).await?;
-        Ok(found.pop())
+    async fn records(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
+        if sessions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<String> = sessions.iter().map(ToString::to_string).collect();
+        Ok(self.sessions(Select::some(&keys)?).await?)
     }
 }

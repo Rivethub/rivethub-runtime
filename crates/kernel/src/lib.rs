@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod changes;
 pub mod cleanup;
+pub mod deadline;
 pub mod facts;
 pub mod filing;
 pub mod flagged;

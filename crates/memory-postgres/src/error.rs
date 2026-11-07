@@ -134,6 +134,9 @@ impl From<Error> for MemoryStoreError {
             Error::Operation {
                 message, source, ..
             } if unstorable_text(&source) => Self::InvalidRequest { message },
+            error @ Error::Operation { .. } if cancelled(&error) => {
+                Self::Unavailable(Box::new(error))
+            }
             Error::Operation {
                 message, source, ..
             } => Self::Query {
@@ -142,6 +145,13 @@ impl From<Error> for MemoryStoreError {
             },
         }
     }
+}
+
+fn cancelled(error: &Error) -> bool {
+    matches!(error, Error::Operation { source, .. } if source
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .is_some_and(|code| code == "57014"))
 }
 
 fn unstorable_text(source: &sqlx::Error) -> bool {

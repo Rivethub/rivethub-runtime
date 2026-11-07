@@ -32,7 +32,7 @@ use tower_http::compression::predicate::NotForContentType;
 use crate::auth::DenialLog;
 
 pub use crate::models::ModelAssignment;
-pub use crate::settings::{Settings, SettingsError, state_dir};
+pub use crate::settings::{REQUEST_DEADLINE, Settings, SettingsError, state_dir};
 pub use crate::tls_resolve::private_ca;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -98,7 +98,12 @@ pub struct SessionPage {
 pub trait SessionCatalog: Send + Sync {
     async fn list(&self, query: &SessionQuery) -> Result<SessionPage, MemoryStoreError>;
 
-    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError>;
+    async fn records(&self, sessions: &[SessionId])
+    -> Result<Vec<SessionRecord>, MemoryStoreError>;
+
+    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
+        Ok(self.records(std::slice::from_ref(session)).await?.pop())
+    }
 }
 
 #[must_use]

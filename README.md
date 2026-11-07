@@ -125,7 +125,7 @@ gateway:
 | `providers` | model endpoints: `openai-compatible` or `vllm` (`base_url`, `model`, `api_key` or `token_command`), or a harness used headless (`claude-cli`, `codex-cli`, `grok-cli`, `hermes-cli`, `opencode-cli`, `kimi-code`) |
 | `agents`, `runtime` | named agents on those providers; `runtime.default_agent` is the model the workers use |
 | `memory` | `backend` (`postgres` or `sqlite`), connection and embedding settings, `capture.redaction` (off by default) |
-| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir` |
+| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir`, `request_deadline_secs` (default 30: a read request's database work stops then) |
 | `tasks` | `harnesses.<id>` (`binary`, `model`, `effort`, `cwd`) for the harnesses a headless provider runs |
 | `transports.mcp` | network MCP: `host` and `port` (default 5700, needs `auth_token`), or `socket` (an absolute path) |
 | `mesh` | `node_name` only, as this node's name; the other keys warn and are ignored |

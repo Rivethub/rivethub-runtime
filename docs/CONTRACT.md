@@ -1714,6 +1714,15 @@ service, session control, uploads, agent presets, voice, files and hub state; `k
 `harness-acp` stays as the ACP client the CLI model providers start through `HeadlessLaunch`; it remains its own adapter
 crate because `providers` may not depend on another adapter.
 
+(133) Request deadline (proposed 2026-11-07): a `GET` or `HEAD` request's database work ends at its deadline,
+`gateway.request_deadline_secs` (default 30) after the request starts. On Postgres each statement such a request runs
+carries a `statement_timeout` of the time it has left, so a statement still running at the deadline is cancelled
+(SQLSTATE 57014) and the request answers `503`, and a request whose client went away stops its database work by the
+same deadline. Statements outside a bounded request keep the server's own `statement_timeout`. `GET /api/memory/export`
+is not bounded, and writes are not bounded. `kernel::deadline::Deadline` carries the deadline to the stores.
+`kernel::memory::SessionCatalog::records(sessions)` answers several sessions in one lookup; Review's filing source and
+Today look up the sessions they show in one call each, and Today titles only the sessions of the day's changes.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

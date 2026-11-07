@@ -3,6 +3,7 @@ mod decisions;
 mod done;
 mod entities;
 mod filing;
+mod lookups;
 mod models;
 mod pages;
 mod review;
@@ -51,6 +52,7 @@ fn settings(root: &Path) -> Settings {
         root_redirect: None,
         state_dir: root.join("state"),
         private_ca: None,
+        request_deadline: gateway::REQUEST_DEADLINE,
     }
 }
 
@@ -59,6 +61,7 @@ struct Api {
     sessions: Arc<SessionRegistry>,
     root: tempfile::TempDir,
     store: Arc<SqliteStore>,
+    lookups: Arc<lookups::Lookups>,
 }
 
 impl Api {
@@ -68,6 +71,7 @@ impl Api {
         migrate::sqlite(&path)?;
         let store = Arc::new(SqliteStore::open(&path)?);
         let memory: Arc<dyn MemoryStore> = store.clone();
+        let lookups = Arc::new(lookups::Lookups::new(store.clone()));
         let mut gateway = Gateway::new(memory, settings(root.path()));
         if topics {
             gateway = gateway
@@ -77,7 +81,7 @@ impl Api {
                 .with_facts(store.clone())
                 .with_review(store.clone())
                 .with_changes(store.clone(), store.clone())
-                .with_session_catalog(store.clone())
+                .with_session_catalog(lookups.clone())
                 .with_tenancy_store(store.clone())
                 .with_topic_pages(store.clone())
                 .with_tidy(store.clone(), store.clone());
@@ -88,6 +92,7 @@ impl Api {
             router: gateway.router(false),
             root,
             store,
+            lookups,
         })
     }
 

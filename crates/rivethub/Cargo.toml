@@ -57,6 +57,7 @@ rcgen.workspace = true
 rustls.workspace = true
 tokio-tungstenite = { workspace = true, features = ["__rustls-tls"] }
 migrate = { workspace = true }
+parking_lot = { workspace = true }
 serde_yaml_ng = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 tempfile = { workspace = true }

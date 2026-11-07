@@ -73,6 +73,7 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
             root_redirect: None,
             state_dir: home.path().join("state"),
             private_ca: None,
+            request_deadline: gateway::REQUEST_DEADLINE,
         },
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;

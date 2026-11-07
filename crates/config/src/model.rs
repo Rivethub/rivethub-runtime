@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -273,6 +274,7 @@ pub struct GatewaySection {
     pub root_redirect: Option<String>,
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
+    pub request_deadline_secs: Option<NonZeroU64>,
 }
 
 fn default_gateway_port() -> u16 {

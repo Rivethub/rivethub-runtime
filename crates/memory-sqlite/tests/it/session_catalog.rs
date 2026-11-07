@@ -98,3 +98,10 @@ async fn bare_claude_sessions_list_under_their_harness() -> TestResult {
     let (_directory, store) = store()?;
     session_catalog::lists_bare_claude_sessions_under_their_harness(&store, &store).await
 }
+
+#[tokio::test]
+async fn records_answer_bare_and_keyed_sessions_in_one_lookup() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::session_records::records_answer_bare_and_keyed_sessions_in_one_lookup(&store, &store)
+        .await
+}

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
@@ -133,13 +134,12 @@ impl Titles {
             subject.into_iter().chain(change.source.clone())
         });
         if let Some(catalog) = gateway.session_catalog() {
-            for session in mentioned {
-                if titles.contains_key(&session) {
-                    continue;
-                }
-                if let Some(record) = catalog.get(&session).await? {
-                    titles.insert(session, record.title);
-                }
+            let missing: BTreeSet<SessionId> = mentioned
+                .filter(|session| !titles.contains_key(session))
+                .collect();
+            let missing: Vec<SessionId> = missing.into_iter().collect();
+            for record in catalog.records(&missing).await? {
+                titles.insert(record.id, record.title);
             }
         }
         Ok(Self(titles))
@@ -262,20 +262,16 @@ async fn sources(
     have: &[SessionRecord],
     sessions: impl Iterator<Item = SessionId>,
 ) -> Result<Vec<SessionRecord>, ApiError> {
-    let catalog = catalog(gateway)?;
-    let mut found: Vec<SessionRecord> = Vec::new();
-    for session in sessions {
-        if have.iter().chain(&found).any(|record| record.id == session) {
-            continue;
-        }
-        if let Some(record) = catalog.get(&session).await?
-            && !record.trashed
-            && shown(gateway, user, &record)
-        {
-            found.push(record);
-        }
-    }
-    Ok(found)
+    let wanted: BTreeSet<SessionId> = sessions
+        .filter(|session| !have.iter().any(|record| &record.id == session))
+        .collect();
+    let wanted: Vec<SessionId> = wanted.into_iter().collect();
+    Ok(catalog(gateway)?
+        .records(&wanted)
+        .await?
+        .into_iter()
+        .filter(|record| !record.trashed && shown(gateway, user, record))
+        .collect())
 }
 
 async fn summary(
@@ -400,7 +396,7 @@ async fn digest(
         .cloned()
         .collect();
     let sessions = DaySessions::load(&gateway, &user, (start, end), &day).await?;
-    let titles = Titles::load(&gateway, &sessions.records, &all).await?;
+    let titles = Titles::load(&gateway, &sessions.records, &day).await?;
     let summary = summary(
         &gateway,
         &user,

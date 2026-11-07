@@ -537,7 +537,7 @@ pub async fn excludes_children_and_derives_titles(
 pub const BARE: &str = "00000000-0000-4000-8000-0000000000c5";
 pub const CLI_UUID: &str = "00000000-0000-4000-8000-0000000000c6";
 
-async fn capture_stored(
+pub(crate) async fn capture_stored(
     memory: &dyn MemoryStore,
     key: &str,
     channel: &str,

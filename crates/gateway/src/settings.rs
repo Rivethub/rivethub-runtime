@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
@@ -16,7 +17,10 @@ pub struct Settings {
     pub root_redirect: Option<String>,
     pub state_dir: PathBuf,
     pub private_ca: Option<PathBuf>,
+    pub request_deadline: Duration,
 }
+
+pub const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
 
 pub fn state_dir(env: &config::Environment) -> Result<PathBuf, config::ConfigError> {
     Ok(canonical_dir(
@@ -58,6 +62,9 @@ impl Settings {
             },
             state_dir,
             private_ca,
+            request_deadline: section
+                .request_deadline_secs
+                .map_or(REQUEST_DEADLINE, |secs| Duration::from_secs(secs.get())),
         })
     }
 }

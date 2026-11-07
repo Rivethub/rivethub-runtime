@@ -497,3 +497,57 @@ async fn today_shows_three_review_items_conflicts_first_and_counts_the_queue() -
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn review_and_today_look_up_only_the_suggested_sessions_in_one_call() -> TestResult {
+    let api = Api::new(true)?;
+    let seeded = seed(&api).await?;
+    for key in [FIRST, SECOND] {
+        api.store
+            .suggest(Suggestion {
+                session: key.parse()?,
+                name: TopicName::new("Home Lab")?,
+                topic: Some(seeded.lab.id.parse()?),
+                parent: None,
+            })
+            .await?;
+    }
+    for number in 0..12_u8 {
+        let key = format!("codex:00000000-0000-4000-8000-0000000001{number:02x}");
+        testkit::filing::capture(api.store.as_ref(), &key, "codex", "Unrelated work", None).await?;
+    }
+    api.lookups.take();
+    let items = queue(&api).await?;
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item.group == ReviewGroup::Filing)
+            .count(),
+        3
+    );
+    let calls = api.lookups.take();
+    assert_eq!(calls.lists, 0, "review never pages the catalog");
+    let looked_up: Vec<std::collections::BTreeSet<String>> = calls
+        .records
+        .iter()
+        .map(|sessions| sessions.iter().map(ToString::to_string).collect())
+        .collect();
+    assert_eq!(
+        looked_up,
+        vec![
+            [FIRST, SECOND, UNFILED]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        ],
+        "one lookup of exactly the suggested sessions"
+    );
+    let _today: TodayDigest = api.json("GET", "/api/today", "", StatusCode::OK).await?;
+    let calls = api.lookups.take();
+    assert_eq!(calls.lists, 1, "one page covers a quiet day");
+    assert!(
+        calls.records.len() <= 3,
+        "sources, titles and filing each look up once: {calls:?}"
+    );
+    Ok(())
+}

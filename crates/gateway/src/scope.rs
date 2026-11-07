@@ -6,11 +6,13 @@ use std::task::Poll;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::Response;
 use bytes::Bytes;
 use http_body::Frame;
 use http_body::SizeHint;
+use kernel::deadline::Deadline;
 use kernel::tenancy::Scope;
 
 use crate::Gateway;
@@ -61,6 +63,11 @@ pub(crate) async fn scope_request(
         Ok(viewer) => Scope::Viewer(viewer),
         Err(_) => Scope::Closed,
     };
-    let response = scope.clone().run(next.run(request)).await;
+    let deadline = if matches!(*request.method(), Method::GET | Method::HEAD) {
+        Deadline::after(gateway.settings().request_deadline)
+    } else {
+        Deadline::unbounded()
+    };
+    let response = scope.clone().run(deadline.run(next.run(request))).await;
     response.map(|inner| Body::new(ScopedBody { scope, inner }))
 }

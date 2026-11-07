@@ -21,6 +21,7 @@ pub mod provider;
 pub mod review;
 pub mod session_catalog;
 pub mod session_delete;
+pub mod session_records;
 pub mod sqlite;
 pub mod stub;
 pub mod sweeps;

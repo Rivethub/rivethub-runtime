@@ -167,5 +167,6 @@ fn settings(home: &Path) -> gateway::Settings {
         root_redirect: None,
         state_dir: home.join("gateway"),
         private_ca: None,
+        request_deadline: gateway::REQUEST_DEADLINE,
     }
 }

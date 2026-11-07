@@ -32,7 +32,7 @@ WITH conv AS (
            rh_session_key(c.channel, c.session_key) AS skey
       FROM ros_conversations c
      WHERE c.task_id IS NULL
-       AND (:key IS NULL OR c.session_key IN (SELECT value FROM json_each(:keys)))
+       AND (:keys IS NULL OR c.session_key IN (SELECT value FROM json_each(:keys)))
 ), sess AS (
     SELECT c.skey AS key,
            min(julianday(c.created_at)) AS started,
@@ -41,7 +41,7 @@ WITH conv AS (
            json_group_array(c.id) AS conversations
       FROM conv c
      WHERE substr(c.skey, 1, instr(c.skey, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
-       AND (:key IS NULL OR c.skey = :key)
+       AND (:sessions IS NULL OR c.skey IN (SELECT value FROM json_each(:sessions)))
        AND c.skey NOT IN (SELECT value FROM json_each(:exclude))
      GROUP BY c.skey
 ), titled AS (
@@ -223,7 +223,7 @@ struct Scope<'a> {
     view: Option<SessionView>,
     harnesses: &'a str,
     exclude: &'a str,
-    key: Option<&'a str>,
+    sessions: Option<&'a str>,
     keys: Option<&'a str>,
 }
 
@@ -262,7 +262,7 @@ fn select(
         .query_map(
             named_params! {
                 ":harnesses": scope.harnesses,
-                ":key": scope.key,
+                ":sessions": scope.sessions,
                 ":keys": scope.keys,
                 ":topic": query.and_then(|query| query.topic).map(|topic| topic.to_string()),
                 ":text": query.and_then(|query| query.text.as_deref()),
@@ -286,7 +286,7 @@ fn page(conn: &Connection, query: &SessionQuery) -> Result<SessionPage, SqliteEr
         view: Some(query.view),
         harnesses: &harnesses(query.harness)?,
         exclude: &keys_json(&query.exclude)?,
-        key: None,
+        sessions: None,
         keys: None,
     };
     let mut items = select(conn, &scope, Some(query), wanted)?;
@@ -312,23 +312,31 @@ impl SessionCatalog for SqliteStore {
             .map_err(Into::into)
     }
 
-    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
-        let key = session.to_string();
-        let keys = keys_json(&conversation_keys(session))?;
+    async fn records(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
+        if sessions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let wanted: Vec<String> = sessions.iter().map(ToString::to_string).collect();
+        let stored: Vec<String> = sessions.iter().flat_map(conversation_keys).collect();
+        let limit = i64::try_from(wanted.len()).map_err(SqliteError::Count)?;
+        let wanted = keys_json(&wanted)?;
+        let stored = keys_json(&stored)?;
         self.with_conn(move |conn| {
-            let mut found = select(
+            select(
                 conn,
                 &Scope {
                     view: None,
                     harnesses: &harnesses(None)?,
                     exclude: "[]",
-                    key: Some(&key),
-                    keys: Some(&keys),
+                    sessions: Some(&wanted),
+                    keys: Some(&stored),
                 },
                 None,
-                1,
-            )?;
-            Ok(found.pop())
+                limit,
+            )
         })
         .await
         .map_err(Into::into)

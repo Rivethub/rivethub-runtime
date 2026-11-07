@@ -82,6 +82,7 @@ impl Fixture {
                 root_redirect: None,
                 state_dir: PathBuf::from("/tmp/rr-gateway-unused-agents/state"),
                 private_ca: None,
+                request_deadline: gateway::REQUEST_DEADLINE,
             },
         )
         .with_tenancy(tenancy)

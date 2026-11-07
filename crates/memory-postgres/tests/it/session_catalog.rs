@@ -402,3 +402,10 @@ async fn lists_bare_claude_sessions_under_their_harness(pool: PgPool) -> TestRes
     let memory = PostgresMemory::new(pool);
     session_catalog::lists_bare_claude_sessions_under_their_harness(&memory, &memory).await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn records_answer_bare_and_keyed_sessions_in_one_lookup(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_records::records_answer_bare_and_keyed_sessions_in_one_lookup(&memory, &memory)
+        .await
+}

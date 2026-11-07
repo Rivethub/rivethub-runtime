@@ -70,11 +70,15 @@ impl SessionCatalog for FakeSessionCatalog {
         Ok(SessionPage { items, next: None })
     }
 
-    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
+    async fn records(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
         Ok(self
             .records
             .iter()
-            .find(|record| &record.id == session)
-            .map(|record| self.marked(record)))
+            .filter(|record| sessions.contains(&record.id))
+            .map(|record| self.marked(record))
+            .collect())
     }
 }

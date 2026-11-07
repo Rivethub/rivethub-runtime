@@ -101,6 +101,7 @@ fn settings() -> Settings {
         root_redirect: None,
         state_dir: scratch.join("state"),
         private_ca: None,
+        request_deadline: gateway::REQUEST_DEADLINE,
     }
 }
 
