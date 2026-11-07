@@ -27,6 +27,7 @@ use wire::gateway::memory::PendingTagListResult;
 use wire::gateway::review::ReviewGroup;
 use wire::gateway::review::ReviewItem;
 use wire::gateway::review::SubjectRef;
+use wire::gateway::today::TodayDigest;
 use wire::gateway::topics::PlacedBy;
 use wire::gateway::topics::PlacementReply;
 use wire::gateway::topics::TopicList;
@@ -442,6 +443,57 @@ async fn editing_a_new_fact_records_your_value() -> TestResult {
             .iter()
             .all(|item| item.group != ReviewGroup::Fact),
         "a value you set is not new"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn today_shows_three_review_items_conflicts_first_and_counts_the_queue() -> TestResult {
+    let api = Api::new(true)?;
+    seed(&api).await?;
+    api.database()?.execute(
+        "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, display, source, state,
+                               proposed_by, reason, created_at, updated_at)
+         SELECT ?1, entity_type, entity_id, 'area', 'backups', 'area: backups', source, state,
+                proposed_by, reason, ?2, ?2
+           FROM ros_tags WHERE id = ?3",
+        rusqlite::params![
+            "00000000-0000-4000-8000-0000000000d5",
+            (Utc::now() + TimeDelta::hours(1)).to_rfc3339(),
+            TAG
+        ],
+    )?;
+    let items = queue(&api).await?;
+    let today: TodayDigest = api.json("GET", "/api/today", "", StatusCode::OK).await?;
+    assert_eq!(today.review_count, 6);
+    let groups: Vec<ReviewGroup> = today.needs_you.iter().map(|item| item.group).collect();
+    assert_eq!(groups.len(), 3, "{groups:?}");
+    assert_eq!(groups.first(), Some(&ReviewGroup::Conflict));
+    assert_ne!(
+        items.first().map(|item| item.group),
+        Some(ReviewGroup::Conflict),
+        "the queue alone does not lead with the conflict"
+    );
+    let rest: Vec<ReviewItem> = items
+        .iter()
+        .filter(|item| item.group != ReviewGroup::Conflict)
+        .take(2)
+        .cloned()
+        .collect();
+    assert_eq!(
+        today.needs_you.get(1..),
+        Some(rest.as_slice()),
+        "after the conflict, the queue's newest items"
+    );
+
+    let conflict = find(&items, ReviewGroup::Conflict)?;
+    decide(&api, &conflict, r#"{"kind":"later"}"#).await?;
+    let today: TodayDigest = api.json("GET", "/api/today", "", StatusCode::OK).await?;
+    assert_eq!(today.review_count, 5, "a snoozed item leaves Today too");
+    assert!(
+        today.needs_you.iter().all(|item| item.id != conflict.id),
+        "{:?}",
+        today.needs_you
     );
     Ok(())
 }

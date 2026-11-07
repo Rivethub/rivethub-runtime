@@ -9437,7 +9437,6 @@
       ],
       "type": "object"
     },
-    "PendingReview": false,
     "PendingTagAction": {
       "enum": [
         "add",
@@ -12121,11 +12120,16 @@
         "id": {
           "$ref": "#/$defs/SessionId"
         },
+        "kind": {
+          "const": "session",
+          "type": "string"
+        },
         "title": {
           "type": "string"
         }
       },
       "required": [
+        "kind",
         "id",
         "title"
       ],
@@ -15043,7 +15047,7 @@
         },
         "needsYou": {
           "items": {
-            "$ref": "#/$defs/PendingReview"
+            "$ref": "#/$defs/ReviewItem"
           },
           "type": "array"
         },

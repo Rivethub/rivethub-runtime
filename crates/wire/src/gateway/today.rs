@@ -2,17 +2,36 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::entities::{ChangeKind, Freshness};
-use crate::gateway::review::SubjectRef;
+use crate::gateway::review::{ReviewItem, SubjectRef};
 use crate::gateway::session_catalog::SessionSummaryRow;
 use crate::harness::HarnessId;
 use crate::session_id::SessionId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename = "session")]
-#[schemars(rename = "SessionRef")]
+#[schemars(rename = "SessionRef", transform = session_kind)]
 pub struct SessionRef {
     pub id: SessionId,
     pub title: String,
+}
+
+// schemars drops the tag serde writes on a struct.
+fn session_kind(schema: &mut schemars::Schema) {
+    if let Some(properties) = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        properties.insert(
+            "kind".to_owned(),
+            serde_json::json!({"type": "string", "const": "session"}),
+        );
+    }
+    if let Some(required) = schema
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.insert(0, "kind".into());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -53,16 +72,13 @@ pub struct ActivityDay {
     pub level: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum PendingReview {}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TodayDigest {
     pub date: NaiveDate,
     pub headline: String,
     pub summary: String,
-    pub needs_you: Vec<PendingReview>,
+    pub needs_you: Vec<ReviewItem>,
     pub review_count: u32,
     pub entries: Vec<TodayEntry>,
     pub activity_by_day: Vec<ActivityDay>,

@@ -169,7 +169,14 @@ async fn queue(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
 ) -> Result<Json<Vec<ReviewItem>>, ApiError> {
-    let now = Utc::now();
+    Ok(Json(open(&gateway, &user, Utc::now()).await?))
+}
+
+pub(crate) async fn open(
+    gateway: &Gateway,
+    user: &UserId,
+    now: DateTime<Utc>,
+) -> Result<Vec<ReviewItem>, ApiError> {
     let marks = Marks::of(
         gateway
             .review()?
@@ -177,10 +184,10 @@ async fn queue(
             .await
             .map_err(review_error)?,
     );
-    let topics = Topics::load(&gateway).await?;
+    let topics = Topics::load(gateway).await?;
     let mut items = Vec::new();
     for source in Source::ALL {
-        items.extend(source.items(&gateway, &topics, now).await?);
+        items.extend(source.items(gateway, &topics, now).await?);
     }
     let mut open: Vec<ReviewItem> = items
         .into_iter()
@@ -193,7 +200,7 @@ async fn queue(
             .cmp(&left.created_at)
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(Json(open))
+    Ok(open)
 }
 
 async fn decision(

@@ -29,6 +29,8 @@ use kernel::topics::TopicId;
 use serde::Deserialize;
 use wire::gateway::entities;
 use wire::gateway::review;
+use wire::gateway::review::ReviewGroup;
+use wire::gateway::review::ReviewItem;
 use wire::gateway::session_catalog::SharedWith;
 use wire::gateway::today;
 use wire::session_id::SessionId;
@@ -44,6 +46,7 @@ const CHANGES_DEFAULT: usize = 200;
 const CHANGES_MAX: usize = 1000;
 const LOOKBACK_DAYS: i64 = 30;
 const DAY_PAGES: usize = 5;
+const NEEDS_YOU: usize = 3;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
     Router::new()
@@ -407,12 +410,18 @@ async fn digest(
     )
     .await?;
     let entries = sessions.entries(&day, &titles);
+    let queue = if gateway.review.is_some() {
+        super::review::open(&gateway, &user, Utc::now()).await?
+    } else {
+        Vec::new()
+    };
+    let review_count = u32::try_from(queue.len()).map_err(|_| ApiError::Internal)?;
     Ok(Json(today::TodayDigest {
         date,
         headline: kernel::changes::headline(kernel::changes::learned(&day), date, today),
         summary,
-        needs_you: Vec::new(),
-        review_count: 0,
+        needs_you: needs_you(queue),
+        review_count,
         entries,
         activity_by_day: kernel::changes::activity(&all, date, &Local)
             .into_iter()
@@ -427,4 +436,10 @@ async fn digest(
             .collect(),
         freshness: entities::Freshness::Live,
     }))
+}
+
+fn needs_you(mut queue: Vec<ReviewItem>) -> Vec<ReviewItem> {
+    queue.sort_by_key(|item| item.group != ReviewGroup::Conflict);
+    queue.truncate(NEEDS_YOU);
+    queue
 }

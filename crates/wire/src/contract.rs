@@ -300,7 +300,6 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::today::Change>,
     SchemaGenerator::subschema_for::<crate::gateway::today::TodayEntry>,
     SchemaGenerator::subschema_for::<crate::gateway::today::ActivityDay>,
-    SchemaGenerator::subschema_for::<crate::gateway::today::PendingReview>,
     SchemaGenerator::subschema_for::<crate::gateway::today::TodayDigest>,
     SchemaGenerator::subschema_for::<crate::gateway::topics::TopicDirectory>,
     SchemaGenerator::subschema_for::<crate::gateway::topics::TopicKind>,
