@@ -1579,7 +1579,7 @@ already has. A bundle whose version is not 1 is refused. Postgres memory is not 
 (NEW-entities) Entity facts (proposed 2026-11-06): an entity page shows the entity's last known state as facts, each a
 key and a value with the date it became true, the sessions that support it, a pinned flag, the value before it and a
 conflict when sources disagree. A fact is one key of one entity (`rh_entity_facts`: `id`, `topic_id` an entity topic,
-`key`, `created_at`; unique `(topic_id, key)`); a key is trimmed, its spaces collapsed and lowercased, 1 to 64
+`key`, `created_at`); a key is trimmed, its spaces collapsed and lowercased, 1 to 64
 characters. What anyone said about it is a claim (`rh_entity_fact_claims`: `id`, `fact_id`, `value` (1 to 400
 characters), `actor` `you` or `wiki-writer`, `pinned` (only a `you` claim pins), `session_id` and `summary_id` (both set
 exactly for a `wiki-writer` claim), `evidence` (the quoted words, at most 300 characters), `at` (when it was true: the
@@ -1598,8 +1598,8 @@ writer claims, its connected entities those that share a session with it, and it
 Visibility: a fact row is visible with its entity topic (as decisions are); a claim is visible to its owner, and to
 another viewer only while its entity is visible to them and, for a writer claim, its session's conversation is shared
 with them (as session placements are). A `you` claim is owned by the caller, a writer claim by its summary's owner. A
-topic merge moves the source's facts to the target, joining claims of keys both have; deleting an entity deletes its
-facts. Routes (B1, new, no TypeScript recording; bodies are the `wire::gateway::entities` types, which match the
+topic merge moves the source's fact rows to the target unchanged (so no claim a merging viewer cannot see is lost); a
+key both had then has two rows and reads as one fact whose id is the older row's. Deleting an entity deletes its facts. Routes (B1, new, no TypeScript recording; bodies are the `wire::gateway::entities` types, which match the
 RivetHub web contracts `EntitySummary`, `EntityArticle`, `Fact` and `FactSource`): `GET /api/entities?type=<type>`
 lists entities whose root type is one of `person` (People), `agent` (Agents), `machine` (Hosts), `hardware`, `model`,
 `service`, `software`, `repository` (Repos), `domain`, `database`; `GET /api/entities/{id}?asOf=<RFC 3339>` answers the

@@ -2,6 +2,7 @@ pub mod agent;
 pub mod agent_presets;
 pub mod ca;
 pub mod cleanup;
+pub mod facts;
 pub mod filing;
 pub mod flagged;
 pub mod fork;

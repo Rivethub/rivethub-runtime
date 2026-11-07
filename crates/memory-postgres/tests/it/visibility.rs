@@ -1378,3 +1378,108 @@ async fn a_pinned_login_writes_wiki_pages_only_in_its_own_scopes(pool: PgPool) -
     assert_eq!(visible(&pinned, Scope::Closed, "rh_wiki_topics").await?, 2);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -> TestResult {
+    use kernel::facts::FactKey;
+    use kernel::facts::FactStore as _;
+    use kernel::facts::FactValue;
+    use kernel::facts::NewClaim;
+    use kernel::facts::Said;
+
+    let (store, _) = seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let alice = viewer("alice")?;
+    let owners = Scope::Viewer(alice.clone());
+    let members = Scope::Viewer(viewer("bob")?);
+    let now = Utc::now();
+    let hosts = store
+        .list()
+        .await?
+        .into_iter()
+        .find(|listing| {
+            listing.topic.kind == TopicKind::Type && listing.topic.name.as_str() == "Hosts"
+        })
+        .ok_or("no Hosts type")?
+        .topic
+        .id;
+    let host = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Entity,
+                name: TopicName::new("web01")?,
+                aliases: Vec::new(),
+                parent: Some(hosts),
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    let claim = |value: &str, said: Said| -> Result<NewClaim, Box<dyn std::error::Error>> {
+        Ok(NewClaim {
+            entity: host.id,
+            key: FactKey::new("address")?,
+            value: FactValue::new(value)?,
+            said,
+            owner: Some(alice.principal().clone()),
+            at: now,
+        })
+    };
+    let writer = |session: &str| -> Result<Said, Box<dyn std::error::Error>> {
+        Ok(Said::Writer {
+            session: SessionId::try_from(session.to_owned())?,
+            summary: Uuid::new_v4(),
+            evidence: None,
+        })
+    };
+    store
+        .assert_facts(&[
+            claim("10.0.0.1", writer(FIRST)?)?,
+            claim("10.0.0.2", writer(SECOND)?)?,
+            claim(
+                "10.0.0.3",
+                Said::You {
+                    by: alice.principal().clone(),
+                    pinned: true,
+                },
+            )?,
+        ])
+        .await?;
+    let claims = "rh_entity_fact_claims";
+    assert_eq!(visible(&probe, owners.clone(), claims).await?, 3);
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        0,
+        "a private entity hides its facts"
+    );
+
+    let tenancy = PostgresTenancy::new(probe.clone());
+    let shared = Visibility::Space(household()?);
+    owners
+        .clone()
+        .run(tenancy.mark_topic(&alice, host.id, Some(&shared)))
+        .await?;
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        1,
+        "only your claim shows while both sessions are private"
+    );
+    let second = SessionId::try_from(SECOND.to_owned())?;
+    owners
+        .clone()
+        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .await?;
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        2,
+        "a shared session's claim shows; the private session's stays hidden"
+    );
+    let bob_store = PostgresMemory::new(probe.clone());
+    let read = members.run(bob_store.claims(host.id)).await?;
+    let values: Vec<&str> = read.iter().map(|claim| claim.value.as_str()).collect();
+    assert_eq!(values.len(), 2);
+    assert!(!values.contains(&"10.0.0.1"), "{values:?}");
+    Ok(())
+}

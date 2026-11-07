@@ -229,7 +229,7 @@ fn undashed_ids_are_canonical_in_every_table_that_holds_or_references_them() -> 
     assert_eq!(migrated, expected);
     let conn = Connection::open(&path)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(version, 30);
+    assert_eq!(version, 31);
     let violations: i64 =
         conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
