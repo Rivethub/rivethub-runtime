@@ -70,7 +70,14 @@ async fn fallback(State(gateway): State<Arc<Gateway>>, request: Request) -> Resp
 }
 
 pub(super) fn static_blocked(path: &str) -> bool {
-    blocked_prefix(path, "/api") || blocked_prefix(path, "/wiki")
+    matches!(
+        path,
+        "/event" | "/events" | "/state" | "/session" | "/ws" | "/layout" | "/mesh.json"
+    ) || [
+        "/api", "/wiki", "/term", "/files", "/audio", "/gateway", "/v1", "/ca",
+    ]
+    .into_iter()
+    .any(|prefix| blocked_prefix(path, prefix))
 }
 
 fn blocked_prefix(path: &str, prefix: &str) -> bool {

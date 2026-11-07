@@ -54,3 +54,33 @@ fn symlink_and_sibling_prefix_stay_inside_the_static_root() {
     assert_eq!(nested.status, 404);
     assert_eq!(nested.body, br#"{"error":"not found"}"#);
 }
+
+#[test]
+fn app_deep_links_get_the_shell_and_removed_live_routes_answer_404() {
+    let scratch = tempfile::tempdir().expect("temp");
+    std::fs::write(scratch.path().join("index.html"), b"<!doctype html>shell").expect("index");
+    let mut settings = common::settings();
+    settings.static_dir = Some(scratch.path().to_owned());
+    let router = app(settings);
+    for path in ["/sessions", "/sessions/abc", "/review", "/settings/account"] {
+        let page = call(router.clone(), path).expect(path);
+        assert_eq!((path, page.status), (path, 200));
+        assert_eq!(page.body, b"<!doctype html>shell");
+    }
+    for path in [
+        "/ws",
+        "/session",
+        "/state",
+        "/event",
+        "/events",
+        "/mesh.json",
+        "/term/main",
+        "/files",
+        "/files/a.txt",
+        "/ca/v1/chain",
+        "/api/tasks",
+    ] {
+        let gone = call(router.clone(), path).expect(path);
+        assert_eq!((path, gone.status), (path, 404));
+    }
+}
