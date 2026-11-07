@@ -5,10 +5,8 @@ and a `CancellationToken`. It serves `memory_search`, `memory_browse`, `memory_g
 `memory_stats`, `memory_tags`, `wiki_search`, and `wiki_read`. Memory responses are JSON text
 serialized directly from kernel result types. No concrete memory adapter is linked.
 
-`Server::builder` injects an `Arc<dyn kernel::tasks::Delegation>` and a transport surface.
-`delegate_task` and `list_agents` call that port. `delegate_task` is registered only on
-`Surface::Stdio`. `Surface::Remote` (streamable HTTP and Unix) registers `list_agents` and
-not `delegate_task`. `Server::new` registers neither. The composition root wires the port.
+`Server::builder` adds the node's time zone and the plug-in tools. `delegate_task` and
+`list_agents` were removed with delegation (CONTRACT note 132).
 
 `echo`, `skill_list`, and `skill_manage` are excluded by the product decision. The skills
 implementation is removed. `internet_search` and `web_fetch` remain absent because harnesses

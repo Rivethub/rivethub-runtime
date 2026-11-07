@@ -1,19 +1,13 @@
 # Memory service
 
-A node can run as a memory service: capture, recall, and the organizer
-(topics, wiki, tags, and tidy), with attribution kept on the stored rows.
-Set this in the node config:
-
-```yaml
-runtime:
-  profile: memory
-```
-
-That profile mounts `/healthz`, `/api/capture`, `/api/memory` (including
-tags), `/api/wiki`, and `/api/topics`. It does not mount harness-session,
-task, delegation, or terminal routes. The default profile is unchanged and
-keeps those routes through 0.8. They are absent when `runtime.profile` is
-`memory`.
+Every node is a memory service: capture, recall, and the organizer
+(topics, entities, the wiki, tags, and Tidy), with attribution kept on the
+stored rows. The gateway mounts `/healthz`, `/api/capture`, `/api/memory`
+(including tags), `/api/wiki`, `/api/topics` and the other memory routes,
+the stored sessions and their transcripts, and the plug-in host. It has no
+live-session, chat, terminal, task or delegation routes; those run in T3
+Code. `runtime.profile` chose between this surface and a larger one before
+0.8. The key still loads, and `rh config validate` warns that it is ignored.
 
 ## Contract
 
@@ -70,6 +64,4 @@ upgrade.
 `RIVETHUB_HOME` is the state directory for that process. It must be an
 absolute path with no `..` components. Two processes with different
 `RIVETHUB_HOME` values use different databases, config files, and owner
-locks, and they do not adopt `~/.rivetos`. When the terminal socket path
-would exceed 107 bytes, the socket directory is a short name under the
-system temp directory, derived from the state directory and port.
+locks, and they do not adopt `~/.rivetos`.

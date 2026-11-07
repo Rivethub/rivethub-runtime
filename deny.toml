@@ -23,9 +23,9 @@ deny = [
   { crate = "openssl-sys", reason = "TLS is rustls everywhere" },
   { crate = "native-tls", reason = "TLS is rustls everywhere" },
   { crate = "ring", reason = "one rustls crypto provider: aws-lc-rs, named explicitly in every rustls config" },
-  { crate = "anyhow", wrappers = ["agent-client-protocol", "agent-client-protocol-schema", "portable-pty"], reason = "errors are typed with thiserror; the binary maps them to exit codes (the exceptions are third-party crates' own internal error types, not our code)" },
+  { crate = "anyhow", wrappers = ["agent-client-protocol", "agent-client-protocol-schema"], reason = "errors are typed with thiserror; the binary maps them to exit codes (the exceptions are third-party crates' own internal error types, not our code)" },
   { crate = "async-std", reason = "one async runtime: tokio" },
-  { crate = "tmux_interface", reason = "herdr is the only multiplexer" },
+  { crate = "tmux_interface", reason = "DEPS: rh runs no terminal multiplexer" },
 
   { crate = "values", wrappers = ["wire", "kernel"], reason = "values is the vocabulary under kernel and wire; it depends on external crates only, and every other crate reaches it through them" },
   { crate = "wire", wrappers = ["config", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"], reason = "KERNELWIRE: wire depends on values and external crates only, and the kernel never depends on it" },

@@ -1,8 +1,8 @@
 # RivetHub runtime (`rh`)
 
-`rh` is the node runtime of RivetHub. One binary runs a node's gateway (the HTTP and WebSocket API every client uses),
-its harness sessions (Chat over ACP, Terminal over a PTY), memory (capture, search, summaries, topics and the wiki),
-delegated tasks, the plug-in host, the MCP sidecar, the memory workers, and the mesh and certificate commands. A second
+`rh` is RivetHub's memory runtime. One binary runs a node's gateway (the HTTP API that clients use to read memory),
+capture of harness sessions, memory (search, summaries, topics, entities and the wiki), the plug-in host, the MCP
+sidecar and the memory workers. Live sessions, chat, terminals and delegation run in T3 Code, not in `rh`. A second
 binary, `rivethub-migrate`, applies every schema change. Memory lives in Postgres on a shared datahub, or in one SQLite
 file on a standalone machine.
 
@@ -32,7 +32,6 @@ installation current:
 - It verifies the archive against `SHA256SUMS`, runs the new `rivethub-migrate` against the configured memory backend,
   swaps both binaries in place (keeping `rh.previous` and `rivethub-migrate.previous`) and restarts the systemd unit
   unless `--no-restart` is given. On macOS restarting is up to you, so pass `--no-restart`.
-- `--mesh` then runs `rh update` over SSH on every node in the mesh registry, at the same release tag.
 - `--channel nightly` builds from the clean `main` checkout named by `RIVETHUB_INSTALL_ROOT` instead.
 
 Every merge to `main` publishes the next patch version as a beta prerelease; the Promote workflow marks a beta stable.
@@ -49,7 +48,7 @@ rh local --ensure          # start one in the background unless one already answ
 
 `rh local` is one process on one SQLite file (`~/.rivethub/memory.sqlite`). With no configuration it writes a minimal
 `~/.rivethub/config.yaml` (the database path and the gateway bind) and never invents agents, providers or endpoints. It
-runs the gateway, the plug-in host and the task engine, and adds, from `memory.sqlite`:
+runs the gateway and the plug-in host, and adds, from `memory.sqlite`:
 
 | Setting | Adds |
 |---|---|
@@ -73,8 +72,7 @@ serves one person: it stores visibility marks but does not filter reads by them.
    `rh service start|stop|restart|status|logs` control it. `rh start` supervises `rh gateway`, and `rh mcp` when
    `transports.mcp` names a host or socket, restarting either with backoff.
 
-`rh gateway` serves the API, sessions and terminals, the plug-in host, devices, the certificate routes and the mesh,
-and runs the tasks queued for its node. `rh status` reports its health and `rh logs` reads its journal.
+`rh gateway` serves the memory API, the stored sessions and their transcripts, the wiki, and the plug-in host. `rh status` reports its health and `rh logs` reads its journal.
 
 ### Memory workers on the datahub
 
@@ -120,7 +118,6 @@ memory:
 gateway:
   host: 127.0.0.1
   port: 5174
-  terminal: { enabled: true }
 ```
 
 | Section | Holds |
@@ -128,24 +125,21 @@ gateway:
 | `providers` | model endpoints: `openai-compatible` or `vllm` (`base_url`, `model`, `api_key` or `token_command`), or a harness used headless (`claude-cli`, `codex-cli`, `grok-cli`, `hermes-cli`, `opencode-cli`, `kimi-code`) |
 | `agents`, `runtime` | named agents on those providers; `runtime.default_agent` is the model the workers use |
 | `memory` | `backend` (`postgres` or `sqlite`), connection and embedding settings, `capture.redaction` (off by default) |
-| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`, `tls_ca`, `tls_crl`, `tls_require_client`), `users_file`, `terminal` (`enabled`, `roots`, `trust_claude_launch_dirs`), `allowed_origins`, `certificate_authority`, `devices.gateway_url` |
-| `tasks` | `enabled`, and `harnesses.<id>` (`binary`, `model`, `effort`, `cwd`) for the harnesses this node runs |
+| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir` |
+| `tasks` | `harnesses.<id>` (`binary`, `model`, `effort`, `cwd`) for the harnesses a headless provider runs |
 | `transports.mcp` | network MCP: `host` and `port` (default 5700, needs `auth_token`), or `socket` (an absolute path) |
-| `mesh` | `enabled`, `node_name`, `advertise_host`, `agent_channel_port`, TLS paths |
+| `mesh` | `node_name` only, as this node's name; the other keys warn and are ignored |
 
-The gateway binds `127.0.0.1:5174` by default. Off loopback it refuses to start without TLS, and with TLS it requires a
-client certificate unless `tls_require_client: false`. A caller on loopback is the node's owner. Browser origins other
+The gateway binds `127.0.0.1:5174` by default. Off loopback it refuses to start without TLS. A caller on loopback is the
+node's owner; a caller from elsewhere sends a bearer token listed in the users file (see Tenancy). Browser origins other
 than the gateway's own must be listed in `gateway.allowed_origins`.
+
+Keys from removed features (`runtime.profile`, `gateway.terminal`, the client-certificate keys, every `mesh` key but
+`node_name`) still load; `rh config validate` warns about each one and the node ignores it.
 
 ## Harnesses and capture
 
-A session runs one harness on one node. Chat speaks ACP to it: natively for `grok-build` (`grok agent stdio`),
-`opencode`, `hermes`, `kimi-code`, `omp` and `dsh` (each `<binary> acp`), and through the `claude-agent-acp` and
-`codex-acp` adapters for `claude-code` and `codex`. `cursor` is terminal-only and `cowork` is captured only. Terminal runs
-the harness's own TUI under herdr (`gateway.terminal.enabled: true`; the node needs `herdr` installed), and Chat and
-Terminal take turns holding a session. Override a binary with `tasks.harnesses.<id>.binary`.
-
-Sessions started outside RivetHub reach memory through `rh capture hook`, run from the harness's hook command. It reads
+`rh` does not run harness sessions. Sessions reach memory through `rh capture hook`, run from the harness's hook command. It reads
 one hook payload on stdin, posts it to the local node's `/api/capture` (a running `rh local` or `rh gateway`), spools
 what the node could not take under `~/.rivethub/capture-spool/` for the next run, and always exits 0:
 
@@ -170,8 +164,7 @@ nothing, so the workers' own model calls never become conversations. `memory.cap
 ### MCP
 
 `rh mcp` gives any MCP client this node's memory: `memory_search` (hybrid, fts, trigram, regex or vector),
-`memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`, `list_agents`, and on stdio
-`delegate_task`; then the plug-in creator's four tools and every running plug-in's tools, named `<plugin>-<tool>`. It
+`memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search` and `wiki_read`; then the plug-in creator's four tools and every running plug-in's tools, named `<plugin>-<tool>`. It
 serves stdio by default and streamable HTTP at `/mcp` when `transports.mcp` names a host (bearer `auth_token` required) or
 a socket. On a SQLite node `rh mcp` opens the node's SQLite file and serves stdio; the network transports there are
 `rh local`'s own.
@@ -189,14 +182,13 @@ per-start token on the node's plug-in API socket. `rh gateway` and `rh local` ho
 - **Install:** `POST /api/plugins` with `{"path": "<absolute directory>"}` registers it in place, disabled. Its data,
   socket and logs live in `~/.rivethub/plugins/<id>/`.
 - **Permissions:** the manifest asks for `memory.read`, `memory.write`, `sessions.read`, `sessions.control`,
-  `topics.read`, `topics.write`, `tasks.read`, `tasks.delegate`, `agents.read`, `notifications.send`, and the host
-  permissions `host.files.read`, `host.files.write`, `host.network` and `host.exec`. The owner approves them by enabling
-  the plug-in from a paired device (Settings › Plug-ins in the app); a reload that asks for more stops it until they
+  `topics.read`, `topics.write`, `notifications.send`, and the host permissions `host.files.read`, `host.files.write`,
+  `host.network` and `host.exec`. The node's owner approves them by enabling the plug-in (Settings › Plug-ins in the app); a reload that asks for more stops it until they
   are approved again. Every API call is checked against the grant when it arrives.
 - **Confinement:** on Linux each plug-in runs under Landlock, limited to its own folders, its program and the system
   directories unless a `host.*` permission widens that. A kernel without full Landlock cannot enable a `host.*` plug-in.
 - **What it adds:** views each client draws natively (pages, topic cards, session actions, canvases), web panels,
-  agent tools in MCP, event subscriptions (`session.*`, `summary.written`, `task.done`), cron or manual jobs, and a
+  agent tools in MCP, event subscriptions (`session.*`, `summary.written`), cron or manual jobs, and a
   settings form.
 - **Creator mode:** an agent builds one with the `plugins-templates`, `plugins-scaffold`, `plugins-install` and
   `plugins-status` tools: it scaffolds from a template in `~/.rivethub/plugin-templates/` into `~/.rivethub/workshop/<id>/`,
@@ -237,41 +229,24 @@ cleanup that can be written as one Tidy batch), and `merge-store`. `rh memory --
 {
   "ownerUserId": "alice",
   "unmappedIsOwner": false,
-  "users": { "alice": { "devices": ["alice-laptop"] }, "bob": { "devices": ["bob-phone"] } },
+  "users": { "alice": { "tokens": ["<sha256 hex>"] }, "bob": { "tokens": ["<sha256 hex>"] } },
   "spaces": { "home": { "kind": "household", "name": "Home", "members": ["alice", "bob"] } }
 }
 ```
 
-- Every captured row records its owner: a bearer token's user, a device certificate's user, or the node's owner for a
-  loopback caller, a plug-in or `rh capture hook`. Without a users file the owner is `owner`. `"admin": true` lets a
+- `tokens` lists the hex SHA-256 digests of the bearer tokens that identify that user; the file never holds a
+  token itself. A caller sends `Authorization: Bearer <token>`, and an unknown token is refused, even on loopback.
+- Every captured row records its owner: a bearer token's user, or the node's owner for a loopback caller, a plug-in or `rh capture hook`. Without a users file the owner is `owner`. `"admin": true` lets a
   user pass the node-owner checks too.
 - Everything is private to its owner until shared with a space (`household`, `team` or `compartment`; without
   `spaces` the node has one household of every listed user). A session's visibility is its own mark, else its topic's,
   else its owner's default for sessions started after choosing it, else private. Only an item's owner marks it.
-- Postgres enforces this with forced row-level security on every owned table. `rh mcp`, plug-ins and tasks act as the
-  node's owner; workers and operator commands run as maintenance, except that filing runs as the conversation's owner.
+- Postgres enforces this with forced row-level security on every owned table. `rh mcp` and plug-ins act as the node's
+  owner; workers and operator commands run as maintenance, except that filing runs as the conversation's owner.
 - Wiki pages live in scopes: the owner's pages at the root of `WIKI_DIR`, another person's in `users/<user>/`, a
   space's in `spaces/<space>/`, each its own git repository. A private session's notes never reach a shared page.
 - `rh memory merge-store --from <url> --owner <user>` folds a second person's memory database into this one, private
   to them.
-
-## Tasks and delegation
-
-A task is a harness session started by another session. `POST /api/tasks` takes a `goal`, an `agentId` (`agent@node`
-pins the node), and optional acceptance criteria and a budget (`maxWallClockMs`, `maxTurns`). The gateway that takes it
-picks the node, queues `run-task:<node>`, and that node's gateway starts the child session with the parent's topic
-memory and sends the goal as one turn. The task ends with the reply text when the turn ends, `awaiting-input` while an
-approval waits, `timeout` or `killed` past its budget, and `POST /api/tasks/{id}/kill` stops it. The child session
-stays open and resumable. Agents delegate through MCP `delegate_task` and see targets with `list_agents`.
-`tasks.enabled: false` turns tasks off on a node.
-
-## Mesh and certificates
-
-Nodes, agents and devices hold short-lived certificates from a step-ca the operator runs: SPIFFE identities, keys made
-on the holder, renewed at two thirds of their life by `rh cert renew`. `rh mesh enroll` enrolls a node, `rh mesh
-list|ping|status` inspect the registry, and `rh ca token|revoke|crl|status` mint enrollment tokens and manage
-revocation. The gateway proxies signing at `/ca/v1/` when `gateway.certificate_authority` is set, and pairs phones when
-`gateway.devices.gateway_url` is set too. See [docs/PKI.md](docs/PKI.md).
 
 ## Documentation
 
@@ -280,7 +255,6 @@ revocation. The gateway proxies signing at `/ca/v1/` when `gateway.certificate_a
 - [docs/CONTRACT.md](docs/CONTRACT.md): the boundaries (HTTP API, events, schema, CLI, config, plug-ins) and every
   numbered note that changed them; the payload schemas are in `contract/`.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, ports, process shape.
-- [docs/PKI.md](docs/PKI.md): certificates and step-ca.
 - [docs/BUILDER-RULES.md](docs/BUILDER-RULES.md) and [docs/PATTERNS.md](docs/PATTERNS.md): the rules every change is held to.
 
 ## Working here

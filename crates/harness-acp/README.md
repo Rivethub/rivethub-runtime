@@ -1,9 +1,13 @@
 # ACP harness adapter
 
+`rh` runs a harness over ACP only as a headless model provider (`claude-cli`, `codex-cli` and the other harness
+provider types): `HeadlessLaunch` and `Supervisor` start one, send each model call as a prompt and reap it. No live
+chat session runs here.
+
 The launch table: Claude Code through the `claude-agent-acp` adapter (with
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`), Codex through `codex-acp`, Grok Build through
 `grok agent stdio`, and opencode, Hermes, Kimi Code, omp and dsh natively through
-`<binary> acp`. Cursor is terminal-only and Cowork is captured only.
+`<binary> acp`. Cursor and Cowork have no ACP launch.
 `tasks.harnesses.<id>.binary` and `cwd` replace the binary and the working
 directory; a configured binary path is passed unchanged.
 
