@@ -23,8 +23,6 @@ use axum::middleware;
 use axum::routing;
 
 use kernel::memory::MemoryStore;
-use tower::ServiceBuilder;
-use tower::util::MapRequestLayer;
 use tower_http::CompressionLevel;
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::Predicate;
@@ -82,12 +80,6 @@ pub struct Gateway {
     changes: Option<Arc<dyn kernel::changes::ChangeFeed>>,
     digests: Option<Arc<dyn kernel::changes::DigestStore>>,
     account: Option<Arc<account::AccountService>>,
-    surface: Surface,
-}
-
-enum Surface {
-    Full,
-    Memory,
 }
 
 impl Gateway {
@@ -129,14 +121,7 @@ impl Gateway {
             changes: None,
             digests: None,
             account: None,
-            surface: Surface::Full,
         }
-    }
-
-    #[must_use]
-    pub fn with_memory_profile(mut self) -> Self {
-        self.surface = Surface::Memory;
-        self
     }
 
     #[must_use]
@@ -255,7 +240,7 @@ impl Gateway {
             gateway: Arc::clone(self),
             secure,
         };
-        let mut routed = Router::new()
+        let routed = Router::new()
             .route("/healthz", routing::any(routes::healthz))
             .route(
                 "/api/capture",
@@ -274,21 +259,9 @@ impl Gateway {
                 routing::post(routes::capture_status::connect).fallback(routes::method_not_allowed),
             )
             .nest("/api/memory", routes::memory::router());
-        routed = if matches!(self.surface, Surface::Memory) {
-            routed.merge(routes::organizer())
-        } else {
-            routed
-                .merge(routes::notices::router())
-                .merge(routes::router())
-        };
-        let mounted = routes::mount(routed)
+        routes::mount(routed.merge(routes::router()))
             .layer(middleware::from_fn(routes::contract_header))
-            .with_state(Arc::clone(self));
-        let rewritten = ServiceBuilder::new()
-            .layer(MapRequestLayer::new(routes::rewrite_request))
-            .service(mounted);
-        Router::new()
-            .fallback_service(rewritten)
+            .with_state(Arc::clone(self))
             .layer(middleware::from_fn_with_state(
                 Arc::clone(self),
                 scope::scope_request,

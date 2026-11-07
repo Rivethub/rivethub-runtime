@@ -12,6 +12,11 @@ const CERTIFICATES: &str = "rh no longer issues or checks client certificates; c
 
 pub const RETIRED: &[Retired] = &[
     Retired {
+        path: "runtime.profile",
+        keeps: &[],
+        why: "every rh node serves the memory routes only, so there is no profile to choose. Delete it",
+    },
+    Retired {
         path: "mesh",
         keeps: &["node_name"],
         why: "rh has no mesh; peer discovery, heartbeats and the agent channel were removed, and only mesh.node_name is still read, as this node's name. Delete the other mesh keys",

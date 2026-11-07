@@ -343,9 +343,6 @@ impl Composition {
         gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
         spool::replay_captures(&tracker, env, shutdown);
-        if config.memory_only() {
-            gateway = gateway.with_memory_profile();
-        }
         let started = plugins::started(gateway, env, vec![bind.port]);
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;
         Ok(Self {

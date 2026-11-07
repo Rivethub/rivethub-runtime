@@ -39,18 +39,6 @@ use crate::error::ApiError;
 
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 
-pub(crate) use surface::rewrite_request;
-
-pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
-    wiki::router()
-        .merge(account::router())
-        .merge(topics::router())
-        .merge(entities::router())
-        .merge(review::router())
-        .merge(tidy::router())
-        .merge(today::router())
-}
-
 pub(crate) async fn contract_header(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -68,6 +56,7 @@ pub(crate) async fn contract_header(
 
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
     harnesses::mount(wiki::router())
+        .merge(notices::router())
         .merge(account::router())
         .merge(history::router())
         .merge(notifications::router())
