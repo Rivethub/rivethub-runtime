@@ -46,7 +46,6 @@ pub(super) const fn event_kind(event: &PluginEvent) -> Option<PluginEventKind> {
         PluginEvent::SessionEnded { .. } => Some(PluginEventKind::SessionEnded),
         PluginEvent::SessionPlaced { .. } => Some(PluginEventKind::SessionPlaced),
         PluginEvent::SummaryWritten { .. } => Some(PluginEventKind::SummaryWritten),
-        PluginEvent::TaskDone { .. } => Some(PluginEventKind::TaskDone),
         PluginEvent::SettingsChanged { .. } => None,
     }
 }
@@ -63,8 +62,6 @@ pub(super) const fn body(permission: Permission) -> PermissionBody {
         Permission::SessionsControl => PermissionBody::SessionsControl,
         Permission::TopicsRead => PermissionBody::TopicsRead,
         Permission::TopicsWrite => PermissionBody::TopicsWrite,
-        Permission::TasksRead => PermissionBody::TasksRead,
-        Permission::TasksDelegate => PermissionBody::TasksDelegate,
         Permission::AgentsRead => PermissionBody::AgentsRead,
         Permission::NotificationsSend => PermissionBody::NotificationsSend,
         Permission::HostFilesRead => PermissionBody::HostFilesRead,
@@ -82,8 +79,6 @@ const fn permission(body: PermissionBody) -> Permission {
         PermissionBody::SessionsControl => Permission::SessionsControl,
         PermissionBody::TopicsRead => Permission::TopicsRead,
         PermissionBody::TopicsWrite => Permission::TopicsWrite,
-        PermissionBody::TasksRead => Permission::TasksRead,
-        PermissionBody::TasksDelegate => Permission::TasksDelegate,
         PermissionBody::AgentsRead => Permission::AgentsRead,
         PermissionBody::NotificationsSend => Permission::NotificationsSend,
         PermissionBody::HostFilesRead => Permission::HostFilesRead,
@@ -100,7 +95,6 @@ const fn event(kind: PluginEventKind) -> EventKind {
         PluginEventKind::SessionEnded => EventKind::SessionEnded,
         PluginEventKind::SessionPlaced => EventKind::SessionPlaced,
         PluginEventKind::SummaryWritten => EventKind::SummaryWritten,
-        PluginEventKind::TaskDone => EventKind::TaskDone,
     }
 }
 

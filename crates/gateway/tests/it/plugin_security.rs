@@ -16,7 +16,7 @@ use crate::plugin_support::{
     refused, tenancy, write_manifest, write_manifest_with,
 };
 
-const BASE: [Permission; 2] = [Permission::SessionsRead, Permission::TasksRead];
+const BASE: [Permission; 2] = [Permission::SessionsRead, Permission::TopicsRead];
 
 fn get(path: &str) -> Result<Request<Body>, axum::http::Error> {
     Request::builder()

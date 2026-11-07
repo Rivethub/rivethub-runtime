@@ -170,12 +170,22 @@ async fn an_unhandled_claim_is_failed() {
     let rig = rig(ProcessRole::Embedder, 1, fnv_provider());
     let id = rig
         .queue
-        .push_any(fixed(FixedJob::RunTask), JsonObject::default(), 1)
+        .push_any(
+            JobName::Heartbeat {
+                agent: "edge".into(),
+                index: 0,
+            },
+            JsonObject::default(),
+            1,
+        )
         .await;
     let (cancel, run) = spawn(&rig);
     rig.queue.wait_phase(id, Phase::Dead).await;
     let job = rig.queue.view(id).await;
-    assert_eq!(job.error.as_deref(), Some("no handler for job run-task"));
+    assert_eq!(
+        job.error.as_deref(),
+        Some("no handler for job heartbeat-edge-0")
+    );
     assert_ne!(job.phase, Phase::Done);
     finish(cancel, run).await;
 }

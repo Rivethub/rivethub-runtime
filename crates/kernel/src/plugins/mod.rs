@@ -28,10 +28,6 @@ pub enum Permission {
     TopicsRead,
     #[strum(serialize = "topics.write")]
     TopicsWrite,
-    #[strum(serialize = "tasks.read")]
-    TasksRead,
-    #[strum(serialize = "tasks.delegate")]
-    TasksDelegate,
     #[strum(serialize = "agents.read")]
     AgentsRead,
     #[strum(serialize = "notifications.send")]
@@ -53,7 +49,6 @@ pub enum EventKind {
     SessionEnded,
     SessionPlaced,
     SummaryWritten,
-    TaskDone,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -156,11 +151,7 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
         (false, ["api", "topics", ..] | ["api", "sessions", _, "placement" | "history"]) => {
             needs(Permission::TopicsWrite)
         }
-        (true, ["api", "tasks", ..]) => needs(Permission::TasksRead),
-        (false, ["api", "tasks"]) => needs(Permission::TasksDelegate),
-        (true, ["api", "agents", ..] | ["api", "catalog", "agents"]) => {
-            needs(Permission::AgentsRead)
-        }
+        (true, ["api", "agents", ..]) => needs(Permission::AgentsRead),
         _ => PluginAccess::Refused,
     }
 }
@@ -173,7 +164,6 @@ pub const fn event_permission(kind: EventKind) -> Permission {
         | EventKind::SessionEnded
         | EventKind::SessionPlaced => Permission::SessionsRead,
         EventKind::SummaryWritten => Permission::MemoryRead,
-        EventKind::TaskDone => Permission::TasksRead,
     }
 }
 

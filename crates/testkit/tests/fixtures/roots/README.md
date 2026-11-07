@@ -22,5 +22,7 @@ Gateway coverage starts `rh gateway` with an initialized certificate authority a
 - `echo` — Product decision: not a sidecar tool
 - `skill_list` — Product decision: skills are not sidecar tools
 - `skill_manage` — Product decision: skills are not sidecar tools
+- `delegate_task` — Delegation left rh for T3 Code (CONTRACT note 132)
+- `list_agents` — Delegation left rh for T3 Code (CONTRACT note 132)
 - `categorizer` — categorizer has no handler in this build
 - `wiki-builder` — wiki-builder has no handler in this build

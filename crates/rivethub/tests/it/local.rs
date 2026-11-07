@@ -12,21 +12,13 @@ mod import;
 mod memory_http;
 #[path = "local/summarize.rs"]
 mod summarize;
-#[path = "local/tasks.rs"]
-mod task_routes;
 
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
-use kernel::ToolContext;
 use kernel::memory::MemoryEntry;
-use kernel::tool::Tool;
-use mcp::client::Client;
-use rmcp::transport::StreamableHttpClientTransport;
-use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -286,55 +278,6 @@ async fn sqlite_worker_roles_and_mcp_share_the_process() -> TestResult {
     assert!(logs.contains("SIGTERM received — shutting down"), "{logs}");
     assert!(!socket.exists(), "{logs}");
     assert!(!home.path().join(".rivethub/rivethub.pid").exists());
-    Ok(())
-}
-
-#[tokio::test]
-async fn mcp_delegate_task_refuses_an_agent_without_a_harness() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let stub = model_stub().await?;
-    let gateway = testkit::ports::claim()?;
-    let mcp_port = testkit::ports::claim()?;
-    let database = home.path().join(".rivethub").join("memory.sqlite");
-    write_config(
-        home.path(),
-        &provider_base(
-            home.path(),
-            &format!("http://{}", stub.address),
-            &mcp_config(&database, gateway.number(), mcp_port.number()),
-        ),
-    )?;
-    let ran = delegated(home.path(), &database, mcp_port.number()).await;
-    let closed = stub.close().await;
-    ran?;
-    closed
-}
-
-fn mcp_config(database: &Path, gateway: u16, mcp_port: u16) -> String {
-    format!(
-        "mesh:\n  node_name: standalone-node\nmemory:\n  backend: sqlite\n  sqlite:\n    path: {}\ngateway:\n  host: 127.0.0.1\n  port: {gateway}\ntransports:\n  mcp:\n    host: 127.0.0.1\n    port: {mcp_port}\n    auth_token: test-secret\n",
-        database.display()
-    )
-}
-
-async fn delegated(home: &Path, database: &Path, mcp_port: u16) -> TestResult {
-    let started = start(
-        home,
-        &["local", "--no-lan"],
-        &["gateway listening on ", "mcp listening on "],
-    )
-    .await?;
-    let outcome = delegate_outcome(mcp_port).await;
-    stop(started).await?;
-    let outcome = outcome?;
-    assert!(outcome.contains("can't be delegated"), "{outcome}");
-    assert!(outcome.contains("opencode or pi preset"), "{outcome}");
-    let rows: i64 = rusqlite::Connection::open(database)?.query_row(
-        "SELECT count(*) FROM rh_tasks",
-        [],
-        |row| row.get(0),
-    )?;
-    assert_eq!(rows, 0);
     Ok(())
 }
 
@@ -615,51 +558,4 @@ async fn complete(
         [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
         payload,
     ))
-}
-
-async fn delegate_outcome(port: u16) -> TestResult<String> {
-    let shutdown = CancellationToken::new();
-    let http = reqwest::Client::builder().no_proxy().build()?;
-    let config =
-        StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{port}/mcp"))
-            .auth_header("test-secret");
-    let client = Client::connect(
-        StreamableHttpClientTransport::with_client(http, config),
-        shutdown.clone(),
-    )
-    .await?;
-    let tools = client.tools().await?;
-    let outcome = call_delegate(&tools).await;
-    let closed = client.close().await;
-    shutdown.cancel();
-    closed?;
-    outcome
-}
-
-async fn call_delegate(tools: &[Arc<dyn Tool>]) -> TestResult<String> {
-    let tool = tools
-        .iter()
-        .find(|tool| tool.definition().name == "delegate_task")
-        .ok_or("delegate_task")?;
-    let result = tokio::time::timeout(
-        Duration::from_secs(30),
-        tool.call(
-            Some(serde_json::from_str(
-                r#"{"to_agent":"main","task":"finish the ledger"}"#,
-            )?),
-            ToolContext {
-                agent_id: None,
-                working_dir: None,
-                session: None,
-            },
-        ),
-    )
-    .await??;
-    let [block] = result.content.as_slice() else {
-        return Err("one result block".into());
-    };
-    let Some(text) = block.as_text() else {
-        return Err("text outcome".into());
-    };
-    Ok(text.text.clone())
 }

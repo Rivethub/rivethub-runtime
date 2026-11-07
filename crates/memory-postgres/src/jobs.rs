@@ -2,30 +2,13 @@ use std::str::FromStr;
 
 use sqlx::PgConnection;
 use sqlx::Row;
-use uuid::Uuid;
 
-use kernel::queue::ClaimSelector;
-use kernel::queue::ClaimedJob;
 use kernel::queue::Job;
 use kernel::queue::JobId;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueueError;
 use kernel::queue::StoredJob;
-use kernel::tasks::TaskError;
-
-pub(crate) fn map_sql(operation: &'static str, source: sqlx::Error) -> TaskError {
-    if queue_absent(&source) {
-        return TaskError::QueueAbsent;
-    }
-    if crate::loss::unreachable(&source) {
-        return TaskError::Unavailable(Box::new(source));
-    }
-    TaskError::Operation {
-        operation,
-        source: Box::new(source),
-    }
-}
 
 fn queue_absent(source: &sqlx::Error) -> bool {
     source.as_database_error().is_some_and(|database| {
@@ -64,78 +47,6 @@ pub(crate) async fn enqueue_job(
     Ok(JobId::new(id))
 }
 
-pub(crate) async fn claim_job(
-    conn: &mut PgConnection,
-    selector: &ClaimSelector,
-    worker: &str,
-) -> Result<Option<ClaimedJob>, JobQueueError> {
-    let names: Vec<String> = selector.names.iter().map(ToString::to_string).collect();
-    let locked_by = format!("{worker}-{}", Uuid::new_v4());
-    let row = sqlx::query(crate::graphile_sql::CLAIM)
-        .bind(&names)
-        .bind(selector.only_id.map(i64::from))
-        .bind(locked_by)
-        .bind(None::<i16>)
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(|source| map_queue("claim", source))?;
-    row.as_ref().map(claimed).transpose()
-}
-
-pub(crate) async fn complete_job(
-    conn: &mut PgConnection,
-    id: JobId,
-    worker: &str,
-) -> Result<(), JobQueueError> {
-    let row = sqlx::query(crate::graphile_sql::COMPLETE)
-        .bind(i64::from(id))
-        .bind(format!("{worker}-"))
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|source| map_queue("complete", source))?;
-    let removed: i64 = queue_cell(&row, "complete", "removed")?;
-    if removed == 0 {
-        return Err(JobQueueError::Missing { id });
-    }
-    Ok(())
-}
-
-pub(crate) async fn release_job(
-    conn: &mut PgConnection,
-    id: JobId,
-    worker: &str,
-) -> Result<(), JobQueueError> {
-    let released: i64 = sqlx::query_scalar(crate::graphile_sql::RELEASE)
-        .bind(i64::from(id))
-        .bind(format!("{worker}-"))
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|source| map_queue("release", source))?;
-    if released == 0 {
-        return Err(JobQueueError::Missing { id });
-    }
-    Ok(())
-}
-
-pub(crate) async fn fail_job(
-    conn: &mut PgConnection,
-    id: JobId,
-    error: &str,
-    worker: &str,
-) -> Result<(), JobQueueError> {
-    let failed: i64 = sqlx::query_scalar(crate::graphile_sql::FAIL)
-        .bind(i64::from(id))
-        .bind(error)
-        .bind(format!("{worker}-"))
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|source| map_queue("fail", source))?;
-    if failed == 0 {
-        return Err(JobQueueError::Missing { id });
-    }
-    Ok(())
-}
-
 pub(crate) async fn read_job(
     conn: &mut PgConnection,
     id: JobId,
@@ -153,18 +64,6 @@ pub(crate) async fn read_job(
     .await
     .map_err(|source| map_queue("read job", source))?;
     row.as_ref().map(stored).transpose()
-}
-
-fn claimed(row: &sqlx::postgres::PgRow) -> Result<ClaimedJob, JobQueueError> {
-    let attempts: i64 = queue_cell(row, "claim", "attempts")?;
-    let id: i64 = queue_cell(row, "claim", "id")?;
-    let identifier: String = queue_cell(row, "claim", "identifier")?;
-    Ok(ClaimedJob {
-        id: JobId::new(id),
-        name: job_name(&identifier)?,
-        payload: queue_cell::<sqlx::types::Json<wire::JsonObject>>(row, "claim", "payload")?.0,
-        attempt: narrow(attempts, "attempt")?,
-    })
 }
 
 fn stored(row: &sqlx::postgres::PgRow) -> Result<StoredJob, JobQueueError> {

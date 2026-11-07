@@ -5,7 +5,6 @@ mod mesh;
 mod models;
 pub(crate) mod plugins;
 mod spool;
-mod tasks;
 mod terminals;
 
 pub use capture::listing::store_roots;
@@ -73,8 +72,6 @@ pub enum ComposeError {
     Devices(#[from] gateway::routes::devices::SetupError),
     #[error(transparent)]
     Pki(#[from] pki::Error),
-    #[error(transparent)]
-    Tasks(#[from] kernel::tasks::TaskError),
     #[error(transparent)]
     Plugins(#[from] gateway::plugins::HostError),
     #[error(transparent)]
@@ -147,7 +144,6 @@ struct Backing {
         Arc<dyn kernel::changes::ChangeFeed>,
         Arc<dyn kernel::changes::DigestStore>,
     )>,
-    tasks: Option<tasks::TaskPorts>,
     tenancy: Option<Arc<dyn kernel::tenancy::TenancyStore>>,
 }
 
@@ -302,7 +298,6 @@ impl Composition {
         let url = config.memory_postgres_url(env).ok_or_else(|| {
             ComposeError::Invalid("no Postgres URL for the memory database".into())
         })?;
-        let (ports, watching) = tasks::postgres(&url, shutdown).await?;
         let backing = Backing {
             presets: agent_presets(memory).await?,
             hub_state: hub_state(memory).await?,
@@ -318,7 +313,6 @@ impl Composition {
             catalog: Some(memory.clone()),
             changes: Some((memory.clone(), memory.clone())),
             summaries: Some(memory.clone()),
-            tasks: Some(ports),
             tenancy: Some(Arc::new(memory_postgres::PostgresTenancy::new(
                 memory.pool().clone(),
             ))),
@@ -333,7 +327,6 @@ impl Composition {
         composition
             .tasks
             .spawn(async move { summaries.await.map_err(ComposeError::Task) });
-        composition.tasks.spawn(async move { Ok(watching.await??) });
         Ok(composition)
     }
 
@@ -359,7 +352,6 @@ impl Composition {
             catalog: Some(store.clone()),
             changes: Some((store.clone(), store.clone())),
             summaries: Some(store.clone()),
-            tasks: Some(tasks::TaskPorts::of(store.as_ref())),
             tenancy: Some(store.clone()),
         };
         let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
@@ -443,19 +435,9 @@ impl Composition {
             std::collections::BTreeMap::new()
         };
         let mesh = mesh::start(config, env, agents, identity.tenancy, shutdown);
-        let mut background = Box::pin(owner_scope.clone().run(mesh)).await?;
-        let delegating = backing.tasks.is_some() && !config.memory_only();
-        if !config.memory_only()
-            && let Some(ports) = backing.tasks
-        {
-            let files_root = gateway.settings().files_root.clone();
-            gateway = tasks::attach(gateway, ports, config, env, files_root).await?;
-        }
+        let background = Box::pin(owner_scope.clone().run(mesh)).await?;
         let started = plugins::started(gateway, env, plugins::node_ports(config, bind.port));
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;
-        if delegating && gateway.has_tasks() {
-            owner_scope.enter(|| tasks::serve(&gateway, shutdown, &mut background));
-        }
         Ok(Self {
             gateway,
             audit_tasks,

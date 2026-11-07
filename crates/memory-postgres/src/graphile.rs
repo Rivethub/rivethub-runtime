@@ -196,7 +196,7 @@ impl GraphileQueue {
             .acquire()
             .await
             .map_err(|source| kernel::queue::JobQueueError::Unavailable(Box::new(source)))?;
-        crate::task_jobs::read_job(&mut conn, id).await
+        crate::jobs::read_job(&mut conn, id).await
     }
 
     pub(crate) async fn complete(&self, id: JobId) -> Result<u64, Error> {
@@ -419,7 +419,6 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
             FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
-            FixedJob::RunTask => 1,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
@@ -432,6 +431,6 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::RunTaskOn { .. } | JobName::Heartbeat { .. } => 1,
+        JobName::Heartbeat { .. } => 1,
     }
 }

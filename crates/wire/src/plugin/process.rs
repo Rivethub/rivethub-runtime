@@ -13,7 +13,6 @@ use crate::plugin::manifest::Permission;
 use crate::plugin::view::{ViewTone, ViewValue};
 use crate::plugin::{PluginId, RouteName};
 use crate::session_id::SessionId;
-use crate::task::TaskStatus;
 
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -52,8 +51,6 @@ pub enum PluginEvent {
         kind: SummaryKind,
         level: u32,
     },
-    #[serde(rename = "task.done", rename_all = "camelCase")]
-    TaskDone { task_id: String, status: TaskStatus },
     #[serde(rename = "settings.changed", rename_all = "camelCase")]
     SettingsChanged { values: BTreeMap<String, ViewValue> },
 }

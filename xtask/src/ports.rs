@@ -49,7 +49,6 @@ fn scoped(rel: &str) -> bool {
             "gateway"
                 | "agent-loop"
                 | "workers"
-                | "tasks"
                 | "mcp"
                 | "capture"
                 | "providers"

@@ -22,7 +22,6 @@ mod review;
 mod session_delete;
 pub mod sessions;
 pub mod tags;
-pub mod tasks;
 pub mod terminal;
 mod tidy;
 mod today;

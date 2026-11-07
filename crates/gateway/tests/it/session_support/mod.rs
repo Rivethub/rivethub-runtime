@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use gateway::tenancy::{Tenancy, UserId};
-use gateway::term::{Delegate, LaunchCommand, TerminalOptions, TerminalService};
+use gateway::term::{LaunchCommand, TerminalOptions, TerminalService};
 use kernel::terminal::{
     PtyInfo, TermSize, TerminalAttachment, TerminalDetails, TerminalId, TerminalMux,
     TerminalMuxError,
@@ -334,24 +334,12 @@ impl Fixture {
         lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
         extra: &[(&str, HarnessId)],
     ) -> Self {
-        Self::with_delegates(harness, registry, lister, extra, BTreeMap::new(), None).await
-    }
-
-    pub(crate) async fn with_delegates(
-        harness: Option<Arc<dyn kernel::harness::HarnessAdapter>>,
-        registry: gateway::sessions::SessionRegistry,
-        lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
-        extra: &[(&str, HarnessId)],
-        delegates: BTreeMap<String, Delegate>,
-        tasks: Option<Arc<gateway::tasks::Tasks>>,
-    ) -> Self {
         let ports = Ports {
             lister,
             deletion: None,
             catalog: None,
-            tasks,
         };
-        Self::build(harness, registry, ports, extra, delegates).await
+        Self::build(harness, registry, ports, extra).await
     }
 
     pub(crate) async fn with_deletion(
@@ -365,9 +353,8 @@ impl Fixture {
             lister,
             deletion: Some(deletion),
             catalog: None,
-            tasks: None,
         };
-        Self::build(harness, registry, ports, extra, BTreeMap::new()).await
+        Self::build(harness, registry, ports, extra).await
     }
 
     pub(crate) async fn with_catalog(
@@ -381,9 +368,8 @@ impl Fixture {
             lister,
             deletion: Some(deletion),
             catalog: Some(catalog),
-            tasks: None,
         };
-        Self::build(harness, registry, ports, &[], BTreeMap::new()).await
+        Self::build(harness, registry, ports, &[]).await
     }
 
     async fn build(
@@ -391,7 +377,6 @@ impl Fixture {
         registry: gateway::sessions::SessionRegistry,
         ports: Ports,
         extra: &[(&str, HarnessId)],
-        delegates: BTreeMap<String, Delegate>,
     ) -> Self {
         let directory = tempfile::tempdir().expect("temporary terminal directory");
         let root = directory.path().to_path_buf();
@@ -426,11 +411,7 @@ impl Fixture {
         )
         .await
         .expect("terminal service");
-        let service = terminal(
-            service.with_delegates(delegates),
-            harness,
-            ports.lister.clone(),
-        );
+        let service = terminal(service, harness, ports.lister.clone());
         let tenancy = Tenancy::local(user("owner"))
             .with_token("alice-test-token", user("alice"))
             .expect("token");
@@ -544,7 +525,6 @@ struct Ports {
     lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
     deletion: Option<Arc<dyn kernel::memory::SessionDeletion>>,
     catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
-    tasks: Option<Arc<gateway::tasks::Tasks>>,
 }
 
 impl Ports {
@@ -557,12 +537,8 @@ impl Ports {
             Some(deletion) => gateway.with_session_deletion(deletion),
             None => gateway,
         };
-        let gateway = match self.catalog {
+        match self.catalog {
             Some(catalog) => gateway.with_session_catalog(catalog),
-            None => gateway,
-        };
-        match self.tasks {
-            Some(tasks) => gateway.with_tasks(tasks),
             None => gateway,
         }
     }

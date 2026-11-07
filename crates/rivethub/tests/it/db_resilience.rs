@@ -27,8 +27,8 @@ use proxy::Proxy;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-const TASK_DOWN: &str = "task watch: database unreachable; reconnecting";
-const TASK_UP: &str = "task watch: database connection restored";
+const TASK_DOWN: &str = "summary watch: database unreachable; reconnecting";
+const TASK_UP: &str = "summary watch: database connection restored";
 const JOB_DOWN: &str = "job notifications: database unreachable; reconnecting";
 const JOB_UP: &str = "job notifications: database connection restored";
 
@@ -327,42 +327,6 @@ async fn worker_stays_up_and_claims_after_the_database_returns(pool: PgPool) -> 
     wait_rows(&pool, &mut running.child, "reap-dead-jobs", false).await?;
     once(&running.logs, JOB_DOWN, JOB_UP).await?;
     stop(running, "worker stopped").await?;
-    drop(proxy);
-    Ok(())
-}
-
-#[sqlx::test(migrations = false)]
-async fn gateway_runs_its_tasks_again_after_the_database_returns(pool: PgPool) -> TestResult {
-    migrate::postgres_pool(&pool).await?;
-    install_queue(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
-    let home = tempfile::tempdir()?;
-    let port = testkit::ports::claim()?;
-    write_state(
-        home.path(),
-        &provider_config(
-            home.path(),
-            &url,
-            &format!(
-                "gateway:\n  host: 127.0.0.1\n  port: {port}\nmesh:\n  node_name: agent-node\n"
-            ),
-        ),
-    )?;
-    let mut running = spawn_rh(home.path(), &["gateway"], "gateway listening on ").await?;
-    proxy.pause().await;
-    running.logs.wait_for(JOB_DOWN).await?;
-    alive(&mut running.child)?;
-    enqueue(
-        &pool,
-        JobName::RunTaskOn {
-            node: "agent-node".to_owned(),
-        },
-    )
-    .await?;
-    proxy.resume();
-    running.logs.wait_for(JOB_UP).await?;
-    wait_rows(&pool, &mut running.child, "run-task:agent-node", true).await?;
-    stop(running, "gateway stopped").await?;
     drop(proxy);
     Ok(())
 }

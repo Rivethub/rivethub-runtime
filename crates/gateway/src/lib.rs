@@ -13,7 +13,6 @@ mod scope;
 pub mod server;
 pub mod sessions;
 mod settings;
-pub mod tasks;
 pub mod tenancy;
 pub mod term;
 pub mod tls;
@@ -78,7 +77,6 @@ pub struct Gateway {
     devices: routes::devices::DeviceRuntime,
     mesh_cache: routes::MeshCache,
     voice: VoiceProxy,
-    tasks: Option<Arc<tasks::Tasks>>,
     providers: Vec<kernel::model::ProviderHealth>,
     memory_export: Option<Arc<dyn kernel::memory::MemoryExport>>,
     topics: Option<Arc<dyn kernel::topics::TopicStore>>,
@@ -145,7 +143,6 @@ impl Gateway {
             devices: routes::devices::DeviceRuntime::unconfigured(),
             mesh_cache: routes::MeshCache::default(),
             voice: VoiceProxy::unconfigured(),
-            tasks: None,
             providers: Vec::new(),
             memory_export: None,
             topics: None,
@@ -209,12 +206,6 @@ impl Gateway {
     #[must_use]
     pub fn with_provider_health(mut self, providers: Vec<kernel::model::ProviderHealth>) -> Self {
         self.providers = providers;
-        self
-    }
-
-    #[must_use]
-    pub fn with_tasks(mut self, tasks: Arc<tasks::Tasks>) -> Self {
-        self.tasks = Some(tasks);
         self
     }
 
@@ -303,15 +294,6 @@ impl Gateway {
     pub fn with_uploads(mut self, uploads: uploads::UploadService) -> Self {
         self.uploads = Some(uploads);
         self
-    }
-
-    pub(crate) fn tasks(&self) -> Option<&Arc<tasks::Tasks>> {
-        self.tasks.as_ref()
-    }
-
-    #[must_use]
-    pub fn has_tasks(&self) -> bool {
-        self.tasks.is_some()
     }
 
     pub(crate) fn uploads(&self) -> Option<&uploads::UploadService> {
@@ -455,11 +437,7 @@ impl Gateway {
         let rewritten = ServiceBuilder::new()
             .layer(MapRequestLayer::new(routes::rewrite_request))
             .service(mounted);
-        let mut served = Router::new();
-        if self.tasks.is_some() {
-            served = served.merge(routes::tasks::router().with_state(Arc::clone(self)));
-        }
-        served
+        Router::new()
             .fallback_service(rewritten)
             .layer(middleware::from_fn_with_state(
                 Arc::clone(self),

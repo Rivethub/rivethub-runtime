@@ -21,8 +21,6 @@
       "permissions": [
         "sessions.read",
         "sessions.control",
-        "tasks.read",
-        "tasks.delegate",
         "agents.read",
         "memory.read",
         "memory.write",
@@ -150,8 +148,7 @@
       "events": [
         "session.idle",
         "session.ended",
-        "summary.written",
-        "task.done"
+        "summary.written"
       ]
     }
   ],
@@ -1658,16 +1655,6 @@
         "sessionId": "claude-code:00000000-0000-4000-8000-000000000001",
         "kind": "leaf",
         "level": 0
-      }
-    },
-    {
-      "seq": 21,
-      "at": 1793000000000,
-      "missed": 0,
-      "event": {
-        "type": "task.done",
-        "taskId": "00000000-0000-4000-8000-000000000004",
-        "status": "completed"
       }
     },
     {

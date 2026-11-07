@@ -1,6 +1,5 @@
 pub mod account;
 pub mod agents;
-pub mod catalog;
 pub mod devices;
 pub mod entities;
 pub mod files;
@@ -8,7 +7,6 @@ pub mod flagged;
 pub mod hub_state;
 pub mod memory;
 pub mod memory_models;
-pub mod notifications;
 pub mod review;
 pub mod roster;
 pub mod session_catalog;

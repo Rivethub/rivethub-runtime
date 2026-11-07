@@ -7,9 +7,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use wire::gateway::agents::AgentListResponse;
 use wire::gateway::agents::AgentStoreBackend;
-use wire::gateway::catalog::CatalogAgentsResponse;
 use wire::gateway::devices::PhonePairingAvailability;
-use wire::task::TasksListResponse;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -134,28 +132,6 @@ async fn phone_pairing_without_an_authority_stays_unavailable_and_agents_come_fr
         .json::<AgentListResponse>()
         .await?;
     assert_eq!(agents.backend, Some(AgentStoreBackend::Postgres));
-    let agents = client
-        .get(format!("{base}/api/catalog/agents"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<CatalogAgentsResponse>()
-        .await?;
-    assert!(
-        agents.agents.iter().any(|agent| matches!(
-            agent,
-            wire::gateway::catalog::CatalogAgent::Node(node) if node.id == "main" && node.local
-        )),
-        "{agents:?}"
-    );
-    let tasks = client
-        .get(format!("{base}/api/tasks"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<TasksListResponse>()
-        .await?;
-    assert!(tasks.tasks.is_empty(), "{tasks:?}");
     let pid = child.id().ok_or("gateway already stopped")?;
     terminate(pid)?;
     let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;

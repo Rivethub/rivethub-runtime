@@ -1,5 +1,4 @@
 use crate::events::Activity;
-use crate::task::TaskStatus;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -247,13 +246,6 @@ pub enum Notification {
         agent_id: String,
         summary: String,
         href: String,
-        #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-        ts: DateTime<Utc>,
-    },
-    #[serde(rename = "task.done", rename_all = "camelCase")]
-    TaskDone {
-        task_id: String,
-        status: TaskStatus,
         #[serde_as(as = "serde_with::TimestampMilliSeconds")]
         ts: DateTime<Utc>,
     },

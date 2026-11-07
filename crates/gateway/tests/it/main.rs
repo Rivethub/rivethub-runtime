@@ -56,8 +56,6 @@ mod session_replay;
 mod sessions;
 mod store_error;
 mod surface;
-mod task_runner;
-mod tasks_http;
 mod term_agents;
 mod term_owner_device;
 mod tls_resolve;

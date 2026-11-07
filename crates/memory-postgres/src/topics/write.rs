@@ -448,7 +448,7 @@ pub(super) async fn enqueue_syncs(
         let job = sync
             .job()
             .map_err(|source| TopicError::Unavailable(Box::new(source)))?;
-        match crate::task_jobs::enqueue_job(conn, &job).await {
+        match crate::jobs::enqueue_job(conn, &job).await {
             Ok(_) => {}
             Err(JobQueueError::Absent) => return Ok(()),
             Err(source) => return Err(TopicError::Unavailable(Box::new(source))),

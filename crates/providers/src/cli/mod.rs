@@ -16,9 +16,9 @@ use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use wire::harness::HarnessId;
+use wire::levels::Effort;
 use wire::session_id::SessionId;
 use wire::stream::ThinkingLevel;
-use wire::task::Effort;
 
 pub use error::CliError;
 

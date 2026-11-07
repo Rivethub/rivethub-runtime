@@ -89,12 +89,6 @@ impl PostgresMemory {
     }
 }
 
-impl crate::PostgresTasks {
-    pub async fn agent_presets(&self) -> Result<Option<PostgresPresets>, Error> {
-        PostgresPresets::detect(self.pool().clone()).await
-    }
-}
-
 #[async_trait]
 impl AgentPresetStore for PostgresPresets {
     fn backend(&self) -> AgentStoreBackend {

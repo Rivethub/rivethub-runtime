@@ -31,7 +31,6 @@ fn public_traits_fail_in_every_service_and_adapter() -> Result {
         "gateway",
         "agent-loop",
         "workers",
-        "tasks",
         "mcp",
         "capture",
         "providers",

@@ -183,7 +183,6 @@ fn ceiling(name: &JobName) -> i32 {
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
             FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
-            FixedJob::RunTask => 1,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
@@ -196,6 +195,6 @@ fn ceiling(name: &JobName) -> i32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::RunTaskOn { .. } | JobName::Heartbeat { .. } => 1,
+        JobName::Heartbeat { .. } => 1,
     }
 }

@@ -44,13 +44,11 @@ memory-sqlite = { workspace = true }
 pki = { workspace = true }
 workers = { workspace = true }
 nix = { workspace = true, features = ["hostname", "inotify", "signal"] }
-rustls-pki-types.workspace = true
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-x509-parser.workspace = true
 reqwest = { workspace = true }
 uuid = { workspace = true }
 

@@ -108,9 +108,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
         JobName::Fixed(FixedJob::DigestDay) => dispatch_digest(env, job, cancel).await,
-        JobName::Fixed(FixedJob::RunTask)
-        | JobName::Heartbeat { .. }
-        | JobName::RunTaskOn { .. } => Err(WorkerError::Unhandled {
+        JobName::Heartbeat { .. } => Err(WorkerError::Unhandled {
             name: job.name.to_string(),
         }),
     }

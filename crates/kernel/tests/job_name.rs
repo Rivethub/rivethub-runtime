@@ -5,7 +5,7 @@ use kernel::queue::JobName;
 use kernel::queue::JobNameError;
 use strum::IntoEnumIterator;
 
-const FIXED: [(&str, JobName); 19] = [
+const FIXED: [(&str, JobName); 18] = [
     ("embed-target", JobName::Fixed(FixedJob::EmbedTarget)),
     (
         "enqueue-unembedded",
@@ -48,7 +48,6 @@ const FIXED: [(&str, JobName); 19] = [
         JobName::Fixed(FixedJob::EnqueueStaleSummaries),
     ),
     ("reap-dead-jobs", JobName::Fixed(FixedJob::ReapDeadJobs)),
-    ("run-task", JobName::Fixed(FixedJob::RunTask)),
     ("sync-topic-page", JobName::Fixed(FixedJob::SyncTopicPage)),
     (
         "purge-deleted-sessions",
@@ -92,16 +91,6 @@ fn heartbeat_with_a_dashed_agent_round_trips() {
         Ok(name.clone())
     );
     assert_eq!(String::from(name), "heartbeat-rivet-edge-agent-7");
-}
-
-#[test]
-fn run_task_on_a_node_round_trips() {
-    let name = JobName::RunTaskOn {
-        node: "node-b".to_string(),
-    };
-    assert_eq!(name.to_string(), "run-task:node-b");
-    assert_eq!(JobName::from_str("run-task:node-b"), Ok(name.clone()));
-    assert_eq!(String::from(name), "run-task:node-b");
 }
 
 #[test]
@@ -155,11 +144,6 @@ fn rejects_a_non_numeric_heartbeat_index() {
 }
 
 #[test]
-fn rejects_an_empty_run_task_node() {
-    assert_eq!(JobName::from_str("run-task:"), Err(JobNameError::EmptyNode));
-}
-
-#[test]
 fn serde_uses_the_wire_string() {
     let heartbeat = JobName::Heartbeat {
         agent: "edge-agent".to_string(),
@@ -168,17 +152,6 @@ fn serde_uses_the_wire_string() {
     assert_eq!(
         serde_json::to_string(&heartbeat).unwrap(),
         "\"heartbeat-edge-agent-3\""
-    );
-    let run_task_on = JobName::RunTaskOn {
-        node: "node-b".to_string(),
-    };
-    assert_eq!(
-        serde_json::to_string(&run_task_on).unwrap(),
-        "\"run-task:node-b\""
-    );
-    assert_eq!(
-        serde_json::to_string(&JobName::Fixed(FixedJob::RunTask)).unwrap(),
-        "\"run-task\""
     );
     for (wire, name) in FIXED {
         let parsed: JobName = serde_json::from_str(&serde_json::to_string(&name).unwrap()).unwrap();

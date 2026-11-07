@@ -54,10 +54,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
         tools,
         host.shutdown.child_token(),
     ));
-    if let Some(tasks) = gateway.tasks() {
-        host.tasks
-            .spawn(forward_task_events(Arc::clone(host), Arc::clone(tasks)));
-    }
     if let Some(summaries) = gateway.summaries.as_ref() {
         host.tasks
             .spawn(forward_summaries(Arc::clone(host), summaries.written()));
@@ -67,34 +63,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
         host.refresh(&id).await;
     }
     Ok(())
-}
-
-async fn forward_task_events(host: Arc<PluginHost>, tasks: Arc<crate::tasks::Tasks>) {
-    let mut finished = tasks.watch.changed();
-    loop {
-        let id = tokio::select! {
-            () = host.shutdown.cancelled() => return,
-            id = finished.recv() => id,
-        };
-        match id {
-            Ok(id) => match tasks.store.load(id).await {
-                Ok(task) if task.status.terminal() => {
-                    host.publish(&PluginEvent::TaskDone {
-                        task_id: id.to_string(),
-                        status: crate::routes::tasks::status_out(task.status),
-                    });
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(%error, %id, "finished task could not be read for plug-ins");
-                }
-            },
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
-                tracing::warn!(missed, "plug-in task events lagged");
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-        }
-    }
 }
 
 async fn forward_summaries(

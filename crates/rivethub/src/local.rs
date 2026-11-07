@@ -1,8 +1,5 @@
 mod import;
 
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,7 +11,6 @@ use kernel::memory::jobs::UnembeddedStore;
 use kernel::memory::{EmbeddingStore, MemoryStore, SessionDeletion, SummaryStore};
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue, MAINTENANCE_PRIORITY};
 use kernel::shutdown::Activities;
-use kernel::tasks::Delegation;
 use kernel::tidy::TidyStore;
 use kernel::topics::DecisionStore;
 use kernel::topics::TopicPageStore;
@@ -48,11 +44,7 @@ enum LocalError {
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
     #[error(transparent)]
-    Dial(#[from] crate::sidecar::dial::DialError),
-    #[error(transparent)]
     Queue(#[from] kernel::queue::JobQueueError),
-    #[error("gateway address is not a loopback url")]
-    GatewayUrl,
 }
 
 impl LocalError {
@@ -61,12 +53,7 @@ impl LocalError {
             Self::Startup(error) => error.exit(),
             Self::Worker(error) => error.exit(),
             Self::Mcp(error) => error.exit(),
-            Self::Import(_)
-            | Self::Store(_)
-            | Self::Join(_)
-            | Self::Dial(_)
-            | Self::Queue(_)
-            | Self::GatewayUrl => Exit::Failure,
+            Self::Import(_) | Self::Store(_) | Self::Join(_) | Self::Queue(_) => Exit::Failure,
         }
     }
 }
@@ -143,9 +130,7 @@ fn report_local(error: &LocalError) {
         LocalError::Import(_)
         | LocalError::Store(_)
         | LocalError::Join(_)
-        | LocalError::Dial(_)
-        | LocalError::Queue(_)
-        | LocalError::GatewayUrl => {
+        | LocalError::Queue(_) => {
             tracing::error!("{error}");
         }
     }
@@ -156,7 +141,6 @@ struct GatewayNode {
     listener: tokio::net::TcpListener,
     tls: Option<gateway::tls::TlsPaths>,
     runners: Vec<(ProcessRole, ComposedRunner<SqliteStore>)>,
-    delegation: Option<Arc<dyn Delegation>>,
     activities: Activities,
 }
 
@@ -195,23 +179,15 @@ async fn bind_node(
     )
     .await?;
     let (listener, tls) = listen(config, env).await?;
-    let addr = listener.local_addr().map_err(StartupError::from)?;
-    let gateway = loopback_url(addr, tls.is_some())?;
     let composition =
         crate::composition::Composition::on_sqlite(config, env, store, shutdown, activities)
             .await
             .map_err(StartupError::from)?;
-    let delegation = if composition.gateway().has_tasks() {
-        Some(crate::sidecar::local_delegation(config, env, gateway).await?)
-    } else {
-        None
-    };
     Ok(GatewayNode {
         composition,
         listener,
         tls,
         runners,
-        delegation,
         activities: activities.clone(),
     })
 }
@@ -229,7 +205,6 @@ async fn supervise(
         listener,
         tls,
         runners,
-        delegation,
         activities,
     } = node;
     let addr = listener.local_addr().map_err(StartupError::from)?;
@@ -250,7 +225,7 @@ async fn supervise(
         shutdown: &shutdown,
         plugins: composition.gateway().plugins().cloned(),
     })
-    .start(runners, delegation)
+    .start(runners)
     .await
     {
         shutdown.cancel();
@@ -296,7 +271,6 @@ impl NodeBoot<'_> {
     async fn start(
         &self,
         runners: Vec<(ProcessRole, ComposedRunner<SqliteStore>)>,
-        delegation: Option<Arc<dyn Delegation>>,
     ) -> Result<(), LocalError> {
         if self.switches.contains(&ServiceSwitch::Workers) {
             enqueue_sweep(
@@ -318,17 +292,16 @@ impl NodeBoot<'_> {
             enqueue_sweep(self.store, FixedJob::ConsolidateWiki, "wiki-consolidate", 5).await?;
         }
         spawn_workers(self.tracker, self.failed, self.shutdown, runners);
-        self.spawn_mcp(delegation)
+        self.spawn_mcp()
     }
 
-    fn spawn_mcp(&self, delegation: Option<Arc<dyn Delegation>>) -> Result<(), LocalError> {
+    fn spawn_mcp(&self) -> Result<(), LocalError> {
         if !self.switches.contains(&ServiceSwitch::Mcp) {
             return Ok(());
         }
         let task = sidecar::memory_future(
             self.config,
             Arc::clone(self.store) as Arc<dyn MemoryStore>,
-            delegation,
             self.plugins
                 .clone()
                 .map(|host| host as Arc<dyn kernel::plugins::PluginTools>),
@@ -363,24 +336,6 @@ async fn enqueue_sweep(
         })
         .await?;
     Ok(())
-}
-
-fn loopback_url(addr: SocketAddr, secure: bool) -> Result<url::Url, LocalError> {
-    let ip = if addr.ip().is_unspecified() {
-        IpAddr::V4(Ipv4Addr::LOCALHOST)
-    } else {
-        addr.ip()
-    };
-    let mut url = url::Url::parse("http://127.0.0.1/").map_err(|_| LocalError::GatewayUrl)?;
-    if secure {
-        url.set_scheme("https")
-            .map_err(|()| LocalError::GatewayUrl)?;
-    }
-    url.set_ip_host(ip).map_err(|()| LocalError::GatewayUrl)?;
-    url.set_port(Some(addr.port()))
-        .map_err(|()| LocalError::GatewayUrl)?;
-    url.set_path("/");
-    Ok(url)
 }
 
 async fn await_node(

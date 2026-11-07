@@ -393,7 +393,6 @@ fn default_max_attempts(name: &JobName) -> u32 {
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
             FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
-            FixedJob::RunTask => 1,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
@@ -406,7 +405,7 @@ fn default_max_attempts(name: &JobName) -> u32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::Heartbeat { .. } | JobName::RunTaskOn { .. } => 1,
+        JobName::Heartbeat { .. } => 1,
     }
 }
 

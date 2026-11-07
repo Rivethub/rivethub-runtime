@@ -372,7 +372,7 @@ fn fixed(job: FixedJob) -> JobName {
 fn port_max_attempts(name: &JobName) -> u32 {
     match name {
         JobName::Fixed(fixed) => fixed_attempts(*fixed),
-        JobName::Heartbeat { .. } | JobName::RunTaskOn { .. } => 1,
+        JobName::Heartbeat { .. } => 1,
     }
 }
 
@@ -380,7 +380,6 @@ fn fixed_attempts(fixed: FixedJob) -> u32 {
     match fixed {
         FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall | FixedJob::DigestDay => 3,
         FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
-        FixedJob::RunTask => 1,
         FixedJob::EmbedTarget
         | FixedJob::EnqueueUnembedded
         | FixedJob::EnqueueUnchunked

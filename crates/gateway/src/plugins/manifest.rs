@@ -137,7 +137,10 @@ mod tests {
     fn manifest_problems_name_the_field() {
         assert!(check_manifest(&manifest(RUN).unwrap()).is_ok());
         let problems = [
-            (format!(r#"{RUN}, "events": ["task.done"]"#), "events[0]"),
+            (
+                format!(r#"{RUN}, "events": ["summary.written"]"#),
+                "events[0]",
+            ),
             (r#""run": {"command": []}"#.to_owned(), "run.command"),
             (
                 r#""run": {"command": ["/usr/bin/node"]}"#.to_owned(),

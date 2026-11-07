@@ -1,6 +1,3 @@
-mod delegation;
-pub(crate) mod dial;
-
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -27,8 +24,6 @@ pub(crate) enum SidecarError {
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]
-    Dial(#[from] dial::DialError),
-    #[error(transparent)]
     Compose(#[from] crate::composition::ComposeError),
     #[error(transparent)]
     Sqlite(#[from] memory_sqlite::SqliteError),
@@ -44,7 +39,6 @@ impl SidecarError {
             Self::Join(_)
             | Self::Invalid(_)
             | Self::Compose(_)
-            | Self::Dial(_)
             | Self::Sqlite(_)
             | Self::SqlitePath => Exit::Failure,
         }
@@ -135,7 +129,6 @@ pub(crate) fn report_error(error: &SidecarError) {
         SidecarError::Mcp(_)
         | SidecarError::Join(_)
         | SidecarError::Invalid(_)
-        | SidecarError::Dial(_)
         | SidecarError::Compose(_)
         | SidecarError::Sqlite(_)
         | SidecarError::SqlitePath => {
@@ -197,39 +190,19 @@ async fn run_server(
     selected: Selected,
     shutdown: &CancellationToken,
 ) -> Result<(), SidecarError> {
-    let delegation: Arc<dyn kernel::tasks::Delegation> = Arc::new(
-        delegation::GatewayDelegation::open(
-            config,
-            env,
-            delegation::GatewayDelegation::session_parent(env),
-        )
-        .await?,
-    );
     let folder = crate::composition::plugins::tools_folder(config, env)?;
     let plugins =
         mcp::plugins::SocketTools::new(folder.join("tools.sock"), folder.join("tools.token"))?;
     let server = mcp::Server::builder(memory, false, shutdown.child_token())
         .display_zone(display_zone(env))
-        .delegation(delegation, surface(&selected))
         .plugins(Arc::new(plugins))
         .build()?;
     serve(server, selected, shutdown.clone()).await
 }
 
-pub(crate) async fn local_delegation(
-    config: &Config,
-    env: &Environment,
-    gateway: url::Url,
-) -> Result<Arc<dyn kernel::tasks::Delegation>, dial::DialError> {
-    Ok(Arc::new(
-        delegation::GatewayDelegation::local(config, env, gateway).await?,
-    ))
-}
-
 pub(crate) fn memory_future(
     config: &Config,
     memory: Arc<dyn MemoryStore>,
-    delegation: Option<Arc<dyn kernel::tasks::Delegation>>,
     plugins: Option<Arc<dyn kernel::plugins::PluginTools>>,
     zone: chrono_tz::Tz,
     shutdown: CancellationToken,
@@ -243,9 +216,6 @@ pub(crate) fn memory_future(
     }
     let mut builder =
         mcp::Server::builder(memory, false, shutdown.child_token()).display_zone(zone);
-    if let Some(port) = delegation {
-        builder = builder.delegation(port, mcp::Surface::Stdio);
-    }
     if let Some(port) = plugins {
         builder = builder.plugins(port);
     }
@@ -255,13 +225,6 @@ pub(crate) fn memory_future(
         tracing::info!("mcp stopped");
         Ok(())
     })
-}
-
-fn surface(selected: &Selected) -> mcp::Surface {
-    match selected {
-        Selected::Stdio => mcp::Surface::Stdio,
-        Selected::Network { .. } => mcp::Surface::Remote,
-    }
 }
 
 fn load_standalone_or_node(env: &Environment) -> Result<Config, StartupError> {

@@ -3161,7 +3161,6 @@ dependencies = [
  "rmcp",
  "rusqlite",
  "rustls",
- "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -3180,7 +3179,6 @@ dependencies = [
  "uuid",
  "wire",
  "workers",
- "x509-parser",
 ]
 
 [[package]]
@@ -4199,7 +4197,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
- "tracing",
  "uuid",
  "wire",
 ]
