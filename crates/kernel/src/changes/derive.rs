@@ -29,7 +29,11 @@ pub fn changes(records: Vec<ChangeRecord>, window: &ChangeWindow) -> Vec<Change>
                 .or_insert_with(|| (title, Vec::new()))
                 .1
                 .push(claim),
-            other => found.extend(change(other)),
+            other @ (ChangeRecord::Decision { .. }
+            | ChangeRecord::Created { .. }
+            | ChangeRecord::Placed { .. }
+            | ChangeRecord::Tagged { .. }
+            | ChangeRecord::Merged { .. }) => found.extend(change(other)),
         }
     }
     for (entity, (title, history)) in claims {

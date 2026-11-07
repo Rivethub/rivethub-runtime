@@ -25,10 +25,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (58, 1));
+    assert_eq!((gapped.current, gapped.pending), (60, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (58, 0));
+    assert_eq!((migrated.current, migrated.pending), (60, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -44,12 +44,12 @@ async fn empty_database_reaches_the_recorded_shape(pool: PgPool) -> TestResult {
     let tracked = sqlx::query("SELECT count(*)::bigint AS n FROM _rivetos_migrations")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(tracked.try_get::<i64, _>("n").unwrap(), 54);
+    assert_eq!(tracked.try_get::<i64, _>("n").unwrap(), 55);
 
     let applied = sqlx::query("SELECT count(*)::bigint AS n FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(applied.try_get::<i64, _>("n").unwrap(), 54);
+    assert_eq!(applied.try_get::<i64, _>("n").unwrap(), 55);
 
     migrate::postgres_pool(&pool).await?;
 

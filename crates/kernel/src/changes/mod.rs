@@ -32,7 +32,8 @@ pub use self::today::headline;
 pub use self::today::learned;
 pub use self::today::recently_updated;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display)]
+#[strum(serialize_all = "lowercase")]
 pub enum ChangeKind {
     Fact,
     Decision,

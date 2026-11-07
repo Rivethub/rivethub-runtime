@@ -183,10 +183,11 @@ async fn today_is_the_days_sessions_with_the_changes_they_caused() {
              The day brought 1 decision, 1 new page and 1 session filed."
         )
     );
-    assert!(digest.needs_you.is_empty());
+    assert_eq!(digest.needs_you, []);
     assert_eq!(digest.review_count, 0);
-    assert_eq!(digest.entries.len(), 1);
-    let entry = &digest.entries[0];
+    let [entry] = digest.entries.as_slice() else {
+        panic!("one session that day: {:?}", digest.entries);
+    };
     assert_eq!(entry.session.title, "Set up nightly backups");
     assert_eq!(
         entry
@@ -197,9 +198,10 @@ async fn today_is_the_days_sessions_with_the_changes_they_caused() {
         ["Filed under Backups.", "Keep 14 days of nightly dumps"]
     );
     assert_eq!(
-        entry.changes[0]
-            .source
-            .as_ref()
+        entry
+            .changes
+            .first()
+            .and_then(|change| change.source.as_ref())
             .map(|source| source.title.as_str()),
         Some("Set up nightly backups")
     );
@@ -228,12 +230,10 @@ async fn today_is_the_days_sessions_with_the_changes_they_caused() {
         ]
     );
     let requested = digests.requested.lock().clone();
-    assert_eq!(
-        requested.len(),
-        1,
-        "a day with changes and no digest queues one"
-    );
-    assert_eq!(requested[0].day.to_string(), "2026-09-21");
+    let [request] = requested.as_slice() else {
+        panic!("a day with changes and no digest queues one: {requested:?}");
+    };
+    assert_eq!(request.day.to_string(), "2026-09-21");
 }
 
 #[tokio::test]
@@ -251,7 +251,7 @@ async fn a_kept_digest_is_the_summary_and_is_not_asked_for_again_while_current()
         .unwrap();
     let digest = today(app(digests.clone()), "2026-09-21").await;
     assert_eq!(digest.summary, "The day set up [Backups](/topics/x).");
-    assert!(digests.requested.lock().is_empty());
+    assert_eq!(*digests.requested.lock(), []);
 }
 
 #[tokio::test]
@@ -263,9 +263,11 @@ async fn a_quiet_day_says_so_and_queues_nothing() {
         digest.summary,
         "1 session was captured. Nothing new was learned from it yet."
     );
-    assert_eq!(digest.entries.len(), 1);
-    assert!(digest.entries[0].changes.is_empty());
-    assert!(digests.requested.lock().is_empty());
+    let [entry] = digest.entries.as_slice() else {
+        panic!("one session that day: {:?}", digest.entries);
+    };
+    assert_eq!(entry.changes, []);
+    assert_eq!(*digests.requested.lock(), []);
 }
 
 #[tokio::test]

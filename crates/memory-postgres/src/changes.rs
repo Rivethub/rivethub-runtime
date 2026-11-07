@@ -303,8 +303,10 @@ impl DigestStore for PostgresMemory {
             .await
             .map_err(failed("daily digest job"))?;
         match crate::task_jobs::enqueue_job(&mut conn, &job).await {
-            Ok(_) | Err(JobQueueError::Absent) => Ok(()),
-            Err(source) => Err(ChangeError::Unavailable(Box::new(source))),
+            Ok(_) => {}
+            Err(JobQueueError::Absent) => return Ok(()),
+            Err(source) => return Err(ChangeError::Unavailable(Box::new(source))),
         }
+        Ok(())
     }
 }

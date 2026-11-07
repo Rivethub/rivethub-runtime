@@ -112,19 +112,23 @@ async fn the_summarizer_writes_the_days_digest_from_its_changes() {
     };
     handle_digest_day(&env, &request()).await.unwrap();
     let written = kept.0.lock().await.clone();
-    assert_eq!(written.len(), 1);
-    assert_eq!(written[0].day, "2026-11-05".parse::<NaiveDate>().unwrap());
-    assert_eq!(written[0].owner.as_str(), "owner");
-    assert_eq!(written[0].changes, 2);
+    let [digest] = written.as_slice() else {
+        panic!("one digest is kept: {written:?}");
+    };
+    assert_eq!(digest.day, "2026-11-05".parse::<NaiveDate>().unwrap());
+    assert_eq!(digest.owner.as_str(), "owner");
+    assert_eq!(digest.changes, 2);
     assert_eq!(
-        written[0].summary,
+        digest.summary,
         format!("The day set up [Backups](/topics/{BACKUPS}). Dumps are kept 14 days.")
     );
     let requests = provider.chat_requests().await;
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].model, "summarizer-model");
-    let prompt = match &requests[0].messages[1].content {
-        MessageContent::Text(text) => text.clone(),
+    let [asked] = requests.as_slice() else {
+        panic!("one model call: {requests:?}");
+    };
+    assert_eq!(asked.model, "summarizer-model");
+    let prompt = match asked.messages.get(1).map(|message| &message.content) {
+        Some(MessageContent::Text(text)) => text.clone(),
         other => panic!("the prompt is text: {other:?}"),
     };
     assert!(
@@ -155,6 +159,6 @@ async fn a_day_without_changes_asks_no_model_and_keeps_nothing() {
         cancel: &cancel,
     };
     handle_digest_day(&env, &request()).await.unwrap();
-    assert!(kept.0.lock().await.is_empty());
-    assert!(provider.chat_requests().await.is_empty());
+    assert_eq!(*kept.0.lock().await, []);
+    assert_eq!(provider.chat_requests().await.len(), 0, "no model call");
 }

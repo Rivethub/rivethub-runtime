@@ -27,6 +27,7 @@ use kernel::topics::TopicKind;
 use kernel::topics::TopicName;
 use kernel::topics::TopicStore;
 use uuid::Uuid;
+use wire::session_id::SessionId;
 
 use crate::topics::Outcome;
 use crate::topics::at;
@@ -83,9 +84,9 @@ fn shown(changes: &[Change]) -> Vec<(ChangeKind, String, Option<String>)> {
         .collect()
 }
 
-pub async fn changes_list_what_the_day_recorded<S>(store: &S) -> Outcome
+async fn seed<S>(store: &S) -> Result<(SessionId, TopicId), Box<dyn std::error::Error>>
 where
-    S: TopicStore + FactStore + DecisionStore + ChangeFeed,
+    S: TopicStore + FactStore + DecisionStore,
 {
     let filed = session(FILED)?;
     let backups = topic(store, "Backups", TopicKind::Work, None, 1).await?;
@@ -131,6 +132,14 @@ where
         })
         .await?;
     store.merge(jobs.id, backups.id, at(7)).await?;
+    Ok((filed, nas.id))
+}
+
+pub async fn changes_list_what_the_day_recorded<S>(store: &S) -> Outcome
+where
+    S: TopicStore + FactStore + DecisionStore + ChangeFeed,
+{
+    let (filed, nas) = seed(store).await?;
     let source = Some(filed.to_string());
     let day = store.changes(&ChangeWindow::between(at(0), at(60))).await?;
     same(
@@ -194,7 +203,7 @@ where
     )?;
     let mut history = ChangeWindow::between(at(0), at(60));
     history.from = None;
-    history.subject = Some(SubjectKey::Topic(nas.id));
+    history.subject = Some(SubjectKey::Topic(nas));
     same(
         "an entity's history has its facts and its creation",
         shown(&store.changes(&history).await?)

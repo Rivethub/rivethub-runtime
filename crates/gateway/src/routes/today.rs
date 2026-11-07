@@ -70,8 +70,10 @@ struct ChangeParams {
     limit: Option<usize>,
 }
 
-fn feed_error(error: kernel::changes::ChangeError) -> ApiError {
-    ApiError::Unavailable(error.to_string())
+impl From<kernel::changes::ChangeError> for ApiError {
+    fn from(error: kernel::changes::ChangeError) -> Self {
+        Self::Unavailable(error.to_string())
+    }
 }
 
 fn subject_key(text: &str) -> Result<SubjectKey, ApiError> {
@@ -202,11 +204,7 @@ async fn changes(
         to: params.to.unwrap_or_else(Utc::now),
         subject: params.subject.as_deref().map(subject_key).transpose()?,
     };
-    let mut found = gateway
-        .changes()?
-        .changes(&window)
-        .await
-        .map_err(feed_error)?;
+    let mut found = gateway.changes()?.changes(&window).await?;
     found.truncate(
         params
             .limit
@@ -264,10 +262,11 @@ async fn sources(
         if have.iter().chain(&found).any(|record| record.id == session) {
             continue;
         }
-        if let Some(record) = catalog.get(&session).await? {
-            if !record.trashed && shown(gateway, user, &record) {
-                found.push(record);
-            }
+        if let Some(record) = catalog.get(&session).await?
+            && !record.trashed
+            && shown(gateway, user, &record)
+        {
+            found.push(record);
         }
     }
     Ok(found)
@@ -282,23 +281,93 @@ async fn summary(
     sessions: usize,
 ) -> Result<String, ApiError> {
     let digests = gateway.digests()?;
-    let kept = digests
-        .digest(date, user.owner())
-        .await
-        .map_err(feed_error)?;
+    let kept = digests.digest(date, user.owner()).await?;
     let stale = kept.as_ref().is_none_or(|digest| {
         !usize::try_from(digest.changes).is_ok_and(|counted| counted == day.len())
     });
     if stale && !day.is_empty() {
         digests
             .request_digest(&DigestRequest::new(date, start, end, user.owner()))
-            .await
-            .map_err(feed_error)?;
+            .await?;
     }
     Ok(match kept {
         Some(digest) => digest.summary,
         None => kernel::changes::fallback_summary(day, sessions),
     })
+}
+
+struct DaySessions {
+    records: Vec<SessionRecord>,
+    marks: BTreeMap<SessionId, String>,
+    lineage: Lineage,
+}
+
+impl DaySessions {
+    async fn load(
+        gateway: &Gateway,
+        user: &UserId,
+        (start, end): (DateTime<Utc>, DateTime<Utc>),
+        day: &[Change],
+    ) -> Result<Self, ApiError> {
+        let lineage = lineage(gateway).await;
+        let mut records = day_sessions(gateway, user, &lineage, start, end).await?;
+        let caused = day
+            .iter()
+            .filter_map(|change| change.source.as_ref())
+            .map(|session| top(&lineage, session));
+        let more = sources(gateway, user, &records, caused).await?;
+        records.extend(more);
+        records.sort_by(|left, right| {
+            let last = |record: &SessionRecord| record.ended_at.unwrap_or(record.started_at);
+            last(right).cmp(&last(left)).then(right.id.cmp(&left.id))
+        });
+        let ids: Vec<SessionId> = records.iter().map(|record| record.id.clone()).collect();
+        let marks = visibilities(gateway, user, &ids).await?;
+        Ok(Self {
+            records,
+            marks,
+            lineage,
+        })
+    }
+
+    fn entries(self, day: &[Change], titles: &Titles) -> Vec<today::TodayEntry> {
+        let Self {
+            records,
+            marks,
+            lineage,
+        } = self;
+        records
+            .into_iter()
+            .map(|record| {
+                let changes = day
+                    .iter()
+                    .filter(|change| {
+                        change
+                            .source
+                            .as_ref()
+                            .is_some_and(|source| top(&lineage, source) == record.id)
+                    })
+                    .map(|change| titles.change(change))
+                    .collect();
+                let visibility = marks
+                    .get(&record.id)
+                    .cloned()
+                    .unwrap_or_else(|| PRIVATE.to_owned());
+                today::TodayEntry {
+                    session: row(record, visibility, &lineage),
+                    changes,
+                }
+            })
+            .collect()
+    }
+}
+
+fn top(lineage: &Lineage, session: &SessionId) -> SessionId {
+    lineage
+        .parents
+        .get(&session.to_string())
+        .cloned()
+        .unwrap_or_else(|| session.clone())
 }
 
 async fn digest(
@@ -313,8 +382,7 @@ async fn digest(
     let all = gateway
         .changes()?
         .changes(&ChangeWindow::between(from, month_end(date)?.max(end)))
-        .await
-        .map_err(feed_error)?;
+        .await?;
     let before_end: Vec<Change> = all
         .iter()
         .filter(|change| change.at < end)
@@ -325,47 +393,18 @@ async fn digest(
         .filter(|change| change.at >= start)
         .cloned()
         .collect();
-    let lineage = lineage(&gateway).await;
-    let top = |session: &SessionId| {
-        lineage
-            .parents
-            .get(&session.to_string())
-            .cloned()
-            .unwrap_or_else(|| session.clone())
-    };
-    let mut records = day_sessions(&gateway, &user, &lineage, start, end).await?;
-    let caused: Vec<SessionId> = day
-        .iter()
-        .filter_map(|change| change.source.as_ref().map(top))
-        .collect();
-    let more = sources(&gateway, &user, &records, caused.into_iter()).await?;
-    records.extend(more);
-    records.sort_by(|left, right| {
-        let last = |record: &SessionRecord| record.ended_at.unwrap_or(record.started_at);
-        last(right).cmp(&last(left)).then(right.id.cmp(&left.id))
-    });
-    let ids: Vec<SessionId> = records.iter().map(|record| record.id.clone()).collect();
-    let marks = visibilities(&gateway, &user, &ids).await?;
-    let titles = Titles::load(&gateway, &records, &all).await?;
-    let summary = summary(&gateway, &user, date, (start, end), &day, records.len()).await?;
-    let entries = records
-        .into_iter()
-        .map(|record| {
-            let changes = day
-                .iter()
-                .filter(|change| change.source.as_ref().map(top).as_ref() == Some(&record.id))
-                .map(|change| titles.change(change))
-                .collect();
-            let visibility = marks
-                .get(&record.id)
-                .cloned()
-                .unwrap_or_else(|| PRIVATE.to_owned());
-            today::TodayEntry {
-                session: row(record, visibility, &lineage),
-                changes,
-            }
-        })
-        .collect();
+    let sessions = DaySessions::load(&gateway, &user, (start, end), &day).await?;
+    let titles = Titles::load(&gateway, &sessions.records, &all).await?;
+    let summary = summary(
+        &gateway,
+        &user,
+        date,
+        (start, end),
+        &day,
+        sessions.records.len(),
+    )
+    .await?;
+    let entries = sessions.entries(&day, &titles);
     Ok(Json(today::TodayDigest {
         date,
         headline: kernel::changes::headline(kernel::changes::learned(&day), date, today),

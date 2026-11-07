@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use chrono::DateTime;
 use chrono::NaiveDate;
 use chrono::Utc;

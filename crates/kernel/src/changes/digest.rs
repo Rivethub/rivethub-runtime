@@ -8,7 +8,6 @@ use values::JsonObject;
 
 use super::Change;
 use super::ChangeError;
-use super::ChangeKind;
 use super::ChangeWindow;
 use crate::owner::Owner;
 use crate::queue::FixedJob;
@@ -114,20 +113,11 @@ pub fn digest_prompt(day: NaiveDate, changes: &[Change]) -> String {
 }
 
 fn prompt_line(change: &Change) -> String {
-    let kind = match change.kind {
-        ChangeKind::Fact => "fact",
-        ChangeKind::Decision => "decision",
-        ChangeKind::New => "new",
-        ChangeKind::Filed => "filed",
-        ChangeKind::Conflict => "conflict",
-        ChangeKind::Tag => "tag",
-        ChangeKind::Merge => "merge",
-    };
     let on = change
         .subject
         .link()
         .unwrap_or_else(|| "a session".to_owned());
-    format!("- {kind} on {on}: {}", change.text)
+    format!("- {} on {on}: {}", change.kind, change.text)
 }
 
 #[must_use]
