@@ -350,6 +350,7 @@ fn tasks_for(role: WorkerRole) -> Vec<JobName> {
             fixed(FixedJob::ReapDeadJobs),
             fixed(FixedJob::SyncTopicPage),
             fixed(FixedJob::PurgeDeletedSessions),
+            fixed(FixedJob::DigestDay),
         ],
         WorkerRole::Categorizer => vec![
             fixed(FixedJob::FileConversation),
@@ -377,7 +378,7 @@ fn port_max_attempts(name: &JobName) -> u32 {
 
 fn fixed_attempts(fixed: FixedJob) -> u32 {
     match fixed {
-        FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall => 3,
+        FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall | FixedJob::DigestDay => 3,
         FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
         FixedJob::RunTask => 1,
         FixedJob::EmbedTarget

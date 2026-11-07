@@ -10,6 +10,7 @@ use super::Topic;
 use super::TopicError;
 use super::TopicId;
 use super::TopicKind;
+use super::TopicName;
 use super::TopicTree;
 
 pub fn check_parent(child: &Topic, parent: &Topic, tree: &TopicTree) -> Result<(), TopicError> {
@@ -47,6 +48,7 @@ const fn nests_under(child: TopicKind, parent: TopicKind) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergePlan {
     pub source: TopicId,
+    pub source_name: TopicName,
     pub into: TopicId,
     pub redirect: Redirect,
     pub aliases: Vec<Alias>,
@@ -93,6 +95,7 @@ impl MergePlan {
             .collect();
         Ok(Self {
             source: source.id,
+            source_name: source.name.clone(),
             into: into.id,
             redirect: Redirect {
                 slug: source.slug.clone(),

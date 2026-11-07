@@ -1,6 +1,7 @@
 mod append;
 mod bundle;
 pub mod capture;
+mod changes;
 mod context;
 mod conversation;
 mod deletion;
@@ -101,7 +102,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 33;
+pub const SCHEMA_VERSION: i64 = 34;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -351,7 +352,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 74));
+        assert_eq!(state, (crate::SCHEMA_VERSION, 75));
     }
 
     #[tokio::test]

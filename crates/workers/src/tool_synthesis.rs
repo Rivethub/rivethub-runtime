@@ -147,7 +147,7 @@ fn valid_sentence(text: &str) -> Option<&str> {
     .then_some(text)
 }
 
-fn message_text(role: Role, content: String) -> Message {
+pub(crate) fn message_text(role: Role, content: String) -> Message {
     Message {
         role,
         content: MessageContent::Text(content),

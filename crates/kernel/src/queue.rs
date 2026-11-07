@@ -103,6 +103,7 @@ pub enum FixedJob {
     RunTask,
     SyncTopicPage,
     PurgeDeletedSessions,
+    DigestDay,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -289,6 +290,7 @@ impl WorkerRole {
                 JobName::Fixed(FixedJob::ReapDeadJobs),
                 JobName::Fixed(FixedJob::SyncTopicPage),
                 JobName::Fixed(FixedJob::PurgeDeletedSessions),
+                JobName::Fixed(FixedJob::DigestDay),
             ],
             Self::Categorizer => &[
                 JobName::Fixed(FixedJob::FileConversation),

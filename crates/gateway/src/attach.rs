@@ -204,6 +204,33 @@ impl Gateway {
         self
     }
 
+    #[must_use]
+    pub fn with_changes(
+        mut self,
+        changes: Arc<dyn kernel::changes::ChangeFeed>,
+        digests: Arc<dyn kernel::changes::DigestStore>,
+    ) -> Self {
+        self.changes = Some(changes);
+        self.digests = Some(digests);
+        self
+    }
+
+    pub(crate) fn changes(
+        &self,
+    ) -> Result<&Arc<dyn kernel::changes::ChangeFeed>, crate::error::ApiError> {
+        self.changes
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("change feed unavailable".into()))
+    }
+
+    pub(crate) fn digests(
+        &self,
+    ) -> Result<&Arc<dyn kernel::changes::DigestStore>, crate::error::ApiError> {
+        self.digests
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("daily digests unavailable".into()))
+    }
+
     pub(crate) fn session_catalog(&self) -> Option<&dyn kernel::memory::SessionCatalog> {
         self.session_catalog.as_deref()
     }

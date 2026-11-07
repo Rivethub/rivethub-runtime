@@ -18,4 +18,5 @@ pub use query::compose_query_input;
 pub use scoring::composite_score;
 pub use scoring::recency_boost;
 pub use window::TimeRange;
+pub use window::day_window;
 pub use window::resolve_window;

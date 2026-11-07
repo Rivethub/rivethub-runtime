@@ -127,6 +127,10 @@ pub enum WorkerError {
     Tidy(#[from] kernel::tidy::TidyError),
     #[error("{message}")]
     TidyAnswer { message: String },
+    #[error("the change feed failed: {0}")]
+    Changes(#[from] kernel::changes::ChangeError),
+    #[error("the model returned an empty daily digest")]
+    EmptyDigest,
 }
 
 impl WorkerError {

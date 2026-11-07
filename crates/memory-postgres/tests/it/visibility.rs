@@ -1533,3 +1533,57 @@ async fn a_review_mark_is_read_and_written_only_by_its_owner(pool: PgPool) -> Te
     assert_eq!(visible(&probe, owners, "rh_review_marks").await?, 1);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_change_feed_shows_a_viewer_only_what_they_may_read(pool: PgPool) -> TestResult {
+    use kernel::changes::ChangeFeed as _;
+    use kernel::changes::ChangeKind;
+    use kernel::changes::ChangeWindow;
+    let (store, _) = seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let alice = viewer("alice")?;
+    let now = Utc::now();
+    let topic = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new("Private plans")?,
+                aliases: Vec::new(),
+                parent: None,
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    store
+        .place(Placement {
+            session: SessionId::try_from(FIRST.to_owned())?,
+            topic: topic.id,
+            by: PlacementSource::You,
+            at: now,
+            owner: Some(alice.principal().clone()),
+        })
+        .await?;
+    let scoped = PostgresMemory::new(probe);
+    let window = ChangeWindow::between(now - Duration::hours(1), now + Duration::hours(1));
+    let kinds = |changes: Vec<kernel::changes::Change>| {
+        changes
+            .into_iter()
+            .map(|change| change.kind)
+            .collect::<Vec<_>>()
+    };
+    let owners = kinds(Scope::Viewer(alice).run(scoped.changes(&window)).await?);
+    assert_eq!(owners, [ChangeKind::New, ChangeKind::Filed]);
+    let members = kinds(
+        Scope::Viewer(viewer("bob")?)
+            .run(scoped.changes(&window))
+            .await?,
+    );
+    assert!(
+        members.is_empty(),
+        "bob sees none of alice's private topic: {members:?}"
+    );
+    Ok(())
+}

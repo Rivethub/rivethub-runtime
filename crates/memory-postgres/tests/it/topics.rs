@@ -311,3 +311,17 @@ async fn upkeep_counts_filings_entities_and_finished_jobs(pool: PgPool) -> TestR
 async fn every_topic_s_filing_reads_at_once(pool: PgPool) -> TestResult {
     testkit::filing_bulk::every_topic_s_filing_reads_at_once(&PostgresMemory::new(pool)).await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn changes_list_what_the_day_recorded(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::changes_list_what_the_day_recorded(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn digests_are_kept_per_day_and_owner(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::digests_are_kept_per_day_and_owner(&memory).await?;
+    Ok(())
+}

@@ -38,6 +38,93 @@
       ],
       "type": "string"
     },
+    "ActivityDay": {
+      "properties": {
+        "date": {
+          "format": "date",
+          "type": "string"
+        },
+        "level": {
+          "format": "uint8",
+          "maximum": 4,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "date",
+        "level"
+      ],
+      "type": "object"
+    },
+    "Actor": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "you",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "wiki-writer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "categorizer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "summarizer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "harness": {
+              "$ref": "#/$defs/HarnessId"
+            },
+            "kind": {
+              "const": "capture",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "harness"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "AgentEvent": {
       "oneOf": [
         {
@@ -2159,6 +2246,44 @@
         "id",
         "node",
         "local"
+      ],
+      "type": "object"
+    },
+    "Change": {
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subject": {
+          "$ref": "#/$defs/SubjectRef"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "subject",
+        "text",
+        "at",
+        "actor"
       ],
       "type": "object"
     },
@@ -9155,6 +9280,7 @@
       ],
       "type": "object"
     },
+    "PendingReview": false,
     "PendingTagAction": {
       "enum": [
         "add",
@@ -11780,6 +11906,21 @@
       },
       "required": [
         "previews"
+      ],
+      "type": "object"
+    },
+    "SessionRef": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
       ],
       "type": "object"
     },
@@ -14602,6 +14743,82 @@
         "at",
         "text",
         "kind"
+      ],
+      "type": "object"
+    },
+    "TodayDigest": {
+      "properties": {
+        "activityByDay": {
+          "items": {
+            "$ref": "#/$defs/ActivityDay"
+          },
+          "type": "array"
+        },
+        "date": {
+          "format": "date",
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/TodayEntry"
+          },
+          "type": "array"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "needsYou": {
+          "items": {
+            "$ref": "#/$defs/PendingReview"
+          },
+          "type": "array"
+        },
+        "recentlyUpdated": {
+          "items": {
+            "$ref": "#/$defs/SubjectRef"
+          },
+          "type": "array"
+        },
+        "reviewCount": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "headline",
+        "summary",
+        "needsYou",
+        "reviewCount",
+        "entries",
+        "activityByDay",
+        "recentlyUpdated",
+        "freshness"
+      ],
+      "type": "object"
+    },
+    "TodayEntry": {
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/Change"
+          },
+          "type": "array"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionSummaryRow"
+        }
+      },
+      "required": [
+        "session",
+        "changes"
       ],
       "type": "object"
     },

@@ -1,4 +1,4 @@
-mod catalog;
+pub(crate) mod catalog;
 mod trash;
 
 use std::collections::{BTreeMap, BTreeSet};

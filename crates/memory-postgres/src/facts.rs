@@ -70,7 +70,7 @@ const CLAIM_SQL: &str = "INSERT INTO rh_entity_fact_claims
             recorded_at = EXCLUDED.recorded_at";
 
 #[derive(sqlx::FromRow)]
-struct ClaimRow {
+pub(crate) struct ClaimRow {
     fact: Uuid,
     key: String,
     value: String,
@@ -125,7 +125,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
     }
 }
 
-fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
+pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
     Ok(Claim {
         fact: FactId::from_uuid(row.fact),
         key: FactKey::new(&row.key)?,
