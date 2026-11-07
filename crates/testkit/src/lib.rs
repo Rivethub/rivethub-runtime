@@ -17,6 +17,7 @@ pub mod paths;
 pub mod pgdump;
 pub mod ports;
 pub mod provider;
+pub mod review;
 pub mod session_catalog;
 pub mod session_delete;
 pub mod sqlite;

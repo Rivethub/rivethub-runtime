@@ -346,8 +346,21 @@ async fn place(
     Body(request): Body<PlacementRequest>,
 ) -> Result<Json<PlacementReply>, ApiError> {
     let session = canonical(&segment)?;
+    let topic = resolve_id(gateway.topics()?.as_ref(), &request.topic_id).await?;
+    let placement = place_session(&gateway, &user, session, topic).await?;
+    Ok(Json(PlacementReply {
+        placement: Some(placement),
+        suggestion: None,
+    }))
+}
+
+pub(crate) async fn place_session(
+    gateway: &Gateway,
+    user: &UserId,
+    session: SessionId,
+    topic: TopicId,
+) -> Result<wire::gateway::topics::TopicPlacement, ApiError> {
     let store = gateway.topics()?;
-    let topic = resolve_id(store.as_ref(), &request.topic_id).await?;
     let before = store.placement(&session).await.map_err(map::error)?;
     let now = Utc::now();
     let outcome = store
@@ -361,7 +374,7 @@ async fn place(
         .await
         .map_err(map::error)?;
     let filed = before.map(|placement| (placement.by, placement.topic));
-    filing::correct(&gateway, Target::Session(session), filed, Some(topic), now).await?;
+    filing::correct(gateway, Target::Session(session), filed, Some(topic), now).await?;
     let placement = map::placement(outcome.into_placement());
     if let Some(host) = gateway.plugins() {
         host.publish(&wire::plugin::process::PluginEvent::SessionPlaced {
@@ -370,10 +383,7 @@ async fn place(
             by: placement.by,
         });
     }
-    Ok(Json(PlacementReply {
-        placement: Some(placement),
-        suggestion: None,
-    }))
+    Ok(placement)
 }
 
 async fn unplace(

@@ -1,5 +1,5 @@
 mod article;
-mod map;
+pub(super) mod map;
 
 use std::str::FromStr as _;
 use std::sync::Arc;

@@ -133,6 +133,7 @@ struct Backing {
     topics: Option<(Arc<dyn TopicStore>, Arc<dyn FilingStore>)>,
     decisions: Option<Arc<dyn DecisionStore>>,
     facts: Option<Arc<dyn kernel::facts::FactStore>>,
+    review: Option<Arc<dyn kernel::review::ReviewStore>>,
     startup: Option<(Arc<dyn TopicPageStore>, Arc<dyn StartupStore>)>,
     tidy: Option<(Arc<dyn TidyStore>, Arc<dyn UpkeepStore>)>,
     flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
@@ -166,6 +167,10 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     };
     let gateway = match backing.facts.clone() {
         Some(facts) => gateway.with_facts(facts),
+        None => gateway,
+    };
+    let gateway = match backing.review.clone() {
+        Some(review) => gateway.with_review(review),
         None => gateway,
     };
     let gateway = match backing.tidy.clone() {
@@ -294,6 +299,7 @@ impl Composition {
             topics: Some((memory.clone(), memory.clone())),
             decisions: Some(memory.clone()),
             facts: Some(memory.clone()),
+            review: Some(memory.clone()),
             startup: Some((memory.clone(), memory.clone())),
             tidy: Some((memory.clone(), memory.clone())),
             flagged: Some(memory.clone()),
@@ -333,6 +339,7 @@ impl Composition {
             topics: Some((store.clone(), store.clone())),
             decisions: Some(store.clone()),
             facts: Some(store.clone()),
+            review: Some(store.clone()),
             startup: Some((store.clone(), store.clone())),
             tidy: Some((store.clone(), store.clone())),
             flagged: Some(store.clone()),

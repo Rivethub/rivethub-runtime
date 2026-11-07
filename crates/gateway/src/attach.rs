@@ -143,6 +143,20 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_review(mut self, store: Arc<dyn kernel::review::ReviewStore>) -> Self {
+        self.review = Some(store);
+        self
+    }
+
+    pub(crate) fn review(
+        &self,
+    ) -> Result<&Arc<dyn kernel::review::ReviewStore>, crate::error::ApiError> {
+        self.review
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("review store unavailable".into()))
+    }
+
+    #[must_use]
     pub fn with_startup_memory(
         mut self,
         pages: Arc<dyn kernel::topics::TopicPageStore>,

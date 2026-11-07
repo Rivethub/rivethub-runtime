@@ -10962,6 +10962,200 @@
       ],
       "type": "string"
     },
+    "ReviewDecision": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "accept",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "reject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "later",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "choose",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "edit",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReviewEvidence": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "highlight": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quote": {
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionMention"
+        }
+      },
+      "required": [
+        "session",
+        "at",
+        "quote"
+      ],
+      "type": "object"
+    },
+    "ReviewGroup": {
+      "enum": [
+        "conflict",
+        "fact",
+        "filing",
+        "tag",
+        "tidy"
+      ],
+      "type": "string"
+    },
+    "ReviewItem": {
+      "properties": {
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ReviewEvidence"
+          },
+          "type": "array"
+        },
+        "group": {
+          "$ref": "#/$defs/ReviewGroup"
+        },
+        "id": {
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/ReviewOption"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "subject": {
+          "$ref": "#/$defs/SubjectRef"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "group",
+        "subject",
+        "text",
+        "evidence",
+        "createdAt"
+      ],
+      "type": "object"
+    },
+    "ReviewOption": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object"
+    },
     "Role": {
       "enum": [
         "system",
@@ -12609,6 +12803,70 @@
         "error"
       ],
       "type": "string"
+    },
+    "SubjectRef": {
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "topic",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/SessionId"
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "SummarizerHealth": {
       "properties": {

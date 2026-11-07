@@ -229,6 +229,13 @@ async fn facts_keep_claims_pins_and_merges(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn review_marks_keep_each_owners_decisions(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::review::review_marks_keep_each_owners_decisions(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(
     pool: PgPool,
 ) -> TestResult {

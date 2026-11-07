@@ -8,6 +8,7 @@ pub mod hub_state;
 pub mod memory;
 pub mod memory_models;
 pub mod notifications;
+pub mod review;
 pub mod roster;
 pub mod session_catalog;
 pub mod session_delete;
