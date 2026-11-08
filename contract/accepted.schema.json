@@ -265,6 +265,83 @@
       ],
       "type": "object"
     },
+    "CallOutcome": {
+      "enum": [
+        "completed",
+        "rate_limited",
+        "client_error",
+        "server_error",
+        "aborted"
+      ],
+      "type": "string"
+    },
+    "CallTotals": {
+      "properties": {
+        "calls": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "errors": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "models": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "usage": {
+          "$ref": "#/$defs/CallUsage"
+        }
+      },
+      "required": [
+        "calls",
+        "errors",
+        "usage",
+        "models"
+      ],
+      "type": "object"
+    },
+    "CallUsage": {
+      "properties": {
+        "cache_read": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cache_write": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reasoning": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "CanvasAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -1312,6 +1389,89 @@
         "unknown"
       ],
       "type": "string"
+    },
+    "CapturedModelCall": {
+      "properties": {
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "model_requested": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_served": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/CallOutcome"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "retry_after_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status_code": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CallUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "call_id",
+        "started_at",
+        "provider",
+        "outcome"
+      ],
+      "type": "object"
     },
     "Change": {
       "properties": {
@@ -6089,6 +6249,55 @@
       "format": "date-time",
       "type": "string"
     },
+    "ModelCallBatchRequest": {
+      "properties": {
+        "calls": {
+          "items": {
+            "$ref": "#/$defs/CapturedModelCall"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "type": "object"
+    },
+    "ModelCallBatchResult": {
+      "properties": {
+        "duplicate": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "inserted": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "matched": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "unmatched": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "ok",
+        "inserted",
+        "duplicate",
+        "matched",
+        "unmatched"
+      ],
+      "type": "object"
+    },
     "ModelHealth": {
       "enum": [
         "healthy",
@@ -8531,6 +8740,24 @@
       ],
       "type": "string"
     },
+    "SessionModelCalls": {
+      "properties": {
+        "calls": {
+          "items": {
+            "$ref": "#/$defs/StoredModelCall"
+          },
+          "type": "array"
+        },
+        "totals": {
+          "$ref": "#/$defs/CallTotals"
+        }
+      },
+      "required": [
+        "totals",
+        "calls"
+      ],
+      "type": "object"
+    },
     "SessionOrigin": {
       "properties": {
         "agent": {
@@ -9153,6 +9380,94 @@
       },
       "required": [
         "harnesses"
+      ],
+      "type": "object"
+    },
+    "StoredModelCall": {
+      "properties": {
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "finished_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_requested": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model_served": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/$defs/CallOutcome"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "request_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retry_after_secs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "started_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "status_code": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "turn_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CallUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "call_id",
+        "started_at",
+        "provider",
+        "outcome"
       ],
       "type": "object"
     },

@@ -8,6 +8,7 @@ pub mod json;
 pub mod levels;
 pub mod memory;
 pub mod message;
+pub mod model_call;
 pub mod plugin;
 pub mod session_id;
 pub mod stream;
