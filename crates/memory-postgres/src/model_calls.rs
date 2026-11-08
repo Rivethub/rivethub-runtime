@@ -51,10 +51,7 @@ impl Row {
             }),
             None => None,
         };
-        let turn = (self.turn_id.is_some() || self.request_kind.is_some()).then(|| TurnMetadata {
-            turn_id: self.turn_id,
-            request_kind: self.request_kind,
-        });
+        let turn = TurnMetadata::of(self.turn_id, self.request_kind);
         Ok(ModelCall {
             call_id: self.call_id,
             started_at: self.started_at,

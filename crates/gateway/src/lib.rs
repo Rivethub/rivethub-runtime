@@ -80,6 +80,7 @@ pub struct Gateway {
     changes: Option<Arc<dyn kernel::changes::ChangeFeed>>,
     digests: Option<Arc<dyn kernel::changes::DigestStore>>,
     account: Option<Arc<account::AccountService>>,
+    model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
 }
 
 impl Gateway {
@@ -121,6 +122,7 @@ impl Gateway {
             changes: None,
             digests: None,
             account: None,
+            model_calls: None,
         }
     }
 
@@ -257,6 +259,14 @@ impl Gateway {
             .route(
                 "/api/harnesses/{id}/connect",
                 routing::post(routes::capture_status::connect).fallback(routes::method_not_allowed),
+            )
+            .route(
+                "/api/capture/model-calls",
+                routing::post(routes::model_calls::ingest)
+                    .fallback(routes::method_not_allowed)
+                    .layer(axum::extract::DefaultBodyLimit::max(
+                        routes::capture_schema::body_limit(),
+                    )),
             )
             .nest("/api/memory", routes::memory::router());
         routes::mount(routed.merge(routes::router()))

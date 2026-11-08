@@ -122,7 +122,7 @@ fn deletions(gateway: &Gateway) -> Result<&dyn SessionDeletion, ApiError> {
         .ok_or_else(|| ApiError::Unavailable("session deletion unavailable".to_owned()))
 }
 
-fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
+pub(in crate::routes) fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
     match segment.parse::<SessionKey>() {
         Ok(key) => Ok(key),
         Err(error @ SessionKeyError::Import(_)) => Err(ApiError::BadRequest(error.to_string())),
@@ -150,7 +150,11 @@ fn resolved(session: &SessionId) -> Resolved {
     }
 }
 
-async fn visible(gateway: &Gateway, user: &UserId, session: &SessionId) -> Result<bool, ApiError> {
+pub(in crate::routes) async fn visible(
+    gateway: &Gateway,
+    user: &UserId,
+    session: &SessionId,
+) -> Result<bool, ApiError> {
     match authorize(gateway, user, &resolved(session)).await {
         Ok(()) => Ok(true),
         Err(ApiError::SessionForbidden) => Ok(false),

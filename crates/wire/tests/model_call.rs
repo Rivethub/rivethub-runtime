@@ -50,11 +50,11 @@ fn session_reads_roundtrip() -> Result<(), String> {
 }
 
 #[test]
-fn a_call_needs_only_its_id_start_provider_and_outcome() -> Result<(), serde_json::Error> {
+fn a_call_needs_only_its_id_start_provider_and_outcome() -> Result<(), Box<dyn std::error::Error>> {
     let request: ModelCallBatchRequest = serde_json::from_str(
         r#"{"calls":[{"call_id":"c","started_at":"2026-11-08T12:00:00Z","provider":"p","outcome":"server_error"}]}"#,
     )?;
-    let call = &request.calls[0];
+    let call = request.calls.first().ok_or("no call")?;
     assert_eq!(call.outcome, CallOutcome::ServerError);
     assert!(call.headers.is_empty());
     assert_eq!(call.usage, None);

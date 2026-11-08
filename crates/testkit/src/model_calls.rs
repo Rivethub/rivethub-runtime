@@ -1,4 +1,6 @@
-use kernel::model_calls::{ModelCall, ModelCallStore, TurnMetadata};
+use std::collections::BTreeMap;
+
+use kernel::model_calls::{CallTotals, ModelCall, ModelCallStore, TurnMetadata};
 use wire::model_call::{CallOutcome, CallUsage};
 use wire::session_id::SessionId;
 
@@ -46,7 +48,7 @@ pub async fn a_repeated_call_is_a_duplicate_and_changes_nothing(
     )?;
 
     let mut changed = first.clone();
-    changed.provider = "openai".to_owned();
+    "openai".clone_into(&mut changed.provider);
     changed.outcome = CallOutcome::ServerError;
     changed.usage = Some(CallUsage {
         input: 9,
@@ -121,10 +123,23 @@ pub async fn a_session_reads_its_own_calls_in_start_order_with_every_field(
         )
         .await?;
     let session: SessionId = CODEX_SESSION.parse()?;
+    let stored = store.session_calls(&session).await?;
+    same("codex session", stored.clone(), vec![early, late])?;
     same(
-        "codex session",
-        store.session_calls(&session).await?,
-        vec![early, late],
+        "codex totals",
+        CallTotals::of(&stored),
+        CallTotals {
+            calls: 2,
+            errors: 1,
+            usage: CallUsage {
+                input: 1,
+                output: 2,
+                cache_read: 3,
+                cache_write: 4,
+                reasoning: 5,
+            },
+            models: BTreeMap::from([("model-a".to_owned(), 1), ("unknown".to_owned(), 1)]),
+        },
     )?;
     Ok(())
 }

@@ -99,12 +99,13 @@ async fn a_person_login_reads_and_writes_only_its_own_calls(pool: PgPool) -> Tes
     let seen_by_alice = viewer("alice")?.run(store.session_calls(&session)).await?;
     assert_eq!(seen_by_alice, [alice_call]);
     let seen_by_bob = viewer("bob")?.run(store.session_calls(&session)).await?;
-    assert_eq!(seen_by_bob, [bob_call.clone()]);
-    assert!(
+    assert_eq!(seen_by_bob, std::slice::from_ref(&bob_call));
+    assert_eq!(
         Scope::Closed
             .run(store.session_calls(&session))
             .await?
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         Scope::Maintenance

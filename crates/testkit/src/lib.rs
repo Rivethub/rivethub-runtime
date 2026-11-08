@@ -49,6 +49,7 @@ pub use capture_pg::PgStep;
 pub use cases::Thrown;
 pub use fakes::FakeHarness;
 pub use fakes::FakeJobQueue;
+pub use fakes::FakeModelCallStore;
 pub use fakes::FakeProvider;
 pub use fakes::FakeReader;
 pub use fakes::FakeSessionCatalog;
