@@ -19,6 +19,7 @@ mod listen;
 mod loss;
 mod memory_jobs;
 pub mod merge;
+mod model_calls;
 pub mod queue;
 pub mod read;
 mod review;
@@ -82,7 +83,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 61;
+pub const SCHEMA_VERSION: i64 = 62;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

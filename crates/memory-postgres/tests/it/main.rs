@@ -12,6 +12,7 @@ mod import_sessions;
 mod index_friendly;
 mod memory_golden;
 mod merge;
+mod model_calls;
 mod named_queues;
 mod owners;
 mod queue;
