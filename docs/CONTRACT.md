@@ -1707,82 +1707,141 @@ A trashed import is left out of a whole-store bundle and exported only when name
 `--out` that is a directory, and writes nothing then. Both files are written as `rh memory bundle` writes its file
 (note 134). It prints `sanitized <n> sessions: <s> secrets, <m> mapped, <r> redacted; report at <path>`.
 
-The text it scrubs is, per session, `origin.node`, `origin.session_key`, `origin.agent`, the batch's `session_key`,
-`agent`, `channel`, `task_id`, `title` and `settings`, each message's `content`, `tool_result`, `tool_name`,
-`tool_args` and `metadata`, and `manifest.exported_by.node`. In a JSON object it scrubs every key and every string
-value, at every depth. A member whose original key, before any rule renames it, matches the secret-name regex in
-`crates/capture/src/rules/rivethub.toml` (`password`, `secret`, `token`, `api_key`, `cookie`, `session_key` and the
-like) has its whole value, of any JSON type, replaced by the string `[REDACTED:secret_key]`. When two keys of one
-object scrub to the same text, the later one gets `#2`, `#3` and so on appended, so no value is lost, and the report
-lists each renamed key. Not scrubbed: `origin.author`, `origin.conversation_id`, dates, roles and `finalize`, so the
-sessions stay credited to their author with their original dates. Each `event_id` is replaced by the lowercase hex
-SHA-256 of the message's index in its session, a zero byte and the canonical JSON of the sanitized message with an
-empty `event_id`, so the same raw bundle and policy give the same ids (the receiver's dedupe stays idempotent) and
-nothing about the original message can be tested against them.
+Every stored text field is scrubbed. Per session: `origin.author` (secrets only), `origin.node`,
+`origin.conversation_id`, `origin.session_key`, `origin.agent`, the batch's `session_key`, `agent`, `channel`,
+`task_id` (secrets only), `title` and `settings`, each message's `event_id` (secrets only), `content`, `tool_result`,
+`tool_name`, `tool_args` and `metadata`; then `manifest.exported_by.user` and `.node`. Not scrubbed: dates, roles and
+`finalize`. The author and task id are never mapped, so the sessions stay credited and a task id stays a UUID; a task
+id in which a secret rule matches becomes a UUID derived from the local key (below) and the raw task id. In a JSON
+object every key and every string value is scrubbed at every depth. A member whose key, before or after a mapping
+rule renames it, is a secret name (below) has each string value under it, at any depth, replaced by
+`[REDACTED:secret_key]` when the value passes that family's value test; numbers, booleans and null under it stay
+typed, and a key that is exactly a placeholder (`[REDACTED]`, `[REDACTED:<kind>]`, with an optional `#n`) is never a
+secret name. When two keys of one object scrub to the same text, the later one gets `#2`, `#3` and so on appended
+before its value is scrubbed, so no value is lost, every report path uses the suffixed key, and the report lists each
+renamed key under its path.
+
+Ids, fingerprints and the policy hash are HMAC-SHA256 under a local key: 32 random bytes created once at
+`$XDG_STATE_HOME/rivethub/sanitize.key`, else `~/.local/state/rivethub/sanitize.key`, mode 0600, never shipped. Each
+`event_id` becomes the lowercase hex HMAC of the raw `origin.node`, `origin.conversation_id`, the batch's raw
+`session_key` and the raw `event_id`, so the same raw bundle gives the same ids on the same machine (the receiver's
+dedupe stays idempotent), two sessions whose first messages are byte-identical never merge at the receiver, and
+nothing about the original message can be tested against an id. A new key makes the receiver see new ids, so a
+re-import after rotation duplicates every message; bundles sanitized on two machines of one user dedupe only if the
+key file is copied. A key file that is not 32 bytes is refused with its path.
 
 Two passes run over each text. The secrets pass applies the secret rules, data in `crates/capture/src/rules/`:
-RivetHub's own rules in `rivethub.toml` first (`bearer`, `pem_private_key` including truncated and PGP blocks,
-`aws_access_key`, `github_token`, `slack_token`, `slack_webhook`, `sk_token`, `stripe_key`, `google_api_key`,
-`gitlab_token`, `npm_token`, `huggingface_token`, `sendgrid_key`, `jwt`, `http_auth`, `url_password` for
-`scheme://user:password@host` with an empty user or a password holding `/` or `@` included, `secret_assignment` for a
-value assigned to a name that holds a secret word in shell, env, YAML, TOML, JSON, query-string or header form,
-`curl_user` and `mysql_password_flag`), then the default gitleaks configuration in `gitleaks.toml`, vendored unchanged
-(its version, commit, SHA-256 and MIT license are recorded in `rivethub.toml`; rules that need a file path are
-skipped). Each rule names keywords; one Aho-Corasick automaton over every keyword prefilters the text, and a rule whose
-keyword appears runs its regex on that line, or on a 64 KiB window when its regex spans lines. The secret is the
-rule's `secretGroup`, else its first non-empty capture group, else the whole match, so a name and its separator stay
-(`api_key: [REDACTED:secret_assignment]`). A match is dropped when the Shannon entropy of the secret is at or under the
-rule's `entropy`, or when a global or rule allowlist matches it (gitleaks' and RivetHub's: template placeholders such
-as `{NAME}`, `<password>`, `${VAR}` and `$VAR`, masks such as `****` and `...`, bare words, code paths). Only the
-secret span is replaced, by `[REDACTED:<rule id>]`, the text live capture redaction writes. Where matches overlap, the
-earliest start wins, then rule order. Live capture redaction, when it is on, uses the same rules and the same
-secret-name regex. The rules compile once per process; a test fails when a rule does not compile or when the vendored
-file's digest differs from the pin.
+RivetHub's 38 rules in `rivethub.toml` first (`bearer`, `pem_private_key` including truncated and PGP blocks,
+`aws_access_key`, `aws_secret_near_id` for a bare 40-character secret within 160 bytes of an access key id,
+`github_token`, `slack_token`, `slack_webhook`, `sk_token`, `stripe_key`, `stripe_webhook_secret`, `google_api_key`,
+`gitlab_token`, `npm_token`, `huggingface_token`, `sendgrid_key`, `jwt`, `http_auth`, `authorization_header`,
+`cookie_header`, `url_password` for `scheme://user:password@host` with an empty user, a `/` or `@` in the password or a
+JSON-escaped `:\/\/` included, `secret_assignment`, `curl_user`, `mysql_password_flag`, `cli_credential_flag` for
+`sshpass -p`, `docker login -p`, `az login -p`, `redis-cli -a` and `--password`, `--token`, `--api-key`, `--secret`
+and their kin, `openssl_pass_arg`, `netrc_password` on one line or over lines, `sentry_dsn`, `discord_bot_token`,
+`discord_webhook`, `telegram_bot_token`, `azure_sas`, `doppler_service_token`, `mailchimp_key`, `datadog_app_key`,
+`twilio_auth_token`, `jwk_private`, `k8s_secret_data` for every value of a Kubernetes Secret's `data` or
+`stringData` block, and `base64_secret`), then the default gitleaks configuration in `gitleaks.toml`, vendored
+byte-identical (its version, commit, SHA-256 and MIT license are recorded in `rivethub.toml`). The loader applies the
+deviations `rivethub.toml` lists: rules that need a file path and `generic-api-key` are not loaded (216 of 221 are),
+`microsoft-teams-webhook` redacts its whole match, and an allowlist regex written `^a|b|c$` is compiled as
+`^(?:a|b|c)$`. Each rule names keywords; one Aho-Corasick automaton over every keyword prefilters the text, and a rule
+whose keyword appears runs its regex on that line, or on a 64 KiB window when its regex spans lines; a rule with the
+keyword `*` runs over the whole text. The secret is the rule's `secretGroup`, else its first non-empty capture group,
+else the whole match, so a name and its separator stay (`api_key: [REDACTED:secret_assignment]`). A rule with
+`decode = "base64"` keeps a match only when the match decodes to JSON or a PEM block in which a rule matches, and
+then redacts the whole blob; a rule with `each` redacts each match of that regex inside the secret. A match is dropped
+when the Shannon entropy of the secret is at or under the rule's `entropy`, or when an allowlist matches it:
+gitleaks' global allowlist applies to gitleaks rules only, RivetHub rules use the `[names]` stopwords and templates
+(exact words such as `null`, `none`, `true`, `false`, `changeme`, `placeholder`, `password`; whole-value templates
+`{{ name }}`, `{NAME}`, `${VAR}`, `$VAR`, `$(cmd)`, `%VAR%`, `<name>`, `***`, `xxx`, `...` and a placeholder), and a
+rule's own allowlists apply to it.
 
-The mapping pass applies the rules of the mapping file as one pass: literals through one leftmost-first automaton,
-regexes through one combined pattern; where matches overlap, the earliest start wins, then file order. `map` writes
-the rule's placeholder and `redact` writes `[REDACTED]`. Text a pass already replaced is never matched again: a
-`[REDACTED]` or `[REDACTED:<kind>]` span is protected only when `<kind>` is a rule id the sanitizer emits,
-`secret_key`, or `pattern:<n>` (a live capture pattern); any other `[REDACTED:...]` text is ordinary text and is
-scanned, so brackets wrapped around a secret do not hide it. A `settings.origin` the scrubber changed does not change
-credit: ingest replaces `settings.origin` with the session's `origin` (note 135).
+`secret_assignment` is the name-based rule, driven by the `[names]` table. A key is split into lower-case segments at
+`_`, `-`, `.` and camel-case boundaries (`X-Api-Key`, `clientSecret` and `CLIENT_SECRET` all read `client_secret`).
+The password family is `password`, `passwd`, `pwd`, `passphrase`, `pin`, `secret`, `private_key`, `ssh_key`, as the
+whole key or its last segments, `pass` only as a last segment (`db_pass`, not `pass`), and `pgpassword`; it redacts
+any value that is not a stopword, a template, a number or an expression. The token family is `token`, `api_key`,
+`apikey`, `access_key`, `secret_key`, `app_key`, `account_key`, `signing_key`, `encryption_key`, `master_key`,
+`auth_key`, `auth`, `identitytoken` and `authtoken`; it redacts a value that starts with a known vendor prefix, or
+has 12 or more characters and Shannon entropy of at least 3.0 (a UUID under `api_key` is redacted). A key whose last
+segment is anything else is never a secret name: `token_count`, `max_tokens`, `api_key_id`, `secret_ref`,
+`secretName`, `password_last_changed_at`, `session_key`, `token_endpoint`, `cookie`. In text the rule reads
+`<key>[ \t]*[=:][ \t]*<value>` with an optional quote after the key; a value opened by `"`, `'`, `\"` or `\'` runs to
+the matching quote (`'a;b&c'` and `"one two"` are one value), a bare value runs to whitespace or `, ; & ) ] }` and
+keeps the separator and the punctuation after it (`"token_count": 7958,` stays valid JSON), a bare value that opens
+with `${`, `$(`, `{{`, `{`, `<` or `%` runs to its closer, and a bare value that opens with a placeholder is judged on
+the text after it. A bare value with a `(`, a `::` path, a version range such as `^0.7.1`, or no letter or digit is
+never a secret.
+
+Only the secret span is replaced, by `[REDACTED:<rule id>]`, the text live capture redaction writes. Where matches
+overlap, the earliest start wins, then rule order. Text a pass already replaced is protected: a `[REDACTED]` or
+`[REDACTED:<kind>]` span is protected only when `<kind>` is a rule id the sanitizer emits, `secret_key`, or
+`pattern:<n>` (a live capture pattern); any other `[REDACTED:...]` text is ordinary text and is scanned, so brackets
+wrapped around a secret do not hide it. A match that runs into a protected span is trimmed to the text outside it and
+each remaining piece is replaced, so a PEM body after a placeholder line, the password of
+`postgres://[REDACTED]:pw@host` and a mapping regex that runs into a placeholder are still scrubbed. The rules compile
+once per process; a test fails when a rule does not compile or when the vendored file's digest differs from the pin.
+
+Live capture redaction, when it is on, uses the same rules, the same `[names]` table and the same JSON walk, so a
+value under a token-family key is redacted only when it passes the likeness test and a key ending in `_id`, `_count`
+or `_at` keeps its value. Against the previous builtins the placeholders change in three ways, and rows already
+stored keep their old text: `Authorization: Bearer abc...` becomes `Authorization: Bearer [REDACTED:bearer]` (was
+`Authorization: [REDACTED:bearer]`), `api_key: X` becomes `api_key: [REDACTED:secret_assignment]` (was
+`[REDACTED:assignment]` over the name too), and `DB_PASSWORD=X` becomes `DB_PASSWORD=[REDACTED:secret_assignment]` (was
+`[REDACTED:env_secret]`). Three things live capture redacted before are now kept: a JSON value under
+`Authorization`, `Cookie`, `session_key`, `credential` or a key ending in `_id` or `_count`; a token-family value
+shorter than 12 characters or of low entropy (`token: box7`); and a bare `pass:` key (`messages: {pass: "..."}` in
+minified JavaScript). Everything the gitleaks rules, `cookie_header`, `authorization_header`, `netrc_password`, the
+CLI flag rules and `base64_secret` match is new to live capture; on a base64 dump of a binary gitleaks'
+`square-access-token` rule produces false positives.
+
+The mapping pass applies the rules of the mapping file: every literal and every regex is matched over the whole text
+(literals through one automaton that reports every occurrence, a `\b` in a regex as an ASCII word boundary so the
+scan stays on the regex engine's fast path), and where matches overlap the earlier rule in the file wins, then the
+earlier start: with the rules `abc` then `zab`, `zabc` becomes `z<abc's placeholder>`. `map` writes the rule's
+placeholder and `redact` writes `[REDACTED]`. A `settings.origin` the scrubber changed does not change credit: ingest
+replaces `settings.origin` with the session's `origin` (note 135).
 
 The mapping file is `--mapping`, else `memory.sanitize.mapping` in config.yaml (`~` expands to the home folder),
 else `~/.config/rivethub/redactions.toml`. A file named by `--mapping` or the config must exist; the default file may
 be absent, and then no rule runs. It is TOML: a list of `[[rule]]` tables, each with exactly one of `literal =
 "<text>"` or `regex = '<pattern>'` (the Rust `regex` syntax, which runs in linear time), and `action = "map"` with
-`as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A `\b` in a mapping regex is an ASCII
-word boundary, so the one-pass scan stays on the regex engine's fast path. A file that is not TOML,
+`as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A file that is not TOML,
 a rule with no matcher, both matchers, an empty matcher or placeholder, a `map` without `as`, a `redact` with `as`,
 or a regex that does not compile is refused with the line of the rule's `[[rule]]` header, and nothing is written.
 
-The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (its node scrubbed) and
-`sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets", "mapping"],
-"unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex SHA-256 of the raw
-bundle's `bundle_sha256`, a zero byte and the canonical JSON of the secret rules' digest (SHA-256 over both rule
-files) and the mapping rules in order (matcher and action). The raw digest never ships with the sanitized bundle, so
-the hash tells whether one raw bundle was sanitized twice with the same policy, and nobody can test a guessed mapping
-rule against it.
+The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (both fields scrubbed
+and mapped) and `sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets",
+"mapping"], "unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex
+HMAC-SHA256, under the local key, of the raw bundle's `bundle_sha256`, a zero byte and the canonical JSON of the
+secret rules' digest (SHA-256 over both rule files) and the mapping rules in order (matcher and action). Neither the
+key nor the raw digest ships, so the hash tells its owner whether one raw bundle was sanitized twice with the same
+policy, and nobody else can test a guessed mapping rule or a reconstructed raw bundle against it.
 
-The report never holds replaced text. It names the bundle, the time, the totals, the fields it does not scan, the
-secret rule counts with the gitleaks version, the mapping file and its rule count, the policy and bundle digests, a
-table of every rule with its change count (a mapping rule by its line number, since a `redact` rule's literal is the
-secret itself), and, for each session and then the manifest, one row per event, field and rule: the first 12 hex
-characters of the event id, the field (`title`, `content`, `tool_result`, `tool_name`, `session_key`, `agent`,
-`channel`, `task_id`, `origin.node`, `origin.session_key`, `origin.agent`, `manifest.exported_by.node`, or
-`settings`, `tool_args` or `metadata` with the JSON path built from the scrubbed keys and whether a key was changed),
-the rule, the replacement, the number of changes and an Original column, then the keys a collision renamed. The
-Original column lists fingerprints, each the first 12 hex characters of the SHA-256 of the raw bundle's
-`bundle_sha256`, a zero byte and the replaced span, so spans with the same text share a fingerprint and nobody without
-the raw bundle can test a guess against it.
+The report never holds replaced text. It names the bundle, the time, the totals, what is and is not scanned, the
+secret rule counts by source file with the gitleaks version, the mapping file and its rule count, the policy and
+bundle digests, a table of every rule with its change count (a mapping rule by its line number, since a `redact`
+rule's literal is the secret itself), and, for each session (headed by its scrubbed conversation id) and then the
+manifest, one row per event, field and rule: the first 12 hex characters of the event id, the field (`title`,
+`content`, `tool_result`, `tool_name`, `event_id`, `session_key`, `agent`, `channel`, `task_id`, `origin.author`,
+`origin.node`, `origin.conversation_id`, `origin.session_key`, `origin.agent`, `manifest.exported_by.user`,
+`manifest.exported_by.node`, or `settings`, `tool_args` or `metadata` with the JSON path built from the scrubbed and
+suffixed keys, and ` (a key)` naming the scrubbed key when the key itself changed), the rule, the replacement, the
+number of changes and an Original column, then the keys a collision renamed, each under its suffixed path. The
+Original column lists fingerprints, each the first 12 hex characters of the HMAC-SHA256, under the local key, of the
+raw bundle's `bundle_sha256`, a zero byte and the replaced span, so spans with the same text share a fingerprint and
+nobody without the key can test a guess against it.
 
-`ingest-bundle` does not trust the stamp. Before it posts anything, it runs the secrets pass over every sanitized
-bundle it reads, with the same placeholder protection. When a rule still matches, it refuses the bundle with the match
-count and the first match's session, event, field and rule (never the text), and writes nothing, unless `--force` is
-given. Then it ingests it and its report adds `(<n> secret pattern matches forced)`. `--dry-run` lists the bundle as
-before and adds the match count to its total line. The receiver cannot re-apply the sender's mapping rules, which never
-ship: a raw bundle relabelled sanitized with a recomputed digest passes the scan when only mapping terms (names, hosts,
-projects) remain in it, so the receiver trusts the sender for mapping and only the secret rules for secrets.
+`ingest-bundle` does not trust the stamp. Before it posts anything, it runs the secrets pass over every field of a
+sanitized bundle it reads, event ids, task ids, the author and `exported_by` included, with the same placeholder
+protection and the same name tests, so a bundle `sanitize` wrote always passes and a forged stamp on a bundle with a
+secret-shaped id or author does not. When a rule still matches, it refuses the bundle with the match count and the
+first match's session, event, field and rule (never the text), and writes nothing, unless `--force` is given. Then it
+ingests it and its report adds `(<n> secret pattern matches forced)`. `--dry-run` lists the bundle as before and adds
+the match count to its total line. The receiver cannot re-apply the sender's mapping rules, which never ship: a raw
+bundle relabelled sanitized with a recomputed digest passes the scan when only mapping terms (names, hosts, projects)
+remain in it, so the receiver trusts the sender for mapping and only the secret rules for secrets.
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 
