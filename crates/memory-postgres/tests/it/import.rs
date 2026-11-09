@@ -642,7 +642,7 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
         user: "alex".to_owned(),
         node: "team".to_owned(),
     };
-    assert!(store.bundled_sessions(&alex, None).await?.is_empty());
+    assert_eq!(store.bundled_sessions(&alex, None).await?.len(), 0);
     let id = Uuid::parse_str(&first.conversation_id)?;
     let named = store.bundled_sessions(&alex, Some(&[id])).await?;
     let forwarded = named

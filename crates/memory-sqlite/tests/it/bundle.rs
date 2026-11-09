@@ -404,8 +404,9 @@ async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_tit
         .store
         .context("claude-code:tied", instant("2026-11-08T12:00:00.000Z")?)
         .await?;
-    let recent = steps[3..].iter().map(|step| format!("[user] {step}"));
-    let relevant = steps[..3].iter().map(|step| format!("[rivet/user] {step}"));
+    let (older, newest) = steps.split_at(3);
+    let recent = newest.iter().map(|step| format!("[user] {step}"));
+    let relevant = older.iter().map(|step| format!("[rivet/user] {step}"));
     assert!(
         context.contains(&recent.collect::<Vec<_>>().join("\n")),
         "{context}"
@@ -610,13 +611,8 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
         user: "alex".to_owned(),
         node: "team".to_owned(),
     };
-    assert!(
-        store
-            .store
-            .bundled_sessions(team.clone(), None)
-            .await?
-            .is_empty()
-    );
+    let everything = store.store.bundled_sessions(team.clone(), None).await?;
+    assert_eq!(everything.len(), 0);
     let named = store
         .store
         .bundled_sessions(team, Some(vec![first.conversation_id.clone()]))
