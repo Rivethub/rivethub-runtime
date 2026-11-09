@@ -62,12 +62,62 @@ impl CaptureBatchRequest {
     }
 }
 
-pub const SESSION_BUNDLE_VERSION: u32 = 1;
+pub const SESSION_BUNDLE_VERSION: u32 = 2;
+
+pub const UNKNOWN_ORIGIN: &str = "unknown";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionBundle {
     pub version: u32,
-    pub sessions: Vec<CaptureBatchRequest>,
+    pub manifest: BundleManifest,
+    pub sessions: Vec<BundledSession>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundleManifest {
+    pub exported_at: DateTime<Utc>,
+    pub exported_by: BundleAuthor,
+    pub sanitization: Sanitization,
+    pub session_count: usize,
+    pub sessions_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundleAuthor {
+    pub user: String,
+    pub node: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Sanitization {
+    Raw,
+    Sanitized(SanitizeStamp),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SanitizeStamp {
+    pub at: DateTime<Utc>,
+    pub policy_sha256: String,
+    pub passes: Vec<String>,
+    pub unresolved_flags: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundledSession {
+    pub origin: SessionOrigin,
+    pub batch: CaptureBatchRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionOrigin {
+    pub author: String,
+    pub node: String,
+    pub conversation_id: String,
+    pub session_key: String,
+    pub agent: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

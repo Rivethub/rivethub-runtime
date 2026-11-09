@@ -10,6 +10,7 @@ mod db;
 mod local;
 mod logs;
 mod memory;
+mod memory_bundle;
 mod memory_jobs;
 mod memory_titles;
 mod migrate_binary;

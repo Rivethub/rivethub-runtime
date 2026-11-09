@@ -215,10 +215,15 @@ pub enum Error {
     Worker(#[from] workers::WorkerError),
     #[error(transparent)]
     ProviderBuild(#[from] providers::BuildError),
-    #[error(
-        "session bundles are read from a SQLite memory file; pass --sqlite <file> or set memory.sqlite.path"
-    )]
-    BundleSqlite,
+    #[error("--session requires a conversation id")]
+    SessionRequired,
+    #[error("no session this node can export has the id {0}")]
+    BundleUnknown(String),
+    #[error("the users file {path} is not a users registry: {source}")]
+    BundleUsers {
+        path: String,
+        source: serde_json::Error,
+    },
     #[error(transparent)]
     Bundle(#[from] capture::bundle::BundleError),
 }

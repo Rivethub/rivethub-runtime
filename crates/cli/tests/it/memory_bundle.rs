@@ -1,0 +1,278 @@
+#![cfg(test)]
+
+use crate::support;
+
+use std::path::Path;
+
+use cli::Exit;
+use cli::Report;
+use config::Environment;
+use kernel::memory::CaptureBatchRequest;
+use kernel::memory::CaptureMessage;
+use kernel::owner::Owner;
+use memory_postgres::CaptureOptions;
+use memory_postgres::PostgresMemory;
+use sqlx::ConnectOptions as _;
+use sqlx::PgPool;
+use tempfile::TempDir;
+use wire::capture::SessionBundle;
+use wire::message::Role;
+
+struct Node {
+    _home: TempDir,
+    directory: TempDir,
+    environment: Environment,
+}
+
+fn node(extra: &[(&str, &str)]) -> Node {
+    let home = support::home();
+    let directory = tempfile::tempdir().expect("directory");
+    let users = directory.path().join("users.json");
+    std::fs::write(
+        &users,
+        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+    )
+    .expect("users file");
+    let mut environment = support::environment(&home)
+        .with_override("RIVETHUB_USERS_FILE", users.display().to_string())
+        .with_override("RIVETHUB_NODE_NAME", "desk");
+    for (key, value) in extra {
+        environment = environment.with_override(key, value);
+    }
+    Node {
+        _home: home,
+        directory,
+        environment,
+    }
+}
+
+async fn run(parts: &[&str], environment: &Environment) -> Report {
+    support::run(parts, environment).await
+}
+
+fn sqlite_with_sessions(directory: &Path) -> String {
+    let path = directory.join("memory.sqlite");
+    migrate::sqlite(&path).expect("migrate");
+    let connection = rusqlite::Connection::open(&path).expect("sqlite");
+    connection
+        .execute_batch(
+            "INSERT INTO ros_conversations (id, session_key, agent, settings, created_at, updated_at) VALUES
+               ('c1', 'claude-code:one', 'rivet', '{\"model\":\"opus\"}', '2026-10-14T09:00:00.000Z', '2026-10-14T10:00:00.000Z'),
+               ('c2', 'claude-code:two', 'rivet', '{}', '2026-10-15T09:00:00.000Z', '2026-10-15T10:00:00.000Z'),
+               ('c3', 'codex:three', 'rivet-gpt', '{}', '2026-10-16T09:00:00.000Z', '2026-10-16T10:00:00.000Z');
+             INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at) VALUES
+               ('m1', 'c1', 'rivet', 'claude-code', 'user', 'first session', '{}', '2026-10-14T09:00:00.000Z'),
+               ('m2', 'c2', 'rivet', 'claude-code', 'user', 'second session', '{}', '2026-10-15T09:00:00.000Z'),
+               ('m3', 'c3', 'rivet-gpt', 'codex', 'user', 'third session', '{}', '2026-10-16T09:00:00.000Z');",
+        )
+        .expect("seed");
+    path.display().to_string()
+}
+
+fn bundle_at(path: &Path) -> SessionBundle {
+    capture::bundle::parse(&std::fs::read_to_string(path).expect("bundle file")).expect("bundle")
+}
+
+fn session_keys(bundle: &SessionBundle) -> Vec<&str> {
+    bundle
+        .sessions
+        .iter()
+        .map(|session| session.origin.session_key.as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn bundle_takes_every_repeated_session_and_credits_the_node_owner() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("s.json");
+    let out_text = out.display().to_string();
+
+    let report = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out_text,
+            "--session",
+            "c3",
+            "--session",
+            "c1",
+            "--sqlite",
+            &sqlite,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        report.stdout,
+        format!("bundled 2 sessions (raw, not sanitized) to {out_text}\n")
+    );
+    let bundle = bundle_at(&out);
+    assert_eq!(bundle.version, 2);
+    assert_eq!(bundle.manifest.session_count, 2);
+    assert_eq!(bundle.manifest.exported_by.user, "phil");
+    assert_eq!(bundle.manifest.exported_by.node, "desk");
+    assert_eq!(session_keys(&bundle), ["claude-code:one", "codex:three"]);
+    let first = bundle.sessions.first().expect("first session");
+    assert_eq!(first.origin.author, "phil");
+    assert_eq!(
+        first.batch.settings,
+        Some(serde_json::from_str(r#"{"model":"opus"}"#).expect("settings"))
+    );
+    assert!(!node.directory.path().join("s.json.tmp").exists());
+
+    let everything = run(
+        &["memory", "bundle", "--out", &out_text, "--sqlite", &sqlite],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(everything.exit, Exit::Ok, "{}", everything.stderr);
+    assert_eq!(
+        session_keys(&bundle_at(&out)),
+        ["claude-code:one", "claude-code:two", "codex:three"]
+    );
+}
+
+#[tokio::test]
+async fn bundle_refuses_an_unknown_session_and_writes_nothing() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("s.json");
+    let out_text = out.display().to_string();
+
+    let report = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out_text,
+            "--session",
+            "c1",
+            "--session",
+            "nope",
+            "--sqlite",
+            &sqlite,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stderr,
+        "Error: no session this node can export has the id nope\n"
+    );
+    assert!(!out.exists());
+    assert!(!node.directory.path().join("s.json.tmp").exists());
+}
+
+#[tokio::test]
+async fn bundle_requires_a_value_for_every_session_flag() {
+    let node = node(&[]);
+    for parts in [
+        vec!["memory", "bundle", "--out", "s.json", "--session"],
+        vec!["memory", "bundle", "--out", "s.json", "--session="],
+        vec![
+            "memory",
+            "bundle",
+            "--session",
+            "c1",
+            "--out",
+            "s.json",
+            "--session",
+            " ",
+        ],
+    ] {
+        let report = run(&parts, &node.environment).await;
+        assert_eq!(report.exit, Exit::Failure, "{parts:?}");
+        assert_eq!(
+            report.stderr, "Error: --session requires a conversation id\n",
+            "{parts:?}"
+        );
+    }
+}
+
+fn said(event_id: &str, content: &str) -> CaptureMessage {
+    CaptureMessage {
+        event_id: event_id.to_owned(),
+        role: Role::User,
+        content: content.to_owned(),
+        tool_name: None,
+        tool_args: None,
+        tool_result: None,
+        metadata: None,
+        created_at: None,
+    }
+}
+
+async fn captured(store: &PostgresMemory, owner: &str, session_key: &str) -> String {
+    let batch = CaptureBatchRequest {
+        session_key: session_key.to_owned(),
+        agent: "rivet".to_owned(),
+        channel: Some("claude-code".to_owned()),
+        title: None,
+        settings: None,
+        task_id: None,
+        finalize: None,
+        created_at: None,
+        updated_at: None,
+        messages: vec![said(&format!("{session_key}-1"), "hello")],
+    };
+    let owner = Owner::new(owner.to_owned()).expect("owner");
+    store
+        .capture_batch(&batch, &CaptureOptions::owned_by(&owner))
+        .await
+        .expect("capture")
+        .conversation_id
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPool) {
+    let store = PostgresMemory::new(pool.clone());
+    let mine = captured(&store, "phil", "claude-code:mine").await;
+    let other = captured(&store, "phil", "claude-code:other").await;
+    let alexs = captured(&store, "alex", "claude-code:alex").await;
+    let url = pool.connect_options().to_url_lossy().to_string();
+    let node = node(&[("RIVETHUB_PG_URL", &url)]);
+    let out = node.directory.path().join("s.json");
+    let out_text = out.display().to_string();
+
+    let named = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out_text,
+            "--session",
+            &mine,
+            "--session",
+            &other,
+        ],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(named.exit, Exit::Ok, "{}", named.stderr);
+    let bundle = bundle_at(&out);
+    assert_eq!(bundle.manifest.session_count, 2);
+    assert!(
+        bundle
+            .sessions
+            .iter()
+            .all(|session| session.origin.author == "phil")
+    );
+
+    let refused = run(
+        &["memory", "bundle", "--out", &out_text, "--session", &alexs],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(refused.exit, Exit::Failure);
+    assert_eq!(
+        refused.stderr,
+        format!("Error: no session this node can export has the id {alexs}\n")
+    );
+    assert_eq!(bundle_at(&out), bundle);
+}

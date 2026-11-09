@@ -1,5 +1,6 @@
 mod common;
 
+mod bundle;
 mod capture_pg;
 mod counts;
 mod deadline;

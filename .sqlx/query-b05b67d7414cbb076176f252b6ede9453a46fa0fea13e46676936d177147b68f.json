@@ -1,0 +1,218 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as \"settings: sqlx::types::Json<JsonObject>\", c.node, c.owner_user_id, c.created_at as conversation_created_at, c.updated_at as conversation_updated_at, m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as message_at from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and ($2::uuid[] is null or c.id = any($2)) order by c.created_at, c.id, m.created_at, m.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "conversation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "session_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "session_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "agent",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "agent"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "channel",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "channel"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "settings: sqlx::types::Json<JsonObject>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "settings"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "node",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "node"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "owner_user_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "owner_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "conversation_created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "conversation_updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "message_id",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "role_text",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_messages",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "content",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_messages",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "tool_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_messages",
+            "name": "tool_name"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "tool_args",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 15,
+        "name": "tool_result",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_messages",
+            "name": "tool_result"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "metadata",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 17,
+        "name": "message_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_messages",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      true,
+      null,
+      true,
+      null,
+      false
+    ]
+  },
+  "hash": "b05b67d7414cbb076176f252b6ede9453a46fa0fea13e46676936d177147b68f"
+}
