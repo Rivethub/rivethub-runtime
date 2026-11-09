@@ -177,6 +177,19 @@ pub struct MemorySection {
     pub sqlite: Option<SqliteSection>,
     pub capture: CaptureSection,
     pub models: Option<crate::memory_models::MemoryModels>,
+    pub sanitize: SanitizeSection,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SanitizeSection {
+    pub mapping: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MappingFile {
+    Configured(PathBuf),
+    Default(PathBuf),
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -418,6 +431,25 @@ impl Config {
             enabled: redaction.enabled == Some(true),
             builtins: redaction.builtins != Some(false),
             patterns: redaction.patterns,
+        }
+    }
+
+    pub fn sanitize_mapping(&self, env: &Environment) -> Result<MappingFile, crate::ConfigError> {
+        let configured = self
+            .memory
+            .as_ref()
+            .and_then(|memory| memory.sanitize.mapping.as_ref());
+        match configured {
+            Some(path) => Ok(MappingFile::Configured(
+                crate::paths::expand_home(env, path)?.unwrap_or_else(|| path.clone()),
+            )),
+            None => Ok(MappingFile::Default(
+                crate::Paths::new(env)?
+                    .home()
+                    .join(".config")
+                    .join("rivethub")
+                    .join("redactions.toml"),
+            )),
         }
     }
 

@@ -422,3 +422,201 @@ async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPoo
     );
     assert_eq!(bundle_at(&out), bundle);
 }
+
+const PLANTED_TOKEN: &str = concat!("ghp_", "Zq8RmT2vLx9WcN4bKp7HyJ3dFs6GtA1eUo5V");
+
+fn planted_bundle(directory: &Path, sanitization: wire::capture::Sanitization) -> String {
+    let session = wire::capture::BundledSession {
+        origin: wire::capture::SessionOrigin {
+            author: "phil".to_owned(),
+            node: "desk".to_owned(),
+            conversation_id: "c1".to_owned(),
+            session_key: "claude-code:one".to_owned(),
+            agent: "rivet".to_owned(),
+            created_at: None,
+            updated_at: None,
+        },
+        batch: wire::capture::CaptureBatchRequest {
+            session_key: "claude-code:one".to_owned(),
+            agent: "rivet".to_owned(),
+            channel: None,
+            title: None,
+            settings: None,
+            task_id: None,
+            finalize: None,
+            created_at: None,
+            updated_at: None,
+            messages: vec![wire::capture::CaptureMessage {
+                event_id: "evt-1".to_owned(),
+                role: Role::Assistant,
+                content: format!("pushed with {PLANTED_TOKEN} to build.example.com"),
+                tool_name: None,
+                tool_args: None,
+                tool_result: Some("ssh build.example.com: ok".to_owned()),
+                metadata: None,
+                created_at: None,
+            }],
+        },
+    };
+    let sealed = capture::bundle::seal(
+        wire::capture::BundleAuthor {
+            user: "phil".to_owned(),
+            node: "desk".to_owned(),
+        },
+        chrono::DateTime::UNIX_EPOCH,
+        sanitization,
+        vec![session],
+    )
+    .expect("seal");
+    let path = directory.join("planted.json");
+    std::fs::write(&path, sealed.text).expect("bundle file");
+    path.display().to_string()
+}
+
+fn mapping(directory: &Path, text: &str) -> String {
+    let path = directory.join("redactions.toml");
+    std::fs::write(&path, text).expect("mapping file");
+    path.display().to_string()
+}
+
+#[tokio::test]
+async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
+    let node = node(&[]);
+    let raw = planted_bundle(node.directory.path(), wire::capture::Sanitization::Raw);
+    let rules = mapping(
+        node.directory.path(),
+        "[[rule]]\nliteral = \"build.example.com\"\naction = \"map\"\nas = \"<buildhost>\"\n",
+    );
+    let out = node.directory.path().join("s.clean.json");
+    let out_text = out.display().to_string();
+
+    let report = run(
+        &[
+            "memory",
+            "sanitize",
+            &raw,
+            "--out",
+            &out_text,
+            "--mapping",
+            &rules,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    let report_path = node.directory.path().join("s.clean.report.md");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "sanitized 1 session: 1 secrets, 2 mapped, 0 redacted; report at {}\n",
+            report_path.display()
+        )
+    );
+    let file = std::fs::read_to_string(&out).expect("sanitized file");
+    let markdown = std::fs::read_to_string(&report_path).expect("report file");
+    for text in [&file, &markdown] {
+        assert!(!text.contains(PLANTED_TOKEN));
+        assert!(!text.contains("build.example.com"));
+    }
+    let sanitized = bundle_at(&out);
+    let contents: Vec<&str> = sanitized
+        .sessions
+        .iter()
+        .flat_map(|session| &session.batch.messages)
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(
+        contents,
+        ["pushed with [REDACTED:github_token] to <buildhost>"]
+    );
+
+    let ingest = run(
+        &["memory", "ingest-bundle", &out_text, "--dry-run"],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(ingest.exit, Exit::Ok, "{}", ingest.stderr);
+    assert!(
+        ingest
+            .stdout
+            .ends_with("would ingest 1 session from phil; nothing written\n"),
+        "{}",
+        ingest.stdout
+    );
+
+    let again = run(
+        &["memory", "sanitize", &out_text, "--out", &raw],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(again.exit, Exit::Failure);
+    assert!(
+        again.stderr.contains("already sanitized"),
+        "{}",
+        again.stderr
+    );
+}
+
+#[tokio::test]
+async fn a_forged_sanitized_stamp_is_refused_when_a_secret_still_matches() {
+    let node = node(&[]);
+    let forged = planted_bundle(
+        node.directory.path(),
+        wire::capture::Sanitization::Sanitized(wire::capture::SanitizeStamp {
+            at: chrono::DateTime::UNIX_EPOCH,
+            policy_sha256: "0".repeat(64),
+            passes: vec!["secrets".to_owned()],
+            unresolved_flags: 0,
+        }),
+    );
+
+    let report = run(&["memory", "ingest-bundle", &forged], &node.environment).await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stderr,
+        format!(
+            "Error: {forged} claims to be sanitized, but 1 secret pattern match(es) remain (session 1 event evt-1 content: github_token); sanitize the raw bundle again, or pass --force to ingest it as it is\n"
+        )
+    );
+    assert!(!report.stderr.contains(PLANTED_TOKEN));
+}
+
+#[tokio::test]
+async fn a_mapping_with_a_bad_regex_names_its_line_and_writes_nothing() {
+    let node = node(&[]);
+    let raw = planted_bundle(node.directory.path(), wire::capture::Sanitization::Raw);
+    let rules = mapping(
+        node.directory.path(),
+        "[[rule]]\nliteral = \"a\"\naction = \"redact\"\n\n[[rule]]\nregex = \"(unclosed\"\naction = \"redact\"\n",
+    );
+    let out = node.directory.path().join("s.clean.json");
+
+    let report = run(
+        &[
+            "memory",
+            "sanitize",
+            &raw,
+            "--out",
+            &out.display().to_string(),
+            "--mapping",
+            &rules,
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.starts_with(&format!(
+            "Error: the mapping file {rules} is invalid: mapping rule at line 6 has a regex that does not compile"
+        )),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(
+        listing(node.directory.path()),
+        ["planted.json", "redactions.toml", "users.json"]
+    );
+}
