@@ -35,16 +35,43 @@ impl Case {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Anywhere,
+    LineWith(&'static str),
+}
+
 #[derive(Debug)]
 pub(crate) struct Builtin {
     pub(crate) name: &'static str,
     pub(crate) source: &'static str,
     regex: Regex,
     replacement: Replacement,
+    line_needle: Option<regex::Regex>,
 }
 
 impl Builtin {
     pub(crate) fn spans(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        let Some(needle) = &self.line_needle else {
+            return self.spans_in(text, 0);
+        };
+        let mut spans = Vec::new();
+        let mut scanned = 0;
+        for found in needle.find_iter(text) {
+            if found.start() < scanned {
+                continue;
+            }
+            let start = text[..found.start()].rfind('\n').map_or(0, |at| at + 1);
+            let end = text[found.end()..]
+                .find('\n')
+                .map_or(text.len(), |at| found.end() + at);
+            spans.extend(self.spans_in(&text[start..end], start));
+            scanned = end;
+        }
+        spans
+    }
+
+    fn spans_in(&self, text: &str, offset: usize) -> Vec<std::ops::Range<usize>> {
         self.regex
             .find_iter(text)
             .map(|found| match self.replacement {
@@ -56,6 +83,7 @@ impl Builtin {
                     kept..found.end()
                 }
             })
+            .map(|span| span.start + offset..span.end + offset)
             .collect()
     }
 
@@ -64,12 +92,13 @@ impl Builtin {
     }
 }
 
-const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 11] = [
+const BUILTIN_SOURCES: [(&str, &str, Replacement, Case, Scope); 11] = [
     (
         "bearer",
         r"Bearer [A-Za-z0-9\-._~+/=]{16,}",
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "pem_private_key",
@@ -80,60 +109,72 @@ const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 11] = [
         ),
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "aws_access_key",
         r"AKIA[0-9A-Z]{16}",
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "github_token",
         r"gh[pousr]_[A-Za-z0-9]{30,}",
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "slack_token",
         r"xox[aebprs]-[A-Za-z0-9\-]{10,}",
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "sk_token",
         concat!("sk", r"[_\-][A-Za-z0-9_\-]{20,}"),
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "jwt",
         r"ey[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
         Replacement::Whole,
         Case::Insensitive,
+        Scope::Anywhere,
     ),
     (
         "http_auth",
         r"\b(?:Basic|Digest|Negotiate|NTLM) (?=[A-Za-z0-9+/=._~\-]*[A-Z0-9+/=])[A-Za-z0-9+/=._~\-]{8,}",
         Replacement::Whole,
         Case::Sensitive,
+        Scope::LineWith("Basic |Digest |Negotiate |NTLM "),
     ),
     (
         "assignment",
         r#"\b(api[_-]?key|apikey|access[_-]?key|access[_-]?token|auth[_-]?token|secret|token|authorization|credential)["']?[ \t]*[=:][ \t]*\S+"#,
         Replacement::FirstGroup,
         Case::Insensitive,
+        Scope::LineWith("(?i)key|token|secret|authorization|credential"),
     ),
     (
         "env_secret",
         r#"^([ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIALS?)[A-Z0-9_]*[ \t]*=[ \t]*)(?:"[^"\n]*"|'[^'\n]*'|[^\s"']+)"#,
         Replacement::FirstGroup,
         Case::SensitiveLines,
+        Scope::LineWith(
+            "PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIAL",
+        ),
     ),
     (
         "url_password",
         r"([a-z][a-z0-9+.\-]*://[^\s:/@\[\]]+:)[^\s@/\[\]]+(?=@)",
         Replacement::FirstGroup,
         Case::Insensitive,
+        Scope::LineWith("://"),
     ),
 ];
 
@@ -153,12 +194,19 @@ static SECRET_KEYS: LazyLock<Regex> = LazyLock::new(|| {
 static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
     BUILTIN_SOURCES
         .into_iter()
-        .map(|(name, source, replacement, case)| Builtin {
+        .map(|(name, source, replacement, case, scope)| Builtin {
             name,
             source,
             regex: Regex::with_flags(source, case.flags())
                 .expect("builtin redaction patterns are constants that compile"),
             replacement,
+            line_needle: match scope {
+                Scope::Anywhere => None,
+                Scope::LineWith(needle) => Some(
+                    regex::Regex::new(needle)
+                        .expect("builtin line needles are constants that compile"),
+                ),
+            },
         })
         .collect()
 });
@@ -432,6 +480,25 @@ mod tests {
     }
 
     #[test]
+    fn scanning_only_needle_lines_finds_what_a_whole_text_scan_finds() {
+        let text = concat!(
+            "intro line\nAuthorization: Basic dXNlcjpwYXNz and Digest abcdefgh12\n",
+            "  export DB_PASSWORD=\"two words\"\nAPI_KEY=x\nnot_a_key here\n",
+            "token: abc token=def\r\nsecret\n= split\ncredential:\tzz key",
+            "\npostgres://app:pw@db.example.com/app https://a:b@c x://no-at:here\n",
+            "NTLM short\nBearer abcdefghijklmnop1234\n:// \nend"
+        );
+        for builtin in BUILTINS.iter() {
+            assert_eq!(
+                builtin.spans(text),
+                builtin.spans_in(text, 0),
+                "builtin {}",
+                builtin.name
+            );
+        }
+    }
+
+    #[test]
     fn a_capture_group_that_does_not_participate_keeps_nothing() {
         let source = "x(?:-(y))?";
         let builtin = Builtin {
@@ -439,6 +506,7 @@ mod tests {
             source,
             regex: Regex::new(source).expect("the test pattern is a constant that compiles"),
             replacement: Replacement::FirstGroup,
+            line_needle: None,
         };
         assert_eq!(builtin.spans("a x b"), vec![2..3]);
         assert_eq!(builtin.spans("a x-y b"), vec![5..5]);
