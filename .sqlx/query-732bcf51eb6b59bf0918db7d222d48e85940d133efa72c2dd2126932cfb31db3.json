@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select max(created_at) from rh_messages\n              where conversation_id = $1\n                and created_at >= date_trunc('milliseconds', $2::timestamptz)\n                and created_at < date_trunc('milliseconds', $2::timestamptz)\n                                 + interval '1 millisecond'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "732bcf51eb6b59bf0918db7d222d48e85940d133efa72c2dd2126932cfb31db3"
+}

@@ -196,3 +196,43 @@ async fn an_import_never_moves_a_native_conversation_back_in_time(pool: PgPool) 
     assert_eq!(after.updated_at, before.updated_at);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn messages_sharing_a_millisecond_export_in_bundle_order(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let tied = at("2026-10-14T09:00:00.123Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let mut whole = phils_session()?;
+    whole.batch.messages = steps.iter().map(|step| said(step, step, tied)).collect();
+    let mut split = whole.clone();
+    split.batch.session_key = "claude-code:split".to_owned();
+    split.origin.session_key = "claude-code:split".to_owned();
+    let mut second = split.clone();
+    second.batch.messages = split.batch.messages.split_off(4);
+
+    import(&store, "alex", &whole).await?;
+    import(&store, "alex", &split).await?;
+    import(&store, "alex", &second).await?;
+
+    let exported = store
+        .bundled_sessions(
+            &wire::capture::BundleAuthor {
+                user: "alex".to_owned(),
+                node: "team".to_owned(),
+            },
+            None,
+        )
+        .await?;
+    assert_eq!(exported.len(), 2);
+    for session in &exported {
+        let order: Vec<&str> = session
+            .batch
+            .messages
+            .iter()
+            .map(|message| message.event_id.as_str())
+            .collect();
+        assert_eq!(order, steps, "{}", session.origin.session_key);
+    }
+    Ok(())
+}

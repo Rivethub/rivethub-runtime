@@ -6,6 +6,7 @@ use crate::capture::prepare_capture_message;
 use crate::error::Error;
 use async_trait::async_trait;
 use chrono::DateTime;
+use chrono::TimeDelta;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
@@ -69,8 +70,17 @@ impl crate::PostgresMemory {
             .map(|message| message.event_id.clone())
             .collect();
         let seen = writer.seen_event_ids(conversation_id, &event_ids).await?;
+        let first = batch.messages.iter().find_map(|message| message.created_at);
+        let earlier = match first {
+            Some(at) => writer.latest_in_millisecond(conversation_id, at).await?,
+            None => None,
+        };
+        let stamps = untied(
+            earlier,
+            batch.messages.iter().map(|message| message.created_at),
+        );
         let mut inserted: u64 = 0;
-        for (index, message) in batch.messages.iter().enumerate() {
+        for ((index, message), created_at) in batch.messages.iter().enumerate().zip(stamps) {
             if seen.contains(&message.event_id) {
                 continue;
             }
@@ -87,7 +97,7 @@ impl crate::PostgresMemory {
                     tool_result: prepared.tool_result.as_deref(),
                     metadata: &prepared.metadata,
                     owner_user_id: &conversation.owner_user_id,
-                    created_at: prepared.created_at,
+                    created_at,
                     batch_index: i64::try_from(index)?,
                 })
                 .await?;
@@ -104,6 +114,27 @@ impl crate::PostgresMemory {
             skipped: u64::try_from(batch.messages.len())? - inserted,
         })
     }
+}
+
+fn untied(
+    stored_in_first_millisecond: Option<DateTime<Utc>>,
+    stamps: impl Iterator<Item = Option<DateTime<Utc>>>,
+) -> Vec<Option<DateTime<Utc>>> {
+    let tick = TimeDelta::microseconds(1);
+    let mut last: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
+    stamps
+        .map(|stamp| {
+            stamp.map(|at| {
+                let stored = match (last, stored_in_first_millisecond) {
+                    (Some((raw, stored)), _) if raw == at => stored + tick,
+                    (None, Some(earlier)) if at <= earlier => earlier + tick,
+                    _ => at,
+                };
+                last = Some((at, stored));
+                stored
+            })
+        })
+        .collect()
 }
 
 struct EntryGroup {

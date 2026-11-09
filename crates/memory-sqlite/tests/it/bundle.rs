@@ -315,3 +315,47 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
     assert_eq!(origin, session.origin);
     Ok(())
 }
+
+#[tokio::test]
+async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult {
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let tied = instant("2026-10-14T09:00:00.123Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
+    for step in &steps {
+        let mut said = message(step, Role::User, step);
+        said.created_at = Some(tied);
+        tied_batch.messages.push(said);
+    }
+    store
+        .store
+        .capture(
+            tied_batch,
+            &alex,
+            None,
+            instant("2026-11-08T12:00:00.000Z")?,
+        )
+        .await?;
+
+    let exported = store
+        .store
+        .bundled_sessions(
+            BundleAuthor {
+                user: "alex".to_owned(),
+                node: "team".to_owned(),
+            },
+            None,
+        )
+        .await?;
+
+    let session = exported.first().ok_or("exported session")?;
+    let order: Vec<&str> = session
+        .batch
+        .messages
+        .iter()
+        .map(|message| message.event_id.as_str())
+        .collect();
+    assert_eq!(order, steps);
+    Ok(())
+}

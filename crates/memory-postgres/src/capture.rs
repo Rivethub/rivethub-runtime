@@ -238,6 +238,25 @@ impl<'a> CaptureWriter<'a> {
         Ok(record.id)
     }
 
+    pub async fn latest_in_millisecond(
+        &mut self,
+        conversation_id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<Option<DateTime<Utc>>, Error> {
+        sqlx::query_scalar!(
+            "select max(created_at) from rh_messages
+              where conversation_id = $1
+                and created_at >= date_trunc('milliseconds', $2::timestamptz)
+                and created_at < date_trunc('milliseconds', $2::timestamptz)
+                                 + interval '1 millisecond'",
+            conversation_id,
+            at
+        )
+        .fetch_one(&mut *self.tx)
+        .await
+        .map_err(|source| Error::operation("message time lookup", source))
+    }
+
     pub async fn seen_event_ids(
         &mut self,
         conversation_id: Uuid,
@@ -346,7 +365,6 @@ pub(crate) struct PreparedMessage {
     pub(crate) content: String,
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: JsonObject,
-    pub(crate) created_at: Option<DateTime<Utc>>,
 }
 
 pub(crate) fn prepare_capture_message(message: &CaptureMessage) -> Result<PreparedMessage, Error> {
@@ -372,6 +390,5 @@ pub(crate) fn prepare_capture_message(message: &CaptureMessage) -> Result<Prepar
         content,
         tool_result,
         metadata: metadata.clone(),
-        created_at: message.created_at,
     })
 }

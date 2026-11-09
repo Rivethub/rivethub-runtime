@@ -1641,7 +1641,7 @@ the user it authenticated as the owner: the origin is attribution only. Capture 
 `updated_at` on a new Postgres conversation (else `now()`, as before) and, on an existing one, sets `updated_at` to the
 later of its stored value and the batch's (else `now()`), so a reimport or a bundle of a session the receiver already
 holds never moves a conversation back in time; SQLite already did both. Live capture hooks send no batch dates, so
-their conversations are unchanged. A second ingest adds no messages, since event ids it already has are skipped. The
+their conversations are unchanged. A second ingest adds no messages, since event ids it already has are skipped. Bundle times have millisecond precision, so messages can share a time; Postgres capture keeps a batch's message order by storing each dated message at least 1 µs after the dated message before it in the batch, and the first after any message the conversation already holds in the same millisecond (an earlier chunk of the same session), so an export returns them in the order they were captured. SQLite keeps the order through its row order. The
 report reads `ingested <n> sessions from <authors>[ (raw bundle forced)]: <inserted> inserted, <skipped> skipped`.
 `memory_get_full` (and the MCP `memory_search` that reads hits through it) returns a message whose conversation carries
 `settings.origin` with that origin under `metadata.origin`, on Postgres and SQLite, and `memory_search` appends
