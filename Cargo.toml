@@ -59,7 +59,7 @@ regex = "1"
 regress = "0.12"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 rmcp = { version = "3.9", default-features = false }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pki-types = "1"
 schemars = { version = "1", features = ["chrono04", "url2"] }

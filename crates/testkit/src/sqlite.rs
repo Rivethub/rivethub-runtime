@@ -82,11 +82,7 @@ fn value_to_json(value: ValueRef<'_>) -> Result<Json, Error> {
 
 pub fn query_json(conn: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<Json>, Error> {
     let mut statement = conn.prepare(sql)?;
-    let columns: Vec<String> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let columns: Vec<String> = statement.column_names().map(str::to_string).collect();
     let mut rows = statement.query(params)?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {

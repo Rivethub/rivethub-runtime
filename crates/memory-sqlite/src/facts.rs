@@ -197,7 +197,7 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
 fn session_row(conn: &Connection, session: &SessionId) -> Result<Option<FactSession>, FactError> {
     let keys = serde_json::to_string(&conversation_keys(session))
         .map_err(|error| invalid("session keys", error))?;
-    let row: (Option<String>, Option<String>, Option<String>, u64) = conn
+    let row: (Option<String>, Option<String>, Option<String>, i64) = conn
         .query_row(SESSION_SQL, params![keys], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
@@ -210,7 +210,8 @@ fn session_row(conn: &Connection, session: &SessionId) -> Result<Option<FactSess
         title,
         started_at: time::stored(&started, "created_at").map_err(unavailable)?,
         last_at: time::stored(&last, "updated_at").map_err(unavailable)?,
-        messages,
+        messages: u64::try_from(messages)
+            .map_err(|error| unavailable(SqliteError::Count(error)))?,
     }))
 }
 

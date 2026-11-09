@@ -96,11 +96,7 @@ pub(crate) fn read_table_columns(conn: &Connection, table: &str) -> TestResult<V
 
 pub(crate) fn read_rows(conn: &Connection, table: &str) -> TestResult<Vec<BTreeMap<String, Cell>>> {
     let mut statement = conn.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
-    let names: Vec<String> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let names: Vec<String> = statement.column_names().map(str::to_string).collect();
     let mut rows = statement.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
@@ -118,11 +114,7 @@ pub(crate) fn read_fts_rows(
     table: &str,
 ) -> TestResult<Vec<BTreeMap<String, Cell>>> {
     let mut statement = conn.prepare(&format!("SELECT rowid, * FROM {table} ORDER BY rowid"))?;
-    let names: Vec<String> = statement
-        .column_names()
-        .into_iter()
-        .map(str::to_string)
-        .collect();
+    let names: Vec<String> = statement.column_names().map(str::to_string).collect();
     let mut rows = statement.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
