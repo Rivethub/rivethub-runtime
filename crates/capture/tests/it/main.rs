@@ -13,6 +13,8 @@ mod opencode_v2_store;
 mod redaction;
 mod redaction_gaps;
 mod sanitize;
+mod sanitize_boundary;
+mod sanitize_corpus;
 mod session_titles;
 mod session_transcripts;
 mod spool_and_transport;

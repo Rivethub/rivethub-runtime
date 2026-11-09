@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use chrono::DateTime;
@@ -6,21 +7,31 @@ use wire::capture::BundledSession;
 
 use super::mapping::Action;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+const SHOWN_FINGERPRINTS: usize = 3;
+const SHOWN_EVENT_HEX: usize = 12;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Spot {
     pub path: String,
     pub key: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Field {
     Title,
     Settings(Spot),
     Content,
     ToolArgs(Spot),
     ToolResult,
+    ToolName,
     Metadata(Spot),
+    SessionKey,
+    Agent,
+    Channel,
+    TaskId,
     OriginNode,
+    OriginSessionKey,
+    OriginAgent,
     ExporterNode,
 }
 
@@ -30,7 +41,14 @@ impl fmt::Display for Field {
             Self::Title => return formatter.write_str("title"),
             Self::Content => return formatter.write_str("content"),
             Self::ToolResult => return formatter.write_str("tool_result"),
+            Self::ToolName => return formatter.write_str("tool_name"),
+            Self::SessionKey => return formatter.write_str("session_key"),
+            Self::Agent => return formatter.write_str("agent"),
+            Self::Channel => return formatter.write_str("channel"),
+            Self::TaskId => return formatter.write_str("task_id"),
             Self::OriginNode => return formatter.write_str("origin.node"),
+            Self::OriginSessionKey => return formatter.write_str("origin.session_key"),
+            Self::OriginAgent => return formatter.write_str("origin.agent"),
             Self::ExporterNode => return formatter.write_str("manifest.exported_by.node"),
             Self::Settings(spot) => ("settings", spot),
             Self::ToolArgs(spot) => ("tool_args", spot),
@@ -52,7 +70,6 @@ impl fmt::Display for Field {
 pub enum Pass {
     Secrets,
     Mapping,
-    Hosts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +126,7 @@ impl fmt::Display for RuleId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
     pub session: Option<usize>,
+    pub message: Option<usize>,
     pub event_id: Option<String>,
     pub field: Field,
     pub rule: RuleId,
@@ -127,6 +145,15 @@ impl fmt::Display for Change {
         }
         write!(formatter, " {}: {}", self.field, self.rule)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Collision {
+    pub session: Option<usize>,
+    pub message: Option<usize>,
+    pub event_id: Option<String>,
+    pub field: Field,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +181,7 @@ pub struct Report {
     pub sessions: Vec<SessionLine>,
     pub rules: Vec<(usize, Action)>,
     pub changes: Vec<Change>,
+    pub collisions: Vec<Collision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -179,37 +207,20 @@ impl Report {
 
     #[must_use]
     pub fn markdown(&self, bundle: &str, mapping: &str) -> String {
-        let totals = self.totals();
         let mut out = String::new();
-        let sessions = self.sessions.len();
-        push_line(
-            &mut out,
-            format_args!("# Sanitize report for {}\n", cell(bundle)),
-        );
-        push_line(
-            &mut out,
-            format_args!(
-                "Sanitized {sessions} {} at {}: {} secrets, {} mapped, {} redacted.\n",
-                plural(sessions, "session", "sessions"),
-                self.at.format("%Y-%m-%d %H:%M:%S UTC"),
-                totals.secrets,
-                totals.mapped,
-                totals.redacted,
-            ),
-        );
-        out.push_str(
-            "This report never shows the text that was replaced. The Original column is a short hash of the replaced text, keyed by the raw bundle, so equal values share a hash and nobody without the raw bundle can test a guess against it.\n\n",
-        );
-        push_line(&mut out, format_args!("- Mapping: {}", cell(mapping)));
-        push_line(
-            &mut out,
-            format_args!("- Policy sha256: `{}`", self.policy_sha256),
-        );
-        push_line(
-            &mut out,
-            format_args!("- Bundle sha256: `{}`\n", self.bundle_sha256),
-        );
+        self.header(&mut out, bundle, mapping);
         self.rule_table(&mut out);
+        let mut by_session: HashMap<Option<usize>, Vec<&Change>> = HashMap::new();
+        for change in &self.changes {
+            by_session.entry(change.session).or_default().push(change);
+        }
+        let mut collisions: HashMap<Option<usize>, Vec<&Collision>> = HashMap::new();
+        for collision in &self.collisions {
+            collisions
+                .entry(collision.session)
+                .or_default()
+                .push(collision);
+        }
         for (index, session) in self.sessions.iter().enumerate() {
             push_line(
                 &mut out,
@@ -224,17 +235,67 @@ impl Report {
             );
             change_table(
                 &mut out,
-                self.changes.iter().filter(|c| c.session == Some(index)),
+                by_session.get(&Some(index)).map_or(&[], Vec::as_slice),
+            );
+            collision_lines(
+                &mut out,
+                collisions.get(&Some(index)).map_or(&[], Vec::as_slice),
             );
         }
-        if self.changes.iter().any(|change| change.session.is_none()) {
+        if let Some(changes) = by_session.get(&None) {
             out.push_str("## Manifest\n\n");
-            change_table(
-                &mut out,
-                self.changes.iter().filter(|c| c.session.is_none()),
-            );
+            change_table(&mut out, changes);
         }
         out
+    }
+
+    fn header(&self, out: &mut String, bundle: &str, mapping: &str) {
+        let totals = self.totals();
+        let sessions = self.sessions.len();
+        push_line(
+            out,
+            format_args!("# Sanitize report for {}\n", cell(bundle)),
+        );
+        push_line(
+            out,
+            format_args!(
+                "Sanitized {sessions} {} at {}: {} secrets, {} mapped, {} redacted.\n",
+                plural(sessions, "session", "sessions"),
+                self.at.format("%Y-%m-%d %H:%M:%S UTC"),
+                totals.secrets,
+                totals.mapped,
+                totals.redacted,
+            ),
+        );
+        out.push_str(
+            "This report never shows the text that was replaced. The Original column is a short hash of each replaced span, keyed by the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the raw bundle can test a guess against it.\n\n",
+        );
+        out.push_str(
+            "Not scanned: the author, the conversation id, dates and roles. Event ids are replaced by a hash of the sanitized message.\n\n",
+        );
+        let rules = crate::rules::ruleset();
+        let ours = rules
+            .rules()
+            .iter()
+            .filter(|rule| !rule.id.contains('-'))
+            .count();
+        push_line(
+            out,
+            format_args!(
+                "- Secret rules: {ours} RivetHub rules and {} gitleaks rules ({})",
+                rules.rules().len() - ours,
+                rules.upstream().version
+            ),
+        );
+        push_line(out, format_args!("- Mapping: {}", cell(mapping)));
+        push_line(
+            out,
+            format_args!("- Policy sha256: `{}`", self.policy_sha256),
+        );
+        push_line(
+            out,
+            format_args!("- Bundle sha256: `{}`\n", self.bundle_sha256),
+        );
     }
 
     fn rule_table(&self, out: &mut String) {
@@ -242,10 +303,15 @@ impl Report {
             "## Changes per rule\n\n| Pass | Rule | Replaced with | Changes |\n|---|---|---|---|\n",
         );
         let mut rows: Vec<(RuleId, String, usize)> = Vec::new();
+        let mut index: HashMap<RuleId, usize> = HashMap::new();
         for change in &self.changes {
-            match rows.iter_mut().find(|row| row.0 == change.rule) {
-                Some(row) => row.2 += 1,
-                None => rows.push((change.rule, change.replacement.clone(), 1)),
+            if let Some(&at) = index.get(&change.rule) {
+                if let Some(row) = rows.get_mut(at) {
+                    row.2 += 1;
+                }
+            } else {
+                index.insert(change.rule, rows.len());
+                rows.push((change.rule, change.replacement.clone(), 1));
             }
         }
         for (line, action) in &self.rules {
@@ -253,7 +319,8 @@ impl Report {
                 Action::Map(_) => RuleId::Mapped { line: *line },
                 Action::Redact => RuleId::Redacted { line: *line },
             };
-            if !rows.iter().any(|row| row.0 == rule) {
+            if let std::collections::hash_map::Entry::Vacant(slot) = index.entry(rule) {
+                slot.insert(rows.len());
                 rows.push((rule, action.replacement().to_owned(), 0));
             }
         }
@@ -285,31 +352,28 @@ struct Row<'a> {
     fingerprints: Vec<&'a str>,
 }
 
-const SHOWN_FINGERPRINTS: usize = 3;
-
-fn change_table<'a>(out: &mut String, changes: impl Iterator<Item = &'a Change>) {
-    let mut rows: Vec<Row<'a>> = Vec::new();
+fn change_table(out: &mut String, changes: &[&Change]) {
+    let mut rows: Vec<Row<'_>> = Vec::new();
+    let mut index: HashMap<(&str, &Field, RuleId), usize> = HashMap::new();
     for change in changes {
         let event_id = change.event_id.as_deref().unwrap_or("-");
-        let field = change.field.to_string();
-        let found = rows
-            .iter_mut()
-            .find(|row| row.event_id == event_id && row.field == field && row.rule == change.rule);
-        match found {
-            Some(row) => {
+        if let Some(&at) = index.get(&(event_id, &change.field, change.rule)) {
+            if let Some(row) = rows.get_mut(at) {
                 row.count += 1;
                 if !row.fingerprints.contains(&change.fingerprint.as_str()) {
                     row.fingerprints.push(&change.fingerprint);
                 }
             }
-            None => rows.push(Row {
+        } else {
+            index.insert((event_id, &change.field, change.rule), rows.len());
+            rows.push(Row {
                 event_id,
-                field,
+                field: change.field.to_string(),
                 rule: change.rule,
                 replacement: &change.replacement,
                 count: 1,
                 fingerprints: vec![&change.fingerprint],
-            }),
+            });
         }
     }
     if rows.is_empty() {
@@ -336,7 +400,7 @@ fn change_table<'a>(out: &mut String, changes: impl Iterator<Item = &'a Change>)
             out,
             format_args!(
                 "| {} | {} | {} | {} | {} | {} |",
-                cell(row.event_id),
+                cell(short_event(row.event_id)),
                 cell(&row.field),
                 row.rule,
                 code(row.replacement),
@@ -346,6 +410,29 @@ fn change_table<'a>(out: &mut String, changes: impl Iterator<Item = &'a Change>)
         );
     }
     out.push('\n');
+}
+
+fn collision_lines(out: &mut String, collisions: &[&Collision]) {
+    if collisions.is_empty() {
+        return;
+    }
+    out.push_str("Keys renamed because two keys scrubbed to the same text:\n\n");
+    for collision in collisions {
+        push_line(
+            out,
+            format_args!(
+                "- event {}, {}: {}",
+                cell(short_event(collision.event_id.as_deref().unwrap_or("-"))),
+                cell(&collision.field.to_string()),
+                code(&collision.key)
+            ),
+        );
+    }
+    out.push('\n');
+}
+
+fn short_event(event_id: &str) -> &str {
+    event_id.get(..SHOWN_EVENT_HEX).unwrap_or(event_id)
 }
 
 fn cell(text: &str) -> String {

@@ -90,7 +90,11 @@ fn builtins_replace_secret_spans() -> Result<(), Box<dyn std::error::Error>> {
     assert!(spans >= 3);
     assert!(message.content.contains("[REDACTED:bearer]"));
     assert!(message.content.contains("[REDACTED:aws_access_key]"));
-    assert!(message.content.contains("pass=hunter2"));
+    assert!(
+        message
+            .content
+            .contains("pass=[REDACTED:secret_assignment]")
+    );
     let args = message.tool_args.expect("args");
     assert_eq!(
         args.get("api_key").and_then(|v| v.as_str()),
@@ -123,7 +127,7 @@ fn scan_covers_only_the_head_of_long_text() -> Result<(), Box<dyn std::error::Er
     let mut head_case = message(&head_secret, "{}")?;
     let spans = redaction.redact_message(&mut head_case);
     assert_eq!(spans, 1);
-    assert!(head_case.content.starts_with("[REDACTED:bearer]"));
+    assert!(head_case.content.starts_with("Bearer [REDACTED:bearer]"));
     Ok(())
 }
 
@@ -173,7 +177,7 @@ async fn the_writer_redacts_the_session_title() -> Result<(), Box<dyn std::error
     let posted = capture::batch::parse_batch(body)?;
     assert_eq!(
         posted.title.as_deref(),
-        Some("deploy with [REDACTED:bearer] now")
+        Some("deploy with Bearer [REDACTED:bearer] now")
     );
     Ok(())
 }

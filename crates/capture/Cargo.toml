@@ -11,6 +11,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+aho-corasick = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 config = { workspace = true }

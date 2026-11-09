@@ -77,8 +77,8 @@ pub(super) async fn run(
             .unwrap_or_default()
             .sanitize_mapping(env)?,
     };
-    let (rules, source) = rules(&mapping).await?;
-    let policy = capture::sanitize::Policy { rules };
+    let (mapping, source) = rules(&mapping).await?;
+    let policy = capture::sanitize::Policy { mapping };
     let sanitized = capture::sanitize::run(&bundle, &policy, Utc::now())?;
     let report_path = report_path(out);
     let report = sanitized
@@ -102,7 +102,7 @@ pub(super) async fn run(
 
 async fn rules(
     mapping: &MappingFile,
-) -> Result<(Vec<capture::sanitize::mapping::Rule>, String), Error> {
+) -> Result<(capture::sanitize::mapping::Mapping, String), Error> {
     let (path, required) = match mapping {
         MappingFile::Configured(path) => (path, true),
         MappingFile::Default(path) => (path, false),
@@ -111,7 +111,10 @@ async fn rules(
     let text = match tokio::fs::read_to_string(path).await {
         Ok(text) => text,
         Err(error) if !required && error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok((Vec::new(), format!("none ({display} does not exist)")));
+            return Ok((
+                capture::sanitize::mapping::Mapping::default(),
+                format!("none ({display} does not exist)"),
+            ));
         }
         Err(source) => {
             return Err(Error::MappingRead {
@@ -124,7 +127,7 @@ async fn rules(
         path: display.clone(),
         source,
     })?;
-    let count = rules.len();
+    let count = rules.rules().len();
     let noun = if count == 1 { "rule" } else { "rules" };
     Ok((rules, format!("{display} ({count} {noun})")))
 }

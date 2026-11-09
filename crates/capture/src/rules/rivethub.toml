@@ -1,0 +1,163 @@
+title = "RivetHub secret rules"
+
+[gitleaks]
+version = "v8.30.1"
+commit = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"
+file = "config/gitleaks.toml"
+sha256 = "e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf"
+license = "MIT"
+copyright = "Copyright (c) 2019 Zachary Rice"
+license_text = """
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+[secret_names]
+regex = '''(?i)(?:^|[_.-])(?:pwd|pass|auth)(?:$|[_.-])|passw(?:or)?d|secret|token|api[_.-]?key|access[_.-]?key|private[_.-]?key|account[_.-]?key|app[_.-]?key|signing[_.-]?key|encryption[_.-]?key|master[_.-]?key|credential|authorization|cookie|session[_.-]?key'''
+
+[allowlist]
+description = "values that are templates, masks or words, never a secret"
+regexes = [
+    '''^[{<\[$%]''',
+    '''^[*xX.#-]+$''',
+    '''^(?i:null|none|nil|undefined|true|false|changeme|change_me|placeholder|redacted|example|secret|password|token|bearer|basic|digest|negotiate|ntlm|string|str|int|bool)$''',
+    '''^\[REDACTED''',
+]
+
+[[rules]]
+id = "bearer"
+description = "HTTP bearer token"
+regex = '''(?i)\bbearer[ \t]+([A-Za-z0-9\-._~+/=]{16,})'''
+keywords = ["bearer"]
+
+[[rules]]
+id = "pem_private_key"
+description = "PEM or PGP private key block, with or without its END line"
+regex = '''(?i)(-----BEGIN[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----|(?:(?:\\r|\\n|\r|\n|[ \t])+[A-Za-z0-9+/=:,. _-]+)*))'''
+keywords = ["-----begin"]
+
+[[rules]]
+id = "aws_access_key"
+description = "AWS access key id"
+regex = '''((?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16})'''
+keywords = ["akia", "asia", "abia", "acca", "a3t"]
+entropy = 3.0
+
+[[rules]]
+id = "github_token"
+description = "GitHub token"
+regex = '''\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,})'''
+keywords = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"]
+
+[[rules]]
+id = "slack_token"
+description = "Slack token"
+regex = '''\b((?:xox[aebprs]|xapp)-[A-Za-z0-9\-]{10,})'''
+keywords = ["xox", "xapp-"]
+
+[[rules]]
+id = "slack_webhook"
+description = "Slack webhook path"
+regex = '''hooks\.slack\.com/(?:services|workflows|triggers)/([A-Za-z0-9+/_-]{20,})'''
+keywords = ["hooks.slack.com"]
+
+[[rules]]
+id = "sk_token"
+description = "sk- or sk_ prefixed API key (OpenAI, Anthropic, Stripe)"
+regex = '''\b(sk[_-][A-Za-z0-9_-]{20,})'''
+keywords = ["sk-", "sk_"]
+
+[[rules]]
+id = "stripe_key"
+description = "Stripe restricted key"
+regex = '''\b(rk_(?:live|test|prod)_[A-Za-z0-9]{10,})'''
+keywords = ["rk_live", "rk_test", "rk_prod"]
+
+[[rules]]
+id = "google_api_key"
+description = "Google API key"
+regex = '''\b(AIza[0-9A-Za-z_-]{35})'''
+keywords = ["aiza"]
+
+[[rules]]
+id = "gitlab_token"
+description = "GitLab personal access token"
+regex = '''\b(glpat-[A-Za-z0-9_-]{20,})'''
+keywords = ["glpat-"]
+
+[[rules]]
+id = "npm_token"
+description = "npm access token"
+regex = '''\b(npm_[A-Za-z0-9]{36})'''
+keywords = ["npm_"]
+
+[[rules]]
+id = "huggingface_token"
+description = "Hugging Face access token"
+regex = '''\b(hf_[A-Za-z0-9]{30,})'''
+keywords = ["hf_"]
+
+[[rules]]
+id = "sendgrid_key"
+description = "SendGrid API key"
+regex = '''\b(SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,})'''
+keywords = ["sg."]
+
+[[rules]]
+id = "jwt"
+description = "JSON web token"
+regex = '''\b(ey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})'''
+keywords = ["ey"]
+
+[[rules]]
+id = "http_auth"
+description = "HTTP Basic, Digest, Negotiate or NTLM credential"
+regex = '''\b(?:Basic|Digest|Negotiate|NTLM) ([A-Za-z0-9+/=._~\-]{8,})'''
+keywords = ["basic ", "digest ", "negotiate ", "ntlm "]
+
+[[rules.allowlists]]
+regexes = ['''^[a-z]+$''']
+
+[[rules]]
+id = "url_password"
+description = "password in the userinfo of a URL"
+regex = '''(?i)\b[a-z][a-z0-9+.-]*://([^\s:/@]*):([^\s]+)@[A-Za-z0-9._-]+(?::\d+)?(?:[/?#]|\s|$)'''
+keywords = ["://"]
+secretGroup = 2
+
+[[rules]]
+id = "secret_assignment"
+description = "value assigned to a name that holds a secret word, in shell, env, YAML, TOML, JSON, query or header form"
+regex = '''(?i)\b[\w.-]*?(?:passw(?:or)?d|secret|token|api[_.-]?key|access[_.-]?key|private[_.-]?key|account[_.-]?key|app[_.-]?key|signing[_.-]?key|encryption[_.-]?key|master[_.-]?key|credentials?|authorization|cookie|session[_.-]?key|(?:\b|_)(?:pass|pwd|auth)(?:\b|[_.-]))[\w.-]*(?:\\?["'])?[ \t]*[=:][ \t]*(?:\\?["'])?([^\s"'\\;&<>:][^\s"'\\;&<>]{2,})'''
+keywords = ["pass", "pwd", "secret", "token", "key", "credential", "auth", "cookie"]
+
+[[rules.allowlists]]
+regexes = ['''^[A-Za-z_]+[,;]?$''', '''::''', '''\($''']
+
+[[rules]]
+id = "curl_user"
+description = "password of curl -u user:password"
+regex = '''(?i)\bcurl\b[^\n]*?\s(?:-u|--user)(?:[ \t]+|=)["']?([^\s"':]+:)([^\s"']+)'''
+keywords = ["curl"]
+secretGroup = 2
+
+[[rules]]
+id = "mysql_password_flag"
+description = "password glued to the -p flag of a MySQL or MariaDB client"
+regex = '''(?i)\b(?:mysql|mysqldump|mariadb)\b[^\n]*?\s-p([^\s"']+)'''
+keywords = ["mysql", "mariadb"]

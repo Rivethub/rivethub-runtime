@@ -143,12 +143,15 @@ fn json_quoted_assignments_are_redacted() -> Result<(), Box<dyn std::error::Erro
     for shape in shapes {
         let (redacted, spans) = redacted_content(&shape)?;
         assert!(!redacted.contains(value), "value survived: {redacted}");
-        assert!(redacted.contains("[REDACTED:assignment]"), "{redacted}");
+        assert!(
+            redacted.contains("[REDACTED:secret_assignment]"),
+            "{redacted}"
+        );
         assert_eq!(spans, 1);
     }
     assert_eq!(
         redacted_content("api_key: hunter2 next")?.0,
-        "api_key[REDACTED:assignment] next"
+        "api_key: [REDACTED:secret_assignment] next"
     );
     Ok(())
 }
@@ -174,7 +177,7 @@ fn title_settings_and_metadata_are_scanned() -> Result<(), Box<dyn std::error::E
         text_at(settings, "api_token"),
         Some("[REDACTED:secret_key]")
     );
-    assert_eq!(text_at(settings, "note"), Some("[REDACTED:bearer]"));
+    assert_eq!(text_at(settings, "note"), Some("Bearer [REDACTED:bearer]"));
     let metadata = batch.messages.first().and_then(|m| m.metadata.as_ref());
     assert_eq!(text_at(metadata, "note"), Some("[REDACTED:github_token]"));
     assert_eq!(text_at(metadata, "ingest_key"), Some("k-1"));
@@ -247,7 +250,7 @@ fn batch_of(message: CaptureMessage) -> CaptureBatchRequest {
 
 #[tokio::test]
 async fn no_unscanned_text_reaches_the_capped_content() -> Result<(), Box<dyn std::error::Error>> {
-    let bearer = format!("Bearer {}", "a".repeat(9000));
+    let bearer = format!("Bearer {}", "ab".repeat(4500));
     let filler = "x".repeat(16_000 - bearer.chars().count() - 1);
     let shrunk = format!("{bearer} {filler}{AWS_KEY}{}", "y".repeat(100));
     let posted = posted_message(batch_of(message(&shrunk))).await?;
@@ -257,7 +260,7 @@ async fn no_unscanned_text_reaches_the_capped_content() -> Result<(), Box<dyn st
     );
     assert_eq!(
         posted.content.chars().count(),
-        16_000 - bearer.chars().count() + 17 + 25 + 100
+        16_000 - bearer.chars().count() + 24 + 25 + 100
     );
     let straddling = format!("{}{AWS_KEY}{}", "x".repeat(15_990), "y".repeat(100));
     let posted = posted_message(batch_of(message(&straddling))).await?;

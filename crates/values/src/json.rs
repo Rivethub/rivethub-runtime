@@ -60,62 +60,67 @@ impl JsonObject {
         }
     }
 
-    pub fn visit_text_mut(&mut self, visit: &mut impl FnMut(TextAt<'_>, &mut String)) {
-        visit_members(&mut self.0, "", visit);
+    pub fn scrub(&mut self, scrub: &mut impl Scrub) {
+        scrub_members(&mut self.0, "", scrub);
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextSlot<'a> {
-    Key,
-    Value { key: &'a str },
+pub trait Scrub {
+    fn is_secret_name(&self, key: &str) -> bool;
+    fn key(&mut self, parent: &str, key: &mut String);
+    fn text(&mut self, path: &str, text: &mut String);
+    fn whole(&mut self, path: &str, current: Current<'_>) -> Option<String>;
+    fn collision(&mut self, parent: &str, key: &str);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextAt<'a> {
-    pub path: &'a str,
-    pub slot: TextSlot<'a>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Current<'a> {
+    Text(&'a str),
+    Json(String),
 }
 
-fn visit_members(
-    members: &mut Map<String, Value>,
-    parent: &str,
-    visit: &mut impl FnMut(TextAt<'_>, &mut String),
-) {
+fn scrub_members(members: &mut Map<String, Value>, parent: &str, scrub: &mut impl Scrub) {
     for (mut key, mut value) in std::mem::take(members) {
-        visit(
-            TextAt {
-                path: parent,
-                slot: TextSlot::Key,
-            },
-            &mut key,
-        );
+        let secret = scrub.is_secret_name(&key);
+        scrub.key(parent, &mut key);
         let path = member_path(parent, &key);
-        visit_value(&mut value, &path, &key, visit);
+        if secret {
+            let current = match &value {
+                Value::String(text) => Current::Text(text),
+                Value::Null
+                | Value::Bool(_)
+                | Value::Number(_)
+                | Value::Array(_)
+                | Value::Object(_) => Current::Json(value.to_string()),
+            };
+            if let Some(placeholder) = scrub.whole(&path, current) {
+                value = Value::String(placeholder);
+            }
+        } else {
+            scrub_value(&mut value, &path, scrub);
+        }
+        if members.contains_key(&key) {
+            let base = key.clone();
+            let mut suffix = 2;
+            while members.contains_key(&key) {
+                key = format!("{base}#{suffix}");
+                suffix += 1;
+            }
+            scrub.collision(parent, &key);
+        }
         members.insert(key, value);
     }
 }
 
-fn visit_value(
-    value: &mut Value,
-    path: &str,
-    key: &str,
-    visit: &mut impl FnMut(TextAt<'_>, &mut String),
-) {
+fn scrub_value(value: &mut Value, path: &str, scrub: &mut impl Scrub) {
     match value {
-        Value::String(text) => visit(
-            TextAt {
-                path,
-                slot: TextSlot::Value { key },
-            },
-            text,
-        ),
+        Value::String(text) => scrub.text(path, text),
         Value::Array(items) => {
             for (index, item) in items.iter_mut().enumerate() {
-                visit_value(item, &format!("{path}[{index}]"), key, visit);
+                scrub_value(item, &format!("{path}[{index}]"), scrub);
             }
         }
-        Value::Object(members) => visit_members(members, path, visit),
+        Value::Object(members) => scrub_members(members, path, scrub),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }

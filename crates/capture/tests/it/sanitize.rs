@@ -75,7 +75,7 @@ as = "<node>"
 
 fn policy() -> Result<Policy, MappingError> {
     Ok(Policy {
-        rules: sanitize::mapping::parse(MAPPING)?,
+        mapping: sanitize::mapping::parse(MAPPING)?,
     })
 }
 
@@ -204,8 +204,8 @@ fn every_planted_secret_is_gone() -> TestResult {
         stamp,
         &SanitizeStamp {
             at: at()?,
-            policy_sha256: policy()?.sha256()?,
-            passes: vec!["secrets".into(), "mapping".into(), "hosts".into()],
+            policy_sha256: policy()?.sha256(&input.manifest.bundle_sha256)?,
+            passes: vec!["secrets".into(), "mapping".into()],
             unresolved_flags: 0,
         }
     );
@@ -245,7 +245,7 @@ fn tool_results_are_kept_and_scrubbed() -> TestResult {
     let output = sanitize::run(&input, &policy()?, at()?)?.sealed.bundle;
     assert_eq!(
         first_message(first(&output)?)?.tool_result.as_deref(),
-        Some(format!("{filler}token[REDACTED:assignment]\n{filler}done").as_str())
+        Some(format!("{filler}token = [REDACTED:secret_assignment]\n{filler}done").as_str())
     );
     Ok(())
 }
@@ -290,9 +290,7 @@ fn the_report_never_contains_redacted_text() -> TestResult {
         "{markdown}"
     );
     assert!(
-        markdown.contains(
-            "| evt-2 | tool_args.token | secret key name | `[REDACTED:secret_key]` | 1 |"
-        ),
+        markdown.contains("| tool_args.token | secret key name | `[REDACTED:secret_key]` | 1 |"),
         "{markdown}"
     );
     assert!(
@@ -353,7 +351,7 @@ fn a_bad_regex_names_its_line() {
         "[[rule]]\nliteral = \"a\"\naction = \"redact\"\n\n[[rule]]\nregex = \"(unclosed\"\naction = \"redact\"\n",
     );
     assert!(
-        matches!(&parsed, Err(MappingError::Regex { line: 6, .. })),
+        matches!(&parsed, Err(MappingError::Regex { line: 5, .. })),
         "{parsed:?}"
     );
 }
@@ -362,7 +360,7 @@ fn a_bad_regex_names_its_line() {
 fn a_rule_missing_its_placeholder_names_its_line() {
     let parsed = sanitize::mapping::parse("\n[[rule]]\nliteral = \"a\"\naction = \"map\"\n");
     assert_eq!(
-        parsed.map(|rules| rules.len()),
+        parsed.map(|rules| rules.rules().len()),
         Err(MappingError::Rule {
             line: 2,
             problem: RuleProblem::MapWithoutPlaceholder

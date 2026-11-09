@@ -610,7 +610,7 @@ async fn a_mapping_with_a_bad_regex_names_its_line_and_writes_nothing() {
     assert_eq!(report.exit, Exit::Failure);
     assert!(
         report.stderr.starts_with(&format!(
-            "Error: the mapping file {rules} is invalid: mapping rule at line 6 has a regex that does not compile"
+            "Error: the mapping file {rules} is invalid: mapping rule at line 5 has a regex that does not compile"
         )),
         "{}",
         report.stderr

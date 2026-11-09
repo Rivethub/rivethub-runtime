@@ -476,6 +476,7 @@ dependencies = [
 name = "capture"
 version = "0.7.0"
 dependencies = [
+ "aho-corasick",
  "async-trait",
  "axum",
  "chrono",
