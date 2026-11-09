@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -71,6 +72,12 @@ pub(super) async fn share(
     sqlite: Option<PathBuf>,
     env: &Environment,
 ) -> Result<Report, Error> {
+    if tokio::fs::metadata(&out)
+        .await
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        return Err(Error::BundleOutDirectory(out.display().to_string()));
+    }
     let target = resolve(env, sqlite, Kind::Either)?;
     let author = exporter(env).await?;
     let named = (!wanted.is_empty()).then_some(wanted);
@@ -94,7 +101,7 @@ pub(super) async fn share(
     }
     let bundle = capture::bundle::seal(author, Utc::now(), sessions)?;
     let text = serde_json::to_string_pretty(&bundle).map_err(capture::bundle::BundleError::from)?;
-    write_whole(&out, format!("{text}\n").as_bytes()).await?;
+    write_whole(out.clone(), format!("{text}\n").into_bytes()).await?;
     let count = bundle.sessions.len();
     let noun = if count == 1 { "session" } else { "sessions" };
     Ok(Report::success(format!(
@@ -127,12 +134,22 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-async fn write_whole(out: &Path, bytes: &[u8]) -> Result<(), Error> {
-    let mut partial = out.as_os_str().to_owned();
-    partial.push(".tmp");
-    let partial = PathBuf::from(partial);
-    tokio::fs::write(&partial, bytes).await?;
-    tokio::fs::rename(&partial, out).await?;
+async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
+    tokio::task::spawn_blocking(move || {
+        let parent = match out.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent,
+            Some(_) | None => Path::new("."),
+        };
+        let mut partial = tempfile::Builder::new()
+            .prefix(".rh-bundle-")
+            .suffix(".tmp")
+            .tempfile_in(parent)?;
+        partial.write_all(&bytes)?;
+        partial.as_file().sync_all()?;
+        partial.persist(&out).map_err(|error| error.error)?;
+        Ok::<_, std::io::Error>(())
+    })
+    .await??;
     Ok(())
 }
 

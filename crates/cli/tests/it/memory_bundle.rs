@@ -169,6 +169,73 @@ async fn bundle_refuses_an_unknown_session_and_writes_nothing() {
     assert!(!node.directory.path().join("s.json.tmp").exists());
 }
 
+fn listing(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory)
+        .expect("listing")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[tokio::test]
+async fn bundle_leaves_a_users_tmp_file_alone_and_no_temporary_behind() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("s.json");
+    let out_text = out.display().to_string();
+    let neighbour = node.directory.path().join("s.json.tmp");
+    std::fs::write(&neighbour, "precious user data").expect("neighbour");
+
+    let report = run(
+        &["memory", "bundle", "--out", &out_text, "--sqlite", &sqlite],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        std::fs::read_to_string(&neighbour).expect("neighbour kept"),
+        "precious user data"
+    );
+    assert_eq!(
+        listing(node.directory.path()),
+        ["memory.sqlite", "s.json", "s.json.tmp", "users.json"]
+    );
+}
+
+#[tokio::test]
+async fn bundle_refuses_a_directory_out_and_writes_nothing() {
+    let node = node(&[]);
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("outdir");
+    std::fs::create_dir(&out).expect("outdir");
+    let out_text = out.display().to_string();
+
+    let report = run(
+        &["memory", "bundle", "--out", &out_text, "--sqlite", &sqlite],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stderr,
+        format!("Error: --out {out_text} is a directory; name the bundle file\n")
+    );
+    assert_eq!(
+        listing(node.directory.path()),
+        ["memory.sqlite", "outdir", "users.json"]
+    );
+    assert_eq!(listing(&out), Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn bundle_requires_a_value_for_every_session_flag() {
     let node = node(&[]);

@@ -219,6 +219,8 @@ pub enum Error {
     SessionRequired,
     #[error("no session this node can export has the id {0}")]
     BundleUnknown(String),
+    #[error("--out {0} is a directory; name the bundle file")]
+    BundleOutDirectory(String),
     #[error("the users file {path} is not a users registry: {source}")]
     BundleUsers {
         path: String,
