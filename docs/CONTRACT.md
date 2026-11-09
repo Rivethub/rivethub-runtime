@@ -1649,7 +1649,8 @@ owner, so it cannot post into another user's import; a batch whose key starts wi
 those two arrays (two strings, neither `unknown`, or four strings whose first is `unknown`) is an invalid request
 (HTTP 400 from the gateway). The readable node, conversation id
 and session key stay in `settings.origin`, which holds the session's `origin`. Ingesting the same bundle again as the
-same user reaches the same conversation and adds no messages, since event ids it already has are skipped. The
+same user reaches the same conversation and adds no messages, since event ids it already has are skipped; when the
+receiver has trashed that conversation, it stays trashed, as a capture never lifts the mark (note 127). The
 receiver still records the user it authenticated as the owner: the origin is attribution only.
 
 A capture batch whose `session_key` starts with `import:` is an import. Postgres honours a batch's `created_at` and
@@ -1665,7 +1666,8 @@ stored title (a receiver rename included) stay; a key only one side has is kept 
 `origin` (author, node, conversation id, session key, agent and dates), its batch `session_key` set to the origin's,
 and the origin's dates as the batch dates, absent when the origin has none, so a session passed on from user to
 user stays credited to its first author with its first dates and an undated origin never takes a receiver's import
-time.
+time. A trashed import is left out of a whole-store bundle and exported, with its stored origin, only when named by
+id, as `rh memory bundle` treats every trashed session.
 
 Postgres stores times to the microsecond, so capture truncates finer message times to the microsecond before it
 places them. Bundle times have millisecond precision, so messages can share a time. Postgres capture, live capture

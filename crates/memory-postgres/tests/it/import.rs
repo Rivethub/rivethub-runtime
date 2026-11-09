@@ -3,6 +3,7 @@ use crate::common;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::MemoryStore as _;
+use kernel::memory::SessionDeletion as _;
 use kernel::owner::Owner;
 use memory_postgres::CaptureOptions;
 use memory_postgres::PostgresMemory;
@@ -611,5 +612,45 @@ async fn times_finer_than_a_microsecond_keep_the_batch_order(pool: PgPool) -> Te
         .await?;
 
     assert_eq!(exported_order(&store).await?, steps);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let session = phils_session()?;
+    let first = import(&store, "alex", &session).await?;
+    let key = receiver_key("alex", &session)?;
+    store
+        .trash_session(&key, Some("alex"), at("2026-11-01T00:00:00Z")?)
+        .await?;
+
+    let again = import(&store, "alex", &session).await?;
+
+    assert_eq!(again.conversation_id, first.conversation_id);
+    assert_eq!((again.inserted, again.skipped), (0, 2));
+    assert!(
+        store
+            .trashed(std::slice::from_ref(&key))
+            .await?
+            .contains_key(&key)
+    );
+    let alex = wire::capture::BundleAuthor {
+        user: "alex".to_owned(),
+        node: "team".to_owned(),
+    };
+    assert!(store.bundled_sessions(&alex, None).await?.is_empty());
+    let id = Uuid::parse_str(&first.conversation_id)?;
+    let named = store.bundled_sessions(&alex, Some(&[id])).await?;
+    let forwarded = named
+        .into_iter()
+        .next()
+        .ok_or("the named trashed import")?
+        .forwarding_stored_origin();
+    assert_eq!(forwarded.origin, session.origin);
+    assert_eq!(forwarded.batch.session_key, "claude-code:shared");
     Ok(())
 }

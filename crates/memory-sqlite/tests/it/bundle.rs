@@ -366,7 +366,8 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
 }
 
 #[tokio::test]
-async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult {
+async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult
+{
     let store = fresh_store()?;
     let alex = Owner::new("alex".to_owned())?;
     let tied = instant("2026-10-14T09:00:00.123Z")?;
@@ -578,5 +579,54 @@ async fn an_older_bundle_keeps_a_newer_title() -> TestResult {
 
     assert_eq!(after_older.as_deref(), Some("Wombat plan final"));
     assert_eq!(title().await?.as_deref(), Some("Receiver title"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named() -> TestResult {
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let now = instant("2026-11-08T12:00:00.000Z")?;
+    let posted = imported("2026-10-14T11:30:00.000Z", "opus")?;
+    let key = wire::capture::owned_import_key("alex", &posted.session_key)?.ok_or("import key")?;
+    let first = store
+        .store
+        .capture(posted.clone(), &alex, None, now)
+        .await?;
+    store.store.trash_session(&key, Some("alex"), now).await?;
+
+    let again = store.store.capture(posted, &alex, None, now).await?;
+
+    assert_eq!(again.conversation_id, first.conversation_id);
+    assert_eq!((again.inserted, again.skipped), (0, 1));
+    assert!(
+        store
+            .store
+            .trashed(std::slice::from_ref(&key))
+            .await?
+            .contains_key(&key)
+    );
+    let team = BundleAuthor {
+        user: "alex".to_owned(),
+        node: "team".to_owned(),
+    };
+    assert!(
+        store
+            .store
+            .bundled_sessions(team.clone(), None)
+            .await?
+            .is_empty()
+    );
+    let named = store
+        .store
+        .bundled_sessions(team, Some(vec![first.conversation_id.clone()]))
+        .await?;
+    let forwarded = named
+        .into_iter()
+        .next()
+        .ok_or("the named trashed import")?
+        .forwarding_stored_origin();
+    assert_eq!(forwarded.origin.author, "phil");
+    assert_eq!(forwarded.batch.session_key, "claude-code:shared");
     Ok(())
 }
