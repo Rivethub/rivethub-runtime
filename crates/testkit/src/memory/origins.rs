@@ -13,7 +13,7 @@ impl Origins {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "CONTRACT B6 (note 134): lookup_origins returns only origins that are JSON objects"
+                reason = "CONTRACT B6 (note 135): lookup_origins returns only origins that are JSON objects"
             )
         )]
         let origin = batch
