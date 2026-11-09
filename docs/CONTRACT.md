@@ -1707,19 +1707,45 @@ A trashed import is left out of a whole-store bundle and exported only when name
 `--out` that is a directory, and writes nothing then. Both files are written as `rh memory bundle` writes its file
 (note 134). It prints `sanitized <n> sessions: <s> secrets, <m> mapped, <r> redacted; report at <path>`.
 
-The text it scrubs is each session's title, its `settings`, and each message's `content`, `tool_result`, `tool_args`
-and `metadata`. In a JSON object it scrubs every string value and every key, at every depth. A string value under a
-key the capture redaction treats as a secret name becomes `[REDACTED:secret_key]` whole. Two passes run over that text in
-order. The secrets pass replaces each match of the capture redaction patterns (`bearer`, `pem_private_key`,
-`aws_access_key`, `github_token`, `slack_token`, `sk_token`, `jwt`, `http_auth`, `assignment`, `env_secret` and
-`url_password`) with `[REDACTED:<name>]`, the text live capture redaction writes. `env_secret` matches the value of a
-`.env` line whose upper-case name holds a secret word (`PASSWORD`, `SECRET`, `TOKEN`, `API_KEY` and the like), and `url_password` matches the password of a connection string
-(`scheme://user:<password>@host`). Live capture redaction, when it is on, uses the same patterns. The mapping pass
-applies the rules of the mapping file in file order. The mapping pass alone also runs on each `origin.node` and on
-`manifest.exported_by.node`. Text a pass already replaced (any `[REDACTED` placeholder) is never matched again. The
-author, conversation id, session key, agent, dates, event ids, roles, channel, task id and tool names are not scrubbed,
-so the sessions stay credited to their author with their original dates. A `settings.origin` the scrubber changed
-does not change credit: ingest replaces `settings.origin` with the session's `origin` (note 135).
+The text it scrubs is, per session, `origin.node`, `origin.session_key`, `origin.agent`, the batch's `session_key`,
+`agent`, `channel`, `task_id`, `title` and `settings`, each message's `content`, `tool_result`, `tool_name`,
+`tool_args` and `metadata`, and `manifest.exported_by.node`. In a JSON object it scrubs every key and every string
+value, at every depth. A member whose original key, before any rule renames it, matches the secret-name regex in
+`crates/capture/src/rules/rivethub.toml` (`password`, `secret`, `token`, `api_key`, `cookie`, `session_key` and the
+like) has its whole value, of any JSON type, replaced by the string `[REDACTED:secret_key]`. When two keys of one
+object scrub to the same text, the later one gets `#2`, `#3` and so on appended, so no value is lost, and the report
+lists each renamed key. Not scrubbed: `origin.author`, `origin.conversation_id`, dates, roles and `finalize`, so the
+sessions stay credited to their author with their original dates. Each `event_id` is replaced by the lowercase hex
+SHA-256 of the message's index in its session, a zero byte and the canonical JSON of the sanitized message with an
+empty `event_id`, so the same raw bundle and policy give the same ids (the receiver's dedupe stays idempotent) and
+nothing about the original message can be tested against them.
+
+Two passes run over each text. The secrets pass applies the secret rules, data in `crates/capture/src/rules/`:
+RivetHub's own rules in `rivethub.toml` first (`bearer`, `pem_private_key` including truncated and PGP blocks,
+`aws_access_key`, `github_token`, `slack_token`, `slack_webhook`, `sk_token`, `stripe_key`, `google_api_key`,
+`gitlab_token`, `npm_token`, `huggingface_token`, `sendgrid_key`, `jwt`, `http_auth`, `url_password` for
+`scheme://user:password@host` with an empty user or a password holding `/` or `@` included, `secret_assignment` for a
+value assigned to a name that holds a secret word in shell, env, YAML, TOML, JSON, query-string or header form,
+`curl_user` and `mysql_password_flag`), then the default gitleaks configuration in `gitleaks.toml`, vendored unchanged
+(its version, commit, SHA-256 and MIT license are recorded in `rivethub.toml`; rules that need a file path are
+skipped). Each rule names keywords; one Aho-Corasick automaton over every keyword prefilters the text, and a rule whose
+keyword appears runs its regex on that line, or on a 64 KiB window when its regex spans lines. The secret is the
+rule's `secretGroup`, else its first non-empty capture group, else the whole match, so a name and its separator stay
+(`api_key: [REDACTED:secret_assignment]`). A match is dropped when the Shannon entropy of the secret is at or under the
+rule's `entropy`, or when a global or rule allowlist matches it (gitleaks' and RivetHub's: template placeholders such
+as `{NAME}`, `<password>`, `${VAR}` and `$VAR`, masks such as `****` and `...`, bare words, code paths). Only the
+secret span is replaced, by `[REDACTED:<rule id>]`, the text live capture redaction writes. Where matches overlap, the
+earliest start wins, then rule order. Live capture redaction, when it is on, uses the same rules and the same
+secret-name regex. The rules compile once per process; a test fails when a rule does not compile or when the vendored
+file's digest differs from the pin.
+
+The mapping pass applies the rules of the mapping file as one pass: literals through one leftmost-first automaton,
+regexes through one combined pattern; where matches overlap, the earliest start wins, then file order. `map` writes
+the rule's placeholder and `redact` writes `[REDACTED]`. Text a pass already replaced is never matched again: a
+`[REDACTED]` or `[REDACTED:<kind>]` span is protected only when `<kind>` is a rule id the sanitizer emits,
+`secret_key`, or `pattern:<n>` (a live capture pattern); any other `[REDACTED:...]` text is ordinary text and is
+scanned, so brackets wrapped around a secret do not hide it. A `settings.origin` the scrubber changed does not change
+credit: ingest replaces `settings.origin` with the session's `origin` (note 135).
 
 The mapping file is `--mapping`, else `memory.sanitize.mapping` in config.yaml (`~` expands to the home folder),
 else `~/.config/rivethub/redactions.toml`. A file named by `--mapping` or the config must exist; the default file may
@@ -1727,27 +1753,35 @@ be absent, and then no rule runs. It is TOML: a list of `[[rule]]` tables, each 
 "<text>"` or `regex = '<pattern>'` (the Rust `regex` syntax, which runs in linear time), and `action = "map"` with
 `as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A file that is not TOML,
 a rule with no matcher, both matchers, an empty matcher or placeholder, a `map` without `as`, a `redact` with `as`,
-or a regex that does not compile is refused with the rule's line number, and nothing is written.
+or a regex that does not compile is refused with the line of the rule's `[[rule]]` header, and nothing is written.
 
-The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (its node mapped) and
-`sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets", "mapping", "hosts"],
-"unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex SHA-256 of the
-canonical JSON of the secret-name pattern, every secrets-pass pattern by name and source, and the mapping rules in
-order (matcher and action), so the same patterns and rules give the same digest.
+The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (its node scrubbed) and
+`sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets", "mapping"],
+"unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex SHA-256 of the raw
+bundle's `bundle_sha256`, a zero byte and the canonical JSON of the secret rules' digest (SHA-256 over both rule
+files) and the mapping rules in order (matcher and action). The raw digest never ships with the sanitized bundle, so
+the hash tells whether one raw bundle was sanitized twice with the same policy, and nobody can test a guessed mapping
+rule against it.
 
-The report never holds replaced text. It names the bundle, the time, the totals, the mapping file and its rule count,
-the policy and bundle digests, a table of every rule with its change count (a mapping rule by its line number, since a
-`redact` rule's literal is the secret itself), and, for each session and then the manifest, one row per event, field and rule: event
-id, field (`title`, `content`, `tool_result`, `origin.node`, `manifest.exported_by.node`, or `settings`, `tool_args`
-or `metadata` with the JSON path and whether a key was changed), rule, the replacement, the number of changes and an Original column. The
-Original column lists fingerprints, each the first 12 hex characters of the SHA-256 of the raw bundle's `bundle_sha256`, a zero byte and
-the replaced text, so equal values share a fingerprint and nobody without the raw bundle can test a guess against it.
+The report never holds replaced text. It names the bundle, the time, the totals, the fields it does not scan, the
+secret rule counts with the gitleaks version, the mapping file and its rule count, the policy and bundle digests, a
+table of every rule with its change count (a mapping rule by its line number, since a `redact` rule's literal is the
+secret itself), and, for each session and then the manifest, one row per event, field and rule: the first 12 hex
+characters of the event id, the field (`title`, `content`, `tool_result`, `tool_name`, `session_key`, `agent`,
+`channel`, `task_id`, `origin.node`, `origin.session_key`, `origin.agent`, `manifest.exported_by.node`, or
+`settings`, `tool_args` or `metadata` with the JSON path built from the scrubbed keys and whether a key was changed),
+the rule, the replacement, the number of changes and an Original column, then the keys a collision renamed. The
+Original column lists fingerprints, each the first 12 hex characters of the SHA-256 of the raw bundle's
+`bundle_sha256`, a zero byte and the replaced span, so spans with the same text share a fingerprint and nobody without
+the raw bundle can test a guess against it.
 
 `ingest-bundle` does not trust the stamp. Before it posts anything, it runs the secrets pass over every sanitized
-bundle it reads. When a pattern still matches, it refuses the bundle with the match count and the first match's
-session, event, field and pattern (never the text), and writes nothing, unless `--force` is given. Then it ingests it
-and its report adds `(<n> secret pattern matches forced)`. `--dry-run` lists the bundle as before and adds the match
-count to its total line.
+bundle it reads, with the same placeholder protection. When a rule still matches, it refuses the bundle with the match
+count and the first match's session, event, field and rule (never the text), and writes nothing, unless `--force` is
+given. Then it ingests it and its report adds `(<n> secret pattern matches forced)`. `--dry-run` lists the bundle as
+before and adds the match count to its total line. The receiver cannot re-apply the sender's mapping rules, which never
+ship: a raw bundle relabelled sanitized with a recomputed digest passes the scan when only mapping terms (names, hosts,
+projects) remain in it, so the receiver trusts the sender for mapping and only the secret rules for secrets.
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 
