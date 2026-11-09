@@ -31,6 +31,7 @@ impl CaptureOptions {
 #[derive(Debug)]
 pub struct CaptureWriter<'a> {
     pub(crate) tx: Transaction<'a, Postgres>,
+    undated_from: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +111,21 @@ impl<'a> CaptureWriter<'a> {
         .fetch_one(&mut *tx)
         .await
         .map_err(|source| Error::operation("capture lock", source))?;
+        let undated_from = sqlx::query_scalar!(
+            r#"select greatest(now(), max(last.created_at) + interval '1 microsecond') as "undated_from!"
+                 from rh_conversations c
+                 cross join lateral (
+                     select m.created_at from rh_messages m
+                      where m.conversation_id = c.id
+                      order by m.created_at desc
+                      limit 1
+                 ) last
+                where c.session_key = $1"#,
+            session_key
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|source| Error::operation("capture start time", source))?;
         let queued = crate::graphile::GraphileQueue::schema_present(&mut *tx).await?;
         sqlx::query(
             "select set_config('rivet.defer_embed_enqueue', case when $1 then 'off' else 'on' end, true)",
@@ -118,7 +134,7 @@ impl<'a> CaptureWriter<'a> {
         .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("embed defer", source))?;
-        Ok(Self { tx })
+        Ok(Self { tx, undated_from })
     }
 
     pub async fn commit(self) -> Result<(), Error> {
@@ -198,7 +214,7 @@ impl<'a> CaptureWriter<'a> {
                (conversation_id, agent, channel, role, content, tool_name, tool_args,
                 tool_result, metadata, owner_user_id, created_at)
              values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                     coalesce($11, now() + $12::bigint * interval '1 microsecond'))
+                     coalesce($11, $13::timestamptz + $12::bigint * interval '1 microsecond'))
              returning id",
             row.conversation_id,
             row.agent,
@@ -212,6 +228,7 @@ impl<'a> CaptureWriter<'a> {
             row.owner_user_id,
             row.created_at,
             row.batch_index,
+            self.undated_from,
         )
         .fetch_one(&mut *self.tx)
         .await

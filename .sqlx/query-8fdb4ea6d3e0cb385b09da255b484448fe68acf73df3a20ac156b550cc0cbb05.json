@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select greatest(now(), max(last.created_at) + interval '1 microsecond') as \"undated_from!\"\n                 from rh_conversations c\n                 cross join lateral (\n                     select m.created_at from rh_messages m\n                      where m.conversation_id = c.id\n                      order by m.created_at desc\n                      limit 1\n                 ) last\n                where c.session_key = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "undated_from!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8fdb4ea6d3e0cb385b09da255b484448fe68acf73df3a20ac156b550cc0cbb05"
+}

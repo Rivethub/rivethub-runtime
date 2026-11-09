@@ -218,3 +218,82 @@ async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
     assert_eq!(exported, steps);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let key = "claude-code:overlap";
+    let undated = |content: &str| CaptureMessage {
+        created_at: None,
+        ..said(&format!("evt-{content}"), content, Utc::now())
+    };
+    let id = captured(&store, "phil", &batch(key, vec![undated("seed")])).await?;
+    let warm = (pool.acquire().await?, pool.acquire().await?);
+    drop(warm);
+
+    let first: Vec<String> = (0..3_000).map(|n| format!("a {n}")).collect();
+    let metadata = object("{}")?;
+    let mut holder = memory_postgres::CaptureWriter::begin(&pool, key).await?;
+    let second = tokio::spawn({
+        let store = PostgresMemory::new(pool.clone());
+        let request = batch(key, vec![undated("b")]);
+        async move {
+            captured(&store, "phil", &request)
+                .await
+                .map_err(|e| e.to_string())
+        }
+    });
+    while sqlx::query_scalar::<_, i64>(
+        "select count(*) from pg_locks where locktype = 'advisory' and not granted",
+    )
+    .fetch_one(&pool)
+    .await?
+        == 0
+    {
+        tokio::task::yield_now().await;
+    }
+    for (index, content) in first.iter().enumerate() {
+        holder
+            .insert_message(&memory_postgres::MessageRow {
+                conversation_id: id,
+                agent: "rivet",
+                channel: "claude-code",
+                role: Role::User,
+                content,
+                tool_name: None,
+                tool_args: None,
+                tool_result: None,
+                metadata: &metadata,
+                owner_user_id: "phil",
+                created_at: None,
+                batch_index: i64::try_from(index)?,
+            })
+            .await?;
+    }
+    holder.commit().await?;
+    second.await??;
+
+    let sessions = store.bundled_sessions(&author("phil"), Some(&[id])).await?;
+
+    let session = sessions.first().ok_or("overlap session")?;
+    let exported: Vec<&str> = session
+        .batch
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    let expected: Vec<&str> = std::iter::once("seed")
+        .chain(first.iter().map(String::as_str))
+        .chain(std::iter::once("b"))
+        .collect();
+    assert_eq!(exported.len(), expected.len());
+    assert_eq!(
+        exported.iter().position(|c| *c == "b"),
+        Some(expected.len() - 1)
+    );
+    assert_eq!(exported, expected);
+    Ok(())
+}
