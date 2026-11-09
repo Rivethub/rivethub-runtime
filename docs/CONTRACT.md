@@ -1575,9 +1575,9 @@ SQLite memory file as JSON of version 1 (`wire::capture::SessionBundle`: `versio
 its row id, and that key is not copied back into the message metadata. `rh memory ingest-bundle <file>` posts each
 session through the capture writer this node already uses (the local gateway, or `memory.capture.gateway` when that is
 set), so the receiving node records every session as the user it authenticated and a second ingest skips event ids it
-already has. Note 125 moves bundles to version 2 and adds Postgres as a source.
+already has. Note 134 moves bundles to version 2 and adds Postgres as a source.
 
-(125) Session bundles, version 2 (Phil, 2026-11-08; session-sharing plan SS-1): `rh memory bundle --out <file>
+(134) Session bundles, version 2 (Phil, 2026-11-08; session-sharing plan SS-1): `rh memory bundle --out <file>
 [--session <conversation id>]... [--sqlite <file>]` writes version 2 (`wire::capture::SessionBundle`: `version`,
 `manifest` and `sessions`). It reads the SQLite file `--sqlite` names when given, else Postgres at `RIVETHUB_PG_URL`,
 else `memory.postgres` in the config, else the SQLite file at `memory.sqlite.path`, as `export` does. Each `--session`
