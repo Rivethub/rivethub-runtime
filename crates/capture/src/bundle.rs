@@ -27,6 +27,8 @@ pub enum BundleError {
         "session bundle digest does not match its contents: the manifest says {declared}, the bundle hashes to {computed}"
     )]
     Digest { declared: String, computed: String },
+    #[error("canonical session bundle text does not open with its manifest")]
+    Layout,
     #[error("session bundle manifest counts {declared} sessions but holds {found}")]
     Count { declared: usize, found: usize },
 }
@@ -53,11 +55,16 @@ pub fn parse(text: &str) -> Result<SessionBundle, BundleError> {
     }
 }
 
+pub struct Sealed {
+    pub bundle: SessionBundle,
+    pub text: Vec<u8>,
+}
+
 pub fn seal(
     exported_by: BundleAuthor,
     exported_at: DateTime<Utc>,
     sessions: Vec<BundledSession>,
-) -> Result<SessionBundle, BundleError> {
+) -> Result<Sealed, BundleError> {
     let mut bundle = SessionBundle {
         version: SESSION_BUNDLE_VERSION,
         manifest: BundleManifest {
@@ -69,15 +76,34 @@ pub fn seal(
         },
         sessions,
     };
-    bundle.manifest.bundle_sha256 = bundle_sha256(&bundle)?;
-    Ok(bundle)
+    let covered = covered_json(&bundle)?;
+    let digest = hex::encode(Sha256::digest(&covered));
+    let text = with_digest(&covered, &digest)?;
+    bundle.manifest.bundle_sha256 = digest;
+    Ok(Sealed { bundle, text })
+}
+
+const MANIFEST_OPEN: &[u8] = br#"{"manifest":{"#;
+
+// Canonical JSON sorts keys, so the covered text opens with the manifest and `bundle_sha256` sorts before every other
+// manifest key: inserting it there yields the canonical JSON of the whole sealed bundle without serializing it again.
+fn with_digest(covered: &[u8], digest: &str) -> Result<Vec<u8>, BundleError> {
+    let Some(rest) = covered.strip_prefix(MANIFEST_OPEN) else {
+        return Err(BundleError::Layout);
+    };
+    let member = format!(r#""bundle_sha256":"{digest}","#);
+    let mut text = Vec::with_capacity(covered.len() + member.len());
+    text.extend_from_slice(MANIFEST_OPEN);
+    text.extend_from_slice(member.as_bytes());
+    text.extend_from_slice(rest);
+    Ok(text)
 }
 
 #[derive(Serialize)]
 struct Covered<'a> {
-    version: u32,
     manifest: CoveredManifest<'a>,
     sessions: &'a [BundledSession],
+    version: u32,
 }
 
 #[derive(Serialize)]
@@ -89,6 +115,10 @@ struct CoveredManifest<'a> {
 }
 
 pub fn bundle_sha256(bundle: &SessionBundle) -> Result<String, BundleError> {
+    Ok(hex::encode(Sha256::digest(covered_json(bundle)?)))
+}
+
+fn covered_json(bundle: &SessionBundle) -> Result<Vec<u8>, BundleError> {
     let BundleManifest {
         exported_at,
         exported_by,
@@ -106,9 +136,7 @@ pub fn bundle_sha256(bundle: &SessionBundle) -> Result<String, BundleError> {
         },
         sessions: &bundle.sessions,
     };
-    Ok(hex::encode(Sha256::digest(wire::json::canonical_json(
-        &covered,
-    )?)))
+    Ok(wire::json::canonical_json(&covered)?)
 }
 
 fn check(bundle: &SessionBundle) -> Result<(), BundleError> {
@@ -136,14 +164,15 @@ fn upgrade(first: FirstBundle) -> Result<SessionBundle, BundleError> {
         .filter_map(|session| session.origin.updated_at)
         .max()
         .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
-    seal(
+    Ok(seal(
         BundleAuthor {
             user: UNKNOWN_ORIGIN.to_owned(),
             node: UNKNOWN_ORIGIN.to_owned(),
         },
         exported_at,
         sessions,
-    )
+    )?
+    .bundle)
 }
 
 fn inferred(batch: CaptureBatchRequest) -> BundledSession {

@@ -102,7 +102,7 @@ fn sealed_with(
         user: "phil".to_owned(),
         node: "desk".to_owned(),
     };
-    Ok(capture::bundle::seal(author, at, vec![session])?)
+    Ok(capture::bundle::seal(author, at, vec![session])?.bundle)
 }
 
 #[test]
@@ -114,6 +114,21 @@ fn a_sealed_bundle_round_trips_through_its_file_text() -> TestResult {
     assert_eq!(bundle.manifest.sanitization, Sanitization::Raw);
     let stamped: Stamped = serde_json::from_str(&text)?;
     assert_eq!(stamped.manifest.sanitization.state, "raw");
+    Ok(())
+}
+
+#[test]
+fn the_sealed_text_is_the_canonical_json_of_the_bundle_it_parses_to() -> TestResult {
+    let bundle = sealed()?;
+    let sealed = capture::bundle::seal(
+        bundle.manifest.exported_by.clone(),
+        bundle.manifest.exported_at,
+        bundle.sessions.clone(),
+    )?;
+    let parsed = capture::bundle::parse(std::str::from_utf8(&sealed.text)?)?;
+    assert_eq!(parsed, sealed.bundle);
+    assert_eq!(parsed, bundle);
+    assert_eq!(sealed.text, wire::json::canonical_json(&parsed)?);
     Ok(())
 }
 

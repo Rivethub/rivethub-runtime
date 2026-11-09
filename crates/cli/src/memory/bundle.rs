@@ -99,10 +99,10 @@ pub(super) async fn share(
     if let Some(named) = &named {
         refuse_missing(named, &sessions)?;
     }
-    let bundle = capture::bundle::seal(author, Utc::now(), sessions)?;
-    let text = serde_json::to_string_pretty(&bundle).map_err(capture::bundle::BundleError::from)?;
-    write_whole(out.clone(), format!("{text}\n").into_bytes()).await?;
-    let count = bundle.sessions.len();
+    let count = sessions.len();
+    let mut text = capture::bundle::seal(author, Utc::now(), sessions)?.text;
+    text.push(b'\n');
+    write_whole(out.clone(), text).await?;
     let noun = if count == 1 { "session" } else { "sessions" };
     Ok(Report::success(format!(
         "bundled {count} {noun} (raw, not sanitized) to {}\n",
@@ -145,7 +145,6 @@ async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
             .suffix(".tmp")
             .tempfile_in(parent)?;
         partial.write_all(&bytes)?;
-        partial.as_file().sync_all()?;
         partial.persist(&out).map_err(|error| error.error)?;
         Ok::<_, std::io::Error>(())
     })
