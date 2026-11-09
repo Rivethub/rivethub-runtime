@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use kernel::memory::{MemoryEntry, MemorySearchResult};
 use kernel::memory::{MemoryHitSource, TagWire};
 use kernel::memory::{SearchOutcome, SearchQuery, SummaryDetail};
+use wire::capture::SessionOrigin;
 
 use crate::{Error, render_memory, render_tags};
 
@@ -118,6 +119,12 @@ fn message(
         dated(hit, now, zone),
         hit.relevance_score
     )?;
+    if let Some(origin) = origin(entry)? {
+        write!(heading, " from {}", origin.author)?;
+        if let Some(created) = origin.created_at {
+            write!(heading, " · {}", render_memory::local_date(created, zone))?;
+        }
+    }
     if let Some(tags) = render_memory::tags(entry, tags) {
         heading.push_str(&tags);
     }
@@ -134,6 +141,18 @@ fn message(
         None => render_memory::payload(entry, 500)?,
     };
     Ok(format!("{heading}\n{payload}"))
+}
+
+#[derive(serde::Deserialize)]
+struct Imported {
+    origin: Option<SessionOrigin>,
+}
+
+fn origin(entry: &MemoryEntry) -> Result<Option<SessionOrigin>, Error> {
+    Ok(match &entry.metadata {
+        Some(metadata) => metadata.deserialize::<Imported>()?.origin,
+        None => None,
+    })
 }
 
 fn empty(query: &SearchQuery) -> String {

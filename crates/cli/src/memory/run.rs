@@ -62,7 +62,11 @@ pub(super) async fn run(
             sessions,
             sqlite,
         } => super::bundle::share(out, sessions, sqlite, env).await,
-        MemoryCommand::IngestBundle { path } => ingest_bundle(path, env, shutdown).await,
+        MemoryCommand::IngestBundle {
+            path,
+            force,
+            dry_run,
+        } => super::bundle::ingest(&path, force, dry_run, env).await,
         MemoryCommand::Import {
             path,
             dry_run,
@@ -245,21 +249,6 @@ async fn consolidate_wiki(
     ));
     let text = format!("{}\n", lines.join("\n"));
     Ok(Report::success(text))
-}
-
-async fn ingest_bundle(
-    path: PathBuf,
-    env: &Environment,
-    _shutdown: &CancellationToken,
-) -> Result<Report, Error> {
-    let text = tokio::fs::read_to_string(&path).await?;
-    let bundle = capture::bundle::parse(&text)?;
-    let sessions = bundle.sessions.len();
-    let totals = crate::capture_hook::ingest_bundle(env, &bundle, Utc::now()).await?;
-    Ok(Report::success(format!(
-        "ingested {sessions} session(s): {} inserted, {} skipped\n",
-        totals.inserted, totals.skipped
-    )))
 }
 
 async fn export(

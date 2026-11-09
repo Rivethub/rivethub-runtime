@@ -236,6 +236,65 @@ async fn bundle_refuses_a_directory_out_and_writes_nothing() {
     assert_eq!(listing(&out), Vec::<String>::new());
 }
 
+async fn bundled(node: &Node) -> String {
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("s.json").display().to_string();
+    let report = run(
+        &[
+            "memory",
+            "bundle",
+            "--out",
+            &out,
+            "--session",
+            "c1",
+            "--session",
+            "c3",
+            "--sqlite",
+            &sqlite,
+        ],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    out
+}
+
+#[tokio::test]
+async fn a_raw_bundle_is_refused_without_force() {
+    let node = node(&[]);
+    let bundle = bundled(&node).await;
+
+    let report = run(&["memory", "ingest-bundle", &bundle], &node.environment).await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stderr,
+        format!(
+            "Error: {bundle} is a raw bundle that was never sanitized; pass --force to ingest it as it is\n"
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_dry_run_lists_every_session_and_its_author() {
+    let node = node(&[]);
+    let bundle = bundled(&node).await;
+
+    let report = run(
+        &["memory", "ingest-bundle", &bundle, "--dry-run"],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        report.stdout,
+        "claude-code:one (rivet): 1 message from phil, 2026-10-14 to 2026-10-14\n\
+         codex:three (rivet-gpt): 1 message from phil, 2026-10-16 to 2026-10-16\n\
+         would ingest 2 sessions from phil (raw bundle; ingest needs --force); nothing written\n"
+    );
+}
+
 #[tokio::test]
 async fn bundle_reads_an_explicit_sqlite_file_before_postgres() {
     let node = node(&[(

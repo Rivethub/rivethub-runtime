@@ -425,3 +425,63 @@ async fn tool_previews_count_characters_and_reject_malformed_capture_metadata() 
             .contains("expected a boolean")
     );
 }
+
+#[tokio::test]
+async fn an_imported_hit_names_its_origin_author() {
+    use kernel::memory::MemoryEntry;
+    use kernel::memory::MemoryStore;
+    let (server, store) = setup(false);
+    let entry = |id: &str, metadata: Option<&str>| MemoryEntry {
+        id: Some(id.into()),
+        session_id: format!("{id}-session"),
+        agent: "rivet".into(),
+        channel: "claude-code".into(),
+        role: Role::User,
+        content: format!("bundle digest work in {id}"),
+        tool_name: None,
+        tool_args: None,
+        tool_result: None,
+        metadata: metadata.map(|text| serde_json::from_str(text).expect("metadata")),
+        created_at: Some("2026-11-08T10:00:00Z".parse().expect("date")),
+    };
+    let origin = r#"{"event_id":"evt-1","origin":{"author":"phil","node":"desk","conversation_id":"c1","session_key":"claude-code:one","agent":"rivet","created_at":"2026-10-14T09:00:00Z","updated_at":"2026-10-14T11:30:00Z"}}"#;
+    let undated = r#"{"origin":{"author":"unknown","node":"unknown","conversation_id":"unknown","session_key":"claude-code:old","agent":"rivet","created_at":null,"updated_at":null}}"#;
+    store
+        .append(
+            &testkit::owner().expect("owner"),
+            vec![
+                entry("imported", Some(origin)),
+                entry("undated", Some(undated)),
+                entry("native", None),
+            ],
+        )
+        .await
+        .expect("seed");
+
+    let result = support::call(&server, "memory_search", r#"{"query":"bundle digest"}"#).await;
+
+    assert_eq!(result.is_error, None);
+    let text = &result
+        .content
+        .first()
+        .expect("content")
+        .as_text()
+        .expect("text")
+        .text;
+    let heading = |id: &str| {
+        let body = format!("bundle digest work in {id}");
+        text.lines()
+            .zip(text.lines().skip(1))
+            .find(|(_, next)| *next == body)
+            .map_or_else(
+                || panic!("no hit for {id} in {text}"),
+                |(heading, _)| heading.to_owned(),
+            )
+    };
+    assert!(
+        heading("imported").ends_with(" from phil · 2026-10-14"),
+        "{text}"
+    );
+    assert!(heading("undated").ends_with(" from unknown"), "{text}");
+    assert!(!heading("native").contains(" from "), "{text}");
+}

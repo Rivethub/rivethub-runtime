@@ -72,6 +72,8 @@ pub(super) enum MemoryCommand {
     },
     IngestBundle {
         path: PathBuf,
+        force: bool,
+        dry_run: bool,
     },
 }
 
@@ -145,7 +147,7 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
             .map(MemoryCommand::MergeStore)
             .map(Some),
         Verb::Bundle => super::bundle::args(rest).map(Some),
-        Verb::IngestBundle => ingest_bundle(rest).map(Some),
+        Verb::IngestBundle => super::bundle::ingest_args(rest).map(Some),
     }
 }
 
@@ -379,28 +381,6 @@ fn import(args: &[String]) -> Result<MemoryCommand, Error> {
         dry_run,
         sqlite,
     })
-}
-
-fn ingest_bundle(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut path = None;
-    while scan.current().is_some() {
-        let Some(token) = scan.current().map(str::to_owned) else {
-            break;
-        };
-        if token.starts_with('-') {
-            return Err(Error::UnknownOption(token));
-        }
-        if path.is_some() {
-            return Err(Error::ImportOne);
-        }
-        path = Some(PathBuf::from(token));
-        scan.bump();
-    }
-    let Some(path) = path else {
-        return Err(Error::ImportPath);
-    };
-    Ok(MemoryCommand::IngestBundle { path })
 }
 
 fn titles(args: &[String]) -> Result<MemoryCommand, Error> {
