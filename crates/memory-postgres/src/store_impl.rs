@@ -58,6 +58,8 @@ impl crate::PostgresMemory {
                 task_id: batch.task_id.as_deref(),
                 owner_user_id: options.owner.as_str(),
                 node: options.node.as_deref(),
+                created_at: batch.created_at,
+                updated_at: batch.updated_at,
             })
             .await?;
         let conversation_id = conversation.id;

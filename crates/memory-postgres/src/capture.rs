@@ -44,6 +44,8 @@ pub struct ConversationUpsert<'a> {
     pub task_id: Option<&'a str>,
     pub owner_user_id: &'a str,
     pub node: Option<&'a str>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

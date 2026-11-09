@@ -260,3 +260,58 @@ async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_ro
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
+    let source = fresh_store()?;
+    let phil_owner = Owner::new("phil".to_owned())?;
+    let mut shared = batch("claude-code:shared", "rivet", "claude-code");
+    shared
+        .messages
+        .push(message("evt-1", Role::User, "move the bundle reader"));
+    source
+        .store
+        .capture(
+            shared,
+            &phil_owner,
+            None,
+            instant("2026-10-14T09:00:00.000Z")?,
+        )
+        .await?;
+    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let session = exported.first().ok_or("exported session")?;
+    let received: CaptureBatchRequest =
+        serde_json::from_str(&serde_json::to_string(&session.import_batch()?)?)?;
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+
+    let first = destination
+        .store
+        .capture(received.clone(), &bob, None, later)
+        .await?;
+    let again = destination
+        .store
+        .capture(received, &bob, None, later)
+        .await?;
+
+    assert_eq!((first.inserted, again.inserted), (1, 0));
+    let conversations = table(&destination.store, "ros_conversations").await?;
+    let conversation = conversations.first().ok_or("imported conversation")?;
+    let column = |name: &str| conversation.get(name).and_then(testkit::Json::as_str);
+    assert_eq!(column("created_at"), Some("2026-10-14T09:00:00.000Z"));
+    assert_eq!(column("updated_at"), Some("2026-10-14T09:00:00.000Z"));
+    assert_eq!(column("owner_user_id"), Some("bob"));
+    let messages = table(&destination.store, "ros_messages").await?;
+    let id = messages
+        .first()
+        .and_then(|row| row.get("id"))
+        .and_then(testkit::Json::as_str)
+        .ok_or("imported message")?;
+    let entry = destination.store.get_full(id).await?.ok_or("full entry")?;
+    let metadata = entry.metadata.ok_or("metadata")?;
+    let origin: wire::capture::SessionOrigin =
+        serde_json::from_value(metadata.get("origin").cloned().ok_or("origin")?)?;
+    assert_eq!(origin, session.origin);
+    Ok(())
+}

@@ -202,7 +202,11 @@ impl crate::PostgresMemory {
             "select m.id::text as id, c.session_key as \"session_key!\", \
              m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, \
              m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, \
-             m.tool_result, m.metadata::text as metadata, m.created_at \
+             m.tool_result, \
+             (case when c.settings -> 'origin' is null then m.metadata \
+              else coalesce(m.metadata, '{}'::jsonb) || \
+                   jsonb_build_object('origin', c.settings -> 'origin') end)::text as metadata, \
+             m.created_at \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id \
              where m.id = $1",
             uuid

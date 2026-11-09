@@ -65,9 +65,11 @@ impl CaptureWriter<'_> {
         let settings = upsert.settings.map(sqlx::types::Json);
         let record = sqlx::query!(
             "insert into rh_conversations (session_key, agent, channel, title, settings,
-                                           task_id, owner_user_id, node)
-             values ($1, $2, $3, $4, coalesce($5, '{}'::jsonb), $6::text::uuid, $7, $11)
-             on conflict (session_key, agent) do update set updated_at = now(),
+                                           task_id, owner_user_id, node, created_at, updated_at)
+             values ($1, $2, $3, $4, coalesce($5, '{}'::jsonb), $6::text::uuid, $7, $11,
+                     coalesce($12, now()), coalesce($13, now()))
+             on conflict (session_key, agent) do update
+               set updated_at = greatest(rh_conversations.updated_at, coalesce($13, now())),
                title = case when $8 then excluded.title
                             else rh_conversations.title end,
                settings = case when $9 then excluded.settings
@@ -87,6 +89,8 @@ impl CaptureWriter<'_> {
             upsert.settings.is_some(),
             upsert.task_id.is_some(),
             upsert.node,
+            upsert.created_at,
+            upsert.updated_at,
         )
         .fetch_one(&mut *self.tx)
         .await

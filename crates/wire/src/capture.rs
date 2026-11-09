@@ -109,6 +109,19 @@ pub struct BundledSession {
     pub batch: CaptureBatchRequest,
 }
 
+impl BundledSession {
+    pub fn import_batch(&self) -> Result<CaptureBatchRequest, serde_json::Error> {
+        let mut batch = self.batch.clone();
+        batch
+            .settings
+            .get_or_insert_default()
+            .insert("origin", &self.origin)?;
+        batch.created_at = self.origin.created_at.or(batch.created_at);
+        batch.updated_at = self.origin.updated_at.or(batch.updated_at);
+        Ok(batch)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionOrigin {
     pub author: String,

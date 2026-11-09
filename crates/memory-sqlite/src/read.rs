@@ -15,6 +15,13 @@ use crate::message::ENTRY_COLUMNS;
 use crate::message::EntryRow;
 use crate::time;
 
+const FULL_ENTRY_COLUMNS: &str = "m.id, c.session_key, m.agent, m.channel, m.role, m.content, \
+     m.tool_name, m.tool_args, m.tool_result, \
+     CASE WHEN json_extract(c.settings, '$.origin') IS NULL THEN m.metadata \
+          ELSE json_set(coalesce(m.metadata, '{}'), '$.origin', \
+                        json(json_extract(c.settings, '$.origin'))) END, \
+     m.created_at";
+
 const BROWSE_CONDITIONS: &str = "WHERE (?1 OR m.role <> 'tool')
    AND (?2 IS NULL OR m.conversation_id = ?2)
    AND (?3 IS NULL OR m.agent = ?3)
@@ -84,7 +91,7 @@ impl SqliteStore {
         self.with_conn(move |conn| {
             conn.query_row(
                 &format!(
-                    "SELECT {ENTRY_COLUMNS} FROM ros_messages m
+                    "SELECT {FULL_ENTRY_COLUMNS} FROM ros_messages m
                        JOIN ros_conversations c ON c.id = m.conversation_id
                       WHERE m.id = ?1"
                 ),
