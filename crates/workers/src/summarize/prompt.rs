@@ -16,7 +16,8 @@ pub const ROOT_SYSTEM_PROMPT: &str = "You summarize branch summaries into one ro
 
 const VALUE_COLUMN: usize = 13;
 
-const LEAF_CLOSING: &str = "Write the leaf summary of the batch above now. Do not continue the transcript.";
+const LEAF_CLOSING: &str =
+    "Write the leaf summary of the batch above now. Do not continue the transcript.";
 const BRANCH_CLOSING: &str = "Write the branch summary of the leaves above now.";
 const ROOT_CLOSING: &str = "Write the root summary of the branches above now.";
 
@@ -45,14 +46,28 @@ pub(super) fn branch_user(
     head: &ConversationHead,
     leaves: &[SummaryNode],
 ) -> Result<String, WorkerError> {
-    rollup_user(head, leaves, "leaves", "in this branch", "Leaf", BRANCH_CLOSING)
+    rollup_user(
+        head,
+        leaves,
+        "leaves",
+        "in this branch",
+        "Leaf",
+        BRANCH_CLOSING,
+    )
 }
 
 pub(super) fn root_user(
     head: &ConversationHead,
     branches: &[SummaryNode],
 ) -> Result<String, WorkerError> {
-    rollup_user(head, branches, "branches", "in this root", "Branch", ROOT_CLOSING)
+    rollup_user(
+        head,
+        branches,
+        "branches",
+        "in this root",
+        "Branch",
+        ROOT_CLOSING,
+    )
 }
 
 fn rollup_user(
@@ -195,7 +210,10 @@ mod tests {
             channel: "cli".to_owned(),
             title: None,
         };
-        let at = Utc.with_ymd_and_hms(2026, 11, 1, 12, 0, 0).single().expect("time");
+        let at = Utc
+            .with_ymd_and_hms(2026, 11, 1, 12, 0, 0)
+            .single()
+            .expect("time");
         let messages = [WindowMessage {
             id: Uuid::nil(),
             agent: "rivet-deepseek".to_owned(),
