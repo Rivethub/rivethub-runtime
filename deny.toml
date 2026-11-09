@@ -46,3 +46,6 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# sqlx pinned to launchbadge/sqlx#4502 (libsqlite3-sys <0.40) for RUSTSEC-2026-0459.
+# Remove with the [patch.crates-io] block once a sqlx 0.9.x release contains #4502.
+allow-git = ["https://github.com/launchbadge/sqlx"]
