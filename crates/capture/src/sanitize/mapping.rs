@@ -47,8 +47,7 @@ pub struct Mapping {
     rules: Vec<Rule>,
     literals: Option<AhoCorasick>,
     literal_rules: Vec<usize>,
-    regexes: Option<Regex>,
-    anchored: Vec<(usize, Regex)>,
+    regexes: Vec<(usize, Regex)>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -59,7 +58,7 @@ pub enum MappingError {
     Rule { line: usize, problem: RuleProblem },
     #[error("mapping rule at line {line} has a regex that does not compile: {message}")]
     Regex { line: usize, message: String },
-    #[error("the mapping rules do not combine into one pattern: {message}")]
+    #[error("a mapping regex does not compile for the scan: {message}")]
     Combined { message: String },
 }
 
@@ -194,8 +193,7 @@ impl Mapping {
     pub fn compile(rules: Vec<Rule>) -> Result<Self, MappingError> {
         let mut literals: Vec<&str> = Vec::new();
         let mut literal_rules = Vec::new();
-        let mut alternatives: Vec<String> = Vec::new();
-        let mut anchored = Vec::new();
+        let mut regexes = Vec::new();
         for (index, rule) in rules.iter().enumerate() {
             match &rule.matcher {
                 Matcher::Literal(literal) => {
@@ -203,15 +201,13 @@ impl Mapping {
                     literal_rules.push(index);
                 }
                 Matcher::Regex(regex) => {
-                    let source = ascii_boundaries(regex.as_str());
-                    alternatives.push(format!("(?:{source})"));
-                    let at_start = RegexBuilder::new(&format!("^(?:{source})"))
+                    let fast = RegexBuilder::new(&ascii_boundaries(regex.as_str()))
                         .size_limit(COMBINED_SIZE_LIMIT)
                         .build()
                         .map_err(|error| MappingError::Combined {
                             message: error.to_string(),
                         })?;
-                    anchored.push((index, at_start));
+                    regexes.push((index, fast));
                 }
             }
         }
@@ -220,20 +216,8 @@ impl Mapping {
         } else {
             Some(
                 AhoCorasick::builder()
-                    .match_kind(MatchKind::LeftmostFirst)
+                    .match_kind(MatchKind::Standard)
                     .build(&literals)
-                    .map_err(|error| MappingError::Combined {
-                        message: error.to_string(),
-                    })?,
-            )
-        };
-        let combined = if alternatives.is_empty() {
-            None
-        } else {
-            Some(
-                RegexBuilder::new(&alternatives.join("|"))
-                    .size_limit(COMBINED_SIZE_LIMIT)
-                    .build()
                     .map_err(|error| MappingError::Combined {
                         message: error.to_string(),
                     })?,
@@ -243,8 +227,7 @@ impl Mapping {
             rules,
             literals: automaton,
             literal_rules,
-            regexes: combined,
-            anchored,
+            regexes,
         })
     }
 
@@ -259,42 +242,37 @@ impl Mapping {
     }
 
     pub(crate) fn spans(&self, text: &str) -> Vec<(Range<usize>, &Rule)> {
-        let mut found: Vec<(Range<usize>, usize)> = Vec::new();
+        let mut found: Vec<(usize, Range<usize>)> = Vec::new();
         if let Some(automaton) = &self.literals {
-            for hit in automaton.find_iter(text) {
+            for hit in automaton.find_overlapping_iter(text) {
                 if let Some(&rule) = self.literal_rules.get(hit.pattern().as_usize()) {
-                    found.push((hit.range(), rule));
+                    found.push((rule, hit.range()));
                 }
             }
         }
-        if let Some(combined) = &self.regexes {
-            for whole in combined.find_iter(text) {
-                let Some(rest) = text.get(whole.start()..) else {
-                    continue;
-                };
-                let hit = self.anchored.iter().find_map(|(rule, regex)| {
-                    regex
-                        .find(rest)
-                        .map(|own| (whole.start()..whole.start() + own.end(), *rule))
-                });
-                if let Some((range, rule)) = hit
-                    && !range.is_empty()
-                {
-                    found.push((range, rule));
-                }
+        for (rule, regex) in &self.regexes {
+            found.extend(
+                regex
+                    .find_iter(text)
+                    .filter(|hit| !hit.is_empty())
+                    .map(|hit| (*rule, hit.range())),
+            );
+        }
+        found.sort_by_key(|(rule, range)| (*rule, range.start));
+        let mut taken: Vec<(Range<usize>, usize)> = Vec::new();
+        for (rule, range) in found {
+            let overlaps = taken
+                .iter()
+                .any(|(kept, _)| range.start < kept.end && kept.start < range.end);
+            if !overlaps {
+                taken.push((range, rule));
             }
         }
-        found.sort_by_key(|(range, rule)| (range.start, *rule));
-        let mut kept: Vec<(Range<usize>, &Rule)> = Vec::new();
-        for (range, index) in found {
-            if kept.last().is_some_and(|(last, _)| range.start < last.end) {
-                continue;
-            }
-            if let Some(rule) = self.rules.get(index) {
-                kept.push((range, rule));
-            }
-        }
-        kept
+        taken.sort_by_key(|(range, _)| range.start);
+        taken
+            .into_iter()
+            .filter_map(|(range, index)| self.rules.get(index).map(|rule| (range, rule)))
+            .collect()
     }
 }
 

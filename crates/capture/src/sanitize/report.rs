@@ -25,13 +25,17 @@ pub enum Field {
     ToolResult,
     ToolName,
     Metadata(Spot),
+    EventId,
     SessionKey,
     Agent,
     Channel,
     TaskId,
+    OriginAuthor,
     OriginNode,
+    OriginConversation,
     OriginSessionKey,
     OriginAgent,
+    ExporterUser,
     ExporterNode,
 }
 
@@ -42,13 +46,17 @@ impl fmt::Display for Field {
             Self::Content => return formatter.write_str("content"),
             Self::ToolResult => return formatter.write_str("tool_result"),
             Self::ToolName => return formatter.write_str("tool_name"),
+            Self::EventId => return formatter.write_str("event_id"),
             Self::SessionKey => return formatter.write_str("session_key"),
             Self::Agent => return formatter.write_str("agent"),
             Self::Channel => return formatter.write_str("channel"),
             Self::TaskId => return formatter.write_str("task_id"),
+            Self::OriginAuthor => return formatter.write_str("origin.author"),
             Self::OriginNode => return formatter.write_str("origin.node"),
+            Self::OriginConversation => return formatter.write_str("origin.conversation_id"),
             Self::OriginSessionKey => return formatter.write_str("origin.session_key"),
             Self::OriginAgent => return formatter.write_str("origin.agent"),
+            Self::ExporterUser => return formatter.write_str("manifest.exported_by.user"),
             Self::ExporterNode => return formatter.write_str("manifest.exported_by.node"),
             Self::Settings(spot) => ("settings", spot),
             Self::ToolArgs(spot) => ("tool_args", spot),
@@ -268,22 +276,17 @@ impl Report {
             ),
         );
         out.push_str(
-            "This report never shows the text that was replaced. The Original column is a short hash of each replaced span, keyed by the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the raw bundle can test a guess against it.\n\n",
+            "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n",
         );
         out.push_str(
-            "Not scanned: the author, the conversation id, dates and roles. Event ids are replaced by a hash of the sanitized message.\n\n",
+            "Every text field is scanned for secrets, the author included; the author and task id are not mapped. Dates and roles are not scanned. Event ids are replaced by an HMAC of the raw id under the local key.\n\n",
         );
         let rules = crate::rules::ruleset();
-        let ours = rules
-            .rules()
-            .iter()
-            .filter(|rule| !rule.id.contains('-'))
-            .count();
+        let (ours, theirs) = rules.counts();
         push_line(
             out,
             format_args!(
-                "- Secret rules: {ours} RivetHub rules and {} gitleaks rules ({})",
-                rules.rules().len() - ours,
+                "- Secret rules: {ours} RivetHub rules and {theirs} gitleaks rules ({})",
                 rules.upstream().version
             ),
         );

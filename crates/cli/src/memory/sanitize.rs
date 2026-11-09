@@ -78,7 +78,8 @@ pub(super) async fn run(
             .sanitize_mapping(env)?,
     };
     let (mapping, source) = rules(&mapping).await?;
-    let policy = capture::sanitize::Policy { mapping };
+    let key = capture::sanitize::LocalKey::load_or_create(&key_path(env)?)?;
+    let policy = capture::sanitize::Policy { mapping, key };
     let sanitized = capture::sanitize::run(&bundle, &policy, Utc::now())?;
     let report_path = report_path(out);
     let report = sanitized
@@ -130,6 +131,14 @@ async fn rules(
     let count = rules.rules().len();
     let noun = if count == 1 { "rule" } else { "rules" };
     Ok((rules, format!("{display} ({count} {noun})")))
+}
+
+fn key_path(env: &Environment) -> Result<PathBuf, Error> {
+    let state = match env.text("XDG_STATE_HOME").filter(|text| !text.is_empty()) {
+        Some(text) => PathBuf::from(text),
+        None => config::Paths::new(env)?.home().join(".local").join("state"),
+    };
+    Ok(capture::sanitize::LocalKey::path_in(&state))
 }
 
 fn report_path(out: &Path) -> PathBuf {

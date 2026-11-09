@@ -78,7 +78,7 @@ fn builtins_replace_secret_spans() -> Result<(), Box<dyn std::error::Error>> {
         concat!(
             "Bearer abcdefghijklmnop1234 and ",
             "AKIA",
-            "ABCDEFGHIJKLMNOP and pass=hunter2"
+            "ABCDEFGHIJKLMNOP and pwd=hunter2"
         ),
         concat!(
             r#"{"api_key":"sk-"#,
@@ -90,11 +90,7 @@ fn builtins_replace_secret_spans() -> Result<(), Box<dyn std::error::Error>> {
     assert!(spans >= 3);
     assert!(message.content.contains("[REDACTED:bearer]"));
     assert!(message.content.contains("[REDACTED:aws_access_key]"));
-    assert!(
-        message
-            .content
-            .contains("pass=[REDACTED:secret_assignment]")
-    );
+    assert!(message.content.contains("pwd=[REDACTED:secret_assignment]"));
     let args = message.tool_args.expect("args");
     assert_eq!(
         args.get("api_key").and_then(|v| v.as_str()),

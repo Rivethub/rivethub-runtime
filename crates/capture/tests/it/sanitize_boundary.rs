@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use capture::sanitize;
+use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use chrono::DateTime;
 use chrono::Utc;
@@ -75,8 +76,13 @@ fn raw(sessions: Vec<BundledSession>) -> Result<SessionBundle, Box<dyn std::erro
 }
 
 fn policy(mapping: &str) -> Result<Policy, Box<dyn std::error::Error>> {
+    keyed(mapping, [7; 32])
+}
+
+fn keyed(mapping: &str, key: [u8; 32]) -> Result<Policy, Box<dyn std::error::Error>> {
     Ok(Policy {
         mapping: sanitize::mapping::parse(mapping)?,
+        key: LocalKey::from_bytes(key),
     })
 }
 
@@ -95,47 +101,49 @@ fn first_content(text: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(message.content.clone())
 }
 
-#[test]
-fn event_ids_name_the_sanitized_message_and_not_the_original() -> TestResult {
-    let secret = format!("deploy with password {PASSWORD}");
-    let original_id = format!(
-        "sess:occ:{}:0",
-        capture::event_id::digest_text(&format!("assistant\0{secret}\0\0"))
-    );
-    let input = raw(vec![session("sess", vec![message(&original_id, &secret)])])?;
-    let first = sanitize::run(&input, &Policy::default(), at()?)?;
-    let again = sanitize::run(&input, &Policy::default(), at()?)?;
-    let first_bundle = capture::bundle::parse(std::str::from_utf8(&first.sealed.text)?)?;
-    let id = first_bundle
+fn first_id(out: &sanitize::Sanitized) -> Result<String, Box<dyn std::error::Error>> {
+    let bundle = capture::bundle::parse(std::str::from_utf8(&out.sealed.text)?)?;
+    Ok(bundle
         .sessions
         .first()
         .and_then(|session| session.batch.messages.first())
         .map(|message| message.event_id.clone())
-        .ok_or("no message")?;
+        .ok_or("no message")?)
+}
+
+#[test]
+fn event_ids_are_keyed_hmacs_of_the_raw_id_and_session() -> TestResult {
+    let secret = format!("deploy with password {PASSWORD}");
+    let digest = capture::event_id::digest_text(&format!("assistant\0{secret}\0\0"));
+    let original_id = format!("sess:occ:{digest}:0");
+    let input = raw(vec![session("sess", vec![message(&original_id, &secret)])])?;
+    let first = sanitize::run(&input, &policy("")?, at()?)?;
+    let again = sanitize::run(&input, &policy("")?, at()?)?;
+    let id = first_id(&first)?;
     assert_ne!(id, original_id);
     assert!(
-        !id.contains(&capture::event_id::digest_text(&format!(
-            "assistant\0{secret}\0\0"
-        ))),
-        "the digest of the original content is still visible: {id}"
+        !id.contains(&digest),
+        "the original digest is visible: {id}"
     );
     assert_eq!(
         first.sealed.text, again.sealed.text,
-        "same raw bundle, same ids"
+        "same raw bundle and key, same ids"
     );
-    let other = raw(vec![session(
-        "sess",
-        vec![message(&original_id, "deploy quietly")],
+    let other_key = sanitize::run(&input, &keyed("", [8; 32])?, at()?)?;
+    assert_ne!(
+        id,
+        first_id(&other_key)?,
+        "another machine's key, other ids"
+    );
+    let twin = raw(vec![session(
+        "sess-b",
+        vec![message(&original_id, &secret)],
     )])?;
-    let other_id = sanitize::run(&other, &Policy::default(), at()?)?
-        .sealed
-        .bundle
-        .sessions
-        .first()
-        .and_then(|session| session.batch.messages.first())
-        .map(|message| message.event_id.clone())
-        .ok_or("no message")?;
-    assert_ne!(id, other_id, "different sanitized content, different id");
+    assert_ne!(
+        id,
+        first_id(&sanitize::run(&twin, &policy("")?, at()?)?)?,
+        "the same raw event id in another session never merges"
+    );
     Ok(())
 }
 
@@ -153,6 +161,11 @@ fn the_policy_hash_depends_on_the_raw_bundle() -> TestResult {
     };
     assert_ne!(stamp(&one)?, stamp(&two)?);
     assert_eq!(stamp(&one)?, stamp(&one)?);
+    let other_key = sanitize::run(&one, &keyed(mapping, [9; 32])?, at()?)?;
+    match other_key.sealed.bundle.manifest.sanitization {
+        Sanitization::Sanitized(other) => assert_ne!(stamp(&one)?, other.policy_sha256),
+        Sanitization::Raw => return Err("not stamped".into()),
+    }
     Ok(())
 }
 
@@ -191,7 +204,7 @@ fn the_report_shows_scrubbed_key_paths_only() -> TestResult {
         r#"{{"client_secret={KEY_VALUE}": "x", "env": {{"API_TOKEN": "{PASSWORD}"}}}}"#
     ))?);
     let input = raw(vec![session("paths", vec![tool])])?;
-    let out = sanitize::run(&input, &Policy::default(), at()?)?;
+    let out = sanitize::run(&input, &policy("")?, at()?)?;
     let markdown = out.report.markdown("s.json", "none");
     assert!(!markdown.contains(KEY_VALUE), "{markdown}");
     assert!(!markdown.contains(PASSWORD), "{markdown}");

@@ -240,6 +240,8 @@ pub enum Error {
     },
     #[error(transparent)]
     Sanitize(#[from] capture::sanitize::SanitizeError),
+    #[error(transparent)]
+    SanitizeKey(#[from] capture::sanitize::KeyError),
     #[error("the mapping file {path} is invalid: {source}")]
     Mapping {
         path: String,

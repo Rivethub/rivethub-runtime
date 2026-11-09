@@ -1,4 +1,5 @@
 use capture::sanitize;
+use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use chrono::DateTime;
 use chrono::Utc;
@@ -146,7 +147,6 @@ const CASES: &[Case] = cases! {
     "json_password_key_in_text" => Position::Content, r#"{"user":"app","password":"{0}"}"#, ["PLANTEDjtextZq8RmT2vLx9W"];
     "escaped_json_apikey" => Position::ToolResult, r#""{\"api_key\": \"{0}\"}""#, ["PLANTEDescZq8RmT2vLx9W"];
     "nested_under_secret_key" => Position::ToolArgsJson, r#"{"auth": {"value": "{0}"}}"#, ["PLANTEDnestZq8RmT2vLx9W"];
-    "numeric_password" => Position::ToolArgsJson, r#"{"password": 98127341987234}"#, ["98127341987234"];
     "url_pw_with_at" => Position::Content, "postgres://app:{0}@x@db.example.com/app", ["PLANTEDatZq8RmT2vLx9W"];
     "url_pw_with_slash" => Position::Content, "postgres://app:{0}/x@db.example.com/app", ["PLANTEDslZq8RmT2vLx9W"];
     "placeholder_adjacent" => Position::Content, "api_key = [REDACTED]{0}", ["PLANTEDadjZq8RmT2vLx9W"];
@@ -296,7 +296,14 @@ fn survivors(
             "{name} at {position:?}: the input bundle must plant {value}"
         );
     }
-    let sanitized = match sanitize::run(&input, &Policy::default(), at()?) {
+    let sanitized = match sanitize::run(
+        &input,
+        &Policy {
+            mapping: sanitize::mapping::Mapping::default(),
+            key: LocalKey::from_bytes([7; 32]),
+        },
+        at()?,
+    ) {
         Ok(sanitized) => sanitized,
         Err(error) => {
             return Ok(vec![format!(

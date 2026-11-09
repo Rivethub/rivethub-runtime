@@ -1,4 +1,5 @@
 use capture::sanitize;
+use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::SanitizeError;
 use capture::sanitize::mapping::MappingError;
@@ -76,6 +77,7 @@ as = "<node>"
 fn policy() -> Result<Policy, MappingError> {
     Ok(Policy {
         mapping: sanitize::mapping::parse(MAPPING)?,
+        key: LocalKey::from_bytes([7; 32]),
     })
 }
 
@@ -204,7 +206,7 @@ fn every_planted_secret_is_gone() -> TestResult {
         stamp,
         &SanitizeStamp {
             at: at()?,
-            policy_sha256: policy()?.sha256(&input.manifest.bundle_sha256)?,
+            policy_sha256: policy()?.hash(&input.manifest.bundle_sha256)?,
             passes: vec!["secrets".into(), "mapping".into()],
             unresolved_flags: 0,
         }
@@ -294,8 +296,9 @@ fn the_report_never_contains_redacted_text() -> TestResult {
         "{markdown}"
     );
     assert!(
-        markdown
-            .contains("| - | settings.hosts (a key) | rule at line 2 (map) | `<buildhost>` | 1 |"),
+        markdown.contains(
+            "| - | settings.hosts.<buildhost> (a key) | rule at line 2 (map) | `<buildhost>` | 1 |"
+        ),
         "{markdown}"
     );
     let totals = report.totals();

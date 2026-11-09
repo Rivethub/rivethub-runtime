@@ -26,18 +26,42 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-
-[secret_names]
-regex = '''(?i)(?:^|[_.-])(?:pwd|pass|auth)(?:$|[_.-])|passw(?:or)?d|secret|token|api[_.-]?key|access[_.-]?key|private[_.-]?key|account[_.-]?key|app[_.-]?key|signing[_.-]?key|encryption[_.-]?key|master[_.-]?key|credential|authorization|cookie|session[_.-]?key'''
-
-[allowlist]
-description = "values that are templates, masks or words, never a secret"
-regexes = [
-    '''^[{<\[$%]''',
-    '''^[*xX.#-]+$''',
-    '''^(?i:null|none|nil|undefined|true|false|changeme|change_me|placeholder|redacted|example|secret|password|token|bearer|basic|digest|negotiate|ntlm|string|str|int|bool)$''',
-    '''^\[REDACTED''',
+deviations = [
+    "The vendored file is byte-identical to upstream; the loader applies these two changes.",
+    "An allowlist regex written ^a|b|c$ is compiled as ^(?:a|b|c)$, so the anchors cover every branch: upstream's (?i)^true|false|null$ would otherwise allow any secret that contains 'false' or ends in 'null'.",
+    "The rules listed in whole_match redact the whole match: their first capture group is a repeated fragment of the match (a UUID segment), which gitleaks would report as the secret.",
+    "gitleaks' global allowlist applies to gitleaks rules only; RivetHub rules use the [names] stopwords and templates.",
+    "Rules that need a file path are skipped; bundles have no paths.",
+    "The rules listed in skip are not loaded: generic-api-key fires on any name that contains key, token or secret (api_key_id, session_key, token_count) and on identifiers under them; RivetHub's secret_assignment rule covers the same ground with the name and value tests described in CONTRACT note 136.",
 ]
+whole_match = ["microsoft-teams-webhook"]
+skip = ["generic-api-key"]
+
+[names]
+password = ["password", "passwd", "pwd", "passphrase", "pass", "pin", "secret", "private_key", "ssh_key"]
+suffix_only = ["pass"]
+token = ["token", "api_key", "apikey", "access_key", "secret_key", "app_key", "account_key", "signing_key", "encryption_key", "master_key", "auth_key", "auth"]
+exact_password = ["pgpassword"]
+exact_token = ["identitytoken", "authtoken"]
+vendor_prefixes = ["sk-", "sk_", "rk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xox", "xapp-", "glpat-", "npm_", "hf_", "AIza", "AKIA", "ASIA", "ya29.", "dop_v1_", "doo_v1_", "hvs.", "hvb.", "dp.", "lin_api_", "shpat_", "shpss_", "whsec_", "sntry", "pypi-", "glsa_", "pul-", "PMAK-", "HRKU-", "EAAA", "SG.", "key-", "xkeysib-"]
+stopwords = ["none", "null", "nil", "undefined", "true", "false", "yes", "no", "required", "optional", "string", "str", "int", "bool", "changeme", "change_me", "change-me", "placeholder", "example", "password", "secret", "token", "redacted", "bearer", "basic"]
+templates = [
+    '''^\{\{[ \t]*[A-Za-z_][\w.|() -]*[ \t]*\}\}$''',
+    '''^\$\{\{.*\}\}$''',
+    '''^\{[A-Z_][A-Z0-9_]*\}$''',
+    '''^\$\{[A-Za-z_]\w*(?::-[^}]*)?\}$''',
+    '''^\$[A-Z_][A-Z0-9_]*$''',
+    '''^\$\(.*\)$''',
+    '''^\$\d+$''',
+    '''^%[A-Z_][A-Z0-9_]*%$''',
+    '''^<[^<>\s]+>$''',
+    '''^\*{3,}$''',
+    '''^[xX]{3,}$''',
+    '''^\.{3,}$''',
+    '''^\[REDACTED(?::[^\]]*)?\](?:#\d+)?$''',
+]
+min_length = 12
+min_entropy = 3.0
 
 [[rules]]
 id = "bearer"
@@ -57,6 +81,13 @@ description = "AWS access key id"
 regex = '''((?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16})'''
 keywords = ["akia", "asia", "abia", "acca", "a3t"]
 entropy = 3.0
+
+[[rules]]
+id = "aws_secret_near_id"
+description = "bare 40-character AWS secret key within 160 bytes after an AWS access key id"
+regex = '''\b(?:AKIA|ASIA)[A-Z0-9]{16,}[\s\S]{0,160}?(?:^|[\s"'=:,])([A-Za-z0-9/+=]{40})(?:[\s"',;]|$)'''
+keywords = ["akia", "asia"]
+entropy = 3.5
 
 [[rules]]
 id = "github_token"
@@ -87,6 +118,12 @@ id = "stripe_key"
 description = "Stripe restricted key"
 regex = '''\b(rk_(?:live|test|prod)_[A-Za-z0-9]{10,})'''
 keywords = ["rk_live", "rk_test", "rk_prod"]
+
+[[rules]]
+id = "stripe_webhook_secret"
+description = "Stripe webhook signing secret"
+regex = '''\b(whsec_[A-Za-z0-9]{24,})'''
+keywords = ["whsec_"]
 
 [[rules]]
 id = "google_api_key"
@@ -134,20 +171,28 @@ keywords = ["basic ", "digest ", "negotiate ", "ntlm "]
 regexes = ['''^[a-z]+$''']
 
 [[rules]]
+id = "authorization_header"
+description = "credential of an Authorization header with any scheme"
+regex = '''(?i)\bauthorization:[ \t]*(?:[A-Za-z][A-Za-z0-9-]*[ \t]+)?([A-Za-z0-9\-._~+/=]{16,})'''
+keywords = ["authorization:"]
+
+[[rules]]
+id = "cookie_header"
+description = "value of a Cookie or Set-Cookie header"
+regex = '''(?i)\bcookie:[ \t]*([^\s=;]+=[^\r\n]+)'''
+keywords = ["cookie:"]
+
+[[rules]]
 id = "url_password"
-description = "password in the userinfo of a URL"
-regex = '''(?i)\b[a-z][a-z0-9+.-]*://([^\s:/@]*):([^\s]+)@[A-Za-z0-9._-]+(?::\d+)?(?:[/?#]|\s|$)'''
-keywords = ["://"]
+description = "password in the userinfo of a URL, including a JSON-escaped :\\/\\/ URL"
+regex = '''(?i)\b[a-z][a-z0-9+.-]*:(?:\\?/){2}([^\s:/@\\]*):([^\s]+)@[A-Za-z0-9._-]+(?::\d+)?(?:[/?#\\]|\s|$)'''
+keywords = ["://", ":\\/\\/"]
 secretGroup = 2
 
 [[rules]]
 id = "secret_assignment"
-description = "value assigned to a name that holds a secret word, in shell, env, YAML, TOML, JSON, query or header form"
-regex = '''(?i)\b[\w.-]*?(?:passw(?:or)?d|secret|token|api[_.-]?key|access[_.-]?key|private[_.-]?key|account[_.-]?key|app[_.-]?key|signing[_.-]?key|encryption[_.-]?key|master[_.-]?key|credentials?|authorization|cookie|session[_.-]?key|(?:\b|_)(?:pass|pwd|auth)(?:\b|[_.-]))[\w.-]*(?:\\?["'])?[ \t]*[=:][ \t]*(?:\\?["'])?([^\s"'\\;&<>:][^\s"'\\;&<>]{2,})'''
-keywords = ["pass", "pwd", "secret", "token", "key", "credential", "auth", "cookie"]
-
-[[rules.allowlists]]
-regexes = ['''^[A-Za-z_]+[,;]?$''', '''::''', '''\($''']
+description = "value assigned to a password- or token-family name in shell, env, YAML, TOML, JSON, query, header or CLI form"
+kind = "names"
 
 [[rules]]
 id = "curl_user"
@@ -161,3 +206,96 @@ id = "mysql_password_flag"
 description = "password glued to the -p flag of a MySQL or MariaDB client"
 regex = '''(?i)\b(?:mysql|mysqldump|mariadb)\b[^\n]*?\s-p([^\s"']+)'''
 keywords = ["mysql", "mariadb"]
+
+[[rules]]
+id = "cli_credential_flag"
+description = "credential passed to a command-line flag (sshpass -p, docker login -p, az login -p, redis-cli -a, --password, --token, --api-key, --secret and the like)"
+regex = '''(?i)(?:\bsshpass[ \t]+-p|\bdocker[ \t]+login\b[^\n]*?[ \t](?:-p|--password)|\baz[ \t]+login\b[^\n]*?[ \t]-p|\bredis-cli\b[^\n]*?[ \t]-a|--(?:password|passwd|token|api-key|apikey|secret|auth-token|access-token|client-secret|passphrase|private-key))(?:[ \t]+|=)["']?([^\s"']+)'''
+keywords = ["sshpass", "docker login", "az login", "redis-cli", "--password", "--passwd", "--token", "--api-key", "--apikey", "--secret", "--auth-token", "--access-token", "--client-secret", "--passphrase", "--private-key"]
+
+[[rules]]
+id = "openssl_pass_arg"
+description = "password of an openssl -passin or -passout pass: argument"
+regex = '''(?i)(?:^|\s)-pass(?:in|out)[ \t]+pass:([^\s"']+)'''
+keywords = ["-passin", "-passout"]
+
+[[rules]]
+id = "netrc_password"
+description = "password of a .netrc machine entry, on one line or spread over lines"
+regex = '''(?i)\bmachine[ \t]+\S+(?:[ \t]+|[ \t]*\n[ \t]+)login[ \t]+\S+(?:[ \t]+|[ \t]*\n[ \t]+)password[ \t]+(\S+)'''
+keywords = ["machine"]
+
+[[rules]]
+id = "sentry_dsn"
+description = "public key of a Sentry DSN"
+regex = '''(?i)https?://([a-f0-9]{32})(?::[a-f0-9]{32})?@[a-z0-9.-]*sentry\.io/\d+'''
+keywords = ["sentry.io"]
+
+[[rules]]
+id = "discord_bot_token"
+description = "Discord bot token (base64 user id, timestamp and HMAC)"
+regex = '''\b([MNO][A-Za-z0-9_-]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})'''
+keywords = ["*"]
+
+[[rules]]
+id = "discord_webhook"
+description = "Discord webhook token"
+regex = '''discord(?:app)?\.com/api/webhooks/\d+/([A-Za-z0-9_-]{60,})'''
+keywords = ["/api/webhooks/"]
+
+[[rules]]
+id = "telegram_bot_token"
+description = "Telegram bot token in a URL or in code"
+regex = '''(?:bot|\b)(\d{8,10}:AA[A-Za-z0-9_-]{33})'''
+keywords = [":aa"]
+
+[[rules]]
+id = "azure_sas"
+description = "signature of an Azure shared access signature URL"
+regex = '''[?&]sig=([A-Za-z0-9%+/=]{40,})'''
+keywords = ["sig="]
+
+[[rules]]
+id = "doppler_service_token"
+description = "Doppler service, CLI, service-account, SCIM or audit token"
+regex = '''\b(dp\.(?:st|ct|sa|scim|audit)\.(?:[a-z0-9_]+\.)?[A-Za-z0-9]{40,})'''
+keywords = ["dp."]
+
+[[rules]]
+id = "mailchimp_key"
+description = "Mailchimp API key with its data-center suffix"
+regex = '''\b([a-f0-9]{32}-us\d{1,2})\b'''
+keywords = ["-us"]
+
+[[rules]]
+id = "datadog_app_key"
+description = "Datadog application key header"
+regex = '''(?i)\bdd-application-key:[ \t]*([a-f0-9]{40})'''
+keywords = ["dd-application-key"]
+
+[[rules]]
+id = "twilio_auth_token"
+description = "Twilio auth token passed beside an account SID"
+regex = '''\bAC[a-f0-9]{32}["']?[ \t]*,[ \t]*["']?([a-f0-9]{32})\b'''
+keywords = ["ac"]
+
+[[rules]]
+id = "jwk_private"
+description = "private parameters of a JSON web key"
+regex = '''"kty"[ \t]*:[ \t]*"(?:EC|RSA|OKP|oct)"([\s\S]{0,3000}?)\}'''
+each = '''"(?:d|k|p|q|dp|dq|qi)"[ \t]*:[ \t]*"([A-Za-z0-9_=-]{16,})"'''
+keywords = ["\"kty\""]
+
+[[rules]]
+id = "k8s_secret_data"
+description = "values of the data or stringData block of a Kubernetes Secret manifest"
+regex = '''(?i)(?:\bkind:[ \t]*["']?secret["']?[ \t]*\n[\s\S]{0,600}?\n(?:string)?data:[ \t]*\n((?:[ \t]+[\w.-]+:[ \t]*\S[^\n]*\n?)+)|(?:^|\n)(?:string)?data:[ \t]*\n((?:[ \t]+[\w.-]+:[ \t]*\S[^\n]*\n?)+)[\s\S]{0,600}?\bkind:[ \t]*["']?secret\b)'''
+each = '''(?m)^[ \t]+[\w.-]+:[ \t]*(\S.*?)[ \t]*$'''
+keywords = ["kind:", "data:"]
+
+[[rules]]
+id = "base64_secret"
+description = "base64 text that decodes to JSON or a PEM block in which a rule matches"
+regex = '''\b((?:ey|ew|LS0t)[A-Za-z0-9+/_-]{61,}={0,2})'''
+keywords = ["ey", "ew", "ls0t"]
+decode = "base64"

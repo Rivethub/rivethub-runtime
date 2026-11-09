@@ -54,51 +54,35 @@ impl JsonObject {
         self.0.retain(|key, _| keep(key));
     }
 
-    pub fn visit_strings_mut(&mut self, visit: &mut impl FnMut(&str, &mut String)) {
-        for (key, value) in &mut self.0 {
-            visit_strings(key, value, visit);
-        }
-    }
-
     pub fn scrub(&mut self, scrub: &mut impl Scrub) {
-        scrub_members(&mut self.0, "", scrub);
+        scrub_members(&mut self.0, "", None, scrub);
     }
 }
 
 pub trait Scrub {
     fn is_secret_name(&self, key: &str) -> bool;
     fn key(&mut self, parent: &str, key: &mut String);
+    fn renamed(&mut self, parent: &str, key: &str, renamed: &str);
     fn text(&mut self, path: &str, text: &mut String);
-    fn whole(&mut self, path: &str, current: Current<'_>) -> Option<String>;
-    fn collision(&mut self, parent: &str, key: &str);
+    fn secret(&mut self, path: &str, key: &str, text: &mut String) -> bool;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Current<'a> {
-    Text(&'a str),
-    Json(String),
-}
-
-fn scrub_members(members: &mut Map<String, Value>, parent: &str, scrub: &mut impl Scrub) {
+fn scrub_members(
+    members: &mut Map<String, Value>,
+    parent: &str,
+    under: Option<&str>,
+    scrub: &mut impl Scrub,
+) {
     for (mut key, mut value) in std::mem::take(members) {
-        let secret = scrub.is_secret_name(&key);
+        let original = key.clone();
         scrub.key(parent, &mut key);
-        let path = member_path(parent, &key);
-        if secret {
-            let current = match &value {
-                Value::String(text) => Current::Text(text),
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::Array(_)
-                | Value::Object(_) => Current::Json(value.to_string()),
-            };
-            if let Some(placeholder) = scrub.whole(&path, current) {
-                value = Value::String(placeholder);
-            }
+        let named = if scrub.is_secret_name(&original) {
+            Some(original)
+        } else if scrub.is_secret_name(&key) {
+            Some(key.clone())
         } else {
-            scrub_value(&mut value, &path, scrub);
-        }
+            under.map(str::to_owned)
+        };
         if members.contains_key(&key) {
             let base = key.clone();
             let mut suffix = 2;
@@ -106,47 +90,38 @@ fn scrub_members(members: &mut Map<String, Value>, parent: &str, scrub: &mut imp
                 key = format!("{base}#{suffix}");
                 suffix += 1;
             }
-            scrub.collision(parent, &key);
+            scrub.renamed(parent, &base, &key);
         }
+        let path = member_path(parent, &key);
+        scrub_value(&mut value, &path, named.as_deref(), scrub);
         members.insert(key, value);
     }
 }
 
-fn scrub_value(value: &mut Value, path: &str, scrub: &mut impl Scrub) {
+fn scrub_value(value: &mut Value, path: &str, under: Option<&str>, scrub: &mut impl Scrub) {
     match value {
-        Value::String(text) => scrub.text(path, text),
-        Value::Array(items) => {
-            for (index, item) in items.iter_mut().enumerate() {
-                scrub_value(item, &format!("{path}[{index}]"), scrub);
+        Value::String(text) => {
+            let replaced = under.is_some_and(|key| scrub.secret(path, key, text));
+            if !replaced {
+                scrub.text(path, text);
             }
         }
-        Value::Object(members) => scrub_members(members, path, scrub),
+        Value::Array(items) => {
+            for (index, item) in items.iter_mut().enumerate() {
+                scrub_value(item, &format!("{path}[{index}]"), under, scrub);
+            }
+        }
+        Value::Object(members) => scrub_members(members, path, under, scrub),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 
-fn member_path(parent: &str, key: &str) -> String {
+#[must_use]
+pub fn member_path(parent: &str, key: &str) -> String {
     if parent.is_empty() {
         key.to_owned()
     } else {
         format!("{parent}.{key}")
-    }
-}
-
-fn visit_strings(key: &str, value: &mut Value, visit: &mut impl FnMut(&str, &mut String)) {
-    match value {
-        Value::String(text) => visit(key, text),
-        Value::Array(items) => {
-            for item in items {
-                visit_strings(key, item, visit);
-            }
-        }
-        Value::Object(members) => {
-            for (name, member) in members {
-                visit_strings(name, member, visit);
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 
@@ -275,19 +250,67 @@ mod tests {
         );
     }
 
-    #[test]
-    fn string_leaves_are_visited_with_their_member_name() {
-        let mut object: JsonObject =
-            serde_json::from_str(r#"{"a":"x","list":["y",{"b":"z"}],"n":1,"none":null}"#).unwrap();
-        let mut seen = Vec::new();
-        object.visit_strings_mut(&mut |key, text| {
-            seen.push(format!("{key}={text}"));
+    struct Recorder {
+        secret_keys: Vec<&'static str>,
+        seen: Vec<String>,
+    }
+
+    impl Scrub for Recorder {
+        fn is_secret_name(&self, key: &str) -> bool {
+            self.secret_keys.contains(&key)
+        }
+
+        fn key(&mut self, _parent: &str, key: &mut String) {
+            if key == "Matt" {
+                "matt".clone_into(key);
+            }
+        }
+
+        fn renamed(&mut self, parent: &str, key: &str, renamed: &str) {
+            self.seen.push(format!("renamed {parent}/{key}->{renamed}"));
+        }
+
+        fn text(&mut self, path: &str, text: &mut String) {
+            self.seen.push(format!("text {path}={text}"));
             text.push('!');
-        });
-        assert_eq!(seen, ["a=x", "list=y", "b=z"]);
+        }
+
+        fn secret(&mut self, path: &str, key: &str, text: &mut String) -> bool {
+            self.seen.push(format!("secret {path} under {key}={text}"));
+            if text == "keep" {
+                return false;
+            }
+            "[X]".clone_into(text);
+            true
+        }
+    }
+
+    #[test]
+    fn scrubbing_renames_collisions_before_descending_and_inherits_the_secret_key_downward() {
+        let mut object: JsonObject = serde_json::from_str(
+            r#"{"Matt": {"inner": "a"}, "matt": "b", "n": 1, "token": {"v": "x", "k": "keep", "count": 2, "list": ["y"]}}"#,
+        )
+        .unwrap();
+        let mut recorder = Recorder {
+            secret_keys: vec!["token"],
+            seen: Vec::new(),
+        };
+        object.scrub(&mut recorder);
+        assert_eq!(
+            recorder.seen,
+            [
+                "text matt.inner=a",
+                "renamed /matt->matt#2",
+                "text matt#2=b",
+                "secret token.v under token=x",
+                "secret token.k under token=keep",
+                "text token.k=keep",
+                "secret token.list[0] under token=y",
+            ]
+        );
         assert_eq!(
             serde_json::to_string(&object).unwrap(),
-            r#"{"a":"x!","list":["y!",{"b":"z!"}],"n":1,"none":null}"#
+            r#"{"matt":{"inner":"a!"},"matt#2":"b!","n":1,"token":{"v":"[X]","k":"keep!","count":2,"list":["[X]"]}}"#
         );
     }
 }

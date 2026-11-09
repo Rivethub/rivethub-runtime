@@ -1,11 +1,22 @@
 use std::ops::Range;
 
+use base64::Engine as _;
+use base64::engine::DecodePaddingMode;
+use base64::engine::GeneralPurpose;
+use base64::engine::GeneralPurposeConfig;
+
 use super::Allow;
+use super::Decode;
+use super::Matcher;
 use super::Rule;
 use super::Ruleset;
+use super::Secret;
+use super::Source;
 use super::Target;
+use super::names::shannon_entropy;
 
 const WINDOW: usize = 64 * 1024;
+const PEM_OPEN: &str = "-----BEGIN";
 
 #[derive(Debug, Clone)]
 pub struct Span<'a> {
@@ -14,9 +25,20 @@ pub struct Span<'a> {
     order: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Scope {
+    order: usize,
+    offset: usize,
+    decode: bool,
+}
+
 impl Ruleset {
     #[must_use]
     pub fn spans(&self, text: &str) -> Vec<Span<'_>> {
+        self.scan(text, true)
+    }
+
+    fn scan(&self, text: &str, decode: bool) -> Vec<Span<'_>> {
         let mut scanned: Vec<usize> = vec![0; self.rules.len()];
         let mut found: Vec<Span<'_>> = Vec::new();
         for hit in self.keywords.find_overlapping_iter(text) {
@@ -41,7 +63,22 @@ impl Ruleset {
                 let Some(slice) = text.get(start..end) else {
                     continue;
                 };
-                self.matches(rule, index, slice, start, &mut found);
+                let scope = Scope {
+                    order: index,
+                    offset: start,
+                    decode,
+                };
+                self.matches(rule, slice, scope, &mut found);
+            }
+        }
+        for &index in &self.always {
+            if let Some(rule) = self.rules.get(index) {
+                let scope = Scope {
+                    order: index,
+                    offset: 0,
+                    decode,
+                };
+                self.matches(rule, text, scope, &mut found);
             }
         }
         found.sort_by_key(|span| (span.range.start, span.order));
@@ -61,21 +98,37 @@ impl Ruleset {
         kept
     }
 
-    fn matches<'a>(
-        &'a self,
-        rule: &'a Rule,
-        order: usize,
-        slice: &str,
-        offset: usize,
-        out: &mut Vec<Span<'a>>,
-    ) {
-        for captures in rule.regex.captures_iter(slice) {
+    fn matches<'a>(&'a self, rule: &'a Rule, slice: &str, scope: Scope, out: &mut Vec<Span<'a>>) {
+        let Scope {
+            order,
+            offset,
+            decode,
+        } = scope;
+        let regex = match &rule.matcher {
+            Matcher::Names => {
+                for range in self.names.hits(slice) {
+                    out.push(Span {
+                        range: offset + range.start..offset + range.end,
+                        rule,
+                        order,
+                    });
+                }
+                return;
+            }
+            Matcher::Regex(regex) => regex,
+        };
+        let global = match rule.source {
+            Source::Rivethub => &self.allow_ours,
+            Source::Gitleaks => &self.allow_theirs,
+        };
+        for captures in regex.captures_iter(slice) {
             let Some(whole) = captures.get(0) else {
                 continue;
             };
-            let secret = match rule.secret_group {
-                Some(group) => captures.get(group),
-                None => Some(
+            let secret = match rule.secret {
+                Secret::Whole => Some(whole),
+                Secret::Group(group) => captures.get(group),
+                Secret::FirstGroup => Some(
                     (1..captures.len())
                         .filter_map(|group| captures.get(group))
                         .find(|group| !group.is_empty())
@@ -92,7 +145,28 @@ impl Ruleset {
             }
             let line = line_of(slice, whole.start());
             let allowed = |allow: &Allow| allow.permits(secret.as_str(), whole.as_str(), line);
-            if self.allow.iter().any(allowed) || rule.allow.iter().any(allowed) {
+            if global.iter().any(allowed) || rule.allow.iter().any(allowed) {
+                continue;
+            }
+            if rule.decode == Some(Decode::Base64) {
+                let hidden = decode
+                    && decoded_text(secret.as_str())
+                        .is_some_and(|inner| !self.scan(&inner, false).is_empty());
+                if !hidden {
+                    continue;
+                }
+            }
+            if let Some(each) = &rule.each {
+                for inner in each.captures_iter(secret.as_str()) {
+                    if let Some(value) = inner.get(1).filter(|value| !value.is_empty()) {
+                        out.push(Span {
+                            range: offset + secret.start() + value.start()
+                                ..offset + secret.start() + value.end(),
+                            rule,
+                            order,
+                        });
+                    }
+                }
                 continue;
             }
             out.push(Span {
@@ -127,6 +201,37 @@ impl Allow {
     }
 }
 
+fn decoded_text(blob: &str) -> Option<String> {
+    let config =
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    let standard = GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(blob);
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B9 (note 136): text that is not base64 in either alphabet is not a blob to scan; only_json_or_pem_blobs_decode pins it"
+        )
+    )]
+    let bytes = match standard {
+        Ok(bytes) => bytes,
+        Err(_) => match GeneralPurpose::new(&base64::alphabet::URL_SAFE, config).decode(blob) {
+            Ok(bytes) => bytes,
+            Err(_) => return None,
+        },
+    };
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B9 (note 136): a blob that decodes to bytes that are not UTF-8 is not JSON or PEM; only_json_or_pem_blobs_decode pins it"
+        )
+    )]
+    let Ok(text) = String::from_utf8(bytes) else {
+        return None;
+    };
+    (text.trim_start().starts_with('{') || text.contains(PEM_OPEN)).then_some(text)
+}
+
 fn line_start(text: &str, at: usize) -> usize {
     text.get(..at)
         .and_then(|head| head.rfind('\n'))
@@ -153,42 +258,24 @@ fn line_of(slice: &str, at: usize) -> &str {
     slice.get(start..end).unwrap_or(slice)
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "a secret is far shorter than 2^52 bytes, so the counts convert exactly"
-)]
-fn shannon_entropy(text: &str) -> f64 {
-    let mut counts = [0usize; 256];
-    for byte in text.bytes() {
-        if let Some(slot) = counts.get_mut(usize::from(byte)) {
-            *slot += 1;
-        }
-    }
-    let total = text.len() as f64;
-    counts
-        .iter()
-        .filter(|&&count| count > 0)
-        .map(|&count| {
-            let p = count as f64 / total;
-            -p * p.log2()
-        })
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn entropy_grows_with_variety() {
-        assert!(shannon_entropy("aaaaaaaa") < 0.01);
-        assert!(shannon_entropy("abcdefgh") > 2.9);
-        assert!(shannon_entropy("Zq8RmT2vLx9WcN4bKp7HyJ3dFs6GtA1e") > 4.5);
-    }
-
-    #[test]
     fn a_window_ends_on_a_char_boundary() {
         let text = format!("{}é", "x".repeat(WINDOW - 1));
         assert!(text.is_char_boundary(window_end(&text, 0)));
+    }
+
+    #[test]
+    fn only_json_or_pem_blobs_decode() {
+        let json = base64::engine::general_purpose::STANDARD.encode(r#"{"a": 1}"#);
+        assert!(decoded_text(&json).is_some_and(|text| text.starts_with('{')));
+        let pem = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("-----BEGIN X-----");
+        assert!(decoded_text(&pem).is_some());
+        let noise = base64::engine::general_purpose::STANDARD.encode([0xffu8, 0xfe, 0xfd, 0x00]);
+        assert!(decoded_text(&noise).is_none());
+        assert!(decoded_text("not base64 at all!").is_none());
     }
 }

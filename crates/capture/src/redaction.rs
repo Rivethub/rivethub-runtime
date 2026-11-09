@@ -3,6 +3,7 @@ use regress::Regex;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
+use wire::json::Scrub;
 
 use crate::rules::Ruleset;
 
@@ -102,17 +103,51 @@ impl Redaction {
     }
 
     fn redact_object(&self, object: &mut JsonObject) -> u64 {
-        let mut spans = 0;
-        object.visit_strings_mut(&mut |name, text| {
-            let (redacted, count) = apply_spans(text, self);
-            spans += count;
-            if secret_key(name) {
-                SECRET_KEY_PLACEHOLDER.clone_into(text);
-            } else {
-                *text = redacted;
-            }
-        });
-        spans
+        let mut live = LiveScrub {
+            redaction: self,
+            spans: 0,
+        };
+        object.scrub(&mut live);
+        live.spans
+    }
+}
+
+struct LiveScrub<'a> {
+    redaction: &'a Redaction,
+    spans: u64,
+}
+
+impl Scrub for LiveScrub<'_> {
+    fn is_secret_name(&self, key: &str) -> bool {
+        self.redaction
+            .rules
+            .is_some_and(|rules| rules.is_secret_name(key))
+    }
+
+    fn key(&mut self, _parent: &str, key: &mut String) {
+        let (redacted, count) = apply_spans(key, self.redaction);
+        *key = redacted;
+        self.spans += count;
+    }
+
+    fn renamed(&mut self, _parent: &str, _key: &str, _renamed: &str) {}
+
+    fn text(&mut self, _path: &str, text: &mut String) {
+        let (redacted, count) = apply_spans(text, self.redaction);
+        *text = redacted;
+        self.spans += count;
+    }
+
+    fn secret(&mut self, _path: &str, key: &str, text: &mut String) -> bool {
+        let redacts = self
+            .redaction
+            .rules
+            .is_some_and(|rules| rules.names().redacts(key, text));
+        if redacts {
+            SECRET_KEY_PLACEHOLDER.clone_into(text);
+            self.spans += 1;
+        }
+        redacts
     }
 }
 
@@ -164,10 +199,6 @@ fn split_at_char(text: &str, chars: usize) -> (&str, &str) {
     text.char_indices()
         .nth(chars)
         .map_or((text, ""), |(end, _)| text.split_at(end))
-}
-
-pub(crate) fn secret_key(key: &str) -> bool {
-    crate::rules::ruleset().is_secret_name(key)
 }
 
 fn replace_spans(text: &str, spans: &[(std::ops::Range<usize>, String)]) -> String {

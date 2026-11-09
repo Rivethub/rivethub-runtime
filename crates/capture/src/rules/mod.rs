@@ -1,3 +1,5 @@
+mod compile;
+pub mod names;
 mod scan;
 
 use std::sync::LazyLock;
@@ -5,18 +7,22 @@ use std::sync::LazyLock;
 use aho_corasick::AhoCorasick;
 use aho_corasick::MatchKind;
 use regex::Regex;
-use regex::RegexBuilder;
 use serde::Deserialize;
 use sha2::Digest as _;
 use sha2::Sha256;
 use thiserror::Error;
 
+use compile::compile;
+use compile::compile_allow;
+pub use names::Family;
+pub use names::Names;
 pub use scan::Span;
 
 const GITLEAKS: &str = include_str!("gitleaks.toml");
 const RIVETHUB: &str = include_str!("rivethub.toml");
 const RIVETHUB_FILE: &str = "rivethub.toml";
-const REGEX_SIZE_LIMIT: usize = 32 << 20;
+const GITLEAKS_FILE: &str = "gitleaks.toml";
+const ALWAYS: &str = "*";
 
 #[derive(Debug, Error)]
 pub enum RuleError {
@@ -45,7 +51,7 @@ pub enum RuleError {
         id: String,
         message: String,
     },
-    #[error("the secret-name regex in {file} does not compile: {message}")]
+    #[error("the [names] table in {file} does not load: {message}")]
     SecretNames { file: &'static str, message: String },
     #[error("the keyword automaton does not build: {0}")]
     Keywords(#[from] aho_corasick::BuildError),
@@ -70,7 +76,7 @@ struct File {
     )]
     min_version: Option<String>,
     gitleaks: Option<Upstream>,
-    secret_names: Option<SecretNames>,
+    names: Option<names::RawNames>,
     allowlist: Option<RawAllowlist>,
     #[serde(default)]
     rules: Vec<RawRule>,
@@ -86,12 +92,11 @@ pub struct Upstream {
     pub license: String,
     pub copyright: String,
     pub license_text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SecretNames {
-    regex: String,
+    pub deviations: Vec<String>,
+    #[serde(default)]
+    pub whole_match: Vec<String>,
+    #[serde(default)]
+    pub skip: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -99,14 +104,29 @@ struct SecretNames {
 struct RawRule {
     id: String,
     description: Option<String>,
+    kind: Option<Kind>,
     regex: Option<String>,
     path: Option<String>,
     #[serde(default)]
     keywords: Vec<String>,
     entropy: Option<f64>,
     secret_group: Option<usize>,
+    decode: Option<Decode>,
+    each: Option<String>,
     #[serde(default)]
     allowlists: Vec<RawAllowlist>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Kind {
+    Names,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Decode {
+    Base64,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +166,12 @@ enum Condition {
     And,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Rivethub,
+    Gitleaks,
+}
+
 #[derive(Debug)]
 pub struct Allow {
     target: Target,
@@ -154,14 +180,41 @@ pub struct Allow {
     all: bool,
 }
 
+impl Allow {
+    pub(crate) fn exact(regexes: Vec<Regex>) -> Self {
+        Self {
+            target: Target::Secret,
+            regexes,
+            stopwords: Vec::new(),
+            all: false,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Matcher {
+    Regex(Regex),
+    Names,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Secret {
+    Whole,
+    FirstGroup,
+    Group(usize),
+}
+
 #[derive(Debug)]
 pub struct Rule {
     pub id: String,
     pub description: String,
-    regex: Regex,
+    pub source: Source,
+    matcher: Matcher,
+    secret: Secret,
     entropy: Option<f64>,
-    secret_group: Option<usize>,
     multiline: bool,
+    decode: Option<Decode>,
+    each: Option<Regex>,
     allow: Vec<Allow>,
 }
 
@@ -170,10 +223,13 @@ pub struct Ruleset {
     rules: Vec<Rule>,
     keywords: AhoCorasick,
     keyword_rules: Vec<Vec<usize>>,
-    allow: Vec<Allow>,
-    secret_names: Regex,
+    always: Vec<usize>,
+    allow_ours: Vec<Allow>,
+    allow_theirs: Vec<Allow>,
+    names: Names,
     upstream: Upstream,
     digest: String,
+    ours: usize,
 }
 
 #[expect(
@@ -189,8 +245,8 @@ pub fn ruleset() -> &'static Ruleset {
 }
 
 pub fn load() -> Result<Ruleset, RuleError> {
-    let ours = parse(RIVETHUB, "rivethub.toml")?;
-    let theirs = parse(GITLEAKS, "gitleaks.toml")?;
+    let ours = parse(RIVETHUB, RIVETHUB_FILE)?;
+    let theirs = parse(GITLEAKS, GITLEAKS_FILE)?;
     let upstream = ours.gitleaks.ok_or(RuleError::Unpinned)?;
     let found = hex::encode(Sha256::digest(GITLEAKS.as_bytes()));
     if found != upstream.sha256 {
@@ -199,50 +255,45 @@ pub fn load() -> Result<Ruleset, RuleError> {
             pinned: upstream.sha256,
         });
     }
-    let names = ours.secret_names.ok_or_else(|| RuleError::SecretNames {
+    let names = Names::build(ours.names.ok_or_else(|| RuleError::SecretNames {
         file: RIVETHUB_FILE,
         message: "missing".to_owned(),
-    })?;
-    let secret_names = Regex::new(&names.regex).map_err(|error| RuleError::SecretNames {
-        file: RIVETHUB_FILE,
-        message: error.to_string(),
-    })?;
-    let mut allow = Vec::new();
-    for (raw, file) in [
-        (ours.allowlist, "rivethub.toml"),
-        (theirs.allowlist, "gitleaks.toml"),
-    ] {
-        if let Some(raw) = raw
-            && let Some(compiled) = allowlist(raw, file, "allowlist")?
-        {
-            allow.push(compiled);
-        }
-    }
+    })?)?;
+    let (allow_ours, allow_theirs) = globals(ours.allowlist, theirs.allowlist, &names)?;
     let mut rules = Vec::new();
     let mut patterns: Vec<String> = Vec::new();
     let mut keyword_rules: Vec<Vec<usize>> = Vec::new();
-    for (raw, file) in ours
+    let mut always = Vec::new();
+    let mut ours_count = 0;
+    for (raw, source) in ours
         .rules
         .into_iter()
-        .map(|raw| (raw, "rivethub.toml"))
-        .chain(theirs.rules.into_iter().map(|raw| (raw, "gitleaks.toml")))
+        .map(|raw| (raw, Source::Rivethub))
+        .chain(theirs.rules.into_iter().map(|raw| (raw, Source::Gitleaks)))
     {
-        if raw.path.is_some() {
+        if raw.path.is_some() || upstream.skip.contains(&raw.id) {
             continue;
         }
         let index = rules.len();
-        for keyword in &raw.keywords {
-            let keyword = keyword.to_lowercase();
-            if let Some(at) = patterns.iter().position(|known| *known == keyword) {
-                if let Some(list) = keyword_rules.get_mut(at) {
-                    list.push(index);
-                }
-            } else {
-                patterns.push(keyword);
-                keyword_rules.push(vec![index]);
-            }
+        let keywords = match raw.kind {
+            Some(Kind::Names) => names.keywords(),
+            None => raw
+                .keywords
+                .iter()
+                .map(|word| word.to_lowercase())
+                .collect(),
+        };
+        register(
+            index,
+            keywords,
+            &mut patterns,
+            &mut keyword_rules,
+            &mut always,
+        );
+        if source == Source::Rivethub {
+            ours_count += 1;
         }
-        rules.push(rule(raw, file)?);
+        rules.push(rule(raw, source, &upstream.whole_match)?);
     }
     let keywords = AhoCorasick::builder()
         .ascii_case_insensitive(true)
@@ -256,11 +307,55 @@ pub fn load() -> Result<Ruleset, RuleError> {
         rules,
         keywords,
         keyword_rules,
-        allow,
-        secret_names,
+        always,
+        allow_ours,
+        allow_theirs,
+        names,
         upstream,
         digest: hex::encode(hasher.finalize()),
+        ours: ours_count,
     })
+}
+
+fn globals(
+    ours: Option<RawAllowlist>,
+    theirs: Option<RawAllowlist>,
+    names: &Names,
+) -> Result<(Vec<Allow>, Vec<Allow>), RuleError> {
+    let mut allow_ours = vec![names.allow()];
+    if let Some(raw) = ours
+        && let Some(compiled) = allowlist(raw, RIVETHUB_FILE, "allowlist")?
+    {
+        allow_ours.push(compiled);
+    }
+    let mut allow_theirs = Vec::new();
+    if let Some(raw) = theirs
+        && let Some(compiled) = allowlist(raw, GITLEAKS_FILE, "allowlist")?
+    {
+        allow_theirs.push(compiled);
+    }
+    Ok((allow_ours, allow_theirs))
+}
+
+fn register(
+    index: usize,
+    keywords: Vec<String>,
+    patterns: &mut Vec<String>,
+    keyword_rules: &mut Vec<Vec<usize>>,
+    always: &mut Vec<usize>,
+) {
+    for keyword in keywords {
+        if keyword == ALWAYS {
+            always.push(index);
+        } else if let Some(at) = patterns.iter().position(|known| *known == keyword) {
+            if let Some(list) = keyword_rules.get_mut(at) {
+                list.push(index);
+            }
+        } else {
+            patterns.push(keyword);
+            keyword_rules.push(vec![index]);
+        }
+    }
 }
 
 fn parse(text: &str, file: &'static str) -> Result<File, RuleError> {
@@ -270,30 +365,51 @@ fn parse(text: &str, file: &'static str) -> Result<File, RuleError> {
     })
 }
 
-fn rule(raw: RawRule, file: &'static str) -> Result<Rule, RuleError> {
+fn rule(raw: RawRule, source: Source, whole_match: &[String]) -> Result<Rule, RuleError> {
+    let file = match source {
+        Source::Rivethub => RIVETHUB_FILE,
+        Source::Gitleaks => GITLEAKS_FILE,
+    };
     let id = raw.id;
-    let source = raw.regex.ok_or_else(|| RuleError::NoRegex {
+    let regex_error = |id: &str, error: regex::Error| RuleError::Regex {
         file,
-        id: id.clone(),
-    })?;
-    let regex = compile(&source).map_err(|error| RuleError::Regex {
-        file,
-        id: id.clone(),
+        id: id.to_owned(),
         message: error.to_string(),
-    })?;
-    if let Some(group) = raw.secret_group
-        && group >= regex.captures_len()
-    {
-        return Err(RuleError::SecretGroup {
-            file,
-            id,
-            group,
-            groups: regex.captures_len() - 1,
-        });
-    }
-    if raw.keywords.is_empty() {
-        return Err(RuleError::NoKeywords { file, id });
-    }
+    };
+    let (matcher, multiline) = match (raw.kind, raw.regex) {
+        (Some(Kind::Names), _) => (Matcher::Names, false),
+        (None, Some(source)) => {
+            let regex = compile(&source).map_err(|error| regex_error(&id, error))?;
+            if let Some(group) = raw.secret_group
+                && group >= regex.captures_len()
+            {
+                return Err(RuleError::SecretGroup {
+                    file,
+                    id,
+                    group,
+                    groups: regex.captures_len() - 1,
+                });
+            }
+            if raw.keywords.is_empty() {
+                return Err(RuleError::NoKeywords { file, id });
+            }
+            let multiline = source.contains("\\n")
+                || source.contains("\\r")
+                || source.contains("\\s\\S")
+                || source.contains("(?s");
+            (Matcher::Regex(regex), multiline)
+        }
+        (None, None) => return Err(RuleError::NoRegex { file, id }),
+    };
+    let secret = if whole_match.contains(&id) {
+        Secret::Whole
+    } else {
+        raw.secret_group.map_or(Secret::FirstGroup, Secret::Group)
+    };
+    let each = raw
+        .each
+        .map(|source| compile(&source).map_err(|error| regex_error(&id, error)))
+        .transpose()?;
     let mut allow = Vec::new();
     for raw in raw.allowlists {
         if let Some(compiled) = allowlist(raw, file, &id)? {
@@ -302,10 +418,13 @@ fn rule(raw: RawRule, file: &'static str) -> Result<Rule, RuleError> {
     }
     Ok(Rule {
         description: raw.description.unwrap_or_default(),
-        multiline: source.contains("\\n") || source.contains("\\r") || source.contains("\\s\\S"),
-        regex,
+        source,
+        matcher,
+        secret,
         entropy: raw.entropy,
-        secret_group: raw.secret_group,
+        multiline,
+        decode: raw.decode,
+        each,
         allow,
         id,
     })
@@ -321,8 +440,8 @@ fn allowlist(raw: RawAllowlist, file: &'static str, id: &str) -> Result<Option<A
     }
     let regexes = raw
         .regexes
-        .into_iter()
-        .map(|source| compile(&source))
+        .iter()
+        .map(|source| compile_allow(source))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| RuleError::Allowlist {
             file,
@@ -339,82 +458,6 @@ fn allowlist(raw: RawAllowlist, file: &'static str, id: &str) -> Result<Option<A
             .collect(),
         all,
     }))
-}
-
-fn compile(source: &str) -> Result<Regex, regex::Error> {
-    let source = rust_syntax(source);
-    RegexBuilder::new(&source)
-        .unicode(false)
-        .size_limit(REGEX_SIZE_LIMIT)
-        .build()
-        .or_else(|_| {
-            RegexBuilder::new(&source)
-                .size_limit(REGEX_SIZE_LIMIT)
-                .build()
-        })
-}
-
-fn rust_syntax(source: &str) -> String {
-    let chars: Vec<char> = source.chars().collect();
-    let mut out = String::with_capacity(source.len() + 8);
-    let mut in_class = false;
-    let mut index = 0;
-    while let Some(&c) = chars.get(index) {
-        match c {
-            '\\' => {
-                out.push(c);
-                if let Some(&next) = chars.get(index + 1) {
-                    out.push(next);
-                    index += 1;
-                }
-            }
-            '[' if !in_class => {
-                in_class = true;
-                out.push(c);
-            }
-            ']' if in_class => {
-                in_class = false;
-                out.push(c);
-            }
-            '{' if !in_class && !repetition_follows(&chars, index) => out.push_str("\\{"),
-            '}' if !in_class && !repetition_closes(&chars, index) => out.push_str("\\}"),
-            _ => out.push(c),
-        }
-        index += 1;
-    }
-    out
-}
-
-fn repetition_follows(chars: &[char], open: usize) -> bool {
-    let mut index = open + 1;
-    let mut digits = 0;
-    while chars.get(index).is_some_and(char::is_ascii_digit) {
-        index += 1;
-        digits += 1;
-    }
-    if digits == 0 {
-        return false;
-    }
-    if chars.get(index) == Some(&',') {
-        index += 1;
-        while chars.get(index).is_some_and(char::is_ascii_digit) {
-            index += 1;
-        }
-    }
-    chars.get(index) == Some(&'}')
-}
-
-fn repetition_closes(chars: &[char], close: usize) -> bool {
-    let mut index = close;
-    while index > 0 {
-        index -= 1;
-        match chars.get(index) {
-            Some(c) if c.is_ascii_digit() || *c == ',' => {}
-            Some('{') => return repetition_follows(chars, index),
-            _ => return false,
-        }
-    }
-    false
 }
 
 impl Ruleset {
@@ -434,10 +477,18 @@ impl Ruleset {
     }
 
     #[must_use]
+    pub fn names(&self) -> &Names {
+        &self.names
+    }
+
+    #[must_use]
+    pub fn counts(&self) -> (usize, usize) {
+        (self.ours, self.rules.len() - self.ours)
+    }
+
+    #[must_use]
     pub fn is_secret_name(&self, key: &str) -> bool {
-        self.secret_names
-            .find(key)
-            .is_some_and(|found| !found.range().is_empty())
+        self.names.family(key).is_some()
     }
 
     #[must_use]
@@ -453,17 +504,13 @@ mod tests {
     #[test]
     fn every_rule_compiles_and_the_upstream_pin_holds() {
         let rules = load().unwrap_or_else(|error| panic!("{error}"));
-        assert!(rules.rules().len() > 200, "{} rules", rules.rules().len());
+        let (ours, theirs) = rules.counts();
+        assert!(theirs > 200, "{theirs} gitleaks rules");
+        assert!(ours > 30, "{ours} RivetHub rules");
         assert_eq!(rules.upstream().version, "v8.30.1");
         assert!(rules.emits("github_token"));
         assert!(rules.emits("github-pat"));
+        assert!(rules.emits("secret_assignment"));
         assert!(!rules.emits("ghp_abcdefghij"));
-    }
-
-    #[test]
-    fn re2_literal_braces_become_rust_escapes() {
-        assert_eq!(rust_syntax(r"^\$(?:\d+|{\d+})$"), r"^\$(?:\d+|\{\d+\})$");
-        assert_eq!(rust_syntax(r"{{[^}]+}}"), r"\{\{[^}]+\}\}");
-        assert_eq!(rust_syntax(r"a{2,3}b{4}c{5,}\{d"), r"a{2,3}b{4}c{5,}\{d");
     }
 }

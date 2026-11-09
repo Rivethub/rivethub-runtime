@@ -1,3 +1,4 @@
+pub mod key;
 pub mod mapping;
 pub mod report;
 mod scrub;
@@ -5,17 +6,17 @@ mod scrub;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Serialize;
-use sha2::Digest as _;
-use sha2::Sha256;
 use strum::IntoEnumIterator as _;
 use thiserror::Error;
-use wire::capture::CaptureMessage;
+use wire::capture::BundledSession;
 use wire::capture::Sanitization;
 use wire::capture::SanitizeStamp;
 use wire::capture::SessionBundle;
 
 use crate::bundle::BundleError;
 use crate::bundle::Sealed;
+pub use key::KeyError;
+pub use key::LocalKey;
 use mapping::Action;
 use mapping::Mapping;
 use mapping::Matcher;
@@ -39,13 +40,14 @@ pub enum SanitizeError {
     Policy(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Policy {
     pub mapping: Mapping,
+    pub key: LocalKey,
 }
 
 impl Policy {
-    pub fn sha256(&self, raw_bundle_sha256: &str) -> Result<String, serde_json::Error> {
+    pub fn hash(&self, raw_bundle_sha256: &str) -> Result<String, serde_json::Error> {
         let text = PolicyText {
             rules: crate::rules::ruleset().digest(),
             mapping: self
@@ -61,11 +63,10 @@ impl Policy {
                 })
                 .collect(),
         };
-        let mut hasher = Sha256::new();
-        hasher.update(raw_bundle_sha256.as_bytes());
-        hasher.update([0]);
-        hasher.update(wire::json::canonical_json(&text)?);
-        Ok(hex::encode(hasher.finalize()))
+        Ok(self.key.hex(&[
+            raw_bundle_sha256.as_bytes(),
+            &wire::json::canonical_json(&text)?,
+        ]))
     }
 }
 
@@ -103,26 +104,19 @@ pub fn run(
         return Err(SanitizeError::AlreadySanitized { at: stamp.at });
     }
     let raw_digest = &bundle.manifest.bundle_sha256;
-    let mut scrubber = Scrubber::new(&policy.mapping, raw_digest);
+    let mut scrubber = Scrubber::new(&policy.mapping, Some(&policy.key), raw_digest);
     let mut sessions = bundle.sessions.clone();
     for (index, session) in sessions.iter_mut().enumerate() {
+        let ids = event_ids(&policy.key, session);
         scrubber.session(index, session);
-        let ids: Vec<String> = session
-            .batch
-            .messages
-            .iter()
-            .enumerate()
-            .map(|(position, message)| event_id(position, message))
-            .collect::<Result<_, _>>()?;
         for (message, id) in session.batch.messages.iter_mut().zip(&ids) {
             message.event_id.clone_from(id);
         }
         scrubber.name_events(index, &ids);
     }
     let mut exported_by = bundle.manifest.exported_by.clone();
-    scrubber.at = scrub::Location::default();
-    scrubber.text(&Field::ExporterNode, &mut exported_by.node);
-    let policy_sha256 = policy.sha256(raw_digest)?;
+    scrubber.manifest(&mut exported_by);
+    let policy_sha256 = policy.hash(raw_digest)?;
     let sealed = crate::bundle::seal(
         exported_by,
         bundle.manifest.exported_at,
@@ -154,7 +148,7 @@ pub fn run(
 #[must_use]
 pub fn secrets(bundle: &SessionBundle) -> Vec<Change> {
     let mapping = Mapping::default();
-    let mut scrubber = Scrubber::new(&mapping, &bundle.manifest.bundle_sha256);
+    let mut scrubber = Scrubber::new(&mapping, None, &bundle.manifest.bundle_sha256);
     for (index, session) in bundle.sessions.iter().enumerate() {
         let mut copy = session.clone();
         scrubber.session(index, &mut copy);
@@ -166,17 +160,26 @@ pub fn secrets(bundle: &SessionBundle) -> Vec<Change> {
             .collect();
         scrubber.name_events(index, &ids);
     }
+    let mut exported_by = bundle.manifest.exported_by.clone();
+    scrubber.manifest(&mut exported_by);
     scrubber.changes
 }
 
-fn event_id(position: usize, message: &CaptureMessage) -> Result<String, serde_json::Error> {
-    let mut unnamed = message.clone();
-    unnamed.event_id = String::new();
-    let mut hasher = Sha256::new();
-    hasher.update(position.to_string().as_bytes());
-    hasher.update([0]);
-    hasher.update(wire::json::canonical_json(&unnamed)?);
-    Ok(hex::encode(hasher.finalize()))
+fn event_ids(key: &LocalKey, session: &BundledSession) -> Vec<String> {
+    session
+        .batch
+        .messages
+        .iter()
+        .map(|message| {
+            key.hex(&[
+                b"event_id",
+                session.origin.node.as_bytes(),
+                session.origin.conversation_id.as_bytes(),
+                session.batch.session_key.as_bytes(),
+                message.event_id.as_bytes(),
+            ])
+        })
+        .collect()
 }
 
 impl Scrubber<'_> {
