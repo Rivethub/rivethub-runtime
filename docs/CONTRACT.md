@@ -1751,7 +1751,8 @@ The mapping file is `--mapping`, else `memory.sanitize.mapping` in config.yaml (
 else `~/.config/rivethub/redactions.toml`. A file named by `--mapping` or the config must exist; the default file may
 be absent, and then no rule runs. It is TOML: a list of `[[rule]]` tables, each with exactly one of `literal =
 "<text>"` or `regex = '<pattern>'` (the Rust `regex` syntax, which runs in linear time), and `action = "map"` with
-`as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A file that is not TOML,
+`as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A `\b` in a mapping regex is an ASCII
+word boundary, so the one-pass scan stays on the regex engine's fast path. A file that is not TOML,
 a rule with no matcher, both matchers, an empty matcher or placeholder, a `map` without `as`, a `redact` with `as`,
 or a regex that does not compile is refused with the line of the rule's `[[rule]]` header, and nothing is written.
 

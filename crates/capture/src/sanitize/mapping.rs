@@ -156,6 +156,40 @@ fn line_of(text: &str, offset: usize) -> usize {
         .map_or(1, |before| before.matches('\n').count() + 1)
 }
 
+fn ascii_boundaries(source: &str) -> String {
+    let mut out = String::with_capacity(source.len() + 16);
+    let mut chars = source.chars().peekable();
+    let mut in_class = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let Some(next) = chars.next() else {
+                    out.push(c);
+                    break;
+                };
+                if !in_class && (next == 'b' || next == 'B') {
+                    out.push_str("(?-u:\\");
+                    out.push(next);
+                    out.push(')');
+                } else {
+                    out.push(c);
+                    out.push(next);
+                }
+            }
+            '[' if !in_class => {
+                in_class = true;
+                out.push(c);
+            }
+            ']' if in_class => {
+                in_class = false;
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 impl Mapping {
     pub fn compile(rules: Vec<Rule>) -> Result<Self, MappingError> {
         let mut literals: Vec<&str> = Vec::new();
@@ -169,8 +203,9 @@ impl Mapping {
                     literal_rules.push(index);
                 }
                 Matcher::Regex(regex) => {
-                    alternatives.push(format!("(?:{})", regex.as_str()));
-                    let at_start = RegexBuilder::new(&format!("^(?:{})", regex.as_str()))
+                    let source = ascii_boundaries(regex.as_str());
+                    alternatives.push(format!("(?:{source})"));
+                    let at_start = RegexBuilder::new(&format!("^(?:{source})"))
                         .size_limit(COMBINED_SIZE_LIMIT)
                         .build()
                         .map_err(|error| MappingError::Combined {
@@ -260,5 +295,19 @@ impl Mapping {
             }
         }
         kept
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_boundaries_in_mapping_regexes_become_ascii() {
+        assert_eq!(
+            ascii_boundaries(r"\b\d{3}-\d{4}\b"),
+            r"(?-u:\b)\d{3}-\d{4}(?-u:\b)"
+        );
+        assert_eq!(ascii_boundaries(r"[\b]x\\b\Bq"), r"[\b]x\\b(?-u:\B)q");
     }
 }
