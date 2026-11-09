@@ -2,6 +2,7 @@ use crate::common;
 
 use common::TestResult;
 use common::batch;
+use common::execute;
 use common::fresh_store;
 use common::instant;
 use common::message;
@@ -20,36 +21,72 @@ fn phil() -> BundleAuthor {
 }
 
 #[tokio::test]
-async fn a_bundle_credits_its_author_and_the_receiver_records_its_own_owner() -> TestResult {
+async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_owner_and_node()
+-> TestResult {
     let source = fresh_store()?;
-    let alice = Owner::new("alice".to_owned())?;
+    let phil_owner = Owner::new("phil".to_owned())?;
+    let alex = Owner::new("alex".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut first = batch("claude-code:one", "rivet", "claude-code");
     first.title = Some("pairing".to_owned());
     first
         .messages
         .push(message("evt-1", Role::User, "ship the bundle"));
-    first
+    first.messages.push(message(
+        "evt-2",
+        Role::Assistant,
+        "the file names its author",
+    ));
+    source
+        .store
+        .capture(first, &phil_owner, Some("laptop"), now)
+        .await?;
+    let mut legacy = batch("codex:legacy", "rivet-gpt", "codex");
+    legacy
         .messages
-        .push(message("evt-2", Role::Assistant, "the file names no owner"));
-    source.store.capture(first, &alice, None, now).await?;
-    let mut second = batch("codex:two", "rivet-gpt", "codex");
-    second
+        .push(message("evt-3", Role::User, "captured before owners"));
+    let legacy = source.store.capture(legacy, &phil_owner, None, now).await?;
+    execute(
+        &source.store,
+        &format!(
+            "UPDATE ros_conversations SET owner_user_id = NULL WHERE id = '{}'",
+            legacy.conversation_id
+        ),
+    )
+    .await?;
+    let mut private = batch("claude-code:alex-private", "rivet", "claude-code");
+    private
         .messages
-        .push(message("evt-3", Role::User, "ingest it there"));
-    source.store.capture(second, &alice, None, now).await?;
+        .push(message("evt-4", Role::User, "alex private note"));
+    let private = source.store.capture(private, &alex, None, now).await?;
 
     let exported = source.store.bundled_sessions(phil(), None).await?;
+
     let text = serde_json::to_string(&exported)?;
-    assert!(!text.contains("alice"));
+    assert!(!text.contains("alex private note"));
     assert!(!text.contains("owner_user_id"));
-    assert_eq!(exported.len(), 2);
+    let mut origins: Vec<(&str, &str, &str)> = exported
+        .iter()
+        .map(|session| {
+            (
+                session.batch.session_key.as_str(),
+                session.origin.author.as_str(),
+                session.origin.node.as_str(),
+            )
+        })
+        .collect();
+    origins.sort_unstable();
+    assert_eq!(
+        origins,
+        [
+            ("claude-code:one", "phil", "laptop"),
+            ("codex:legacy", "phil", "desk"),
+        ]
+    );
     let pairing = exported
         .iter()
         .find(|session| session.batch.session_key == "claude-code:one")
         .ok_or("pairing session")?;
-    assert_eq!(pairing.origin.author, "phil");
-    assert_eq!(pairing.origin.node, "desk");
     assert_eq!(pairing.batch.title.as_deref(), Some("pairing"));
     assert_eq!(
         pairing
@@ -60,6 +97,11 @@ async fn a_bundle_credits_its_author_and_the_receiver_records_its_own_owner() ->
             .collect::<Vec<_>>(),
         ["evt-1", "evt-2"]
     );
+    let named = source
+        .store
+        .bundled_sessions(phil(), Some(vec![private.conversation_id]))
+        .await?;
+    assert_eq!(named, Vec::new());
 
     let received: CaptureBatchRequest =
         serde_json::from_value(serde_json::to_value(&pairing.batch)?)?;

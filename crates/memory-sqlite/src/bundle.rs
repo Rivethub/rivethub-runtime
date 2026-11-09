@@ -13,11 +13,13 @@ use crate::error::SqliteError;
 use crate::time;
 
 const SESSIONS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title, c.settings, \
-     c.created_at, c.updated_at, \
+     c.created_at, c.updated_at, coalesce(c.owner_user_id, ?2), coalesce(n.node, ?3), \
      m.id, m.role, m.content, m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at \
      FROM ros_conversations c \
      JOIN ros_messages m ON m.conversation_id = c.id \
-     WHERE ?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1)) \
+     LEFT JOIN rh_conversation_nodes n ON n.conversation_id = c.id \
+     WHERE (c.owner_user_id IS NULL OR c.owner_user_id = ?2) \
+       AND (?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1))) \
      ORDER BY c.created_at, c.id, m.created_at, m.rowid";
 
 struct StoredSession {
@@ -29,6 +31,8 @@ struct StoredSession {
     settings: Option<String>,
     created_at: String,
     updated_at: String,
+    author: String,
+    node: String,
     id: String,
     role: Role,
     content: String,
@@ -66,13 +70,16 @@ fn read_bundle(
         .prepare(SESSIONS)
         .map_err(SqliteError::query("session bundle"))?;
     let rows = statement
-        .query_map([wanted], stored_session)
+        .query_map(
+            rusqlite::params![wanted, author.user, author.node],
+            stored_session,
+        )
         .map_err(SqliteError::query("session bundle"))?;
     let mut sessions = Vec::new();
     let mut current: Option<BundledSession> = None;
     for row in rows {
         let row = row.map_err(SqliteError::query("session bundle"))?;
-        push_message(&mut sessions, &mut current, author, &row)?;
+        push_message(&mut sessions, &mut current, &row)?;
     }
     if let Some(session) = current {
         sessions.push(session);
@@ -90,21 +97,22 @@ fn stored_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSession> {
         settings: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
-        id: row.get(8)?,
-        role: crate::message::stored_role(row, 9)?,
-        content: row.get(10)?,
-        tool_name: row.get(11)?,
-        tool_args: row.get(12)?,
-        tool_result: row.get(13)?,
-        metadata: row.get(14)?,
-        message_at: row.get(15)?,
+        author: row.get(8)?,
+        node: row.get(9)?,
+        id: row.get(10)?,
+        role: crate::message::stored_role(row, 11)?,
+        content: row.get(12)?,
+        tool_name: row.get(13)?,
+        tool_args: row.get(14)?,
+        tool_result: row.get(15)?,
+        metadata: row.get(16)?,
+        message_at: row.get(17)?,
     })
 }
 
 fn push_message(
     sessions: &mut Vec<BundledSession>,
     current: &mut Option<BundledSession>,
-    author: &BundleAuthor,
     row: &StoredSession,
 ) -> Result<(), SqliteError> {
     let same = current
@@ -114,7 +122,7 @@ fn push_message(
         if let Some(session) = current.take() {
             sessions.push(session);
         }
-        *current = Some(session_for(author, row)?);
+        *current = Some(session_for(row)?);
     }
     let Some(session) = current.as_mut() else {
         return Err(SqliteError::Invalid {
@@ -125,13 +133,13 @@ fn push_message(
     Ok(())
 }
 
-fn session_for(author: &BundleAuthor, row: &StoredSession) -> Result<BundledSession, SqliteError> {
+fn session_for(row: &StoredSession) -> Result<BundledSession, SqliteError> {
     let created_at = time::stored(&row.created_at, "created_at")?;
     let updated_at = time::stored(&row.updated_at, "updated_at")?;
     Ok(BundledSession {
         origin: SessionOrigin {
-            author: author.user.clone(),
-            node: author.node.clone(),
+            author: row.author.clone(),
+            node: row.node.clone(),
             conversation_id: row.conversation_id.clone(),
             session_key: row.session_key.clone(),
             agent: row.agent.clone(),
