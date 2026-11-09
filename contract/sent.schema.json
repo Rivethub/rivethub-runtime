@@ -8542,7 +8542,10 @@
         },
         "created_at": {
           "format": "date-time",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "node": {
           "type": "string"
@@ -8552,7 +8555,10 @@
         },
         "updated_at": {
           "format": "date-time",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

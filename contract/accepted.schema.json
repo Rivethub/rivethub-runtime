@@ -8525,7 +8525,10 @@
         },
         "created_at": {
           "format": "date-time",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "node": {
           "type": "string"
@@ -8535,7 +8538,10 @@
         },
         "updated_at": {
           "format": "date-time",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -8543,9 +8549,7 @@
         "node",
         "conversation_id",
         "session_key",
-        "agent",
-        "created_at",
-        "updated_at"
+        "agent"
       ],
       "type": "object"
     },

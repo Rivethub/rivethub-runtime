@@ -28,8 +28,6 @@ pub enum BundleError {
     Digest { declared: String, computed: String },
     #[error("session bundle manifest counts {declared} sessions but holds {found}")]
     Count { declared: usize, found: usize },
-    #[error("version 1 session {session_key} has no dates and no messages to take them from")]
-    Undated { session_key: String },
 }
 
 #[derive(Deserialize)]
@@ -97,14 +95,10 @@ fn check(bundle: &SessionBundle) -> Result<(), BundleError> {
 }
 
 fn upgrade(first: FirstBundle) -> Result<SessionBundle, BundleError> {
-    let sessions = first
-        .sessions
-        .into_iter()
-        .map(inferred)
-        .collect::<Result<Vec<_>, _>>()?;
+    let sessions: Vec<BundledSession> = first.sessions.into_iter().map(inferred).collect();
     let exported_at = sessions
         .iter()
-        .map(|session| session.origin.updated_at)
+        .filter_map(|session| session.origin.updated_at)
         .max()
         .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
     seal(
@@ -117,20 +111,14 @@ fn upgrade(first: FirstBundle) -> Result<SessionBundle, BundleError> {
     )
 }
 
-fn inferred(batch: CaptureBatchRequest) -> Result<BundledSession, BundleError> {
+fn inferred(batch: CaptureBatchRequest) -> BundledSession {
     let sent = batch
         .messages
         .iter()
         .filter_map(|message| message.created_at);
-    let (Some(created_at), Some(updated_at)) = (
-        batch.created_at.or_else(|| sent.clone().min()),
-        batch.updated_at.or_else(|| sent.max()),
-    ) else {
-        return Err(BundleError::Undated {
-            session_key: batch.session_key,
-        });
-    };
-    Ok(BundledSession {
+    let created_at = batch.created_at.or_else(|| sent.clone().min());
+    let updated_at = batch.updated_at.or_else(|| sent.max());
+    BundledSession {
         origin: SessionOrigin {
             author: UNKNOWN_ORIGIN.to_owned(),
             node: UNKNOWN_ORIGIN.to_owned(),
@@ -141,5 +129,5 @@ fn inferred(batch: CaptureBatchRequest) -> Result<BundledSession, BundleError> {
             updated_at,
         },
         batch,
-    })
+    }
 }

@@ -86,8 +86,8 @@ fn session_for(author: &BundleAuthor, row: &BundleRow) -> BundledSession {
             conversation_id: row.conversation_id.to_string(),
             session_key: row.session_key.clone(),
             agent: row.agent.clone(),
-            created_at: row.conversation_created_at,
-            updated_at: row.conversation_updated_at,
+            created_at: Some(row.conversation_created_at),
+            updated_at: Some(row.conversation_updated_at),
         },
         batch: CaptureBatchRequest {
             session_key: row.session_key.clone(),

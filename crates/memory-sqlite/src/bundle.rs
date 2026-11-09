@@ -143,8 +143,8 @@ fn session_for(row: &StoredSession) -> Result<BundledSession, SqliteError> {
             conversation_id: row.conversation_id.clone(),
             session_key: row.session_key.clone(),
             agent: row.agent.clone(),
-            created_at,
-            updated_at,
+            created_at: Some(created_at),
+            updated_at: Some(updated_at),
         },
         batch: CaptureBatchRequest {
             session_key: row.session_key.clone(),

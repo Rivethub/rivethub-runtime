@@ -87,8 +87,8 @@ fn sealed_with(
             conversation_id: "0195f0c2-0000-7000-8000-000000000001".to_owned(),
             session_key: "claude-code:one".to_owned(),
             agent: "rivet".to_owned(),
-            created_at: at,
-            updated_at: at,
+            created_at: Some(at),
+            updated_at: Some(at),
         },
         batch: CaptureBatchRequest {
             settings,
@@ -160,8 +160,8 @@ fn a_v1_bundle_parses_as_v2_with_inferred_origin() -> TestResult {
     assert_eq!(
         origins,
         [
-            ("claude-code:one", "unknown", opened, closed),
-            ("codex:two", "unknown", opened, closed),
+            ("claude-code:one", "unknown", Some(opened), Some(closed)),
+            ("codex:two", "unknown", Some(opened), Some(closed)),
         ]
     );
     let first = bundle.sessions.first().ok_or("first session")?;
@@ -170,13 +170,16 @@ fn a_v1_bundle_parses_as_v2_with_inferred_origin() -> TestResult {
 }
 
 #[test]
-fn a_v1_session_with_no_dates_is_refused() -> TestResult {
+fn a_v1_session_with_no_dates_parses_with_unknown_dates() -> TestResult {
     let undated = batch("undated", vec![message("evt-1", "hi", None)]);
-    let error = capture::bundle::parse(&first_bundle(&[undated])?).err();
-    assert!(
-        matches!(&error, Some(BundleError::Undated { session_key }) if session_key == "undated"),
-        "{error:?}"
+    let bundle = capture::bundle::parse(&first_bundle(std::slice::from_ref(&undated))?)?;
+    let session = bundle.sessions.first().ok_or("undated session")?;
+    assert_eq!(session.batch, undated);
+    assert_eq!(
+        (session.origin.created_at, session.origin.updated_at),
+        (None, None)
     );
+    assert_eq!(bundle.manifest.exported_at, DateTime::<Utc>::UNIX_EPOCH);
     Ok(())
 }
 
