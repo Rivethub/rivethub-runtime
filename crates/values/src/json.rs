@@ -186,6 +186,14 @@ mod tests {
     }
 
     #[test]
+    fn canonical_json_writes_non_ascii_as_utf8_and_escapes_only_quotes_backslashes_and_controls() {
+        assert_eq!(
+            String::from_utf8(canonical_json("é \u{1F600} \" \\ \u{1} \u{7f}").unwrap()).unwrap(),
+            "\"é \u{1F600} \\\" \\\\ \\u0001 \u{7f}\""
+        );
+    }
+
+    #[test]
     fn canonical_json_sorts_keys_at_every_depth_and_keeps_array_order() {
         let object: JsonObject =
             serde_json::from_str(r#"{ "b": [ {"z": 1, "y": 2}, 3 ], "a": null }"#).unwrap();

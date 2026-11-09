@@ -1579,35 +1579,48 @@ already has. Note 125 moves bundles to version 2 and adds Postgres as a source.
 
 (125) Session bundles, version 2 (Phil, 2026-11-08; session-sharing plan SS-1): `rh memory bundle --out <file>
 [--session <conversation id>]... [--sqlite <file>]` writes version 2 (`wire::capture::SessionBundle`: `version`,
-`manifest` and `sessions`). It reads Postgres when a URL is set, else `--sqlite` or `memory.sqlite.path`, as `export`
-does. Each `--session` names one conversation id; with none it writes every session. On Postgres it exports only the
-node owner's conversations: `owner_user_id` equals `ownerUserId` of the users registry (`RIVETHUB_USERS_FILE`, else
-`gateway.users_file`, else `owner`), whatever the rows' visibility. An id that is not one of the owner's conversations
-is refused as unknown, with the id named, and no file is written. A conversation with no messages
-is never exported, so naming one is refused the same way. SQLite serves one person, so its rows are not filtered
-by owner. The command writes `<out>.tmp` and renames it onto `--out`, so a crash never leaves a partial bundle at
-`--out`, and a rerun overwrites the leftover.
+`manifest` and `sessions`). It reads the SQLite file `--sqlite` names when given, else Postgres at `RIVETHUB_PG_URL`,
+else `memory.postgres` in the config, else the SQLite file at `memory.sqlite.path`, as `export` does. Each `--session`
+names one conversation id; with none it writes every session it may export. It exports only the node owner's
+conversations: the owner is `ownerUserId` of the users registry (`RIVETHUB_USERS_FILE`, else `gateway.users_file`,
+else `owner`). On Postgres a conversation is the owner's when its `owner_user_id` is that user, whatever its
+visibility. On SQLite it is the owner's when its `owner_user_id` is that user or is empty: a row with no owner was
+captured before owners existed, and on a personal node those rows are the owner's. An id that is not one of the owner's
+conversations is refused as unknown, with the id named, and no file is written. A conversation with no messages is
+never exported, so naming one is refused the same way. An `--out` that is a directory is refused before anything is
+read. The command writes a uniquely named temporary file (`.rh-bundle-*.tmp`, mode 0600) beside `--out` and renames it
+onto `--out`; a failed write removes it, and a killed export leaves no partial file at `--out`.
 
 `manifest` holds `exported_at` (RFC 3339), `exported_by` (`user`, the node owner, and `node`, the node name from
-`mesh.node_name`, `RIVETHUB_NODE_NAME` or the hostname), `sanitization`, `session_count` and `sessions_sha256`.
+`mesh.node_name`, `RIVETHUB_NODE_NAME` or the hostname), `sanitization`, `session_count` and `bundle_sha256`.
 `sanitization` is `{"state": "raw"}`, or `{"state": "sanitized", "at", "policy_sha256", "passes", "unresolved_flags"}`
 once a sanitizer stamps the file; `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
-holds `author` (the conversation's owner), `node` (the conversation's node, else the exporting node), `conversation_id`,
-`session_key`, `agent`, and the conversation's own `created_at` and `updated_at` (RFC 3339). `batch` is the
-`CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are ordered by conversation
-`created_at`, then id, and messages by `created_at`, then id (row order on SQLite), so the same selection always gives
-the same digest.
+holds `author` (the conversation's stored owner; on SQLite a row with no owner is credited to the node owner),
+`node` (the node that captured the conversation, else the exporting node), `conversation_id`, `session_key`, `agent`,
+and the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
+files). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
+ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then capture order: the row order
+on SQLite, and on Postgres the `seq` column migration 0061 adds to `rh_messages`, then id. `seq` is filled from a
+sequence for every message captured after 0061; messages stored before it keep a null `seq`, so ties among them still
+fall back to id order. `memory_postgres::SCHEMA_VERSION` is 61.
 
-`sessions_sha256` is the lowercase hex SHA-256 of `sessions` serialized as compact JSON (no whitespace) after every
-object's keys are sorted by byte order, at every depth; array order is kept. The file's own key order and whitespace do
-not change it, so a reader recomputes it from the parsed sessions. A reader refuses a version 2 file whose digest or
-`session_count` does not match its sessions.
+Canonical JSON, as the digest uses it, is compact (no whitespace between tokens), sorts every object's keys by the
+byte order of their UTF-8 text at every depth, keeps array order, and escapes strings as `serde_json` does: `"`, `\`
+and control characters are escaped and every other character, non-ASCII included, is written as UTF-8. `bundle_sha256`
+is the lowercase hex SHA-256 of the canonical JSON of the bundle without `bundle_sha256`, that is of
+`{"manifest": {"exported_at", "exported_by", "sanitization", "session_count"}, "sessions", "version"}`, so an edit to
+any manifest field, a session or the version changes it. `rh memory bundle` writes the file itself as canonical JSON
+on one line followed by a newline; `bundle_sha256` sorts first in the manifest, so deleting its member
+(`"bundle_sha256":"<hex>",`) from the file's bytes leaves exactly the hashed text. A reader does not rely on that: it
+recomputes the digest from the parsed bundle, so whitespace and key order in an edited file do not change it, and it
+refuses a version 2 file whose digest or `session_count` does not match.
 
-`ingest-bundle` reads versions 1 and 2 and refuses any other. A version 1 file becomes version 2: each origin takes
-`session_key` and `agent` from its batch, `created_at` and `updated_at` from the batch, else from its earliest and latest
-message, and `unknown` as `author`, `node` and `conversation_id`. Its `exported_by` is `unknown` on both fields, its
-`exported_at` is the latest session `updated_at` (the Unix epoch when it holds no session), and a session with no date at all is refused. Ingest still posts each
-`batch` alone, so the receiver records the user it authenticated as the owner and does not store the origin yet.
+`ingest-bundle` reads versions 1 and 2 and refuses any other. A version 1 file becomes a raw version 2 bundle: each
+origin takes `session_key` and `agent` from its batch, `created_at` and `updated_at` from the batch, else from its
+earliest and latest message, else null, and `unknown` as `author`, `node` and `conversation_id`. Its `exported_by` is
+`unknown` on both fields and its `exported_at` is the latest known session `updated_at`, else the Unix epoch. Ingest
+still posts each `batch` alone, so the receiver records the user it authenticated as the owner and does not store the
+origin yet.
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 

@@ -237,6 +237,26 @@ async fn bundle_refuses_a_directory_out_and_writes_nothing() {
 }
 
 #[tokio::test]
+async fn bundle_reads_an_explicit_sqlite_file_before_postgres() {
+    let node = node(&[(
+        "RIVETHUB_PG_URL",
+        "postgres://nobody:nothing@127.0.0.1:9/absent",
+    )]);
+    let sqlite = sqlite_with_sessions(node.directory.path());
+    let out = node.directory.path().join("s.json");
+    let out_text = out.display().to_string();
+
+    let report = run(
+        &["memory", "bundle", "--out", &out_text, "--sqlite", &sqlite],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(bundle_at(&out).manifest.session_count, 3);
+}
+
+#[tokio::test]
 async fn bundle_requires_a_value_for_every_session_flag() {
     let node = node(&[]);
     for parts in [
