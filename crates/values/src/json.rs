@@ -61,25 +61,6 @@ impl JsonObject {
     }
 }
 
-pub fn canonical_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(&sorted(serde_json::to_value(value)?))
-}
-
-fn sorted(value: Value) -> Value {
-    match value {
-        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
-        Value::Object(members) => {
-            let mut entries: Vec<_> = members
-                .into_iter()
-                .map(|(name, member)| (name, sorted(member)))
-                .collect();
-            entries.sort_by(|left, right| left.0.cmp(&right.0));
-            Value::Object(entries.into_iter().collect())
-        }
-        leaf @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => leaf,
-    }
-}
-
 fn visit_strings(key: &str, value: &mut Value, visit: &mut impl FnMut(&str, &mut String)) {
     match value {
         Value::String(text) => visit(key, text),
@@ -100,6 +81,7 @@ fn visit_strings(key: &str, value: &mut Value, visit: &mut impl FnMut(&str, &mut
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canonical_json;
 
     #[derive(Serialize, schemars::JsonSchema)]
     struct Sample {
@@ -121,6 +103,86 @@ mod tests {
             r#"{"name":"a","flag":true}"#
         );
         assert!(JsonObject::from_serialize(&[1, 2]).is_err());
+    }
+
+    fn sorted(value: Value) -> Value {
+        match value {
+            Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+            Value::Object(members) => {
+                let mut entries: Vec<_> = members
+                    .into_iter()
+                    .map(|(name, member)| (name, sorted(member)))
+                    .collect();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+                Value::Object(entries.into_iter().collect())
+            }
+            leaf @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => leaf,
+        }
+    }
+
+    #[derive(Serialize)]
+    enum Shape {
+        Unit,
+        Newtype(JsonObject),
+        Tuple(u8, String),
+        Struct { zeta: Option<u8>, alpha: f64 },
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "state", rename_all = "snake_case")]
+    enum Tagged {
+        Raw,
+        Stamped { policy: String, count: u32 },
+    }
+
+    #[derive(Serialize)]
+    struct Covered {
+        version: u32,
+        name: String,
+        object: JsonObject,
+        shapes: Vec<Shape>,
+        tagged: Vec<Tagged>,
+        missing: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        skipped: Option<String>,
+        bytes: Vec<u8>,
+    }
+
+    #[test]
+    fn canonical_json_matches_sorting_a_parsed_value() {
+        let object: JsonObject = serde_json::from_str(
+            r#"{"z":[{"b":1,"a":[3,{"d":null,"c":true}]}],"é":"ü \" \\ \n \u0001","a":-1.5e300,"m":18446744073709551615,"":0}"#,
+        )
+        .unwrap();
+        let sample = Covered {
+            version: 2,
+            name: "línea \u{1F600} \"quoted\"".to_owned(),
+            object: object.clone(),
+            shapes: vec![
+                Shape::Unit,
+                Shape::Newtype(object),
+                Shape::Tuple(7, "x".to_owned()),
+                Shape::Struct {
+                    zeta: None,
+                    alpha: 0.1,
+                },
+            ],
+            tagged: vec![
+                Tagged::Raw,
+                Tagged::Stamped {
+                    policy: "p".to_owned(),
+                    count: 3,
+                },
+            ],
+            missing: None,
+            skipped: None,
+            bytes: vec![0, 255],
+        };
+        let oracle = serde_json::to_vec(&sorted(serde_json::to_value(&sample).unwrap())).unwrap();
+        assert_eq!(
+            String::from_utf8(canonical_json(&sample).unwrap()).unwrap(),
+            String::from_utf8(oracle).unwrap()
+        );
     }
 
     #[test]
