@@ -1600,7 +1600,9 @@ holds `author` (the conversation's stored owner; on SQLite a row with no owner i
 and the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
 files). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
 ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then row order on SQLite and id
-on Postgres.
+on Postgres. A Postgres capture stamps a message that carries no `created_at` with the transaction time plus its index
+in the batch in microseconds, so messages captured together without a time keep their order. Rows stored before this
+rule that share a `created_at` still fall back to id order, as before.
 
 Canonical JSON, as the digest uses it, is compact (no whitespace between tokens), sorts every object's keys by the
 byte order of their UTF-8 text at every depth, keeps array order, and escapes strings as `serde_json` does: `"`, `\`

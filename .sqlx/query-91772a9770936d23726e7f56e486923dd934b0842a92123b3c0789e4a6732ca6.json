@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into rh_messages\n               (conversation_id, agent, channel, role, content, tool_name, tool_args,\n                tool_result, metadata, owner_user_id, created_at)\n             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, now()))\n             returning id",
+  "query": "insert into rh_messages\n               (conversation_id, agent, channel, role, content, tool_name, tool_args,\n                tool_result, metadata, owner_user_id, created_at)\n             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,\n                     coalesce($11, now() + $12::bigint * interval '1 microsecond'))\n             returning id",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,13 @@
         "Text",
         "Jsonb",
         "Text",
-        "Timestamptz"
+        "Timestamptz",
+        "Int8"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "a218cd37b3b78b752b81503f9487726982f4de48423aefcdc65db96925e70cc5"
+  "hash": "91772a9770936d23726e7f56e486923dd934b0842a92123b3c0789e4a6732ca6"
 }

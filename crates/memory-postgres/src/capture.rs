@@ -94,6 +94,7 @@ pub struct MessageRow<'a> {
     pub metadata: &'a JsonObject,
     pub owner_user_id: &'a str,
     pub created_at: Option<DateTime<Utc>>,
+    pub batch_index: i64,
 }
 
 impl<'a> CaptureWriter<'a> {
@@ -196,7 +197,8 @@ impl<'a> CaptureWriter<'a> {
             "insert into rh_messages
                (conversation_id, agent, channel, role, content, tool_name, tool_args,
                 tool_result, metadata, owner_user_id, created_at)
-             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, coalesce($11, now()))
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                     coalesce($11, now() + $12::bigint * interval '1 microsecond'))
              returning id",
             row.conversation_id,
             row.agent,
@@ -209,6 +211,7 @@ impl<'a> CaptureWriter<'a> {
             metadata as _,
             row.owner_user_id,
             row.created_at,
+            row.batch_index,
         )
         .fetch_one(&mut *self.tx)
         .await

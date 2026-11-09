@@ -188,3 +188,33 @@ async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult
     assert!(!serde_json::to_string(&everything)?.contains("not phil's"));
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let tied = at("2026-10-14T09:00:00Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step {step}")).collect();
+    let messages = steps
+        .iter()
+        .map(|step| CaptureMessage {
+            created_at: None,
+            ..said(&format!("evt-{step}"), step, tied)
+        })
+        .collect();
+    let id = captured(&store, "phil", &batch("claude-code:undated", messages)).await?;
+
+    let sessions = store.bundled_sessions(&author("phil"), Some(&[id])).await?;
+
+    let session = sessions.first().ok_or("undated session")?;
+    let exported: Vec<&str> = session
+        .batch
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(exported, steps);
+    Ok(())
+}
