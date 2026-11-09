@@ -114,10 +114,34 @@ pub(super) async fn ingest(
             path: path.display().to_string(),
         });
     }
-    let state = match (raw, force) {
-        (false, _) => "",
-        (true, true) => " (raw bundle forced)",
-        (true, false) => " (raw bundle; ingest needs --force)",
+    let secrets = if raw {
+        Vec::new()
+    } else {
+        capture::sanitize::secrets(&bundle)
+    };
+    if let Some(first) = secrets.first()
+        && !force
+        && !dry_run
+    {
+        return Err(Error::BundleSecrets {
+            path: path.display().to_string(),
+            count: secrets.len(),
+            first: first.to_string(),
+        });
+    }
+    let unscrubbed;
+    let state = match (raw, secrets.len(), force) {
+        (false, 0, _) => "",
+        (false, count, true) => {
+            unscrubbed = format!(" ({count} secret pattern matches forced)");
+            &unscrubbed
+        }
+        (false, count, false) => {
+            unscrubbed = format!(" ({count} secret pattern matches; ingest needs --force)");
+            &unscrubbed
+        }
+        (true, _, true) => " (raw bundle forced)",
+        (true, _, false) => " (raw bundle; ingest needs --force)",
     };
     let sessions = sessions_from(&bundle);
     if dry_run {
@@ -211,7 +235,7 @@ pub(super) async fn share(
         .map(BundledSession::forwarding_stored_origin)
         .collect();
     let count = sessions.len();
-    let mut text = capture::bundle::seal(author, Utc::now(), sessions)?.text;
+    let mut text = capture::bundle::seal(author, Utc::now(), Sanitization::Raw, sessions)?.text;
     text.push(b'\n');
     write_whole(out.clone(), text).await?;
     let noun = if count == 1 { "session" } else { "sessions" };
@@ -245,7 +269,7 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
+pub(super) async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
     tokio::task::spawn_blocking(move || {
         let parent = match out.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent,

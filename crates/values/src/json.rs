@@ -59,6 +59,73 @@ impl JsonObject {
             visit_strings(key, value, visit);
         }
     }
+
+    pub fn visit_text_mut(&mut self, visit: &mut impl FnMut(TextAt<'_>, &mut String)) {
+        visit_members(&mut self.0, "", visit);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextSlot<'a> {
+    Key,
+    Value { key: &'a str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextAt<'a> {
+    pub path: &'a str,
+    pub slot: TextSlot<'a>,
+}
+
+fn visit_members(
+    members: &mut Map<String, Value>,
+    parent: &str,
+    visit: &mut impl FnMut(TextAt<'_>, &mut String),
+) {
+    for (mut key, mut value) in std::mem::take(members) {
+        visit(
+            TextAt {
+                path: parent,
+                slot: TextSlot::Key,
+            },
+            &mut key,
+        );
+        let path = member_path(parent, &key);
+        visit_value(&mut value, &path, &key, visit);
+        members.insert(key, value);
+    }
+}
+
+fn visit_value(
+    value: &mut Value,
+    path: &str,
+    key: &str,
+    visit: &mut impl FnMut(TextAt<'_>, &mut String),
+) {
+    match value {
+        Value::String(text) => visit(
+            TextAt {
+                path,
+                slot: TextSlot::Value { key },
+            },
+            text,
+        ),
+        Value::Array(items) => {
+            for (index, item) in items.iter_mut().enumerate() {
+                visit_value(item, &format!("{path}[{index}]"), key, visit);
+            }
+        }
+        Value::Object(members) => visit_members(members, path, visit),
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn member_path(parent: &str, key: &str) -> String {
+    if parent.is_empty() {
+        key.to_owned()
+    } else {
+        format!("{parent}.{key}")
+    }
 }
 
 fn visit_strings(key: &str, value: &mut Value, visit: &mut impl FnMut(&str, &mut String)) {

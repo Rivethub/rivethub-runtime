@@ -102,7 +102,7 @@ fn sealed_with(
         user: "phil".to_owned(),
         node: "desk".to_owned(),
     };
-    Ok(capture::bundle::seal(author, at, vec![session])?.bundle)
+    Ok(capture::bundle::seal(author, at, Sanitization::Raw, vec![session])?.bundle)
 }
 
 #[test]
@@ -123,6 +123,7 @@ fn the_sealed_text_is_the_canonical_json_of_the_bundle_it_parses_to() -> TestRes
     let sealed = capture::bundle::seal(
         bundle.manifest.exported_by.clone(),
         bundle.manifest.exported_at,
+        Sanitization::Raw,
         bundle.sessions.clone(),
     )?;
     let parsed = capture::bundle::parse(std::str::from_utf8(&sealed.text)?)?;

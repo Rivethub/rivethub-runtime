@@ -484,6 +484,7 @@ dependencies = [
  "hex",
  "kernel",
  "parking_lot",
+ "regex",
  "regress",
  "reqwest",
  "rusqlite",
