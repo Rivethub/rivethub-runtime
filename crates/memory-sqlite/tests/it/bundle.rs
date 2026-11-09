@@ -156,3 +156,48 @@ async fn export_by_id_keeps_settings() -> TestResult {
     assert_eq!(none, Vec::new());
     Ok(())
 }
+
+#[tokio::test]
+async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_row() -> TestResult {
+    let source = fresh_store()?;
+    execute(
+        &source.store,
+        "INSERT INTO ros_conversations (id, session_key, agent, settings, created_at, updated_at) VALUES
+           ('b-first', 'claude-code:first', 'rivet', '{}', '2026-10-14T09:00:00.000Z', '2026-10-14T10:00:00.000Z'),
+           ('a-second', 'claude-code:second', 'rivet', '{}', '2026-10-15T09:00:00.000Z', '2026-10-15T10:00:00.000Z'),
+           ('c-second', 'claude-code:third', 'rivet', '{}', '2026-10-15T09:00:00.000Z', '2026-10-15T10:00:00.000Z');
+         INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at) VALUES
+           ('m3', 'b-first', 'rivet', 'claude-code', 'user', 'later', '{}', '2026-10-14T09:05:00.000Z'),
+           ('m2', 'b-first', 'rivet', 'claude-code', 'user', 'tied one', '{}', '2026-10-14T09:00:00.000Z'),
+           ('m1', 'b-first', 'rivet', 'claude-code', 'user', 'tied two', '{}', '2026-10-14T09:00:00.000Z'),
+           ('m4', 'c-second', 'rivet', 'claude-code', 'user', 'third', '{}', '2026-10-15T09:00:00.000Z'),
+           ('m5', 'a-second', 'rivet', 'claude-code', 'user', 'second', '{}', '2026-10-15T09:00:00.000Z');",
+    )
+    .await?;
+
+    let exported = source.store.bundled_sessions(phil(), None).await?;
+
+    let order: Vec<(&str, Vec<&str>)> = exported
+        .iter()
+        .map(|session| {
+            (
+                session.origin.conversation_id.as_str(),
+                session
+                    .batch
+                    .messages
+                    .iter()
+                    .map(|message| message.content.as_str())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            ("b-first", vec!["tied one", "tied two", "later"]),
+            ("a-second", vec!["second"]),
+            ("c-second", vec!["third"]),
+        ]
+    );
+    Ok(())
+}

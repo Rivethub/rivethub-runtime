@@ -15,12 +15,12 @@ use crate::time;
 const SESSIONS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title, c.settings, \
      c.created_at, c.updated_at, coalesce(c.owner_user_id, ?2), coalesce(n.node, ?3), \
      m.id, m.role, m.content, m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at \
-     FROM ros_conversations c \
-     JOIN ros_messages m ON m.conversation_id = c.id \
+     FROM ros_messages m \
+     JOIN ros_conversations c ON c.id = m.conversation_id \
      LEFT JOIN rh_conversation_nodes n ON n.conversation_id = c.id \
      WHERE (c.owner_user_id IS NULL OR c.owner_user_id = ?2) \
        AND (?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1))) \
-     ORDER BY c.created_at, c.id, m.created_at, m.rowid";
+     ORDER BY m.conversation_id, m.created_at, m.rowid";
 
 struct StoredSession {
     conversation_id: String,
@@ -84,6 +84,11 @@ fn read_bundle(
     if let Some(session) = current {
         sessions.push(session);
     }
+    // Rows arrive in the message index's order: sorting conversations in SQL would sort every message row instead.
+    sessions.sort_by(|left, right| {
+        (left.origin.created_at, &left.origin.conversation_id)
+            .cmp(&(right.origin.created_at, &right.origin.conversation_id))
+    });
     Ok(sessions)
 }
 
