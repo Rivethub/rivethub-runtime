@@ -79,7 +79,7 @@ pub struct BundleManifest {
     pub exported_by: BundleAuthor,
     pub sanitization: Sanitization,
     pub session_count: usize,
-    pub sessions_sha256: String,
+    pub bundle_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

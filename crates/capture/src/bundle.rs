@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
+use serde::Serialize;
 use sha2::Digest as _;
 use sha2::Sha256;
 use thiserror::Error;
@@ -23,7 +24,7 @@ pub enum BundleError {
     #[error("session bundle version {found} is not supported")]
     Version { found: u32 },
     #[error(
-        "session bundle digest does not match its sessions: the manifest says {declared}, the sessions hash to {computed}"
+        "session bundle digest does not match its contents: the manifest says {declared}, the bundle hashes to {computed}"
     )]
     Digest { declared: String, computed: String },
     #[error("session bundle manifest counts {declared} sessions but holds {found}")]
@@ -57,22 +58,56 @@ pub fn seal(
     exported_at: DateTime<Utc>,
     sessions: Vec<BundledSession>,
 ) -> Result<SessionBundle, BundleError> {
-    Ok(SessionBundle {
+    let mut bundle = SessionBundle {
         version: SESSION_BUNDLE_VERSION,
         manifest: BundleManifest {
             exported_at,
             exported_by,
             sanitization: Sanitization::Raw,
             session_count: sessions.len(),
-            sessions_sha256: sessions_sha256(&sessions)?,
+            bundle_sha256: String::new(),
         },
         sessions,
-    })
+    };
+    bundle.manifest.bundle_sha256 = bundle_sha256(&bundle)?;
+    Ok(bundle)
 }
 
-pub fn sessions_sha256(sessions: &[BundledSession]) -> Result<String, BundleError> {
+#[derive(Serialize)]
+struct Covered<'a> {
+    version: u32,
+    manifest: CoveredManifest<'a>,
+    sessions: &'a [BundledSession],
+}
+
+#[derive(Serialize)]
+struct CoveredManifest<'a> {
+    exported_at: DateTime<Utc>,
+    exported_by: &'a BundleAuthor,
+    sanitization: &'a Sanitization,
+    session_count: usize,
+}
+
+pub fn bundle_sha256(bundle: &SessionBundle) -> Result<String, BundleError> {
+    let BundleManifest {
+        exported_at,
+        exported_by,
+        sanitization,
+        session_count,
+        bundle_sha256: _,
+    } = &bundle.manifest;
+    let covered = Covered {
+        version: bundle.version,
+        manifest: CoveredManifest {
+            exported_at: *exported_at,
+            exported_by,
+            sanitization,
+            session_count: *session_count,
+        },
+        sessions: &bundle.sessions,
+    };
     Ok(hex::encode(Sha256::digest(wire::json::canonical_json(
-        sessions,
+        &covered,
     )?)))
 }
 
@@ -84,10 +119,10 @@ fn check(bundle: &SessionBundle) -> Result<(), BundleError> {
             found,
         });
     }
-    let computed = sessions_sha256(&bundle.sessions)?;
-    if computed != bundle.manifest.sessions_sha256 {
+    let computed = bundle_sha256(bundle)?;
+    if computed != bundle.manifest.bundle_sha256 {
         return Err(BundleError::Digest {
-            declared: bundle.manifest.sessions_sha256.clone(),
+            declared: bundle.manifest.bundle_sha256.clone(),
             computed,
         });
     }

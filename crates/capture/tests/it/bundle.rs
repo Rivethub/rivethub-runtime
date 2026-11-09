@@ -142,8 +142,8 @@ fn a_v1_bundle_parses_as_v2_with_inferred_origin() -> TestResult {
     assert_eq!(bundle.manifest.exported_by.user, "unknown");
     assert_eq!(bundle.manifest.exported_at, closed);
     assert_eq!(
-        bundle.manifest.sessions_sha256,
-        capture::bundle::sessions_sha256(&bundle.sessions)?
+        bundle.manifest.bundle_sha256,
+        capture::bundle::bundle_sha256(&bundle)?
     );
     let origins: Vec<_> = bundle
         .sessions
@@ -197,17 +197,46 @@ fn a_bundle_with_a_wrong_digest_is_rejected() -> TestResult {
 }
 
 #[test]
+fn a_bundle_with_an_edited_manifest_is_rejected() -> TestResult {
+    let text = serde_json::to_string(&sealed()?)?;
+    let edits = [
+        (
+            r#""user":"phil","node":"desk"}"#,
+            r#""user":"mallory","node":"desk"}"#,
+        ),
+        (
+            r#""sanitization":{"state":"raw"}"#,
+            r#""sanitization":{"state":"sanitized","at":"2026-11-08T00:00:00Z","policy_sha256":"00","passes":["all"],"unresolved_flags":0}"#,
+        ),
+        (
+            r#""exported_at":"2026-10-14T09:00:00Z""#,
+            r#""exported_at":"2026-10-15T09:00:00Z""#,
+        ),
+    ];
+    for (from, to) in edits {
+        let forged = text.replacen(from, to, 1);
+        assert_ne!(forged, text, "{from} must occur in the sealed text");
+        let error = capture::bundle::parse(&forged).err();
+        assert!(
+            matches!(error, Some(BundleError::Digest { .. })),
+            "{from}: {error:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn the_digest_ignores_key_order_and_whitespace() -> TestResult {
     let ordered = sealed_with(Some(serde_json::from_str(r#"{"a":1,"b":{"c":2,"d":3}}"#)?))?;
     let reversed = sealed_with(Some(serde_json::from_str(r#"{"b":{"d":3,"c":2},"a":1}"#)?))?;
     assert_eq!(
-        ordered.manifest.sessions_sha256,
-        reversed.manifest.sessions_sha256
+        ordered.manifest.bundle_sha256,
+        reversed.manifest.bundle_sha256
     );
     let compact = serde_json::to_string(&reversed)?;
     let pretty = serde_json::to_string_pretty(&ordered)?.replace(
-        &ordered.manifest.sessions_sha256,
-        &reversed.manifest.sessions_sha256,
+        &ordered.manifest.bundle_sha256,
+        &reversed.manifest.bundle_sha256,
     );
     assert_eq!(capture::bundle::parse(&compact)?, reversed);
     assert_eq!(capture::bundle::parse(&pretty)?, ordered);

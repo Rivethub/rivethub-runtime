@@ -222,6 +222,9 @@
     },
     "BundleManifest": {
       "properties": {
+        "bundle_sha256": {
+          "type": "string"
+        },
         "exported_at": {
           "format": "date-time",
           "type": "string"
@@ -236,9 +239,6 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
-        },
-        "sessions_sha256": {
-          "type": "string"
         }
       },
       "required": [
@@ -246,7 +246,7 @@
         "exported_by",
         "sanitization",
         "session_count",
-        "sessions_sha256"
+        "bundle_sha256"
       ],
       "type": "object"
     },
