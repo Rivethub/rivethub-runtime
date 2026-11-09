@@ -12,12 +12,6 @@ count = 1
 
 [[entry]]
 check = "FALLBACK"
-file = "crates/capture/src/redaction.rs"
-text = "unwrap_or"
-count = 1
-
-[[entry]]
-check = "FALLBACK"
 file = "crates/capture/src/spool.rs"
 text = "ok"
 count = 1

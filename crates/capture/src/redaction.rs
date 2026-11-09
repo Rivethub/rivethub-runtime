@@ -10,7 +10,7 @@ pub const ENV_VARIABLE: &str = "RIVETHUB_CAPTURE_REDACTION";
 const SCAN_LIMIT: usize = 16_000;
 const SCAN_MARGIN: usize = 8_192;
 const SECRET_KEY_SOURCE: &str = "^(?:pwd|pass|auth)$|passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|auth[_-]?header|cookie|session[_-]?key";
-const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
+pub(crate) const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Replacement {
@@ -22,6 +22,7 @@ enum Replacement {
 enum Case {
     Insensitive,
     Sensitive,
+    SensitiveLines,
 }
 
 impl Case {
@@ -29,18 +30,41 @@ impl Case {
         match self {
             Self::Insensitive => "i",
             Self::Sensitive => "",
+            Self::SensitiveLines => "m",
         }
     }
 }
 
 #[derive(Debug)]
-struct Builtin {
-    name: &'static str,
+pub(crate) struct Builtin {
+    pub(crate) name: &'static str,
+    pub(crate) source: &'static str,
     regex: Regex,
     replacement: Replacement,
 }
 
-const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 9] = [
+impl Builtin {
+    pub(crate) fn spans(&self, text: &str) -> Vec<std::ops::Range<usize>> {
+        self.regex
+            .find_iter(text)
+            .map(|found| match self.replacement {
+                Replacement::Whole => found.range(),
+                Replacement::FirstGroup => {
+                    let kept = found
+                        .group(1)
+                        .map_or_else(|| found.start(), |group| group.end);
+                    kept..found.end()
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn placeholder(&self) -> String {
+        format!("[REDACTED:{}]", self.name)
+    }
+}
+
+const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 11] = [
     (
         "bearer",
         r"Bearer [A-Za-z0-9\-._~+/=]{16,}",
@@ -99,6 +123,18 @@ const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 9] = [
         Replacement::FirstGroup,
         Case::Insensitive,
     ),
+    (
+        "env_secret",
+        r#"^([ \t]*(?:export[ \t]+)?[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIALS?)[A-Z0-9_]*[ \t]*=[ \t]*)(?:"[^"\n]*"|'[^'\n]*'|[^\s"']+)"#,
+        Replacement::FirstGroup,
+        Case::SensitiveLines,
+    ),
+    (
+        "url_password",
+        r"([a-z][a-z0-9+.\-]*://[^\s:/@\[\]]+:)[^\s@/\[\]]+(?=@)",
+        Replacement::FirstGroup,
+        Case::Insensitive,
+    ),
 ];
 
 #[expect(
@@ -119,6 +155,7 @@ static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
         .into_iter()
         .map(|(name, source, replacement, case)| Builtin {
             name,
+            source,
             regex: Regex::with_flags(source, case.flags())
                 .expect("builtin redaction patterns are constants that compile"),
             replacement,
@@ -235,14 +272,13 @@ fn apply_spans(text: &str, redaction: &Redaction) -> (String, u64) {
     let mut out = text.to_owned();
     let mut count = 0;
     for builtin in redaction.builtins {
-        let placeholder = format!("[REDACTED:{}]", builtin.name);
-        let (next, hits) = replace_matches(&out, &builtin.regex, builtin.replacement, &placeholder);
+        let (next, hits) = replace_spans(&out, &builtin.spans(&out), &builtin.placeholder());
         count += hits;
         out = next;
     }
     for (index, pattern) in redaction.patterns.iter().enumerate() {
-        let placeholder = format!("[REDACTED:pattern:{index}]");
-        let (next, hits) = replace_matches(&out, pattern, Replacement::Whole, &placeholder);
+        let spans: Vec<_> = pattern.find_iter(&out).map(|found| found.range()).collect();
+        let (next, hits) = replace_spans(&out, &spans, &format!("[REDACTED:pattern:{index}]"));
         count += hits;
         out = next;
     }
@@ -271,43 +307,30 @@ fn split_at_char(text: &str, chars: usize) -> (&str, &str) {
         .map_or((text, ""), |(end, _)| text.split_at(end))
 }
 
-fn secret_key(key: &str) -> bool {
+pub(crate) fn builtins() -> &'static [Builtin] {
+    &BUILTINS
+}
+
+pub(crate) const fn secret_key_source() -> &'static str {
+    SECRET_KEY_SOURCE
+}
+
+pub(crate) fn secret_key(key: &str) -> bool {
     SECRET_KEYS
         .find(key)
         .is_some_and(|found| !found.range().is_empty())
 }
 
-fn replace_matches(
-    text: &str,
-    regex: &Regex,
-    replacement: Replacement,
-    placeholder: &str,
-) -> (String, u64) {
+fn replace_spans(text: &str, spans: &[std::ops::Range<usize>], placeholder: &str) -> (String, u64) {
     let mut out = String::new();
     let mut copied = 0;
-    let mut count = 0;
-    for found in regex.find_iter(text) {
-        let range = found.range();
-        out.push_str(&text[copied..range.start]);
-        match replacement {
-            Replacement::Whole => out.push_str(placeholder),
-            Replacement::FirstGroup => {
-                out.push_str(first_group_or_empty(text, &found));
-                out.push_str(placeholder);
-            }
-        }
-        copied = range.end;
-        count += 1;
+    for span in spans {
+        out.push_str(&text[copied..span.start]);
+        out.push_str(placeholder);
+        copied = span.end;
     }
     out.push_str(&text[copied..]);
-    (out, count)
-}
-
-fn first_group_or_empty<'a>(text: &'a str, found: &regress::Match) -> &'a str {
-    found
-        .group(1)
-        .and_then(|group| text.get(group))
-        .unwrap_or("")
+    (out, spans.len() as u64)
 }
 
 fn unsafe_source(source: &str) -> bool {
@@ -389,6 +412,8 @@ mod tests {
             ),
             ("http_auth", concat!("Basic ", "dXNlcjpwYXNz")),
             ("assignment", "api_key = hunter2"),
+            ("env_secret", "DB_PASSWORD=hunter2"),
+            ("url_password", "postgres://app:hunter2@db.example.com/app"),
         ];
         for (name, canary) in canaries {
             let builtin = BUILTINS
@@ -407,11 +432,15 @@ mod tests {
     }
 
     #[test]
-    fn a_capture_group_that_does_not_participate_contributes_nothing() {
-        let regex = Regex::new("x(?:-(y))?").expect("the test pattern is a constant that compiles");
-        let bare = regex.find("x").expect("the bare form matches");
-        assert_eq!(first_group_or_empty("x", &bare), "");
-        let grouped = regex.find("x-y").expect("the grouped form matches");
-        assert_eq!(first_group_or_empty("x-y", &grouped), "y");
+    fn a_capture_group_that_does_not_participate_keeps_nothing() {
+        let source = "x(?:-(y))?";
+        let builtin = Builtin {
+            name: "test",
+            source,
+            regex: Regex::new(source).expect("the test pattern is a constant that compiles"),
+            replacement: Replacement::FirstGroup,
+        };
+        assert_eq!(builtin.spans("a x b"), vec![2..3]);
+        assert_eq!(builtin.spans("a x-y b"), vec![5..5]);
     }
 }
