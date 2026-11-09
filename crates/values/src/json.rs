@@ -61,6 +61,25 @@ impl JsonObject {
     }
 }
 
+pub fn canonical_json<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&sorted(serde_json::to_value(value)?))
+}
+
+fn sorted(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+        Value::Object(members) => {
+            let mut entries: Vec<_> = members
+                .into_iter()
+                .map(|(name, member)| (name, sorted(member)))
+                .collect();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            Value::Object(entries.into_iter().collect())
+        }
+        leaf @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => leaf,
+    }
+}
+
 fn visit_strings(key: &str, value: &mut Value, visit: &mut impl FnMut(&str, &mut String)) {
     match value {
         Value::String(text) => visit(key, text),
@@ -102,6 +121,16 @@ mod tests {
             r#"{"name":"a","flag":true}"#
         );
         assert!(JsonObject::from_serialize(&[1, 2]).is_err());
+    }
+
+    #[test]
+    fn canonical_json_sorts_keys_at_every_depth_and_keeps_array_order() {
+        let object: JsonObject =
+            serde_json::from_str(r#"{ "b": [ {"z": 1, "y": 2}, 3 ], "a": null }"#).unwrap();
+        assert_eq!(
+            String::from_utf8(canonical_json(&object).unwrap()).unwrap(),
+            r#"{"a":null,"b":[{"y":2,"z":1},3]}"#
+        );
     }
 
     #[test]

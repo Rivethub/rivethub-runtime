@@ -1,4 +1,4 @@
-pub use values::{Extra, JsonObject};
+pub use values::{Extra, JsonObject, canonical_json};
 
 #[must_use]
 pub fn replace_lone_surrogates(bytes: &[u8]) -> Vec<u8> {
