@@ -1599,10 +1599,8 @@ holds `author` (the conversation's stored owner; on SQLite a row with no owner i
 `node` (the node that captured the conversation, else the exporting node), `conversation_id`, `session_key`, `agent`,
 and the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
 files). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
-ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then capture order: the row order
-on SQLite, and on Postgres the `seq` column migration 0061 adds to `rh_messages`, then id. `seq` is filled from a
-sequence for every message captured after 0061; messages stored before it keep a null `seq`, so ties among them still
-fall back to id order. `memory_postgres::SCHEMA_VERSION` is 61.
+ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then row order on SQLite and id
+on Postgres.
 
 Canonical JSON, as the digest uses it, is compact (no whitespace between tokens), sorts every object's keys by the
 byte order of their UTF-8 text at every depth, keeps array order, and escapes strings as `serde_json` does: `"`, `\`
