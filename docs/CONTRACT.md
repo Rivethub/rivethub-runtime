@@ -1584,7 +1584,7 @@ else `memory.postgres` in the config, else the SQLite file at `memory.sqlite.pat
 names one conversation id; with none it writes every session it may export. It exports only the node owner's
 conversations: the owner is `ownerUserId` of the users registry (`RIVETHUB_USERS_FILE`, else `gateway.users_file`,
 else `owner`). On Postgres a conversation is the owner's when its `owner_user_id` is that user, whatever its
-visibility. On SQLite it is the owner's when its `owner_user_id` is that user or is empty: a row with no owner was
+visibility. On SQLite it is the owner's when its `owner_user_id` is that user or is NULL: a row with no owner was
 captured before owners existed, and on a personal node those rows are the owner's. An id that is not one of the owner's
 conversations is refused as unknown, with the id named, and no file is written. A conversation with no messages is
 never exported, so naming one is refused the same way. An `--out` that is a directory is refused before anything is
@@ -1595,18 +1595,26 @@ onto `--out`; a failed write removes it, and a killed export leaves no partial f
 `mesh.node_name`, `RIVETHUB_NODE_NAME` or the hostname), `sanitization`, `session_count` and `bundle_sha256`.
 `sanitization` is `{"state": "raw"}`, or `{"state": "sanitized", "at", "policy_sha256", "passes", "unresolved_flags"}`
 once a sanitizer stamps the file; `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
-holds `author` (the conversation's stored owner; on SQLite a row with no owner is credited to the node owner),
+holds `author` (the conversation's stored owner; on SQLite a row whose owner is NULL is credited to the node owner),
 `node` (the node that captured the conversation, else the exporting node), `conversation_id`, `session_key`, `agent`,
 and the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
 files). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
 ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then row order on SQLite and id
-on Postgres. A Postgres capture stamps a message that carries no `created_at` with the transaction time plus its index
-in the batch in microseconds, so messages captured together without a time keep their order. Rows stored before this
-rule that share a `created_at` still fall back to id order, as before.
+on Postgres. A Postgres capture stamps a message that carries no `created_at` with a base time plus its index in the
+batch in microseconds. The capture takes the base after it holds the session's lock: the transaction time, or one
+microsecond after the session's latest stored message when that is later, as it is for a batch that waited on the lock
+behind another. So messages captured without a time keep their order in the batch and sort after every message the
+session already stored. Rows stored before this rule that share a `created_at` still fall back to id order, as before.
 
 Canonical JSON, as the digest uses it, is compact (no whitespace between tokens), sorts every object's keys by the
 byte order of their UTF-8 text at every depth, keeps array order, and escapes strings as `serde_json` does: `"`, `\`
-and control characters are escaped and every other character, non-ASCII included, is written as UTF-8. `bundle_sha256`
+and control characters are escaped and every other character, non-ASCII included, is written as UTF-8. Numbers are
+written as `serde_json` writes them. A number with no fraction or exponent from -2^63 to 2^64-1 is written as its
+digits. Any other number is read as an IEEE 754 double and written as the shortest decimal that reads back as the same
+double: in plain notation with a digit after the point when its decimal exponent is from -5 to 15 (`100.0` for `1e2`,
+`0.00001`), else as digits, `e`, the exponent's sign and the exponent with no leading zero (`1e-7`, `1e+16`,
+`1.2345678901234568e+22`). This is not every language's default: Python's `json.dumps` writes `1e-07` and `1e-05`, so
+another implementation must format numbers by this rule to match the digest. `bundle_sha256`
 is the lowercase hex SHA-256 of the canonical JSON of the bundle without `bundle_sha256`, that is of
 `{"manifest": {"exported_at", "exported_by", "sanitization", "session_count"}, "sessions", "version"}`, so an edit to
 any manifest field, a session or the version changes it. `rh memory bundle` writes the file itself as canonical JSON
