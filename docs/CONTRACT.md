@@ -1628,10 +1628,10 @@ refuses a version 2 file whose digest or `session_count` does not match.
 `ingest-bundle` reads versions 1 and 2 and refuses any other. A version 1 file becomes a raw version 2 bundle: each
 origin takes `session_key` and `agent` from its batch, `created_at` and `updated_at` from the batch, else from its
 earliest and latest message, else null, and `unknown` as `author`, `node` and `conversation_id`. Its `exported_by` is
-`unknown` on both fields and its `exported_at` is the latest known session `updated_at`, else the Unix epoch. Note 126
+`unknown` on both fields and its `exported_at` is the latest known session `updated_at`, else the Unix epoch. Note 134
 says what ingest keeps.
 
-(126) Importing a bundle keeps its origin and dates (Phil, 2026-11-08; session-sharing plan SS-2): `rh memory
+(134) Importing a bundle keeps its origin and dates (Phil, 2026-11-08; session-sharing plan SS-2): `rh memory
 ingest-bundle <file> [--force] [--dry-run]` refuses a bundle whose `sanitization` is raw unless `--force` is given,
 version 1 files included, and writes nothing. `--dry-run` reads and checks the file, prints one line per session
 (`<session_key> (<agent>): <n> messages from <author>, <created> to <updated>`, or `undated`) and a total, and writes

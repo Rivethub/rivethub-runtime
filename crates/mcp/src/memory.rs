@@ -255,7 +255,7 @@ async fn hit_context(
                     dylint_lib = "rr_lints",
                     expect(
                         fallback,
-                        reason = "CONTRACT B6 (note 126): a hit whose origin does not parse has no tag and the search still succeeds"
+                        reason = "CONTRACT B6 (note 134): a hit whose origin does not parse has no tag and the search still succeeds"
                     )
                 )]
                 let origin = origin.deserialize::<wire::capture::SessionOrigin>().ok();
