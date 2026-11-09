@@ -119,7 +119,7 @@ pub fn is_imported_session(session_key: &str) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "an import session key is import: followed by a JSON array of strings naming its origin, not {session_key:?}"
+    "an import session key is import: followed by a JSON array naming its origin, [node, conversation_id] or [\"unknown\", session_key, agent, event_id], not {session_key:?}"
 )]
 pub struct ImportKeyError {
     pub session_key: String,
@@ -133,7 +133,12 @@ pub fn owned_import_key(owner: &str, session_key: &str) -> Result<Option<String>
         session_key: session_key.to_owned(),
     };
     let identity: Vec<String> = serde_json::from_str(identity).map_err(|_| malformed())?;
-    if identity.is_empty() {
+    let names_an_origin = match identity.as_slice() {
+        [node, conversation_id] => node != UNKNOWN_ORIGIN && conversation_id != UNKNOWN_ORIGIN,
+        [unknown, _session_key, _agent, _event_id] => unknown == UNKNOWN_ORIGIN,
+        _ => false,
+    };
+    if !names_an_origin {
         return Err(malformed());
     }
     let preimage: Vec<&str> = std::iter::once(owner)

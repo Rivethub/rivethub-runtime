@@ -1645,8 +1645,9 @@ its origin: `[origin.node, origin.conversation_id]`, or, when the node or conver
 key into the conversation's key, `import:` and the lowercase hex SHA-256 of the compact JSON array of the owner it
 records the batch as (the user the gateway authenticated) followed by the posted strings: `[owner, node,
 conversation_id]` or `[owner, "unknown", session_key, agent, event_id]`. A client names only the origin, never the
-owner, so it cannot post into another user's import; a batch whose key starts with `import:` but is not followed by a
-non-empty JSON array of strings is an invalid request (HTTP 400 from the gateway). The readable node, conversation id
+owner, so it cannot post into another user's import; a batch whose key starts with `import:` but is not followed by one of
+those two arrays (two strings, neither `unknown`, or four strings whose first is `unknown`) is an invalid request
+(HTTP 400 from the gateway). The readable node, conversation id
 and session key stay in `settings.origin`, which holds the session's `origin`. Ingesting the same bundle again as the
 same user reaches the same conversation and adds no messages, since event ids it already has are skipped. The
 receiver still records the user it authenticated as the owner: the origin is attribution only.

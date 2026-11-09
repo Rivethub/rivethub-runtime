@@ -109,7 +109,16 @@ fn a_version_one_key_is_a_stable_hash_of_what_the_session_carries() -> TestResul
 fn a_key_that_does_not_name_an_origin_is_refused() {
     let hashed = format!("import:{}", "0".repeat(64));
 
-    for refused in [hashed.as_str(), "import:[]", "import:desk:c1"] {
+    for refused in [
+        hashed.as_str(),
+        "import:[]",
+        "import:desk:c1",
+        r#"import:["a"]"#,
+        r#"import:["desk","c1","evt-1"]"#,
+        r#"import:["desk","claude-code:s","rivet","evt-1"]"#,
+        r#"import:["unknown","claude-code:s","rivet","evt-1","x"]"#,
+        r#"import:["unknown","c1"]"#,
+    ] {
         assert!(owned_import_key("bob", refused).is_err(), "{refused}");
     }
     assert_eq!(
