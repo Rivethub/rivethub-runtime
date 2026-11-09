@@ -106,7 +106,7 @@ SELECT g.key,
          ORDER BY julianday(c.updated_at) DESC LIMIT 1),
        (SELECT substr(m.content, 1, 600) FROM ros_messages m
          WHERE m.conversation_id IN (SELECT value FROM json_each(g.conversations)) AND m.role = 'user' AND trim(m.content) <> ''
-         ORDER BY julianday(m.created_at), m.id LIMIT 1),
+         ORDER BY julianday(m.created_at), m.rowid LIMIT 1),
        g.native
   FROM page g
  ORDER BY g.started DESC, g.key DESC";

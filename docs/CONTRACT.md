@@ -1674,8 +1674,10 @@ millisecond (stored, or written earlier in the same batch) at the same or a late
 after the latest of them; otherwise it keeps its time. So only ties move, a message never moves earlier, and a
 message that ties stored ones lands after them all. A millisecond that takes more than 1000 messages runs on into
 the next millisecond, and the messages that run on are placed the same way there, after any message stored or
-written earlier in that millisecond, so the order holds within a batch and across batches. SQLite keeps the order
-through its row order.
+written earlier in that millisecond, so the order holds within a batch and across batches. SQLite stores tied times
+as they are, and every SQLite read that orders messages by time breaks a tie by row order, which is capture order:
+the bundle, the transcript, the summary window, agent startup context, the session list's title and the pending tag
+excerpt.
 
 `memory_search` appends `from <author> · <origin created_at as a local date>` to the heading of a message hit whose
 conversation key starts with `import:` and whose `settings.origin` parses as an origin (`from <author>` when the

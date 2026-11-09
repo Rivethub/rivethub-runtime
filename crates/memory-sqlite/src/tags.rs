@@ -138,7 +138,7 @@ fn pending_tags(conn: &Connection, limit: Limit) -> Result<Vec<PendingTagWire>, 
     let sql = format!(
         "SELECT {columns}, t.removal_state, c.session_key, c.title, c.agent, c.id, \
             (SELECT substr(m.content, 1, 120) FROM ros_messages m \
-              WHERE m.conversation_id = c.id ORDER BY m.created_at, m.id LIMIT 1) \
+              WHERE m.conversation_id = c.id ORDER BY m.created_at, m.rowid LIMIT 1) \
          FROM ros_tags t \
          LEFT JOIN ros_conversations c \
            ON t.entity_type = 'conversation' AND c.id = t.entity_id \

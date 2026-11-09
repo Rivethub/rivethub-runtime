@@ -10,7 +10,11 @@ use common::object;
 use common::table;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::MemoryStore as _;
+use kernel::memory::SessionCatalog as _;
 use kernel::memory::SessionDeletion as _;
+use kernel::memory::SessionQuery;
+use kernel::memory::SessionView;
+use kernel::memory::SummaryStore as _;
 use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
 use wire::message::Role;
@@ -358,6 +362,64 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
         .map(|message| message.event_id.as_str())
         .collect();
     assert_eq!(order, steps);
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult {
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let tied = instant("2026-10-14T09:00:00.123Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
+    for step in &steps {
+        let mut said = message(step, Role::User, step);
+        said.created_at = Some(tied);
+        tied_batch.messages.push(said);
+    }
+    let captured = store
+        .store
+        .capture(
+            tied_batch,
+            &alex,
+            None,
+            instant("2026-11-08T12:00:00.000Z")?,
+        )
+        .await?;
+
+    let window = store
+        .store
+        .conversation(uuid::Uuid::parse_str(&captured.conversation_id)?)
+        .await?
+        .ok_or("summary window")?;
+    let summarized: Vec<&str> = window
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(summarized, steps);
+
+    let context = store
+        .store
+        .context("claude-code:tied", instant("2026-11-08T12:00:00.000Z")?)
+        .await?;
+    let recent = steps[3..].iter().map(|step| format!("[user] {step}"));
+    let relevant = steps[..3].iter().map(|step| format!("[rivet/user] {step}"));
+    assert!(
+        context.contains(&recent.collect::<Vec<_>>().join("\n")),
+        "{context}"
+    );
+    assert!(
+        context.contains(&relevant.collect::<Vec<_>>().join("\n")),
+        "{context}"
+    );
+
+    let page = store
+        .store
+        .list(&SessionQuery::new(SessionView::All))
+        .await?;
+    let row = page.items.first().ok_or("catalog row")?;
+    assert_eq!(row.title, "step-1");
     Ok(())
 }
 
