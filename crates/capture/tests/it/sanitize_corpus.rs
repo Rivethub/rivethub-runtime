@@ -2,7 +2,6 @@ use capture::sanitize;
 use capture::sanitize::Policy;
 use chrono::DateTime;
 use chrono::Utc;
-use serde_json::json;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -169,8 +168,8 @@ fn object(text: &str) -> Result<JsonObject, serde_json::Error> {
     serde_json::from_str(text)
 }
 
-fn object_of(value: &serde_json::Value) -> Result<JsonObject, serde_json::Error> {
-    serde_json::from_value(value.clone())
+fn quoted(text: &str) -> Result<String, serde_json::Error> {
+    serde_json::to_string(text)
 }
 
 fn fill(template: &str, planted: &[&str]) -> String {
@@ -182,14 +181,8 @@ fn fill(template: &str, planted: &[&str]) -> String {
         })
 }
 
-fn bundle_with(
-    position: Position,
-    text: &str,
-) -> Result<SessionBundle, Box<dyn std::error::Error>> {
-    let mut node = "node-1".to_owned();
-    let mut session_key = "claude-code:sess-1".to_owned();
-    let mut agent = "claude".to_owned();
-    let mut message = CaptureMessage {
+fn blank_message() -> CaptureMessage {
+    CaptureMessage {
         event_id: "evt-1".to_owned(),
         role: Role::Assistant,
         content: "hello".to_owned(),
@@ -198,8 +191,11 @@ fn bundle_with(
         tool_result: None,
         metadata: None,
         created_at: None,
-    };
-    let mut batch = CaptureBatchRequest {
+    }
+}
+
+fn blank_batch() -> CaptureBatchRequest {
+    CaptureBatchRequest {
         session_key: String::new(),
         agent: String::new(),
         channel: Some("claude-code".to_owned()),
@@ -210,25 +206,46 @@ fn bundle_with(
         created_at: None,
         updated_at: None,
         messages: Vec::new(),
-    };
+    }
+}
+
+fn bundle_with(
+    position: Position,
+    text: &str,
+) -> Result<SessionBundle, Box<dyn std::error::Error>> {
+    let mut node = "node-1".to_owned();
+    let mut session_key = "claude-code:sess-1".to_owned();
+    let mut agent = "claude".to_owned();
+    let mut message = blank_message();
+    let mut batch = blank_batch();
     match position {
         Position::Content => text.clone_into(&mut message.content),
         Position::ToolResult => message.tool_result = Some(text.to_owned()),
         Position::ToolArgsValue => {
-            message.tool_args = Some(object_of(&json!({
-                "cmd": {"argv": ["sh", "-c", text], "opts": {"note": text}},
-                "nest": [{"deep": {"text": text}}],
-            }))?);
+            let q = quoted(text)?;
+            message.tool_args = Some(object(&format!(
+                r#"{{"cmd": {{"argv": ["sh", "-c", {q}], "opts": {{"note": {q}}}}}, "nest": [{{"deep": {{"text": {q}}}}}]}}"#
+            ))?);
         }
-        Position::ToolArgsKey => message.tool_args = Some(object_of(&json!({ text: "x" }))?),
+        Position::ToolArgsKey => {
+            message.tool_args = Some(object(&format!(r#"{{{}: "x"}}"#, quoted(text)?))?);
+        }
         Position::ToolArgsJson => message.tool_args = Some(object(text)?),
         Position::MetadataValue => {
-            message.metadata = Some(object_of(&json!({"ctx": {"note": text}}))?);
+            message.metadata = Some(object(&format!(
+                r#"{{"ctx": {{"note": {}}}}}"#,
+                quoted(text)?
+            ))?);
         }
-        Position::MetadataKey => message.metadata = Some(object_of(&json!({ text: 1 }))?),
+        Position::MetadataKey => {
+            message.metadata = Some(object(&format!("{{{}: 1}}", quoted(text)?))?);
+        }
         Position::Title => batch.title = Some(text.to_owned()),
         Position::SettingsValue => {
-            batch.settings = Some(object_of(&json!({"profile": {"note": text}}))?);
+            batch.settings = Some(object(&format!(
+                r#"{{"profile": {{"note": {}}}}}"#,
+                quoted(text)?
+            ))?);
         }
         Position::SessionKey => text.clone_into(&mut session_key),
         Position::Channel => batch.channel = Some(text.to_owned()),
