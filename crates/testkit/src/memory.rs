@@ -1,3 +1,4 @@
+mod origins;
 mod suggestions;
 
 use std::collections::BTreeMap;
@@ -57,7 +58,7 @@ pub struct FakeMemoryStore {
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
     capture_activity: Mutex<Vec<kernel::harness_setup::CaptureActivity>>,
-    origins: Mutex<BTreeMap<String, wire::JsonObject>>,
+    origins: origins::Origins,
 }
 
 impl FakeMemoryStore {
@@ -275,24 +276,7 @@ impl MemoryStore for FakeMemoryStore {
         let mut entries = batch.entries();
         self.record(MemoryRequest::Append(owner.clone(), entries.clone()))
             .await;
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6 (note 134): lookup_origins returns only origins that are JSON objects"
-            )
-        )]
-        let origin = batch
-            .settings
-            .as_ref()
-            .and_then(|settings| settings.get("origin"))
-            .and_then(|origin| serde_json::from_value::<wire::JsonObject>(origin.clone()).ok());
-        if let Some(origin) = origin {
-            self.origins
-                .lock()
-                .await
-                .insert(batch.session_key.clone(), origin);
-        }
+        self.origins.remember(&batch).await;
         let now = Utc::now();
         let total = entries.len() as u64;
         let inserted = {
@@ -557,11 +541,7 @@ impl MemoryStore for FakeMemoryStore {
         &self,
         session_keys: Vec<String>,
     ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
-        let origins = self.origins.lock().await;
-        Ok(session_keys
-            .into_iter()
-            .filter_map(|key| origins.get(&key).map(|origin| (key, origin.clone())))
-            .collect())
+        Ok(self.origins.lookup(session_keys).await)
     }
 
     async fn upsert_tag_taxonomy(
