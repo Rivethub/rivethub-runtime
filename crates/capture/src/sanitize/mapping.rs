@@ -158,7 +158,7 @@ fn line_of(text: &str, offset: usize) -> usize {
 
 fn ascii_boundaries(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 16);
-    let mut chars = source.chars().peekable();
+    let mut chars = source.chars();
     let mut in_class = false;
     while let Some(c) = chars.next() {
         match c {
