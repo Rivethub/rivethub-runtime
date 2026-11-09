@@ -48,7 +48,7 @@ pub struct Mapping {
     literals: Option<AhoCorasick>,
     literal_rules: Vec<usize>,
     regexes: Option<Regex>,
-    regex_groups: Vec<(usize, usize)>,
+    anchored: Vec<(usize, Regex)>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -161,8 +161,7 @@ impl Mapping {
         let mut literals: Vec<&str> = Vec::new();
         let mut literal_rules = Vec::new();
         let mut alternatives: Vec<String> = Vec::new();
-        let mut regex_groups = Vec::new();
-        let mut next_group = 1;
+        let mut anchored = Vec::new();
         for (index, rule) in rules.iter().enumerate() {
             match &rule.matcher {
                 Matcher::Literal(literal) => {
@@ -170,9 +169,14 @@ impl Mapping {
                     literal_rules.push(index);
                 }
                 Matcher::Regex(regex) => {
-                    alternatives.push(format!("({})", regex.as_str()));
-                    regex_groups.push((index, next_group));
-                    next_group += regex.captures_len();
+                    alternatives.push(format!("(?:{})", regex.as_str()));
+                    let at_start = RegexBuilder::new(&format!("^(?:{})", regex.as_str()))
+                        .size_limit(COMBINED_SIZE_LIMIT)
+                        .build()
+                        .map_err(|error| MappingError::Combined {
+                            message: error.to_string(),
+                        })?;
+                    anchored.push((index, at_start));
                 }
             }
         }
@@ -205,7 +209,7 @@ impl Mapping {
             literals: automaton,
             literal_rules,
             regexes: combined,
-            regex_groups,
+            anchored,
         })
     }
 
@@ -229,9 +233,14 @@ impl Mapping {
             }
         }
         if let Some(combined) = &self.regexes {
-            for captures in combined.captures_iter(text) {
-                let hit = self.regex_groups.iter().find_map(|&(rule, group)| {
-                    captures.get(group).map(|found| (found.range(), rule))
+            for whole in combined.find_iter(text) {
+                let Some(rest) = text.get(whole.start()..) else {
+                    continue;
+                };
+                let hit = self.anchored.iter().find_map(|(rule, regex)| {
+                    regex
+                        .find(rest)
+                        .map(|own| (whole.start()..whole.start() + own.end(), *rule))
                 });
                 if let Some((range, rule)) = hit
                     && !range.is_empty()
