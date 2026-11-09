@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as \"settings: sqlx::types::Json<JsonObject>\", c.node, c.owner_user_id, c.created_at as conversation_created_at, c.updated_at as conversation_updated_at, m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as message_at from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and ($2::uuid[] is null or c.id = any($2)) order by c.created_at, c.id, m.created_at, m.id",
+  "query": "select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as \"settings: sqlx::types::Json<JsonObject>\", c.node, c.owner_user_id, c.created_at as conversation_created_at, c.updated_at as conversation_updated_at, m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as message_at from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and (c.id = any($2) or ($2::uuid[] is null and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) order by c.created_at, c.id, m.created_at, m.id",
   "describe": {
     "columns": [
       {
@@ -214,5 +214,5 @@
       false
     ]
   },
-  "hash": "b05b67d7414cbb076176f252b6ede9453a46fa0fea13e46676936d177147b68f"
+  "hash": "983303d19141e03051d3ab1c7a0cb4628b1592b6151cb76a29c15b9dc97f1300"
 }

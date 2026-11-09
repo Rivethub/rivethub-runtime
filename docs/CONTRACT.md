@@ -1581,7 +1581,9 @@ already has. Note 125 moves bundles to version 2 and adds Postgres as a source.
 [--session <conversation id>]... [--sqlite <file>]` writes version 2 (`wire::capture::SessionBundle`: `version`,
 `manifest` and `sessions`). It reads the SQLite file `--sqlite` names when given, else Postgres at `RIVETHUB_PG_URL`,
 else `memory.postgres` in the config, else the SQLite file at `memory.sqlite.path`, as `export` does. Each `--session`
-names one conversation id; with none it writes every session it may export. It exports only the node owner's
+names one conversation id; with none it writes every session it may export except those in the trash (note 127),
+matched on the conversation's stored session key as memory browse matches them; a named id is exported even when
+its session is trashed, as an explicit id still resolves. It exports only the node owner's
 conversations: the owner is `ownerUserId` of the users registry (`RIVETHUB_USERS_FILE`, else `gateway.users_file`,
 else `owner`). On Postgres a conversation is the owner's when its `owner_user_id` is that user, whatever its
 visibility. On SQLite it is the owner's when its `owner_user_id` is that user or is NULL: a row with no owner was

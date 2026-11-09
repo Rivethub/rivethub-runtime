@@ -19,7 +19,8 @@ const SESSIONS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
      JOIN ros_conversations c ON c.id = m.conversation_id \
      LEFT JOIN rh_conversation_nodes n ON n.conversation_id = c.id \
      WHERE (c.owner_user_id IS NULL OR c.owner_user_id = ?2) \
-       AND (?1 IS NULL OR c.id IN (SELECT value FROM json_each(?1))) \
+       AND (c.id IN (SELECT value FROM json_each(?1)) OR (?1 IS NULL AND NOT EXISTS \
+         (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key))) \
      ORDER BY m.conversation_id, m.created_at, m.rowid";
 
 struct StoredSession {

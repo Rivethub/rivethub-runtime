@@ -9,6 +9,7 @@ use common::message;
 use common::object;
 use common::table;
 use kernel::memory::CaptureBatchRequest;
+use kernel::memory::SessionDeletion as _;
 use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
 use wire::message::Role;
@@ -174,6 +175,44 @@ async fn export_by_id_keeps_settings() -> TestResult {
         .bundled_sessions(phil(), Some(vec!["no-such-conversation".to_owned()]))
         .await?;
     assert_eq!(none, Vec::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_trashed_session_is_exported_only_when_named() -> TestResult {
+    let source = fresh_store()?;
+    let phil_owner = Owner::new("phil".to_owned())?;
+    let now = instant("2026-11-02T18:00:00.000Z")?;
+    let mut kept = batch("claude-code:kept", "rivet", "claude-code");
+    kept.messages.push(message("evt-k", Role::User, "kept"));
+    let kept = source.store.capture(kept, &phil_owner, None, now).await?;
+    let mut trashed = batch("claude-code:trashed", "rivet", "claude-code");
+    trashed
+        .messages
+        .push(message("evt-t", Role::User, "trashed"));
+    let trashed = source
+        .store
+        .capture(trashed, &phil_owner, None, now)
+        .await?;
+    source
+        .store
+        .trash_session("claude-code:trashed", None, now)
+        .await?;
+
+    let everything = source.store.bundled_sessions(phil(), None).await?;
+    let named = source
+        .store
+        .bundled_sessions(phil(), Some(vec![trashed.conversation_id.clone()]))
+        .await?;
+
+    let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
+        sessions
+            .iter()
+            .map(|session| session.origin.conversation_id.clone())
+            .collect()
+    };
+    assert_eq!(ids(&everything), [kept.conversation_id]);
+    assert_eq!(ids(&named), [trashed.conversation_id]);
     Ok(())
 }
 

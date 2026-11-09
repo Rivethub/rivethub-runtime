@@ -4,6 +4,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
+use kernel::memory::SessionDeletion as _;
 use kernel::owner::Owner;
 use memory_postgres::CaptureOptions;
 use memory_postgres::PostgresMemory;
@@ -186,6 +187,48 @@ async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult
         assert_eq!(ids, [phils.to_string()]);
     }
     assert!(!serde_json::to_string(&everything)?.contains("not phil's"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let kept = captured(
+        &store,
+        "phil",
+        &batch(
+            "claude-code:kept",
+            vec![said("evt-k", "kept", at("2026-10-14T09:00:00Z")?)],
+        ),
+    )
+    .await?;
+    let trashed = captured(
+        &store,
+        "phil",
+        &batch(
+            "claude-code:trashed",
+            vec![said("evt-t", "trashed", at("2026-10-14T09:01:00Z")?)],
+        ),
+    )
+    .await?;
+    store
+        .trash_session("claude-code:trashed", None, at("2026-10-15T00:00:00Z")?)
+        .await?;
+
+    let everything = store.bundled_sessions(&author("phil"), None).await?;
+    let named = store
+        .bundled_sessions(&author("phil"), Some(&[trashed]))
+        .await?;
+
+    let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
+        sessions
+            .iter()
+            .map(|session| session.origin.conversation_id.clone())
+            .collect()
+    };
+    assert_eq!(ids(&everything), [kept.to_string()]);
+    assert_eq!(ids(&named), [trashed.to_string()]);
     Ok(())
 }
 

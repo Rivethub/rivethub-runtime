@@ -53,7 +53,9 @@ impl crate::PostgresMemory {
              m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, \
              m.created_at as message_at \
              from rh_conversations c join rh_messages m on m.conversation_id = c.id \
-             where c.owner_user_id = $1 and ($2::uuid[] is null or c.id = any($2)) \
+             where c.owner_user_id = $1 \
+             and (c.id = any($2) or ($2::uuid[] is null and not exists \
+             (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) \
              order by c.created_at, c.id, m.created_at, m.id",
             author.user,
             conversation_ids as Option<&[Uuid]>,
