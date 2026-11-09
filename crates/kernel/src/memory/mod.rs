@@ -556,6 +556,11 @@ pub trait MemoryStore: Send + Sync {
         lookup: TagLookup,
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError>;
 
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, values::JsonObject>, MemoryStoreError>;
+
     async fn upsert_tag_taxonomy(
         &self,
         upsert: TagTaxonomyUpsert,

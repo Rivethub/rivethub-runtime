@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select settings as \"settings!: sqlx::types::Json<JsonObject>\"\n               from rh_conversations where session_key = $1 and agent = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "settings!: sqlx::types::Json<JsonObject>",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "settings"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "2a3b16a21e7760c6509afe3f762052119cf1b6f93866e432759eb3387a3a0cb5"
+}

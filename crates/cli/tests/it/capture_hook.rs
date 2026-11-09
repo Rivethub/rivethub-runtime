@@ -157,7 +157,7 @@ fn leaf(
     Ok(())
 }
 
-fn settings(home: &Path) -> gateway::Settings {
+pub(crate) fn settings(home: &Path) -> gateway::Settings {
     gateway::Settings {
         hostname: "gold-host".to_owned(),
         node: "golden-node".to_owned(),

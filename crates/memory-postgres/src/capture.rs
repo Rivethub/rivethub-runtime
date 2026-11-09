@@ -1,11 +1,15 @@
 use crate::error::Error;
 use chrono::DateTime;
+use chrono::TimeDelta;
 use chrono::Utc;
+use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::owner::Owner;
 use sqlx::PgPool;
 use sqlx::Transaction;
 use sqlx::postgres::Postgres;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
@@ -44,8 +48,30 @@ pub struct ConversationUpsert<'a> {
     pub task_id: Option<&'a str>,
     pub owner_user_id: &'a str,
     pub node: Option<&'a str>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub dates: ConversationDates,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationDates {
+    CaptureTime,
+    Imported {
+        created_at: Option<DateTime<Utc>>,
+        updated_at: Option<DateTime<Utc>>,
+    },
+}
+
+impl ConversationDates {
+    #[must_use]
+    pub fn of(batch: &CaptureBatchRequest) -> Self {
+        if wire::capture::is_imported_session(&batch.session_key) {
+            Self::Imported {
+                created_at: batch.created_at,
+                updated_at: batch.updated_at,
+            }
+        } else {
+            Self::CaptureTime
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,23 +264,98 @@ impl<'a> CaptureWriter<'a> {
         Ok(record.id)
     }
 
-    pub async fn latest_in_millisecond(
+    pub async fn imported_settings(
+        &mut self,
+        batch: &CaptureBatchRequest,
+    ) -> Result<Option<JsonObject>, Error> {
+        if !wire::capture::is_imported_session(&batch.session_key) {
+            return Ok(None);
+        }
+        let stored = self
+            .stored_settings(&batch.session_key, &batch.agent)
+            .await?;
+        Ok(Some(wire::capture::merge_imported_settings(
+            stored.as_ref(),
+            batch.settings.as_ref(),
+        )?))
+    }
+
+    pub async fn untied_times(
         &mut self,
         conversation_id: Uuid,
-        at: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, Error> {
-        sqlx::query_scalar!(
-            "select max(created_at) from rh_messages
-              where conversation_id = $1
-                and created_at >= date_trunc('milliseconds', $2::timestamptz)
-                and created_at < date_trunc('milliseconds', $2::timestamptz)
-                                 + interval '1 millisecond'",
+        times: Vec<Option<DateTime<Utc>>>,
+    ) -> Result<Vec<Option<DateTime<Utc>>>, Error> {
+        let milliseconds: Vec<DateTime<Utc>> = times
+            .iter()
+            .flatten()
+            .copied()
+            .map(millisecond)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut latest: BTreeMap<DateTime<Utc>, DateTime<Utc>> = self
+            .latest_by_millisecond(conversation_id, &milliseconds)
+            .await?
+            .into_iter()
+            .collect();
+        let tick = TimeDelta::microseconds(1);
+        Ok(times
+            .into_iter()
+            .map(|time| {
+                time.map(|at| {
+                    let placed = match latest.get(&millisecond(at)) {
+                        Some(&stored) if at <= stored => stored + tick,
+                        _ => at,
+                    };
+                    latest.insert(millisecond(at), placed);
+                    placed
+                })
+            })
+            .collect())
+    }
+
+    async fn latest_by_millisecond(
+        &mut self,
+        conversation_id: Uuid,
+        milliseconds: &[DateTime<Utc>],
+    ) -> Result<Vec<(DateTime<Utc>, DateTime<Utc>)>, Error> {
+        if milliseconds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query!(
+            "select wanted.at as \"at!\",
+                    (select max(m.created_at) from rh_messages m
+                      where m.conversation_id = $1
+                        and m.created_at >= wanted.at
+                        and m.created_at < wanted.at + interval '1 millisecond') as latest
+               from unnest($2::timestamptz[]) as wanted(at)",
             conversation_id,
-            at
+            milliseconds
         )
-        .fetch_one(&mut *self.tx)
+        .fetch_all(&mut *self.tx)
         .await
-        .map_err(|source| Error::operation("message time lookup", source))
+        .map_err(|source| Error::operation("message time lookup", source))?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| row.latest.map(|latest| (row.at, latest)))
+            .collect())
+    }
+
+    async fn stored_settings(
+        &mut self,
+        session_key: &str,
+        agent: &str,
+    ) -> Result<Option<JsonObject>, Error> {
+        let stored = sqlx::query_scalar!(
+            "select settings as \"settings!: sqlx::types::Json<JsonObject>\"
+               from rh_conversations where session_key = $1 and agent = $2",
+            session_key,
+            agent
+        )
+        .fetch_optional(&mut *self.tx)
+        .await
+        .map_err(|source| Error::operation("conversation settings lookup", source))?;
+        Ok(stored.map(|settings| settings.0))
     }
 
     pub async fn seen_event_ids(
@@ -365,6 +466,10 @@ pub(crate) struct PreparedMessage {
     pub(crate) content: String,
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: JsonObject,
+}
+
+fn millisecond(at: DateTime<Utc>) -> DateTime<Utc> {
+    at - TimeDelta::nanoseconds(i64::from(at.timestamp_subsec_nanos() % 1_000_000))
 }
 
 pub(crate) fn prepare_capture_message(message: &CaptureMessage) -> Result<PreparedMessage, Error> {

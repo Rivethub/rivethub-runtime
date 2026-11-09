@@ -130,20 +130,16 @@ async fn imported_conversation_keeps_origin_dates_and_receiver_owner(pool: PgPoo
     .fetch_all(&pool)
     .await?;
     assert_eq!(owners, ["alex"]);
-    let message: String =
-        sqlx::query_scalar("select id::text from rh_messages where conversation_id = $1 limit 1")
-            .bind(id)
-            .fetch_one(&pool)
-            .await?;
-    let entry = store.get_full(&message).await?.ok_or("imported message")?;
-    let origin: SessionOrigin = serde_json::from_value(
-        entry
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("origin").cloned())
-            .ok_or("origin in metadata")?,
-    )?;
+    let receiver_key = session.receiver_session_key()?;
+    let origins = store
+        .lookup_origins(vec![receiver_key.clone(), "claude-code:shared".to_owned()])
+        .await?;
+    let origin: SessionOrigin = origins
+        .get(&receiver_key)
+        .ok_or("origin of the imported session")?
+        .deserialize()?;
     assert_eq!(origin, session.origin);
+    assert_eq!(origins.len(), 1);
     Ok(())
 }
 
@@ -171,29 +167,209 @@ async fn reimport_adds_nothing(pool: PgPool) -> TestResult {
     Ok(())
 }
 
+async fn capture_live(
+    store: &PostgresMemory,
+    owner: &str,
+    batch: &CaptureBatchRequest,
+) -> Result<kernel::memory::CaptureResult, Box<dyn std::error::Error>> {
+    let owner = Owner::new(owner.to_owned())?;
+    Ok(store
+        .capture_batch(
+            &serde_json::from_str(&serde_json::to_string(batch)?)?,
+            &CaptureOptions::owned_by(&owner),
+        )
+        .await?)
+}
+
+fn alexs_native_session() -> Result<CaptureBatchRequest, Box<dyn std::error::Error>> {
+    Ok(CaptureBatchRequest {
+        session_key: "claude-code:shared".to_owned(),
+        agent: "rivet".to_owned(),
+        channel: Some("claude-code".to_owned()),
+        title: Some("alex native work".to_owned()),
+        settings: Some(serde_json::from_str(r#"{"cwd":"/work/alex"}"#)?),
+        task_id: None,
+        finalize: None,
+        created_at: None,
+        updated_at: None,
+        messages: vec![said("evt-native", "live work", at("2026-11-01T08:00:00Z")?)],
+    })
+}
+
+#[derive(sqlx::FromRow, Debug, PartialEq)]
+struct Conversation {
+    session_key: String,
+    owner_user_id: String,
+    title: Option<String>,
+    settings: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+async fn conversation(pool: &PgPool, id: &str) -> Result<Conversation, Box<dyn std::error::Error>> {
+    Ok(sqlx::query_as::<_, Conversation>(
+        "select session_key, owner_user_id, title, settings::text as settings, created_at, \
+         updated_at from rh_conversations where id = $1",
+    )
+    .bind(Uuid::parse_str(id)?)
+    .fetch_one(pool)
+    .await?)
+}
+
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn an_import_never_moves_a_native_conversation_back_in_time(pool: PgPool) -> TestResult {
+async fn an_import_lands_beside_a_native_conversation_with_the_same_session_key(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let native = capture_live(&store, "alex", &alexs_native_session()?).await?;
+    let before = conversation(&pool, &native.conversation_id).await?;
+
+    let imported = import(&store, "alex", &phils_session()?).await?;
+
+    assert_ne!(imported.conversation_id, native.conversation_id);
+    assert_eq!(imported.inserted, 2);
+    assert_eq!(conversation(&pool, &native.conversation_id).await?, before);
+    let native_messages: i64 =
+        sqlx::query_scalar("select count(*) from rh_messages where conversation_id = $1")
+            .bind(Uuid::parse_str(&native.conversation_id)?)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(native_messages, 1);
+    let receiver = conversation(&pool, &imported.conversation_id).await?;
+    assert_eq!(
+        receiver.session_key,
+        "import:desk:7b0e7d1c-0000-4000-8000-000000000001"
+    );
+    assert_eq!(receiver.title.as_deref(), Some("sqlite bundle migration"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn live_capture_keeps_capture_time_whatever_dates_the_batch_carries(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let mut live = alexs_native_session()?;
+    live.created_at = Some(at("2031-01-01T00:00:00Z")?);
+    live.updated_at = Some(at("2031-01-01T00:00:00Z")?);
+    let started = Utc::now();
+
+    let first = capture_live(&store, "alex", &live).await?;
+    live.messages = vec![said(
+        "evt-native-2",
+        "more live work",
+        at("2026-11-01T09:00:00Z")?,
+    )];
+    capture_live(&store, "alex", &live).await?;
+
+    let row = conversation(&pool, &first.conversation_id).await?;
+    let finished = Utc::now();
+    assert!(
+        started <= row.created_at && row.created_at <= finished,
+        "{row:?}"
+    );
+    assert!(
+        row.created_at <= row.updated_at && row.updated_at <= finished,
+        "{row:?}"
+    );
+    Ok(())
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct Settings {
+    pinned: Option<bool>,
+    model: Option<String>,
+    origin: Option<SessionOrigin>,
+}
+
+async fn settings(pool: &PgPool, id: &str) -> Result<Settings, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_str(
+        &conversation(pool, id).await?.settings,
+    )?)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_reimport_keeps_settings_the_receiver_added(pool: PgPool) -> TestResult {
     common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
-    let mut native = session.batch.clone();
-    native.messages = vec![said("evt-native", "live work", at("2026-11-01T08:00:00Z")?)];
-    let owner = Owner::new("phil".to_owned())?;
-    let captured = store
-        .capture_batch(
-            &serde_json::from_str(&serde_json::to_string(&native)?)?,
-            &CaptureOptions::owned_by(&owner),
-        )
-        .await?;
-    let id = Uuid::parse_str(&captured.conversation_id)?;
-    let before = stored(&pool, id).await?;
+    let first = import(&store, "alex", &session).await?;
+    sqlx::query(
+        "update rh_conversations set settings = settings || '{\"pinned\":true}' where id = $1",
+    )
+    .bind(Uuid::parse_str(&first.conversation_id)?)
+    .execute(&pool)
+    .await?;
 
-    import(&store, "alex", &session).await?;
+    let second = import(&store, "alex", &session).await?;
 
-    let after = stored(&pool, id).await?;
-    assert_eq!(after.owner_user_id, "phil");
-    assert_eq!(after.created_at, before.created_at);
-    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(second.conversation_id, first.conversation_id);
+    let kept = settings(&pool, &first.conversation_id).await?;
+    assert_eq!(kept.pinned, Some(true));
+    assert_eq!(kept.origin.as_ref(), Some(&session.origin));
+    assert_eq!(kept.model.as_deref(), Some("opus"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn only_a_bundle_as_new_or_newer_replaces_the_stored_origin(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let session = phils_session()?;
+    let first = import(&store, "alex", &session).await?;
+    let mut older = session.clone();
+    older.origin.updated_at = Some(at("2026-10-14T10:00:00Z")?);
+    older.batch.settings = Some(serde_json::from_str(r#"{"model":"sonnet"}"#)?);
+    let mut newer = older.clone();
+    newer.origin.updated_at = Some(at("2026-10-20T10:00:00Z")?);
+
+    import(&store, "alex", &older).await?;
+    let after_older = settings(&pool, &first.conversation_id).await?;
+    import(&store, "alex", &newer).await?;
+    let after_newer = settings(&pool, &first.conversation_id).await?;
+
+    assert_eq!(after_older.origin.as_ref(), Some(&session.origin));
+    assert_eq!(after_older.model.as_deref(), Some("opus"));
+    assert_eq!(after_newer.origin.as_ref(), Some(&newer.origin));
+    assert_eq!(after_newer.model.as_deref(), Some("sonnet"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_message_tied_with_stored_messages_lands_after_all_of_them(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let tied = at("2026-10-14T10:00:00.000Z")?;
+    let earlier = at("2026-10-14T09:59:59.000Z")?;
+    let mut first = phils_session()?;
+    first.batch.messages = vec![said("a", "a", tied), said("b", "b", tied)];
+    let mut second = phils_session()?;
+    second.batch.messages = vec![
+        said("x", "x", earlier),
+        said("c", "c", tied),
+        said("d", "d", tied),
+    ];
+
+    let written = import(&store, "alex", &first).await?;
+    import(&store, "alex", &second).await?;
+
+    let stored: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
+        "select metadata->>'event_id', created_at from rh_messages \
+         where conversation_id = $1 order by created_at, id",
+    )
+    .bind(Uuid::parse_str(&written.conversation_id)?)
+    .fetch_all(&pool)
+    .await?;
+    let order: Vec<&str> = stored.iter().map(|(event, _)| event.as_str()).collect();
+    assert_eq!(order, ["x", "a", "b", "c", "d"]);
+    let times: Vec<DateTime<Utc>> = stored.iter().map(|(_, time)| *time).collect();
+    let tick = chrono::TimeDelta::microseconds(1);
+    assert_eq!(
+        times,
+        [earlier, tied, tied + tick, tied + tick * 2, tied + tick * 3]
+    );
     Ok(())
 }
 
@@ -208,6 +384,7 @@ async fn messages_sharing_a_millisecond_export_in_bundle_order(pool: PgPool) -> 
     let mut split = whole.clone();
     split.batch.session_key = "claude-code:split".to_owned();
     split.origin.session_key = "claude-code:split".to_owned();
+    split.origin.conversation_id = "7b0e7d1c-0000-4000-8000-000000000002".to_owned();
     let mut second = split.clone();
     second.batch.messages = split.batch.messages.split_off(4);
 

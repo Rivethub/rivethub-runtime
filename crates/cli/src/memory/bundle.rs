@@ -135,8 +135,9 @@ pub(super) async fn ingest(
 fn sessions_from(bundle: &SessionBundle) -> String {
     let mut authors: Vec<&str> = Vec::new();
     for session in &bundle.sessions {
-        if !authors.contains(&session.origin.author.as_str()) {
-            authors.push(&session.origin.author);
+        let author = author_of(session);
+        if !authors.contains(&author) {
+            authors.push(author);
         }
     }
     let count = bundle.sessions.len();
@@ -162,8 +163,14 @@ fn listed(session: &BundledSession) -> String {
     };
     format!(
         "{} ({}): {count} {noun} from {}, {dates}\n",
-        origin.session_key, origin.agent, origin.author,
+        origin.session_key,
+        origin.agent,
+        author_of(session),
     )
+}
+
+fn author_of(session: &BundledSession) -> &str {
+    session.origin.known_author().unwrap_or("an unknown author")
 }
 
 pub(super) async fn share(

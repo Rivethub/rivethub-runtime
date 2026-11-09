@@ -9,6 +9,7 @@ use common::message;
 use common::object;
 use common::table;
 use kernel::memory::CaptureBatchRequest;
+use kernel::memory::MemoryStore as _;
 use kernel::memory::SessionDeletion as _;
 use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
@@ -302,16 +303,14 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
     assert_eq!(column("created_at"), Some("2026-10-14T09:00:00.000Z"));
     assert_eq!(column("updated_at"), Some("2026-10-14T09:00:00.000Z"));
     assert_eq!(column("owner_user_id"), Some("bob"));
-    let messages = table(&destination.store, "ros_messages").await?;
-    let id = messages
-        .first()
-        .and_then(|row| row.get("id"))
-        .and_then(testkit::Json::as_str)
-        .ok_or("imported message")?;
-    let entry = destination.store.get_full(id).await?.ok_or("full entry")?;
-    let metadata = entry.metadata.ok_or("metadata")?;
+    let receiver_key = session.receiver_session_key()?;
+    assert_eq!(column("session_key"), Some(receiver_key.as_str()));
+    let origins = destination
+        .store
+        .lookup_origins(vec![receiver_key.clone()])
+        .await?;
     let origin: wire::capture::SessionOrigin =
-        serde_json::from_value(metadata.get("origin").cloned().ok_or("origin")?)?;
+        origins.get(&receiver_key).ok_or("origin")?.deserialize()?;
     assert_eq!(origin, session.origin);
     Ok(())
 }
@@ -357,5 +356,113 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
         .map(|message| message.event_id.as_str())
         .collect();
     assert_eq!(order, steps);
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct Settings {
+    pinned: Option<bool>,
+    model: Option<String>,
+    origin: Option<wire::capture::SessionOrigin>,
+}
+
+fn imported(
+    origin_updated_at: &str,
+    model: &str,
+) -> Result<CaptureBatchRequest, Box<dyn std::error::Error>> {
+    let mut shared = batch("claude-code:shared", "rivet", "claude-code");
+    shared.settings = Some(serde_json::from_str(&format!(r#"{{"model":"{model}"}}"#))?);
+    shared
+        .messages
+        .push(message("evt-1", Role::User, "move the bundle reader"));
+    let session = wire::capture::BundledSession {
+        origin: wire::capture::SessionOrigin {
+            author: "phil".to_owned(),
+            node: "desk".to_owned(),
+            conversation_id: "7b0e7d1c-0000-4000-8000-000000000001".to_owned(),
+            session_key: "claude-code:shared".to_owned(),
+            agent: "rivet".to_owned(),
+            created_at: Some(instant("2026-10-14T09:00:00.000Z")?),
+            updated_at: Some(instant(origin_updated_at)?),
+        },
+        batch: serde_json::from_value(serde_json::to_value(shared)?)?,
+    };
+    Ok(serde_json::from_str(&serde_json::to_string(
+        &session.import_batch()?,
+    )?)?)
+}
+
+#[tokio::test]
+async fn a_reimport_merges_settings_and_keeps_the_newest_origin() -> TestResult {
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+    let first = destination
+        .store
+        .capture(
+            imported("2026-10-15T00:00:00.000Z", "opus")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    execute(
+        &destination.store,
+        &format!(
+            "UPDATE ros_conversations SET settings = json_set(settings, '$.pinned', json('true')) \
+             WHERE id = '{}'",
+            first.conversation_id
+        ),
+    )
+    .await?;
+    let settings = || async {
+        let rows = table(&destination.store, "ros_conversations").await?;
+        let row = rows.first().ok_or("conversation")?;
+        let text = row
+            .get("settings")
+            .and_then(testkit::Json::as_str)
+            .ok_or("settings")?;
+        Ok::<Settings, Box<dyn std::error::Error>>(serde_json::from_str(text)?)
+    };
+
+    destination
+        .store
+        .capture(
+            imported("2026-10-14T00:00:00.000Z", "sonnet")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let after_older = settings().await?;
+    destination
+        .store
+        .capture(
+            imported("2026-10-20T00:00:00.000Z", "haiku")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let after_newer = settings().await?;
+
+    let updated = |settings: &Settings| {
+        settings
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.updated_at)
+    };
+    assert_eq!(after_older.pinned, Some(true));
+    assert_eq!(after_older.model.as_deref(), Some("opus"));
+    assert_eq!(
+        updated(&after_older),
+        Some(instant("2026-10-15T00:00:00.000Z")?)
+    );
+    assert_eq!(after_newer.pinned, Some(true));
+    assert_eq!(after_newer.model.as_deref(), Some("haiku"));
+    assert_eq!(
+        updated(&after_newer),
+        Some(instant("2026-10-20T00:00:00.000Z")?)
+    );
     Ok(())
 }

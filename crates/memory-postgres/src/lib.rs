@@ -67,6 +67,7 @@ use std::time::Duration;
 
 pub use capture::CaptureOptions;
 pub use capture::CaptureWriter;
+pub use capture::ConversationDates;
 pub use capture::ConversationEnsure;
 pub use capture::ConversationRecord;
 pub use capture::ConversationUpdate;

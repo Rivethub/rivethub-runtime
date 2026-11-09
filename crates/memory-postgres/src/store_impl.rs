@@ -1,12 +1,12 @@
 use crate::capture::CaptureOptions;
 use crate::capture::CaptureWriter;
+use crate::capture::ConversationDates;
 use crate::capture::ConversationUpsert;
 use crate::capture::MessageRow;
 use crate::capture::prepare_capture_message;
 use crate::error::Error;
 use async_trait::async_trait;
 use chrono::DateTime;
-use chrono::TimeDelta;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
@@ -34,6 +34,7 @@ use kernel::memory::TagWire;
 use kernel::memory::spoken_title;
 use kernel::owner::Owner;
 use serde::Deserialize as _;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 const UNKNOWN_CHANNEL: &str = "unknown";
@@ -49,18 +50,18 @@ impl crate::PostgresMemory {
         if let Some(dropped) = dropped_when_deleted(&mut writer, batch).await? {
             return Ok(dropped);
         }
+        let imported = writer.imported_settings(batch).await?;
         let conversation = writer
             .upsert_conversation(&ConversationUpsert {
                 session_key: &batch.session_key,
                 agent: &batch.agent,
                 channel: Some(channel),
                 title: batch.title.as_deref().and_then(spoken_title),
-                settings: batch.settings.as_ref(),
+                settings: imported.as_ref().or(batch.settings.as_ref()),
                 task_id: batch.task_id.as_deref(),
                 owner_user_id: options.owner.as_str(),
                 node: options.node.as_deref(),
-                created_at: batch.created_at,
-                updated_at: batch.updated_at,
+                dates: ConversationDates::of(batch),
             })
             .await?;
         let conversation_id = conversation.id;
@@ -70,20 +71,23 @@ impl crate::PostgresMemory {
             .map(|message| message.event_id.clone())
             .collect();
         let seen = writer.seen_event_ids(conversation_id, &event_ids).await?;
-        let first = batch.messages.iter().find_map(|message| message.created_at);
-        let earlier = match first {
-            Some(at) => writer.latest_in_millisecond(conversation_id, at).await?,
-            None => None,
-        };
-        let stamps = untied(
-            earlier,
-            batch.messages.iter().map(|message| message.created_at),
-        );
+        let fresh: Vec<(usize, &CaptureMessage)> = batch
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| !seen.contains(&message.event_id))
+            .collect();
+        let stamps = writer
+            .untied_times(
+                conversation_id,
+                fresh
+                    .iter()
+                    .map(|(_, message)| message.created_at)
+                    .collect(),
+            )
+            .await?;
         let mut inserted: u64 = 0;
-        for ((index, message), created_at) in batch.messages.iter().enumerate().zip(stamps) {
-            if seen.contains(&message.event_id) {
-                continue;
-            }
+        for ((index, message), created_at) in fresh.into_iter().zip(stamps) {
             let prepared = prepare_capture_message(message)?;
             writer
                 .insert_message(&MessageRow {
@@ -114,27 +118,6 @@ impl crate::PostgresMemory {
             skipped: u64::try_from(batch.messages.len())? - inserted,
         })
     }
-}
-
-fn untied(
-    stored_in_first_millisecond: Option<DateTime<Utc>>,
-    stamps: impl Iterator<Item = Option<DateTime<Utc>>>,
-) -> Vec<Option<DateTime<Utc>>> {
-    let tick = TimeDelta::microseconds(1);
-    let mut last: Option<(DateTime<Utc>, DateTime<Utc>)> = None;
-    stamps
-        .map(|stamp| {
-            stamp.map(|at| {
-                let stored = match (last, stored_in_first_millisecond) {
-                    (Some((raw, stored)), _) if raw == at => stored + tick,
-                    (None, Some(earlier)) if at <= earlier => earlier + tick,
-                    _ => at,
-                };
-                last = Some((at, stored));
-                stored
-            })
-        })
-        .collect()
 }
 
 struct EntryGroup {
@@ -480,8 +463,15 @@ impl MemoryStore for crate::PostgresMemory {
     async fn lookup_tags(
         &self,
         lookup: TagLookup,
-    ) -> Result<std::collections::BTreeMap<String, Vec<TagWire>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError> {
         self.tags_lookup(&lookup).await
+    }
+
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        Ok(self.conversation_origins(&session_keys).await?)
     }
 
     async fn upsert_tag_taxonomy(

@@ -236,6 +236,13 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
+    async fn lookup_origins(
+        &self,
+        _session_keys: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        unavailable()
+    }
+
     async fn upsert_tag_taxonomy(
         &self,
         _upsert: kernel::memory::TagTaxonomyUpsert,
@@ -446,6 +453,13 @@ impl MemoryStore for GatedStore {
     ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::TagWire>>, MemoryStoreError>
     {
         self.inner.lookup_tags(lookup).await
+    }
+
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        self.inner.lookup_origins(session_keys).await
     }
 
     async fn upsert_tag_taxonomy(

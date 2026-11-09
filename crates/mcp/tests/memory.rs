@@ -426,14 +426,74 @@ async fn tool_previews_count_characters_and_reject_malformed_capture_metadata() 
     );
 }
 
-#[tokio::test]
-async fn an_imported_hit_names_its_origin_author() {
-    use kernel::memory::MemoryEntry;
-    use kernel::memory::MemoryStore;
-    let (server, store) = setup(false);
-    let entry = |id: &str, metadata: Option<&str>| MemoryEntry {
+fn headings(result: &rmcp::model::CallToolResult) -> Vec<(String, String)> {
+    assert_eq!(result.is_error, None, "{result:?}");
+    let text = &result
+        .content
+        .first()
+        .expect("content")
+        .as_text()
+        .expect("text")
+        .text;
+    text.lines()
+        .zip(text.lines().skip(1))
+        .filter(|(heading, _)| heading.starts_with("- ["))
+        .map(|(heading, body)| (body.to_owned(), heading.to_owned()))
+        .collect()
+}
+
+fn heading_of(headings: &[(String, String)], body: &str) -> String {
+    headings.iter().find(|(text, _)| text == body).map_or_else(
+        || panic!("no hit for {body} in {headings:?}"),
+        |(_, heading)| heading.clone(),
+    )
+}
+
+fn bundled(
+    author: &str,
+    node: &str,
+    conversation: &str,
+    created: Option<&str>,
+) -> wire::capture::BundledSession {
+    let at = |text: &str| text.parse().expect("date");
+    wire::capture::BundledSession {
+        origin: wire::capture::SessionOrigin {
+            author: author.into(),
+            node: node.into(),
+            conversation_id: conversation.into(),
+            session_key: format!("claude-code:{conversation}"),
+            agent: "rivet".into(),
+            created_at: created.map(at),
+            updated_at: created.map(at),
+        },
+        batch: wire::capture::CaptureBatchRequest {
+            session_key: format!("claude-code:{conversation}"),
+            agent: "rivet".into(),
+            channel: Some("claude-code".into()),
+            title: None,
+            settings: None,
+            task_id: None,
+            finalize: None,
+            created_at: None,
+            updated_at: None,
+            messages: vec![wire::capture::CaptureMessage {
+                event_id: format!("{conversation}-1"),
+                role: Role::User,
+                content: format!("bundle digest work in {conversation}"),
+                tool_name: None,
+                tool_args: None,
+                tool_result: None,
+                metadata: None,
+                created_at: Some(at("2026-11-08T10:00:00Z")),
+            }],
+        },
+    }
+}
+
+fn native(id: &str, metadata: Option<&str>) -> kernel::memory::MemoryEntry {
+    kernel::memory::MemoryEntry {
         id: Some(id.into()),
-        session_id: format!("{id}-session"),
+        session_id: format!("claude-code:{id}"),
         agent: "rivet".into(),
         channel: "claude-code".into(),
         role: Role::User,
@@ -443,45 +503,81 @@ async fn an_imported_hit_names_its_origin_author() {
         tool_result: None,
         metadata: metadata.map(|text| serde_json::from_str(text).expect("metadata")),
         created_at: Some("2026-11-08T10:00:00Z".parse().expect("date")),
-    };
-    let origin = r#"{"event_id":"evt-1","origin":{"author":"phil","node":"desk","conversation_id":"c1","session_key":"claude-code:one","agent":"rivet","created_at":"2026-10-14T09:00:00Z","updated_at":"2026-10-14T11:30:00Z"}}"#;
-    let undated = r#"{"origin":{"author":"unknown","node":"unknown","conversation_id":"unknown","session_key":"claude-code:old","agent":"rivet","created_at":null,"updated_at":null}}"#;
+    }
+}
+
+#[tokio::test]
+async fn an_imported_hit_names_its_origin_author() {
+    use kernel::memory::MemoryStore;
+    let (server, store) = setup(false);
+    let owner = testkit::owner().expect("owner");
+    let mut broken = bundled("phil", "desk", "broken", Some("2026-10-14T09:00:00Z"))
+        .import_batch()
+        .expect("batch");
+    broken
+        .settings
+        .get_or_insert_default()
+        .insert("origin", "slack")
+        .expect("origin");
+    for batch in [
+        bundled("phil", "desk", "dated", Some("2026-10-14T09:00:00Z"))
+            .import_batch()
+            .expect("batch"),
+        bundled("unknown", "unknown", "unknown", None)
+            .import_batch()
+            .expect("batch"),
+        bundled("alex", "desk", "undated", None)
+            .import_batch()
+            .expect("batch"),
+        broken,
+    ] {
+        let posted = serde_json::to_value(&batch).expect("posted");
+        let received = serde_json::from_value(posted).expect("received");
+        store.capture(received, &owner, None).await.expect("import");
+    }
+    store
+        .append(&owner, vec![native("native", None)])
+        .await
+        .expect("seed");
+
+    let found =
+        headings(&support::call(&server, "memory_search", r#"{"query":"bundle digest"}"#).await);
+
+    assert!(
+        heading_of(&found, "bundle digest work in dated").ends_with(" from phil · 2026-10-14"),
+        "{found:?}"
+    );
+    assert!(
+        heading_of(&found, "bundle digest work in undated").ends_with(" from alex"),
+        "{found:?}"
+    );
+    for untagged in ["unknown", "broken", "native"] {
+        let heading = heading_of(&found, &format!("bundle digest work in {untagged}"));
+        assert!(!heading.contains(" from "), "{found:?}");
+    }
+}
+
+#[tokio::test]
+async fn message_metadata_never_tags_or_breaks_a_search() {
+    use kernel::memory::MemoryStore;
+    let (server, store) = setup(false);
+    let spoof = r#"{"origin":{"author":"phil","node":"desk","conversation_id":"c1","session_key":"claude-code:one","agent":"rivet","created_at":"2026-10-14T09:00:00Z","updated_at":null}}"#;
     store
         .append(
             &testkit::owner().expect("owner"),
             vec![
-                entry("imported", Some(origin)),
-                entry("undated", Some(undated)),
-                entry("native", None),
+                native("spoof", Some(spoof)),
+                native("slack", Some(r#"{"origin":"slack"}"#)),
             ],
         )
         .await
         .expect("seed");
 
-    let result = support::call(&server, "memory_search", r#"{"query":"bundle digest"}"#).await;
+    let found =
+        headings(&support::call(&server, "memory_search", r#"{"query":"bundle digest"}"#).await);
 
-    assert_eq!(result.is_error, None);
-    let text = &result
-        .content
-        .first()
-        .expect("content")
-        .as_text()
-        .expect("text")
-        .text;
-    let heading = |id: &str| {
-        let body = format!("bundle digest work in {id}");
-        text.lines()
-            .zip(text.lines().skip(1))
-            .find(|(_, next)| *next == body)
-            .map_or_else(
-                || panic!("no hit for {id} in {text}"),
-                |(heading, _)| heading.to_owned(),
-            )
-    };
-    assert!(
-        heading("imported").ends_with(" from phil · 2026-10-14"),
-        "{text}"
-    );
-    assert!(heading("undated").ends_with(" from unknown"), "{text}");
-    assert!(!heading("native").contains(" from "), "{text}");
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (_, heading) in &found {
+        assert!(!heading.contains(" from "), "{found:?}");
+    }
 }

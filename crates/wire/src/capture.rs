@@ -3,6 +3,7 @@ use crate::message::Role;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use sha2::{Digest as _, Sha256};
 
 #[serde_as]
 #[serde_with::skip_serializing_none]
@@ -109,9 +110,39 @@ pub struct BundledSession {
     pub batch: CaptureBatchRequest,
 }
 
+pub const IMPORTED_SESSION_PREFIX: &str = "import:";
+
+#[must_use]
+pub fn is_imported_session(session_key: &str) -> bool {
+    session_key.starts_with(IMPORTED_SESSION_PREFIX)
+}
+
 impl BundledSession {
+    pub fn receiver_session_key(&self) -> Result<String, serde_json::Error> {
+        let origin = &self.origin;
+        if origin.node == UNKNOWN_ORIGIN || origin.conversation_id == UNKNOWN_ORIGIN {
+            let first = self
+                .batch
+                .messages
+                .first()
+                .map_or("", |message| message.event_id.as_str());
+            let identity = serde_json::to_string(&(&origin.session_key, &origin.agent, first))?;
+            let digest = hex::encode(Sha256::digest(identity));
+            Ok(format!(
+                "{IMPORTED_SESSION_PREFIX}{UNKNOWN_ORIGIN}:{}",
+                digest.get(..32).unwrap_or(&digest)
+            ))
+        } else {
+            Ok(format!(
+                "{IMPORTED_SESSION_PREFIX}{}:{}",
+                origin.node, origin.conversation_id
+            ))
+        }
+    }
+
     pub fn import_batch(&self) -> Result<CaptureBatchRequest, serde_json::Error> {
         let mut batch = self.batch.clone();
+        batch.session_key = self.receiver_session_key()?;
         batch
             .settings
             .get_or_insert_default()
@@ -120,6 +151,28 @@ impl BundledSession {
         batch.updated_at = self.origin.updated_at.or(batch.updated_at);
         Ok(batch)
     }
+}
+
+pub fn merge_imported_settings(
+    stored: Option<&JsonObject>,
+    incoming: Option<&JsonObject>,
+) -> Result<JsonObject, serde_json::Error> {
+    let empty = JsonObject::default();
+    let incoming = incoming.unwrap_or(&empty);
+    let Some(stored) = stored else {
+        return Ok(incoming.clone());
+    };
+    let updated =
+        |settings: &JsonObject| SessionOrigin::of(settings).and_then(|origin| origin.updated_at);
+    let (mut merged, winner) = if updated(incoming) >= updated(stored) {
+        (stored.clone(), incoming)
+    } else {
+        (incoming.clone(), stored)
+    };
+    for (key, value) in winner.as_map() {
+        merged.insert(key, value)?;
+    }
+    Ok(merged)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -131,6 +184,26 @@ pub struct SessionOrigin {
     pub agent: String,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl SessionOrigin {
+    #[must_use]
+    pub fn of(settings: &JsonObject) -> Option<Self> {
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "CONTRACT B3 (note 126): a stored origin that does not parse counts as the earliest when an import merges settings"
+            )
+        )]
+        let origin = serde_json::from_value(settings.get("origin")?.clone()).ok();
+        origin
+    }
+
+    #[must_use]
+    pub fn known_author(&self) -> Option<&str> {
+        (self.author != UNKNOWN_ORIGIN).then_some(self.author.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
