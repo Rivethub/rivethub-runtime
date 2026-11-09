@@ -1663,8 +1663,9 @@ stored title (a receiver rename included) stay; a key only one side has is kept 
 
 `rh memory bundle` exports an `import:` conversation whose `settings.origin` parses with that stored origin as its
 `origin` (author, node, conversation id, session key, agent and dates), its batch `session_key` set to the origin's,
-and the origin's dates as the batch dates, so a session passed on from user to user stays credited to its first
-author with its first dates.
+and the origin's dates as the batch dates, absent when the origin has none, so a session passed on from user to
+user stays credited to its first author with its first dates and an undated origin never takes a receiver's import
+time.
 
 Postgres stores times to the microsecond, so capture truncates finer message times to the microsecond before it
 places them. Bundle times have millisecond precision, so messages can share a time. Postgres capture, live capture

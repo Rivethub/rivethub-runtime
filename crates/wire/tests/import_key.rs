@@ -126,3 +126,23 @@ fn a_key_that_does_not_name_an_origin_is_refused() {
         None
     );
 }
+
+#[test]
+fn re_exporting_an_undated_import_leaves_its_dates_absent() -> TestResult {
+    let undated = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
+    let mut stored = BundledSession {
+        origin: undated.origin.clone(),
+        batch: undated.import_batch()?,
+    };
+    stored.batch.session_key = owned("alex", &undated)?;
+    let imported_at = chrono::DateTime::parse_from_rfc3339("2026-11-09T12:00:00Z")?.to_utc();
+    stored.batch.created_at = Some(imported_at);
+    stored.batch.updated_at = Some(imported_at);
+
+    let forwarded = stored.forwarding_stored_origin();
+
+    assert_eq!(forwarded.batch.session_key, "claude-code:shared");
+    assert_eq!(forwarded.batch.created_at, None);
+    assert_eq!(forwarded.batch.updated_at, None);
+    Ok(())
+}

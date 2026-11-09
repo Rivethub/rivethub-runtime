@@ -190,8 +190,8 @@ impl BundledSession {
             return self;
         };
         self.batch.session_key.clone_from(&origin.session_key);
-        self.batch.created_at = origin.created_at.or(self.batch.created_at);
-        self.batch.updated_at = origin.updated_at.or(self.batch.updated_at);
+        self.batch.created_at = origin.created_at;
+        self.batch.updated_at = origin.updated_at;
         self.origin = origin;
         self
     }
