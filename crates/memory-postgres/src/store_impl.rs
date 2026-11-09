@@ -3,6 +3,7 @@ use crate::capture::CaptureWriter;
 use crate::capture::ConversationDates;
 use crate::capture::ConversationUpsert;
 use crate::capture::MessageRow;
+use crate::capture::UpsertedConversation;
 use crate::capture::prepare_capture_message;
 use crate::error::Error;
 use async_trait::async_trait;
@@ -45,25 +46,29 @@ impl crate::PostgresMemory {
         batch: &CaptureBatchRequest,
         options: &CaptureOptions,
     ) -> Result<CaptureResult, Error> {
+        match wire::capture::owned_import_key(options.owner.as_str(), &batch.session_key)? {
+            Some(session_key) => {
+                let owned = CaptureBatchRequest {
+                    session_key,
+                    ..batch.clone()
+                };
+                self.capture_keyed(&owned, options).await
+            }
+            None => self.capture_keyed(batch, options).await,
+        }
+    }
+
+    async fn capture_keyed(
+        &self,
+        batch: &CaptureBatchRequest,
+        options: &CaptureOptions,
+    ) -> Result<CaptureResult, Error> {
         let channel = batch.channel.as_deref().ok_or(Error::MissingChannel)?;
         let mut writer = CaptureWriter::begin(&self.pool, &batch.session_key).await?;
         if let Some(dropped) = dropped_when_deleted(&mut writer, batch).await? {
             return Ok(dropped);
         }
-        let imported = writer.imported_settings(batch).await?;
-        let conversation = writer
-            .upsert_conversation(&ConversationUpsert {
-                session_key: &batch.session_key,
-                agent: &batch.agent,
-                channel: Some(channel),
-                title: batch.title.as_deref().and_then(spoken_title),
-                settings: imported.as_ref().or(batch.settings.as_ref()),
-                task_id: batch.task_id.as_deref(),
-                owner_user_id: options.owner.as_str(),
-                node: options.node.as_deref(),
-                dates: ConversationDates::of(batch),
-            })
-            .await?;
+        let conversation = upsert_batch_conversation(&mut writer, batch, channel, options).await?;
         let conversation_id = conversation.id;
         let event_ids: Vec<String> = batch
             .messages
@@ -118,6 +123,38 @@ impl crate::PostgresMemory {
             skipped: u64::try_from(batch.messages.len())? - inserted,
         })
     }
+}
+
+async fn upsert_batch_conversation(
+    writer: &mut CaptureWriter<'_>,
+    batch: &CaptureBatchRequest,
+    channel: &str,
+    options: &CaptureOptions,
+) -> Result<UpsertedConversation, Error> {
+    let imported = writer.imported_settings(batch).await?;
+    let newer = imported
+        .as_ref()
+        .is_none_or(|merged| merged.incoming_is_newer);
+    writer
+        .upsert_conversation(&ConversationUpsert {
+            session_key: &batch.session_key,
+            agent: &batch.agent,
+            channel: Some(channel),
+            title: batch
+                .title
+                .as_deref()
+                .and_then(spoken_title)
+                .filter(|_| newer),
+            settings: imported
+                .as_ref()
+                .map(|merged| &merged.settings)
+                .or(batch.settings.as_ref()),
+            task_id: batch.task_id.as_deref(),
+            owner_user_id: options.owner.as_str(),
+            node: options.node.as_deref(),
+            dates: ConversationDates::of(batch),
+        })
+        .await
 }
 
 struct EntryGroup {

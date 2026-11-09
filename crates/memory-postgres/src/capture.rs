@@ -1,5 +1,6 @@
 use crate::error::Error;
 use chrono::DateTime;
+use chrono::SubsecRound as _;
 use chrono::TimeDelta;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
@@ -267,7 +268,7 @@ impl<'a> CaptureWriter<'a> {
     pub async fn imported_settings(
         &mut self,
         batch: &CaptureBatchRequest,
-    ) -> Result<Option<JsonObject>, Error> {
+    ) -> Result<Option<wire::capture::ImportedSettings>, Error> {
         if !wire::capture::is_imported_session(&batch.session_key) {
             return Ok(None);
         }
@@ -285,33 +286,25 @@ impl<'a> CaptureWriter<'a> {
         conversation_id: Uuid,
         times: Vec<Option<DateTime<Utc>>>,
     ) -> Result<Vec<Option<DateTime<Utc>>>, Error> {
-        let milliseconds: Vec<DateTime<Utc>> = times
-            .iter()
-            .flatten()
-            .copied()
-            .map(millisecond)
-            .collect::<BTreeSet<_>>()
+        let times: Vec<Option<DateTime<Utc>>> = times
             .into_iter()
+            .map(|time| time.map(|at| at.trunc_subsecs(6)))
             .collect();
-        let mut latest: BTreeMap<DateTime<Utc>, DateTime<Utc>> = self
-            .latest_by_millisecond(conversation_id, &milliseconds)
-            .await?
-            .into_iter()
-            .collect();
-        let tick = TimeDelta::microseconds(1);
-        Ok(times
-            .into_iter()
-            .map(|time| {
-                time.map(|at| {
-                    let placed = match latest.get(&millisecond(at)) {
-                        Some(&stored) if at <= stored => stored + tick,
-                        _ => at,
-                    };
-                    latest.insert(millisecond(at), placed);
-                    placed
-                })
-            })
-            .collect())
+        let mut latest = BTreeMap::new();
+        let mut asked = BTreeSet::new();
+        let mut wanted = milliseconds(&times);
+        loop {
+            latest.extend(self.latest_by_millisecond(conversation_id, &wanted).await?);
+            asked.extend(wanted);
+            let placed = untie(&times, latest.clone());
+            wanted = milliseconds(&placed)
+                .into_iter()
+                .filter(|millisecond| !asked.contains(millisecond))
+                .collect();
+            if wanted.is_empty() {
+                return Ok(placed);
+            }
+        }
     }
 
     async fn latest_by_millisecond(
@@ -466,6 +459,41 @@ pub(crate) struct PreparedMessage {
     pub(crate) content: String,
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: JsonObject,
+}
+
+fn milliseconds(times: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
+    times
+        .iter()
+        .flatten()
+        .copied()
+        .map(millisecond)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn untie(
+    times: &[Option<DateTime<Utc>>],
+    mut latest: BTreeMap<DateTime<Utc>, DateTime<Utc>>,
+) -> Vec<Option<DateTime<Utc>>> {
+    let tick = TimeDelta::microseconds(1);
+    times
+        .iter()
+        .map(|time| {
+            time.map(|at| {
+                let mut placed = at;
+                while let Some(&stored) = latest
+                    .get(&millisecond(placed))
+                    .filter(|&&stored| placed <= stored)
+                {
+                    placed = stored + tick;
+                }
+                latest.insert(millisecond(at), placed);
+                latest.insert(millisecond(placed), placed);
+                placed
+            })
+        })
+        .collect()
 }
 
 fn millisecond(at: DateTime<Utc>) -> DateTime<Utc> {

@@ -1,8 +1,11 @@
+use sha2::Digest as _;
+use sha2::Sha256;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
 use wire::capture::SessionOrigin;
 use wire::capture::UNKNOWN_ORIGIN;
+use wire::capture::owned_import_key;
 use wire::message::Role;
 
 fn session(node: &str, conversation_id: &str, first_event: &str) -> BundledSession {
@@ -40,37 +43,77 @@ fn session(node: &str, conversation_id: &str, first_event: &str) -> BundledSessi
     }
 }
 
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+fn owned(owner: &str, session: &BundledSession) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(owned_import_key(owner, &session.import_batch()?.session_key)?.ok_or("an import key")?)
+}
+
 #[test]
-fn an_import_gets_its_own_session_key_and_keeps_the_original_in_its_origin()
--> Result<(), serde_json::Error> {
+fn an_import_names_its_origin_and_keeps_the_original_key_in_its_settings() -> TestResult {
     let known = session("desk", "c1", "evt-1");
 
     let batch = known.import_batch()?;
 
-    assert_eq!(batch.session_key, "import:desk:c1");
+    assert_eq!(batch.session_key, r#"import:["desk","c1"]"#);
     let origin: SessionOrigin = batch
         .settings
         .as_ref()
         .and_then(|settings| settings.get("origin").cloned())
         .map(serde_json::from_value)
         .transpose()?
-        .unwrap_or_else(|| panic!("no origin in {batch:?}"));
+        .ok_or("no origin")?;
     assert_eq!(origin.session_key, "claude-code:shared");
     Ok(())
 }
 
 #[test]
-fn a_version_one_session_key_is_a_stable_hash_of_what_it_carries() -> Result<(), serde_json::Error>
-{
-    let first = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
-    let same = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
-    let other = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-9");
+fn the_receiver_key_hashes_the_owner_with_the_origin() -> TestResult {
+    let known = session("desk", "c1", "evt-1");
 
-    let key = first.receiver_session_key()?;
+    let key = owned("alex", &known)?;
 
-    assert_eq!(key, same.receiver_session_key()?);
-    assert!(key.starts_with("import:unknown:"), "{key}");
-    assert_eq!(key.len(), "import:unknown:".len() + 32, "{key}");
-    assert_ne!(key, other.receiver_session_key()?);
+    let digest = hex::encode(Sha256::digest(r#"["alex","desk","c1"]"#));
+    assert_eq!(key, format!("import:{digest}"));
+    assert_ne!(key, owned("bob", &known)?);
     Ok(())
+}
+
+#[test]
+fn origins_that_join_to_the_same_text_get_different_keys() -> TestResult {
+    assert_ne!(
+        owned("team", &session("lab:x", "c", "evt-1"))?,
+        owned("team", &session("lab", "x:c", "evt-1"))?
+    );
+    Ok(())
+}
+
+#[test]
+fn a_version_one_key_is_a_stable_hash_of_what_the_session_carries() -> TestResult {
+    let first = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
+
+    let key = owned("alex", &first)?;
+
+    let digest = hex::encode(Sha256::digest(
+        r#"["alex","unknown","claude-code:shared","rivet","evt-1"]"#,
+    ));
+    assert_eq!(key, format!("import:{digest}"));
+    assert_ne!(
+        key,
+        owned("alex", &session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-9"))?
+    );
+    Ok(())
+}
+
+#[test]
+fn a_key_that_does_not_name_an_origin_is_refused() {
+    let hashed = format!("import:{}", "0".repeat(64));
+
+    for refused in [hashed.as_str(), "import:[]", "import:desk:c1"] {
+        assert!(owned_import_key("bob", refused).is_err(), "{refused}");
+    }
+    assert_eq!(
+        owned_import_key("bob", "claude-code:s").ok().flatten(),
+        None
+    );
 }

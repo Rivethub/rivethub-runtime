@@ -81,6 +81,16 @@ async fn import(
         .await?)
 }
 
+fn receiver_key(
+    owner: &str,
+    session: &BundledSession,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(
+        wire::capture::owned_import_key(owner, &session.import_batch()?.session_key)?
+            .ok_or("an import key")?,
+    )
+}
+
 #[derive(sqlx::FromRow)]
 struct Stored {
     owner_user_id: String,
@@ -130,7 +140,7 @@ async fn imported_conversation_keeps_origin_dates_and_receiver_owner(pool: PgPoo
     .fetch_all(&pool)
     .await?;
     assert_eq!(owners, ["alex"]);
-    let receiver_key = session.receiver_session_key()?;
+    let receiver_key = receiver_key("alex", &session)?;
     let origins = store
         .lookup_origins(vec![receiver_key.clone(), "claude-code:shared".to_owned()])
         .await?;
@@ -239,7 +249,7 @@ async fn an_import_lands_beside_a_native_conversation_with_the_same_session_key(
     let receiver = conversation(&pool, &imported.conversation_id).await?;
     assert_eq!(
         receiver.session_key,
-        "import:desk:7b0e7d1c-0000-4000-8000-000000000001"
+        receiver_key("alex", &phils_session()?)?
     );
     assert_eq!(receiver.title.as_deref(), Some("sqlite bundle migration"));
     Ok(())
@@ -411,5 +421,195 @@ async fn messages_sharing_a_millisecond_export_in_bundle_order(pool: PgPool) -> 
             .collect();
         assert_eq!(order, steps, "{}", session.origin.session_key);
     }
+    Ok(())
+}
+
+fn team() -> wire::capture::BundleAuthor {
+    wire::capture::BundleAuthor {
+        user: "team".to_owned(),
+        node: "team".to_owned(),
+    }
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_older_bundle_keeps_a_newer_title(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let mut newer = phils_session()?;
+    newer.origin.updated_at = Some(at("2026-10-20T10:00:00Z")?);
+    newer.batch.title = Some("Wombat plan final".to_owned());
+    let mut older = phils_session()?;
+    older.origin.updated_at = Some(at("2026-10-02T10:00:00Z")?);
+    older.batch.title = Some("Wombat draft".to_owned());
+    let first = import(&store, "alex", &newer).await?;
+    import(&store, "alex", &older).await?;
+    let after_older = conversation(&pool, &first.conversation_id).await?;
+    sqlx::query("update rh_conversations set title = 'Receiver title' where id = $1")
+        .bind(Uuid::parse_str(&first.conversation_id)?)
+        .execute(&pool)
+        .await?;
+
+    import(&store, "alex", &older).await?;
+
+    let renamed = conversation(&pool, &first.conversation_id).await?;
+    assert_eq!(after_older.title.as_deref(), Some("Wombat plan final"));
+    assert_eq!(renamed.title.as_deref(), Some("Receiver title"));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_client_cannot_post_into_another_owners_import(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let alexs = import(&store, "alex", &phils_session()?).await?;
+    let target = conversation(&pool, &alexs.conversation_id).await?;
+    let mut forged = phils_session()?.import_batch()?;
+    forged.session_key = target.session_key.clone();
+    forged.messages = vec![said(
+        "evt-bob",
+        "bob slipped in",
+        at("2026-10-14T12:00:00Z")?,
+    )];
+
+    let posted = capture_live(&store, "bob", &forged).await;
+
+    assert!(
+        matches!(&posted, Err(error) if error.to_string().contains("import")),
+        "{posted:?}"
+    );
+    let messages: Vec<String> = sqlx::query_scalar("select content from rh_messages order by 1")
+        .fetch_all(&pool)
+        .await?;
+    assert_eq!(messages, ["digest matches now", "move the bundle reader"]);
+    Ok(())
+}
+
+fn assert_in_order(order: &[String], expected: &[String]) {
+    let first_wrong = order
+        .iter()
+        .zip(expected)
+        .position(|(got, wanted)| got != wanted);
+    assert_eq!(
+        (first_wrong, order.len()),
+        (None, expected.len()),
+        "got {:?}",
+        order
+            .iter()
+            .skip(first_wrong.unwrap_or(0))
+            .take(8)
+            .collect::<Vec<_>>()
+    );
+}
+
+async fn exported_order(store: &PostgresMemory) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let [session] = store
+        .bundled_sessions(&team(), None)
+        .await?
+        .try_into()
+        .map_err(|_| "one session")?;
+    Ok(session
+        .batch
+        .messages
+        .into_iter()
+        .map(|message| message.event_id)
+        .collect())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_millisecond_past_1000_ties_keeps_the_batch_order(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let tied = at("2026-10-14T09:00:00.123Z")?;
+    let next = at("2026-10-14T09:00:00.124Z")?;
+    let mut steps: Vec<String> = (1..=1002).map(|step| format!("step-{step:04}")).collect();
+    let mut session = phils_session()?;
+    session.batch.messages = steps.iter().map(|step| said(step, step, tied)).collect();
+    session
+        .batch
+        .messages
+        .push(said("step-last", "step-last", next));
+    steps.push("step-last".to_owned());
+
+    import(&store, "team", &session).await?;
+
+    assert_in_order(&exported_order(&store).await?, &steps);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn ties_past_1000_land_after_a_message_stored_in_the_next_millisecond(
+    pool: PgPool,
+) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let tied = at("2026-10-14T09:00:00.123Z")?;
+    let next = at("2026-10-14T09:00:00.124Z")?;
+    let stored: Vec<String> = (1..=5).map(|step| format!("stored-{step}")).collect();
+    let mut first = phils_session()?;
+    first.batch.messages = stored.iter().map(|step| said(step, step, next)).collect();
+    let mut second = phils_session()?;
+    let steps: Vec<String> = (1..=1005).map(|step| format!("step-{step:04}")).collect();
+    second.batch.messages = steps.iter().map(|step| said(step, step, tied)).collect();
+
+    import(&store, "team", &first).await?;
+    import(&store, "team", &second).await?;
+
+    let mut expected = steps.clone();
+    expected.splice(1000..1000, stored);
+    assert_in_order(&exported_order(&store).await?, &expected);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn times_finer_than_a_microsecond_keep_the_batch_order(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let store = PostgresMemory::new(pool.clone());
+    let mut batch = alexs_native_session()?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("n{step}")).collect();
+    batch.messages = steps
+        .iter()
+        .zip(1..)
+        .map(|(step, tenth)| {
+            Ok(said(
+                step,
+                step,
+                at(&format!("2026-10-01T09:00:00.0000000{tenth}Z"))?,
+            ))
+        })
+        .collect::<Result<_, chrono::ParseError>>()?;
+    let owner = Owner::new("team".to_owned())?;
+
+    store
+        .capture_batch(
+            &kernel::memory::CaptureBatchRequest {
+                session_key: batch.session_key,
+                agent: batch.agent,
+                channel: batch.channel,
+                title: None,
+                settings: None,
+                task_id: None,
+                finalize: None,
+                created_at: None,
+                updated_at: None,
+                messages: batch
+                    .messages
+                    .into_iter()
+                    .map(|message| kernel::memory::CaptureMessage {
+                        event_id: message.event_id,
+                        role: message.role,
+                        content: message.content,
+                        tool_name: None,
+                        tool_args: None,
+                        tool_result: None,
+                        metadata: None,
+                        created_at: message.created_at,
+                    })
+                    .collect(),
+            },
+            &CaptureOptions::owned_by(&owner),
+        )
+        .await?;
+
+    assert_eq!(exported_order(&store).await?, steps);
     Ok(())
 }

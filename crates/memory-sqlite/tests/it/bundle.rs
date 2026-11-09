@@ -303,7 +303,9 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
     assert_eq!(column("created_at"), Some("2026-10-14T09:00:00.000Z"));
     assert_eq!(column("updated_at"), Some("2026-10-14T09:00:00.000Z"));
     assert_eq!(column("owner_user_id"), Some("bob"));
-    let receiver_key = session.receiver_session_key()?;
+    let receiver_key =
+        wire::capture::owned_import_key("bob", &session.import_batch()?.session_key)?
+            .ok_or("an import key")?;
     assert_eq!(column("session_key"), Some(receiver_key.as_str()));
     let origins = destination
         .store
@@ -464,5 +466,55 @@ async fn a_reimport_merges_settings_and_keeps_the_newest_origin() -> TestResult 
         updated(&after_newer),
         Some(instant("2026-10-20T00:00:00.000Z")?)
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_older_bundle_keeps_a_newer_title() -> TestResult {
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+    let titled = |updated: &str, title: &str| {
+        let mut batch = imported(updated, "opus")?;
+        batch.title = Some(title.to_owned());
+        Ok::<_, Box<dyn std::error::Error>>(batch)
+    };
+    let title = || async {
+        let rows = table(&destination.store, "ros_conversations").await?;
+        let row = rows.first().ok_or("conversation")?;
+        Ok::<_, Box<dyn std::error::Error>>(
+            row.get("title")
+                .and_then(testkit::Json::as_str)
+                .map(str::to_owned),
+        )
+    };
+    let first = destination
+        .store
+        .capture(
+            titled("2026-10-20T00:00:00.000Z", "Wombat plan final")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let older = titled("2026-10-02T00:00:00.000Z", "Wombat draft")?;
+    destination
+        .store
+        .capture(older.clone(), &bob, None, later)
+        .await?;
+    let after_older = title().await?;
+    execute(
+        &destination.store,
+        &format!(
+            "UPDATE ros_conversations SET title = 'Receiver title' WHERE id = '{}'",
+            first.conversation_id
+        ),
+    )
+    .await?;
+
+    destination.store.capture(older, &bob, None, later).await?;
+
+    assert_eq!(after_older.as_deref(), Some("Wombat plan final"));
+    assert_eq!(title().await?.as_deref(), Some("Receiver title"));
     Ok(())
 }

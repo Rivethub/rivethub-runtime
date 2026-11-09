@@ -117,8 +117,37 @@ pub fn is_imported_session(session_key: &str) -> bool {
     session_key.starts_with(IMPORTED_SESSION_PREFIX)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "an import session key is import: followed by a JSON array of strings naming its origin, not {session_key:?}"
+)]
+pub struct ImportKeyError {
+    pub session_key: String,
+}
+
+pub fn owned_import_key(owner: &str, session_key: &str) -> Result<Option<String>, ImportKeyError> {
+    let Some(identity) = session_key.strip_prefix(IMPORTED_SESSION_PREFIX) else {
+        return Ok(None);
+    };
+    let malformed = || ImportKeyError {
+        session_key: session_key.to_owned(),
+    };
+    let identity: Vec<String> = serde_json::from_str(identity).map_err(|_| malformed())?;
+    if identity.is_empty() {
+        return Err(malformed());
+    }
+    let preimage: Vec<&str> = std::iter::once(owner)
+        .chain(identity.iter().map(String::as_str))
+        .collect();
+    let canonical = serde_json::to_string(&preimage).map_err(|_| malformed())?;
+    Ok(Some(format!(
+        "{IMPORTED_SESSION_PREFIX}{}",
+        hex::encode(Sha256::digest(canonical))
+    )))
+}
+
 impl BundledSession {
-    pub fn receiver_session_key(&self) -> Result<String, serde_json::Error> {
+    fn import_identity(&self) -> Vec<&str> {
         let origin = &self.origin;
         if origin.node == UNKNOWN_ORIGIN || origin.conversation_id == UNKNOWN_ORIGIN {
             let first = self
@@ -126,23 +155,18 @@ impl BundledSession {
                 .messages
                 .first()
                 .map_or("", |message| message.event_id.as_str());
-            let identity = serde_json::to_string(&(&origin.session_key, &origin.agent, first))?;
-            let digest = hex::encode(Sha256::digest(identity));
-            Ok(format!(
-                "{IMPORTED_SESSION_PREFIX}{UNKNOWN_ORIGIN}:{}",
-                digest.get(..32).unwrap_or(&digest)
-            ))
+            vec![UNKNOWN_ORIGIN, &origin.session_key, &origin.agent, first]
         } else {
-            Ok(format!(
-                "{IMPORTED_SESSION_PREFIX}{}:{}",
-                origin.node, origin.conversation_id
-            ))
+            vec![&origin.node, &origin.conversation_id]
         }
     }
 
     pub fn import_batch(&self) -> Result<CaptureBatchRequest, serde_json::Error> {
         let mut batch = self.batch.clone();
-        batch.session_key = self.receiver_session_key()?;
+        batch.session_key = format!(
+            "{IMPORTED_SESSION_PREFIX}{}",
+            serde_json::to_string(&self.import_identity())?
+        );
         batch
             .settings
             .get_or_insert_default()
@@ -151,28 +175,56 @@ impl BundledSession {
         batch.updated_at = self.origin.updated_at.or(batch.updated_at);
         Ok(batch)
     }
+
+    #[must_use]
+    pub fn forwarding_stored_origin(mut self) -> Self {
+        if !is_imported_session(&self.batch.session_key) {
+            return self;
+        }
+        let Some(origin) = self.batch.settings.as_ref().and_then(SessionOrigin::of) else {
+            return self;
+        };
+        self.batch.session_key.clone_from(&origin.session_key);
+        self.batch.created_at = origin.created_at.or(self.batch.created_at);
+        self.batch.updated_at = origin.updated_at.or(self.batch.updated_at);
+        self.origin = origin;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedSettings {
+    pub settings: JsonObject,
+    pub incoming_is_newer: bool,
 }
 
 pub fn merge_imported_settings(
     stored: Option<&JsonObject>,
     incoming: Option<&JsonObject>,
-) -> Result<JsonObject, serde_json::Error> {
+) -> Result<ImportedSettings, serde_json::Error> {
     let empty = JsonObject::default();
     let incoming = incoming.unwrap_or(&empty);
     let Some(stored) = stored else {
-        return Ok(incoming.clone());
+        return Ok(ImportedSettings {
+            settings: incoming.clone(),
+            incoming_is_newer: true,
+        });
     };
     let updated =
         |settings: &JsonObject| SessionOrigin::of(settings).and_then(|origin| origin.updated_at);
-    let (mut merged, winner) = if updated(incoming) >= updated(stored) {
+    let incoming_is_newer = updated(incoming) >= updated(stored);
+    let (mut settings, winner) = if incoming_is_newer {
         (stored.clone(), incoming)
     } else {
         (incoming.clone(), stored)
     };
     for (key, value) in winner.as_map() {
-        merged.insert(key, value)?;
+        settings.insert(key, value)?;
     }
-    Ok(merged)
+    Ok(ImportedSettings {
+        settings,
+        incoming_is_newer,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

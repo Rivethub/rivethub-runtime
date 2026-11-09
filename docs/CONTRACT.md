@@ -1638,13 +1638,18 @@ version 1 files included, and writes nothing. `--dry-run` reads and checks the f
 nothing; it needs no `--force`. The report reads `ingested <n> sessions from <authors>[ (raw bundle forced)]:
 <inserted> inserted, <skipped> skipped`. An author of `unknown` (every version 1 session) reads `an unknown author`.
 
-An import never writes into a conversation the receiver captured itself. Each session is posted under its own
-receiver session key, `import:<origin.node>:<origin.conversation_id>`; when the node or conversation id is `unknown`,
-the key is `import:unknown:` and the first 32 hex digits of the SHA-256 of the JSON array `[origin.session_key,
-origin.agent, <first message event_id or "">]`. The session's own `session_key` stays in `settings.origin`, which
-holds the session's `origin`. Ingesting the same bundle again reaches the same conversation and adds no messages,
-since event ids it already has are skipped. The receiver still records the user it authenticated as the owner: the
-origin is attribution only.
+An import never writes into a conversation the receiver captured itself, and two users who import the same session get
+a conversation each. `ingest-bundle` posts each session under `import:` followed by a JSON array of strings naming
+its origin: `[origin.node, origin.conversation_id]`, or, when the node or conversation id is `unknown`,
+`["unknown", origin.session_key, origin.agent, <first message event_id or "">]`. Capture on either store turns that
+key into the conversation's key, `import:` and the lowercase hex SHA-256 of the compact JSON array of the owner it
+records the batch as (the user the gateway authenticated) followed by the posted strings: `[owner, node,
+conversation_id]` or `[owner, "unknown", session_key, agent, event_id]`. A client names only the origin, never the
+owner, so it cannot post into another user's import; a batch whose key starts with `import:` but is not followed by a
+non-empty JSON array of strings is an invalid request (HTTP 400 from the gateway). The readable node, conversation id
+and session key stay in `settings.origin`, which holds the session's `origin`. Ingesting the same bundle again as the
+same user reaches the same conversation and adds no messages, since event ids it already has are skipped. The
+receiver still records the user it authenticated as the owner: the origin is attribution only.
 
 A capture batch whose `session_key` starts with `import:` is an import. Postgres honours a batch's `created_at` and
 `updated_at` only for an import: a new import conversation takes them (else `now()`), and a later import into it sets
@@ -1652,15 +1657,23 @@ A capture batch whose `session_key` starts with `import:` is an import. Postgres
 capture keeps the conversation dates it had before: created and updated at `now()`. SQLite already took batch dates
 for every capture and still does. On an import into an existing conversation, both stores merge `settings` key by
 key: when the batch's `origin.updated_at` is equal to or later than the stored one (an origin with no `updated_at`,
-or one that does not parse, counts as earliest), the batch's keys win, else the stored keys win; a key only one side has is kept either way.
+or one that does not parse, counts as earliest), the batch's keys and its title win, else the stored keys and the
+stored title (a receiver rename included) stay; a key only one side has is kept either way.
 
-Bundle times have millisecond precision, so messages can share a time. Postgres capture places each new dated
-message by its millisecond: when the conversation already holds a message in that millisecond (stored, or written
-earlier in the same batch) at the same or a later time, the message is stored 1 µs after the latest of them; otherwise
-it keeps its time. So only ties move, a message never moves earlier, and a message that ties stored ones lands after
-them all. A millisecond that takes more than 1000 messages runs on into the next millisecond; within one batch the
-order still holds, but a later batch's tie with that millisecond is placed after the latest message stored inside it
-and can share a time with one of the overflow. SQLite keeps the order through its row order.
+`rh memory bundle` exports an `import:` conversation whose `settings.origin` parses with that stored origin as its
+`origin` (author, node, conversation id, session key, agent and dates), its batch `session_key` set to the origin's,
+and the origin's dates as the batch dates, so a session passed on from user to user stays credited to its first
+author with its first dates.
+
+Postgres stores times to the microsecond, so capture truncates finer message times to the microsecond before it
+places them. Bundle times have millisecond precision, so messages can share a time. Postgres capture, live capture
+included, places each new dated message by its millisecond: when the conversation already holds a message in that
+millisecond (stored, or written earlier in the same batch) at the same or a later time, the message is stored 1 µs
+after the latest of them; otherwise it keeps its time. So only ties move, a message never moves earlier, and a
+message that ties stored ones lands after them all. A millisecond that takes more than 1000 messages runs on into
+the next millisecond, and the messages that run on are placed the same way there, after any message stored or
+written earlier in that millisecond, so the order holds within a batch and across batches. SQLite keeps the order
+through its row order.
 
 `memory_search` appends `from <author> · <origin created_at as a local date>` to the heading of a message hit whose
 conversation key starts with `import:` and whose `settings.origin` parses as an origin (`from <author>` when the

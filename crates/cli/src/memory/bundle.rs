@@ -206,6 +206,10 @@ pub(super) async fn share(
     if let Some(named) = &named {
         refuse_missing(named, &sessions)?;
     }
+    let sessions: Vec<BundledSession> = sessions
+        .into_iter()
+        .map(BundledSession::forwarding_stored_origin)
+        .collect();
     let count = sessions.len();
     let mut text = capture::bundle::seal(author, Utc::now(), sessions)?.text;
     text.push(b'\n');

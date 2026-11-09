@@ -73,7 +73,7 @@ impl SqliteStore {
         node: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<CaptureResult, SqliteError> {
-        let prepared = PreparedBatch::new(batch, node)?;
+        let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
         let embed = self.embed_armed();
         let result = self
@@ -101,10 +101,18 @@ impl SqliteStore {
 }
 
 impl PreparedBatch {
-    fn new(batch: CaptureBatchRequest, node: Option<&str>) -> Result<Self, SqliteError> {
+    fn new(
+        batch: CaptureBatchRequest,
+        owner: &Owner,
+        node: Option<&str>,
+    ) -> Result<Self, SqliteError> {
         let created_at = crate::time::Stamp::from(batch.created_at);
         let updated_at = crate::time::Stamp::from(batch.updated_at);
-        let imported = wire::capture::is_imported_session(&batch.session_key);
+        let owned_key = wire::capture::owned_import_key(owner.as_str(), &batch.session_key)
+            .map_err(|error| SqliteError::Invalid {
+                message: error.to_string(),
+            })?;
+        let imported = owned_key.is_some();
         let messages = batch
             .messages
             .iter()
@@ -112,7 +120,7 @@ impl PreparedBatch {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             key: ConversationKey {
-                session_key: batch.session_key,
+                session_key: owned_key.unwrap_or(batch.session_key),
                 agent: batch.agent,
             },
             channel: batch.channel,
@@ -237,17 +245,18 @@ impl PreparedBatch {
         now: DateTime<Utc>,
     ) -> Result<(), SqliteError> {
         let updated_at = self.updated_at.at(now).max(stored_updated_at);
-        let settings = if self.imported {
+        let (settings, title) = if self.imported {
             let stored = stored_settings(tx, id)?;
-            Some(
+            let merged =
                 wire::capture::merge_imported_settings(stored.as_ref(), self.settings.as_ref())
                     .map_err(|source| SqliteError::Encode {
                         column: "settings",
                         source,
-                    })?,
-            )
+                    })?;
+            let title = self.title.as_ref().filter(|_| merged.incoming_is_newer);
+            (Some(merged.settings), title)
         } else {
-            self.settings.clone()
+            (self.settings.clone(), self.title.as_ref())
         };
         let settings = settings
             .map(|settings| encode(&settings, "settings"))
@@ -263,7 +272,7 @@ impl PreparedBatch {
             params![
                 id,
                 time::stamp(updated_at),
-                self.title,
+                title,
                 settings,
                 self.task_id,
                 owner,

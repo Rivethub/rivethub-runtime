@@ -56,6 +56,8 @@ pub enum Error {
     DumpMessage(String),
     #[error("merge: {0}")]
     Merge(String),
+    #[error(transparent)]
+    ImportKey(#[from] wire::capture::ImportKeyError),
     #[error("{operation} failed: {message}")]
     Operation {
         operation: &'static str,
@@ -118,7 +120,8 @@ impl From<Error> for MemoryStoreError {
             | Error::DumpDuplicate { .. }
             | Error::DumpCancelled
             | Error::DumpMessage(_)
-            | Error::Merge(_) => Self::InvalidRequest {
+            | Error::Merge(_)
+            | Error::ImportKey(_) => Self::InvalidRequest {
                 message: value.to_string(),
             },
             Error::Integer(_)
@@ -187,7 +190,8 @@ impl From<Error> for JobQueueError {
             | Error::DumpDuplicate { .. }
             | Error::DumpCancelled
             | Error::DumpMessage(_)
-            | Error::Merge(_) => Self::Unavailable(Box::new(value)),
+            | Error::Merge(_)
+            | Error::ImportKey(_) => Self::Unavailable(Box::new(value)),
             error @ Error::StoredValue { .. } => Self::Claim {
                 message: error.to_string(),
                 source: Box::new(error),
