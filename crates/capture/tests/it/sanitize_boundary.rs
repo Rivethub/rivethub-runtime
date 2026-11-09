@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
+
 use capture::sanitize;
 use capture::sanitize::Policy;
 use chrono::DateTime;
 use chrono::Utc;
-use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
@@ -165,28 +166,18 @@ fn colliding_keys_keep_both_values_and_are_reported() -> TestResult {
     noted.metadata = Some(serde_json::from_str(r#"{"Matt": 1, "matt": 2}"#)?);
     let input = raw(vec![session("col", vec![noted])])?;
     let out = sanitize::run(&input, &policy(mapping)?, at()?)?;
-    let metadata: &JsonObject = out
+    let counts: BTreeMap<String, i64> = out
         .sealed
         .bundle
         .sessions
         .first()
         .and_then(|session| session.batch.messages.first())
         .and_then(|message| message.metadata.as_ref())
-        .ok_or("no metadata")?;
-    let mut keys: Vec<&str> = metadata.as_map().keys().map(String::as_str).collect();
-    keys.sort_unstable();
-    assert_eq!(keys, ["[REDACTED]", "[REDACTED]#2"]);
+        .ok_or("no metadata")?
+        .deserialize()?;
     assert_eq!(
-        metadata
-            .get("[REDACTED]")
-            .and_then(serde_json::Value::as_i64),
-        Some(1)
-    );
-    assert_eq!(
-        metadata
-            .get("[REDACTED]#2")
-            .and_then(serde_json::Value::as_i64),
-        Some(2)
+        counts,
+        BTreeMap::from([("[REDACTED]".to_owned(), 1), ("[REDACTED]#2".to_owned(), 2)])
     );
     let markdown = out.report.markdown("s.json", "m.toml");
     assert!(markdown.contains("`[REDACTED]#2`"), "{markdown}");
