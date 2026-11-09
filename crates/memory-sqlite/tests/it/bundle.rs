@@ -102,6 +102,26 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
         .bundled_sessions(phil(), Some(vec![private.conversation_id]))
         .await?;
     assert_eq!(named, Vec::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bundled_batch_is_recorded_as_the_receivers_own() -> TestResult {
+    let source = fresh_store()?;
+    let phil_owner = Owner::new("phil".to_owned())?;
+    let now = instant("2026-11-02T18:00:00.000Z")?;
+    let mut first = batch("claude-code:one", "rivet", "claude-code");
+    first
+        .messages
+        .push(message("evt-1", Role::User, "ship the bundle"));
+    first.messages.push(message(
+        "evt-2",
+        Role::Assistant,
+        "the file names its author",
+    ));
+    source.store.capture(first, &phil_owner, None, now).await?;
+    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let pairing = exported.first().ok_or("pairing session")?;
 
     let received: CaptureBatchRequest =
         serde_json::from_value(serde_json::to_value(&pairing.batch)?)?;

@@ -55,6 +55,7 @@ pub fn parse(text: &str) -> Result<SessionBundle, BundleError> {
     }
 }
 
+#[derive(Debug)]
 pub struct Sealed {
     pub bundle: SessionBundle,
     pub text: Vec<u8>,
@@ -78,16 +79,14 @@ pub fn seal(
     };
     let covered = covered_json(&bundle)?;
     let digest = hex::encode(Sha256::digest(&covered));
-    let text = with_digest(&covered, &digest)?;
+    let text = with_digest_first_in_manifest(&covered, &digest)?;
     bundle.manifest.bundle_sha256 = digest;
     Ok(Sealed { bundle, text })
 }
 
 const MANIFEST_OPEN: &[u8] = br#"{"manifest":{"#;
 
-// Canonical JSON sorts keys, so the covered text opens with the manifest and `bundle_sha256` sorts before every other
-// manifest key: inserting it there yields the canonical JSON of the whole sealed bundle without serializing it again.
-fn with_digest(covered: &[u8], digest: &str) -> Result<Vec<u8>, BundleError> {
+fn with_digest_first_in_manifest(covered: &[u8], digest: &str) -> Result<Vec<u8>, BundleError> {
     let Some(rest) = covered.strip_prefix(MANIFEST_OPEN) else {
         return Err(BundleError::Layout);
     };

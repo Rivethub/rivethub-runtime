@@ -261,8 +261,6 @@ struct Member {
     end: usize,
 }
 
-// Entries are written in arrival order, each recorded as the byte range of `"key":value`; `close` rewrites the range
-// in key order only when they did not already arrive sorted.
 struct Members<'a> {
     out: &'a mut Vec<u8>,
     body: usize,

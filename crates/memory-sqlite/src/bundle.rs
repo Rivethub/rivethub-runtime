@@ -84,7 +84,6 @@ fn read_bundle(
     if let Some(session) = current {
         sessions.push(session);
     }
-    // Rows arrive in the message index's order: sorting conversations in SQL would sort every message row instead.
     sessions.sort_by(|left, right| {
         (left.origin.created_at, &left.origin.conversation_id)
             .cmp(&(right.origin.created_at, &right.origin.conversation_id))
