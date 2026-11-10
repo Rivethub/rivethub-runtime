@@ -19,6 +19,8 @@ pub trait SessionShare: Send + Sync + std::fmt::Debug {
     async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure>;
 
     async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure>;
+
+    fn redact(&self, text: &str) -> String;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

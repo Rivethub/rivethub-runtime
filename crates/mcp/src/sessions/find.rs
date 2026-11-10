@@ -31,13 +31,16 @@ pub(crate) struct Ranked {
     pub(crate) excerpts: Vec<String>,
 }
 
-pub(crate) fn group(results: &[MemorySearchResult]) -> Vec<Ranked> {
+pub(crate) fn group(
+    results: &[MemorySearchResult],
+    redact: impl Fn(&str) -> String,
+) -> Vec<Ranked> {
     let mut ranked: Vec<Ranked> = Vec::new();
     for hit in results {
         let Some(key) = &hit.session_id else {
             continue;
         };
-        let excerpt = excerpt(&hit.content);
+        let excerpt = excerpt(&redact(&hit.content));
         match ranked.iter_mut().find(|session| session.key == *key) {
             Some(session) => {
                 session.best = session.best.max(hit.relevance_score);
@@ -113,7 +116,7 @@ pub(crate) async fn find(
             synthesize: Some(false),
         })
         .await?;
-    let ranked = group(&outcome.results);
+    let ranked = group(&outcome.results, |text| kit.share.redact(text));
     let keys: Vec<String> = ranked.iter().map(|session| session.key.clone()).collect();
     let digests = if keys.is_empty() {
         Vec::new()
@@ -129,7 +132,13 @@ pub(crate) async fn find(
         }
     }
     found.truncate(wanted as usize);
-    Ok(crate::text(render(&query, &found, dropped, zone)?))
+    Ok(crate::text(render(
+        &query,
+        &found,
+        dropped,
+        zone,
+        |text| kit.share.redact(text),
+    )?))
 }
 
 fn render(
@@ -137,6 +146,7 @@ fn render(
     found: &[(&Ranked, &SessionDigest)],
     dropped: usize,
     zone: chrono_tz::Tz,
+    redact: impl Fn(&str) -> String,
 ) -> Result<String, Error> {
     let mut out = String::new();
     if found.is_empty() {
@@ -149,7 +159,10 @@ fn render(
             "{}. {}  \"{}\"  {}  {} to {}  {}  best {:.2} ({})",
             index + 1,
             digest.conversation_id,
-            digest.title.as_deref().unwrap_or("untitled"),
+            digest
+                .title
+                .as_deref()
+                .map_or_else(|| "untitled".to_owned(), &redact),
             digest.agent,
             day(digest.first),
             day(digest.last),

@@ -286,6 +286,10 @@ impl SessionShare for ScriptedShare {
         })
     }
 
+    fn redact(&self, text: &str) -> String {
+        text.to_owned()
+    }
+
     async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure> {
         let stub = read(&path)?;
         if stub.raw {

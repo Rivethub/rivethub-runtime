@@ -416,3 +416,30 @@ async fn a_bundle_goes_from_one_node_to_another_through_rh_mcp() -> TestResult {
     model.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn find_redacts_secrets_in_titles_and_excerpts() -> TestResult {
+    let token = concat!("ghp_", "PLANTEDfind8RmT2vLx9WcN4bKp7HyJ3dFs6Gt");
+    let seed = [batch(
+        "claude-code:delta",
+        &format!("rotation of {token}"),
+        "claude-code",
+        vec![said(
+            "evt-d1",
+            &format!("token rotation: export GITHUB_TOKEN={token} then rerun"),
+            "2026-10-16T09:00:00Z",
+        )],
+    )];
+    let phil = Node::new("phil", "http://127.0.0.1:9", &seed).await?;
+    let (refused, reply) = call(
+        &phil.server(false)?,
+        "session_find",
+        r#"{"query":"rotation"}"#,
+    )
+    .await?;
+    assert!(!refused, "{reply}");
+    assert!(reply.contains("token rotation"), "{reply}");
+    assert!(!reply.contains(token), "{reply}");
+    assert!(reply.contains("[REDACTED:"), "{reply}");
+    Ok(())
+}

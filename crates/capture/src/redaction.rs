@@ -64,6 +64,22 @@ fn env_opt_in(env: &Environment) -> bool {
 }
 
 impl Redaction {
+    #[must_use]
+    pub fn builtins() -> Self {
+        Self {
+            rules: Some(crate::rules::ruleset()),
+            patterns: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn redact_text(&self, text: &str) -> String {
+        match scan_text(text, self) {
+            Some((redacted, _)) => redacted,
+            None => text.to_owned(),
+        }
+    }
+
     pub fn redact_batch(&self, batch: &mut CaptureBatchRequest) -> u64 {
         let mut spans = 0;
         if let Some(title) = &mut batch.title {

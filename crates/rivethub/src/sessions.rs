@@ -63,6 +63,7 @@ struct NodeShare {
     key: PathBuf,
     decider: Result<Decider, SetupError>,
     redaction: Option<Redaction>,
+    excerpts: Redaction,
 }
 
 pub fn kit(
@@ -88,6 +89,7 @@ pub fn kit(
         key: share::key_path(env)?,
         decider: share::decider(config, false),
         redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
+        excerpts: Redaction::builtins(),
     };
     Ok(Sessions {
         share: Arc::new(share),
@@ -177,6 +179,10 @@ impl SessionShare for NodeShare {
         .await
         .map_err(failed)?;
         Ok(summary(&outcome, paths))
+    }
+
+    fn redact(&self, text: &str) -> String {
+        self.excerpts.redact_text(text)
     }
 
     async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure> {
