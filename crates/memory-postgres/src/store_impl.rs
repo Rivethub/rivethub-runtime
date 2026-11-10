@@ -113,7 +113,10 @@ impl crate::PostgresMemory {
             inserted += 1;
         }
         if batch.finalize == Some(true) {
-            writer.finalize_conversation(conversation_id).await?;
+            let imported = wire::capture::is_imported_session(&batch.session_key);
+            writer
+                .finalize_conversation(conversation_id, imported)
+                .await?;
         }
         writer.commit().await?;
         Ok(CaptureResult {

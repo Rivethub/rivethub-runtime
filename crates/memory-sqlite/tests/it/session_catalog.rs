@@ -133,3 +133,10 @@ async fn paging_walks_across_an_import() -> TestResult {
     let (_directory, store) = store()?;
     session_imports::paging_walks_across_an_import(&store, &store).await
 }
+
+#[tokio::test]
+async fn an_import_is_a_finished_record_ended_when_its_origin_ended() -> TestResult {
+    let (_directory, store) = store()?;
+    session_imports::an_import_is_a_finished_record_ended_when_its_origin_ended(&store, &store)
+        .await
+}

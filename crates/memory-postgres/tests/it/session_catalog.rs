@@ -443,3 +443,10 @@ async fn paging_walks_across_an_import(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool);
     session_imports::paging_walks_across_an_import(&memory, &memory).await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_import_is_a_finished_record_ended_when_its_origin_ended(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_imports::an_import_is_a_finished_record_ended_when_its_origin_ended(&memory, &memory)
+        .await
+}

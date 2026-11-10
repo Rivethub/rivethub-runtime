@@ -177,7 +177,12 @@ impl BundledSession {
             .get_or_insert_default()
             .insert("origin", &self.origin)?;
         batch.created_at = self.origin.created_at.or(batch.created_at);
-        batch.updated_at = self.origin.updated_at.or(batch.updated_at);
+        batch.updated_at = self
+            .origin
+            .updated_at
+            .or(batch.updated_at)
+            .or_else(|| batch.messages.iter().filter_map(|m| m.created_at).max());
+        batch.finalize = Some(true);
         Ok(batch)
     }
 

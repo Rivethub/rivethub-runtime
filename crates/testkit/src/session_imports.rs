@@ -305,3 +305,55 @@ pub async fn paging_walks_across_an_import(
     )?;
     Ok(())
 }
+
+pub async fn an_import_is_a_finished_record_ended_when_its_origin_ended(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+) -> Outcome {
+    let dated = bundle("alex", "desk", "conv-d", 50);
+    let mut undated = bundle("alex", "desk", "conv-e", 70);
+    undated.origin.updated_at = None;
+    let dated_key = imported(memory, &dated).await?;
+    let undated_key = imported(memory, &undated).await?;
+
+    let row = |key: &SessionKey| {
+        let key = key.clone();
+        async move { catalog.get(&key).await }
+    };
+    let first = row(&dated_key).await?.ok_or("the import is listed")?;
+    same(
+        "an import is not capturing",
+        first.memory != MemoryState::Capturing,
+        true,
+    )?;
+    same(
+        "it ended when the author last updated it",
+        first.ended_at,
+        dated.origin.updated_at,
+    )?;
+    let open = row(&undated_key).await?.ok_or("the undated import")?;
+    same(
+        "an undated import is not capturing",
+        open.memory != MemoryState::Capturing,
+        true,
+    )?;
+    same(
+        "an undated import ended at its last message",
+        open.ended_at,
+        Some(at(75)),
+    )?;
+
+    imported(memory, &dated).await?;
+    let again = row(&dated_key).await?.ok_or("the import is still listed")?;
+    same(
+        "importing the bundle again keeps it ended",
+        again.ended_at,
+        dated.origin.updated_at,
+    )?;
+    same(
+        "and still finished",
+        again.memory != MemoryState::Capturing,
+        true,
+    )?;
+    Ok(())
+}
