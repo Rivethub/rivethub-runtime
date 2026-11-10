@@ -408,6 +408,7 @@ async fn reads_refuse_hidden_directories_and_symlink_escapes() {
     let escaped = phil.outside.join("work.json");
     std::fs::copy(&bundle, &escaped).expect("outside copy");
     std::os::unix::fs::symlink(&escaped, phil.home.join("link.json")).expect("symlink");
+    std::fs::hard_link(hidden.join("work.json"), phil.home.join("hard.json")).expect("hard link");
 
     let cases = [
         (hidden.join("work.json"), "is inside a hidden directory"),
@@ -415,6 +416,7 @@ async fn reads_refuse_hidden_directories_and_symlink_escapes() {
             phil.home.join("link.json"),
             "is outside your home directory",
         ),
+        (phil.home.join("hard.json"), "has more than one hard link"),
     ];
     for (path, refusal) in cases {
         let result = support::call(

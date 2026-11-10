@@ -1,4 +1,5 @@
 use std::os::unix::fs::DirBuilderExt as _;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -27,6 +28,10 @@ pub enum PathRefusal {
     Hidden(PathBuf),
     #[error("refused: {0} is not a regular file")]
     NotAFile(PathBuf),
+    #[error(
+        "refused: {0} has more than one hard link, so it may be a file from a hidden directory; copy it instead"
+    )]
+    HardLinked(PathBuf),
     #[error("refused: {path} is not a .{wanted} file")]
     WrongKind { path: PathBuf, wanted: &'static str },
     #[error("cannot create the share directory {path}: {source}")]
@@ -170,11 +175,14 @@ impl ShareFiles {
         if !shared && inside.components().any(hidden) {
             return Err(PathRefusal::Hidden(path));
         }
-        if !tokio::fs::metadata(&path)
-            .await
-            .is_ok_and(|metadata| metadata.is_file())
-        {
+        let Ok(metadata) = tokio::fs::metadata(&path).await else {
             return Err(PathRefusal::NotAFile(path));
+        };
+        if !metadata.is_file() {
+            return Err(PathRefusal::NotAFile(path));
+        }
+        if metadata.nlink() > 1 {
+            return Err(PathRefusal::HardLinked(path));
         }
         if path
             .extension()
