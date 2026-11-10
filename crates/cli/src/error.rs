@@ -242,16 +242,8 @@ pub enum Error {
     Sanitize(#[from] capture::sanitize::SanitizeError),
     #[error(transparent)]
     SanitizeKey(#[from] capture::sanitize::KeyError),
-    #[error("the mapping file {path} is invalid: {source}")]
-    Mapping {
-        path: String,
-        source: capture::sanitize::mapping::MappingError,
-    },
-    #[error("the mapping file {path} could not be read: {source}")]
-    MappingRead {
-        path: String,
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Share(#[from] capture::share::ShareError),
     #[error("--mapping requires a file")]
     MappingRequired,
     #[error("--resolve requires the report file sanitize wrote")]
@@ -271,22 +263,8 @@ pub enum Error {
         path: String,
         source: capture::sanitize::marks::ReportError,
     },
-    #[error(
-        "--decide needs memory.sanitize.decide.url in the config (the decision model, for example http://<host>:8015)"
-    )]
-    DecideUnconfigured,
-    #[error("memory.sanitize.decide.threshold is {0}; set it above 0 and at most 1")]
-    DecideThreshold(f64),
-    #[error(
-        "memory.sanitize.decide.concurrency is {0}; set it from 1 to 8, since the decision model is a shared server"
-    )]
-    DecideConcurrency(usize),
-    #[error("memory.sanitize.decide.top is 0; set it to 1 or more")]
-    DecideTop,
     #[error("--block makes the decision-model review block ingest and needs --decide")]
     BlockWithoutDecide,
-    #[error("the decision pass failed, so no bundle was written: {0}")]
-    Decide(#[from] capture::sanitize::decide::DecideError),
     #[error(
         "{path} withholds {count} flagged chunk(s) until you mark them; mark them in the report and run rh memory sanitize --resolve <report>, or pass --force to ingest it with the chunks withheld"
     )]
