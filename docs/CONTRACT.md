@@ -2075,7 +2075,7 @@ startup, so a change to them needs a restart.
 `session_find {query, since?, before?, agent?, tag?, limit?}` (limit 1 to 25, default 10; times RFC 3339) is
 read-only. It runs a hybrid memory search for four hits per wanted session, at most 100, groups the hits by session
 key and ranks sessions by best score, then hit count, then latest hit. It reads the node owner's digest of each key
-(`SessionArchive::digests`: conversation id, title, agent, first and last message time, message count, and the origin
+(conversation id, title, agent, first and last message time, message count, and the origin
 author of an import) and drops hits whose key has no digest, such as a trashed session (note 127), saying how many.
 Each entry reads `<n>. <conversation id>  "<title>"  <agent>  <first> to <last>  <count> messages  best <score>
 (<hits> hits)`, plus `  from <author>` for an import, dates in the server's display zone, then up to three

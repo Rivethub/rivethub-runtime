@@ -3,10 +3,11 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-use capture::share::LOCAL_SUFFIX;
-use capture::share::REPORT_SUFFIX;
+use kernel::memory::share::ShareFailure;
 use serde::Deserialize;
 use thiserror::Error;
+use wire::capture::LOCAL_SUFFIX;
+use wire::capture::REPORT_SUFFIX;
 
 const NAME_MAX: usize = 100;
 const BUNDLE_EXTENSION: &str = "json";
@@ -28,10 +29,6 @@ pub enum PathRefusal {
     NotAFile(PathBuf),
     #[error("refused: {path} is not a .{wanted} file")]
     WrongKind { path: PathBuf, wanted: &'static str },
-    #[error(
-        "refused: {0} already exists; session tools never replace a file, so choose another out name"
-    )]
-    Exists(PathBuf),
     #[error("cannot create the share directory {path}: {source}")]
     Share {
         path: PathBuf,
@@ -201,10 +198,10 @@ fn hidden(part: Component<'_>) -> bool {
     }
 }
 
-pub(crate) async fn refuse_existing(paths: &[&Path]) -> Result<(), PathRefusal> {
+pub async fn refuse_existing(paths: &[&Path]) -> Result<(), ShareFailure> {
     for path in paths {
         if tokio::fs::symlink_metadata(path).await.is_ok() {
-            return Err(PathRefusal::Exists(path.to_path_buf()));
+            return Err(ShareFailure::Exists(path.to_path_buf()));
         }
     }
     Ok(())

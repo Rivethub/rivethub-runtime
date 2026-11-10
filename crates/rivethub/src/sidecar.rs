@@ -68,12 +68,6 @@ fn mcp_exit(error: &mcp::Error) -> Exit {
         | mcp::Error::Format(_)
         | mcp::Error::Path(_)
         | mcp::Error::Share(_)
-        | mcp::Error::Bundle(_)
-        | mcp::Error::Capture(_)
-        | mcp::Error::ImportBatch(_)
-        | mcp::Error::NotBundle(_)
-        | mcp::Error::UnknownSessions(_)
-        | mcp::Error::DecideUnconfigured
         | mcp::Error::RawBundle(_)
         | mcp::Error::BundleSecrets { .. }
         | mcp::Error::BundleWithheld { .. } => Exit::Failure,

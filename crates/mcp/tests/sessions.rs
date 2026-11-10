@@ -13,13 +13,12 @@ mod fixture;
 use fixture::RISKY;
 use fixture::appended;
 use fixture::at;
-use fixture::blocking;
 use fixture::id;
 use fixture::node;
 use fixture::path_text;
 use fixture::sessions;
 use fixture::text;
-use fixture::unconfigured;
+use kernel::memory::share::DecideMode;
 
 fn hit(key: &str, score: f64, content: &str, created_at: &str) -> MemorySearchResult {
     MemorySearchResult {
@@ -38,7 +37,7 @@ fn hit(key: &str, score: f64, content: &str, created_at: &str) -> MemorySearchRe
 
 #[tokio::test]
 async fn find_groups_hits_by_session() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     phil.store
         .set_search_outcome(SearchOutcome {
             results: vec![
@@ -118,25 +117,23 @@ async fn exported_and_sanitized(phil: &fixture::Node) -> std::path::PathBuf {
     let reply = text(&sanitized);
     assert_ne!(sanitized.is_error, Some(true), "{reply}");
     let clean = phil.share.join("work.clean.json");
-    let report = phil.share.join("work.clean.report.md");
-    assert!(
-        reply.contains(&format!("bundle: {}\n", path_text(&clean))),
-        "{reply}"
+    let report = path_text(&phil.share.join("work.clean.report.md"));
+    assert_eq!(
+        reply,
+        format!(
+            "sanitized 2 sessions: 1 replaced, 0 hashed\nbundle: {}\nreport: {report}\nchanges by rule: mapped 1\nnot scanned: dates\nbest effort\nshare only the bundle, never the report or the local review file; mark flags on their Mark lines in the report and run `rh memory sanitize --resolve {report}`\n",
+            path_text(&clean)
+        )
     );
-    assert!(
-        reply.contains(&format!("report: {}\n", path_text(&report))),
-        "{reply}"
-    );
-    assert!(report.is_file());
     clean
 }
 
 #[tokio::test]
 async fn export_then_sanitize_then_import_round_trips() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     let clean = exported_and_sanitized(&phil).await;
 
-    let ana = node("ana", Vec::new(), unconfigured()).await;
+    let ana = node("ana", Vec::new(), None).await;
     let downloads = ana.home.join("Downloads");
     std::fs::create_dir_all(&downloads).expect("downloads");
     let received = downloads.join("work.clean.json");
@@ -200,7 +197,7 @@ async fn export_then_sanitize_then_import_round_trips() {
 
 #[tokio::test]
 async fn import_refuses_raw_over_mcp() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     support::call(
         &phil.server,
         "session_export",
@@ -222,45 +219,9 @@ async fn import_refuses_raw_over_mcp() {
     assert_eq!(appended(&phil.store).await, Vec::new());
 }
 
-async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
-    let yes = if ask.state.contains(RISKY) {
-        0.88
-    } else {
-        0.05
-    };
-    axum::Json(Answer {
-        probabilities: [1.0 - yes, yes],
-    })
-}
-
-#[derive(serde::Deserialize)]
-struct Ask {
-    state: String,
-}
-
-#[derive(serde::Serialize)]
-struct Answer {
-    probabilities: [f64; 2],
-}
-
 #[tokio::test]
 async fn import_refuses_open_withheld_flags() {
-    let model = testkit::stub_server(
-        axum::Router::new()
-            .route("/v1/decide", axum::routing::post(decide))
-            .route(
-                "/v1/decide/info",
-                axum::routing::get(|| async { r#"{"model": "stub-model"}"# }),
-            ),
-    )
-    .await
-    .expect("stub model");
-    let phil = node(
-        "phil",
-        sessions(),
-        Ok(blocking(&format!("http://{}", model.addr))),
-    )
-    .await;
+    let phil = node("phil", sessions(), Some(DecideMode::Block)).await;
     support::call(
         &phil.server,
         "session_export",
@@ -278,9 +239,8 @@ async fn import_refuses_open_withheld_flags() {
     .await;
     let reply = text(&sanitized);
     assert_ne!(sanitized.is_error, Some(true), "{reply}");
-    assert!(reply.contains("1 flag open (block"), "{reply}");
     assert!(
-        reply.contains("flag 1  score 0.88  session 1 message 1 content  report line "),
+        reply.contains("decision pass: stub-model scored 2 chunks in 1 call, 0 trivial chunks skipped; 1 flag open (block: import refuses the bundle until every flag is marked)\nflag 1  score 0.88  session 1 message 1 content  report line 12  9 chars\n"),
         "{reply}"
     );
     assert!(!reply.contains(RISKY), "{reply}");
@@ -313,12 +273,11 @@ async fn import_refuses_open_withheld_flags() {
         text(&listed)
     );
     assert_eq!(appended(&phil.store).await, Vec::new());
-    model.close().await.expect("close stub");
 }
 
 #[tokio::test]
 async fn no_tool_accepts_a_remote_target() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     let outside = phil.outside.join("x.json");
     std::fs::write(&outside, "{}").expect("outside file");
     let refused = [
@@ -397,7 +356,7 @@ async fn no_tool_accepts_a_remote_target() {
 
 #[tokio::test]
 async fn export_never_replaces_an_existing_file() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     let arguments = format!(r#"{{"conversation_ids":["{}"],"out":"work.json"}}"#, id(1));
     support::call(&phil.server, "session_export", &arguments).await;
     let first = std::fs::read(phil.share.join("work.json")).expect("bundle");
@@ -414,7 +373,7 @@ async fn export_never_replaces_an_existing_file() {
 
 #[tokio::test]
 async fn export_refuses_an_unknown_id_by_name() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     let result = support::call(
         &phil.server,
         "session_export",
@@ -435,7 +394,7 @@ async fn export_refuses_an_unknown_id_by_name() {
 
 #[tokio::test]
 async fn reads_refuse_hidden_directories_and_symlink_escapes() {
-    let phil = node("phil", sessions(), unconfigured()).await;
+    let phil = node("phil", sessions(), None).await;
     support::call(
         &phil.server,
         "session_export",

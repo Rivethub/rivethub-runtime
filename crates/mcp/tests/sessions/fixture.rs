@@ -1,34 +1,40 @@
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use capture::sanitize::decide::Endpoint;
-use capture::sanitize::decide::Mode;
-use capture::sanitize::decide::Review;
-use capture::share::Decider;
-use capture::share::SetupError;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::MemoryStore as _;
-use kernel::memory::MemoryStoreError;
-use kernel::memory::SessionArchive;
 use kernel::memory::SessionDigest;
+use kernel::memory::share::DecideMode;
+use kernel::memory::share::DecisionSummary;
+use kernel::memory::share::FlagPlace;
+use kernel::memory::share::FlagSummary;
+use kernel::memory::share::ListedSession;
+use kernel::memory::share::OpenedBundle;
+use kernel::memory::share::SanitizeJob;
+use kernel::memory::share::SanitizeSummary;
+use kernel::memory::share::SanitizedBundle;
+use kernel::memory::share::SessionShare;
+use kernel::memory::share::ShareFailure;
 use kernel::owner::Owner;
 use mcp::Server;
 use mcp::sessions::Sessions;
 use mcp::sessions::ShareFiles;
 use rmcp::model::CallToolResult;
+use serde::Deserialize;
+use serde::Serialize;
 use tempfile::TempDir;
 use testkit::FakeMemoryStore;
 use testkit::MemoryRequest;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
+use wire::capture::LOCAL_SUFFIX;
+use wire::capture::REPORT_SUFFIX;
 use wire::capture::SessionOrigin;
 use wire::message::Role;
 
@@ -137,16 +143,62 @@ pub(crate) fn sessions() -> Vec<BundledSession> {
     ]
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Stub {
+    raw: bool,
+    withheld: usize,
+    sessions: Vec<BundledSession>,
+}
+
 #[derive(Debug)]
-pub(crate) struct FixtureArchive(Vec<BundledSession>);
+pub(crate) struct ScriptedShare {
+    sessions: Vec<BundledSession>,
+    decide: Option<DecideMode>,
+}
+
+fn write(path: &Path, stub: &Stub) {
+    std::fs::write(path, serde_json::to_vec(stub).expect("stub")).expect("write stub");
+}
+
+fn read(path: &Path) -> Result<Stub, ShareFailure> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or_else(|| ShareFailure::NotBundle(path.to_path_buf()))
+}
+
+fn beside(out: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{}{suffix}",
+        out.display().to_string().trim_end_matches(".json")
+    ))
+}
+
+fn kernel_batch(session: &BundledSession) -> kernel::memory::CaptureBatchRequest {
+    let batch = session.import_batch().expect("import batch");
+    serde_json::from_value(serde_json::to_value(batch).expect("batch")).expect("kernel batch")
+}
+
+pub(crate) fn flagged() -> FlagSummary {
+    FlagSummary {
+        number: 1,
+        score: 0.88,
+        place: Some(FlagPlace {
+            session: 0,
+            message: Some(0),
+            field: "content".to_owned(),
+            more: 0,
+        }),
+        report_line: Some(12),
+        chars: RISKY.chars().count(),
+    }
+}
 
 #[async_trait]
-impl SessionArchive for FixtureArchive {
-    type Session = BundledSession;
-
-    async fn digests(&self, keys: &[String]) -> Result<Vec<SessionDigest>, MemoryStoreError> {
+impl SessionShare for ScriptedShare {
+    async fn digests(&self, keys: &[String]) -> Result<Vec<SessionDigest>, ShareFailure> {
         Ok(self
-            .0
+            .sessions
             .iter()
             .filter(|session| keys.contains(&session.batch.session_key))
             .map(|session| {
@@ -171,16 +223,92 @@ impl SessionArchive for FixtureArchive {
             .collect())
     }
 
-    async fn export(&self, ids: &[Uuid]) -> Result<Vec<BundledSession>, MemoryStoreError> {
-        Ok(self
-            .0
-            .iter()
-            .filter(|session| {
-                ids.iter()
-                    .any(|id| id.to_string() == session.origin.conversation_id)
-            })
-            .cloned()
-            .collect())
+    async fn export(&self, ids: &[Uuid], out: PathBuf) -> Result<usize, ShareFailure> {
+        let mut chosen = Vec::new();
+        for id in ids {
+            match self
+                .sessions
+                .iter()
+                .find(|session| session.origin.conversation_id == id.to_string())
+            {
+                Some(session) => chosen.push(session.clone()),
+                None => return Err(ShareFailure::UnknownSessions(id.to_string())),
+            }
+        }
+        let count = chosen.len();
+        write(
+            &out,
+            &Stub {
+                raw: true,
+                withheld: 0,
+                sessions: chosen,
+            },
+        );
+        Ok(count)
+    }
+
+    async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
+        let mode = match (job.decide, self.decide) {
+            (false, _) => None,
+            (true, None) => return Err(ShareFailure::DecideUnconfigured),
+            (true, Some(mode)) => Some(mode),
+        };
+        let raw = read(&job.input)?;
+        let count = raw.sessions.len();
+        let report = beside(&job.out, REPORT_SUFFIX);
+        let local = mode.map(|_| beside(&job.out, LOCAL_SUFFIX));
+        write(
+            &job.out,
+            &Stub {
+                raw: false,
+                withheld: usize::from(mode == Some(DecideMode::Block)),
+                sessions: raw.sessions,
+            },
+        );
+        std::fs::write(&report, "report").expect("report");
+        Ok(SanitizeSummary {
+            sessions: count,
+            totals: "1 replaced, 0 hashed".to_owned(),
+            rule_counts: "mapped 1".to_owned(),
+            not_scanned: "not scanned: dates".to_owned(),
+            best_effort: "best effort".to_owned(),
+            bundle: job.out,
+            report,
+            local,
+            decision: mode.map(|mode| DecisionSummary {
+                model: "stub-model".to_owned(),
+                scored: 2,
+                calls: 1,
+                trivial: 0,
+                mode,
+                flags: vec![flagged()],
+            }),
+        })
+    }
+
+    async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure> {
+        let stub = read(&path)?;
+        if stub.raw {
+            return Ok(OpenedBundle::Raw);
+        }
+        Ok(OpenedBundle::Sanitized(SanitizedBundle {
+            secrets: None,
+            withheld: stub.withheld,
+            unreviewed: 0,
+            sessions: stub
+                .sessions
+                .iter()
+                .map(|session| ListedSession {
+                    key: session.origin.session_key.clone(),
+                    agent: session.origin.agent.clone(),
+                    messages: session.batch.messages.len(),
+                    author: session.origin.author.clone(),
+                    dates: session.origin.created_at.zip(session.origin.updated_at),
+                })
+                .collect(),
+            authors: vec!["phil".to_owned()],
+            batches: Ok(stub.sessions.iter().map(kernel_batch).collect()),
+        }))
     }
 }
 
@@ -194,28 +322,10 @@ pub(crate) struct Node {
     _directory: TempDir,
 }
 
-pub(crate) fn unconfigured() -> Result<Decider, SetupError> {
-    Err(SetupError::Unconfigured)
-}
-
-pub(crate) fn blocking(url: &str) -> Decider {
-    Decider {
-        endpoint: Endpoint {
-            url: url.to_owned(),
-            concurrency: NonZeroUsize::MIN,
-        },
-        review: Review {
-            top: NonZeroUsize::new(5).expect("top"),
-            threshold: 0.3,
-            mode: Mode::Block,
-        },
-    }
-}
-
 pub(crate) async fn node(
     owner: &str,
     sessions: Vec<BundledSession>,
-    decider: Result<Decider, SetupError>,
+    decide: Option<DecideMode>,
 ) -> Node {
     let directory = tempfile::tempdir().expect("directory");
     let home = directory.path().join("home");
@@ -235,17 +345,10 @@ pub(crate) async fn node(
             .expect("seed");
     }
     let kit = Sessions {
-        archive: Arc::new(FixtureArchive(sessions)),
+        share: Arc::new(ScriptedShare { sessions, decide }),
         files: ShareFiles::new(share.clone(), home.clone()),
-        author: BundleAuthor {
-            user: owner.as_str().to_owned(),
-            node: "desk".to_owned(),
-        },
         owner,
-        mapping: config::MappingFile::Default(home.join("no-mapping.toml")),
-        key: directory.path().join("state/rivethub/sanitize.key"),
-        decider,
-        redaction: None,
+        node: "desk".to_owned(),
     };
     let server = Server::builder(store.clone(), false, CancellationToken::new())
         .sessions(kit)

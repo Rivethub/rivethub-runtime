@@ -44,21 +44,7 @@ pub enum Error {
     #[error(transparent)]
     Path(#[from] crate::sessions::PathRefusal),
     #[error(transparent)]
-    Share(#[from] capture::share::ShareError),
-    #[error(transparent)]
-    Bundle(#[from] capture::bundle::BundleError),
-    #[error(transparent)]
-    Capture(#[from] capture::writer::WriteError),
-    #[error("cannot build the import batch: {0}")]
-    ImportBatch(#[source] serde_json::Error),
-    #[error("not a session bundle: {}", .0.display())]
-    NotBundle(std::path::PathBuf),
-    #[error("no session this node can export has the id {0}")]
-    UnknownSessions(String),
-    #[error(
-        "decide needs memory.sanitize.decide.url in the config (the decision model); rh mcp reads it at startup, so restart it after you set the key"
-    )]
-    DecideUnconfigured,
+    Share(#[from] kernel::memory::share::ShareFailure),
     #[error(
         "refused: {} is a raw bundle that was never sanitized; run session_sanitize on the raw bundle first", .0.display()
     )]

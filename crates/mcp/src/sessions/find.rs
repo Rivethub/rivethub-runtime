@@ -118,7 +118,7 @@ pub(crate) async fn find(
     let digests = if keys.is_empty() {
         Vec::new()
     } else {
-        kit.archive.digests(&keys).await?
+        kit.share.digests(&keys).await?
     };
     let mut found: Vec<(&Ranked, &SessionDigest)> = Vec::new();
     let mut dropped = 0;

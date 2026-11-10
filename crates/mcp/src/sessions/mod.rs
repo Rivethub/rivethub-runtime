@@ -3,64 +3,36 @@ mod find;
 mod flow;
 mod import;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use capture::redaction::Redaction;
-use capture::share::Decider;
-use capture::share::SetupError;
 use chrono::DateTime;
 use chrono::Utc;
-use config::MappingFile;
-use kernel::memory::SessionArchive;
+use kernel::memory::share::SessionShare;
 use kernel::owner::Owner;
 use rmcp::model::ToolAnnotations;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use uuid::Uuid;
-use wire::capture::BundleAuthor;
-use wire::capture::BundledSession;
 
 pub use files::BundleName;
 pub use files::NameError;
 pub use files::PathRefusal;
 pub use files::ReadPath;
 pub use files::ShareFiles;
+pub use files::refuse_existing;
 pub(crate) use find::find;
 pub(crate) use flow::export;
 pub(crate) use flow::sanitize;
 pub(crate) use import::import;
 
-pub type Archive = Arc<dyn SessionArchive<Session = BundledSession>>;
-
 const MAX_IDS: usize = 50;
 
+#[derive(Debug)]
 pub struct Sessions {
-    pub archive: Archive,
+    pub share: Arc<dyn SessionShare>,
     pub files: ShareFiles,
     pub owner: Owner,
-    pub author: BundleAuthor,
-    pub mapping: MappingFile,
-    pub key: PathBuf,
-    pub decider: Result<Decider, SetupError>,
-    pub redaction: Option<Redaction>,
-}
-
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "SessionArchive is a kernel trait object without Debug; the formatter names the owner, author and share directory"
-    )
-)]
-impl std::fmt::Debug for Sessions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Sessions")
-            .field("owner", &self.owner)
-            .field("author", &self.author)
-            .field("files", &self.files)
-            .finish_non_exhaustive()
-    }
+    pub node: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -340,7 +340,7 @@ fn resolved_line(resolved: &capture::sanitize::Resolved, bundle: &Path) -> Strin
 async fn bundle_beside(report: &Path) -> Result<PathBuf, Error> {
     let name = report.display().to_string();
     let stem = name
-        .strip_suffix(share::REPORT_SUFFIX)
+        .strip_suffix(wire::capture::REPORT_SUFFIX)
         .ok_or_else(|| Error::ResolveBundle(name.clone()))?;
     let json = PathBuf::from(format!("{stem}.json"));
     if tokio::fs::try_exists(&json).await? {

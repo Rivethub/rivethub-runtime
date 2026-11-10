@@ -10,10 +10,8 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true }
-capture = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
-config = { workspace = true }
 kernel = { workspace = true }
 nix = { workspace = true }
 reqwest = { workspace = true }

@@ -10,6 +10,8 @@ use config::Config;
 use config::Environment;
 use config::MappingFile;
 use thiserror::Error;
+use wire::capture::LOCAL_SUFFIX;
+use wire::capture::REPORT_SUFFIX;
 use wire::capture::SessionBundle;
 
 use crate::sanitize::KeyError;
@@ -25,8 +27,6 @@ use crate::sanitize::mapping::Mapping;
 use crate::sanitize::mapping::MappingError;
 use crate::sanitize::marks::ReportError;
 
-pub const REPORT_SUFFIX: &str = ".report.md";
-pub const LOCAL_SUFFIX: &str = ".review.local.json";
 const MAX_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Error)]
