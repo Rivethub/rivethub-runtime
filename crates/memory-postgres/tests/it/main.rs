@@ -4,6 +4,7 @@ mod bundle;
 mod capture_pg;
 mod counts;
 mod deadline;
+mod digest;
 mod embedding_store;
 mod final_fix;
 mod flagged;

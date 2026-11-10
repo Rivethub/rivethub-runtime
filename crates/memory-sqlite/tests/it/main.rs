@@ -9,6 +9,7 @@ mod bundle;
 mod capture_activity;
 mod capture_rules;
 mod close;
+mod digest;
 mod embed_store;
 mod import;
 mod local_ports;

@@ -15,6 +15,7 @@ use values::Role;
 use crate::BoxError;
 use crate::owner::Owner;
 
+mod archive;
 pub mod budget;
 mod capture;
 mod deletion;
@@ -31,6 +32,7 @@ mod tags;
 mod title;
 mod tree;
 
+pub use archive::SessionDigest;
 pub use capture::{CaptureBatchRequest, CaptureMessage, CaptureResult};
 pub use deletion::DeletedSession;
 pub use deletion::EMPTY_SESSIONS_MAX;
