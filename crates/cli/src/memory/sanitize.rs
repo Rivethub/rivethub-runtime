@@ -7,7 +7,6 @@ use capture::sanitize::decide::Endpoint;
 use capture::sanitize::decide::Mode;
 use capture::sanitize::decide::Resolution;
 use capture::sanitize::decide::Review;
-use capture::sanitize::mapping::Matcher;
 use chrono::Utc;
 use config::Config;
 use config::Environment;
@@ -140,10 +139,16 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     {
         return Err(Error::BundleOutDirectory(out.display().to_string()));
     }
-    let config = super::target::load(env)?.unwrap_or_default();
-    let endpoint = decide.then(|| endpoint(&config, block)).transpose()?;
+    let endpoint = if decide {
+        Some(endpoint(
+            &super::target::load(env)?.unwrap_or_default(),
+            block,
+        )?)
+    } else {
+        None
+    };
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(input).await?)?;
-    let mapping = mapping_file(mapping, &config, env)?;
+    let mapping = mapping_file(mapping, env)?;
     let (mapping, source) = rules(&mapping).await?;
     let key = capture::sanitize::LocalKey::load_or_create(&key_path(env)?)?;
     let policy = capture::sanitize::Policy { mapping, key };
@@ -152,7 +157,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     let decided = if let Some((endpoint, review)) = endpoint {
         let candidates = scrubbed.candidates();
         let scores = capture::sanitize::decide::score(&endpoint, &candidates.chunks).await?;
-        let decision = scrubbed.flag(candidates, &scores, review);
+        let decision = scrubbed.flag(candidates, &scores, review)?;
         decision_line(decision, &report_path)
     } else {
         String::new()
@@ -169,10 +174,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     let count = bundle.sessions.len();
     let noun = if count == 1 { "session" } else { "sessions" };
     let mut out = format!(
-        "sanitized {count} {noun}: {} secrets, {} mapped, {} redacted; report at {}\n{decided}",
-        totals.secrets,
-        totals.mapped,
-        totals.redacted,
+        "sanitized {count} {noun}: {totals}; report at {}\n{decided}",
         report_path.display()
     );
     out.push_str(&summary(&sanitized.report));
@@ -213,9 +215,12 @@ fn endpoint(config: &Config, block: bool) -> Result<(Endpoint, Review), Error> {
     if !(section.threshold > 0.0 && section.threshold <= 1.0) {
         return Err(Error::DecideThreshold(section.threshold));
     }
+    let concurrency = NonZeroUsize::new(section.concurrency)
+        .filter(|concurrency| concurrency.get() <= MAX_CONCURRENCY)
+        .ok_or(Error::DecideConcurrency(section.concurrency))?;
     let endpoint = Endpoint {
         url: section.url.trim().to_owned(),
-        concurrency: NonZeroUsize::new(section.concurrency).ok_or(Error::DecideConcurrency)?,
+        concurrency,
     };
     let review = Review {
         top: NonZeroUsize::new(section.top).ok_or(Error::DecideTop)?,
@@ -228,6 +233,8 @@ fn endpoint(config: &Config, block: bool) -> Result<(Endpoint, Review), Error> {
     };
     Ok((endpoint, review))
 }
+
+const MAX_CONCURRENCY: usize = 16;
 
 fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> String {
     let count =
@@ -246,7 +253,8 @@ fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> Strin
         ),
     };
     format!(
-        "decision pass: {} scored in {}, {} skipped; {} for review (top {} per session at or over {:.2}){next}\n",
+        "decision pass: {} scored {} in {}, {} skipped; {} for review (top {} per session at or over {:.2}){next}\n",
+        decision.model,
         count(decision.scored, "chunk", "chunks"),
         count(decision.calls, "call", "calls"),
         count(decision.trivial, "trivial chunk", "trivial chunks"),
@@ -256,14 +264,12 @@ fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> Strin
     )
 }
 
-fn mapping_file(
-    mapping: Option<PathBuf>,
-    config: &Config,
-    env: &Environment,
-) -> Result<MappingFile, Error> {
+fn mapping_file(mapping: Option<PathBuf>, env: &Environment) -> Result<MappingFile, Error> {
     Ok(match mapping {
         Some(path) => MappingFile::Configured(path),
-        None => config.sanitize_mapping(env)?,
+        None => super::target::load(env)?
+            .unwrap_or_default()
+            .sanitize_mapping(env)?,
     })
 }
 
@@ -283,37 +289,51 @@ pub(super) async fn resolve(
         Some(path) => path,
         None => bundle_beside(report).await?,
     };
+    if learn {
+        for flag in &flags.flags {
+            flag.learnable().map_err(|source| Error::Report {
+                path: report.display().to_string(),
+                source,
+            })?;
+        }
+    }
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(&bundle_path).await?)?;
-    let resolved = capture::sanitize::resolve(&bundle, &flags)?;
+    let key = capture::sanitize::LocalKey::load_or_create(&key_path(env)?)?;
+    let resolved = capture::sanitize::resolve(&bundle, &flags, &key)?;
     if resolved.sealed.bundle != bundle {
-        let mut sealed = resolved.sealed.text;
+        let mut sealed = resolved.sealed.text.clone();
         sealed.push(b'\n');
         write_whole(bundle_path.clone(), sealed).await?;
     }
-    let rewritten = flags.rewrite(&text, resolved.open);
+    let applied: Vec<usize> = resolved.applied.iter().map(|(number, _)| *number).collect();
+    let rewritten = flags.rewrite(&text, resolved.open, resolved.total, &applied);
     if rewritten != text {
         write_whole(report.to_path_buf(), rewritten.into_bytes()).await?;
     }
-    let (mut keep, mut redact, mut map) = (0, 0, 0);
     let mut maps: Vec<(&str, &str)> = Vec::new();
     for flag in &flags.flags {
-        let resolution = match &flag.state {
-            MarkState::Open => continue,
-            MarkState::Marked(resolution) => {
-                *match resolution {
-                    Resolution::Keep => &mut keep,
-                    Resolution::Redact => &mut redact,
-                    Resolution::Map { .. } => &mut map,
-                } += 1;
-                resolution
-            }
-            MarkState::Resolved(resolution) => resolution,
-        };
-        if let Resolution::Map { term, placeholder } = resolution
+        if let MarkState::Marked(Resolution::Map { term, placeholder })
+        | MarkState::Resolved(Resolution::Map { term, placeholder }) = &flag.state
             && !maps.iter().any(|(known, _)| known == term)
         {
             maps.push((term, placeholder));
         }
+    }
+    let mut message = resolved_line(&resolved, &bundle_path);
+    if !maps.is_empty() {
+        message.push_str(&offer(&mapping_file(mapping, env)?, &maps, learn).await?);
+    }
+    Ok(Report::success(message))
+}
+
+fn resolved_line(resolved: &capture::sanitize::Resolved, bundle: &Path) -> String {
+    let (mut keep, mut redact, mut map) = (0, 0, 0);
+    for (_, resolution) in &resolved.applied {
+        *match resolution {
+            Resolution::Keep => &mut keep,
+            Resolution::Redact => &mut redact,
+            Resolution::Map { .. } => &mut map,
+        } += 1;
     }
     let rechecked = match resolved.rechecked.len() {
         0 => String::new(),
@@ -328,7 +348,7 @@ pub(super) async fn resolve(
                 .join("; ")
         ),
     };
-    let mut message = format!(
+    format!(
         "resolved {} {} in {} ({keep} keep, {redact} redact, {map} map); {}\n{rechecked}",
         keep + redact + map,
         if keep + redact + map == 1 {
@@ -336,18 +356,13 @@ pub(super) async fn resolve(
         } else {
             "flags"
         },
-        bundle_path.display(),
+        bundle.display(),
         match resolved.open {
             0 => "every flag is reviewed".to_owned(),
             1 => "1 flag still unreviewed".to_owned(),
             open => format!("{open} flags still unreviewed"),
         },
-    );
-    if !maps.is_empty() {
-        let config = super::target::load(env)?.unwrap_or_default();
-        message.push_str(&offer(&mapping_file(mapping, &config, env)?, &maps, learn).await?);
-    }
-    Ok(Report::success(message))
+    )
 }
 
 async fn bundle_beside(report: &Path) -> Result<PathBuf, Error> {
@@ -381,15 +396,11 @@ async fn offer(mapping: &MappingFile, maps: &[(&str, &str)], learn: bool) -> Res
         source,
     };
     let known = capture::sanitize::mapping::parse(&existing).map_err(invalid)?;
-    let fresh: Vec<String> =
-        maps.iter()
-            .filter(|(term, _)| {
-                !known.rules().iter().any(
-                    |rule| matches!(&rule.matcher, Matcher::Literal(literal) if literal == term),
-                )
-            })
-            .map(|(term, placeholder)| capture::sanitize::mapping::map_rule(term, placeholder))
-            .collect();
+    let fresh: Vec<String> = maps
+        .iter()
+        .filter(|(term, _)| !known.learned(term))
+        .map(|(term, placeholder)| capture::sanitize::mapping::map_rule(term, placeholder))
+        .collect();
     let display = path.display();
     if fresh.is_empty() {
         return Ok(format!("{display} already has a rule for each map mark\n"));

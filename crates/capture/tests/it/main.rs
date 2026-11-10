@@ -15,6 +15,7 @@ mod redaction_gaps;
 mod sanitize;
 mod sanitize_boundary;
 mod sanitize_corpus;
+mod sanitize_corpus_review;
 mod sanitize_decide;
 mod session_titles;
 mod session_transcripts;

@@ -67,10 +67,15 @@ async fn decide(
     })
 }
 
+async fn info() -> &'static str {
+    r#"{"model": "stub-model"}"#
+}
+
 async fn model() -> Result<(testkit::Stub, Calls), std::io::Error> {
     let calls = Calls::default();
     let routes = axum::Router::new()
         .route("/v1/decide", axum::routing::post(decide))
+        .route("/v1/decide/info", axum::routing::get(info))
         .with_state(calls.clone());
     Ok((testkit::stub_server(routes).await?, calls))
 }
@@ -174,7 +179,7 @@ async fn decided(url: String, review: Review) -> Result<Sanitized, Box<dyn std::
     let mut scrubbed = sanitize::scrub(&bundle()?, &policy)?;
     let candidates = scrubbed.candidates();
     let scores = sanitize::decide::score(&endpoint(url), &candidates.chunks).await?;
-    scrubbed.flag(candidates, &scores, review);
+    scrubbed.flag(candidates, &scores, review)?;
     Ok(scrubbed.seal(&policy, at()?)?)
 }
 
@@ -235,7 +240,7 @@ fn event_ids(bundle: &SessionBundle) -> Vec<String> {
 
 fn place(ids: &[String], message: usize, field: &str) -> String {
     let id = ids.get(message).map_or("-", String::as_str);
-    format!("{id}:{field}:0")
+    format!("{id}:{field}")
 }
 
 fn risky_command() -> String {
@@ -249,13 +254,16 @@ async fn the_top_chunks_of_each_session_are_listed_and_stay_in_the_bundle() -> T
     let decision = sanitized.report.decision.as_ref().ok_or("no decision")?;
     let ids = event_ids(&sanitized.sealed.bundle);
     let at = |message: usize, field: &str| place(&ids, message, field);
-    let listed: Vec<(&str, &[String], String)> = decision
+    let listed: Vec<(&str, Vec<String>, String)> = decision
         .flags
         .iter()
         .map(|flag| {
             (
-                flag.original.as_str(),
-                flag.places.as_slice(),
+                flag.text.as_str(),
+                flag.shown
+                    .iter()
+                    .map(|shown| format!("{}:{}", shown.owner, shown.field))
+                    .collect(),
                 format!("{:.2}", flag.score),
             )
         })
@@ -265,17 +273,17 @@ async fn the_top_chunks_of_each_session_are_listed_and_stay_in_the_bundle() -> T
         [
             (
                 risky_line().as_str(),
-                &[at(0, "content")][..],
+                vec![at(0, "content")],
                 "0.91".to_owned()
             ),
             (
                 risky_command().as_str(),
-                &[at(1, "tool_args.command"), at(3, "tool_args.command")][..],
+                vec![at(1, "tool_args.command"), at(3, "tool_args.command")],
                 "0.91".to_owned()
             ),
             (
                 format!("{WARM} rows: 3").as_str(),
-                &[at(1, "tool_result")][..],
+                vec![at(1, "tool_result")],
                 "0.55".to_owned()
             ),
         ]
@@ -283,17 +291,19 @@ async fn the_top_chunks_of_each_session_are_listed_and_stay_in_the_bundle() -> T
     assert_eq!(
         calls.states(),
         [
+            "/srv/reports/q3.csv".to_owned(),
+            UUID.to_owned(),
             risky_line(),
             format!("{WARM} rows: 3"),
             risky_command(),
             "numbers for Q3".to_owned(),
             "running it".to_owned(),
         ],
-        "trivial values (the path, the uuid) are never sent, and equal texts share one call"
+        "a path and a 16-character token are sent, and equal texts share one call"
     );
     assert_eq!(
         (decision.scored, decision.calls, decision.trivial),
-        (8, 5, 3)
+        (11, 7, 0)
     );
 
     let bundle = &sanitized.sealed.bundle;
@@ -348,7 +358,7 @@ async fn top_caps_the_list_and_the_threshold_is_a_floor() -> TestResult {
         .decision
         .iter()
         .flat_map(|decision| &decision.flags)
-        .map(|flag| (flag.number, flag.original.clone()))
+        .map(|flag| (flag.number, flag.text.clone()))
         .collect();
     assert_eq!(numbers, [(1, risky_line())], "ties keep session order");
 
@@ -416,10 +426,12 @@ async fn an_unreachable_endpoint_fails_the_run() -> TestResult {
 
 #[tokio::test]
 async fn a_model_error_fails_the_run() -> TestResult {
-    let routes = axum::Router::new().route(
-        "/v1/decide",
-        axum::routing::post(|| async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "busy") }),
-    );
+    let routes = axum::Router::new()
+        .route(
+            "/v1/decide",
+            axum::routing::post(|| async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "busy") }),
+        )
+        .route("/v1/decide/info", axum::routing::get(info));
     let stub = testkit::stub_server(routes).await?;
     let error = advisory(format!("http://{}", stub.addr))
         .await
@@ -461,7 +473,7 @@ async fn resolve_rewrites_an_advisory_bundle_in_place_and_converges() -> TestRes
     let report = mark(&report, 3, "keep");
 
     let flags = sanitize::marks::read_flags(&report)?;
-    let resolved = sanitize::resolve(&bundle, &flags)?;
+    let resolved = sanitize::resolve(&bundle, &flags, &policy()?.key)?;
 
     let clean = &resolved.sealed.bundle;
     assert_eq!(
@@ -481,13 +493,18 @@ async fn resolve_rewrites_an_advisory_bundle_in_place_and_converges() -> TestRes
     );
     assert_eq!((resolved.open, stamp_flags(clean)), (0, Some(0)));
 
-    let rewritten = flags.rewrite(&report, resolved.open);
-    assert!(rewritten.contains(&format!("Resolved: map {RISKY} as <customer>")));
+    let applied: Vec<usize> = resolved.applied.iter().map(|(number, _)| *number).collect();
+    let rewritten = flags.rewrite(&report, resolved.open, resolved.total, &applied);
+    assert!(rewritten.contains(&format!("Resolved: map `{RISKY}` as `<customer>`")));
     assert!(rewritten.contains("Resolved: redact"));
     assert!(rewritten.contains("Resolved: keep"));
     assert!(rewritten.contains("Unreviewed: 0 of 3"));
 
-    let again = sanitize::resolve(clean, &sanitize::marks::read_flags(&rewritten)?)?;
+    let again = sanitize::resolve(
+        clean,
+        &sanitize::marks::read_flags(&rewritten)?,
+        &policy()?.key,
+    )?;
     assert_eq!(again.open, 0);
     assert_eq!(&again.sealed.bundle, clean);
     stub.close().await?;
@@ -505,7 +522,7 @@ async fn keep_puts_withheld_text_back_and_open_flags_stay_withheld() -> TestResu
     );
 
     let flags = sanitize::marks::read_flags(&report)?;
-    let resolved = sanitize::resolve(&sanitized.sealed.bundle, &flags)?;
+    let resolved = sanitize::resolve(&sanitized.sealed.bundle, &flags, &policy()?.key)?;
 
     let clean = &resolved.sealed.bundle;
     assert_eq!(
@@ -519,7 +536,7 @@ async fn keep_puts_withheld_text_back_and_open_flags_stay_withheld() -> TestResu
     );
     assert!(
         flags
-            .rewrite(&report, resolved.open)
+            .rewrite(&report, resolved.open, resolved.total, &[1])
             .contains("Unreviewed: 2 of 3")
     );
     stub.close().await?;
@@ -559,11 +576,11 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
     let mut scrubbed = sanitize::scrub(&bundle()?, &policy)?;
     let candidates = scrubbed.candidates();
     let scores = sanitize::decide::score(&endpoint(url), &candidates.chunks).await?;
-    scrubbed.flag(candidates, &scores, review(20, Mode::Advisory)?);
+    scrubbed.flag(candidates, &scores, review(20, Mode::Advisory)?)?;
     let second = scrubbed.seal(&policy, DateTime::UNIX_EPOCH)?;
 
     let flags = sanitize::marks::read_flags(&first.report.markdown("s.clean.json", "none"))?;
-    let error = sanitize::resolve(&second.sealed.bundle, &flags).err();
+    let error = sanitize::resolve(&second.sealed.bundle, &flags, &policy.key).err();
 
     assert!(
         matches!(error, Some(sanitize::SanitizeError::OtherRun { .. })),

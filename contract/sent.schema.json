@@ -2250,6 +2250,81 @@
       ],
       "type": "object"
     },
+    "FlagMark": {
+      "enum": [
+        "open",
+        "keep",
+        "redact",
+        "map"
+      ],
+      "type": "string"
+    },
+    "FlagPlace": {
+      "properties": {
+        "end": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "field": {
+          "type": "string"
+        },
+        "message": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "session": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "message",
+        "field",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "FlagStamp": {
+      "properties": {
+        "mark": {
+          "$ref": "#/$defs/FlagMark"
+        },
+        "number": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "places": {
+          "items": {
+            "$ref": "#/$defs/FlagPlace"
+          },
+          "type": "array"
+        },
+        "seal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "mark",
+        "places",
+        "seal"
+      ],
+      "type": "object"
+    },
     "FlaggedGroup": {
       "properties": {
         "cause": {
@@ -8264,6 +8339,13 @@
       ],
       "type": "object"
     },
+    "ReviewMode": {
+      "enum": [
+        "advisory",
+        "block"
+      ],
+      "type": "string"
+    },
     "ReviewOption": {
       "properties": {
         "label": {
@@ -8286,6 +8368,38 @@
       "required": [
         "label",
         "value"
+      ],
+      "type": "object"
+    },
+    "ReviewStamp": {
+      "properties": {
+        "calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/FlagStamp"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "$ref": "#/$defs/ReviewMode"
+        },
+        "model": {
+          "type": "string"
+        },
+        "seal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "model",
+        "calls",
+        "flags",
+        "seal"
       ],
       "type": "object"
     },
@@ -8361,6 +8475,16 @@
         },
         "policy_sha256": {
           "type": "string"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewStamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "unresolved_flags": {
           "format": "uint32",

@@ -277,8 +277,10 @@ pub enum Error {
     DecideUnconfigured,
     #[error("memory.sanitize.decide.threshold is {0}; set it above 0 and at most 1")]
     DecideThreshold(f64),
-    #[error("memory.sanitize.decide.concurrency is 0; set it to 1 or more")]
-    DecideConcurrency,
+    #[error(
+        "memory.sanitize.decide.concurrency is {0}; set it from 1 to 16, since the decision model is a shared server"
+    )]
+    DecideConcurrency(usize),
     #[error("memory.sanitize.decide.top is 0; set it to 1 or more")]
     DecideTop,
     #[error("--block makes the decision-model review block ingest and needs --decide")]

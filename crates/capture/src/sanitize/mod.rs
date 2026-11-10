@@ -21,6 +21,7 @@ use crate::bundle::BundleError;
 use crate::bundle::Sealed;
 pub use decide::Candidates;
 pub use decide::Decision;
+pub use decide::ResolveError;
 pub use key::KeyError;
 pub use key::LocalKey;
 use mapping::Action;
@@ -58,6 +59,10 @@ pub enum SanitizeError {
     FlagCount(#[from] std::num::TryFromIntError),
     #[error("the bundle is not sanitized, so it has no flags to resolve")]
     NotSanitized,
+    #[error("the flagged texts do not build a search: {0}")]
+    Search(#[from] aho_corasick::BuildError),
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
     #[error(
         "the report is from the sanitize run at {report}, but the bundle is from the run at {bundle}; resolve with the report written beside this bundle"
     )]
@@ -194,11 +199,11 @@ impl Scrubbed {
     pub fn flag(
         &mut self,
         candidates: Candidates,
-        scores: &[f64],
+        scores: &decide::Scores,
         review: decide::Review,
-    ) -> &Decision {
-        self.decision
-            .insert(decide::flag(&mut self.sessions, candidates, scores, review))
+    ) -> Result<&Decision, SanitizeError> {
+        let decision = decide::flag(&mut self.sessions, candidates, scores, review)?;
+        Ok(self.decision.insert(decision))
     }
 
     pub fn seal(self, policy: &Policy, at: DateTime<Utc>) -> Result<Sanitized, SanitizeError> {
@@ -218,6 +223,10 @@ impl Scrubbed {
                     .map(|pass| pass.to_string())
                     .collect(),
                 unresolved_flags: u32::try_from(unresolved_flags)?,
+                review: self
+                    .decision
+                    .as_ref()
+                    .map(|decision| decision.stamp(&policy.key, at)),
             }),
             self.sessions,
         )?)?;
@@ -253,10 +262,16 @@ fn settled(sealed: Sealed) -> Result<Sealed, SanitizeError> {
 pub struct Resolved {
     pub sealed: Sealed,
     pub open: usize,
+    pub total: usize,
+    pub applied: Vec<(usize, decide::Resolution)>,
     pub rechecked: Vec<Change>,
 }
 
-pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, SanitizeError> {
+pub fn resolve(
+    bundle: &SessionBundle,
+    flags: &ReportFlags,
+    key: &LocalKey,
+) -> Result<Resolved, SanitizeError> {
     let Sanitization::Sanitized(stamp) = &bundle.manifest.sanitization else {
         return Err(SanitizeError::NotSanitized);
     };
@@ -266,42 +281,33 @@ pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, 
             report: flags.at,
         });
     }
-    let marks: Vec<decide::Marked<'_>> = flags
-        .flags
-        .iter()
-        .filter_map(|flag| match &flag.state {
-            MarkState::Marked(resolution) | MarkState::Resolved(resolution) => {
-                Some(decide::Marked {
-                    number: flag.number,
-                    resolution,
-                    original: &flag.original,
-                    places: &flag.places,
-                })
-            }
-            MarkState::Open => None,
-        })
-        .collect();
+    let review = stamp.review.as_ref().ok_or(ResolveError::NoReview)?;
     let mut sessions = bundle.sessions.clone();
-    decide::resolve(&mut sessions, &marks);
     let mut exported_by = bundle.manifest.exported_by.clone();
-    let rechecked = recheck(
+    let mut rechecked = Vec::new();
+    let marked = decide::resolve(
         &mut sessions,
-        &mut exported_by,
-        None,
-        &bundle.manifest.bundle_sha256,
-    )
-    .changes;
-    let unmarked = flags
-        .flags
-        .iter()
-        .filter(|flag| flag.state == MarkState::Open)
-        .count();
-    let open = unmarked.max(decide::withheld(&sessions));
+        review,
+        &flags.flags,
+        key,
+        stamp.at,
+        |sessions| {
+            rechecked = recheck(
+                sessions,
+                &mut exported_by,
+                None,
+                &bundle.manifest.bundle_sha256,
+            )
+            .changes;
+        },
+    )?;
+    let open = marked.open();
     let sealed = settled(crate::bundle::seal(
         exported_by,
         bundle.manifest.exported_at,
         Sanitization::Sanitized(SanitizeStamp {
             unresolved_flags: u32::try_from(open)?,
+            review: Some(marked.review),
             ..stamp.clone()
         }),
         sessions,
@@ -309,6 +315,8 @@ pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, 
     Ok(Resolved {
         sealed,
         open,
+        total: review.flags.len(),
+        applied: marked.applied,
         rechecked,
     })
 }

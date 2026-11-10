@@ -184,18 +184,13 @@ impl<'a> Scrubber<'a> {
     }
 
     fn escape_flags(&mut self, field: &Field, text: &mut String) {
-        let literals = super::decide::placeholders(text);
-        for (range, number) in &literals {
+        let literals = super::decide::escapes(text);
+        for (range, escaped) in &literals {
             let original = text.get(range.clone()).unwrap_or_default().to_owned();
-            self.record(
-                field.clone(),
-                RuleId::FlagLiteral,
-                &original,
-                &super::decide::escaped(*number),
-            );
+            self.record(field.clone(), RuleId::FlagLiteral, &original, escaped);
         }
-        for (range, number) in literals.into_iter().rev() {
-            text.replace_range(range, &super::decide::escaped(number));
+        for (range, escaped) in literals.into_iter().rev() {
+            text.replace_range(range, &escaped);
         }
     }
 
@@ -365,7 +360,15 @@ fn unprotected(hit: &Range<usize>, protected: &[Range<usize>]) -> Vec<Range<usiz
     pieces
 }
 
-fn protected(text: &str, rules: &Ruleset) -> Vec<Range<usize>> {
+pub(super) fn scan_flags(text: &str) -> bool {
+    let mapping = Mapping::default();
+    let mut scrubber = Scrubber::new(&mapping, None, "");
+    let mut copy = text.to_owned();
+    scrubber.text(&Field::Content, &mut copy);
+    !scrubber.changes.is_empty()
+}
+
+pub(super) fn protected(text: &str, rules: &Ruleset) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut from = 0;
     while let Some(found) = text.get(from..).and_then(|rest| rest.find('[')) {

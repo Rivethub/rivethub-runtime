@@ -330,7 +330,7 @@ fn a_flag_written_in_the_session_is_escaped_so_ingest_never_counts_it_withheld()
     let text = String::from_utf8(out.sealed.text.clone())?;
     assert_eq!(
         first_content(&text)?,
-        "the test expects a [FLAGGED 12] b [FLAGGED:x]"
+        "the test expects a [FLAGGED::12] b [FLAGGED:x]"
     );
     assert_eq!(sanitize::withheld(&out.sealed.bundle), 0);
     assert_eq!(
@@ -339,7 +339,7 @@ fn a_flag_written_in_the_session_is_escaped_so_ingest_never_counts_it_withheld()
             .iter()
             .map(|change| change.rule.to_string())
             .collect::<Vec<_>>(),
-        ["[FLAGGED:<n>] written in the session"]
+        ["[FLAGGED:<n>] written in the session (escaped)"]
     );
     Ok(())
 }

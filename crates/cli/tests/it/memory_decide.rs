@@ -25,7 +25,7 @@ struct Answer {
 }
 
 struct Node {
-    _home: TempDir,
+    home: TempDir,
     directory: TempDir,
     environment: Environment,
 }
@@ -49,7 +49,7 @@ fn node(decide_url: Option<&str>) -> Node {
         .with_override("RIVETHUB_USERS_FILE", users.display().to_string())
         .with_override("RIVETHUB_NODE_NAME", "desk");
     Node {
-        _home: home,
+        home,
         directory,
         environment,
     }
@@ -68,7 +68,12 @@ async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
 }
 
 async fn model() -> testkit::Stub {
-    let routes = axum::Router::new().route("/v1/decide", axum::routing::post(decide));
+    let routes = axum::Router::new()
+        .route("/v1/decide", axum::routing::post(decide))
+        .route(
+            "/v1/decide/info",
+            axum::routing::get(|| async { r#"{"model": "stub-model"}"# }),
+        );
     testkit::stub_server(routes).await.expect("stub model")
 }
 
@@ -188,7 +193,7 @@ async fn sanitize_with_decide(node: &Node, block: bool) -> Decided {
     assert_eq!(
         sanitize.stdout,
         format!(
-            "sanitized 1 session: 0 secrets, 0 mapped, 0 redacted; report at {}\ndecision pass: 2 chunks scored in 2 calls, 0 trivial chunks skipped; 1 flag for review (top 5 per session at or over 0.30); {next}\nreview summary: changes by rule: no rule matched\n{SUMMARY_TAIL}",
+            "sanitized 1 session: 0 secrets, 0 mapped, 0 redacted; report at {}\ndecision pass: stub-model scored 2 chunks in 2 calls, 0 trivial chunks skipped; 1 flag for review (top 5 per session at or over 0.30); {next}\nreview summary: changes by rule: no rule matched\n{SUMMARY_TAIL}",
             decided.report
         )
     );
@@ -305,7 +310,7 @@ async fn resolve_applies_a_map_mark_learns_the_rule_and_converges() {
     ));
     assert_eq!(
         std::fs::read_to_string(&decided.rules).expect("mapping"),
-        "[[rule]]\nliteral = \"Acme Corp\"\naction = \"map\"\nas = \"<customer>\"\n"
+        "[[rule]]\nregex = '\\bAcme Corp\\b'\naction = \"map\"\nas = \"<customer>\"\n"
     );
 
     let again = run(&resolve, &node.environment).await;
@@ -358,7 +363,7 @@ async fn an_unreachable_model_fails_and_writes_nothing() {
     assert_eq!(report.exit, Exit::Failure);
     assert!(
         report.stderr.starts_with(&format!(
-            "Error: the decision pass failed, so no bundle was written: the decision model at http://{closed}/v1/decide could not be reached"
+            "Error: the decision pass failed, so no bundle was written: the decision model at http://{closed}/v1/decide/info could not be reached"
         )),
         "{}",
         report.stderr
@@ -413,5 +418,63 @@ async fn block_needs_decide() {
     assert_eq!(
         report.stderr,
         "Error: --block makes the decision-model review block ingest and needs --decide\n"
+    );
+}
+
+#[tokio::test]
+async fn plain_sanitize_with_a_mapping_never_reads_the_config() {
+    let node = node(None);
+    std::fs::write(
+        node.home.path().join(".rivethub/config.yaml"),
+        "memory: [this is not a mapping\n",
+    )
+    .expect("broken config");
+    let raw = raw_bundle(node.directory.path());
+    let rules = node.directory.path().join("rules.toml");
+    std::fs::write(&rules, "").expect("empty mapping");
+    let out = node.directory.path().join("s.clean.json");
+
+    let report = run(
+        &[
+            "memory",
+            "sanitize",
+            &raw,
+            "--out",
+            &out.display().to_string(),
+            "--mapping",
+            &rules.display().to_string(),
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+}
+
+#[tokio::test]
+async fn decide_concurrency_is_capped_for_the_shared_model() {
+    let node = node(Some("http://127.0.0.1:9"));
+    let config = node.home.path().join(".rivethub/config.yaml");
+    let text = std::fs::read_to_string(&config).expect("config");
+    std::fs::write(&config, format!("{text}      concurrency: 17\n")).expect("config");
+    let raw = raw_bundle(node.directory.path());
+
+    let report = run(
+        &[
+            "memory",
+            "sanitize",
+            &raw,
+            "--out",
+            "unused.json",
+            "--decide",
+        ],
+        &node.environment,
+    )
+    .await;
+
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stderr,
+        "Error: memory.sanitize.decide.concurrency is 17; set it from 1 to 16, since the decision model is a shared server\n"
     );
 }

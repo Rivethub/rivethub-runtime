@@ -99,6 +99,7 @@ pub enum ChangeKind {
     Secret,
     Mapped,
     Redacted,
+    Escaped,
 }
 
 impl RuleId {
@@ -106,8 +107,9 @@ impl RuleId {
     pub const fn change_kind(self) -> ChangeKind {
         match self {
             Self::Pattern(_) | Self::SecretKey => ChangeKind::Secret,
-            Self::Mapped { .. } | Self::FlagLiteral => ChangeKind::Mapped,
+            Self::Mapped { .. } => ChangeKind::Mapped,
             Self::Redacted { .. } => ChangeKind::Redacted,
+            Self::FlagLiteral => ChangeKind::Escaped,
         }
     }
 
@@ -120,8 +122,8 @@ impl RuleId {
 
     const fn pass(self) -> Pass {
         match self {
-            Self::Pattern(_) | Self::SecretKey => Pass::Secrets,
-            Self::Mapped { .. } | Self::Redacted { .. } | Self::FlagLiteral => Pass::Mapping,
+            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => Pass::Secrets,
+            Self::Mapped { .. } | Self::Redacted { .. } => Pass::Mapping,
         }
     }
 }
@@ -133,7 +135,9 @@ impl fmt::Display for RuleId {
             Self::SecretKey => formatter.write_str("secret key name"),
             Self::Mapped { line } => write!(formatter, "rule at line {line} (map)"),
             Self::Redacted { line } => write!(formatter, "rule at line {line} (redact)"),
-            Self::FlagLiteral => formatter.write_str("[FLAGGED:<n>] written in the session"),
+            Self::FlagLiteral => {
+                formatter.write_str("[FLAGGED:<n>] written in the session (escaped)")
+            }
         }
     }
 }
@@ -206,6 +210,21 @@ pub struct Totals {
     pub secrets: usize,
     pub mapped: usize,
     pub redacted: usize,
+    pub escaped: usize,
+}
+
+impl fmt::Display for Totals {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} secrets, {} mapped, {} redacted",
+            self.secrets, self.mapped, self.redacted
+        )?;
+        if self.escaped > 0 {
+            write!(formatter, ", {} escaped", self.escaped)?;
+        }
+        Ok(())
+    }
 }
 
 impl Report {
@@ -217,6 +236,7 @@ impl Report {
                 ChangeKind::Secret => totals.secrets += 1,
                 ChangeKind::Mapped => totals.mapped += 1,
                 ChangeKind::Redacted => totals.redacted += 1,
+                ChangeKind::Escaped => totals.escaped += 1,
             }
         }
         totals
@@ -282,14 +302,20 @@ impl Report {
         push_line(
             out,
             format_args!(
-                "Sanitized {sessions} {} at {}: {} secrets, {} mapped, {} redacted.\n",
+                "Sanitized {sessions} {} at {}: {totals}.\n",
                 plural(sessions, "session", "sessions"),
                 self.at.format("%Y-%m-%d %H:%M:%S UTC"),
-                totals.secrets,
-                totals.mapped,
-                totals.redacted,
             ),
         );
+        if let Some(decision) = &self.decision {
+            out.push_str(
+                "Never share this report or send it with the bundle. Its Flags section shows the text of each flagged chunk",
+            );
+            if decision.review.mode == super::decide::Mode::Block {
+                out.push_str(", including the text the bundle withholds");
+            }
+            out.push_str(", so it is for you alone; share only the bundle.\n\n");
+        }
         if self.rechecked > 0 {
             push_line(
                 out,

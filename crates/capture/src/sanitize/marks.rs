@@ -21,6 +21,7 @@ const OPEN_PREFIX: &str = "Unreviewed: ";
 const FLAG_HEADING: &str = "### Flag ";
 const HIDDEN_OPEN: &str = "<!-- flag ";
 const HIDDEN_CLOSE: &str = " -->";
+const SHORTEST_LEARNED: usize = 3;
 
 pub(super) fn stamp_text(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
@@ -33,7 +34,8 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
     push_line(
         out,
         format_args!(
-            "After the secrets and mapping passes, the decision model scored {} {} in {} {}. It skipped {} trivial {}: single tokens with no spaces, such as ids, paths, numbers and enum values. Below are the chunks it scored highest, up to {} per session, at or over {:.2}.\n",
+            "After the secrets and mapping passes, the decision model {} scored {} {} in {} {}. It skipped {} trivial {}: bare tokens under 16 characters with no capitalized word and none of `@ / = , : ;`, such as ids, numbers and enum values, placeholders, and `[tool call] <name>` lines. Below are the chunks it scored highest, up to {} per session, at or over {:.2}. Each flag covers every place in the bundle, in any session, where its text occurs.\n",
+            code(&decision.model),
             decision.scored,
             plural(decision.scored, "chunk", "chunks"),
             decision.calls,
@@ -48,14 +50,14 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
         Mode::Advisory => push_line(
             out,
             format_args!(
-                "This review is advisory. {} holds each flagged chunk as sanitized text, and ingest does not wait for you. The bundle's stamp counts the flags you have not marked.\n",
+                "This review is advisory. {} holds each flagged chunk as sanitized text, and ingest does not wait for you. The bundle's stamp records which flags you have marked.\n",
                 cell(bundle),
             ),
         ),
         Mode::Block => push_line(
             out,
             format_args!(
-                "This review blocks. Until you mark a flag, {} holds `[FLAGGED:<n>]` in place of its text, so that text leaves this machine only if you keep it. Ingest refuses the bundle while any flag is open.\n",
+                "This review blocks. Until you mark a flag, {} holds `[FLAGGED:<n>]` in place of its text at every place, so that text leaves this machine only if you keep it. Ingest refuses the bundle while any flag is open.\n",
                 cell(bundle),
             ),
         ),
@@ -74,8 +76,8 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
             "To review a flag, replace `open` on its Mark line with one of these marks, then run `rh memory sanitize --resolve <this report>`:\n\n\
              - `keep` {keep}.\n\
              - `redact` replaces the text with `[REDACTED:flagged]`.\n\
-             - `map <term> as <placeholder>` replaces each `<term>` in the text with `<placeholder>`. Add `--learn` to also add the rule to your mapping file.\n\n\
-             You can mark some flags now and the rest later.\n"
+             - `map <term> as <placeholder>` replaces each `<term>` in the text with `<placeholder>`; a term that starts or ends with a letter, digit or underscore matches whole words only. The placeholder may not be a `[FLAGGED:<n>]` or `[REDACTED...]` form or look like a secret. Add `--learn` to also add the rule to your mapping file (terms of 3 or more characters).\n\n\
+             Do not edit the text under a flag: `--resolve` refuses a flag whose text changed. You can mark some flags now and the rest later; a flag whose section you delete stays open.\n"
         ),
     );
     for flag in &decision.flags {
@@ -84,37 +86,40 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
 }
 
 fn flag_entry(out: &mut String, flag: &Flag) {
-    let fence = "~".repeat(longest_run(&flag.original, '~').max(2) + 1);
-    let (first, more) = flag
-        .places
+    let fence = "~".repeat(longest_run(&flag.text, '~').max(2) + 1);
+    let mut sessions: Vec<&str> = Vec::new();
+    for shown in &flag.shown {
+        if !sessions.contains(&shown.session.as_str()) {
+            sessions.push(&shown.session);
+        }
+    }
+    let ids: Vec<String> = flag
+        .shown
+        .iter()
+        .map(|shown| code(&format!("{}:{}", shown.owner, shown.field)))
+        .collect();
+    let (first, more) = ids
         .split_first()
-        .map_or(("", &[][..]), |(first, more)| (first.as_str(), more));
+        .map_or(("`-`", &[][..]), |(first, more)| (first.as_str(), more));
     let also = if more.is_empty() {
         String::new()
     } else {
-        format!(
-            "\n- Also at: {}",
-            more.iter()
-                .map(|place| code(place))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        format!("\n- Also at: {}", more.join(", "))
     };
-    let hidden = std::iter::once(&flag.original)
-        .chain(&flag.places)
-        .map(|part| BASE64.encode(part))
-        .collect::<Vec<_>>()
-        .join(" ");
     push_line(
         out,
         format_args!(
-            "{FLAG_HEADING}{} (score {:.2})\n\n- Session: {}\n- Id: {}{also}\n\nMark: open\n\n{fence}text\n{}\n{fence}\n\n{HIDDEN_OPEN}{}: {hidden}{HIDDEN_CLOSE}\n",
+            "{FLAG_HEADING}{} (score {:.2})\n\n- Session: {}\n- Id: {first}{also}\n\nMark: open\n\n{fence}text\n{}\n{fence}\n\n{HIDDEN_OPEN}{}: {}{HIDDEN_CLOSE}\n",
             flag.number,
             flag.score,
-            code(&flag.session),
-            code(first),
-            flag.original,
+            sessions
+                .iter()
+                .map(|session| code(session))
+                .collect::<Vec<_>>()
+                .join(", "),
+            flag.text,
             flag.number,
+            BASE64.encode(&flag.text),
         ),
     );
 }
@@ -139,8 +144,8 @@ pub enum MarkState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportFlag {
     pub number: usize,
-    pub original: String,
-    pub places: Vec<String>,
+    pub text: String,
+    pub shown: String,
     pub state: MarkState,
     line: usize,
 }
@@ -160,9 +165,11 @@ pub enum ReportError {
     BadStamp(String),
     #[error("the report has no flags section; it was written without --decide")]
     NoFlags,
+    #[error("flag {number} appears twice in the report")]
+    Twice { number: usize },
     #[error("flag {number} has no Mark line")]
     NoMark { number: usize },
-    #[error("flag {number} lost its hidden text and places; sanitize the raw bundle again")]
+    #[error("flag {number} lost its hidden copy; put the section back as sanitize wrote it")]
     NoOriginal { number: usize },
     #[error("flag {number}: {problem}")]
     Mark { number: usize, problem: MarkProblem },
@@ -174,8 +181,22 @@ pub enum MarkProblem {
     Unknown(String),
     #[error("write a map mark as `map <term> as <placeholder>`")]
     MapShape,
-    #[error("the flagged text does not contain `{0}`")]
+    #[error("the map term is blank")]
+    BlankTerm,
+    #[error("the flagged text does not contain `{0}` as a whole word")]
     TermMissing(String),
+    #[error("the map term `{0}` cuts into a placeholder in the flagged text")]
+    CutsPlaceholder(String),
+    #[error(
+        "the placeholder `{0}` holds a `[FLAGGED:<n>]` or `[REDACTED...]` form; pick a plain placeholder"
+    )]
+    PlaceholderForm(String),
+    #[error("the placeholder looks like a secret to the secrets scan; pick a plain placeholder")]
+    SecretForm,
+    #[error(
+        "`{0}` is shorter than {SHORTEST_LEARNED} characters, too short to learn as a mapping rule"
+    )]
+    TooShort(String),
 }
 
 impl fmt::Display for Resolution {
@@ -183,15 +204,19 @@ impl fmt::Display for Resolution {
         match self {
             Self::Keep => formatter.write_str("keep"),
             Self::Redact => formatter.write_str("redact"),
-            Self::Map { term, placeholder } => write!(formatter, "map {term} as {placeholder}"),
+            Self::Map { term, placeholder } => {
+                write!(formatter, "map `{term}` as `{placeholder}`")
+            }
         }
     }
 }
 
+#[derive(Default)]
 struct Pending {
     number: usize,
     mark: Option<(usize, String, bool)>,
     hidden: Option<String>,
+    shown: Option<Vec<String>>,
 }
 
 pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
@@ -204,6 +229,8 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
         if let Some((wanted, length)) = fence {
             if trimmed.chars().all(|c| c == wanted) && trimmed.chars().count() >= length {
                 fence = None;
+            } else if let Some(lines) = pending.last_mut().and_then(|flag| flag.shown.as_mut()) {
+                lines.push(line.to_owned());
             }
             continue;
         }
@@ -212,6 +239,11 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
             .find(|&c| trimmed.starts_with(&c.to_string().repeat(3)))
         {
             fence = Some((opened, trimmed.chars().take_while(|&c| c == opened).count()));
+            if let Some(current) = pending.last_mut()
+                && current.shown.is_none()
+            {
+                current.shown = Some(Vec::new());
+            }
             continue;
         }
         if let Some(stamp) = line.strip_prefix(STAMP_PREFIX) {
@@ -226,10 +258,12 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
         } else if let Some(rest) = line.strip_prefix(FLAG_HEADING) {
             let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
             if let Ok(number) = digits.parse() {
+                if pending.iter().any(|flag| flag.number == number) {
+                    return Err(ReportError::Twice { number });
+                }
                 pending.push(Pending {
                     number,
-                    mark: None,
-                    hidden: None,
+                    ..Pending::default()
                 });
             }
         } else if let Some(current) = pending.last_mut() {
@@ -265,17 +299,9 @@ impl ReportFlag {
         let (line, value, resolved) = pending.mark.ok_or(ReportError::NoMark { number })?;
         let lost = || ReportError::NoOriginal { number };
         let encoded = pending.hidden.ok_or_else(lost)?;
-        let mut parts = encoded
-            .split(' ')
-            .map(|part| {
-                let bytes = BASE64.decode(part).map_err(|_| lost())?;
-                String::from_utf8(bytes).map_err(|_| lost())
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter();
-        let original = parts.next().ok_or_else(lost)?;
-        let places: Vec<String> = parts.collect();
-        let state = match (resolution(&value, &original), resolved) {
+        let bytes = BASE64.decode(encoded.trim()).map_err(|_| lost())?;
+        let text = String::from_utf8(bytes).map_err(|_| lost())?;
+        let state = match (resolution(&value, &text), resolved) {
             (Ok(None), false) => MarkState::Open,
             (Ok(Some(resolution)), false) => MarkState::Marked(resolution),
             (Ok(Some(resolution)), true) => MarkState::Resolved(resolution),
@@ -289,21 +315,74 @@ impl ReportFlag {
         };
         Ok(Self {
             number,
-            original,
-            places,
+            shown: pending.shown.unwrap_or_default().join("\n"),
+            text,
             state,
             line,
         })
     }
+
+    #[must_use]
+    pub fn shows_its_text(&self) -> bool {
+        let lines = |text: &str| -> Vec<String> {
+            text.lines()
+                .map(|line| line.trim_end().to_owned())
+                .collect()
+        };
+        lines(&self.shown) == lines(&self.text)
+    }
+
+    pub fn learnable(&self) -> Result<(), ReportError> {
+        match &self.state {
+            MarkState::Marked(Resolution::Map { term, .. })
+            | MarkState::Resolved(Resolution::Map { term, .. })
+                if term.chars().filter(|c| !c.is_whitespace()).count() < SHORTEST_LEARNED =>
+            {
+                Err(ReportError::Mark {
+                    number: self.number,
+                    problem: MarkProblem::TooShort(term.clone()),
+                })
+            }
+            MarkState::Open | MarkState::Marked(_) | MarkState::Resolved(_) => Ok(()),
+        }
+    }
+}
+
+fn emphasis(text: &str) -> &str {
+    let length = text
+        .chars()
+        .take_while(|c| matches!(c, '*' | '_'))
+        .take(2)
+        .count();
+    text.get(..length).unwrap_or_default()
+}
+
+fn unwrapped(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        let marker = emphasis(text);
+        match text
+            .strip_prefix(marker)
+            .and_then(|rest| rest.strip_suffix(marker))
+            .filter(|inner| !marker.is_empty() && !inner.trim().is_empty())
+        {
+            Some(inner) => text = inner.trim(),
+            None => return text,
+        }
+    }
 }
 
 fn mark_line(line: &str) -> Option<(String, bool)> {
-    let bare = line.replace(['*', '_'], "");
-    let bare = bare.trim_start_matches(['-', '>', ' ']);
-    let lower = bare.to_ascii_lowercase();
-    for (prefix, resolved) in [("mark:", false), ("resolved:", true)] {
-        if lower.starts_with(prefix) {
-            return Some((bare[prefix.len()..].trim().to_owned(), resolved));
+    let bare = unwrapped(line.trim_start_matches(['-', '>', ' ']));
+    let marker = emphasis(bare);
+    let labelled = bare.get(marker.len()..).unwrap_or_default();
+    for (label, resolved) in [("mark:", false), ("resolved:", true)] {
+        if let Some(head) = labelled.get(..label.len())
+            && head.eq_ignore_ascii_case(label)
+        {
+            let rest = labelled.get(label.len()..).unwrap_or_default();
+            let rest = rest.strip_prefix(marker).unwrap_or(rest);
+            return Some((unwrapped(rest).to_owned(), resolved));
         }
     }
     None
@@ -319,7 +398,12 @@ enum MarkWord {
 }
 
 fn resolution(value: &str, original: &str) -> Result<Option<Resolution>, MarkProblem> {
-    let value = value.trim().trim_matches('`').trim();
+    let value = value.trim();
+    let value = value
+        .strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+        .unwrap_or(value)
+        .trim();
     if value.is_empty() {
         return Ok(None);
     }
@@ -343,11 +427,32 @@ fn map_mark(rest: &str, original: &str) -> Result<Resolution, MarkProblem> {
     let (term, placeholder) = rest.rsplit_once(" as ").ok_or(MarkProblem::MapShape)?;
     let term = unquote(term);
     let placeholder = unquote(placeholder);
-    if term.is_empty() || placeholder.is_empty() {
+    if term.trim().is_empty() {
+        return Err(MarkProblem::BlankTerm);
+    }
+    if placeholder.trim().is_empty() {
         return Err(MarkProblem::MapShape);
     }
-    if !original.contains(term) {
+    let spans = super::decide::term_spans(original, term);
+    if spans.is_empty() {
         return Err(MarkProblem::TermMissing(term.to_owned()));
+    }
+    let protected = super::scrub::protected(original, crate::rules::ruleset());
+    if spans.iter().any(|span| {
+        protected
+            .iter()
+            .any(|held| span.start < held.end && held.start < span.end)
+    }) {
+        return Err(MarkProblem::CutsPlaceholder(term.to_owned()));
+    }
+    if [crate::rules::names::FLAGGED_OPEN, "[REDACTED"]
+        .iter()
+        .any(|form| placeholder.contains(form))
+    {
+        return Err(MarkProblem::PlaceholderForm(placeholder.to_owned()));
+    }
+    if super::scrub::scan_flags(placeholder) {
+        return Err(MarkProblem::SecretForm);
     }
     Ok(Resolution::Map {
         term: term.to_owned(),
@@ -368,8 +473,7 @@ fn unquote(text: &str) -> &str {
 
 impl ReportFlags {
     #[must_use]
-    pub fn rewrite(&self, report: &str, open: usize) -> String {
-        let total = self.flags.len();
+    pub fn rewrite(&self, report: &str, open: usize, total: usize, applied: &[usize]) -> String {
         let mut lines: Vec<String> = report.split('\n').map(str::to_owned).collect();
         if let Some(line) = lines.get_mut(self.open_line) {
             *line = format!("{OPEN_PREFIX}{open} of {total}");
@@ -377,10 +481,50 @@ impl ReportFlags {
         for flag in &self.flags {
             if let (MarkState::Marked(resolution), Some(line)) =
                 (&flag.state, lines.get_mut(flag.line))
+                && applied.contains(&flag.number)
             {
                 *line = format!("Resolved: {resolution}");
             }
         }
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emphasis_wraps_the_label_or_the_whole_mark_and_never_the_term() {
+        for (line, value) in [
+            ("Mark: keep", "keep"),
+            ("**Mark:** keep", "keep"),
+            ("**Mark: keep**", "keep"),
+            ("_Mark:_ *redact*", "redact"),
+            (
+                "- Mark: map `pg_prod_07` as DB_HOST",
+                "map `pg_prod_07` as DB_HOST",
+            ),
+            ("Mark: map a*b*c as __X__", "map a*b*c as __X__"),
+            ("Resolved: map `x` as `y`", "map `x` as `y`"),
+        ] {
+            assert_eq!(
+                mark_line(line).map(|(value, _)| value),
+                Some(value.to_owned()),
+                "{line}"
+            );
+        }
+        assert_eq!(mark_line("Marked by Phil"), None);
+    }
+
+    #[test]
+    fn a_map_mark_keeps_the_characters_of_its_term() {
+        assert_eq!(
+            resolution("map `halyard_app` as DB_USER", "use halyard_app now"),
+            Ok(Some(Resolution::Map {
+                term: "halyard_app".to_owned(),
+                placeholder: "DB_USER".to_owned(),
+            }))
+        );
     }
 }

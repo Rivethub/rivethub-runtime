@@ -1,17 +1,9 @@
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 
 use capture::sanitize;
 use capture::sanitize::LocalKey;
-use capture::sanitize::MarkState;
 use capture::sanitize::Policy;
-use capture::sanitize::ReportFlags;
-use capture::sanitize::Sanitized;
-use capture::sanitize::decide::Endpoint;
-use capture::sanitize::decide::Mode;
-use capture::sanitize::decide::Resolution;
-use capture::sanitize::decide::Review;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
@@ -32,7 +24,7 @@ const EVERY_POSITION: &str = "*";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Position {
+pub(super) enum Position {
     Content,
     ToolResult,
     ToolArgsValue,
@@ -71,20 +63,20 @@ const ALL: [Position; 15] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Expect {
+pub(super) enum Expect {
     Redact,
     Keep,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Case {
-    shape: String,
-    position: String,
-    raw: String,
+pub(super) struct Case {
+    pub(super) shape: String,
+    pub(super) position: String,
+    pub(super) raw: String,
     #[serde(default)]
-    planted: Vec<String>,
-    expect: Expect,
+    pub(super) planted: Vec<String>,
+    pub(super) expect: Expect,
     #[serde(default)]
     note: Option<String>,
 }
@@ -93,7 +85,7 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES)
 }
 
-fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
+pub(super) fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
     let path = fixture_dir().join(corpus).join("cases.jsonl");
     let text =
         std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -109,14 +101,14 @@ fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
     Ok(out)
 }
 
-fn positions(spec: &str) -> Result<Vec<Position>, serde_json::Error> {
+pub(super) fn positions(spec: &str) -> Result<Vec<Position>, serde_json::Error> {
     if spec == EVERY_POSITION {
         return Ok(ALL.to_vec());
     }
     serde_json::from_str(&serde_json::to_string(spec)?).map(|position| vec![position])
 }
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
+pub(super) fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
     Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")?.with_timezone(&Utc))
 }
 
@@ -156,7 +148,7 @@ fn blank_batch() -> CaptureBatchRequest {
     }
 }
 
-fn bundle_with(
+pub(super) fn bundle_with(
     position: Position,
     text: &str,
 ) -> Result<SessionBundle, Box<dyn std::error::Error>> {
@@ -363,151 +355,7 @@ fn every_corpus_case_sanitizes_to_a_bundle_ingest_accepts() -> TestResult {
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct Answer {
-    probabilities: [f64; 2],
-}
-
-async fn flag_everything() -> axum::Json<Answer> {
-    axum::Json(Answer {
-        probabilities: [0.1, 0.9],
-    })
-}
-
-type SendError = Box<dyn std::error::Error + Send + Sync>;
-
-async fn decided(url: &str, raw: &SessionBundle, mode: Mode) -> Result<Sanitized, SendError> {
-    let policy = Policy {
-        mapping: sanitize::mapping::Mapping::default(),
-        key: LocalKey::from_bytes([7; 32]),
-    };
-    let mut scrubbed = sanitize::scrub(raw, &policy)?;
-    let candidates = scrubbed.candidates();
-    let endpoint = Endpoint {
-        url: url.to_owned(),
-        concurrency: NonZeroUsize::MIN.saturating_add(7),
-    };
-    let scores = sanitize::decide::score(&endpoint, &candidates.chunks).await?;
-    let review = Review {
-        top: NonZeroUsize::MIN.saturating_add(19),
-        threshold: 0.3,
-        mode,
-    };
-    scrubbed.flag(candidates, &scores, review);
-    Ok(scrubbed.seal(&policy, at()?)?)
-}
-
-fn marked(report: &str) -> Result<ReportFlags, SendError> {
-    let mut flags = sanitize::marks::read_flags(report)?;
-    for flag in &mut flags.flags {
-        let term = flag.original.split_whitespace().next();
-        flag.state = MarkState::Marked(match (flag.number % 3, term) {
-            (0, _) => Resolution::Keep,
-            (2, Some(term)) => Resolution::Map {
-                term: term.to_owned(),
-                placeholder: "[ORG]".to_owned(),
-            },
-            _ => Resolution::Redact,
-        });
-    }
-    Ok(flags)
-}
-
-async fn decide_stages(
-    url: &str,
-    case: &Case,
-    position: Position,
-) -> Result<Vec<String>, SendError> {
-    let raw = bundle_with(position, &case.raw).map_err(|error| error.to_string())?;
-    let mut found = Vec::new();
-    for mode in [Mode::Advisory, Mode::Block] {
-        let line = |stage: &str, what: &dyn std::fmt::Display| {
-            format!("{} | {position:?} | {mode} {stage} | {what}", case.shape)
-        };
-        let sanitized = match decided(url, &raw, mode).await {
-            Ok(sanitized) => sanitized,
-            Err(error) => {
-                found.push(line("sanitize", &error));
-                continue;
-            }
-        };
-        let report = sanitized.report.markdown("s.clean.json", "none");
-        let resolved = match sanitize::resolve(&sanitized.sealed.bundle, &marked(&report)?) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                found.push(line("resolve", &error));
-                continue;
-            }
-        };
-        for (stage, bundle) in [
-            ("sanitized", &sanitized.sealed.bundle),
-            ("resolved", &resolved.sealed.bundle),
-        ] {
-            found.extend(
-                sanitize::secrets(bundle)
-                    .iter()
-                    .map(|again| line(stage, again)),
-            );
-        }
-        if mode == Mode::Advisory && sanitize::withheld(&sanitized.sealed.bundle) > 0 {
-            found.push(line("sanitized", &"ingest would count a withheld flag"));
-        }
-        if resolved.open > 0 || sanitize::withheld(&resolved.sealed.bundle) > 0 {
-            found.push(line(
-                "resolved",
-                &"flags still open after every flag was marked",
-            ));
-        }
-    }
-    Ok(found)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn every_corpus_case_with_the_decision_review_stays_a_bundle_ingest_accepts() -> TestResult {
-    let routes = axum::Router::new().route("/v1/decide", axum::routing::post(flag_everything));
-    let stub = testkit::stub_server(routes).await?;
-    let url = format!("http://{}", stub.addr);
-    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(
-        std::thread::available_parallelism().map_or(4, NonZeroUsize::get),
-    ));
-    let mut tasks = tokio::task::JoinSet::new();
-    for corpus in corpus_dirs()? {
-        for case in cases(&corpus)? {
-            let case = std::sync::Arc::new(case);
-            for position in positions(&case.position)? {
-                let (corpus, case, url) = (corpus.clone(), case.clone(), url.clone());
-                let slots = slots.clone();
-                tasks.spawn(async move {
-                    let _slot = slots.acquire_owned().await?;
-                    let lines = decide_stages(&url, &case, position).await?;
-                    Ok::<_, SendError>(
-                        lines
-                            .into_iter()
-                            .map(|line| format!("{corpus} | {line}"))
-                            .collect::<Vec<_>>(),
-                    )
-                });
-            }
-        }
-    }
-    let runs = tasks.len();
-    let mut found = Vec::new();
-    while let Some(lines) = tasks.join_next().await {
-        found.extend(lines?.map_err(|error| error.to_string())?);
-    }
-    found.sort();
-    stub.close().await?;
-    assert!(runs > 0, "no corpus cases ran");
-    assert!(
-        found.is_empty(),
-        "{} problems over {runs} corpus runs with --decide, advisory and --block, before and after --resolve\ncorpus | shape | position | stage | match\n{}",
-        found.len(),
-        found.join("\n")
-    );
-    Ok(())
-}
-
-fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
+pub(super) fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
     let mut dirs: Vec<String> = std::fs::read_dir(fixture_dir())?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())

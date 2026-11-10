@@ -572,6 +572,7 @@ async fn a_forged_sanitized_stamp_is_refused_when_a_secret_still_matches() {
             policy_sha256: "0".repeat(64),
             passes: vec!["secrets".to_owned()],
             unresolved_flags: 0,
+            review: None,
         }),
     );
 
