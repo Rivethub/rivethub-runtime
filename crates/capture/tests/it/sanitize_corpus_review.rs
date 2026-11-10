@@ -101,7 +101,7 @@ fn sanitized(
     Ok(scrubbed.seal(&policy, at()?)?)
 }
 
-const EVERY_SET: [Marks; 9] = [
+const EVERY_SET: [Marks; 10] = [
     Marks::Keep,
     Marks::Redact,
     Marks::MapSecret,
@@ -110,6 +110,7 @@ const EVERY_SET: [Marks; 9] = [
     Marks::MapPartial,
     Marks::MapPlaceholder,
     Marks::MapFlagged,
+    Marks::MapUnderscore,
     Marks::Mixed,
 ];
 
@@ -124,6 +125,7 @@ enum Marks {
     MapPartial,
     MapPlaceholder,
     MapFlagged,
+    MapUnderscore,
     Mixed,
 }
 
@@ -166,6 +168,17 @@ impl Marks {
                 None => format!("map `{token}` as {PLAIN}"),
             },
             Self::MapFlagged => format!("map `{token}` as [FLAGGED:7]"),
+            Self::MapUnderscore => format!(
+                "map {} as DB_THING",
+                text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .find(|word| {
+                        word.contains('_')
+                            && word.trim_matches('_').len() >= 3
+                            && word.starts_with(char::is_alphanumeric)
+                            && word.ends_with(char::is_alphanumeric)
+                    })
+                    .unwrap_or(token)
+            ),
             Self::Mixed => match number % 4 {
                 0 => "keep".to_owned(),
                 1 => "redact".to_owned(),
