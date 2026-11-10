@@ -95,3 +95,35 @@ async fn another_person_neither_lists_nor_marks_an_import(pool: PgPool) -> TestR
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn only_the_owner_keeps_an_import(pool: PgPool) -> TestResult {
+    common::install_graphile(&pool).await?;
+    let session = phils_session()?;
+    import(&PostgresMemory::new(pool.clone()), "alice", &session).await?;
+    let key = receiver_key("alice", &session)?;
+    let scoped = PostgresMemory::new(common::probe(&pool).await?);
+    let keys = [key.clone()];
+
+    let refused = person("bob")?
+        .run(scoped.keep_session(&key, Some("bob"), at("2026-11-02T00:00:00Z")?))
+        .await;
+    let error = refused.err().ok_or("another person's keep is refused")?;
+    assert!(
+        error.to_string().contains("belongs to another person"),
+        "{error}"
+    );
+    assert_eq!(
+        listed(&scoped, person("alice")?, SessionView::Kept).await?,
+        Vec::<String>::new()
+    );
+
+    person("alice")?
+        .run(scoped.keep_session(&key, Some("alice"), at("2026-11-02T00:00:00Z")?))
+        .await?;
+    assert_eq!(
+        listed(&scoped, person("alice")?, SessionView::Kept).await?,
+        keys
+    );
+    Ok(())
+}
