@@ -326,9 +326,11 @@ impl Report {
                 ),
             );
         }
-        out.push_str(
-            "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n",
-        );
+        out.push_str(if self.decision.is_some() {
+            "The tables below never show the text the secrets and mapping passes replaced, but the Flags section does show flagged text. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n"
+        } else {
+            "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n"
+        });
         out.push_str(
             "Every text field is scanned for secrets, the author included; the author and task id are not mapped. Dates and roles are not scanned. Event ids are replaced by an HMAC of the raw id under the local key.\n\n",
         );

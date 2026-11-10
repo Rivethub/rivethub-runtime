@@ -34,7 +34,7 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
     push_line(
         out,
         format_args!(
-            "After the secrets and mapping passes, the decision model {} scored {} {} in {} {}. It skipped {} trivial {}: bare tokens under 16 characters with no capitalized word and none of `@ / = , : ;`, such as ids, numbers and enum values, placeholders, and `[tool call] <name>` lines. Below are the chunks it scored highest, up to {} per session, at or over {:.2}. Each flag covers every place in the bundle, in any session, where its text occurs.\n",
+            "After the secrets and mapping passes, the decision model {} scored {} {} in {} {}. It skipped {} trivial {}: identifiers (UUIDs, hex digests, base64url ids, times, and metadata id and path fields), placeholders, `[tool call] <name>` lines, and bare tokens under 16 characters that hold none of `@ / = , : ;`, no capitalized word, no non-ASCII letter, no mix of letters and digits, and no IP, phone or host-name shape, such as numbers and enum values. Below are the chunks it scored highest, up to {} per session, at or over {:.2}. Each flag covers every place in the bundle, in any session and inside other flagged text, JSON keys, tool names, channels and task ids, where its text occurs outside a placeholder.\n",
             code(&decision.model),
             decision.scored,
             plural(decision.scored, "chunk", "chunks"),
