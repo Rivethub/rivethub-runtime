@@ -1,4 +1,4 @@
-use crate::{memory, tags, wiki};
+use crate::{memory, sessions, tags, wiki};
 use rmcp::model::{Tool, ToolAnnotations};
 use schemars::{JsonSchema, Schema, generate::SchemaSettings};
 
@@ -32,6 +32,15 @@ pub fn definitions() -> Result<Vec<Tool>, serde_json::Error> {
         definition::<tags::Args>()?,
         definition::<wiki::Read>()?,
         definition::<wiki::Search>()?,
+    ])
+}
+
+pub fn session_definitions() -> Result<Vec<Tool>, serde_json::Error> {
+    Ok(vec![
+        definition::<sessions::Find>()?,
+        definition::<sessions::Export>()?,
+        definition::<sessions::Sanitize>()?,
+        definition::<sessions::Import>()?,
     ])
 }
 

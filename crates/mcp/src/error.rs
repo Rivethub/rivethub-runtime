@@ -41,6 +41,43 @@ pub enum Error {
     Initialize(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     Service(#[from] rmcp::service::ServiceError),
+    #[error(transparent)]
+    Path(#[from] crate::sessions::PathRefusal),
+    #[error(transparent)]
+    Share(#[from] capture::share::ShareError),
+    #[error(transparent)]
+    Bundle(#[from] capture::bundle::BundleError),
+    #[error(transparent)]
+    Capture(#[from] capture::writer::WriteError),
+    #[error("cannot build the import batch: {0}")]
+    ImportBatch(#[source] serde_json::Error),
+    #[error("not a session bundle: {}", .0.display())]
+    NotBundle(std::path::PathBuf),
+    #[error("no session this node can export has the id {0}")]
+    UnknownSessions(String),
+    #[error(
+        "decide needs memory.sanitize.decide.url in the config (the decision model); rh mcp reads it at startup, so restart it after you set the key"
+    )]
+    DecideUnconfigured,
+    #[error(
+        "refused: {} is a raw bundle that was never sanitized; run session_sanitize on the raw bundle first", .0.display()
+    )]
+    RawBundle(std::path::PathBuf),
+    #[error(
+        "refused: {} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again", path.display()
+    )]
+    BundleSecrets {
+        path: std::path::PathBuf,
+        count: usize,
+        first: String,
+    },
+    #[error(
+        "refused: {} withholds {count} flagged chunk(s) until they are marked; mark them in the report and run rh memory sanitize --resolve <report>", path.display()
+    )]
+    BundleWithheld {
+        path: std::path::PathBuf,
+        count: usize,
+    },
 }
 
 pub fn required<T>(value: Option<T>, field: &str) -> Result<T, Error> {

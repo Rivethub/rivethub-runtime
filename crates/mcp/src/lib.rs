@@ -7,6 +7,7 @@ pub mod plugins;
 mod render_memory;
 mod render_search;
 mod render_tags;
+pub mod sessions;
 pub mod tags;
 pub mod transport;
 pub mod wiki;
@@ -33,6 +34,7 @@ pub struct Server {
     shutdown: CancellationToken,
     zone: chrono_tz::Tz,
     plugins: Option<Arc<dyn PluginTools>>,
+    sessions: Option<Arc<sessions::Sessions>>,
     scope: Option<Scope>,
 }
 
@@ -42,6 +44,7 @@ pub struct Builder {
     shutdown: CancellationToken,
     zone: Option<chrono_tz::Tz>,
     plugins: Option<Arc<dyn PluginTools>>,
+    sessions: Option<sessions::Sessions>,
 }
 
 #[cfg_attr(
@@ -56,6 +59,7 @@ impl std::fmt::Debug for Server {
         f.debug_struct("Server")
             .field("memory_write", &self.memory_write)
             .field("plugins", &self.plugins.is_some())
+            .field("sessions", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -91,6 +95,14 @@ enum Operation {
     WikiSearch,
     #[strum(serialize = "wiki_read")]
     WikiRead,
+    #[strum(serialize = "session_find")]
+    SessionFind,
+    #[strum(serialize = "session_export")]
+    SessionExport,
+    #[strum(serialize = "session_sanitize")]
+    SessionSanitize,
+    #[strum(serialize = "session_import")]
+    SessionImport,
 }
 
 impl Server {
@@ -113,6 +125,7 @@ impl Server {
             shutdown,
             zone: None,
             plugins: None,
+            sessions: None,
         }
     }
 
@@ -159,7 +172,11 @@ impl Server {
             | Operation::GetFull
             | Operation::Tags
             | Operation::WikiSearch
-            | Operation::WikiRead => {
+            | Operation::WikiRead
+            | Operation::SessionFind
+            | Operation::SessionExport
+            | Operation::SessionSanitize
+            | Operation::SessionImport => {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => Err(Error::Cancelled),
@@ -194,7 +211,31 @@ impl Server {
             }
             Operation::WikiSearch => wiki::search(self.memory.as_ref(), decode(arguments)?).await,
             Operation::WikiRead => wiki::read(self.memory.as_ref(), decode(arguments)?).await,
+            Operation::SessionFind => {
+                Box::pin(sessions::find(
+                    self.memory.as_ref(),
+                    self.sessions()?,
+                    decode(arguments)?,
+                    self.zone,
+                ))
+                .await
+            }
+            Operation::SessionExport => {
+                sessions::export(self.sessions()?, decode(arguments)?).await
+            }
+            Operation::SessionSanitize => {
+                sessions::sanitize(self.sessions()?, decode(arguments)?).await
+            }
+            Operation::SessionImport => {
+                sessions::import(self.memory.as_ref(), self.sessions()?, decode(arguments)?).await
+            }
         }
+    }
+
+    fn sessions(&self) -> Result<&sessions::Sessions, Error> {
+        self.sessions.as_deref().ok_or(Error::Refused(
+            "session tools are served only by rh mcp over stdio",
+        ))
     }
 }
 
@@ -211,8 +252,17 @@ impl Builder {
         self
     }
 
+    #[must_use]
+    pub fn sessions(mut self, kit: sessions::Sessions) -> Self {
+        self.sessions = Some(kit);
+        self
+    }
+
     pub fn build(self) -> Result<Server, Error> {
         let mut tools = catalog::definitions()?;
+        if self.sessions.is_some() {
+            tools.extend(catalog::session_definitions()?);
+        }
         if self.memory_write {
             let tags = tools
                 .iter_mut()
@@ -234,6 +284,7 @@ impl Builder {
             shutdown: self.shutdown,
             zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
             plugins: self.plugins,
+            sessions: self.sessions.map(Arc::new),
             scope: Scope::current(),
         })
     }

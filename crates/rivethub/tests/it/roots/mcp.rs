@@ -38,8 +38,16 @@ fn expected_tool_names() -> TestResult<BTreeSet<String>> {
     Ok(recorded
         .into_iter()
         .filter(|name| !omitted.contains(name.as_str()))
+        .chain(STDIO_ONLY.iter().map(|name| (*name).to_owned()))
         .collect())
 }
+
+const STDIO_ONLY: [&str; 4] = [
+    "session_find",
+    "session_export",
+    "session_sanitize",
+    "session_import",
+];
 
 fn served_names(tools: &[Arc<dyn kernel::tool::Tool>]) -> BTreeSet<String> {
     tools

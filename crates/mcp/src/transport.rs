@@ -231,7 +231,7 @@ pub async fn serve_unix(
 
 pub async fn serve_stdio(server: Server, shutdown: CancellationToken) -> Result<(), Error> {
     let reader = crate::nonblock::reader()?;
-    serve_io(server, (reader, tokio::io::stdout()), shutdown).await
+    Box::pin(serve_io(server, (reader, tokio::io::stdout()), shutdown)).await
 }
 
 pub async fn serve_io<T, E, A>(

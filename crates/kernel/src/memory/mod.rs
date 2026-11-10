@@ -32,6 +32,7 @@ mod tags;
 mod title;
 mod tree;
 
+pub use archive::SessionArchive;
 pub use archive::SessionDigest;
 pub use capture::{CaptureBatchRequest, CaptureMessage, CaptureResult};
 pub use deletion::DeletedSession;
