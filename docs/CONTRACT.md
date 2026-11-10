@@ -1976,9 +1976,9 @@ whitespace and no `"`, `'`, `{` or `}` and is an identifier (a UUID, 12 or more 
 20 or more base64url characters mixing upper case, lower case and digits, or an RFC 3339 time or `YYYY-MM-DD` date)
 or none of these: 16 or more characters; one of `@ / = , : ;`; a capitalized word of two or more letters; a non-ASCII
 letter; letters and digits together in 5 or more characters; an IPv4 address; 7 or more digits with `+` or `-` (a
-phone or SSN shape); a lower-case host name such as `gpubox.lan` whose last label is 2 to 6 letters and not a common
+phone or SSN shape); a lower-case host name such as `buildbox.home` whose last label is 2 to 6 letters and not a common
 file extension. So `42`, `true`, `v1`, `margot` and a uuid are skipped, while an email address, a URL, a CSV row,
-`salary=120k`, `Globex`, `hunter2`, `P4ssw0rd!`, `10.4.20.207`, `078-05-1120`, `müller` and `sk-live-9f8e7d` are
+`salary=120k`, `Globex`, `hunter2`, `P4ssw0rd!`, `203.0.113.7`, `078-05-1120`, `müller` and `sk-live-9f8e7d` are
 scored. Each distinct chunk text is sent
 once, as `POST <url>/v1/decide` with `{"kind": "noul", "state": <chunk>, "question": "This line comes from an AI
 coding session that will be shared outside the author's household. Should it be redacted before sharing?"}`, and its

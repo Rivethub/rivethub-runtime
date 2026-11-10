@@ -41,16 +41,16 @@ async fn short_tokens_that_can_name_people_or_places_are_scored() {
 }
 
 const SHAPES: [&str; 16] = [
-    "10.4.20.207",
+    "203.0.113.7",
     "078-05-1120",
     "P4ssw0rd!",
     "hunter2",
     "山田太郎",
     "+15558675309",
-    "gpubox.lan",
+    "buildbox.home",
     "jsmith42",
     "s3cr3t-pa55",
-    "fe80::1",
+    "2001:db8::1",
     "Tr0ub4dor&3",
     "4111111111111111",
     "555-867-5309",

@@ -11,23 +11,55 @@ const PHONE_DIGITS: usize = 7;
 const HEX_ID: usize = 12;
 const BASE64_ID: usize = 20;
 const TOOL_CALL: &str = "[tool call] ";
-const ID_KEYS: [&str; 10] = [
-    "uuid",
-    "parentuuid",
-    "leafuuid",
-    "requestid",
-    "sessionid",
-    "messageid",
-    "tooluseid",
-    "promptid",
-    "sourcetooluseid",
-    "sessionjsonlpath",
-];
-const ID_SUFFIXES: [&str; 5] = ["_id", "_uuid", "_path", "Id", "Uuid"];
-const FILE_EXTENSIONS: [&str; 24] = [
-    "rs", "md", "py", "js", "ts", "tsx", "jsx", "json", "toml", "yaml", "yml", "txt", "lock", "sh",
-    "go", "rb", "java", "c", "h", "cpp", "html", "css", "log", "sql",
-];
+#[derive(strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+enum IdKey {
+    Uuid,
+    ParentUuid,
+    LeafUuid,
+    RequestId,
+    SessionId,
+    MessageId,
+    ToolUseId,
+    PromptId,
+}
+
+#[derive(strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+enum IdWord {
+    Id,
+    Uuid,
+    Path,
+}
+
+#[derive(strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+enum FileExtension {
+    Rs,
+    Md,
+    Py,
+    Js,
+    Ts,
+    Tsx,
+    Jsx,
+    Json,
+    Toml,
+    Yaml,
+    Yml,
+    Txt,
+    Lock,
+    Sh,
+    Go,
+    Rb,
+    Java,
+    C,
+    H,
+    Cpp,
+    Html,
+    Css,
+    Log,
+    Sql,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
@@ -63,16 +95,27 @@ pub(crate) fn candidates(sessions: &mut [BundledSession]) -> Candidates {
 }
 
 fn is_id_key(key: &str) -> bool {
+    if crate::writer::metadata_keep().contains(&key) {
+        return true;
+    }
     let folded: String = key
         .chars()
         .filter(|c| *c != '_' && *c != '-')
         .flat_map(char::to_lowercase)
         .collect();
-    ID_KEYS.contains(&folded.as_str())
+    folded.parse::<IdKey>().is_ok()
 }
 
 fn is_id_suffixed(key: &str) -> bool {
-    ID_SUFFIXES.iter().any(|suffix| key.ends_with(suffix))
+    let last = match key.rsplit_once('_') {
+        Some((_, last)) => last,
+        None => key
+            .char_indices()
+            .rfind(|(_, c)| c.is_ascii_uppercase())
+            .and_then(|(at, _)| key.get(at..))
+            .unwrap_or(key),
+    };
+    last.to_ascii_lowercase().parse::<IdWord>().is_ok()
 }
 
 fn is_identifier(token: &str) -> bool {
@@ -177,7 +220,7 @@ fn is_hostname(token: &str) -> bool {
         })
         && (2..=6).contains(&last.len())
         && last.chars().all(|c| c.is_ascii_lowercase())
-        && !FILE_EXTENSIONS.contains(last)
+        && last.parse::<FileExtension>().is_err()
 }
 
 fn only_placeholders(text: &str) -> bool {
@@ -302,14 +345,14 @@ mod tests {
             r#"{"customer":"Initech"}"#,
             "it's",
             "[tool call] two words",
-            "10.4.20.207",
+            "203.0.113.7",
             "078-05-1120",
             "+15558675309",
             "hunter2",
             "P4ssw0rd!",
             "山田太郎",
             "müller",
-            "gpubox.lan",
+            "buildbox.home",
             "sk-live-9f8e7d",
         ] {
             assert!(!is_trivial(scored), "{scored}");
@@ -319,7 +362,14 @@ mod tests {
     #[test]
     fn identifier_fields_are_skipped_by_name_and_value() {
         assert!(is_id_key("parentUuid") && is_id_key("session_jsonl_path") && is_id_key("uuid"));
+        assert!(is_id_key("ordinal") && is_id_key("native_event_id"));
         assert!(!is_id_key("note"));
+        assert!(
+            is_id_suffixed("file_path")
+                && is_id_suffixed("requestId")
+                && is_id_suffixed("parentUuid")
+        );
+        assert!(!is_id_suffixed("pattern") && !is_id_suffixed("command"));
         assert!(is_identifier(
             "~/.claude/projects/-home-phil-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl"
         ));
