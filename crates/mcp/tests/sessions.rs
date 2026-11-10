@@ -306,6 +306,7 @@ async fn import_refuses_open_withheld_flags() {
         r#"{"path":"pairing.clean.json","dry_run":true}"#,
     )
     .await;
+    assert_eq!(listed.is_error, Some(true), "{}", text(&listed));
     assert!(
         text(&listed).ends_with("refused: 1 withheld flag open; nothing written\n"),
         "{}",

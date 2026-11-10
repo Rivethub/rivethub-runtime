@@ -2115,7 +2115,7 @@ whose digest fails is an error. A raw bundle, version 1 included, is refused wit
 sessions are not listed. A sanitized bundle the ingest scan still matches is refused with the match count and the
 first match's place (session, message, field and rule, never the text); one with open withheld flags is refused with
 their count. With `dry_run` those two list each session as `ingest-bundle --dry-run` does, with matched fields
-masked, and end `refused: ...; nothing written`. Open advisory flags do not stop an import; the reply counts them. A
+masked, and end `refused: ...; nothing written`; every refusal, on a dry run too, is a tool error result. Open advisory flags do not stop an import; the reply counts them. A
 clean bundle replies `ingested <n> sessions from <authors>: <i> inserted, <s> skipped` (`would import ...; nothing
 written` on a dry run). Importing the same bundle again inserts nothing, because the store keys an import by owner
 and origin and skips event ids it has (note 135).

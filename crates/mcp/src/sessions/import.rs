@@ -52,21 +52,31 @@ pub(crate) async fn import(
             .enumerate()
             .map(|(index, session)| listed(index, session, &secrets))
             .collect();
-        lines.push(match verdict {
-            Verdict::Clean { unreviewed } => format!(
-                "would import {sessions}{}; nothing written\n",
-                advisory(unreviewed)
+        let (line, reply): (String, fn(String) -> CallToolResult) = match verdict {
+            Verdict::Clean { unreviewed } => (
+                format!(
+                    "would import {sessions}{}; nothing written\n",
+                    advisory(unreviewed)
+                ),
+                crate::text,
             ),
-            Verdict::Secrets { count, first } => format!(
-                "refused: {} remain ({first}); nothing written\n",
-                noun(count, "secret pattern match", "secret pattern matches")
+            Verdict::Secrets { count, first } => (
+                format!(
+                    "refused: {} remain ({first}); nothing written\n",
+                    noun(count, "secret pattern match", "secret pattern matches")
+                ),
+                crate::refused,
             ),
-            Verdict::Withheld(count) => format!(
-                "refused: {} open; nothing written\n",
-                noun(count, "withheld flag", "withheld flags")
+            Verdict::Withheld(count) => (
+                format!(
+                    "refused: {} open; nothing written\n",
+                    noun(count, "withheld flag", "withheld flags")
+                ),
+                crate::refused,
             ),
-        });
-        return Ok(crate::text(lines.concat()));
+        };
+        lines.push(line);
+        return Ok(reply(lines.concat()));
     }
     let unreviewed = match verdict {
         Verdict::Clean { unreviewed } => unreviewed,

@@ -394,6 +394,10 @@ pub(crate) fn text(value: String) -> CallToolResult {
     stamp(result)
 }
 
+pub(crate) fn refused(value: String) -> CallToolResult {
+    stamp(CallToolResult::error(vec![ContentBlock::text(value)]))
+}
+
 fn stamp(mut result: CallToolResult) -> CallToolResult {
     let mut meta = wire::JsonObject::default();
     if meta
