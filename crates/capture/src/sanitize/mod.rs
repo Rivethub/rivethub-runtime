@@ -1,5 +1,7 @@
+pub mod decide;
 pub mod key;
 pub mod mapping;
+pub mod marks;
 pub mod report;
 mod rescan;
 mod scrub;
@@ -17,11 +19,15 @@ use wire::capture::SessionBundle;
 
 use crate::bundle::BundleError;
 use crate::bundle::Sealed;
+pub use decide::Candidates;
+pub use decide::Decision;
 pub use key::KeyError;
 pub use key::LocalKey;
 use mapping::Action;
 use mapping::Mapping;
 use mapping::Matcher;
+pub use marks::MarkState;
+pub use marks::ReportFlags;
 pub use report::Change;
 pub use report::Collision;
 pub use report::Field;
@@ -30,6 +36,7 @@ pub use report::Report;
 pub use report::RuleId;
 pub use report::SessionLine;
 pub use report::Spot;
+use rescan::Found;
 use rescan::Rescan;
 use scrub::Scrubber;
 
@@ -47,6 +54,17 @@ pub enum SanitizeError {
         "the sanitized bundle still holds {0} secret pattern match(es) after every re-check; this is a sanitizer bug, so nothing was written"
     )]
     Unsettled(usize),
+    #[error("the flag count does not fit the bundle stamp: {0}")]
+    FlagCount(#[from] std::num::TryFromIntError),
+    #[error("the bundle is not sanitized, so it has no flags to resolve")]
+    NotSanitized,
+    #[error(
+        "the report is from the sanitize run at {report}, but the bundle is from the run at {bundle}; resolve with the report written beside this bundle"
+    )]
+    OtherRun {
+        bundle: DateTime<Utc>,
+        report: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug)]
@@ -104,11 +122,27 @@ pub struct Sanitized {
     pub report: Report,
 }
 
+#[derive(Debug)]
+pub struct Scrubbed {
+    raw_digest: String,
+    exported_by: BundleAuthor,
+    exported_at: DateTime<Utc>,
+    sessions: Vec<BundledSession>,
+    changes: Vec<Change>,
+    collisions: Vec<Collision>,
+    rechecked: usize,
+    decision: Option<Decision>,
+}
+
 pub fn run(
     bundle: &SessionBundle,
     policy: &Policy,
     at: DateTime<Utc>,
 ) -> Result<Sanitized, SanitizeError> {
+    scrub(bundle, policy)?.seal(policy, at)
+}
+
+pub fn scrub(bundle: &SessionBundle, policy: &Policy) -> Result<Scrubbed, SanitizeError> {
     if let Sanitization::Sanitized(stamp) = &bundle.manifest.sanitization {
         return Err(SanitizeError::AlreadySanitized { at: stamp.at });
     }
@@ -130,69 +164,177 @@ pub fn run(
     }
     let mut exported_by = bundle.manifest.exported_by.clone();
     scrubber.manifest(&mut exported_by);
-    let first_pass = scrubber.changes.len();
-    recheck(
-        &mut scrubber,
+    let mut found = recheck(
         &mut sessions,
         &mut exported_by,
-        policy,
+        Some(&policy.key),
         raw_digest,
     );
-    let rechecked = scrubber.changes.len() - first_pass;
-    let policy_sha256 = policy.hash(raw_digest)?;
-    let sealed = crate::bundle::seal(
+    let rechecked = found.changes.len();
+    scrubber.changes.append(&mut found.changes);
+    scrubber.collisions.append(&mut found.collisions);
+    Ok(Scrubbed {
+        raw_digest: raw_digest.clone(),
         exported_by,
-        bundle.manifest.exported_at,
-        Sanitization::Sanitized(SanitizeStamp {
-            at,
-            policy_sha256: policy_sha256.clone(),
-            passes: Pass::iter().map(|pass| pass.to_string()).collect(),
-            unresolved_flags: 0,
-        }),
+        exported_at: bundle.manifest.exported_at,
         sessions,
-    )?;
+        changes: scrubber.changes,
+        collisions: scrubber.collisions,
+        rechecked,
+        decision: None,
+    })
+}
+
+impl Scrubbed {
+    pub fn candidates(&mut self) -> Candidates {
+        decide::candidates(&mut self.sessions)
+    }
+
+    pub fn flag(
+        &mut self,
+        candidates: Candidates,
+        scores: &[f64],
+        review: decide::Review,
+    ) -> &Decision {
+        self.decision
+            .insert(decide::flag(&mut self.sessions, candidates, scores, review))
+    }
+
+    pub fn seal(self, policy: &Policy, at: DateTime<Utc>) -> Result<Sanitized, SanitizeError> {
+        let policy_sha256 = policy.hash(&self.raw_digest)?;
+        let unresolved_flags = self
+            .decision
+            .as_ref()
+            .map_or(0, |decision| decision.flags.len());
+        let sealed = settled(crate::bundle::seal(
+            self.exported_by,
+            self.exported_at,
+            Sanitization::Sanitized(SanitizeStamp {
+                at,
+                policy_sha256: policy_sha256.clone(),
+                passes: Pass::iter()
+                    .filter(|pass| *pass != Pass::Decide || self.decision.is_some())
+                    .map(|pass| pass.to_string())
+                    .collect(),
+                unresolved_flags: u32::try_from(unresolved_flags)?,
+            }),
+            self.sessions,
+        )?)?;
+        let report = Report {
+            at,
+            policy_sha256,
+            bundle_sha256: sealed.bundle.manifest.bundle_sha256.clone(),
+            sessions: sealed.bundle.sessions.iter().map(SessionLine::of).collect(),
+            rules: policy
+                .mapping
+                .rules()
+                .iter()
+                .map(|rule| (rule.line, rule.action.clone()))
+                .collect(),
+            changes: self.changes,
+            collisions: self.collisions,
+            rechecked: self.rechecked,
+            decision: self.decision,
+        };
+        Ok(Sanitized { sealed, report })
+    }
+}
+
+fn settled(sealed: Sealed) -> Result<Sealed, SanitizeError> {
     let remaining = secrets(&sealed.bundle).len();
     if remaining > 0 {
         return Err(SanitizeError::Unsettled(remaining));
     }
-    let report = Report {
-        at,
-        policy_sha256,
-        bundle_sha256: sealed.bundle.manifest.bundle_sha256.clone(),
-        sessions: sealed.bundle.sessions.iter().map(SessionLine::of).collect(),
-        rules: policy
-            .mapping
-            .rules()
-            .iter()
-            .map(|rule| (rule.line, rule.action.clone()))
-            .collect(),
-        changes: scrubber.changes,
-        collisions: scrubber.collisions,
-        rechecked,
+    Ok(sealed)
+}
+
+#[derive(Debug)]
+pub struct Resolved {
+    pub sealed: Sealed,
+    pub open: usize,
+}
+
+pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, SanitizeError> {
+    let Sanitization::Sanitized(stamp) = &bundle.manifest.sanitization else {
+        return Err(SanitizeError::NotSanitized);
     };
-    Ok(Sanitized { sealed, report })
+    if stamp.at != flags.at {
+        return Err(SanitizeError::OtherRun {
+            bundle: stamp.at,
+            report: flags.at,
+        });
+    }
+    let marks: Vec<decide::Marked<'_>> = flags
+        .flags
+        .iter()
+        .filter_map(|flag| match &flag.state {
+            MarkState::Marked(resolution) | MarkState::Resolved(resolution) => {
+                Some(decide::Marked {
+                    number: flag.number,
+                    resolution,
+                    original: &flag.original,
+                    places: &flag.places,
+                })
+            }
+            MarkState::Open => None,
+        })
+        .collect();
+    let mut sessions = bundle.sessions.clone();
+    decide::resolve(&mut sessions, &marks);
+    let unmarked = flags
+        .flags
+        .iter()
+        .filter(|flag| flag.state == MarkState::Open)
+        .count();
+    let open = unmarked.max(decide::withheld(&sessions));
+    let sealed = settled(crate::bundle::seal(
+        bundle.manifest.exported_by.clone(),
+        bundle.manifest.exported_at,
+        Sanitization::Sanitized(SanitizeStamp {
+            unresolved_flags: u32::try_from(open)?,
+            ..stamp.clone()
+        }),
+        sessions,
+    )?)?;
+    Ok(Resolved { sealed, open })
+}
+
+#[must_use]
+pub fn withheld(bundle: &SessionBundle) -> usize {
+    match &bundle.manifest.sanitization {
+        Sanitization::Raw => 0,
+        Sanitization::Sanitized(_) => decide::withheld(&bundle.sessions),
+    }
+}
+
+pub fn unreviewed(bundle: &SessionBundle) -> Result<usize, SanitizeError> {
+    match &bundle.manifest.sanitization {
+        Sanitization::Raw => Ok(0),
+        Sanitization::Sanitized(stamp) => Ok(usize::try_from(stamp.unresolved_flags)?),
+    }
 }
 
 fn recheck(
-    scrubber: &mut Scrubber<'_>,
     sessions: &mut [BundledSession],
     exported_by: &mut BundleAuthor,
-    policy: &Policy,
+    key: Option<&LocalKey>,
     digest: &str,
-) {
+) -> Found {
+    let mut all = Found::default();
     for round in 0..=RECHECKS {
         let mut found = Rescan {
-            key: Some(&policy.key),
+            key,
             digest,
             whole: round == RECHECKS,
         }
         .run(sessions, exported_by);
         if found.changes.is_empty() {
-            return;
+            break;
         }
-        scrubber.changes.append(&mut found.changes);
-        scrubber.collisions.append(&mut found.collisions);
+        all.changes.append(&mut found.changes);
+        all.collisions.append(&mut found.collisions);
     }
+    all
 }
 
 #[must_use]

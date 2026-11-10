@@ -15,6 +15,7 @@ aho-corasick = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 config = { workspace = true }
+futures = { workspace = true }
 hex = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }

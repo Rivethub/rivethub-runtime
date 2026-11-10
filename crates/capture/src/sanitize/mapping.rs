@@ -166,6 +166,16 @@ fn rule(line: usize, raw: RawRule) -> Result<Rule, MappingError> {
     })
 }
 
+#[must_use]
+pub fn map_rule(literal: &str, placeholder: &str) -> String {
+    let quote = |text: &str| toml::Value::String(text.to_owned()).to_string();
+    format!(
+        "[[rule]]\nliteral = {}\naction = \"map\"\nas = {}\n",
+        quote(literal),
+        quote(placeholder)
+    )
+}
+
 fn line_of(text: &str, offset: usize) -> usize {
     text.get(..offset)
         .map_or(1, |before| before.matches('\n').count() + 1)

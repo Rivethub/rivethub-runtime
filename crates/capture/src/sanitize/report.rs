@@ -5,7 +5,11 @@ use chrono::DateTime;
 use chrono::Utc;
 use wire::capture::BundledSession;
 
+use super::decide::Decision;
 use super::mapping::Action;
+use super::marks::STAMP_PREFIX;
+use super::marks::flag_section;
+use super::marks::stamp_text;
 
 const SHOWN_FINGERPRINTS: usize = 3;
 const SHOWN_EVENT_HEX: usize = 12;
@@ -78,6 +82,7 @@ impl fmt::Display for Field {
 pub enum Pass {
     Secrets,
     Mapping,
+    Decide,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,7 +186,7 @@ impl SessionLine {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Report {
     pub at: DateTime<Utc>,
     pub policy_sha256: String,
@@ -191,6 +196,7 @@ pub struct Report {
     pub changes: Vec<Change>,
     pub collisions: Vec<Collision>,
     pub rechecked: usize,
+    pub decision: Option<Decision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -218,6 +224,9 @@ impl Report {
     pub fn markdown(&self, bundle: &str, mapping: &str) -> String {
         let mut out = String::new();
         self.header(&mut out, bundle, mapping);
+        if let Some(decision) = &self.decision {
+            flag_section(&mut out, decision, bundle);
+        }
         self.rule_table(&mut out);
         let mut by_session: HashMap<Option<usize>, Vec<&Change>> = HashMap::new();
         for change in &self.changes {
@@ -311,7 +320,11 @@ impl Report {
         );
         push_line(
             out,
-            format_args!("- Bundle sha256: `{}`\n", self.bundle_sha256),
+            format_args!("- Bundle sha256: `{}`", self.bundle_sha256),
+        );
+        push_line(
+            out,
+            format_args!("{STAMP_PREFIX}`{}`\n", stamp_text(self.at)),
         );
     }
 
@@ -452,21 +465,21 @@ fn short_event(event_id: &str) -> &str {
     event_id.get(..SHOWN_EVENT_HEX).unwrap_or(event_id)
 }
 
-fn cell(text: &str) -> String {
+pub(super) fn cell(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('|', "\\|")
         .replace(['\n', '\r'], " ")
 }
 
-fn code(text: &str) -> String {
+pub(super) fn code(text: &str) -> String {
     format!("`{}`", cell(&text.replace('`', "'")))
 }
 
-const fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
+pub(super) const fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
     if count == 1 { one } else { many }
 }
 
-fn push_line(out: &mut String, line: fmt::Arguments<'_>) {
+pub(super) fn push_line(out: &mut String, line: fmt::Arguments<'_>) {
     out.push_str(&line.to_string());
     out.push('\n');
 }
