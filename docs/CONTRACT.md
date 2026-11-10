@@ -2079,7 +2079,10 @@ key and ranks sessions by best score, then hit count, then latest hit. It reads 
 author of an import) and drops hits whose key has no digest, such as a trashed session (note 127), saying how many.
 Each entry reads `<n>. <conversation id>  "<title>"  <agent>  <first> to <last>  <count> messages  best <score>
 (<hits> hits)`, plus `  from <author>` for an import, dates in the server's display zone, then up to three
-excerpts of at most 200 characters with whitespace collapsed.
+excerpts of at most 200 characters with whitespace collapsed. The title and each excerpt pass through the
+built-in secret rules of note 136 before they are shown (each match becomes `[REDACTED:<rule>]`), whatever the live
+capture redaction setting, because the agent's own session is captured and may reach a team gateway. `memory_search`
+is unchanged.
 
 Files. Every write goes into the share directory, `$XDG_DATA_HOME/rivethub/share` (`~/.local/share/rivethub/share`
 when unset), created with mode 0700. An `out` is a bare file name: a letter or digit, then up to 99 letters, digits,
@@ -2087,8 +2090,8 @@ when unset), created with mode 0700. An `out` is a bare file name: a letter or d
 A tool never replaces a file: it refuses an `out` whose bundle, report or local review file exists, and writes each
 file as note 134 does but renames without replacing, so a second run cannot wipe the marks typed into a report. A read
 (`in`, `path`, `mapping`) takes a bare share-directory name or an absolute path; it is resolved through symlinks first
-and must be a regular file under the home directory with no component starting with `.` below it, the share
-directory excepted, and must end `.json` (a bundle) or `.toml` (a mapping). A file that does not parse as a bundle is
+and must be a regular file with one hard link (a second link could name a file in a hidden directory) under the
+home directory with no component starting with `.` below it, the share directory excepted, and must end `.json` (a bundle) or `.toml` (a mapping). A file that does not parse as a bundle is
 reported as `not a session bundle: <path>`, never with the parser's text. Replies give absolute paths.
 
 `session_export {conversation_ids, out}` takes 1 to 50 conversation ids (UUIDs, repeats dropped) and writes the raw
