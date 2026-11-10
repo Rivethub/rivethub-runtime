@@ -19,7 +19,7 @@ use kernel::topics::TopicId;
 use strum::IntoEnumIterator as _;
 use uuid::Uuid;
 use wire::harness::HarnessId;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::PostgresMemory;
 use crate::error::Error;
@@ -144,8 +144,8 @@ struct Row {
 }
 
 impl Row {
-    fn record(self) -> Result<SessionRecord, Error> {
-        let id = SessionId::from_str(&self.session_key)
+    fn record(self) -> Result<SessionRecord<SessionKey>, Error> {
+        let id = SessionKey::from_str(&self.session_key)
             .map_err(|source| Error::stored("session key", source))?;
         let topic = match (self.topic_id, self.topic_name) {
             (Some(topic), Some(name)) => Some(SessionTopic {
@@ -171,6 +171,7 @@ impl Row {
             memory: memory_state(self.active, self.flagged, self.summarized),
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
+            origin: None,
         })
     }
 }
@@ -224,7 +225,7 @@ impl<'a> Select<'a> {
 }
 
 impl PostgresMemory {
-    async fn sessions(&self, select: Select<'_>) -> Result<Vec<SessionRecord>, Error> {
+    async fn sessions(&self, select: Select<'_>) -> Result<Vec<SessionRecord<SessionKey>>, Error> {
         let rows: Vec<Row> = sqlx::query_as(SESSIONS)
             .bind(harnesses(select.harness))
             .bind(select.keys)
@@ -270,14 +271,14 @@ impl SessionCatalog for PostgresMemory {
         self.session_page(query).await.map_err(Into::into)
     }
 
-    async fn records(
+    async fn entries(
         &self,
-        sessions: &[SessionId],
-    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
-        if sessions.is_empty() {
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let keys: Vec<String> = sessions.iter().map(ToString::to_string).collect();
+        let keys: Vec<String> = keys.iter().map(ToString::to_string).collect();
         Ok(self.sessions(Select::some(&keys)?).await?)
     }
 }

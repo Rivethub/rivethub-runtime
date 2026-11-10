@@ -37,7 +37,7 @@ use wire::gateway::today;
 use wire::session_id::SessionId;
 
 use super::session_delete::catalog::Lineage;
-use super::session_delete::catalog::{catalog, lineage, row, shown, visibilities};
+use super::session_delete::catalog::{catalog, lineage, registered, row, visibilities};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Query;
@@ -245,8 +245,9 @@ async fn day_sessions(
         found.extend(
             page.items
                 .into_iter()
+                .filter_map(SessionRecord::narrow)
                 .filter(|record| (start..end).contains(&record.started_at))
-                .filter(|record| shown(gateway, user, record)),
+                .filter(|record| registered(gateway, user, &record.id)),
         );
         match page.next {
             Some(next) if !reached_start => query.after = Some(next),
@@ -270,7 +271,7 @@ async fn sources(
         .records(&wanted)
         .await?
         .into_iter()
-        .filter(|record| !record.trashed && shown(gateway, user, record))
+        .filter(|record| !record.trashed && registered(gateway, user, &record.id))
         .collect())
 }
 

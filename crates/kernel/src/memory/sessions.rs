@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use values::HarnessId;
 use values::SessionId;
+use values::SessionKey;
 
 use super::MemoryStoreError;
 use super::names_session;
@@ -74,8 +75,15 @@ pub struct SessionTopic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionRecord {
-    pub id: SessionId,
+pub struct ImportOrigin {
+    pub author: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRecord<K = SessionId> {
+    pub id: K,
     pub title: String,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
@@ -86,11 +94,54 @@ pub struct SessionRecord {
     pub memory: MemoryState,
     pub gist: Option<String>,
     pub cwd: Option<String>,
+    pub origin: Option<ImportOrigin>,
+}
+
+impl SessionRecord<SessionKey> {
+    #[must_use]
+    pub fn narrow(self) -> Option<SessionRecord> {
+        let SessionKey::Harness(id) = self.id else {
+            return None;
+        };
+        Some(SessionRecord {
+            id,
+            title: self.title,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            message_count: self.message_count,
+            topic: self.topic,
+            kept: self.kept,
+            trashed: self.trashed,
+            memory: self.memory,
+            gist: self.gist,
+            cwd: self.cwd,
+            origin: self.origin,
+        })
+    }
+}
+
+impl From<SessionRecord> for SessionRecord<SessionKey> {
+    fn from(record: SessionRecord) -> Self {
+        Self {
+            id: record.id.into(),
+            title: record.title,
+            started_at: record.started_at,
+            ended_at: record.ended_at,
+            message_count: record.message_count,
+            topic: record.topic,
+            kept: record.kept,
+            trashed: record.trashed,
+            memory: record.memory,
+            gist: record.gist,
+            cwd: record.cwd,
+            origin: record.origin,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SessionPage {
-    pub items: Vec<SessionRecord>,
+    pub items: Vec<SessionRecord<SessionKey>>,
     pub next: Option<SessionCursor>,
 }
 
@@ -98,11 +149,29 @@ pub struct SessionPage {
 pub trait SessionCatalog: Send + Sync {
     async fn list(&self, query: &SessionQuery) -> Result<SessionPage, MemoryStoreError>;
 
-    async fn records(&self, sessions: &[SessionId])
-    -> Result<Vec<SessionRecord>, MemoryStoreError>;
+    async fn entries(
+        &self,
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError>;
 
-    async fn get(&self, session: &SessionId) -> Result<Option<SessionRecord>, MemoryStoreError> {
-        Ok(self.records(std::slice::from_ref(session)).await?.pop())
+    async fn records(
+        &self,
+        sessions: &[SessionId],
+    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
+        let keys: Vec<SessionKey> = sessions.iter().map(SessionKey::from).collect();
+        Ok(self
+            .entries(&keys)
+            .await?
+            .into_iter()
+            .filter_map(SessionRecord::narrow)
+            .collect())
+    }
+
+    async fn get(
+        &self,
+        key: &SessionKey,
+    ) -> Result<Option<SessionRecord<SessionKey>>, MemoryStoreError> {
+        Ok(self.entries(std::slice::from_ref(key)).await?.pop())
     }
 }
 

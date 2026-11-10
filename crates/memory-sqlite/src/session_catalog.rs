@@ -1,8 +1,8 @@
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use kernel::filing::conversation_keys;
 use kernel::filing::session_key;
+use kernel::filing::stored_keys;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -20,7 +20,7 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::named_params;
 use strum::IntoEnumIterator as _;
 use wire::harness::HarnessId;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
@@ -154,8 +154,8 @@ impl Row {
         })
     }
 
-    fn record(self) -> Result<SessionRecord, SqliteError> {
-        let id = SessionId::from_str(&self.key).map_err(|_| SqliteError::StoredSession {
+    fn record(self) -> Result<SessionRecord<SessionKey>, SqliteError> {
+        let id = SessionKey::from_str(&self.key).map_err(|_| SqliteError::StoredSession {
             value: self.key.clone(),
         })?;
         let topic = match (self.topic, self.topic_name) {
@@ -185,6 +185,7 @@ impl Row {
             memory: memory_state(self.active != 0, self.flagged != 0, self.summarized != 0),
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
+            origin: None,
         })
     }
 }
@@ -242,7 +243,7 @@ fn select(
     scope: &Scope<'_>,
     query: Option<&SessionQuery>,
     limit: i64,
-) -> Result<Vec<SessionRecord>, SqliteError> {
+) -> Result<Vec<SessionRecord<SessionKey>>, SqliteError> {
     let sql = SESSIONS.replace("VIEW_CONDITION", view_condition(scope.view));
     let mut statement = conn
         .prepare(&sql)
@@ -312,15 +313,18 @@ impl SessionCatalog for SqliteStore {
             .map_err(Into::into)
     }
 
-    async fn records(
+    async fn entries(
         &self,
-        sessions: &[SessionId],
-    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
-        if sessions.is_empty() {
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let wanted: Vec<String> = sessions.iter().map(ToString::to_string).collect();
-        let stored: Vec<String> = sessions.iter().flat_map(conversation_keys).collect();
+        let wanted: Vec<String> = keys.iter().map(ToString::to_string).collect();
+        let stored: Vec<String> = keys
+            .iter()
+            .flat_map(|key| stored_keys(key.as_str()))
+            .collect();
         let limit = i64::try_from(wanted.len()).map_err(SqliteError::Count)?;
         let wanted = keys_json(&wanted)?;
         let stored = keys_json(&stored)?;

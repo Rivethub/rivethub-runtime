@@ -74,7 +74,7 @@ async fn memory_state_follows_summaries_and_flagged_jobs() -> TestResult {
     let state = |session: &wire::session_id::SessionId| {
         page.items
             .iter()
-            .find(|item| &item.id == session)
+            .find(|item| item.id.as_str() == session.as_str())
             .map(|item| item.memory)
     };
     assert_eq!(state(&seeded.alpha), Some(MemoryState::Summarized));
@@ -84,7 +84,7 @@ async fn memory_state_follows_summaries_and_flagged_jobs() -> TestResult {
     let alpha = page
         .items
         .iter()
-        .find(|item| item.id == seeded.alpha)
+        .find(|item| item.id.as_str() == seeded.alpha.as_str())
         .ok_or("alpha")?;
     assert_eq!(
         alpha.gist.as_deref(),

@@ -208,7 +208,8 @@ async fn rows(
             title: session
                 .title
                 .unwrap_or_else(|| session.session.as_str().to_owned()),
-            harness: session.session.harness(),
+            harness: Some(session.session.harness()),
+            origin: None,
             started_at: session.started_at,
             ended_at: None,
             message_count: session.messages,
@@ -220,7 +221,7 @@ async fn rows(
             trashed: false,
             memory_state: SessionMemoryState::Summarized,
             gist: None,
-            id: session.session,
+            id: session.session.into(),
         })
         .collect();
     rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));

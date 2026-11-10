@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::harness::HarnessId;
-use crate::session_id::SessionId;
+use crate::session_id::{SessionId, SessionKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -30,10 +30,20 @@ pub enum SharedWith {
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionOriginLabel {
+    pub author: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionSummaryRow {
-    pub id: SessionId,
+    pub id: SessionKey,
     pub title: String,
-    pub harness: HarnessId,
+    pub harness: Option<HarnessId>,
+    pub origin: Option<SessionOriginLabel>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub message_count: u64,

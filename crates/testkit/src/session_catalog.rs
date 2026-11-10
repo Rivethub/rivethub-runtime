@@ -18,7 +18,9 @@ use kernel::topics::TopicStore;
 use wire::harness::HarnessId;
 use wire::message::Role;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
+use crate::session_imports::record_of;
 use crate::topics::Outcome;
 use crate::topics::at;
 use crate::topics::new_topic;
@@ -141,7 +143,7 @@ pub async fn seed(memory: &dyn MemoryStore) -> Result<Seeded, Box<dyn std::error
     })
 }
 
-fn ids(items: &[kernel::memory::SessionRecord]) -> Vec<String> {
+fn ids(items: &[kernel::memory::SessionRecord<SessionKey>]) -> Vec<String> {
     items.iter().map(|item| item.id.to_string()).collect()
 }
 
@@ -216,7 +218,7 @@ pub async fn lists_sessions_newest_first_with_counts_and_filters(
     let alpha = everything
         .items
         .iter()
-        .find(|item| item.id == seeded.alpha)
+        .find(|item| item.id.as_str() == seeded.alpha.as_str())
         .ok_or("alpha missing")?;
     same("title", alpha.title.clone(), "Alpha".to_owned())?;
     same("started", alpha.started_at, at(10))?;
@@ -231,7 +233,7 @@ pub async fn lists_sessions_newest_first_with_counts_and_filters(
     let beta = everything
         .items
         .iter()
-        .find(|item| item.id == seeded.beta)
+        .find(|item| item.id.as_str() == seeded.beta.as_str())
         .ok_or("beta missing")?;
     same("a live session has not ended", beta.ended_at, None)?;
 
@@ -275,13 +277,13 @@ async fn pages_and_filters(catalog: &dyn SessionCatalog, seeded: &Seeded) -> Out
         listed(catalog, wild).await?,
         Vec::new(),
     )?;
-    let found = catalog.get(&seeded.beta).await?.ok_or("beta get")?;
+    let found = record_of(catalog, &seeded.beta).await?.ok_or("beta get")?;
     same("detail count", found.message_count, 4)?;
     let absent = SessionId::new(
         HarnessId::ClaudeCode,
         "00000000-0000-4000-8000-0000000000ff",
     );
-    same("unknown session", catalog.get(&absent).await?, None)?;
+    same("unknown session", record_of(catalog, &absent).await?, None)?;
     Ok(())
 }
 
@@ -333,13 +335,17 @@ pub async fn keep_and_topics_shape_the_views(
         listed(catalog, by_parent).await?,
         keys(&[&seeded.alpha]),
     )?;
-    let placed = catalog.get(&seeded.alpha).await?.ok_or("alpha get")?;
+    let placed = record_of(catalog, &seeded.alpha)
+        .await?
+        .ok_or("alpha get")?;
     same(
         "topic path runs from the root",
         placed.topic.map(|topic| (topic.id, topic.path)),
         Some((child.id, vec!["Platform".to_owned(), "Deploys".to_owned()])),
     )?;
-    let kept = catalog.get(&seeded.gamma).await?.ok_or("gamma get")?;
+    let kept = record_of(catalog, &seeded.gamma)
+        .await?
+        .ok_or("gamma get")?;
     same("kept flag", kept.kept, true)?;
 
     deletions.unkeep_session(seeded.gamma.as_str()).await?;
@@ -447,7 +453,7 @@ pub async fn purge_removes_only_old_trash_through_deletion(
     same("its messages purged", purged.messages, 2)?;
     same(
         "alpha is gone for good",
-        catalog.get(&seeded.alpha).await?,
+        record_of(catalog, &seeded.alpha).await?,
         None,
     )?;
     same(
@@ -512,7 +518,7 @@ pub async fn excludes_children_and_derives_titles(
     let titled = all
         .items
         .iter()
-        .find(|item| item.id == child)
+        .find(|item| item.id.as_str() == child.as_str())
         .ok_or("child missing")?;
     same(
         "an untitled session is named from its first message",
@@ -528,7 +534,7 @@ pub async fn excludes_children_and_derives_titles(
     )?;
     same(
         "get ignores nothing a caller can exclude",
-        catalog.get(&child).await?.map(|record| record.id),
+        record_of(catalog, &child).await?.map(|record| record.id),
         Some(child),
     )?;
     Ok(())
@@ -612,8 +618,7 @@ pub async fn lists_bare_claude_sessions_under_their_harness(
         listed(catalog, text).await?,
         keys(&[&bare]),
     )?;
-    let found = catalog
-        .get(&bare)
+    let found = record_of(catalog, &bare)
         .await?
         .ok_or("get misses the bare session")?;
     same("get counts both stored keys", found.message_count, 4)?;

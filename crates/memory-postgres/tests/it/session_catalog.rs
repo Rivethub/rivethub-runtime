@@ -27,6 +27,7 @@ use testkit::topics::at;
 use testkit::topics::new_topic;
 use uuid::Uuid;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -100,7 +101,7 @@ async fn flag(pool: &PgPool, key: &str, payload: &str) -> Result<(), sqlx::Error
 
 async fn state(memory: &PostgresMemory, session: &SessionId) -> Result<MemoryState, String> {
     memory
-        .get(session)
+        .get(&SessionKey::from(session))
         .await
         .map_err(|error| error.to_string())?
         .map(|record| record.memory)
@@ -127,7 +128,10 @@ async fn memory_state_follows_summaries_and_open_flagged_jobs(pool: PgPool) -> T
 
     summarize(&pool, &seeded.alpha, 0, "leaf notes about alpha").await?;
     summarize(&pool, &seeded.alpha, 1, "branch   overview\nof alpha").await?;
-    let alpha = memory.get(&seeded.alpha).await?.ok_or("alpha missing")?;
+    let alpha = memory
+        .get(&SessionKey::from(&seeded.alpha))
+        .await?
+        .ok_or("alpha missing")?;
     assert_eq!(alpha.memory, MemoryState::Summarized);
     assert_eq!(alpha.gist.as_deref(), Some("branch overview of alpha"));
 

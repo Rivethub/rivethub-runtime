@@ -8339,10 +8339,17 @@
           ]
         },
         "harness": {
-          "$ref": "#/$defs/HarnessId"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "id": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         },
         "kept": {
           "type": "boolean"
@@ -8354,6 +8361,16 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionOriginLabel"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "parentId": {
           "anyOf": [
@@ -8404,7 +8421,6 @@
       "required": [
         "id",
         "title",
-        "harness",
         "startedAt",
         "messageCount",
         "visibility",
@@ -8473,6 +8489,9 @@
       "type": "object"
     },
     "SessionId": {
+      "type": "string"
+    },
+    "SessionKey": {
       "type": "string"
     },
     "SessionKind": {
@@ -8551,6 +8570,31 @@
         "session_key",
         "agent"
       ],
+      "type": "object"
+    },
+    "SessionOriginLabel": {
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "SessionPreview": {
@@ -8704,10 +8748,17 @@
           ]
         },
         "harness": {
-          "$ref": "#/$defs/HarnessId"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HarnessId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "id": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         },
         "kept": {
           "type": "boolean"
@@ -8719,6 +8770,16 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionOriginLabel"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "parentId": {
           "anyOf": [
@@ -8757,7 +8818,6 @@
       "required": [
         "id",
         "title",
-        "harness",
         "startedAt",
         "messageCount",
         "visibility",
