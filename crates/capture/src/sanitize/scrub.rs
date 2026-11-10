@@ -33,7 +33,7 @@ pub(super) struct Scrubber<'a> {
     rules: &'static Ruleset,
     key: Option<&'a LocalKey>,
     digest: &'a str,
-    pub(super) budget: Budget,
+    pub(super) budget: Budget<'a>,
     pub(super) whole: bool,
     pub(super) at: Location,
     pub(super) changes: Vec<Change>,

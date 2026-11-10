@@ -13,6 +13,7 @@ use super::report::Change;
 use super::report::Collision;
 use super::scrub::Scrubber;
 use crate::rules::Budget;
+use crate::rules::Pool;
 
 #[derive(Debug, Default)]
 pub(super) struct Found {
@@ -35,6 +36,7 @@ struct Scanned {
     output: Output,
     found: Found,
     spent: u64,
+    starved: bool,
 }
 
 pub(super) struct Rescan<'a> {
@@ -60,12 +62,16 @@ impl Rescan<'_> {
                 )
             })
             .collect();
-        let scanned = parallel(&units, |unit| self.scan(&mapping, &heads, sessions, unit));
+        let pool = Pool::bundle();
+        let scanned = parallel(&units, |unit| {
+            self.scan(&mapping, &heads, sessions, &pool, unit)
+        });
         let mut found = Found::default();
         let mut spent = 0;
         let mut settled = 0;
         for scanned in scanned {
-            let Some(scanned) = scanned.filter(|scanned| Budget::leaves_room(spent, scanned.spent))
+            let Some(scanned) = scanned
+                .filter(|scanned| !scanned.starved && Budget::leaves_room(spent, scanned.spent))
             else {
                 break;
             };
@@ -101,9 +107,10 @@ impl Rescan<'_> {
         mapping: &Mapping,
         heads: &[BundledSession],
         sessions: &[BundledSession],
+        pool: &Pool,
         unit: Unit,
     ) -> Option<Scanned> {
-        let mut scrubber = self.scrubber(mapping, Budget::after(0));
+        let mut scrubber = self.scrubber(mapping, Budget::drawing(pool));
         let output = match unit {
             Unit::Header(index) => {
                 let mut head = heads.get(index)?.clone();
@@ -119,6 +126,7 @@ impl Rescan<'_> {
         Some(Scanned {
             output,
             spent: scrubber.budget.spent(),
+            starved: scrubber.budget.starved(),
             found: Found {
                 changes: scrubber.changes,
                 collisions: scrubber.collisions,
@@ -126,7 +134,7 @@ impl Rescan<'_> {
         })
     }
 
-    fn scrubber<'s>(&'s self, mapping: &'s Mapping, budget: Budget) -> Scrubber<'s> {
+    fn scrubber<'s>(&'s self, mapping: &'s Mapping, budget: Budget<'s>) -> Scrubber<'s> {
         let mut scrubber = Scrubber::new(mapping, self.key, self.digest);
         scrubber.whole = self.whole;
         scrubber.budget = budget;

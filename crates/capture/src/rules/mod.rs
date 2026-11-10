@@ -1,4 +1,5 @@
 mod compile;
+mod decode;
 pub mod names;
 mod scan;
 mod value;
@@ -15,9 +16,10 @@ use thiserror::Error;
 
 use compile::compile;
 use compile::compile_allow;
+pub use decode::Budget;
+pub use decode::Pool;
 pub use names::Family;
 pub use names::Names;
-pub use scan::Budget;
 pub use scan::Span;
 
 const GITLEAKS: &str = include_str!("gitleaks.toml");

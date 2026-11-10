@@ -447,3 +447,37 @@ fn a_decode_bomb_is_redacted_whole_in_sanitize_and_ingest() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_bomb_in_every_message_costs_the_bundle_budget_not_the_message_count() -> TestResult {
+    let inner = gzip_base64(&vec![0xff; 1 << 20])?;
+    let bomb = gzip_base64([inner.as_str(); 9].join(" ").as_bytes())?;
+    let scan = |count: usize| -> Result<std::time::Duration, Box<dyn std::error::Error>> {
+        let messages = (0..count)
+            .map(|at| {
+                let mut tool = message(&format!("evt-{at}"), "x".to_owned());
+                tool.tool_result = Some(format!("blob {bomb}"));
+                tool
+            })
+            .collect();
+        let input = raw(vec![session(
+            "0195f0c2-0000-7000-8000-000000000005",
+            messages,
+        )?])?;
+        let started = std::time::Instant::now();
+        let found = sanitize::secrets(&input);
+        let took = started.elapsed();
+        assert_eq!(found.len(), count);
+        assert!(
+            found
+                .iter()
+                .all(|change| change.rule.to_string() == "undecoded_blob")
+        );
+        Ok(took)
+    };
+    scan(1)?;
+    let few = scan(16)?;
+    let many = scan(1024)?;
+    assert!(many < few * 8, "16 bombs took {few:?}, 1024 took {many:?}");
+    Ok(())
+}

@@ -1799,7 +1799,13 @@ manifest as another), 64 MiB per bundle, and two nested layers. A blob whose dec
 base64 run found inside the second decoded layer, is not decoded and is redacted whole as `undecoded_blob`, which the
 report lists like any rule; once a blob passes the budget, the rest of that message's budget is spent. `ingest-bundle`
 applies the same budget, so neither command spends unbounded time on a gzip or nested-base64 bomb (a 1.7 KB blob that
-inflated to 160 MB took 44 s at 1d687186 and takes 0.2 s now). A rule
+inflated to 160 MB took 44 s at 1d687186 and takes 0.2 s now). The scan that `ingest-bundle` runs, and that `sanitize`
+runs on its own output, works on messages in parallel. Every worker takes each decoded byte from one shared 64 MiB
+bundle budget before it decodes it, in steps of at most 64 KiB of inflated output, and a message that ran short of
+that shared budget, or that would leave the bundle less than 8 MiB in an in-order scan, is scanned again in order with
+what the bundle has left. A scan therefore decodes at most 128 MiB however many messages the bundle holds,
+and refuses or accepts exactly as an in-order scan would (a 2.67 MB forged bundle of 2000 such blobs took 13.2 s at
+04a237d5 and takes 0.75 s now). A rule
 with `each` redacts each match of that regex inside the secret. A match is dropped when the Shannon entropy of the
 secret is at or under the rule's `entropy`, or when an allowlist matches it: gitleaks' global allowlist applies to
 gitleaks rules only, RivetHub rules use the `[names]` stopwords and templates (exact words such as `null`, `none`,
@@ -1813,9 +1819,9 @@ rule's span, then the earliest start, then rule order.
 `_`, `-`, `.` and camel-case boundaries (`X-Api-Key`, `clientSecret` and `CLIENT_SECRET` all read `client_secret`); a
 plural reads as its singular (`passwords`), and a key whose last segment is `value`, `data`, `plaintext`,
 `secret_string` or `string` is judged without it (`outputs.db_password.value`, `secret_value`, `tokenValue`). The
-password family is `password`, `passwd`, `pwd`, `passphrase`, `pin`, `secret`, `private_key`, `ssh_key`, as the whole
-key or its last segments, `pass` only as a last segment (`db_pass`), and `pgpassword`; it redacts any value that is
-not a stopword, a template, a JSON number or code. The token family is `token`, `api_key`, `apikey`, `access_key`,
+password family is `password`, `passwd`, `pwd`, `passphrase`, `pin`, `secret`, `private_key`, `ssh_key`, `secret_value`,
+as the whole key or its last segments, `pass` only as a last segment (`db_pass`), and `pgpassword`; it redacts any value
+that is not a stopword, a template, a JSON number or code. The token family is `token`, `api_key`, `apikey`, `access_key`,
 `secret_key`, `app_key`, `account_key`, `signing_key`, `encryption_key`, `master_key`, `auth_key`, `auth`,
 `credentials`, `credential`, `creds`, `cookie`, `session_cookie`, `license_key`, `routing_key`, `write_key`,
 `client_key`, `consumer_key`, `unseal_key`, and exactly `identitytoken`, `authtoken`, `secret_key_base`, `phpsessid`,
