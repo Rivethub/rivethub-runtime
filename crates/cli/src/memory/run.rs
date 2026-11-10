@@ -67,11 +67,13 @@ pub(super) async fn run(
             force,
             dry_run,
         } => super::bundle::ingest(&path, force, dry_run, env).await,
-        MemoryCommand::Sanitize {
-            input,
-            out,
+        MemoryCommand::Sanitize(job) => super::sanitize::run(job, env).await,
+        MemoryCommand::Resolve {
+            report,
+            bundle,
             mapping,
-        } => super::sanitize::run(&input, &out, mapping, env).await,
+            learn,
+        } => super::sanitize::resolve(&report, bundle, mapping, learn, env).await,
         MemoryCommand::Import {
             path,
             dry_run,

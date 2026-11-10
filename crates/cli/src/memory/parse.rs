@@ -75,10 +75,12 @@ pub(super) enum MemoryCommand {
         force: bool,
         dry_run: bool,
     },
-    Sanitize {
-        input: PathBuf,
-        out: PathBuf,
+    Sanitize(super::sanitize::Job),
+    Resolve {
+        report: PathBuf,
+        bundle: Option<PathBuf>,
         mapping: Option<PathBuf>,
+        learn: bool,
     },
 }
 

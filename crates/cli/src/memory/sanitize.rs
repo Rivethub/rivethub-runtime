@@ -1,7 +1,15 @@
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 
+use capture::sanitize::MarkState;
+use capture::sanitize::decide::Endpoint;
+use capture::sanitize::decide::Mode;
+use capture::sanitize::decide::Resolution;
+use capture::sanitize::decide::Review;
+use capture::sanitize::mapping::Matcher;
 use chrono::Utc;
+use config::Config;
 use config::Environment;
 use config::MappingFile;
 
@@ -19,22 +27,37 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut input = None;
     let mut out = None;
     let mut mapping = None;
+    let mut report = None;
+    let mut decide = false;
+    let mut block = false;
+    let mut learn = false;
     while let Some(token) = scan.current().map(str::to_owned) {
-        match scan.option("--out", None) {
-            Taken::Value(value) => {
-                out = Some(nonempty(&value, Error::OutRequired)?);
-                continue;
-            }
-            Taken::Missing => return Err(Error::OutRequired),
-            Taken::Absent => {}
+        if let Some(set) = [
+            ("--decide", &mut decide),
+            ("--block", &mut block),
+            ("--learn", &mut learn),
+        ]
+        .into_iter()
+        .find_map(|(name, set)| scan.flag(name).then_some(set))
+        {
+            *set = true;
+            continue;
         }
-        match scan.option("--mapping", None) {
-            Taken::Value(value) => {
-                mapping = Some(nonempty(&value, Error::MappingRequired)?);
-                continue;
-            }
-            Taken::Missing => return Err(Error::MappingRequired),
-            Taken::Absent => {}
+        if path_option(&mut scan, "--out", || Error::OutRequired, &mut out)?
+            || path_option(
+                &mut scan,
+                "--mapping",
+                || Error::MappingRequired,
+                &mut mapping,
+            )?
+            || path_option(
+                &mut scan,
+                "--resolve",
+                || Error::ResolveRequired,
+                &mut report,
+            )?
+        {
+            continue;
         }
         if token.starts_with('-') {
             return Err(reject(&scan));
@@ -45,43 +68,96 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
         input = Some(PathBuf::from(token));
         scan.bump();
     }
+    if let Some(report) = report {
+        if out.is_some() || decide || block {
+            return Err(Error::ResolveAlone);
+        }
+        return Ok(MemoryCommand::Resolve {
+            report,
+            bundle: input,
+            mapping,
+            learn,
+        });
+    }
+    if learn {
+        return Err(Error::LearnWithoutResolve);
+    }
+    if block && !decide {
+        return Err(Error::BlockWithoutDecide);
+    }
     let Some(input) = input else {
         return Err(Error::ImportPath);
     };
     let Some(out) = out else {
         return Err(Error::OutRequired);
     };
-    Ok(MemoryCommand::Sanitize {
+    Ok(MemoryCommand::Sanitize(Job {
         input,
         out,
         mapping,
-    })
+        decide,
+        block,
+    }))
 }
 
-pub(super) async fn run(
-    input: &Path,
-    out: &Path,
+fn path_option(
+    scan: &mut Scan<'_>,
+    name: &str,
+    missing: fn() -> Error,
+    slot: &mut Option<PathBuf>,
+) -> Result<bool, Error> {
+    match scan.option(name, None) {
+        Taken::Value(value) => {
+            *slot = Some(nonempty(&value, missing())?);
+            Ok(true)
+        }
+        Taken::Missing => Err(missing()),
+        Taken::Absent => Ok(false),
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Job {
+    input: PathBuf,
+    out: PathBuf,
     mapping: Option<PathBuf>,
-    env: &Environment,
-) -> Result<Report, Error> {
+    decide: bool,
+    block: bool,
+}
+
+pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
+    let Job {
+        input,
+        out,
+        mapping,
+        decide,
+        block,
+    } = job;
+    let (input, out) = (input.as_path(), out.as_path());
     if tokio::fs::metadata(out)
         .await
         .is_ok_and(|metadata| metadata.is_dir())
     {
         return Err(Error::BundleOutDirectory(out.display().to_string()));
     }
+    let config = super::target::load(env)?.unwrap_or_default();
+    let endpoint = decide.then(|| endpoint(&config, block)).transpose()?;
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(input).await?)?;
-    let mapping = match mapping {
-        Some(path) => MappingFile::Configured(path),
-        None => super::target::load(env)?
-            .unwrap_or_default()
-            .sanitize_mapping(env)?,
-    };
+    let mapping = mapping_file(mapping, &config, env)?;
     let (mapping, source) = rules(&mapping).await?;
     let key = capture::sanitize::LocalKey::load_or_create(&key_path(env)?)?;
     let policy = capture::sanitize::Policy { mapping, key };
-    let sanitized = capture::sanitize::run(&bundle, &policy, Utc::now())?;
+    let mut scrubbed = capture::sanitize::scrub(&bundle, &policy)?;
     let report_path = report_path(out);
+    let decided = if let Some((endpoint, review)) = endpoint {
+        let candidates = scrubbed.candidates();
+        let scores = capture::sanitize::decide::score(&endpoint, &candidates.chunks).await?;
+        let decision = scrubbed.flag(candidates, &scores, review);
+        decision_line(decision, &report_path)
+    } else {
+        String::new()
+    };
+    let sanitized = scrubbed.seal(&policy, Utc::now())?;
     let report = sanitized
         .report
         .markdown(&out.display().to_string(), &source);
@@ -93,7 +169,7 @@ pub(super) async fn run(
     let count = bundle.sessions.len();
     let noun = if count == 1 { "session" } else { "sessions" };
     let mut out = format!(
-        "sanitized {count} {noun}: {} secrets, {} mapped, {} redacted; report at {}\n",
+        "sanitized {count} {noun}: {} secrets, {} mapped, {} redacted; report at {}\n{decided}",
         totals.secrets,
         totals.mapped,
         totals.redacted,
@@ -127,6 +203,216 @@ fn summary(report: &capture::sanitize::Report) -> String {
          not scanned: dates, roles, finalize; numbers, booleans and null stay typed\n\
          the sanitizer is best-effort: it catches known vendor tokens, assignments, name/value pairs, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms, new vendor shapes and bare-word passwords in prose; read the report before you share the bundle\n"
     )
+}
+
+fn endpoint(config: &Config, block: bool) -> Result<(Endpoint, Review), Error> {
+    let section = config
+        .sanitize_decide()
+        .filter(|section| !section.url.trim().is_empty())
+        .ok_or(Error::DecideUnconfigured)?;
+    if !(section.threshold > 0.0 && section.threshold <= 1.0) {
+        return Err(Error::DecideThreshold(section.threshold));
+    }
+    let endpoint = Endpoint {
+        url: section.url.trim().to_owned(),
+        concurrency: NonZeroUsize::new(section.concurrency).ok_or(Error::DecideConcurrency)?,
+    };
+    let review = Review {
+        top: NonZeroUsize::new(section.top).ok_or(Error::DecideTop)?,
+        threshold: section.threshold,
+        mode: if block || section.block {
+            Mode::Block
+        } else {
+            Mode::Advisory
+        },
+    };
+    Ok((endpoint, review))
+}
+
+fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> String {
+    let count =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let flagged = decision.flags.len();
+    let review = decision.review;
+    let next = match (flagged, review.mode) {
+        (0, _) => String::new(),
+        (_, Mode::Advisory) => format!(
+            "; review them in {} (advisory: ingest does not wait)",
+            report.display()
+        ),
+        (_, Mode::Block) => format!(
+            "; mark them in {} (block: the bundle withholds them until you do)",
+            report.display()
+        ),
+    };
+    format!(
+        "decision pass: {} scored in {}, {} skipped; {} for review (top {} per session at or over {:.2}){next}\n",
+        count(decision.scored, "chunk", "chunks"),
+        count(decision.calls, "call", "calls"),
+        count(decision.trivial, "trivial chunk", "trivial chunks"),
+        count(flagged, "flag", "flags"),
+        review.top,
+        review.threshold,
+    )
+}
+
+fn mapping_file(
+    mapping: Option<PathBuf>,
+    config: &Config,
+    env: &Environment,
+) -> Result<MappingFile, Error> {
+    Ok(match mapping {
+        Some(path) => MappingFile::Configured(path),
+        None => config.sanitize_mapping(env)?,
+    })
+}
+
+pub(super) async fn resolve(
+    report: &Path,
+    bundle: Option<PathBuf>,
+    mapping: Option<PathBuf>,
+    learn: bool,
+    env: &Environment,
+) -> Result<Report, Error> {
+    let text = tokio::fs::read_to_string(report).await?;
+    let flags = capture::sanitize::marks::read_flags(&text).map_err(|source| Error::Report {
+        path: report.display().to_string(),
+        source,
+    })?;
+    let bundle_path = match bundle {
+        Some(path) => path,
+        None => bundle_beside(report).await?,
+    };
+    let bundle = capture::bundle::parse(&tokio::fs::read_to_string(&bundle_path).await?)?;
+    let resolved = capture::sanitize::resolve(&bundle, &flags)?;
+    if resolved.sealed.bundle != bundle {
+        let mut sealed = resolved.sealed.text;
+        sealed.push(b'\n');
+        write_whole(bundle_path.clone(), sealed).await?;
+    }
+    let rewritten = flags.rewrite(&text, resolved.open);
+    if rewritten != text {
+        write_whole(report.to_path_buf(), rewritten.into_bytes()).await?;
+    }
+    let (mut keep, mut redact, mut map) = (0, 0, 0);
+    let mut maps: Vec<(&str, &str)> = Vec::new();
+    for flag in &flags.flags {
+        let resolution = match &flag.state {
+            MarkState::Open => continue,
+            MarkState::Marked(resolution) => {
+                *match resolution {
+                    Resolution::Keep => &mut keep,
+                    Resolution::Redact => &mut redact,
+                    Resolution::Map { .. } => &mut map,
+                } += 1;
+                resolution
+            }
+            MarkState::Resolved(resolution) => resolution,
+        };
+        if let Resolution::Map { term, placeholder } = resolution
+            && !maps.iter().any(|(known, _)| known == term)
+        {
+            maps.push((term, placeholder));
+        }
+    }
+    let rechecked = match resolved.rechecked.len() {
+        0 => String::new(),
+        count => format!(
+            "the re-check that ingest runs redacted {count} {} that the marks exposed: {}\n",
+            if count == 1 { "span" } else { "spans" },
+            resolved
+                .rechecked
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    };
+    let mut message = format!(
+        "resolved {} {} in {} ({keep} keep, {redact} redact, {map} map); {}\n{rechecked}",
+        keep + redact + map,
+        if keep + redact + map == 1 {
+            "flag"
+        } else {
+            "flags"
+        },
+        bundle_path.display(),
+        match resolved.open {
+            0 => "every flag is reviewed".to_owned(),
+            1 => "1 flag still unreviewed".to_owned(),
+            open => format!("{open} flags still unreviewed"),
+        },
+    );
+    if !maps.is_empty() {
+        let config = super::target::load(env)?.unwrap_or_default();
+        message.push_str(&offer(&mapping_file(mapping, &config, env)?, &maps, learn).await?);
+    }
+    Ok(Report::success(message))
+}
+
+async fn bundle_beside(report: &Path) -> Result<PathBuf, Error> {
+    let name = report.display().to_string();
+    let stem = name
+        .strip_suffix(REPORT_SUFFIX)
+        .ok_or_else(|| Error::ResolveBundle(name.clone()))?;
+    let json = PathBuf::from(format!("{stem}.json"));
+    if tokio::fs::try_exists(&json).await? {
+        return Ok(json);
+    }
+    Ok(PathBuf::from(stem))
+}
+
+async fn offer(mapping: &MappingFile, maps: &[(&str, &str)], learn: bool) -> Result<String, Error> {
+    let path = match mapping {
+        MappingFile::Configured(path) | MappingFile::Default(path) => path,
+    };
+    let existing = match tokio::fs::read_to_string(path).await {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(source) => {
+            return Err(Error::MappingRead {
+                path: path.display().to_string(),
+                source,
+            });
+        }
+    };
+    let invalid = |source| Error::Mapping {
+        path: path.display().to_string(),
+        source,
+    };
+    let known = capture::sanitize::mapping::parse(&existing).map_err(invalid)?;
+    let fresh: Vec<String> =
+        maps.iter()
+            .filter(|(term, _)| {
+                !known.rules().iter().any(
+                    |rule| matches!(&rule.matcher, Matcher::Literal(literal) if literal == term),
+                )
+            })
+            .map(|(term, placeholder)| capture::sanitize::mapping::map_rule(term, placeholder))
+            .collect();
+    let display = path.display();
+    if fresh.is_empty() {
+        return Ok(format!("{display} already has a rule for each map mark\n"));
+    }
+    let count = fresh.len();
+    let noun = if count == 1 { "rule" } else { "rules" };
+    let rules = fresh.join("\n");
+    if !learn {
+        return Ok(format!(
+            "rerun with --learn to add {count} map {noun} to {display}:\n\n{rules}"
+        ));
+    }
+    let mut text = existing;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&rules);
+    capture::sanitize::mapping::parse(&text).map_err(invalid)?;
+    write_whole(path.clone(), text.into_bytes()).await?;
+    Ok(format!("added {count} map {noun} to {display}\n"))
 }
 
 async fn rules(
@@ -169,6 +455,8 @@ fn key_path(env: &Environment) -> Result<PathBuf, Error> {
     Ok(capture::sanitize::LocalKey::path_in(&state))
 }
 
+const REPORT_SUFFIX: &str = ".report.md";
+
 fn report_path(out: &Path) -> PathBuf {
     let base = if out.extension().is_some_and(|extension| extension == "json") {
         out.with_extension("")
@@ -176,7 +464,7 @@ fn report_path(out: &Path) -> PathBuf {
         out.to_path_buf()
     };
     let mut name = base.into_os_string();
-    name.push(".report.md");
+    name.push(REPORT_SUFFIX);
     PathBuf::from(name)
 }
 
@@ -199,7 +487,7 @@ mod tests {
         ]));
         assert!(matches!(
             parsed,
-            Ok(MemoryCommand::Sanitize { input, out, mapping: Some(mapping) })
+            Ok(MemoryCommand::Sanitize(Job { input, out, mapping: Some(mapping), decide: false, block: false }))
                 if input == Path::new("s.json") && out == Path::new("s.clean.json") && mapping == Path::new("m.toml")
         ));
         assert!(matches!(

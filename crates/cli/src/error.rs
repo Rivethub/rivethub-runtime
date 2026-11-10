@@ -254,4 +254,39 @@ pub enum Error {
     },
     #[error("--mapping requires a file")]
     MappingRequired,
+    #[error("--resolve requires the report file sanitize wrote")]
+    ResolveRequired,
+    #[error(
+        "--resolve takes the report, an optional bundle, --mapping and --learn; it does not take --out, --decide or --block"
+    )]
+    ResolveAlone,
+    #[error("--learn adds map marks to the mapping file and needs --resolve <report>")]
+    LearnWithoutResolve,
+    #[error(
+        "{0} does not end in .report.md, so name the bundle to resolve: rh memory sanitize <bundle> --resolve <report>"
+    )]
+    ResolveBundle(String),
+    #[error("the report {path} cannot be resolved: {source}")]
+    Report {
+        path: String,
+        source: capture::sanitize::marks::ReportError,
+    },
+    #[error(
+        "--decide needs memory.sanitize.decide.url in the config (the decision model, for example http://<host>:8015)"
+    )]
+    DecideUnconfigured,
+    #[error("memory.sanitize.decide.threshold is {0}; set it above 0 and at most 1")]
+    DecideThreshold(f64),
+    #[error("memory.sanitize.decide.concurrency is 0; set it to 1 or more")]
+    DecideConcurrency,
+    #[error("memory.sanitize.decide.top is 0; set it to 1 or more")]
+    DecideTop,
+    #[error("--block makes the decision-model review block ingest and needs --decide")]
+    BlockWithoutDecide,
+    #[error("the decision pass failed, so no bundle was written: {0}")]
+    Decide(#[from] capture::sanitize::decide::DecideError),
+    #[error(
+        "{path} withholds {count} flagged chunk(s) until you mark them; mark them in the report and run rh memory sanitize --resolve <report>, or pass --force to ingest it with the chunks withheld"
+    )]
+    BundleFlags { path: String, count: usize },
 }

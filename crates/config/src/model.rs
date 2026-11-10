@@ -184,6 +184,33 @@ pub struct MemorySection {
 #[serde(default)]
 pub struct SanitizeSection {
     pub mapping: Option<PathBuf>,
+    pub decide: Option<DecideSection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecideSection {
+    pub url: String,
+    #[serde(default = "default_decide_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_decide_concurrency")]
+    pub concurrency: usize,
+    #[serde(default = "default_decide_top")]
+    pub top: usize,
+    #[serde(default)]
+    pub block: bool,
+}
+
+const fn default_decide_threshold() -> f64 {
+    0.3
+}
+
+const fn default_decide_concurrency() -> usize {
+    8
+}
+
+const fn default_decide_top() -> usize {
+    20
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -451,6 +478,11 @@ impl Config {
                     .join("redactions.toml"),
             )),
         }
+    }
+
+    #[must_use]
+    pub fn sanitize_decide(&self) -> Option<&DecideSection> {
+        self.memory.as_ref()?.sanitize.decide.as_ref()
     }
 
     pub fn provider_kind(&self, name: &str) -> Option<ProviderType> {
