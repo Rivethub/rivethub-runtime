@@ -1596,7 +1596,7 @@ onto `--out`; a failed write removes it, and a killed export leaves no partial f
 `manifest` holds `exported_at` (RFC 3339), `exported_by` (`user`, the node owner, and `node`, the node name from
 `mesh.node_name`, `RIVETHUB_NODE_NAME` or the hostname), `sanitization`, `session_count` and `bundle_sha256`.
 `sanitization` is `{"state": "raw"}`, or `{"state": "sanitized", "at", "policy_sha256", "passes", "unresolved_flags"}`
-once `rh memory sanitize` stamps the file (note 136); `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
+(plus `review` after a `--decide` run, note 137) once `rh memory sanitize` stamps the file (note 136); `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
 holds `author` (the conversation's stored owner; on SQLite a row whose owner is NULL is credited to the node owner),
 `node` (the node that captured the conversation, else the exporting node), `conversation_id`, `session_key`, `agent`,
 the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
@@ -1953,59 +1953,90 @@ which never ship: a raw bundle relabelled sanitized with a recomputed digest pas
 (names, hosts, projects) remain in it, so the receiver trusts the sender for mapping and only the secret rules for
 secrets.
 
-(137) The decision-model review (Phil, 2026-11-09; session-sharing plan SS-4; extends note 136): `rh memory sanitize
-<bundle> --out <file> --decide [--block]` runs after the secrets and mapping passes and after sanitize's own re-check,
-so the model sees only text they left. It needs `memory.sanitize.decide` in config.yaml: `url` (the decision model's
-base URL, required), `threshold` (default 0.3, above 0 and at most 1), `concurrency` (default 8, at least 1), `top`
-(default 20, at least 1) and `block` (default false). `--block` without `--decide` is refused. The review is a second
-best-effort pass: it ranks what is left for a person to read, it never redacts anything by itself, and on the measured
-sessions most listed chunks are ordinary tool output.
+(137) The decision-model review (Phil, 2026-11-09; session-sharing plan SS-4; extends note 136; resolve model
+redesigned 2026-11-10): `rh memory sanitize <bundle> --out <file> --decide [--block]` runs after the secrets and
+mapping passes and after sanitize's own re-check, so the model sees only text they left. It needs
+`memory.sanitize.decide` in config.yaml: `url` (the decision model's base URL, required), `threshold` (default 0.3,
+above 0 and at most 1), `concurrency` (default 8, from 1 to 16, because the model is a shared server), `top` (default
+20, at least 1) and `block` (default false). `--block` without `--decide` is refused. Without `--decide`, sanitize
+reads config.yaml only to find the default mapping file, so `--mapping <file>` never needs a valid config. The review
+is a second best-effort pass: it ranks what is left for a person to read, it never redacts anything by itself, and on
+the measured sessions most listed chunks are ordinary tool output.
 
-The pass visits each session's title, every string value of `settings`, `tool_args` and `metadata`, and each message's
-`content` and `tool_result` (JSON keys and node names are not sent). It splits each text into chunks of at most 1,200
-characters on line boundaries, cutting a longer line at character boundaries. A chunk with no whitespace and no `"`,
-`'`, `{` or `}` is trivial and is never sent: ids, uuids, paths, numbers, booleans, enum values and placeholders. Each
-distinct chunk text is sent once, as `POST <url>/v1/decide` with `{"kind": "noul", "state": <chunk>, "question":
-"This line comes from an AI coding session that will be shared outside the author's household. Should it be redacted
-before sharing?"}`, and its score is `probabilities[1]`. A connection failure, a non-2xx answer or an answer without
-two probabilities fails the run, and nothing is written.
+The pass first asks `GET <url>/v1/decide/info` and takes the model name from its `model`; a run that cannot reach the
+model fails before any bundle is written, even when no chunk needs scoring. It visits each session's title, every
+string value of `settings`, `tool_args` and `metadata`, and each message's `content` and `tool_result` (JSON keys and
+node names are not sent). It splits each text into chunks of at most 1,200 characters on line boundaries, cutting a
+longer line at character boundaries. A chunk is trivial and never sent when it is a `[tool call] <name>` line, when it
+is only placeholders, or when it has no whitespace and no `"`, `'`, `{` or `}` and is also under 16 characters, has
+none of `@ / = , : ;` and no capitalized word of two or more letters: so `42`, `true` and `x86_64` are skipped, while
+an email address, a URL, a CSV row, `salary=120k`, `Globex` and a uuid are scored. Each distinct chunk text is sent
+once, as `POST <url>/v1/decide` with `{"kind": "noul", "state": <chunk>, "question": "This line comes from an AI
+coding session that will be shared outside the author's household. Should it be redacted before sharing?"}`, and its
+score is `probabilities[1]`. The client follows no redirect and reads at most 1 MiB of any answer. A connection
+failure, a redirect, a non-2xx answer, an answer over 1 MiB, or `probabilities` that are not two finite numbers in
+[0, 1] summing to 1 within 0.001 fails the run, and nothing is written; text from the model is shown with control
+characters removed and at most 200 characters.
 
-Within each session, equal chunk texts form one flag that lists every place it occurs. The flags scoring at or over
-`threshold` are ranked by score, ties in session order, and the first `top` of each session are listed, numbered from
-1 across the bundle in session order. The report keeps note 136's layout and its best-effort paragraph first: its
-header adds a `- Stamp: <sanitize time>` line after the bundle digest, and a `Flags to review` section follows the
-header, before the table of rules. The section gives the scored, call and trivial counts, an `Unreviewed: <open> of
-<listed>` line, and for each flag its score, session key, id `<event id or session key>:<field>:<chunk index>` (the
-first place, then `Also at:` for the others), a `Mark: open` line, the chunk text, and a hidden comment holding the
-text and places in base64 for `--resolve`. The event id in a flag id is the HMAC event id of note 136, the one the
-bundle carries; a raw event id never appears.
+The flags scoring at or over `threshold` are ranked within each session by score, ties in session order, and the
+first `top` of each session are listed. A flag is one distinct text across the whole bundle: flags are numbered from 1
+in session order, and a text already listed for an earlier session is not listed again. A flag's places are every
+place its text occurs in any session: each chunk with that text, then every other occurrence found in the remaining
+text of every visited field, longest match first, so one byte belongs to at most one flag. The report keeps note
+136's layout and its best-effort paragraph first; after the totals line it says to never share the report, because
+its Flags section shows each flagged text (and in block mode the text the bundle withholds). The header adds a
+`- Stamp: <sanitize time>` line after the bundle digest, and a `Flags to review` section follows the header, before
+the table of rules. The section names the model, gives the scored, call and trivial counts, an `Unreviewed: <open>
+of <listed>` line, and for each flag its score, its session keys, its places as `<event id or session key>:<field>`
+(the first as `Id:`, the others as `Also at:`), a `Mark: open` line, the text in a fence, and a hidden comment holding
+the text in base64. The event id is the HMAC event id of note 136; a raw event id never appears. The share skill
+(SS-6) must never send a `*.report.md`.
 
-The review is advisory by default: the bundle keeps each flagged chunk as sanitized text, and ingest does not wait
-for it. With `--block` or `block = true`, the bundle holds `[FLAGGED:<n>]` in place of each listed chunk at every
-place, and `ingest-bundle` refuses it while any `[FLAGGED:<n>]` remains, counted from the sessions, not the stamp,
-unless `--force`. Either way the stamp's `passes` is `["secrets", "mapping", "decide"]`, and `unresolved_flags` counts
-the listed flags not yet marked: when it is 0 and `passes` holds `decide`, every listed flag was reviewed.
-`ingest-bundle` adds `(<n> advisory flags unreviewed)` to its report for an advisory bundle with open flags.
+The bundle's stamp records the review as `review`: `{mode: "advisory" | "block", model, calls, flags, seal}`, where
+each flag is `{number, mark: "open" | "keep" | "redact" | "map", places, seal}` and each place is `{session, message,
+field, start, end}`: the session index, the message index (null for the title and settings), the field as the report
+writes it, and the byte range of the place in that field of this bundle. A flag's `seal` is the HMAC under the local
+sanitize key of the stamp time, its number and its text; the review's `seal` is the HMAC of the stamp time and the
+whole table. Neither can be checked without the key, so they bind the report to the bundle for the sender only; the
+receiver trusts the sender for them as it does for mapping. `unresolved_flags` is the number of flags whose `mark` is
+`open`; a reviewed flag keeps no places. The review is advisory by default: the bundle keeps each flagged text, and
+ingest does not wait for it. With `--block` or `block = true`, the bundle holds `[FLAGGED:<n>]` at every place of each
+listed flag, and `ingest-bundle` refuses it while any `[FLAGGED:<n>]` remains, counted from the sessions, not the
+stamp, unless `--force`. Either way the stamp's `passes` is `["secrets", "mapping", "decide"]`. `ingest-bundle` adds
+`(<n> advisory flags unreviewed)` to its report for an advisory bundle with open flags. Without `--decide` the stamp
+has no `review`, and the bundle is byte-for-byte what sanitize wrote before this note.
 
 `[FLAGGED:<digits>]` and `[REDACTED:flagged]` are placeholders the secrets pass knows, in sanitize and in ingest's
 scan: they are protected like note 136's placeholders, and a key that is exactly one is not a secret name. Because
-ingest counts withheld flags from the text, every sanitize run, with or without `--decide`, rewrites a
-`[FLAGGED:<digits>]` that the raw session itself holds as `[FLAGGED <digits>]` and reports it under the rule
-`[FLAGGED:<n>] written in the session`, so only a flag sanitize withheld reads as one. Sanitize runs ingest's scan on
-its output after the review as note 136 says, so a bundle written with `--decide`, advisory or blocking, passes it.
+ingest counts withheld flags from the text, every sanitize run, with or without `--decide`, escapes a raw
+`[FLAGGED:` that is followed by colons, digits and `]` by adding one colon after `[FLAGGED:` (`[FLAGGED:012]` becomes
+`[FLAGGED::012]`, `[FLAGGED::7]` becomes `[FLAGGED:::7]`), which keeps the digits and can be undone by removing that
+colon. Each escape is reported under the rule `[FLAGGED:<n>] written in the session (escaped)` in the secrets pass,
+and counted as `escaped`, not `mapped`: the totals line adds `, <n> escaped` when there are any. A mapping rule whose
+`as` holds `[FLAGGED:` is refused at its line.
 
 `rh memory sanitize [<bundle>] --resolve <report> [--mapping <file>] [--learn]` reads the marks written on the
-report's Mark lines: `keep`, `redact` (writes `[REDACTED:flagged]`) or `map <term> as <placeholder>` (replaces each
-`<term>` in the chunk; the term must occur in it). At every place a marked flag lists, it replaces `[FLAGGED:<n>]`, or
-in an advisory bundle the chunk text, with the marked result; `keep` on an advisory flag changes no text. A mark can
-expose a secret shape the original context hid (mapping `:param` away from `:param client_secret: The ...` leaves an
-assignment), so `--resolve` then runs ingest's scan over the bundle with the re-check rounds of note 136, redacts what
-it finds, prints each such span by session, message, field and rule, and refuses to write a bundle the scan would
-still refuse. It refuses a report whose stamp is not the bundle's. It reseals the bundle with `unresolved_flags` set
-to the flags still open, rewrites each applied Mark line as `Resolved: <mark>` and the Unreviewed line, so running it
-again changes nothing. The bundle defaults to the report's name without `.report.md`, plus `.json` when that file
-exists. Each `map` mark is offered as a mapping rule in note 136's format (`[[rule]]`, `literal`, `action = "map"`,
-`as`); `--learn` appends the rules the mapping file lacks and checks that the file still parses.
+report's Mark lines: `keep`, `redact` (writes `[REDACTED:flagged]`) or `map <term> as <placeholder>`. Markdown
+emphasis around the label or the whole mark (`**Mark:** keep`, `Mark: *redact*`) is ignored, while `_` and `*`
+inside a term or placeholder, and a term in backticks or quotes, are kept. A map term must not be blank, must occur in
+the flag's text, and must not overlap a placeholder in it; a term that starts or ends with a letter, digit or
+underscore matches whole words only, so `Tom` maps `Tom` but not `Tomcat`. A placeholder must not hold `[FLAGGED:` or
+`[REDACTED`, or text the secrets scan finds. The bundle, not the report, decides what is reviewed: resolve refuses a
+report whose stamp is not the bundle's, a bundle whose review table no longer matches its seal, a report section for a
+flag the bundle does not have, a section whose hidden text does not match the flag's seal, a section whose shown text
+differs from its hidden text (change text with `map`, not by editing it), a mark that differs from the mark the bundle
+already records, and a place that no longer holds the flag's text (advisory) or `[FLAGGED:<n>]` (block). A flag whose
+section is missing stays open. Each newly marked flag is applied at exactly its places, never by searching the text:
+resolve puts `[FLAGGED:<n>]` at every open place, writes each new mark's result in place of its placeholders, runs
+ingest's scan with the re-check rounds of note 136 (a mark can expose a secret shape the original context hid; each
+span it redacts is printed by session, message, field and rule), finds every open flag's places again from its
+placeholders, puts the text back in an advisory bundle, and refuses to write a bundle the scan would still refuse. It
+reseals the bundle with the new marks, places, seals and `unresolved_flags`, rewrites each newly applied Mark line as
+`Resolved: <mark>` and the Unreviewed line, so running it again changes neither file. The bundle defaults to the
+report's name without `.report.md`, plus `.json` when that file exists. Each `map` mark is offered as a mapping rule
+in note 136's format (`[[rule]]`, `regex` with the term escaped and `\b` on each word edge, `action = "map"`, `as`);
+`--learn` refuses a term under 3 non-space characters before writing anything, appends the rules the mapping file
+lacks, and checks that the file still parses.
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 
