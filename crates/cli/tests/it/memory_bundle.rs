@@ -513,7 +513,7 @@ async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
             "sanitized 1 session: 1 secrets, 2 mapped, 0 redacted; report at {}\n\
              review summary: changes by rule: rule at line 1 (map) 2, github_token 1\n\
              not scanned: dates, roles, finalize; numbers, booleans and null stay typed\n\
-             the sanitizer is best-effort: it catches known vendor tokens, assignments, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms and new vendor shapes; read the report before you share the bundle\n",
+             the sanitizer is best-effort: it catches known vendor tokens, assignments, name/value pairs, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms, new vendor shapes and bare-word passwords in prose; read the report before you share the bundle\n",
             report_path.display()
         )
     );

@@ -125,7 +125,7 @@ fn summary(report: &capture::sanitize::Report) -> String {
     format!(
         "review summary: changes by rule: {rules}\n\
          not scanned: dates, roles, finalize; numbers, booleans and null stay typed\n\
-         the sanitizer is best-effort: it catches known vendor tokens, assignments, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms and new vendor shapes; read the report before you share the bundle\n"
+         the sanitizer is best-effort: it catches known vendor tokens, assignments, name/value pairs, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms, new vendor shapes and bare-word passwords in prose; read the report before you share the bundle\n"
     )
 }
 
