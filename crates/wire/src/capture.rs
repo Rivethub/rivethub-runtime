@@ -110,7 +110,7 @@ pub struct BundledSession {
     pub batch: CaptureBatchRequest,
 }
 
-pub const IMPORTED_SESSION_PREFIX: &str = "import:";
+pub use values::IMPORTED_SESSION_PREFIX;
 
 #[must_use]
 pub fn is_imported_session(session_key: &str) -> bool {
