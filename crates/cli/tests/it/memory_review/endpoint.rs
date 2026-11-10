@@ -40,6 +40,71 @@ async fn short_tokens_that_can_name_people_or_places_are_scored() {
     stub.close().await.expect("stub shuts down");
 }
 
+const SHAPES: [&str; 16] = [
+    "10.4.20.207",
+    "078-05-1120",
+    "P4ssw0rd!",
+    "hunter2",
+    "山田太郎",
+    "+15558675309",
+    "gpubox.lan",
+    "jsmith42",
+    "s3cr3t-pa55",
+    "fe80::1",
+    "Tr0ub4dor&3",
+    "4111111111111111",
+    "555-867-5309",
+    "Z9x!k2#Lq",
+    "müller",
+    "sk-live-9f8e7d",
+];
+
+const IDENTIFIERS: [&str; 4] = [
+    "6b0404f2-b094-90b8-6b01-a1c12a3a2107",
+    "3f9a2c1be07d4e5f",
+    "req_011CVzKq8RmT2vLx9WabQ7",
+    "~/.claude/projects/-home-phil-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl",
+];
+
+#[tokio::test]
+async fn short_sensitive_shapes_are_scored_and_identifiers_are_not() {
+    let model = Model::scoring(&[]);
+    let stub = serve(&model).await;
+    let node = Node::new(&format!("http://{}", stub.addr), 5);
+    let mut lines: Vec<&str> = SHAPES.to_vec();
+    lines.extend_from_slice(&IDENTIFIERS[..2]);
+    let mut messages: Vec<wire::capture::CaptureMessage> =
+        lines.iter().map(|line| super::message(line)).collect();
+    let first = messages.first_mut().expect("a message");
+    first.metadata = Some(
+        serde_json::from_str(&format!(
+            r#"{{"uuid":"{}","parentUuid":"{}","requestId":"{}","session_jsonl_path":"{}","note":"jsmith42"}}"#,
+            IDENTIFIERS[0], IDENTIFIERS[0], IDENTIFIERS[2], IDENTIFIERS[3]
+        ))
+        .expect("metadata"),
+    );
+    let raw = node.raw_sessions("s.json", vec![super::session(0, messages)]);
+
+    node.sanitize(&raw, &["--decide"]).await;
+
+    let asked = model.asked();
+    let missing: Vec<&str> = SHAPES
+        .iter()
+        .copied()
+        .filter(|shape| !asked.iter().any(|state| state == shape))
+        .collect();
+    assert!(missing.is_empty(), "never scored: {missing:?}");
+    let identifiers: Vec<&String> = asked
+        .iter()
+        .filter(|state| IDENTIFIERS.contains(&state.as_str()))
+        .collect();
+    assert!(
+        identifiers.is_empty(),
+        "scored identifiers: {identifiers:?}"
+    );
+    stub.close().await.expect("stub shuts down");
+}
+
 async fn decide_fails(node: &Node, raw: &str) -> Report {
     let out = node.path("s.clean.json");
     let report = node

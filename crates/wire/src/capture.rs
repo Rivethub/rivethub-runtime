@@ -129,8 +129,6 @@ pub enum ReviewMode {
 pub struct FlagStamp {
     pub number: usize,
     pub mark: FlagMark,
-    pub places: Vec<FlagPlace>,
-    pub seal: String,
 }
 
 #[derive(
@@ -143,15 +141,6 @@ pub enum FlagMark {
     Keep,
     Redact,
     Map,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct FlagPlace {
-    pub session: usize,
-    pub message: Option<usize>,
-    pub field: String,
-    pub start: usize,
-    pub end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

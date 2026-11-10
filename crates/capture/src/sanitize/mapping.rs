@@ -200,6 +200,14 @@ fn line_of(text: &str, offset: usize) -> usize {
 }
 
 fn ascii_boundaries(source: &str) -> String {
+    source
+        .split(super::decide::UNICODE_BOUNDARY)
+        .map(ascii_piece)
+        .collect::<Vec<_>>()
+        .join(super::decide::UNICODE_BOUNDARY)
+}
+
+fn ascii_piece(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 16);
     let mut chars = source.chars();
     let mut in_class = false;
@@ -341,5 +349,9 @@ mod tests {
             r"(?-u:\b)\d{3}-\d{4}(?-u:\b)"
         );
         assert_eq!(ascii_boundaries(r"[\b]x\\b\Bq"), r"[\b]x\\b(?-u:\B)q");
+        assert_eq!(
+            ascii_boundaries(r"(?u:\b)Tom(?u:\b)|\bx"),
+            r"(?u:\b)Tom(?u:\b)|(?-u:\b)x"
+        );
     }
 }

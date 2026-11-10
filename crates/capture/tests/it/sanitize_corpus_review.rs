@@ -254,6 +254,7 @@ struct Stage<'a> {
     report: &'a str,
     texts: &'a HashMap<usize, String>,
     key: &'a LocalKey,
+    local: &'a sanitize::LocalReview,
 }
 
 impl Stage<'_> {
@@ -268,7 +269,7 @@ impl Stage<'_> {
             Err(_) if marks.refused() => return found,
             Err(error) => return vec![("read", error)],
         };
-        let resolved = match sanitize::resolve(self.bundle, &flags, self.key) {
+        let resolved = match sanitize::resolve(self.bundle, &flags, self.local, self.key) {
             Ok(resolved) => resolved,
             Err(error) => return vec![("resolve", error.to_string())],
         };
@@ -309,8 +310,12 @@ impl Stage<'_> {
         );
         match sanitize::marks::read_flags(&rewritten)
             .map_err(SendError::from)
-            .and_then(|again| Ok((sanitize::resolve(after, &again, self.key)?, again)))
-        {
+            .and_then(|again| {
+                Ok((
+                    sanitize::resolve(after, &again, self.local, self.key)?,
+                    again,
+                ))
+            }) {
             Ok((twice, again)) => {
                 if twice.sealed.text != resolved.sealed.text {
                     found.push((
@@ -374,6 +379,7 @@ async fn review_stages(
             report: &report,
             texts: &texts,
             key: &key,
+            local: decided.local.as_ref().ok_or("no local review")?,
         };
         for &marks in sets {
             found.extend(

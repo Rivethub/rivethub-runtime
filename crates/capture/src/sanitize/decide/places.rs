@@ -1,172 +1,103 @@
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::ops::Range;
 
 use aho_corasick::AhoCorasick;
-use aho_corasick::MatchKind;
+use serde::Deserialize;
+use serde::Serialize;
 use wire::capture::BundledSession;
-use wire::capture::FlagPlace;
 
-use super::texts::At;
+use super::Shown;
+use super::slots::BaseValue;
+use super::slots::FieldAt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Span {
-    pub range: Range<usize>,
-    pub flag: usize,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    pub field: FieldAt,
+    pub slot: usize,
+    pub start: usize,
+    pub end: usize,
 }
 
-pub(super) type Board = BTreeMap<At, Vec<Span>>;
-
-pub(super) struct Seed {
-    pub at: At,
-    pub range: Range<usize>,
-    pub flag: usize,
+#[derive(Debug, Default)]
+pub(super) struct Located {
+    pub places: Vec<Vec<Place>>,
+    pub shown: Vec<Vec<Shown>>,
+    pub bases: BTreeMap<FieldAt, BaseValue>,
 }
 
 pub(super) fn locate(
     sessions: &mut [BundledSession],
-    seeds: Vec<Seed>,
     texts: &[&str],
-) -> Result<Board, aho_corasick::BuildError> {
-    let mut board = Board::new();
-    for seed in seeds {
-        board.entry(seed.at).or_default().push(Span {
-            range: seed.range,
-            flag: seed.flag,
-        });
-    }
-    let search = AhoCorasick::builder()
-        .match_kind(MatchKind::LeftmostLongest)
-        .build(texts)?;
-    super::texts::visit(sessions, &mut |slot, text| {
-        let mut seeded = board.remove(&slot.at).unwrap_or_default();
-        seeded.sort_by_key(|span| span.range.start);
-        let mut spans = Vec::new();
-        let mut from = 0;
-        let ends = seeded
-            .iter()
-            .map(|span| span.range.clone())
-            .chain(std::iter::once(text.len()..text.len()));
-        for next in ends {
-            if let Some(gap) = text.get(from..next.start) {
-                spans.extend(search.find_iter(gap).map(|found| Span {
-                    range: from + found.start()..from + found.end(),
-                    flag: found.pattern().as_usize() + 1,
-                }));
+) -> Result<Located, aho_corasick::BuildError> {
+    let search = AhoCorasick::new(texts)?;
+    let mut located = Located {
+        places: vec![Vec::new(); texts.len()],
+        shown: vec![Vec::new(); texts.len()],
+        bases: BTreeMap::new(),
+    };
+    super::slots::fields(sessions, &mut |at, owner, mut field| {
+        let mut hit = false;
+        super::slots::slots(&mut field, &mut |slot, text| {
+            let held = held(text);
+            for found in search.find_overlapping_iter(text.as_str()) {
+                let range = found.start()..found.end();
+                if held.iter().any(|held| cuts(&range, held)) {
+                    continue;
+                }
+                let flag = found.pattern().as_usize();
+                hit = true;
+                if let Some(places) = located.places.get_mut(flag) {
+                    places.push(Place {
+                        field: at.clone(),
+                        slot: slot.ordinal,
+                        start: range.start,
+                        end: range.end,
+                    });
+                }
+                if let Some(shown) = located.shown.get_mut(flag) {
+                    let place = Shown {
+                        session: owner.session.to_owned(),
+                        owner: owner.id.to_owned(),
+                        field: slot.shown(at.name),
+                    };
+                    if !shown.contains(&place) {
+                        shown.push(place);
+                    }
+                }
             }
-            from = next.end;
-        }
-        spans.extend(seeded);
-        if !spans.is_empty() {
-            board.insert(slot.at, spans);
+        });
+        if hit {
+            located.bases.insert(at, field.base());
         }
     });
-    Ok(sorted(board))
+    Ok(located)
 }
 
-fn sorted(mut board: Board) -> Board {
-    for spans in board.values_mut() {
-        spans.sort_by_key(|span| span.range.start);
+fn held(text: &str) -> Vec<Range<usize>> {
+    let mut held = super::super::scrub::protected(text, crate::rules::ruleset());
+    held.extend(super::escapes(text).into_iter().map(|(range, _)| range));
+    held
+}
+
+fn cuts(range: &Range<usize>, held: &Range<usize>) -> bool {
+    range.start < held.end
+        && held.start < range.end
+        && !(range.start <= held.start && held.end <= range.end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_match_may_hold_a_placeholder_but_never_cut_one() {
+        let held = 4..12;
+        assert!(cuts(&(2..6), &held));
+        assert!(cuts(&(6..8), &held));
+        assert!(cuts(&(10..14), &held));
+        assert!(!cuts(&(2..14), &held));
+        assert!(!cuts(&(4..12), &held));
+        assert!(!cuts(&(0..4), &held));
+        assert!(!cuts(&(12..20), &held));
     }
-    board
-}
-
-pub(super) fn rewrite(
-    text: &mut String,
-    spans: &mut [Span],
-    mut with: impl FnMut(&Span, Option<&str>) -> Option<String>,
-) {
-    let mut out = String::with_capacity(text.len());
-    let mut from = 0;
-    for span in spans.iter_mut() {
-        let old = if span.range.start >= from {
-            text.get(span.range.clone())
-        } else {
-            None
-        };
-        let Some(old) = old else {
-            with(span, None);
-            continue;
-        };
-        out.push_str(text.get(from..span.range.start).unwrap_or_default());
-        let start = out.len();
-        match with(span, Some(old)) {
-            Some(new) => out.push_str(&new),
-            None => out.push_str(old),
-        }
-        from = span.range.end;
-        span.range = start..out.len();
-    }
-    out.push_str(text.get(from..).unwrap_or_default());
-    *text = out;
-}
-
-pub(super) fn apply(
-    sessions: &mut [BundledSession],
-    board: &mut Board,
-    mut with: impl FnMut(&Span, Option<&str>) -> Option<String>,
-) {
-    let mut missing: BTreeSet<At> = board.keys().cloned().collect();
-    super::texts::visit(sessions, &mut |slot, text| {
-        if let Some(spans) = board.get_mut(&slot.at) {
-            missing.remove(&slot.at);
-            rewrite(text, spans, &mut with);
-        }
-    });
-    for at in missing {
-        for span in board.get(&at).into_iter().flatten() {
-            with(span, None);
-        }
-    }
-}
-
-pub(super) fn found(sessions: &mut [BundledSession]) -> Board {
-    let mut board = Board::new();
-    super::texts::visit(sessions, &mut |slot, text| {
-        let spans: Vec<Span> = super::placeholders(text)
-            .into_iter()
-            .map(|(range, number)| Span {
-                range,
-                flag: number,
-            })
-            .collect();
-        if !spans.is_empty() {
-            board.insert(slot.at, spans);
-        }
-    });
-    board
-}
-
-pub(super) fn by_flag(board: &Board) -> BTreeMap<usize, Vec<FlagPlace>> {
-    let mut places: BTreeMap<usize, Vec<FlagPlace>> = BTreeMap::new();
-    for (at, spans) in board {
-        for span in spans {
-            places.entry(span.flag).or_default().push(FlagPlace {
-                session: at.session,
-                message: at.message,
-                field: at.field.clone(),
-                start: span.range.start,
-                end: span.range.end,
-            });
-        }
-    }
-    places
-}
-
-pub(super) fn board_of(places: impl IntoIterator<Item = (usize, FlagPlace)>) -> Board {
-    let mut board = Board::new();
-    for (flag, place) in places {
-        board
-            .entry(At {
-                session: place.session,
-                message: place.message,
-                field: place.field,
-            })
-            .or_default()
-            .push(Span {
-                range: place.start..place.end,
-                flag,
-            });
-    }
-    sorted(board)
 }

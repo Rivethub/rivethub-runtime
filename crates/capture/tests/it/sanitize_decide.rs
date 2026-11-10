@@ -292,18 +292,17 @@ async fn the_top_chunks_of_each_session_are_listed_and_stay_in_the_bundle() -> T
         calls.states(),
         [
             "/srv/reports/q3.csv".to_owned(),
-            UUID.to_owned(),
             risky_line(),
             format!("{WARM} rows: 3"),
             risky_command(),
             "numbers for Q3".to_owned(),
             "running it".to_owned(),
         ],
-        "a path and a 16-character token are sent, and equal texts share one call"
+        "a path is sent, a UUID is not, and equal texts share one call"
     );
     assert_eq!(
         (decision.scored, decision.calls, decision.trivial),
-        (11, 7, 0)
+        (10, 6, 1)
     );
 
     let bundle = &sanitized.sealed.bundle;
@@ -466,6 +465,7 @@ fn mark(report: &str, number: usize, mark: &str) -> String {
 async fn resolve_rewrites_an_advisory_bundle_in_place_and_converges() -> TestResult {
     let (stub, _) = model().await?;
     let sanitized = advisory(format!("http://{}", stub.addr)).await?;
+    let local = sanitized.local.clone().ok_or("no local review")?;
     let bundle = sanitized.sealed.bundle;
     let report = sanitized.report.markdown("s.clean.json", "none");
     let report = mark(&report, 1, &format!("map {RISKY} as <customer>"));
@@ -473,7 +473,7 @@ async fn resolve_rewrites_an_advisory_bundle_in_place_and_converges() -> TestRes
     let report = mark(&report, 3, "keep");
 
     let flags = sanitize::marks::read_flags(&report)?;
-    let resolved = sanitize::resolve(&bundle, &flags, &policy()?.key)?;
+    let resolved = sanitize::resolve(&bundle, &flags, &local, &policy()?.key)?;
 
     let clean = &resolved.sealed.bundle;
     assert_eq!(
@@ -503,6 +503,7 @@ async fn resolve_rewrites_an_advisory_bundle_in_place_and_converges() -> TestRes
     let again = sanitize::resolve(
         clean,
         &sanitize::marks::read_flags(&rewritten)?,
+        &local,
         &policy()?.key,
     )?;
     assert_eq!(again.open, 0);
@@ -522,7 +523,12 @@ async fn keep_puts_withheld_text_back_and_open_flags_stay_withheld() -> TestResu
     );
 
     let flags = sanitize::marks::read_flags(&report)?;
-    let resolved = sanitize::resolve(&sanitized.sealed.bundle, &flags, &policy()?.key)?;
+    let resolved = sanitize::resolve(
+        &sanitized.sealed.bundle,
+        &flags,
+        sanitized.local.as_ref().ok_or("no local review")?,
+        &policy()?.key,
+    )?;
 
     let clean = &resolved.sealed.bundle;
     assert_eq!(
@@ -580,7 +586,13 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
     let second = scrubbed.seal(&policy, DateTime::UNIX_EPOCH)?;
 
     let flags = sanitize::marks::read_flags(&first.report.markdown("s.clean.json", "none"))?;
-    let error = sanitize::resolve(&second.sealed.bundle, &flags, &policy.key).err();
+    let error = sanitize::resolve(
+        &second.sealed.bundle,
+        &flags,
+        second.local.as_ref().ok_or("no local review")?,
+        &policy.key,
+    )
+    .err();
 
     assert!(
         matches!(error, Some(sanitize::SanitizeError::OtherRun { .. })),

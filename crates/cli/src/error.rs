@@ -278,7 +278,7 @@ pub enum Error {
     #[error("memory.sanitize.decide.threshold is {0}; set it above 0 and at most 1")]
     DecideThreshold(f64),
     #[error(
-        "memory.sanitize.decide.concurrency is {0}; set it from 1 to 16, since the decision model is a shared server"
+        "memory.sanitize.decide.concurrency is {0}; set it from 1 to 8, since the decision model is a shared server"
     )]
     DecideConcurrency(usize),
     #[error("memory.sanitize.decide.top is 0; set it to 1 or more")]
@@ -291,4 +291,11 @@ pub enum Error {
         "{path} withholds {count} flagged chunk(s) until you mark them; mark them in the report and run rh memory sanitize --resolve <report>, or pass --force to ingest it with the chunks withheld"
     )]
     BundleFlags { path: String, count: usize },
+    #[error(
+        "cannot read the local review file {path} ({source}); sanitize writes it beside the report, so resolve on the machine and in the folder where sanitize ran"
+    )]
+    ReviewLocal {
+        path: String,
+        source: std::io::Error,
+    },
 }

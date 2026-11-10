@@ -167,6 +167,9 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
         .report
         .markdown(&out.display().to_string(), &source);
     write_whole(report_path.clone(), report.into_bytes()).await?;
+    if let Some(local) = &sanitized.local {
+        write_whole(local_path(&report_path), serde_json::to_vec(local)?).await?;
+    }
     let mut text = sanitized.sealed.text;
     text.push(b'\n');
     write_whole(out.to_path_buf(), text).await?;
@@ -234,7 +237,7 @@ fn endpoint(config: &Config, block: bool) -> Result<(Endpoint, Review), Error> {
     Ok((endpoint, review))
 }
 
-const MAX_CONCURRENCY: usize = 16;
+const MAX_CONCURRENCY: usize = 8;
 
 fn decision_line(decision: &capture::sanitize::Decision, report: &Path) -> String {
     let count =
@@ -297,9 +300,31 @@ pub(super) async fn resolve(
             })?;
         }
     }
+    let local_path = local_path(report);
+    let local: capture::sanitize::LocalReview =
+        serde_json::from_slice(&tokio::fs::read(&local_path).await.map_err(|source| {
+            Error::ReviewLocal {
+                path: local_path.display().to_string(),
+                source,
+            }
+        })?)?;
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(&bundle_path).await?)?;
     let key = capture::sanitize::LocalKey::load_or_create(&key_path(env)?)?;
-    let resolved = capture::sanitize::resolve(&bundle, &flags, &key)?;
+    let resolved = capture::sanitize::resolve(&bundle, &flags, &local, &key)?;
+    let mut maps: Vec<(&str, &str)> = Vec::new();
+    for flag in &flags.flags {
+        if let MarkState::Marked(Resolution::Map { term, placeholder })
+        | MarkState::Resolved(Resolution::Map { term, placeholder }) = &flag.state
+            && !maps.iter().any(|(known, _)| known == term)
+        {
+            maps.push((term, placeholder));
+        }
+    }
+    let offered = if maps.is_empty() {
+        None
+    } else {
+        Some(offer(&mapping_file(mapping, env)?, &maps, learn).await?)
+    };
     if resolved.sealed.bundle != bundle {
         let mut sealed = resolved.sealed.text.clone();
         sealed.push(b'\n');
@@ -310,20 +335,19 @@ pub(super) async fn resolve(
     if rewritten != text {
         write_whole(report.to_path_buf(), rewritten.into_bytes()).await?;
     }
-    let mut maps: Vec<(&str, &str)> = Vec::new();
-    for flag in &flags.flags {
-        if let MarkState::Marked(Resolution::Map { term, placeholder })
-        | MarkState::Resolved(Resolution::Map { term, placeholder }) = &flag.state
-            && !maps.iter().any(|(known, _)| known == term)
-        {
-            maps.push((term, placeholder));
-        }
-    }
     let mut message = resolved_line(&resolved, &bundle_path);
-    if !maps.is_empty() {
-        message.push_str(&offer(&mapping_file(mapping, env)?, &maps, learn).await?);
+    if let Some(offered) = offered {
+        if let Some((path, text)) = offered.write {
+            write_whole(path, text.into_bytes()).await?;
+        }
+        message.push_str(&offered.message);
     }
     Ok(Report::success(message))
+}
+
+struct Offered {
+    message: String,
+    write: Option<(PathBuf, String)>,
 }
 
 fn resolved_line(resolved: &capture::sanitize::Resolved, bundle: &Path) -> String {
@@ -377,7 +401,11 @@ async fn bundle_beside(report: &Path) -> Result<PathBuf, Error> {
     Ok(PathBuf::from(stem))
 }
 
-async fn offer(mapping: &MappingFile, maps: &[(&str, &str)], learn: bool) -> Result<String, Error> {
+async fn offer(
+    mapping: &MappingFile,
+    maps: &[(&str, &str)],
+    learn: bool,
+) -> Result<Offered, Error> {
     let path = match mapping {
         MappingFile::Configured(path) | MappingFile::Default(path) => path,
     };
@@ -402,16 +430,22 @@ async fn offer(mapping: &MappingFile, maps: &[(&str, &str)], learn: bool) -> Res
         .map(|(term, placeholder)| capture::sanitize::mapping::map_rule(term, placeholder))
         .collect();
     let display = path.display();
+    let told = |message: String| Offered {
+        message,
+        write: None,
+    };
     if fresh.is_empty() {
-        return Ok(format!("{display} already has a rule for each map mark\n"));
+        return Ok(told(format!(
+            "{display} already has a rule for each map mark\n"
+        )));
     }
     let count = fresh.len();
     let noun = if count == 1 { "rule" } else { "rules" };
     let rules = fresh.join("\n");
     if !learn {
-        return Ok(format!(
+        return Ok(told(format!(
             "rerun with --learn to add {count} map {noun} to {display}:\n\n{rules}"
-        ));
+        )));
     }
     let mut text = existing;
     if !text.is_empty() && !text.ends_with('\n') {
@@ -422,8 +456,16 @@ async fn offer(mapping: &MappingFile, maps: &[(&str, &str)], learn: bool) -> Res
     }
     text.push_str(&rules);
     capture::sanitize::mapping::parse(&text).map_err(invalid)?;
-    write_whole(path.clone(), text.into_bytes()).await?;
-    Ok(format!("added {count} map {noun} to {display}\n"))
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    Ok(Offered {
+        message: format!("added {count} map {noun} to {display}\n"),
+        write: Some((path.clone(), text)),
+    })
 }
 
 async fn rules(
@@ -467,6 +509,13 @@ fn key_path(env: &Environment) -> Result<PathBuf, Error> {
 }
 
 const REPORT_SUFFIX: &str = ".report.md";
+const LOCAL_SUFFIX: &str = ".review.local.json";
+
+fn local_path(report: &Path) -> PathBuf {
+    let name = report.display().to_string();
+    let stem = name.strip_suffix(REPORT_SUFFIX).unwrap_or(&name);
+    PathBuf::from(format!("{stem}{LOCAL_SUFFIX}"))
+}
 
 fn report_path(out: &Path) -> PathBuf {
     let base = if out.extension().is_some_and(|extension| extension == "json") {

@@ -310,7 +310,7 @@ async fn resolve_applies_a_map_mark_learns_the_rule_and_converges() {
     ));
     assert_eq!(
         std::fs::read_to_string(&decided.rules).expect("mapping"),
-        "[[rule]]\nregex = '\\bAcme Corp\\b'\naction = \"map\"\nas = \"<customer>\"\n"
+        "[[rule]]\nregex = '(?u:\\b)Acme Corp(?u:\\b)'\naction = \"map\"\nas = \"<customer>\"\n"
     );
 
     let again = run(&resolve, &node.environment).await;
@@ -456,7 +456,7 @@ async fn decide_concurrency_is_capped_for_the_shared_model() {
     let node = node(Some("http://127.0.0.1:9"));
     let config = node.home.path().join(".rivethub/config.yaml");
     let text = std::fs::read_to_string(&config).expect("config");
-    std::fs::write(&config, format!("{text}      concurrency: 17\n")).expect("config");
+    std::fs::write(&config, format!("{text}      concurrency: 9\n")).expect("config");
     let raw = raw_bundle(node.directory.path());
 
     let report = run(
@@ -475,6 +475,6 @@ async fn decide_concurrency_is_capped_for_the_shared_model() {
     assert_eq!(report.exit, Exit::Failure);
     assert_eq!(
         report.stderr,
-        "Error: memory.sanitize.decide.concurrency is 17; set it from 1 to 16, since the decision model is a shared server\n"
+        "Error: memory.sanitize.decide.concurrency is 9; set it from 1 to 8, since the decision model is a shared server\n"
     );
 }

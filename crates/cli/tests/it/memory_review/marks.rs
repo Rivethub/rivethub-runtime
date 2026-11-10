@@ -108,9 +108,15 @@ async fn a_learned_word_spares_longer_words_that_start_with_it() {
         sanitized.contents(),
         [vec!["PERSON approved the Tomcat upgrade"]]
     );
-    let later = node.raw("later.json", &[&["Tomcat and Tomas met Tom"]]);
+    let later = node.raw(
+        "later.json",
+        &[&["Tomcat and Tomas met Tom, Tomás and Tomé"]],
+    );
     let plain = node.sanitize(&later, &[]).await;
-    assert_eq!(plain.contents(), [vec!["Tomcat and Tomas met PERSON"]]);
+    assert_eq!(
+        plain.contents(),
+        [vec!["Tomcat and Tomas met PERSON, Tomás and Tomé"]]
+    );
     stub.close().await.expect("stub shuts down");
 }
 
@@ -185,5 +191,47 @@ async fn the_report_warns_that_it_holds_flagged_text() {
         "{report}"
     );
     assert!(report.contains("Never share this report"), "{report}");
+    stub.close().await.expect("stub shuts down");
+}
+
+#[tokio::test]
+async fn learn_into_an_invalid_mapping_file_writes_nothing() {
+    let model = Model::scoring(&[("Tom approved", 0.9)]);
+    let stub = serve(&model).await;
+    let node = Node::new(&format!("http://{}", stub.addr), 5);
+    let raw = node.raw("s.json", &[&["Tom approved the upgrade"]]);
+    let sanitized = node.sanitize(&raw, &["--decide", "--block"]).await;
+    std::fs::write(node.path("rules.toml"), "this is = not [valid toml\n").expect("rules");
+    sanitized.mark(1, "Mark: map Tom as PERSON");
+    let before = (sanitized.bundle_text(), sanitized.report());
+
+    let resolve = node.resolve(&sanitized, &["--learn"]).await;
+
+    assert_eq!(resolve.exit, Exit::Failure, "{}", resolve.stdout);
+    assert!(resolve.stderr.contains("rules.toml"), "{}", resolve.stderr);
+    assert_eq!((sanitized.bundle_text(), sanitized.report()), before);
+    stub.close().await.expect("stub shuts down");
+}
+
+#[tokio::test]
+async fn learn_on_a_fresh_machine_creates_the_mapping_file() {
+    let model = Model::scoring(&[("Tom approved", 0.9)]);
+    let stub = serve(&model).await;
+    let node = Node::new(&format!("http://{}", stub.addr), 5);
+    let raw = node.raw("s.json", &[&["Tom approved the upgrade"]]);
+    let sanitized = node.sanitize(&raw, &["--decide"]).await;
+    sanitized.mark(1, "Mark: map Tom as PERSON");
+    let report = sanitized.report.display().to_string();
+
+    let resolve = node
+        .run(&["memory", "sanitize", "--resolve", &report, "--learn"])
+        .await;
+
+    assert_eq!(resolve.exit, Exit::Ok, "{}", resolve.stderr);
+    let home = node.environment.text("HOME").expect("home");
+    let rules = std::path::Path::new(&home).join(".config/rivethub/redactions.toml");
+    let learned = std::fs::read_to_string(&rules).expect("mapping file created");
+    assert!(learned.contains("PERSON"), "{learned}");
+    assert_eq!(sanitized.contents(), [vec!["PERSON approved the upgrade"]]);
     stub.close().await.expect("stub shuts down");
 }

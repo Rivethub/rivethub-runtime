@@ -1,11 +1,12 @@
 mod chunks;
 mod endpoint;
+mod local;
 mod places;
+mod render;
 mod resolve;
-mod texts;
+mod slots;
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::ops::Range;
@@ -15,22 +16,27 @@ use chrono::SecondsFormat;
 use chrono::Utc;
 use wire::capture::BundledSession;
 use wire::capture::FlagMark;
-use wire::capture::FlagPlace;
 use wire::capture::FlagStamp;
 use wire::capture::ReviewStamp;
 
-pub use chunks::CHUNK_CHARS;
 pub use chunks::Candidates;
 pub use chunks::Chunk;
 pub(super) use chunks::candidates;
-pub use endpoint::ANSWER_CAP;
 pub use endpoint::DecideError;
 pub use endpoint::Endpoint;
-pub use endpoint::QUESTION;
 pub use endpoint::Scores;
 pub use endpoint::score;
+pub use local::BaseField;
+pub use local::LocalFlag;
+pub use local::LocalReview;
+pub use places::Place;
 pub use resolve::ResolveError;
-pub(super) use resolve::resolve;
+pub(super) use resolve::marks;
+pub(super) use resolve::render;
+pub(super) use resolve::restamped;
+pub use slots::BaseValue;
+pub use slots::FieldAt;
+pub use slots::FieldName;
 pub use wire::capture::ReviewMode as Mode;
 
 use super::key::LocalKey;
@@ -58,7 +64,7 @@ pub struct Flag {
     pub score: f64,
     pub text: String,
     pub shown: Vec<Shown>,
-    places: Vec<FlagPlace>,
+    places: Vec<Place>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,31 +75,61 @@ pub struct Decision {
     pub model: String,
     pub review: Review,
     pub flags: Vec<Flag>,
+    bases: BTreeMap<FieldAt, BaseValue>,
 }
 
 impl Decision {
     pub(super) fn stamp(&self, key: &LocalKey, at: DateTime<Utc>) -> ReviewStamp {
-        let flags = self
-            .flags
-            .iter()
-            .map(|flag| FlagStamp {
-                number: flag.number,
-                mark: FlagMark::Open,
-                places: flag.places.clone(),
-                seal: text_seal(key, at, flag.number, &flag.text),
-            })
-            .collect();
         sealed(
             key,
             at,
+            self.flags.len(),
             ReviewStamp {
                 mode: self.review.mode,
                 model: self.model.clone(),
                 calls: self.calls,
-                flags,
+                flags: self
+                    .flags
+                    .iter()
+                    .map(|flag| FlagStamp {
+                        number: flag.number,
+                        mark: FlagMark::Open,
+                    })
+                    .collect(),
                 seal: String::new(),
             },
         )
+    }
+
+    pub(super) fn local(
+        &self,
+        key: &LocalKey,
+        at: DateTime<Utc>,
+        unreviewed: (&[BundledSession], &wire::capture::BundleAuthor),
+    ) -> Result<LocalReview, serde_json::Error> {
+        LocalReview {
+            at,
+            unreviewed_sha256: local::digest(unreviewed.0, unreviewed.1)?,
+            flags: self
+                .flags
+                .iter()
+                .map(|flag| LocalFlag {
+                    number: flag.number,
+                    text: flag.text.clone(),
+                    places: flag.places.clone(),
+                })
+                .collect(),
+            fields: self
+                .bases
+                .iter()
+                .map(|(at, base)| BaseField {
+                    at: at.clone(),
+                    base: base.clone(),
+                })
+                .collect(),
+            seal: String::new(),
+        }
+        .sealed(key)
     }
 }
 
@@ -105,40 +141,21 @@ fn stamp_time(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
-pub(super) fn text_seal(key: &LocalKey, at: DateTime<Utc>, number: usize, text: &str) -> String {
-    key.hex(&[
-        b"flag",
-        &framed(stamp_time(at).as_bytes()),
-        &framed(number.to_string().as_bytes()),
-        &framed(text.as_bytes()),
-    ])
-}
-
-pub(super) fn sealed(key: &LocalKey, at: DateTime<Utc>, mut review: ReviewStamp) -> ReviewStamp {
+pub(super) fn sealed(
+    key: &LocalKey,
+    at: DateTime<Utc>,
+    unresolved: usize,
+    mut review: ReviewStamp,
+) -> ReviewStamp {
     let mut parts: Vec<String> = vec![
         stamp_time(at),
+        unresolved.to_string(),
         review.mode.to_string(),
         review.model.clone(),
         review.calls.to_string(),
     ];
     for flag in &review.flags {
-        parts.extend([
-            flag.number.to_string(),
-            flag.mark.to_string(),
-            flag.seal.clone(),
-            flag.places.len().to_string(),
-        ]);
-        for place in &flag.places {
-            parts.extend([
-                place.session.to_string(),
-                place
-                    .message
-                    .map_or_else(|| "-".to_owned(), |message| message.to_string()),
-                place.field.clone(),
-                place.start.to_string(),
-                place.end.to_string(),
-            ]);
-        }
+        parts.extend([flag.number.to_string(), flag.mark.to_string()]);
     }
     let framed: Vec<Vec<u8>> = std::iter::once(b"review".to_vec())
         .chain(parts.iter().map(|part| framed(part.as_bytes())))
@@ -156,25 +173,6 @@ pub enum Resolution {
 }
 
 impl Resolution {
-    #[must_use]
-    pub fn apply(&self, original: &str) -> String {
-        match self {
-            Self::Keep => original.to_owned(),
-            Self::Redact => REDACTED_FLAG.to_owned(),
-            Self::Map { term, placeholder } => {
-                let mut out = String::with_capacity(original.len());
-                let mut from = 0;
-                for range in term_spans(original, term) {
-                    out.push_str(original.get(from..range.start).unwrap_or_default());
-                    out.push_str(placeholder);
-                    from = range.end;
-                }
-                out.push_str(original.get(from..).unwrap_or_default());
-                out
-            }
-        }
-    }
-
     #[must_use]
     pub const fn mark(&self) -> FlagMark {
         match self {
@@ -213,9 +211,17 @@ pub fn term_spans(text: &str, term: &str) -> Vec<Range<usize>> {
     spans
 }
 
+pub const UNICODE_BOUNDARY: &str = r"(?u:\b)";
+
 #[must_use]
 pub fn term_regex(term: &str) -> String {
-    let edge = |c: Option<char>| if c.is_some_and(is_word) { r"\b" } else { "" };
+    let edge = |c: Option<char>| {
+        if c.is_some_and(is_word) {
+            UNICODE_BOUNDARY
+        } else {
+            ""
+        }
+    };
     format!(
         "{}{}{}",
         edge(term.chars().next()),
@@ -229,6 +235,31 @@ struct Ranked {
     text: String,
 }
 
+fn ranked(chunks: &[Chunk], scores: &Scores, review: Review) -> Vec<Ranked> {
+    let mut by_session: BTreeMap<usize, Vec<Ranked>> = BTreeMap::new();
+    let mut seen: HashSet<(usize, &str)> = HashSet::new();
+    for (chunk, &score) in chunks.iter().zip(&scores.scores) {
+        if score >= review.threshold && seen.insert((chunk.session, &chunk.text)) {
+            by_session.entry(chunk.session).or_default().push(Ranked {
+                score,
+                text: chunk.text.clone(),
+            });
+        }
+    }
+    let mut listed: HashSet<String> = HashSet::new();
+    let mut flagged = Vec::new();
+    for (_, mut group) in by_session {
+        group.sort_by(|a, b| b.score.total_cmp(&a.score));
+        group.truncate(review.top.get());
+        for entry in group {
+            if listed.insert(entry.text.clone()) {
+                flagged.push(entry);
+            }
+        }
+    }
+    flagged
+}
+
 pub(super) fn flag(
     sessions: &mut [BundledSession],
     candidates: Candidates,
@@ -236,56 +267,21 @@ pub(super) fn flag(
     review: Review,
 ) -> Result<Decision, aho_corasick::BuildError> {
     let Candidates { chunks, trivial } = candidates;
-    let mut ranked: BTreeMap<usize, Vec<Ranked>> = BTreeMap::new();
-    let mut seen: HashSet<(usize, &str)> = HashSet::new();
-    for (chunk, &score) in chunks.iter().zip(&scores.scores) {
-        if score >= review.threshold && seen.insert((chunk.at.session, &chunk.text)) {
-            ranked.entry(chunk.at.session).or_default().push(Ranked {
-                score,
-                text: chunk.text.clone(),
-            });
-        }
-    }
-    let mut numbers: HashMap<String, usize> = HashMap::new();
-    let mut flagged: Vec<Ranked> = Vec::new();
-    for (_, mut group) in ranked {
-        group.sort_by(|a, b| b.score.total_cmp(&a.score));
-        group.truncate(review.top.get());
-        for entry in group {
-            if !numbers.contains_key(&entry.text) {
-                numbers.insert(entry.text.clone(), flagged.len() + 1);
-                flagged.push(entry);
-            }
-        }
-    }
-    let seeds = chunks
-        .iter()
-        .filter_map(|chunk| {
-            numbers.get(&chunk.text).map(|&number| places::Seed {
-                at: chunk.at.clone(),
-                range: chunk.range.clone(),
-                flag: number,
-            })
-        })
-        .collect();
-    let texts: Vec<&str> = flagged.iter().map(|entry| entry.text.as_str()).collect();
-    let mut board = places::locate(sessions, seeds, &texts)?;
-    if review.mode == Mode::Block {
-        places::apply(sessions, &mut board, |span, _| Some(placeholder(span.flag)));
-    }
-    let mut by_flag = places::by_flag(&board);
-    let flags = flagged
+    let ranked = ranked(&chunks, scores, review);
+    let texts: Vec<&str> = ranked.iter().map(|entry| entry.text.as_str()).collect();
+    let located = places::locate(sessions, &texts)?;
+    let flags: Vec<Flag> = ranked
         .into_iter()
+        .zip(located.places)
+        .zip(located.shown)
+        .filter(|((_, places), _)| !places.is_empty())
         .zip(1..)
-        .map(|(entry, number)| {
-            let places = by_flag.remove(&number).unwrap_or_default();
-            Flag {
-                number,
-                score: entry.score,
-                shown: places.iter().map(|place| shown(sessions, place)).collect(),
-                text: entry.text,
-                places,
-            }
+        .map(|(((entry, places), shown), number)| Flag {
+            number,
+            score: entry.score,
+            text: entry.text,
+            shown,
+            places,
         })
         .collect();
     Ok(Decision {
@@ -295,23 +291,8 @@ pub(super) fn flag(
         model: scores.model.clone(),
         review,
         flags,
+        bases: located.bases,
     })
-}
-
-fn shown(sessions: &[BundledSession], place: &FlagPlace) -> Shown {
-    let session = sessions.get(place.session);
-    let key = session.map(|session| session.origin.session_key.clone());
-    let owner = match place.message {
-        Some(at) => session
-            .and_then(|session| session.batch.messages.get(at))
-            .map(|message| message.event_id.clone()),
-        None => key.clone(),
-    };
-    Shown {
-        session: key.unwrap_or_default(),
-        owner: owner.unwrap_or_default(),
-        field: place.field.clone(),
-    }
 }
 
 fn placeholder(number: usize) -> String {
@@ -322,8 +303,10 @@ fn placeholder(number: usize) -> String {
 pub fn withheld(sessions: &[BundledSession]) -> usize {
     let mut sessions = sessions.to_vec();
     let mut open = HashSet::new();
-    texts::visit(&mut sessions, &mut |_, text| {
-        open.extend(placeholders(text).into_iter().map(|(_, number)| number));
+    slots::fields(&mut sessions, &mut |_, _, mut field| {
+        slots::slots(&mut field, &mut |_, text| {
+            open.extend(placeholders(text).into_iter().map(|(_, number)| number));
+        });
     });
     open.len()
 }
@@ -402,19 +385,18 @@ mod tests {
 
     #[test]
     fn a_word_term_matches_whole_words_only() {
-        let map = Resolution::Map {
-            term: "Tom".to_owned(),
-            placeholder: "P".to_owned(),
+        let spans = |text, term| -> Vec<(usize, usize)> {
+            term_spans(text, term)
+                .into_iter()
+                .map(|span| (span.start, span.end))
+                .collect()
         };
         assert_eq!(
-            map.apply("Tom, Tomcat and Tom_x met Tom"),
-            "P, Tomcat and Tom_x met P"
+            spans("Tom, Tomcat and Tom_x met Tom", "Tom"),
+            [(0, 3), (26, 29)]
         );
-        assert_eq!(term_regex("Tom"), r"\bTom\b");
-        let dotted = Resolution::Map {
-            term: ".prod".to_owned(),
-            placeholder: ".P".to_owned(),
-        };
-        assert_eq!(dotted.apply("a.prod.x b.production"), "a.P.x b.production");
+        assert_eq!(spans("Tomás and Tom", "Tom"), [(11, 14)]);
+        assert_eq!(term_regex("Tom"), r"(?u:\b)Tom(?u:\b)");
+        assert_eq!(spans("a.prod.x b.production", ".prod"), [(1, 6)]);
     }
 }

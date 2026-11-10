@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -12,15 +11,20 @@ use wire::capture::ReviewStamp;
 use super::super::key::LocalKey;
 use super::super::marks::MarkState;
 use super::super::marks::ReportFlag;
+use super::LocalReview;
 use super::Mode;
 use super::Resolution;
-use super::placeholder;
-use super::places;
+use super::render::Effect;
+use super::render::Marked;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ResolveError {
     #[error("the bundle has no decision-model review; it was sanitized without --decide")]
     NoReview,
+    #[error(
+        "the local review file was sealed under another machine's sanitize key, or edited; resolve on the machine that ran sanitize, with the files it wrote"
+    )]
+    OtherKey,
     #[error(
         "the bundle's review table does not match its seal, so it changed after sanitize; sanitize the raw bundle again"
     )]
@@ -30,7 +34,7 @@ pub enum ResolveError {
     )]
     Unknown(usize),
     #[error(
-        "flag {0}: the report's hidden copy of the text does not match the bundle's seal; sanitize the raw bundle again"
+        "flag {0}: the report's hidden copy of the text does not match the local review file; sanitize the raw bundle again"
     )]
     Forged(usize),
     #[error(
@@ -42,202 +46,126 @@ pub enum ResolveError {
     )]
     Changed { number: usize, done: FlagMark },
     #[error(
-        "flag {0}: the bundle no longer holds the flagged text where sanitize put it; sanitize the raw bundle again"
+        "flag {0} is resolved as map, but the report lost its Resolved line; put the flag's section back as resolve wrote it"
     )]
-    Moved(usize),
+    Lost(usize),
+    #[error(
+        "the bundle changed after sanitize or the last resolve (or a Resolved line in the report did); sanitize the raw bundle again"
+    )]
+    Moved,
 }
 
 #[derive(Debug)]
-pub(crate) struct Marked {
-    pub(crate) review: ReviewStamp,
+pub(crate) struct Marks {
+    pub(crate) before: BTreeMap<usize, Option<Resolution>>,
+    pub(crate) after: BTreeMap<usize, Option<Resolution>>,
     pub(crate) applied: Vec<(usize, Resolution)>,
 }
 
-impl Marked {
-    #[must_use]
-    pub(crate) fn open(&self) -> usize {
-        self.review
-            .flags
-            .iter()
-            .filter(|flag| flag.mark == FlagMark::Open)
-            .count()
-    }
-}
-
-type Texts = HashMap<usize, String>;
-
-pub(in super::super) fn resolve(
-    sessions: &mut [BundledSession],
+pub(in super::super) fn marks(
     review: &ReviewStamp,
     report: &[ReportFlag],
+    local: &LocalReview,
     key: &LocalKey,
     at: DateTime<Utc>,
-    recheck: impl FnOnce(&mut [BundledSession]),
-) -> Result<Marked, ResolveError> {
-    if super::sealed(key, at, review.clone()).seal != review.seal {
+    unresolved: usize,
+) -> Result<Marks, ResolveError> {
+    if !local.holds_its_seal(key) {
+        return Err(ResolveError::OtherKey);
+    }
+    if super::sealed(key, at, unresolved, review.clone()).seal != review.seal {
         return Err(ResolveError::Table);
     }
-    let (mut texts, applied) = checked(review, report, key, at)?;
-    let mut board = withdrawn(sessions, review, &mut texts)?;
-    let resolved: HashMap<usize, String> = applied
-        .iter()
-        .filter_map(|(number, resolution)| {
-            texts
-                .get(number)
-                .map(|text| (*number, resolution.apply(text)))
-        })
-        .collect();
-    places::apply(sessions, &mut board, |span, _| {
-        resolved.get(&span.flag).cloned()
-    });
-    recheck(sessions);
-    let mut found = relocated(sessions, &board, &resolved)?;
-    if review.mode == Mode::Advisory {
-        places::apply(sessions, &mut found, |span, _| {
-            texts.get(&span.flag).cloned()
-        });
-    }
-    let flags = restamped(review, &applied, &found);
-    Ok(Marked {
-        review: super::sealed(
-            key,
-            at,
-            ReviewStamp {
-                flags,
-                seal: String::new(),
-                ..review.clone()
-            },
-        ),
-        applied,
-    })
-}
-
-fn checked(
-    review: &ReviewStamp,
-    report: &[ReportFlag],
-    key: &LocalKey,
-    at: DateTime<Utc>,
-) -> Result<(Texts, Vec<(usize, Resolution)>), ResolveError> {
-    let stamps: BTreeMap<usize, &FlagStamp> = review
-        .flags
-        .iter()
-        .map(|flag| (flag.number, flag))
-        .collect();
-    let mut texts = Texts::new();
-    let mut applied: Vec<(usize, Resolution)> = Vec::new();
-    for flag in report {
-        let stamp = stamps
-            .get(&flag.number)
-            .ok_or(ResolveError::Unknown(flag.number))?;
-        if super::text_seal(key, at, flag.number, &flag.text) != stamp.seal {
-            return Err(ResolveError::Forged(flag.number));
-        }
-        if !flag.shows_its_text() {
-            return Err(ResolveError::Edited(flag.number));
-        }
-        texts.insert(flag.number, flag.text.clone());
-        match (&flag.state, stamp.mark) {
-            (MarkState::Open, _) => {}
-            (MarkState::Marked(resolution) | MarkState::Resolved(resolution), FlagMark::Open) => {
-                applied.push((flag.number, resolution.clone()));
-            }
-            (MarkState::Marked(resolution) | MarkState::Resolved(resolution), done) => {
-                if resolution.mark() != done {
-                    return Err(ResolveError::Changed {
-                        number: flag.number,
-                        done,
-                    });
-                }
-            }
-        }
-    }
-    Ok((texts, applied))
-}
-
-fn withdrawn(
-    sessions: &mut [BundledSession],
-    review: &ReviewStamp,
-    texts: &mut Texts,
-) -> Result<places::Board, ResolveError> {
-    let mut board = places::board_of(review.flags.iter().flat_map(|flag| {
-        let open = flag.mark == FlagMark::Open;
-        flag.places
-            .iter()
-            .filter(move |_| open)
-            .cloned()
-            .map(move |place| (flag.number, place))
-    }));
-    let mut moved = None;
-    places::apply(sessions, &mut board, |span, old| {
-        let expected = match (review.mode, old) {
-            (Mode::Block, Some(old)) => old == placeholder(span.flag),
-            (Mode::Advisory, Some(old)) => {
-                texts.entry(span.flag).or_insert_with(|| old.to_owned()) == old
-            }
-            (_, None) => false,
-        };
-        if !expected {
-            moved.get_or_insert(span.flag);
-        }
-        Some(placeholder(span.flag))
-    });
-    match moved {
-        Some(number) => Err(ResolveError::Moved(number)),
-        None => Ok(board),
-    }
-}
-
-fn counts(board: &places::Board) -> BTreeMap<usize, usize> {
-    let mut counts: BTreeMap<usize, usize> = BTreeMap::new();
-    for span in board.values().flatten() {
-        *counts.entry(span.flag).or_default() += 1;
-    }
-    counts
-}
-
-fn relocated(
-    sessions: &mut [BundledSession],
-    board: &places::Board,
-    resolved: &HashMap<usize, String>,
-) -> Result<places::Board, ResolveError> {
-    let found = places::found(sessions);
-    let mut expected = counts(board);
-    expected.retain(|number, _| !resolved.contains_key(number));
-    let now = counts(&found);
-    match expected
+    let reported: BTreeMap<usize, &ReportFlag> =
+        report.iter().map(|flag| (flag.number, flag)).collect();
+    if let Some(number) = reported
         .keys()
-        .chain(now.keys())
-        .find(|number| expected.get(number) != now.get(number))
+        .find(|number| !review.flags.iter().any(|flag| flag.number == **number))
     {
-        Some(number) => Err(ResolveError::Moved(*number)),
-        None => Ok(found),
+        return Err(ResolveError::Unknown(*number));
     }
+    let mut marks = Marks {
+        before: BTreeMap::new(),
+        after: BTreeMap::new(),
+        applied: Vec::new(),
+    };
+    for stamp in &review.flags {
+        let number = stamp.number;
+        let flag = reported.get(&number);
+        if let Some(flag) = flag {
+            let text = local.flag(number).map(|local| local.text.as_str());
+            if text != Some(flag.text.as_str()) {
+                return Err(ResolveError::Forged(number));
+            }
+            if !flag.shows_its_text() {
+                return Err(ResolveError::Edited(number));
+            }
+        }
+        let written = flag.and_then(|flag| match &flag.state {
+            MarkState::Open => None,
+            MarkState::Marked(resolution) | MarkState::Resolved(resolution) => Some(resolution),
+        });
+        let (before, after) = match (stamp.mark, written) {
+            (FlagMark::Open, None) => (None, None),
+            (FlagMark::Open, Some(resolution)) => {
+                marks.applied.push((number, resolution.clone()));
+                (None, Some(resolution.clone()))
+            }
+            (done, Some(resolution)) if resolution.mark() == done => {
+                (Some(resolution.clone()), Some(resolution.clone()))
+            }
+            (done, Some(_)) => return Err(ResolveError::Changed { number, done }),
+            (FlagMark::Keep, None) => (Some(Resolution::Keep), Some(Resolution::Keep)),
+            (FlagMark::Redact, None) => (Some(Resolution::Redact), Some(Resolution::Redact)),
+            (FlagMark::Map, None) => return Err(ResolveError::Lost(number)),
+        };
+        marks.before.insert(number, before);
+        marks.after.insert(number, after);
+    }
+    Ok(marks)
 }
 
-fn restamped(
-    review: &ReviewStamp,
-    applied: &[(usize, Resolution)],
-    found: &places::Board,
-) -> Vec<FlagStamp> {
-    let mut by_flag = places::by_flag(found);
-    review
+pub(in super::super) fn render(
+    sessions: &mut [BundledSession],
+    local: &LocalReview,
+    mode: Mode,
+    marks: &BTreeMap<usize, Option<Resolution>>,
+    key: &LocalKey,
+) {
+    let flags: Vec<Marked<'_>> = local
         .flags
         .iter()
-        .map(|flag| {
-            let mark = applied
-                .iter()
-                .find(|(number, _)| *number == flag.number)
-                .map_or(flag.mark, |(_, resolution)| resolution.mark());
-            FlagStamp {
-                number: flag.number,
-                mark,
-                places: if mark == FlagMark::Open {
-                    by_flag.remove(&flag.number).unwrap_or_default()
-                } else {
-                    Vec::new()
-                },
-                seal: flag.seal.clone(),
-            }
+        .map(|flag| Marked {
+            number: flag.number,
+            places: &flag.places,
+            effect: match (marks.get(&flag.number).cloned().flatten(), mode) {
+                (Some(resolution), _) => Effect::Apply(resolution),
+                (None, Mode::Block) => Effect::Withhold,
+                (None, Mode::Advisory) => Effect::Keep,
+            },
         })
-        .collect()
+        .collect();
+    super::render::apply(sessions, &local.bases(), &flags, key);
+}
+
+pub(in super::super) fn restamped(
+    review: &ReviewStamp,
+    marks: &BTreeMap<usize, Option<Resolution>>,
+) -> ReviewStamp {
+    ReviewStamp {
+        flags: review
+            .flags
+            .iter()
+            .map(|flag| FlagStamp {
+                number: flag.number,
+                mark: marks
+                    .get(&flag.number)
+                    .cloned()
+                    .flatten()
+                    .map_or(FlagMark::Open, |resolution| resolution.mark()),
+            })
+            .collect(),
+        seal: String::new(),
+        ..review.clone()
+    }
 }

@@ -21,6 +21,7 @@ use crate::bundle::BundleError;
 use crate::bundle::Sealed;
 pub use decide::Candidates;
 pub use decide::Decision;
+pub use decide::LocalReview;
 pub use decide::ResolveError;
 pub use key::KeyError;
 pub use key::LocalKey;
@@ -70,6 +71,12 @@ pub enum SanitizeError {
         bundle: DateTime<Utc>,
         report: DateTime<Utc>,
     },
+    #[error(
+        "the bundle stamp says unresolved_flags is {stamped}, but its review table holds {open} open flag(s); the stamp was edited, so ingest refuses it"
+    )]
+    Unresolved { stamped: u32, open: usize },
+    #[error("the local review file does not serialize: {0}")]
+    LocalReview(serde_json::Error),
 }
 
 #[derive(Debug)]
@@ -125,6 +132,7 @@ enum MatcherText<'a> {
 pub struct Sanitized {
     pub sealed: Sealed,
     pub report: Report,
+    pub local: Option<LocalReview>,
 }
 
 #[derive(Debug)]
@@ -206,7 +214,33 @@ impl Scrubbed {
         Ok(self.decision.insert(decision))
     }
 
-    pub fn seal(self, policy: &Policy, at: DateTime<Utc>) -> Result<Sanitized, SanitizeError> {
+    fn review(
+        &mut self,
+        key: &LocalKey,
+        at: DateTime<Utc>,
+    ) -> Result<Option<LocalReview>, SanitizeError> {
+        let Some(decision) = &self.decision else {
+            return Ok(None);
+        };
+        let local = decision
+            .local(key, at, (&self.sessions, &self.exported_by))
+            .map_err(SanitizeError::LocalReview)?;
+        let open = std::collections::BTreeMap::new();
+        decide::render(&mut self.sessions, &local, decision.review.mode, &open, key);
+        let mut found = recheck(
+            &mut self.sessions,
+            &mut self.exported_by,
+            None,
+            &self.raw_digest,
+        );
+        self.rechecked += found.changes.len();
+        self.changes.append(&mut found.changes);
+        self.collisions.append(&mut found.collisions);
+        Ok(Some(local))
+    }
+
+    pub fn seal(mut self, policy: &Policy, at: DateTime<Utc>) -> Result<Sanitized, SanitizeError> {
+        let local = self.review(&policy.key, at)?;
         let policy_sha256 = policy.hash(&self.raw_digest)?;
         let unresolved_flags = self
             .decision
@@ -246,7 +280,11 @@ impl Scrubbed {
             rechecked: self.rechecked,
             decision: self.decision,
         };
-        Ok(Sanitized { sealed, report })
+        Ok(Sanitized {
+            sealed,
+            report,
+            local,
+        })
     }
 }
 
@@ -270,6 +308,7 @@ pub struct Resolved {
 pub fn resolve(
     bundle: &SessionBundle,
     flags: &ReportFlags,
+    local: &LocalReview,
     key: &LocalKey,
 ) -> Result<Resolved, SanitizeError> {
     let Sanitization::Sanitized(stamp) = &bundle.manifest.sanitization else {
@@ -282,32 +321,55 @@ pub fn resolve(
         });
     }
     let review = stamp.review.as_ref().ok_or(ResolveError::NoReview)?;
-    let mut sessions = bundle.sessions.clone();
-    let mut exported_by = bundle.manifest.exported_by.clone();
-    let mut rechecked = Vec::new();
-    let marked = decide::resolve(
-        &mut sessions,
+    let marks = decide::marks(
         review,
         &flags.flags,
+        local,
         key,
         stamp.at,
-        |sessions| {
-            rechecked = recheck(
-                sessions,
-                &mut exported_by,
-                None,
-                &bundle.manifest.bundle_sha256,
-            )
-            .changes;
-        },
+        usize::try_from(stamp.unresolved_flags)?,
     )?;
-    let open = marked.open();
+    if local.at != stamp.at {
+        return Err(SanitizeError::OtherRun {
+            bundle: stamp.at,
+            report: local.at,
+        });
+    }
+    if !local
+        .holds(&bundle.sessions, &bundle.manifest.exported_by)
+        .map_err(SanitizeError::LocalReview)?
+    {
+        return Err(ResolveError::Moved.into());
+    }
+    let rendered = |marks| {
+        let mut sessions = bundle.sessions.clone();
+        let mut exported_by = bundle.manifest.exported_by.clone();
+        decide::render(&mut sessions, local, review.mode, marks, key);
+        let found = recheck(
+            &mut sessions,
+            &mut exported_by,
+            None,
+            &bundle.manifest.bundle_sha256,
+        );
+        (sessions, exported_by, found.changes)
+    };
+    let (expected, expected_by, _) = rendered(&marks.before);
+    if expected != bundle.sessions || expected_by != bundle.manifest.exported_by {
+        return Err(ResolveError::Moved.into());
+    }
+    let (sessions, exported_by, rechecked) = rendered(&marks.after);
+    let restamped = decide::restamped(review, &marks.after);
+    let open = restamped
+        .flags
+        .iter()
+        .filter(|flag| flag.mark == wire::capture::FlagMark::Open)
+        .count();
     let sealed = settled(crate::bundle::seal(
         exported_by,
         bundle.manifest.exported_at,
         Sanitization::Sanitized(SanitizeStamp {
             unresolved_flags: u32::try_from(open)?,
-            review: Some(marked.review),
+            review: Some(decide::sealed(key, stamp.at, open, restamped)),
             ..stamp.clone()
         }),
         sessions,
@@ -316,8 +378,51 @@ pub fn resolve(
         sealed,
         open,
         total: review.flags.len(),
-        applied: marked.applied,
+        applied: marks.applied,
         rechecked,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenFlags {
+    pub withheld: usize,
+    pub unreviewed: usize,
+}
+
+pub fn open_flags(bundle: &SessionBundle) -> Result<OpenFlags, SanitizeError> {
+    let Sanitization::Sanitized(stamp) = &bundle.manifest.sanitization else {
+        return Ok(OpenFlags {
+            withheld: 0,
+            unreviewed: 0,
+        });
+    };
+    let placed = decide::withheld(&bundle.sessions);
+    let Some(review) = &stamp.review else {
+        return Ok(OpenFlags {
+            withheld: placed,
+            unreviewed: usize::try_from(stamp.unresolved_flags)?,
+        });
+    };
+    let open = review
+        .flags
+        .iter()
+        .filter(|flag| flag.mark == wire::capture::FlagMark::Open)
+        .count();
+    if usize::try_from(stamp.unresolved_flags)? != open {
+        return Err(SanitizeError::Unresolved {
+            stamped: stamp.unresolved_flags,
+            open,
+        });
+    }
+    Ok(match review.mode {
+        decide::Mode::Block => OpenFlags {
+            withheld: placed.max(open),
+            unreviewed: 0,
+        },
+        decide::Mode::Advisory => OpenFlags {
+            withheld: placed,
+            unreviewed: open,
+        },
     })
 }
 
@@ -326,13 +431,6 @@ pub fn withheld(bundle: &SessionBundle) -> usize {
     match &bundle.manifest.sanitization {
         Sanitization::Raw => 0,
         Sanitization::Sanitized(_) => decide::withheld(&bundle.sessions),
-    }
-}
-
-pub fn unreviewed(bundle: &SessionBundle) -> Result<usize, SanitizeError> {
-    match &bundle.manifest.sanitization {
-        Sanitization::Raw => Ok(0),
-        Sanitization::Sanitized(stamp) => Ok(usize::try_from(stamp.unresolved_flags)?),
     }
 }
 

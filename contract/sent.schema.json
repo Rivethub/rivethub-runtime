@@ -2259,44 +2259,6 @@
       ],
       "type": "string"
     },
-    "FlagPlace": {
-      "properties": {
-        "end": {
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "field": {
-          "type": "string"
-        },
-        "message": {
-          "format": "uint",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "session": {
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "start": {
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "session",
-        "message",
-        "field",
-        "start",
-        "end"
-      ],
-      "type": "object"
-    },
     "FlagStamp": {
       "properties": {
         "mark": {
@@ -2306,22 +2268,11 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
-        },
-        "places": {
-          "items": {
-            "$ref": "#/$defs/FlagPlace"
-          },
-          "type": "array"
-        },
-        "seal": {
-          "type": "string"
         }
       },
       "required": [
         "number",
-        "mark",
-        "places",
-        "seal"
+        "mark"
       ],
       "type": "object"
     },

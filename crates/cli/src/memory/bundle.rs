@@ -131,14 +131,16 @@ pub(super) async fn ingest(
             first: first.to_string(),
         });
     }
-    let withheld = capture::sanitize::withheld(&bundle);
+    let capture::sanitize::OpenFlags {
+        withheld,
+        unreviewed,
+    } = capture::sanitize::open_flags(&bundle)?;
     if withheld > 0 && !force && !dry_run {
         return Err(Error::BundleFlags {
             path: path.display().to_string(),
             count: withheld,
         });
     }
-    let unreviewed = capture::sanitize::unreviewed(&bundle)?;
     let unscrubbed;
     let state = match (raw, secrets.len(), force) {
         (false, 0, _) => "",

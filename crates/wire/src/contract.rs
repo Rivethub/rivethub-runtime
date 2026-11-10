@@ -256,7 +256,6 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::capture::ReviewMode>,
     SchemaGenerator::subschema_for::<crate::capture::FlagStamp>,
     SchemaGenerator::subschema_for::<crate::capture::FlagMark>,
-    SchemaGenerator::subschema_for::<crate::capture::FlagPlace>,
     SchemaGenerator::subschema_for::<crate::capture::BundledSession>,
     SchemaGenerator::subschema_for::<crate::capture::SessionOrigin>,
     SchemaGenerator::subschema_for::<crate::model_call::ModelCallBatchRequest>,

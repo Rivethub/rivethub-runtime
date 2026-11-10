@@ -4,6 +4,8 @@
 mod endpoint;
 #[path = "memory_review/marks.rs"]
 mod marks;
+#[path = "memory_review/places.rs"]
+mod places;
 #[path = "memory_review/spans.rs"]
 mod spans;
 
@@ -39,6 +41,7 @@ struct Info {
 #[derive(Clone, Default)]
 struct Model {
     scores: Arc<Vec<(&'static str, f64)>>,
+    exact: bool,
     asked: Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
@@ -46,7 +49,15 @@ impl Model {
     fn scoring(scores: &[(&'static str, f64)]) -> Self {
         Self {
             scores: Arc::new(scores.to_vec()),
+            exact: false,
             asked: Arc::default(),
+        }
+    }
+
+    fn exactly(scores: &[(&'static str, f64)]) -> Self {
+        Self {
+            exact: true,
+            ..Self::scoring(scores)
         }
     }
 
@@ -62,7 +73,13 @@ async fn decide(
     let yes = model
         .scores
         .iter()
-        .filter(|(needle, _)| ask.state.contains(needle))
+        .filter(|(needle, _)| {
+            if model.exact {
+                ask.state == *needle
+            } else {
+                ask.state.contains(needle)
+            }
+        })
         .map(|(_, score)| *score)
         .fold(0.05, f64::max);
     model.asked.lock().push(ask.state);
@@ -126,8 +143,21 @@ impl Node {
     }
 
     fn raw(&self, name: &str, sessions: &[&[&str]]) -> String {
+        self.raw_sessions(
+            name,
+            sessions
+                .iter()
+                .enumerate()
+                .map(|(index, contents)| {
+                    session(index, contents.iter().map(|text| message(text)).collect())
+                })
+                .collect(),
+        )
+    }
+
+    fn raw_sessions(&self, name: &str, sessions: Vec<wire::capture::BundledSession>) -> String {
         let path = self.path(name);
-        std::fs::write(&path, raw_bundle(sessions)).expect("raw bundle");
+        std::fs::write(&path, sealed(sessions)).expect("raw bundle");
         path
     }
 
@@ -256,51 +286,58 @@ fn bundle_at(path: &Path) -> SessionBundle {
     capture::bundle::parse(&std::fs::read_to_string(path).expect("bundle file")).expect("bundle")
 }
 
-fn raw_bundle(sessions: &[&[&str]]) -> Vec<u8> {
-    let sessions = sessions
-        .iter()
-        .enumerate()
-        .map(|(index, contents)| {
-            let key = format!("claude-code:s{index}");
-            wire::capture::BundledSession {
-                origin: wire::capture::SessionOrigin {
-                    author: "phil".to_owned(),
-                    node: "desk".to_owned(),
-                    conversation_id: format!("c{index}"),
-                    session_key: key.clone(),
-                    agent: "rivet".to_owned(),
-                    created_at: None,
-                    updated_at: None,
-                    identity: None,
-                },
-                batch: wire::capture::CaptureBatchRequest {
-                    session_key: key,
-                    agent: "rivet".to_owned(),
-                    channel: None,
-                    title: None,
-                    settings: None,
-                    task_id: None,
-                    finalize: None,
-                    created_at: None,
-                    updated_at: None,
-                    messages: contents
-                        .iter()
-                        .enumerate()
-                        .map(|(at, content)| wire::capture::CaptureMessage {
-                            event_id: format!("evt-{index}-{at}"),
-                            role: Role::Assistant,
-                            content: (*content).to_owned(),
-                            tool_name: None,
-                            tool_args: None,
-                            tool_result: None,
-                            metadata: None,
-                            created_at: None,
-                        })
-                        .collect(),
-                },
-            }
-        })
-        .collect();
+fn message(content: &str) -> wire::capture::CaptureMessage {
+    wire::capture::CaptureMessage {
+        event_id: String::new(),
+        role: Role::Assistant,
+        content: content.to_owned(),
+        tool_name: None,
+        tool_args: None,
+        tool_result: None,
+        metadata: None,
+        created_at: None,
+    }
+}
+
+fn session(
+    index: usize,
+    messages: Vec<wire::capture::CaptureMessage>,
+) -> wire::capture::BundledSession {
+    let key = format!("claude-code:s{index}");
+    wire::capture::BundledSession {
+        origin: wire::capture::SessionOrigin {
+            author: "phil".to_owned(),
+            node: "desk".to_owned(),
+            conversation_id: format!("c{index}"),
+            session_key: key.clone(),
+            agent: "rivet".to_owned(),
+            created_at: None,
+            updated_at: None,
+            identity: None,
+        },
+        batch: wire::capture::CaptureBatchRequest {
+            session_key: key,
+            agent: "rivet".to_owned(),
+            channel: None,
+            title: None,
+            settings: None,
+            task_id: None,
+            finalize: None,
+            created_at: None,
+            updated_at: None,
+            messages: messages
+                .into_iter()
+                .enumerate()
+                .map(|(at, message)| wire::capture::CaptureMessage {
+                    event_id: format!("evt-{index}-{at}"),
+                    ..message
+                })
+                .collect(),
+        },
+    }
+}
+
+fn sealed(sessions: Vec<wire::capture::BundledSession>) -> Vec<u8> {
     capture::bundle::seal(
         wire::capture::BundleAuthor {
             user: "phil".to_owned(),
