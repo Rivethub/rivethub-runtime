@@ -2,6 +2,8 @@ use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
+use capture::sanitize::Change;
+use capture::sanitize::Field;
 use chrono::Utc;
 use config::Config;
 use config::Environment;
@@ -143,9 +145,14 @@ pub(super) async fn ingest(
         (true, _, true) => " (raw bundle forced)",
         (true, _, false) => " (raw bundle; ingest needs --force)",
     };
-    let sessions = sessions_from(&bundle);
+    let sessions = sessions_from(&bundle, &secrets);
     if dry_run {
-        let mut lines: Vec<String> = bundle.sessions.iter().map(listed).collect();
+        let mut lines: Vec<String> = bundle
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| listed(index, session, &secrets))
+            .collect();
         lines.push(format!("would ingest {sessions}{state}; nothing written\n"));
         return Ok(Report::success(lines.concat()));
     }
@@ -156,10 +163,10 @@ pub(super) async fn ingest(
     )))
 }
 
-fn sessions_from(bundle: &SessionBundle) -> String {
-    let mut authors: Vec<&str> = Vec::new();
-    for session in &bundle.sessions {
-        let author = author_of(session);
+fn sessions_from(bundle: &SessionBundle, secrets: &[Change]) -> String {
+    let mut authors: Vec<String> = Vec::new();
+    for (index, session) in bundle.sessions.iter().enumerate() {
+        let author = shown(index, &Field::OriginAuthor, author_of(session), secrets);
         if !authors.contains(&author) {
             authors.push(author);
         }
@@ -173,7 +180,7 @@ fn sessions_from(bundle: &SessionBundle) -> String {
     }
 }
 
-fn listed(session: &BundledSession) -> String {
+fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> String {
     let origin = &session.origin;
     let count = session.batch.messages.len();
     let noun = if count == 1 { "message" } else { "messages" };
@@ -187,10 +194,22 @@ fn listed(session: &BundledSession) -> String {
     };
     format!(
         "{} ({}): {count} {noun} from {}, {dates}\n",
-        origin.session_key,
-        origin.agent,
-        author_of(session),
+        shown(
+            index,
+            &Field::OriginSessionKey,
+            &origin.session_key,
+            secrets
+        ),
+        shown(index, &Field::OriginAgent, &origin.agent, secrets),
+        shown(index, &Field::OriginAuthor, author_of(session), secrets),
     )
+}
+
+fn shown(index: usize, field: &Field, text: &str, secrets: &[Change]) -> String {
+    secrets
+        .iter()
+        .find(|change| change.session == Some(index) && change.field == *field)
+        .map_or_else(|| text.to_owned(), |change| change.replacement.clone())
 }
 
 fn author_of(session: &BundledSession) -> &str {

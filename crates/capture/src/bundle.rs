@@ -192,6 +192,7 @@ fn inferred(batch: CaptureBatchRequest) -> BundledSession {
             agent: batch.agent.clone(),
             created_at,
             updated_at,
+            identity: None,
         },
         batch,
     }

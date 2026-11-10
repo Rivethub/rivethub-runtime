@@ -90,6 +90,7 @@ fn session_for(author: &BundleAuthor, row: &BundleRow) -> BundledSession {
             agent: row.agent.clone(),
             created_at: Some(row.conversation_created_at),
             updated_at: Some(row.conversation_updated_at),
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: row.session_key.clone(),

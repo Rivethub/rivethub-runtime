@@ -18,6 +18,7 @@ fn session(node: &str, conversation_id: &str, first_event: &str) -> BundledSessi
             agent: "rivet".to_owned(),
             created_at: None,
             updated_at: None,
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: "claude-code:shared".to_owned(),
@@ -144,5 +145,21 @@ fn re_exporting_an_undated_import_leaves_its_dates_absent() -> TestResult {
     assert_eq!(forwarded.batch.session_key, "claude-code:shared");
     assert_eq!(forwarded.batch.created_at, None);
     assert_eq!(forwarded.batch.updated_at, None);
+    Ok(())
+}
+
+#[test]
+fn a_sanitized_identity_keys_the_conversation_instead_of_its_display_id() -> TestResult {
+    let mut first = session("desk", "conv-<lan-ip>", "evt-1");
+    let mut second = session("desk", "conv-<lan-ip>", "evt-2");
+    assert_eq!(owned("alex", &first)?, owned("alex", &second)?);
+    first.origin.identity = Some("a".repeat(64));
+    second.origin.identity = Some("b".repeat(64));
+    assert_ne!(owned("alex", &first)?, owned("alex", &second)?);
+    let preimage = serde_json::to_string(&["alex", "desk", &"a".repeat(64)])?;
+    assert_eq!(
+        owned("alex", &first)?,
+        format!("import:{}", hex::encode(Sha256::digest(preimage)))
+    );
     Ok(())
 }

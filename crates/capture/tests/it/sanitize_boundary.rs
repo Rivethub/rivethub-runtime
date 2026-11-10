@@ -46,6 +46,7 @@ fn session(key: &str, messages: Vec<CaptureMessage>) -> BundledSession {
             agent: "rivet".to_owned(),
             created_at: None,
             updated_at: None,
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: key.to_owned(),

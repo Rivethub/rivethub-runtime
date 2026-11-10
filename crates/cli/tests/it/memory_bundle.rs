@@ -435,6 +435,7 @@ fn planted_bundle(directory: &Path, sanitization: wire::capture::Sanitization) -
             agent: "rivet".to_owned(),
             created_at: None,
             updated_at: None,
+            identity: None,
         },
         batch: wire::capture::CaptureBatchRequest {
             session_key: "claude-code:one".to_owned(),
@@ -509,7 +510,10 @@ async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
     assert_eq!(
         report.stdout,
         format!(
-            "sanitized 1 session: 1 secrets, 2 mapped, 0 redacted; report at {}\n",
+            "sanitized 1 session: 1 secrets, 2 mapped, 0 redacted; report at {}\n\
+             review summary: changes by rule: rule at line 1 (map) 2, github_token 1\n\
+             not scanned: dates, roles, finalize; numbers, booleans and null stay typed\n\
+             the sanitizer is best-effort: it catches known vendor tokens, assignments, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms and new vendor shapes; read the report before you share the bundle\n",
             report_path.display()
         )
     );
@@ -577,7 +581,7 @@ async fn a_forged_sanitized_stamp_is_refused_when_a_secret_still_matches() {
     assert_eq!(
         report.stderr,
         format!(
-            "Error: {forged} claims to be sanitized, but 1 secret pattern match(es) remain (session 1 event evt-1 content: github_token); sanitize the raw bundle again, or pass --force to ingest it as it is\n"
+            "Error: {forged} claims to be sanitized, but 1 secret pattern match(es) remain (session 1 message 1 content: github_token); sanitize the raw bundle again, or pass --force to ingest it as it is\n"
         )
     );
     assert!(!report.stderr.contains(PLANTED_TOKEN));

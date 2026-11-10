@@ -55,53 +55,102 @@ impl JsonObject {
     }
 
     pub fn scrub(&mut self, scrub: &mut impl Scrub) {
-        scrub_members(&mut self.0, "", None, scrub);
+        scrub_members(&mut self.0, "", &[], scrub);
     }
 }
 
 pub trait Scrub {
     fn is_secret_name(&self, key: &str) -> bool;
-    fn key(&mut self, parent: &str, key: &mut String);
-    fn renamed(&mut self, parent: &str, key: &str, renamed: &str);
+    fn rank(&self, key: &str) -> u64;
+    fn key(&mut self, parent: &str, key: &mut String) -> usize;
+    fn renamed(&mut self, parent: &str, markers: (usize, Option<usize>), key: &str, renamed: &str);
     fn text(&mut self, path: &str, text: &mut String);
     fn secret(&mut self, path: &str, key: &str, text: &mut String) -> bool;
+}
+
+struct Member {
+    original: String,
+    key: String,
+    marker: usize,
+    value: Value,
 }
 
 fn scrub_members(
     members: &mut Map<String, Value>,
     parent: &str,
-    under: Option<&str>,
+    under: &[String],
     scrub: &mut impl Scrub,
 ) {
-    for (mut key, mut value) in std::mem::take(members) {
-        let original = key.clone();
-        scrub.key(parent, &mut key);
-        let named = if scrub.is_secret_name(&original) {
-            Some(original)
-        } else if scrub.is_secret_name(&key) {
-            Some(key.clone())
-        } else {
-            under.map(str::to_owned)
-        };
-        if members.contains_key(&key) {
-            let base = key.clone();
-            let mut suffix = 2;
-            while members.contains_key(&key) {
-                key = format!("{base}#{suffix}");
-                suffix += 1;
+    let mut entries: Vec<Member> = std::mem::take(members)
+        .into_iter()
+        .map(|(original, value)| {
+            let mut key = original.clone();
+            let marker = scrub.key(parent, &mut key);
+            Member {
+                original,
+                key,
+                marker,
+                value,
             }
-            scrub.renamed(parent, &base, &key);
+        })
+        .collect();
+    suffix_collisions(&mut entries, parent, scrub);
+    for entry in entries {
+        let mut named: Vec<String> = under.to_vec();
+        for name in [&entry.original, &entry.key] {
+            if scrub.is_secret_name(name) && !named.contains(name) {
+                named.push(name.clone());
+            }
         }
-        let path = member_path(parent, &key);
-        scrub_value(&mut value, &path, named.as_deref(), scrub);
-        members.insert(key, value);
+        let path = member_path(parent, &entry.key);
+        let mut value = entry.value;
+        scrub_value(&mut value, &path, &named, scrub);
+        members.insert(entry.key, value);
     }
 }
 
-fn scrub_value(value: &mut Value, path: &str, under: Option<&str>, scrub: &mut impl Scrub) {
+fn suffix_collisions(entries: &mut [Member], parent: &str, scrub: &mut impl Scrub) {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        match groups.iter_mut().find(|(key, _)| *key == entry.key) {
+            Some((_, members)) => members.push(index),
+            None => groups.push((entry.key.clone(), vec![index])),
+        }
+    }
+    let mut taken: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
+    let ends: Vec<Option<usize>> = (0..entries.len())
+        .map(|index| entries.get(index + 1).map(|next| next.marker))
+        .collect();
+    for (base, mut members) in groups {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort_by_key(|&index| {
+            entries
+                .get(index)
+                .map(|entry| (scrub.rank(&entry.original), entry.original.clone()))
+        });
+        for &index in members.iter().skip(1) {
+            let mut suffix = 2;
+            let mut renamed = format!("{base}#{suffix}");
+            while taken.contains(&renamed) {
+                suffix += 1;
+                renamed = format!("{base}#{suffix}");
+            }
+            taken.push(renamed.clone());
+            let end = ends.get(index).copied().flatten();
+            if let Some(entry) = entries.get_mut(index) {
+                scrub.renamed(parent, (entry.marker, end), &base, &renamed);
+                entry.key = renamed;
+            }
+        }
+    }
+}
+
+fn scrub_value(value: &mut Value, path: &str, under: &[String], scrub: &mut impl Scrub) {
     match value {
         Value::String(text) => {
-            let replaced = under.is_some_and(|key| scrub.secret(path, key, text));
+            let replaced = under.iter().any(|key| scrub.secret(path, key, text));
             if !replaced {
                 scrub.text(path, text);
             }
@@ -260,14 +309,28 @@ mod tests {
             self.secret_keys.contains(&key)
         }
 
-        fn key(&mut self, _parent: &str, key: &mut String) {
+        fn rank(&self, key: &str) -> u64 {
+            u64::from(key != "Matt")
+        }
+
+        fn key(&mut self, _parent: &str, key: &mut String) -> usize {
             if key == "Matt" {
                 "matt".clone_into(key);
             }
+            self.seen.len()
         }
 
-        fn renamed(&mut self, parent: &str, key: &str, renamed: &str) {
-            self.seen.push(format!("renamed {parent}/{key}->{renamed}"));
+        fn renamed(
+            &mut self,
+            parent: &str,
+            markers: (usize, Option<usize>),
+            key: &str,
+            renamed: &str,
+        ) {
+            self.seen.push(format!(
+                "renamed {parent}/{key}->{renamed} from {}",
+                markers.0
+            ));
         }
 
         fn text(&mut self, path: &str, text: &mut String) {
@@ -299,8 +362,8 @@ mod tests {
         assert_eq!(
             recorder.seen,
             [
+                "renamed /matt->matt#2 from 0",
                 "text matt.inner=a",
-                "renamed /matt->matt#2",
                 "text matt#2=b",
                 "secret token.v under token=x",
                 "secret token.k under token=keep",

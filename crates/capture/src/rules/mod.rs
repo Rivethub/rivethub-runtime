@@ -1,6 +1,7 @@
 mod compile;
 pub mod names;
 mod scan;
+mod value;
 
 use std::sync::LazyLock;
 
@@ -166,7 +167,7 @@ enum Condition {
     And,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Source {
     Rivethub,
     Gitleaks,
@@ -255,7 +256,7 @@ pub fn load() -> Result<Ruleset, RuleError> {
             pinned: upstream.sha256,
         });
     }
-    let names = Names::build(ours.names.ok_or_else(|| RuleError::SecretNames {
+    let mut names = Names::build(ours.names.ok_or_else(|| RuleError::SecretNames {
         file: RIVETHUB_FILE,
         message: "missing".to_owned(),
     })?)?;
@@ -295,6 +296,7 @@ pub fn load() -> Result<Ruleset, RuleError> {
         }
         rules.push(rule(raw, source, &upstream.whole_match)?);
     }
+    names.set_kinds(rules.iter().map(|rule| rule.id.clone()));
     let keywords = AhoCorasick::builder()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::Standard)

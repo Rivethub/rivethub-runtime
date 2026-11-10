@@ -162,7 +162,11 @@ impl BundledSession {
                 .map_or("", |message| message.event_id.as_str());
             vec![UNKNOWN_ORIGIN, &origin.session_key, &origin.agent, first]
         } else {
-            vec![&origin.node, &origin.conversation_id]
+            let conversation = origin
+                .identity
+                .as_deref()
+                .unwrap_or(&origin.conversation_id);
+            vec![&origin.node, conversation]
         }
     }
 
@@ -246,6 +250,8 @@ pub struct SessionOrigin {
     pub agent: String,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
 }
 
 impl SessionOrigin {

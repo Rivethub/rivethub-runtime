@@ -89,6 +89,7 @@ fn sealed_with(
             agent: "rivet".to_owned(),
             created_at: Some(at),
             updated_at: Some(at),
+            identity: None,
         },
         batch: CaptureBatchRequest {
             settings,

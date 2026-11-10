@@ -108,6 +108,11 @@ pub fn run(
     let mut sessions = bundle.sessions.clone();
     for (index, session) in sessions.iter_mut().enumerate() {
         let ids = event_ids(&policy.key, session);
+        session.origin.identity = Some(policy.key.hex(&[
+            b"conversation",
+            session.origin.node.as_bytes(),
+            session.origin.conversation_id.as_bytes(),
+        ]));
         scrubber.session(index, session);
         for (message, id) in session.batch.messages.iter_mut().zip(&ids) {
             message.event_id.clone_from(id);

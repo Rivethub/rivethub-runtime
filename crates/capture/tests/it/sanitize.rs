@@ -115,6 +115,7 @@ fn session(
             agent: "rivet".to_owned(),
             created_at: None,
             updated_at: None,
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: format!("claude-code:{conversation}"),
@@ -333,7 +334,7 @@ fn a_forged_stamp_on_a_raw_bundle_still_shows_its_secrets() -> TestResult {
     assert_eq!(found.len(), 9);
     assert_eq!(
         found.first().map(ToString::to_string).unwrap_or_default(),
-        "session 1 event evt-2 tool_result: pem_private_key"
+        "session 1 message 2 tool_result: pem_private_key"
     );
     Ok(())
 }

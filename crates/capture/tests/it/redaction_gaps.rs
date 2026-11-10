@@ -52,6 +52,7 @@ fn text_at<'a>(object: Option<&'a wire::JsonObject>, key: &str) -> Option<&'a st
 #[test]
 fn tool_arg_keys_containing_a_secret_word_are_replaced() -> Result<(), Box<dyn std::error::Error>> {
     let secret_keys = [
+        "Cookie",
         "access_token",
         "auth_token",
         "client_secret",
@@ -70,7 +71,6 @@ fn tool_arg_keys_containing_a_secret_word_are_replaced() -> Result<(), Box<dyn s
         "url",
         "Authorization",
         "SESSION_KEY",
-        "Cookie",
         "token_count",
         "api_key_id",
         "secretName",

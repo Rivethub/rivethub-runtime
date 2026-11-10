@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::io::Read as _;
 use std::io::Write as _;
 use std::path::Path;
@@ -9,6 +10,9 @@ use thiserror::Error;
 
 const KEY_BYTES: usize = 32;
 const BLOCK: usize = 64;
+const READ_CAP: u64 = 64;
+const OWNER_ONLY: u32 = 0o600;
+const SHARED_BITS: u32 = 0o077;
 pub const FILE_NAME: &str = "sanitize.key";
 pub const DIR_NAME: &str = "rivethub";
 
@@ -25,6 +29,12 @@ pub enum KeyError {
     Length { path: PathBuf, found: usize },
     #[error("no random bytes for a new local sanitize key: {0}")]
     Random(String),
+    #[error("the local sanitize key {path} is not a regular file; move it aside to make a new one")]
+    NotRegular { path: PathBuf },
+    #[error(
+        "the local sanitize key {path} is readable by other users (mode {mode:o}); run chmod 600 on it"
+    )]
+    Shared { path: PathBuf, mode: u32 },
 }
 
 #[derive(Clone)]
@@ -61,23 +71,38 @@ impl LocalKey {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io)?;
         }
-        let mut options = std::fs::OpenOptions::new();
+        if path.symlink_metadata().is_ok() {
+            return Self::read(path);
+        }
+        let temp = path.with_extension(format!("key.{}.tmp", std::process::id()));
+        let mut bytes = [0u8; KEY_BYTES];
+        getrandom::fill(&mut bytes).map_err(|error| KeyError::Random(error.to_string()))?;
+        let mut options = OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(0o600);
+            options.mode(OWNER_ONLY);
         }
-        match options.open(path) {
-            Ok(mut file) => {
-                let mut bytes = [0u8; KEY_BYTES];
-                getrandom::fill(&mut bytes).map_err(|error| KeyError::Random(error.to_string()))?;
-                file.write_all(&bytes).map_err(io)?;
-                file.sync_all().map_err(io)?;
-                Ok(Self(bytes))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Self::read(path),
+        let written = options.open(&temp).map_err(io).and_then(|mut file| {
+            file.write_all(&bytes).map_err(io)?;
+            file.sync_all().map_err(io)
+        });
+        let linked = written.and_then(|()| match std::fs::hard_link(&temp, path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
             Err(error) => Err(io(error)),
+        });
+        if let Err(error) = std::fs::remove_file(&temp) {
+            tracing::debug!(
+                "temporary sanitize key {} not removed: {error}",
+                temp.display()
+            );
+        }
+        if linked? {
+            Ok(Self(bytes))
+        } else {
+            Self::read(path)
         }
     }
 
@@ -86,11 +111,35 @@ impl LocalKey {
             path: path.to_path_buf(),
             source,
         };
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(
+                (nix::fcntl::OFlag::O_NOFOLLOW | nix::fcntl::OFlag::O_NONBLOCK).bits(),
+            );
+        }
+        let file = options.open(path).map_err(io)?;
+        let metadata = file.metadata().map_err(io)?;
+        if !metadata.is_file() {
+            return Err(KeyError::NotRegular {
+                path: path.to_path_buf(),
+            });
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = metadata.permissions().mode() & 0o777;
+            if mode & SHARED_BITS != 0 {
+                return Err(KeyError::Shared {
+                    path: path.to_path_buf(),
+                    mode,
+                });
+            }
+        }
         let mut found = Vec::new();
-        std::fs::File::open(path)
-            .map_err(io)?
-            .read_to_end(&mut found)
-            .map_err(io)?;
+        file.take(READ_CAP).read_to_end(&mut found).map_err(io)?;
         let bytes: [u8; KEY_BYTES] = found.as_slice().try_into().map_err(|_| KeyError::Length {
             path: path.to_path_buf(),
             found: found.len(),
@@ -173,6 +222,33 @@ mod tests {
         assert!(matches!(
             LocalKey::load_or_create(&path),
             Err(KeyError::Length { found: 5, .. })
+        ));
+        assert!(
+            std::fs::read_dir(path.parent().expect("parent"))
+                .expect("dir")
+                .count()
+                == 1,
+            "no temp file stays behind"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shared_or_irregular_key_file_is_refused() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = LocalKey::path_in(dir.path());
+        LocalKey::load_or_create(&path).expect("create");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        assert!(matches!(
+            LocalKey::load_or_create(&path),
+            Err(KeyError::Shared { mode: 0o644, .. })
+        ));
+        let dir_key = LocalKey::path_in(&dir.path().join("other"));
+        std::fs::create_dir_all(&dir_key).expect("mkdir");
+        assert!(matches!(
+            LocalKey::load_or_create(&dir_key),
+            Err(KeyError::NotRegular { .. })
         ));
     }
 }

@@ -148,8 +148,8 @@ impl fmt::Display for Change {
             Some(index) => write!(formatter, "session {}", index + 1)?,
             None => formatter.write_str("manifest")?,
         }
-        if let Some(event_id) = &self.event_id {
-            write!(formatter, " event {event_id}")?;
+        if let Some(position) = self.message {
+            write!(formatter, " message {}", position + 1)?;
         }
         write!(formatter, " {}: {}", self.field, self.rule)
     }
@@ -274,6 +274,9 @@ impl Report {
                 totals.mapped,
                 totals.redacted,
             ),
+        );
+        out.push_str(
+            "The sanitizer is best-effort. It reliably catches known vendor tokens, assignments to password- and token-named keys in env, JSON, YAML, XML, SQL and code, URL credentials, PEM and DER private keys, base64 blobs that decode to any of those, and mapped terms. It can miss unusual code forms and vendor shapes it has no rule for. Read this report before the bundle leaves the machine.\n\n",
         );
         out.push_str(
             "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n",

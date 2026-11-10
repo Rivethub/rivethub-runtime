@@ -10,7 +10,6 @@ use crate::rules::Ruleset;
 pub const ENV_VARIABLE: &str = "RIVETHUB_CAPTURE_REDACTION";
 const SCAN_LIMIT: usize = 16_000;
 const SCAN_MARGIN: usize = 8_192;
-pub(crate) const SECRET_KEY_KIND: &str = "secret_key";
 pub(crate) const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
 
 #[derive(Debug)]
@@ -124,13 +123,25 @@ impl Scrub for LiveScrub<'_> {
             .is_some_and(|rules| rules.is_secret_name(key))
     }
 
-    fn key(&mut self, _parent: &str, key: &mut String) {
+    fn rank(&self, _key: &str) -> u64 {
+        0
+    }
+
+    fn key(&mut self, _parent: &str, key: &mut String) -> usize {
         let (redacted, count) = apply_spans(key, self.redaction);
         *key = redacted;
         self.spans += count;
+        0
     }
 
-    fn renamed(&mut self, _parent: &str, _key: &str, _renamed: &str) {}
+    fn renamed(
+        &mut self,
+        _parent: &str,
+        _markers: (usize, Option<usize>),
+        _key: &str,
+        _renamed: &str,
+    ) {
+    }
 
     fn text(&mut self, _path: &str, text: &mut String) {
         let (redacted, count) = apply_spans(text, self.redaction);

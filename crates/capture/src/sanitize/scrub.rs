@@ -19,7 +19,6 @@ use crate::rules::Ruleset;
 
 const FINGERPRINT_HEX: usize = 12;
 const PLACEHOLDER_OPEN: &str = "[REDACTED";
-const PATTERN_KIND: &str = "pattern:";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Location {
@@ -233,7 +232,16 @@ impl Scrub for ObjectScrub<'_, '_> {
         self.scrubber.rules.is_secret_name(key)
     }
 
-    fn key(&mut self, parent: &str, key: &mut String) {
+    fn rank(&self, key: &str) -> u64 {
+        self.scrubber.key.map_or(0, |local| {
+            let mac = local.mac(&[b"collision", key.as_bytes()]);
+            let mut prefix = [0u8; 8];
+            prefix.copy_from_slice(&mac[..8]);
+            u64::from_be_bytes(prefix)
+        })
+    }
+
+    fn key(&mut self, parent: &str, key: &mut String) -> usize {
         let start = self.scrubber.changes.len();
         let provisional = self.spot(parent, true);
         self.scrubber.text(&provisional, key);
@@ -241,20 +249,20 @@ impl Scrub for ObjectScrub<'_, '_> {
         for change in self.scrubber.changes.iter_mut().skip(start) {
             change.field = placed.clone();
         }
+        start
     }
 
-    fn renamed(&mut self, parent: &str, key: &str, renamed: &str) {
+    fn renamed(&mut self, parent: &str, markers: (usize, Option<usize>), key: &str, renamed: &str) {
         let from = self.spot(&member_path(parent, key), true);
         let to = self.spot(&member_path(parent, renamed), true);
-        let here = self.scrubber.at.clone();
-        for change in self.scrubber.changes.iter_mut().rev() {
-            if change.session != here.session || change.message != here.message {
-                break;
-            }
+        let (start, end) = markers;
+        let end = end.unwrap_or(self.scrubber.changes.len());
+        for change in self.scrubber.changes.iter_mut().take(end).skip(start) {
             if change.field == from {
                 change.field = to.clone();
             }
         }
+        let here = self.scrubber.at.clone();
         self.scrubber.collisions.push(Collision {
             session: here.session,
             message: here.message,
@@ -323,19 +331,9 @@ fn protected(text: &str, rules: &Ruleset) -> Vec<Range<usize>> {
 }
 
 fn placeholder_end(text: &str, after_open: usize, rules: &Ruleset) -> Option<usize> {
-    let rest = text.get(after_open..)?;
-    if rest.starts_with(']') {
-        return Some(after_open + 1);
-    }
-    let kind = rest.strip_prefix(':')?;
-    let length = kind.find(']')?;
-    let kind = kind.get(..length)?;
-    let emitted = kind == redaction::SECRET_KEY_KIND
-        || rules.emits(kind)
-        || kind
-            .strip_prefix(PATTERN_KIND)
-            .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
-    emitted.then_some(after_open + 1 + length + 1)
+    let start = after_open.checked_sub(PLACEHOLDER_OPEN.len())?;
+    let length = rules.names().placeholder_len(text.get(start..)?);
+    (length > 0).then_some(start + length)
 }
 
 #[cfg(test)]

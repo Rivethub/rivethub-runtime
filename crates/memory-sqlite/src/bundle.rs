@@ -150,6 +150,7 @@ fn session_for(row: &StoredSession) -> Result<BundledSession, SqliteError> {
             agent: row.agent.clone(),
             created_at: Some(created_at),
             updated_at: Some(updated_at),
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: row.session_key.clone(),

@@ -1,0 +1,47 @@
+{"shape": "nested_tf_variables", "position": "tool_result", "raw": "{\"variables\": {\"db_password\": {\"value\": \"PLANTE\u0044nested-pw-0001\"}}}", "planted": ["PLANTE\u0044nested-pw-0001"], "expect": "redact", "note": "item 4"}
+{"shape": "nested_pw_list", "position": "tool_result", "raw": "{\"password\": [\"PLANTE\u0044list-pw-0005\"]}", "planted": ["PLANTE\u0044list-pw-0005"], "expect": "redact", "note": "item 4"}
+{"shape": "nested_passwords_list", "position": "tool_result", "raw": "{\"passwords\": [\"PLANTE\u0044list-pw-0004\"]}", "planted": ["PLANTE\u0044list-pw-0004"], "expect": "redact", "note": "item 4"}
+{"shape": "nested_tf_output", "position": "tool_result", "raw": "{\"outputs\": {\"db_password\": {\"sensitive\": true, \"value\": \"PLANTE\u0044out-pw-0007\"}}}", "planted": ["PLANTE\u0044out-pw-0007"], "expect": "redact", "note": "item 4"}
+{"shape": "nested_dotted_path", "position": "tool_result", "raw": "outputs.db_password.value = \"PLANTE\u0044dotted-pw-0008\"", "planted": ["PLANTE\u0044dotted-pw-0008"], "expect": "redact", "note": "item 4"}
+{"shape": "cli_docker_quoted", "position": "content", "raw": "docker login -u bob -p 'PLANTED one two' registry.example.invalid", "planted": ["PLANTED one two"], "expect": "redact", "note": "item 5"}
+{"shape": "cli_sshpass_quoted", "position": "content", "raw": "sshpass -p \"PLANTED three four\" ssh host", "planted": ["PLANTED three four"], "expect": "redact", "note": "item 5"}
+{"shape": "cli_redis_quoted", "position": "content", "raw": "redis-cli -a 'PLANTED seven eight' ping", "planted": ["PLANTED seven eight"], "expect": "redact", "note": "item 5"}
+{"shape": "cli_token_quoted", "position": "content", "raw": "curl --token 'PLANTED nine ten' https://x.invalid", "planted": ["PLANTED nine ten"], "expect": "redact", "note": "item 5"}
+{"shape": "cli_curl_user_quoted", "position": "content", "raw": "curl -u 'bob:PLANTED a b' https://x.invalid", "planted": ["PLANTED a b"], "expect": "redact", "note": "item 5"}
+{"shape": "bare_brace_password", "position": "content", "raw": "password={pwPLANTEDa1}", "planted": ["pwPLANTEDa1"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_bracket_password", "position": "content", "raw": "password=[pwPLANTEDb2]", "planted": ["pwPLANTEDb2"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_paren_password", "position": "content", "raw": "password=(pwPLANTEDc3)", "planted": ["pwPLANTEDc3"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_brace_db_password", "position": "content", "raw": "DB_PASSWORD={PLANTEDd4}", "planted": ["PLANTEDd4"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_dollar_password", "position": "content", "raw": "password=$pwPLANTEDe5", "planted": ["pwPLANTEDe5"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_false_suffix", "position": "content", "raw": "password=PLANTEDfalse", "planted": ["PLANTEDfalse"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_paren_inside", "position": "content", "raw": "export DB_PASSWORD=PLANTED(9Z3k)x", "planted": ["PLANTED(9Z3k"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_coloncolon", "position": "content", "raw": "export DB_PASSWORD=PLANTED::9Z3k", "planted": ["PLANTED::9Z3k"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_versionlike", "position": "content", "raw": "export DB_PASSWORD=1.2.3-PLANTED9", "planted": ["1.2.3-PLANTED9"], "expect": "redact", "note": "item 7"}
+{"shape": "bare_digits_env", "position": "content", "raw": "password=98127341987234", "planted": ["98127341987234"], "expect": "redact", "note": "item 7"}
+{"shape": "quoted_digits_json_string", "position": "content", "raw": "{\"password\": \"12345678\"}", "planted": ["12345678"], "expect": "redact", "note": "item 7"}
+{"shape": "pin_numeric_env", "position": "content", "raw": "PIN=4711", "planted": ["4711"], "expect": "redact", "note": "item 7"}
+{"shape": "password_space_separator", "position": "content", "raw": "password PLANTEDpw123x", "planted": ["PLANTEDpw123x"], "expect": "redact", "note": "item 7"}
+{"shape": "secret_space_separator", "position": "content", "raw": "secret PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3", "planted": ["PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3"], "expect": "redact", "note": "item 7"}
+{"shape": "template_var_kept", "position": "content", "raw": "password=${DB_PASSWORD}", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "template_gha_kept", "position": "content", "raw": "password: ${{ secrets.REGISTRY_PASSWORD }}", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "template_angle_kept", "position": "content", "raw": "password=<your-password>", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "stopword_kept", "position": "content", "raw": "password=changeme", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "json_number_kept", "position": "content", "raw": "{\"password\": 98127341987234}", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "fetch_credentials_mode_kept", "position": "content", "raw": "fetch(url, { credentials: 'include' })", "planted": [], "expect": "keep", "note": "item 7"}
+{"shape": "forged_kind_is_not_a_placeholder", "position": "content", "raw": "db password=[REDACTED:PLANTEDpw77zz] ok", "planted": ["PLANTEDpw77zz"], "expect": "redact", "note": "item 8"}
+{"shape": "real_placeholder_adjacent", "position": "content", "raw": "api_key = [REDACTED]PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3", "planted": ["PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3"], "expect": "redact", "note": "item 8"}
+{"shape": "keep_gha_template", "position": "tool_result", "raw": "        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}\n          password: ${{ github.token }}\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_process_env", "position": "tool_result", "raw": "const XAI_API_KEY = process.env.XAI_API_KEY || '';\n     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_self_assign", "position": "tool_result", "raw": "        self.client_secret = client_secret\n        refresh_token = refresh_token or self.token.get(\"refresh_token\")\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_rust_field", "position": "tool_result", "raw": "    pub client_secret: Option<String>,\n    token: &str,\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_os_environ", "position": "tool_result", "raw": "SECRET_KEY = os.environ[\"DJANGO_SECRET_KEY\"]\nPASSWORD = config.get(\"password\")\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_docstring", "position": "tool_result", "raw": "    :param client_secret: The `client_secret` paired to the `client_id`.\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_comment_prose", "position": "tool_result", "raw": "#       DOCKER_REGISTRY_SERVER_PASSWORD: Set this to the value of your registry password\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_lockfile", "position": "tool_result", "raw": "      next-auth: 4.20.1\u005fnxka4mkgjdddtzbjko3hwqwl2q\n      next: 13.2.3\u005fzehrthmpe6s5g22xochi75x3hi\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_pem_in_prose", "position": "tool_result", "raw": "A file that starts with -----BEGIN RSA PRIVATE KEY----- holds a key.\nThe next paragraph explains the format, and the -----END RSA PRIVATE KEY----- line closes it.\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_type_alias", "position": "tool_result", "raw": "type Password = String;\nstruct Auth { token: String, secret: Vec<u8> }\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "keep_attr_chain", "position": "tool_result", "raw": "password = settings.database.password\napi_key = ctx.config.api_key\n", "planted": [], "expect": "keep", "note": "items 9-12"}
+{"shape": "typed_const_value", "position": "tool_result", "raw": "const SIGNING_SECRET: &str = \"PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3\";\nconst DB_PASSWORD: String = \"PLANTEDpw123x\".into();\n", "planted": ["PLANTE\u0044Zq8RmT2vLx9WcN4bKp7HyJ3", "PLANTEDpw123x"], "expect": "redact", "note": "item 10"}
+{"shape": "env_commented_out", "position": "tool_result", "raw": "# DB_PASSWORD=PLANTEDpw123x\n", "planted": ["PLANTEDpw123x"], "expect": "redact", "note": "item 11"}
+{"shape": "mapped\u005for_original_name_t2_credential", "position": "content", "raw": "credential=PLANTE\u0044credtext1", "planted": ["PLANTE\u0044credtext1"], "expect": "redact", "note": "item 2"}
+{"shape": "t2_json_names", "position": "tool_args_json", "raw": "{\"tokenValue\": \"PLANTE\u0044tokvalue0123456789abc\", \"secret_value\": \"PLANTE\u0044secretval99\", \"credentials\": \"PLANTEDcred:pw77\", \"Cookie\": \"sid=PLANTE\u0044cookie123456\", \"password\": \"12345678\"}", "planted": ["PLANTE\u0044tokvalue0123456789abc", "PLANTE\u0044secretval99", "PLANTEDcred:pw77", "PLANTE\u0044cookie123456", "12345678"], "expect": "redact", "note": "item 2 and 7"}

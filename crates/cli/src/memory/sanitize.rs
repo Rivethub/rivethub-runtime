@@ -92,13 +92,41 @@ pub(super) async fn run(
     let totals = sanitized.report.totals();
     let count = bundle.sessions.len();
     let noun = if count == 1 { "session" } else { "sessions" };
-    Ok(Report::success(format!(
+    let mut out = format!(
         "sanitized {count} {noun}: {} secrets, {} mapped, {} redacted; report at {}\n",
         totals.secrets,
         totals.mapped,
         totals.redacted,
         report_path.display()
-    )))
+    );
+    out.push_str(&summary(&sanitized.report));
+    Ok(Report::success(out))
+}
+
+fn summary(report: &capture::sanitize::Report) -> String {
+    let mut by_rule: Vec<(String, usize)> = Vec::new();
+    for change in &report.changes {
+        let name = change.rule.to_string();
+        match by_rule.iter_mut().find(|(rule, _)| *rule == name) {
+            Some((_, count)) => *count += 1,
+            None => by_rule.push((name, 1)),
+        }
+    }
+    by_rule.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let rules = if by_rule.is_empty() {
+        "no rule matched".to_owned()
+    } else {
+        by_rule
+            .iter()
+            .map(|(rule, count)| format!("{rule} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "review summary: changes by rule: {rules}\n\
+         not scanned: dates, roles, finalize; numbers, booleans and null stay typed\n\
+         the sanitizer is best-effort: it catches known vendor tokens, assignments, URL credentials, PEM blocks and mapped terms, and can miss unusual code forms and new vendor shapes; read the report before you share the bundle\n"
+    )
 }
 
 async fn rules(

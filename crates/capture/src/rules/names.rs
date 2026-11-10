@@ -7,123 +7,209 @@ use serde::Deserialize;
 use super::Allow;
 use super::RuleError;
 use super::compile::compile;
+use super::value;
+use super::value::Shape;
+use super::value::Value;
+use super::value::normalize;
+use super::value::shannon_entropy;
 
 const RIVETHUB_FILE: &str = "rivethub.toml";
 const PLACEHOLDER_OPEN: &str = "[REDACTED";
-const UNQUOTED_END: &[char] = &[',', ';', '&', ')', ']', '}', '"', '\''];
-const BRACKETS: &[(&str, &str)] = &[
-    ("${", "}"),
-    ("$(", ")"),
-    ("{{", "}}"),
-    ("{", "}"),
-    ("<", ">"),
-    ("%", "%"),
-];
+const PATTERN_KIND: &str = "pattern:";
+const SECRET_KEY_KIND: &str = "secret_key";
+const KEY_WORD: &str = "key";
+const MIN_ECHO_LENGTH: usize = 4;
+const MAX_CODE_SEGMENT: usize = 40;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawNames {
     password: Vec<String>,
     token: Vec<String>,
+    key_never: Vec<String>,
+    exact_key: Vec<String>,
     suffix_only: Vec<String>,
     exact_password: Vec<String>,
     exact_token: Vec<String>,
+    value_suffixes: Vec<String>,
     vendor_prefixes: Vec<String>,
     stopwords: Vec<String>,
     templates: Vec<String>,
+    separators: Vec<String>,
+    comment_openers: Vec<String>,
+    code_values: Vec<String>,
     min_length: usize,
     min_entropy: f64,
+    key_min_length: usize,
+    key_min_entropy: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Password,
     Token,
+    Key,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Quoting {
-    Quoted,
-    Bare,
+#[derive(Debug, Clone, Copy, Default)]
+struct Context<'a> {
+    key: &'a str,
+    key_quoted: bool,
+    in_comment: bool,
+    prose_follows: bool,
+}
+
+enum Verdict {
+    Keep,
+    Redact,
+    Inner(Vec<Range<usize>>),
 }
 
 #[derive(Debug)]
 pub struct Names {
     password: Vec<String>,
     token: Vec<String>,
+    key_never: Vec<String>,
+    exact_key: Vec<String>,
     suffix_only: Vec<String>,
     exact_password: Vec<String>,
     exact_token: Vec<String>,
+    value_suffixes: Vec<String>,
     vendor_prefixes: Vec<String>,
     stopwords: HashSet<String>,
-    exact_stopwords: Option<Regex>,
     templates: Vec<Regex>,
+    code: Vec<Regex>,
+    comment_openers: Vec<String>,
+    kinds: HashSet<String>,
     min_length: usize,
     min_entropy: f64,
+    key_min_length: usize,
+    key_min_entropy: f64,
+    forms: Forms,
+}
+
+#[derive(Debug)]
+struct Forms {
+    exact_stopwords: Option<Regex>,
     candidate: Regex,
+    spaced: Regex,
     number: Regex,
     junk: Regex,
     version: Regex,
+    identifier: Regex,
+    word: Regex,
+    spaced_value: Regex,
+    line_prefix: Regex,
+    embedded_template: Regex,
 }
 
-impl Names {
-    pub(super) fn build(raw: RawNames) -> Result<Self, RuleError> {
-        let templates = raw
-            .templates
-            .iter()
-            .map(|source| compile(source))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| RuleError::Allowlist {
-                file: RIVETHUB_FILE,
-                id: "names".to_owned(),
-                message: error.to_string(),
-            })?;
+impl Forms {
+    fn build(raw: &RawNames) -> Result<Self, RuleError> {
         let fixed = |source: &str| {
             Regex::new(source).map_err(|error| RuleError::SecretNames {
                 file: RIVETHUB_FILE,
                 message: error.to_string(),
             })
         };
-        let exact_stopwords = (!raw.stopwords.is_empty())
-            .then(|| {
-                let words: Vec<String> = raw
-                    .stopwords
-                    .iter()
-                    .map(|word| regex::escape(word))
-                    .collect();
-                fixed(&format!("^(?i:{})$", words.join("|")))
-            })
-            .transpose()?;
-        Ok(Self {
-            password: raw.password.iter().map(|name| normalize(name)).collect(),
-            token: raw.token.iter().map(|name| normalize(name)).collect(),
-            suffix_only: raw.suffix_only.iter().map(|name| normalize(name)).collect(),
-            exact_password: raw
-                .exact_password
+        let escaped = |words: &[String]| {
+            words
                 .iter()
-                .map(|name| normalize(name))
-                .collect(),
-            exact_token: raw.exact_token.iter().map(|name| normalize(name)).collect(),
+                .map(|word| regex::escape(word))
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        let exact_stopwords = (!raw.stopwords.is_empty())
+            .then(|| fixed(&format!("^(?i:{})$", escaped(&raw.stopwords))))
+            .transpose()?;
+        let mut separators = raw.separators.clone();
+        separators.sort_by_key(|separator| std::cmp::Reverse(separator.len()));
+        let mut spaced_words: Vec<String> = Vec::new();
+        for word in raw.password.iter().chain(&raw.token) {
+            if raw.suffix_only.contains(word) {
+                continue;
+            }
+            for variant in [word.clone(), word.replace('_', "-"), word.replace('_', "")] {
+                if !spaced_words.contains(&variant) {
+                    spaced_words.push(variant);
+                }
+            }
+        }
+        Ok(Self {
+            exact_stopwords,
+            candidate: fixed(&format!(
+                r"(?i)\b([A-Za-z_][A-Za-z0-9_.-]*)(\\?[\x22'])?[ \t]*(?:{})[ \t]*",
+                escaped(&separators)
+            ))?,
+            spaced: fixed(&format!(
+                r"(?i)(?:^|[\s(,])({})[ \t]+",
+                escaped(&spaced_words)
+            ))?,
+            number: fixed(r"^-?\d+(?:\.\d+)?$")?,
+            junk: fixed(r"^(?:\\[nrt0]|\s)*$")?,
+            version: fixed(r"^[\^~=<>v]*\d+(?:\.\d+)+(?:[-_+][\w.]+)?(?:\([^()]*\))*$")?,
+            identifier: fixed(r"^[A-Za-z_]\w*$")?,
+            word: fixed(r"^[A-Za-z]+$")?,
+            spaced_value: fixed(r"^[A-Za-z0-9._~+/=-]+$")?,
+            line_prefix: fixed(r"^(?:[+\->|]\s*)?\d*[\s\t]*")?,
+            embedded_template: fixed(
+                r"\$\{\{[^}]*\}\}|\$\{[A-Za-z_][\w.:-]*\}|\{\{[^}]*\}\}|%[A-Z_][A-Z0-9_]*%",
+            )?,
+        })
+    }
+}
+
+impl Names {
+    pub(super) fn build(raw: RawNames) -> Result<Self, RuleError> {
+        let list = |sources: &[String], id: &str| {
+            sources
+                .iter()
+                .map(|source| compile(source))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| RuleError::Allowlist {
+                    file: RIVETHUB_FILE,
+                    id: id.to_owned(),
+                    message: error.to_string(),
+                })
+        };
+        let templates = list(&raw.templates, "names.templates")?;
+        let code = list(&raw.code_values, "names.code_values")?;
+        let forms = Forms::build(&raw)?;
+        let normalized = |names: &[String]| names.iter().map(|name| normalize(name)).collect();
+        Ok(Self {
+            password: normalized(&raw.password),
+            token: normalized(&raw.token),
+            key_never: normalized(&raw.key_never),
+            exact_key: normalized(&raw.exact_key),
+            suffix_only: normalized(&raw.suffix_only),
+            exact_password: normalized(&raw.exact_password),
+            exact_token: normalized(&raw.exact_token),
+            value_suffixes: normalized(&raw.value_suffixes),
             vendor_prefixes: raw.vendor_prefixes,
             stopwords: raw
                 .stopwords
                 .into_iter()
                 .map(|word| word.to_lowercase())
                 .collect(),
-            exact_stopwords,
             templates,
+            code,
+            comment_openers: raw.comment_openers,
+            kinds: HashSet::new(),
             min_length: raw.min_length,
             min_entropy: raw.min_entropy,
-            candidate: fixed(r"(?i)\b([A-Za-z_][A-Za-z0-9_.-]*)(?:\\?[\x22'])?[ \t]*[=:][ \t]*")?,
-            number: fixed(r"^-?\d+(?:\.\d+)?$")?,
-            junk: fixed(r"^(?:\\[nrt0]|\s)*$")?,
-            version: fixed(r"^[\^~=<>v]*\d+(?:\.\d+)+(?:-[\w.]+)?$")?,
+            key_min_length: raw.key_min_length,
+            key_min_entropy: raw.key_min_entropy,
+            forms,
         })
+    }
+
+    pub(super) fn set_kinds(&mut self, kinds: impl IntoIterator<Item = String>) {
+        self.kinds = kinds.into_iter().collect();
+        self.kinds.insert(SECRET_KEY_KIND.to_owned());
     }
 
     pub(super) fn allow(&self) -> Allow {
         let mut regexes = self.templates.clone();
-        regexes.extend(self.exact_stopwords.clone());
+        regexes.extend(self.forms.exact_stopwords.clone());
         Allow::exact(regexes)
     }
 
@@ -135,6 +221,7 @@ impl Names {
             .chain(&self.token)
             .chain(&self.exact_password)
             .chain(&self.exact_token)
+            .chain(&self.exact_key)
         {
             for variant in [name.clone(), name.replace('_', ""), name.replace('_', "-")] {
                 if !words.contains(&variant) {
@@ -142,23 +229,47 @@ impl Names {
                 }
             }
         }
+        for variant in ["_key", "-key", "key=", "key:", "key ", "key\""] {
+            words.push(variant.to_owned());
+        }
+        words.retain(|word| word != KEY_WORD);
         words
     }
 
     #[must_use]
     pub fn family(&self, key: &str) -> Option<Family> {
-        if is_placeholder(key) {
+        if self.is_placeholder(key) {
             return None;
         }
         let name = normalize(key);
         if name.is_empty() {
             return None;
         }
-        if self.exact_password.contains(&name) {
+        self.family_of(&name).or_else(|| {
+            let (head, last) = name.rsplit_once('_')?;
+            self.value_suffixes
+                .contains(&last.to_owned())
+                .then(|| self.family_of(head))
+                .flatten()
+        })
+    }
+
+    fn family_of(&self, name: &str) -> Option<Family> {
+        let singular = name.strip_suffix('s').filter(|rest| !rest.is_empty());
+        self.family_exact(name)
+            .or_else(|| singular.and_then(|rest| self.family_exact(rest)))
+    }
+
+    fn family_exact(&self, name: &str) -> Option<Family> {
+        let owned = name.to_owned();
+        if self.exact_password.contains(&owned) {
             return Some(Family::Password);
         }
-        if self.exact_token.contains(&name) {
+        if self.exact_token.contains(&owned) {
             return Some(Family::Token);
+        }
+        if self.exact_key.contains(&owned) {
+            return Some(Family::Key);
         }
         let ends_with = |family: &[String]| {
             family.iter().any(|word| {
@@ -172,57 +283,136 @@ impl Names {
         if ends_with(&self.token) {
             return Some(Family::Token);
         }
-        None
+        let key_like = name.ends_with(&format!("_{KEY_WORD}"));
+        (key_like && !self.key_never.contains(&owned)).then_some(Family::Key)
     }
 
     #[must_use]
     pub fn redacts(&self, key: &str, value: &str) -> bool {
-        self.family(key)
-            .is_some_and(|family| self.is_secret(family, value, Quoting::Quoted))
+        self.family(key).is_some_and(|family| {
+            matches!(
+                self.judge(family, value, Shape::Quoted, Context::default()),
+                Verdict::Redact
+            )
+        })
     }
 
-    fn is_secret(&self, family: Family, value: &str, quoting: Quoting) -> bool {
-        if value.is_empty()
+    fn judge(&self, family: Family, value: &str, shape: Shape, ctx: Context<'_>) -> Verdict {
+        let value = value.get(self.placeholder_len(value)..).unwrap_or_default();
+        if self.trivially_kept(value) {
+            return Verdict::Keep;
+        }
+        let (value, shape) = if shape == Shape::Bracketed {
+            if let Some(strings) = value::inner_strings(value) {
+                return Verdict::Inner(
+                    strings
+                        .into_iter()
+                        .filter(|range| {
+                            value.get(range.clone()).is_some_and(|inner| {
+                                (!self.forms.word.is_match(inner) || inner.len() >= self.min_length)
+                                    && matches!(
+                                        self.judge(family, inner, Shape::Quoted, ctx),
+                                        Verdict::Redact
+                                    )
+                            })
+                        })
+                        .collect(),
+                );
+            }
+            (value::unwrap_brackets(value), Shape::Bare)
+        } else {
+            (value, shape)
+        };
+        if shape == Shape::Bare && self.trivially_kept(value) {
+            return Verdict::Keep;
+        }
+        if self.forms.number.is_match(value) {
+            let json_number = shape == Shape::Bare && ctx.key_quoted;
+            return if family == Family::Password && !json_number {
+                Verdict::Redact
+            } else {
+                Verdict::Keep
+            };
+        }
+        let vendor = self
+            .vendor_prefixes
+            .iter()
+            .any(|prefix| value.starts_with(prefix.as_str()));
+        if shape == Shape::Bare
+            && !vendor
+            && (self.looks_like_code(value)
+                || self.echoes_key(value, ctx.key)
+                || ((family != Family::Password || ctx.key_quoted)
+                    && self.forms.version.is_match(value))
+                || (ctx.in_comment && ctx.prose_follows && self.forms.word.is_match(value)))
+        {
+            return Verdict::Keep;
+        }
+        let (length, entropy) = match family {
+            Family::Password => return Verdict::Redact,
+            Family::Token => {
+                if value.contains(char::is_whitespace) {
+                    return Verdict::Keep;
+                }
+                (self.min_length, self.min_entropy)
+            }
+            Family::Key => {
+                if !value.chars().any(|c| c.is_ascii_digit()) || value.contains(char::is_whitespace)
+                {
+                    return Verdict::Keep;
+                }
+                (self.key_min_length, self.key_min_entropy)
+            }
+        };
+        if vendor || (value.chars().count() >= length && shannon_entropy(value) >= entropy) {
+            Verdict::Redact
+        } else {
+            Verdict::Keep
+        }
+    }
+
+    fn trivially_kept(&self, value: &str) -> bool {
+        value.is_empty()
             || value.starts_with(['=', ':', '>'])
             || !value.chars().any(char::is_alphanumeric)
-            || self.junk.is_match(value)
-        {
-            return false;
-        }
-        let lowered = value.to_lowercase();
-        if self.stopwords.contains(&lowered)
-            || self.number.is_match(value)
+            || self.forms.junk.is_match(value)
+            || self.is_placeholder(value)
+            || self.stopwords.contains(&value.to_lowercase())
             || self
                 .templates
                 .iter()
                 .any(|template| template.is_match(value))
-        {
+            || self.forms.embedded_template.is_match(value)
+    }
+
+    fn looks_like_code(&self, value: &str) -> bool {
+        let ternary = value
+            .split_once(':')
+            .is_some_and(|(head, _)| self.code.first().is_some_and(|path| path.is_match(head)));
+        ternary
+            || self.code.iter().any(|code| code.is_match(value))
+                && (value.contains(['(', '['])
+                    || value
+                        .split(['.', ':'])
+                        .all(|segment| segment.chars().count() <= MAX_CODE_SEGMENT))
+    }
+
+    fn echoes_key(&self, value: &str, key: &str) -> bool {
+        if value.len() < MIN_ECHO_LENGTH || !self.forms.identifier.is_match(value) {
             return false;
         }
-        if quoting == Quoting::Bare
-            && (value.starts_with(['{', '[', '('])
-                || value.contains('(')
-                || value.contains("::")
-                || self.version.is_match(value))
-        {
-            return false;
-        }
-        match family {
-            Family::Password => true,
-            Family::Token => {
-                self.vendor_prefixes
-                    .iter()
-                    .any(|prefix| value.starts_with(prefix.as_str()))
-                    || (value.chars().count() >= self.min_length
-                        && shannon_entropy(value) >= self.min_entropy)
-            }
-        }
+        let key = normalize(key);
+        let value = normalize(value);
+        let last = key.rsplit('_').next().unwrap_or(&key);
+        key == value
+            || key.ends_with(&format!("_{value}"))
+            || (value.contains('_') && value.ends_with(&format!("_{last}")))
     }
 
     pub(super) fn hits(&self, text: &str) -> Vec<Range<usize>> {
         let mut found = Vec::new();
         let mut at = 0;
-        while let Some(captures) = self.candidate.captures_at(text, at) {
+        while let Some(captures) = self.forms.candidate.captures_at(text, at) {
             let Some(whole) = captures.get(0) else {
                 break;
             };
@@ -236,166 +426,174 @@ impl Names {
             let Some(rest) = text.get(whole.end()..) else {
                 break;
             };
-            let Some((range, quoting)) = value_at(rest) else {
+            let Some(value) = value::parse(rest, &|text| self.placeholder_len(text)) else {
                 continue;
             };
-            let Some(value) = rest.get(range.clone()) else {
+            let value = self.past_type_annotation(rest, value);
+            let ctx = Context {
+                key: key.as_str(),
+                key_quoted: captures.get(2).is_some(),
+                in_comment: self.in_comment(text, key.start()),
+                prose_follows: value::prose_follows(rest, value.range.end),
+            };
+            let base = whole.end();
+            let Some(slice) = rest.get(value.range.clone()) else {
                 continue;
             };
-            let prefix = placeholder_len(value);
-            let Some(value) = value.get(prefix..) else {
-                continue;
-            };
-            let start = range.start + prefix;
-            if self.is_secret(family, value, quoting) {
-                found.push(whole.end() + start..whole.end() + range.end);
-                at = whole.end() + range.end;
+            match self.judge(family, slice, value.shape, ctx) {
+                Verdict::Keep => {}
+                Verdict::Redact => {
+                    found.push(base + value.range.start..base + value.range.end);
+                    at = base + value.range.end;
+                }
+                Verdict::Inner(ranges) => {
+                    let offset = base + value.range.start;
+                    found.extend(
+                        ranges
+                            .into_iter()
+                            .map(|range| offset + range.start..offset + range.end),
+                    );
+                    at = base + value.range.end;
+                }
             }
         }
+        self.spaced_hits(text, &mut found);
+        found.sort_by_key(|range| range.start);
+        found.dedup_by(|next, kept| next.start < kept.end);
         found
     }
-}
 
-fn value_at(rest: &str) -> Option<(Range<usize>, Quoting)> {
-    let line_end = rest.find(['\n', '\r']).unwrap_or(rest.len());
-    let line = rest.get(..line_end)?;
-    for opener in ["\\\"", "\\'", "\"", "'"] {
-        if let Some(inner) = line.strip_prefix(opener) {
-            let start = opener.len();
-            let end = closing_quote(inner, opener).map_or(line_end, |close| start + close);
-            return (end > start).then_some((start..end, Quoting::Quoted));
-        }
-    }
-    if let Some((_, close)) = BRACKETS.iter().find(|(open, _)| line.starts_with(open))
-        && let Some(after) = line.get(1..).and_then(|rest| rest.find(close))
-    {
-        return Some((0..1 + after + close.len(), Quoting::Bare));
-    }
-    let skipped = placeholder_len(line);
-    let tail = line.get(skipped..)?;
-    let end = skipped
-        + tail
-            .find(|c: char| c.is_whitespace() || UNQUOTED_END.contains(&c))
-            .unwrap_or(tail.len());
-    (end > 0).then_some((0..end, Quoting::Bare))
-}
-
-fn closing_quote(inner: &str, opener: &str) -> Option<usize> {
-    let mut from = 0;
-    while let Some(found) = inner.get(from..)?.find(opener) {
-        let at = from + found;
-        let escaped = opener.len() == 1 && inner.get(..at).is_some_and(|head| head.ends_with('\\'));
-        if !escaped {
-            return Some(at);
-        }
-        from = at + opener.len();
-    }
-    None
-}
-
-fn placeholder_len(value: &str) -> usize {
-    let Some(rest) = value.strip_prefix(PLACEHOLDER_OPEN) else {
-        return 0;
-    };
-    match rest.find(']') {
-        Some(close) if close == 0 || rest.starts_with(':') => PLACEHOLDER_OPEN.len() + close + 1,
-        Some(_) | None => 0,
-    }
-}
-
-#[must_use]
-pub fn is_placeholder(key: &str) -> bool {
-    let Some(rest) = key.strip_prefix(PLACEHOLDER_OPEN) else {
-        return false;
-    };
-    let body = rest.rsplit_once('#').map_or(rest, |(body, suffix)| {
-        if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
-            body
-        } else {
-            rest
-        }
-    });
-    body == "]" || (body.starts_with(':') && body.ends_with(']') && !body.contains('['))
-}
-
-fn normalize(key: &str) -> String {
-    let mut out = String::with_capacity(key.len() + 4);
-    let chars: Vec<char> = key.chars().collect();
-    for (index, &c) in chars.iter().enumerate() {
-        if !c.is_alphanumeric() {
-            if !out.is_empty() && !out.ends_with('_') {
-                out.push('_');
+    fn spaced_hits(&self, text: &str, found: &mut Vec<Range<usize>>) {
+        for captures in self.forms.spaced.captures_iter(text) {
+            let (Some(whole), Some(word)) = (captures.get(0), captures.get(1)) else {
+                continue;
+            };
+            if found
+                .iter()
+                .any(|range| range.start <= word.start() && word.start() < range.end)
+            {
+                continue;
             }
-            continue;
+            let Some(rest) = text.get(whole.end()..) else {
+                continue;
+            };
+            if rest.starts_with(|c: char| c.is_whitespace() || c == '=' || c == ':') {
+                continue;
+            }
+            let end = value::bare_end(rest);
+            let Some(value) = rest.get(..end) else {
+                continue;
+            };
+            if !self.forms.spaced_value.is_match(value) {
+                continue;
+            }
+            let followed_by_separator = rest
+                .get(end..)
+                .is_some_and(|tail| tail.trim_start().starts_with(['=', ':']));
+            if followed_by_separator {
+                continue;
+            }
+            let ctx = Context {
+                key: word.as_str(),
+                ..Context::default()
+            };
+            if matches!(
+                self.judge(Family::Token, value, Shape::Bare, ctx),
+                Verdict::Redact
+            ) {
+                found.push(whole.end()..whole.end() + end);
+            }
         }
-        let previous = index.checked_sub(1).and_then(|at| chars.get(at));
-        let next = chars.get(index + 1);
-        let boundary = c.is_uppercase()
-            && previous.is_some_and(|p| {
-                p.is_lowercase()
-                    || p.is_ascii_digit()
-                    || (p.is_uppercase() && next.is_some_and(|n| n.is_lowercase()))
-            });
-        if boundary && !out.is_empty() && !out.ends_with('_') {
-            out.push('_');
+    }
+
+    fn in_comment(&self, text: &str, key_start: usize) -> bool {
+        let line_start = text
+            .get(..key_start)
+            .and_then(|head| head.rfind('\n'))
+            .map_or(0, |found| found + 1);
+        let prefix = text
+            .get(line_start..key_start)
+            .map(str::trim_start)
+            .unwrap_or_default();
+        let prefix = self
+            .forms
+            .line_prefix
+            .find(prefix)
+            .map_or(prefix, |lead| prefix.get(lead.end()..).unwrap_or(prefix));
+        self.comment_openers
+            .iter()
+            .any(|opener| prefix.starts_with(opener.as_str()))
+    }
+
+    fn past_type_annotation(&self, rest: &str, value: Value) -> Value {
+        if value.shape != Shape::Bare {
+            return value;
         }
-        out.extend(c.to_lowercase());
-    }
-    out.trim_matches('_').to_owned()
-}
-
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "a secret is far shorter than 2^52 bytes, so the counts convert exactly"
-)]
-#[must_use]
-pub fn shannon_entropy(text: &str) -> f64 {
-    let mut counts = [0usize; 256];
-    for byte in text.bytes() {
-        if let Some(slot) = counts.get_mut(usize::from(byte)) {
-            *slot += 1;
+        let is_type = rest
+            .get(value.range.clone())
+            .is_some_and(|slice| self.code.iter().any(|code| code.is_match(slice)));
+        let tail = rest.get(value.range.end..).unwrap_or_default();
+        let trimmed = tail.trim_start_matches([' ', '\t']);
+        let assigns =
+            trimmed.starts_with('=') && !trimmed.starts_with("==") && !trimmed.starts_with("=>");
+        if !is_type || !assigns {
+            return value;
+        }
+        let after = rest.len() - trimmed.len() + 1;
+        let spaces = trimmed.get(1..).map_or(0, |body| {
+            body.len() - body.trim_start_matches([' ', '\t']).len()
+        });
+        let start = after + spaces;
+        match rest
+            .get(start..)
+            .and_then(|tail| value::parse(tail, &|text| self.placeholder_len(text)))
+        {
+            Some(inner) => Value {
+                range: start + inner.range.start..start + inner.range.end,
+                shape: inner.shape,
+            },
+            None => value,
         }
     }
-    let total = text.len() as f64;
-    counts
-        .iter()
-        .filter(|&&count| count > 0)
-        .map(|&count| {
-            let p = count as f64 / total;
-            -p * p.log2()
-        })
-        .sum()
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keys_normalize_to_snake_case_segments() {
-        assert_eq!(normalize("X-Api-Key"), "x_api_key");
-        assert_eq!(normalize("clientSecret"), "client_secret");
-        assert_eq!(normalize("APIKey"), "api_key");
-        assert_eq!(normalize("_authToken"), "auth_token");
-        assert_eq!(normalize("secretName"), "secret_name");
-        assert_eq!(normalize("x.auth.y"), "x_auth_y");
-        assert_eq!(normalize("PGPASSWORD"), "pgpassword");
+    pub(crate) fn placeholder_len(&self, value: &str) -> usize {
+        let Some(rest) = value.strip_prefix(PLACEHOLDER_OPEN) else {
+            return 0;
+        };
+        if rest.starts_with(']') {
+            return PLACEHOLDER_OPEN.len() + 1;
+        }
+        let Some(kind) = rest.strip_prefix(':') else {
+            return 0;
+        };
+        let Some(close) = kind.find(']') else {
+            return 0;
+        };
+        let name = kind.get(..close).unwrap_or_default();
+        if self.known_kind(name) {
+            PLACEHOLDER_OPEN.len() + 1 + close + 1
+        } else {
+            0
+        }
     }
 
-    #[test]
-    fn placeholders_are_recognized_with_or_without_a_kind_or_suffix() {
-        assert!(is_placeholder("[REDACTED]"));
-        assert!(is_placeholder("[REDACTED]#2"));
-        assert!(is_placeholder("[REDACTED:github_token]"));
-        assert!(is_placeholder("[REDACTED:pattern:3]#12"));
-        assert!(!is_placeholder("[REDACTED:ghp_abc] tail"));
-        assert!(!is_placeholder("token"));
+    fn known_kind(&self, kind: &str) -> bool {
+        self.kinds.contains(kind)
+            || kind
+                .strip_prefix(PATTERN_KIND)
+                .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
     }
 
-    #[test]
-    fn entropy_grows_with_variety() {
-        assert!(shannon_entropy("aaaaaaaa") < 0.01);
-        assert!(shannon_entropy("abcdefgh") > 2.9);
-        assert!(shannon_entropy("Zq8RmT2vLx9WcN4bKp7HyJ3dFs6GtA1e") > 4.5);
+    #[must_use]
+    pub fn is_placeholder(&self, key: &str) -> bool {
+        let body = key.rsplit_once('#').map_or(key, |(body, suffix)| {
+            if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()) {
+                body
+            } else {
+                key
+            }
+        });
+        let length = self.placeholder_len(body);
+        length > 0 && length == body.len()
     }
 }
