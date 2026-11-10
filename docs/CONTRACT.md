@@ -1800,10 +1800,11 @@ base64 run found inside the second decoded layer, is not decoded and is redacted
 report lists like any rule; once a blob passes the budget, the rest of that message's budget is spent. `ingest-bundle`
 applies the same budget, so neither command spends unbounded time on a gzip or nested-base64 bomb (a 1.7 KB blob that
 inflated to 160 MB took 44 s at 1d687186 and takes 0.2 s now). The scan that `ingest-bundle` runs, and that `sanitize`
-runs on its own output, works on messages in parallel. Every worker takes each decoded byte from one shared 64 MiB
-bundle budget before it decodes it, in steps of at most 64 KiB of inflated output, and a message that ran short of
+runs on its own output, works on messages in parallel. Every worker takes each inflated gzip byte from one shared 64 MiB
+bundle budget before it inflates it, in steps of at most 64 KiB of output. A plain base64 decode is charged after it
+runs, so each worker thread can decode one blob of up to about 6 MiB past the budget. A message that ran short of
 that shared budget, or that would leave the bundle less than 8 MiB in an in-order scan, is scanned again in order with
-what the bundle has left. A scan therefore decodes at most 128 MiB however many messages the bundle holds,
+what the bundle has left. A scan therefore decodes at most 128 MiB plus one such blob per worker thread however many messages the bundle holds,
 and refuses or accepts exactly as an in-order scan would (a 2.67 MB forged bundle of 2000 such blobs took 13.2 s at
 04a237d5 and takes 0.75 s now). A rule
 with `each` redacts each match of that regex inside the secret. A match is dropped when the Shannon entropy of the
