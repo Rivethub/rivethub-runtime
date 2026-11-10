@@ -1,29 +1,39 @@
 use rusqlite::Connection;
 use serde::Deserialize;
 use wire::JsonObject;
+use wire::capture::BundleAuthor;
+use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
-use wire::capture::SESSION_BUNDLE_VERSION;
-use wire::capture::SessionBundle;
+use wire::capture::SessionOrigin;
 use wire::message::Role;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::time;
 
-const SESSIONS: &str = "SELECT c.session_key, c.agent, c.channel, c.title, c.created_at, c.updated_at, \
+const SESSIONS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title, c.settings, \
+     c.created_at, c.updated_at, coalesce(c.owner_user_id, ?2), coalesce(n.node, ?3), \
      m.id, m.role, m.content, m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at \
-     FROM ros_conversations c \
-     JOIN ros_messages m ON m.conversation_id = c.id \
-     ORDER BY c.session_key, c.agent, m.created_at, m.rowid";
+     FROM ros_messages m \
+     JOIN ros_conversations c ON c.id = m.conversation_id \
+     LEFT JOIN rh_conversation_nodes n ON n.conversation_id = c.id \
+     WHERE (c.owner_user_id IS NULL OR c.owner_user_id = ?2) \
+       AND (c.id IN (SELECT value FROM json_each(?1)) OR (?1 IS NULL AND NOT EXISTS \
+         (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key))) \
+     ORDER BY m.conversation_id, m.created_at, m.rowid";
 
 struct StoredSession {
+    conversation_id: String,
     session_key: String,
     agent: String,
     channel: String,
     title: Option<String>,
+    settings: Option<String>,
     created_at: String,
     updated_at: String,
+    author: String,
+    node: String,
     id: String,
     role: Role,
     content: String,
@@ -35,87 +45,129 @@ struct StoredSession {
 }
 
 impl SqliteStore {
-    pub async fn session_bundle(&self) -> Result<SessionBundle, SqliteError> {
-        self.with_conn(read_bundle).await
+    pub async fn bundled_sessions(
+        &self,
+        author: BundleAuthor,
+        conversation_ids: Option<Vec<String>>,
+    ) -> Result<Vec<BundledSession>, SqliteError> {
+        self.with_conn(move |conn| read_bundle(conn, &author, conversation_ids.as_deref()))
+            .await
     }
 }
 
-fn read_bundle(conn: &mut Connection) -> Result<SessionBundle, SqliteError> {
+fn read_bundle(
+    conn: &Connection,
+    author: &BundleAuthor,
+    conversation_ids: Option<&[String]>,
+) -> Result<Vec<BundledSession>, SqliteError> {
+    let wanted = conversation_ids
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|source| SqliteError::StoredJson {
+            column: "conversation ids",
+            source,
+        })?;
     let mut statement = conn
         .prepare(SESSIONS)
         .map_err(SqliteError::query("session bundle"))?;
     let rows = statement
-        .query_map([], stored_session)
+        .query_map(
+            rusqlite::params![wanted, author.user, author.node],
+            stored_session,
+        )
         .map_err(SqliteError::query("session bundle"))?;
     let mut sessions = Vec::new();
-    let mut current: Option<CaptureBatchRequest> = None;
+    let mut current: Option<BundledSession> = None;
     for row in rows {
         let row = row.map_err(SqliteError::query("session bundle"))?;
         push_message(&mut sessions, &mut current, &row)?;
     }
-    if let Some(batch) = current {
-        sessions.push(batch);
+    if let Some(session) = current {
+        sessions.push(session);
     }
-    Ok(SessionBundle {
-        version: SESSION_BUNDLE_VERSION,
-        sessions,
-    })
+    sessions.sort_by(|left, right| {
+        (left.origin.created_at, &left.origin.conversation_id)
+            .cmp(&(right.origin.created_at, &right.origin.conversation_id))
+    });
+    Ok(sessions)
 }
 
 fn stored_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredSession> {
     Ok(StoredSession {
-        session_key: row.get(0)?,
-        agent: row.get(1)?,
-        channel: row.get(2)?,
-        title: row.get(3)?,
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
-        id: row.get(6)?,
-        role: crate::message::stored_role(row, 7)?,
-        content: row.get(8)?,
-        tool_name: row.get(9)?,
-        tool_args: row.get(10)?,
-        tool_result: row.get(11)?,
-        metadata: row.get(12)?,
-        message_at: row.get(13)?,
+        conversation_id: row.get(0)?,
+        session_key: row.get(1)?,
+        agent: row.get(2)?,
+        channel: row.get(3)?,
+        title: row.get(4)?,
+        settings: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        author: row.get(8)?,
+        node: row.get(9)?,
+        id: row.get(10)?,
+        role: crate::message::stored_role(row, 11)?,
+        content: row.get(12)?,
+        tool_name: row.get(13)?,
+        tool_args: row.get(14)?,
+        tool_result: row.get(15)?,
+        metadata: row.get(16)?,
+        message_at: row.get(17)?,
     })
 }
 
 fn push_message(
-    sessions: &mut Vec<CaptureBatchRequest>,
-    current: &mut Option<CaptureBatchRequest>,
+    sessions: &mut Vec<BundledSession>,
+    current: &mut Option<BundledSession>,
     row: &StoredSession,
 ) -> Result<(), SqliteError> {
     let same = current
         .as_ref()
-        .is_some_and(|batch| batch.session_key == row.session_key && batch.agent == row.agent);
+        .is_some_and(|session| session.origin.conversation_id == row.conversation_id);
     if !same {
-        if let Some(batch) = current.take() {
-            sessions.push(batch);
+        if let Some(session) = current.take() {
+            sessions.push(session);
         }
-        *current = Some(batch_for(row)?);
+        *current = Some(session_for(row)?);
     }
-    let Some(batch) = current.as_mut() else {
+    let Some(session) = current.as_mut() else {
         return Err(SqliteError::Invalid {
             message: "session bundle lost its open session".to_owned(),
         });
     };
-    batch.messages.push(message_for(row)?);
+    session.batch.messages.push(message_for(row)?);
     Ok(())
 }
 
-fn batch_for(row: &StoredSession) -> Result<CaptureBatchRequest, SqliteError> {
-    Ok(CaptureBatchRequest {
-        session_key: row.session_key.clone(),
-        agent: row.agent.clone(),
-        channel: present(&row.channel),
-        title: row.title.as_deref().and_then(present),
-        settings: None,
-        task_id: None,
-        finalize: None,
-        created_at: Some(time::stored(&row.created_at, "created_at")?),
-        updated_at: Some(time::stored(&row.updated_at, "updated_at")?),
-        messages: Vec::new(),
+fn session_for(row: &StoredSession) -> Result<BundledSession, SqliteError> {
+    let created_at = time::stored(&row.created_at, "created_at")?;
+    let updated_at = time::stored(&row.updated_at, "updated_at")?;
+    Ok(BundledSession {
+        origin: SessionOrigin {
+            author: row.author.clone(),
+            node: row.node.clone(),
+            conversation_id: row.conversation_id.clone(),
+            session_key: row.session_key.clone(),
+            agent: row.agent.clone(),
+            created_at: Some(created_at),
+            updated_at: Some(updated_at),
+        },
+        batch: CaptureBatchRequest {
+            session_key: row.session_key.clone(),
+            agent: row.agent.clone(),
+            channel: present(&row.channel),
+            title: row.title.as_deref().and_then(present),
+            settings: row
+                .settings
+                .as_deref()
+                .map(|text| stored_object(text, "settings"))
+                .transpose()?
+                .filter(|settings| !settings.as_map().is_empty()),
+            task_id: None,
+            finalize: None,
+            created_at: Some(created_at),
+            updated_at: Some(updated_at),
+            messages: Vec::new(),
+        },
     })
 }
 

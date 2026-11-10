@@ -205,6 +205,66 @@
       ],
       "type": "string"
     },
+    "BundleAuthor": {
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "user",
+        "node"
+      ],
+      "type": "object"
+    },
+    "BundleManifest": {
+      "properties": {
+        "bundle_sha256": {
+          "type": "string"
+        },
+        "exported_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "exported_by": {
+          "$ref": "#/$defs/BundleAuthor"
+        },
+        "sanitization": {
+          "$ref": "#/$defs/Sanitization"
+        },
+        "session_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "exported_at",
+        "exported_by",
+        "sanitization",
+        "session_count",
+        "bundle_sha256"
+      ],
+      "type": "object"
+    },
+    "BundledSession": {
+      "properties": {
+        "batch": {
+          "$ref": "#/$defs/CaptureBatchRequest"
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin"
+        }
+      },
+      "required": [
+        "origin",
+        "batch"
+      ],
+      "type": "object"
+    },
     "CanvasAnchor": {
       "additionalProperties": false,
       "properties": {
@@ -8033,6 +8093,64 @@
       "pattern": "^[a-z0-9][a-z0-9_-]*$",
       "type": "string"
     },
+    "Sanitization": {
+      "oneOf": [
+        {
+          "properties": {
+            "state": {
+              "const": "raw",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/SanitizeStamp",
+          "properties": {
+            "state": {
+              "const": "sanitized",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SanitizeStamp": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "passes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "policy_sha256": {
+          "type": "string"
+        },
+        "unresolved_flags": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "at",
+        "policy_sha256",
+        "passes",
+        "unresolved_flags"
+      ],
+      "type": "object"
+    },
     "SearchMode": {
       "enum": [
         "hybrid",
@@ -8049,9 +8167,12 @@
     },
     "SessionBundle": {
       "properties": {
+        "manifest": {
+          "$ref": "#/$defs/BundleManifest"
+        },
         "sessions": {
           "items": {
-            "$ref": "#/$defs/CaptureBatchRequest"
+            "$ref": "#/$defs/BundledSession"
           },
           "type": "array"
         },
@@ -8063,6 +8184,7 @@
       },
       "required": [
         "version",
+        "manifest",
         "sessions"
       ],
       "type": "object"
@@ -8389,6 +8511,47 @@
         "assistant"
       ],
       "type": "string"
+    },
+    "SessionOrigin": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node": {
+          "type": "string"
+        },
+        "session_key": {
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "author",
+        "node",
+        "conversation_id",
+        "session_key",
+        "agent"
+      ],
+      "type": "object"
     },
     "SessionPreview": {
       "properties": {

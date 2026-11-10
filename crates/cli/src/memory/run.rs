@@ -57,7 +57,11 @@ pub(super) async fn run(
         MemoryCommand::Export { out, since, sqlite } => {
             export(out, since, sqlite, env, shutdown, stdout_is_terminal).await
         }
-        MemoryCommand::Bundle { out, sqlite } => share_bundle(out, sqlite, env).await,
+        MemoryCommand::Bundle {
+            out,
+            sessions,
+            sqlite,
+        } => super::bundle::share(out, sessions, sqlite, env).await,
         MemoryCommand::IngestBundle { path } => ingest_bundle(path, env, shutdown).await,
         MemoryCommand::Import {
             path,
@@ -243,25 +247,6 @@ async fn consolidate_wiki(
     Ok(Report::success(text))
 }
 
-async fn share_bundle(
-    out: PathBuf,
-    sqlite: Option<PathBuf>,
-    env: &Environment,
-) -> Result<Report, Error> {
-    let Target::Sqlite(path) = resolve(env, sqlite, Kind::Either)? else {
-        return Err(Error::BundleSqlite);
-    };
-    let store = open_sqlite(&path).await?;
-    let bundle = store.session_bundle().await?;
-    let sessions = bundle.sessions.len();
-    let text = serde_json::to_string_pretty(&bundle).map_err(capture::bundle::BundleError::from)?;
-    tokio::fs::write(&out, format!("{text}\n")).await?;
-    Ok(Report::success(format!(
-        "wrote {sessions} session(s) to {}\n",
-        out.display()
-    )))
-}
-
 async fn ingest_bundle(
     path: PathBuf,
     env: &Environment,
@@ -427,7 +412,7 @@ pub(super) fn postgres_url(env: &Environment) -> Result<String, Error> {
     }
 }
 
-async fn open_sqlite(path: &Path) -> Result<SqliteStore, Error> {
+pub(super) async fn open_sqlite(path: &Path) -> Result<SqliteStore, Error> {
     let path = path.to_path_buf();
     Ok(tokio::task::spawn_blocking(move || SqliteStore::open(path)).await??)
 }

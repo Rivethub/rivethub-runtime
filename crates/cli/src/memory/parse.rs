@@ -67,6 +67,7 @@ pub(super) enum MemoryCommand {
     MergeStore(super::merge::MergeArgs),
     Bundle {
         out: PathBuf,
+        sessions: Vec<String>,
         sqlite: Option<PathBuf>,
     },
     IngestBundle {
@@ -143,7 +144,7 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
         Verb::MergeStore => super::merge::parse(rest)
             .map(MemoryCommand::MergeStore)
             .map(Some),
-        Verb::Bundle => bundle(rest).map(Some),
+        Verb::Bundle => super::bundle::args(rest).map(Some),
         Verb::IngestBundle => ingest_bundle(rest).map(Some),
     }
 }
@@ -380,35 +381,6 @@ fn import(args: &[String]) -> Result<MemoryCommand, Error> {
     })
 }
 
-fn bundle(args: &[String]) -> Result<MemoryCommand, Error> {
-    let mut scan = Scan::new(args);
-    let mut out = None;
-    let mut sqlite = None;
-    while scan.current().is_some() {
-        match scan.option("--out", None) {
-            Taken::Value(value) => {
-                out = Some(nonempty(&value, Error::OutRequired)?);
-                continue;
-            }
-            Taken::Missing => return Err(Error::OutRequired),
-            Taken::Absent => {}
-        }
-        match scan.option("--sqlite", None) {
-            Taken::Value(value) => {
-                sqlite = Some(nonempty(&value, Error::SqliteRequired)?);
-                continue;
-            }
-            Taken::Missing => return Err(Error::SqliteRequired),
-            Taken::Absent => {}
-        }
-        return Err(reject(&scan));
-    }
-    let Some(out) = out else {
-        return Err(Error::OutRequired);
-    };
-    Ok(MemoryCommand::Bundle { out, sqlite })
-}
-
 fn ingest_bundle(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut path = None;
@@ -546,7 +518,7 @@ fn consolidate_wiki(args: &[String]) -> Result<MemoryCommand, Error> {
     })
 }
 
-fn reject(scan: &Scan<'_>) -> Error {
+pub(super) fn reject(scan: &Scan<'_>) -> Error {
     match scan.current() {
         Some(token) if token.starts_with('-') => Error::UnknownOption(token.to_owned()),
         Some(token) => Error::Unexpected(token.to_owned()),
@@ -608,7 +580,7 @@ fn timestamp(text: &str) -> Result<DateTime<Utc>, Error> {
         .map_err(|_| Error::SinceInvalid(text.to_owned()))
 }
 
-fn nonempty(text: &str, missing: Error) -> Result<PathBuf, Error> {
+pub(super) fn nonempty(text: &str, missing: Error) -> Result<PathBuf, Error> {
     if text.is_empty() {
         Err(missing)
     } else {

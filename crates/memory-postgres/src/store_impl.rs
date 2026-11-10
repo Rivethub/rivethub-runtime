@@ -68,7 +68,7 @@ impl crate::PostgresMemory {
             .collect();
         let seen = writer.seen_event_ids(conversation_id, &event_ids).await?;
         let mut inserted: u64 = 0;
-        for message in &batch.messages {
+        for (index, message) in batch.messages.iter().enumerate() {
             if seen.contains(&message.event_id) {
                 continue;
             }
@@ -86,6 +86,7 @@ impl crate::PostgresMemory {
                     metadata: &prepared.metadata,
                     owner_user_id: &conversation.owner_user_id,
                     created_at: prepared.created_at,
+                    batch_index: i64::try_from(index)?,
                 })
                 .await?;
             inserted += 1;

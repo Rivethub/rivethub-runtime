@@ -1,6 +1,7 @@
 mod access;
 pub mod admin;
 mod backfills;
+mod bundle;
 pub mod capture;
 mod changes;
 mod cleanup;

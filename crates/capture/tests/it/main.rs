@@ -1,5 +1,6 @@
 mod argument_order;
 mod batch_validation;
+mod bundle;
 mod cowork_reader;
 mod event_id;
 mod grok_transcript;
