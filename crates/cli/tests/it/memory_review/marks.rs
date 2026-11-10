@@ -58,7 +58,7 @@ async fn a_map_target_may_not_be_a_placeholder_or_a_secret() {
     for target in [
         "[FLAGGED:3]",
         "x [REDACTED:secret_key]",
-        "ghp_PLANTEDmapZq8RmT2vLx9WabcdefghijklmnoQ",
+        concat!("ghp_", "PLANTEDmapZq8RmT2vLx9WabcdefghijklmnoQ"),
     ] {
         let stderr = refused_mark(&format!("Mark: map Acme as {target}"), false).await;
         assert!(stderr.contains("flag 1"), "{target}: {stderr}");

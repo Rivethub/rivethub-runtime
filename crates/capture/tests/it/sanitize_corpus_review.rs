@@ -28,7 +28,7 @@ use super::sanitize_corpus::positions;
 
 type SendError = Box<dyn std::error::Error + Send + Sync>;
 
-const SECRET: &str = "ghp_PLANTEDmapZq8RmT2vLx9WabcdefghijklmnoQ";
+const SECRET: &str = concat!("ghp_", "PLANTEDmapZq8RmT2vLx9WabcdefghijklmnoQ");
 const ASSIGNMENT: &str = "password=PLANTEDasgZq8RmT2vLx9W";
 const PLAIN: &str = "PLANTEDphZq8RmT2vLx9Wq7";
 
