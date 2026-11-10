@@ -57,10 +57,10 @@ impl FakeSessionDeletion {
     }
 
     #[must_use]
-    pub fn deleted_by(&self, session: &SessionId) -> Option<Option<String>> {
+    pub fn deleted_by(&self, session: impl Into<SessionKey>) -> Option<Option<String>> {
         self.tombstones
             .lock()
-            .get(session.as_str())
+            .get(session.into().as_str())
             .map(|(_, deleted_by)| deleted_by.clone())
     }
 }

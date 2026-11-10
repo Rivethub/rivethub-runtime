@@ -17,7 +17,7 @@ use wire::session_id::SessionId;
 
 use futures::StreamExt as _;
 
-use super::{NOT_FOUND, deletions, hidden, known, resolved, segment_session, visible};
+use super::{deletions, ensure_reachable, hidden, resolved, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -139,15 +139,12 @@ pub(super) async fn keep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    let deletions = deletions(&gateway)?;
-    if !visible(&gateway, &user, &session).await? || !known(&gateway, deletions, &session).await? {
-        return Err(ApiError::NotFound(NOT_FOUND));
-    }
-    deletions
-        .keep_session(session.as_str(), Some(user.as_str()), Utc::now())
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?
+        .keep_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;
-    tracing::info!(session = %session, "session kept out of the trash review");
+    tracing::info!(session = %key, "session kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)
 }
 

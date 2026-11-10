@@ -231,7 +231,7 @@ async fn deleting_a_session_tombstones_it_and_hides_it_from_both_lists() {
         ..Stores::default()
     };
     let deletion =
-        FakeSessionDeletion::default().with_activity(&claude("s-gone"), remembered(2, Some("ok")));
+        FakeSessionDeletion::default().with_activity(claude("s-gone"), remembered(2, Some("ok")));
     let setup = setup("{}", stores, deletion);
     let (status, body) = call(
         &setup,
@@ -247,7 +247,7 @@ async fn deleting_a_session_tombstones_it_and_hides_it_from_both_lists() {
         r#"{"ok":true,"session":"claude-code:s-gone","conversations":1,"messages":3,"summaries":0}"#
     );
     assert_eq!(
-        setup.deletion.deleted_by(&claude("s-gone")),
+        setup.deletion.deleted_by(claude("s-gone")),
         Some(Some("owner".to_owned()))
     );
     let (_, body) = call(
@@ -291,7 +291,10 @@ async fn a_percent_encoded_canonical_id_is_accepted() {
     )
     .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(parsed::<SessionDeleted>(&body).session, claude("s-plain"));
+    assert_eq!(
+        parsed::<SessionDeleted>(&body).session,
+        claude("s-plain").into()
+    );
 }
 
 #[tokio::test]
@@ -315,7 +318,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
     .await;
     assert_eq!(status, 404);
     assert_eq!(parsed::<GatewayError>(&body).error, "not found");
-    assert_eq!(setup.deletion.deleted_by(&claude("s-owned")), None);
+    assert_eq!(setup.deletion.deleted_by(claude("s-owned")), None);
     let (status, _) = call(
         &setup,
         "DELETE",
@@ -325,7 +328,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
     )
     .await;
     assert_eq!(status, 404);
-    assert_eq!(setup.deletion.deleted_by(&claude("s-nowhere")), None);
+    assert_eq!(setup.deletion.deleted_by(claude("s-nowhere")), None);
 }
 
 #[tokio::test]
@@ -417,16 +420,16 @@ fn junk_stores() -> Stores {
 
 fn junk_memory() -> FakeSessionDeletion {
     FakeSessionDeletion::default()
-        .with_activity(&claude("t-hi"), remembered(1, Some("Hello!")))
+        .with_activity(claude("t-hi"), remembered(1, Some("Hello!")))
         .with_activity(
-            &claude("t-placed"),
+            claude("t-placed"),
             SessionActivity {
                 placed: true,
                 ..remembered(1, Some("Hello!"))
             },
         )
         .with_activity(
-            &claude("t-cited"),
+            claude("t-cited"),
             SessionActivity {
                 cited: true,
                 ..remembered(1, Some("Hello!"))
@@ -491,7 +494,7 @@ async fn trash_lists_a_remembered_session_the_list_hides_until_it_is_deleted() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default().with_activity(
-        &claude("t-discovery"),
+        claude("t-discovery"),
         SessionActivity {
             conversations: 1,
             ..SessionActivity::default()
@@ -543,7 +546,7 @@ async fn memory_tool_rows_keep_a_session_out_of_the_trash() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default().with_activity(
-        &claude("t-mem-tool"),
+        claude("t-mem-tool"),
         SessionActivity {
             tool_rows: 1,
             ..remembered(1, None)

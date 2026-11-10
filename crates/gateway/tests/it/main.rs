@@ -19,6 +19,7 @@ mod serving;
 mod session_catalog;
 mod session_delete;
 mod session_history;
+mod session_imports;
 mod session_owners;
 mod store_error;
 mod surface;

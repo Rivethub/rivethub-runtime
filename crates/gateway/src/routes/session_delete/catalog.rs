@@ -19,7 +19,7 @@ use wire::gateway::session_catalog::{
 use wire::harness::HarnessId;
 use wire::session_id::{SessionId, SessionKey};
 
-use super::{NOT_FOUND, deletions, known, segment_session, visible};
+use super::{NOT_FOUND, deletions, ensure_reachable, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -256,18 +256,24 @@ pub(super) async fn detail(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDetail>, ApiError> {
-    let session = segment_session(&segment)?;
+    let key = segment_key(&segment)?;
     let lineage = lineage(&gateway).await;
     let record = catalog(&gateway)?
-        .get(&SessionKey::from(&session))
+        .get(&key)
         .await?
         .filter(|record| shown(&gateway, &user, &record.id))
         .ok_or(ApiError::NotFound(NOT_FOUND))?;
-    let marks = visibilities(&gateway, &user, std::slice::from_ref(&session)).await?;
-    let visibility = marks.get(&session).cloned().unwrap_or(SharedWith::Private);
+    let session = key.session();
+    let wanted: Vec<SessionId> = session.cloned().into_iter().collect();
+    let marks = visibilities(&gateway, &user, &wanted).await?;
+    let visibility = session
+        .and_then(|session| marks.get(session))
+        .cloned()
+        .unwrap_or(SharedWith::Private);
     let cwd = record.cwd.clone();
     Ok(Json(SessionDetail {
-        resume_command: resume_command(session.harness(), session.native()),
+        resume_command: session
+            .and_then(|session| resume_command(session.harness(), session.native())),
         row: row(record, visibility, &lineage),
         cwd,
         changed: Vec::new(),
@@ -276,26 +282,17 @@ pub(super) async fn detail(
     }))
 }
 
-async fn reachable(gateway: &Gateway, user: &UserId, session: &SessionId) -> Result<(), ApiError> {
-    let deletions = deletions(gateway)?;
-    if visible(gateway, user, session).await? && known(gateway, deletions, session).await? {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound(NOT_FOUND))
-    }
-}
-
 pub(super) async fn trash(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
     deletions(&gateway)?
-        .trash_session(session.as_str(), Some(user.as_str()), Utc::now())
+        .trash_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;
-    tracing::info!(session = %session, "session moved to the trash");
+    tracing::info!(session = %key, "session moved to the trash");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -304,12 +301,10 @@ pub(super) async fn restore(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
-    deletions(&gateway)?
-        .restore_session(session.as_str())
-        .await?;
-    tracing::info!(session = %session, "session restored from the trash");
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?.restore_session(key.as_str()).await?;
+    tracing::info!(session = %key, "session restored from the trash");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -318,11 +313,9 @@ pub(super) async fn unkeep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
-    deletions(&gateway)?
-        .unkeep_session(session.as_str())
-        .await?;
-    tracing::info!(session = %session, "session no longer kept out of the trash review");
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?.unkeep_session(key.as_str()).await?;
+    tracing::info!(session = %key, "session no longer kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)
 }

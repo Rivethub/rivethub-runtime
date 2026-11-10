@@ -8233,7 +8233,7 @@
           "type": "boolean"
         },
         "session": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         }
       },
       "required": [
@@ -8247,7 +8247,7 @@
       "properties": {
         "sessions": {
           "items": {
-            "$ref": "#/$defs/SessionId"
+            "$ref": "#/$defs/SessionKey"
           },
           "type": "array"
         }
@@ -8297,7 +8297,7 @@
           "type": "boolean"
         },
         "session": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         },
         "summaries": {
           "format": "uint64",
