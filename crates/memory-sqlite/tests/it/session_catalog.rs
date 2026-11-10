@@ -6,6 +6,7 @@ use memory_sqlite::SqliteStore;
 use rusqlite::Connection;
 use tempfile::TempDir;
 use testkit::session_catalog;
+use testkit::session_imports;
 
 use crate::common::TestResult;
 
@@ -104,4 +105,31 @@ async fn records_answer_bare_and_keyed_sessions_in_one_lookup() -> TestResult {
     let (_directory, store) = store()?;
     testkit::session_records::records_answer_bare_and_keyed_sessions_in_one_lookup(&store, &store)
         .await
+}
+
+#[tokio::test]
+async fn an_import_lists_with_its_origin() -> TestResult {
+    let (_directory, store) = store()?;
+    session_imports::an_import_lists_with_its_origin(&store, &store).await
+}
+
+#[tokio::test]
+async fn a_harness_filter_and_the_lookups_leave_imports_to_their_own_key() -> TestResult {
+    let (_directory, store) = store()?;
+    session_imports::a_harness_filter_and_the_session_lookup_leave_imports_to_their_own_key(
+        &store, &store,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_import_moves_between_the_views_and_deletes() -> TestResult {
+    let (_directory, store) = store()?;
+    session_imports::an_import_moves_between_the_views_and_deletes(&store, &store, &store).await
+}
+
+#[tokio::test]
+async fn paging_walks_across_an_import() -> TestResult {
+    let (_directory, store) = store()?;
+    session_imports::paging_walks_across_an_import(&store, &store).await
 }

@@ -23,6 +23,7 @@ use pgvector::HalfVector;
 use sqlx::PgPool;
 use testkit::FakeProvider;
 use testkit::session_catalog;
+use testkit::session_imports;
 use testkit::topics::at;
 use testkit::topics::new_topic;
 use uuid::Uuid;
@@ -412,4 +413,33 @@ async fn records_answer_bare_and_keyed_sessions_in_one_lookup(pool: PgPool) -> T
     let memory = PostgresMemory::new(pool);
     testkit::session_records::records_answer_bare_and_keyed_sessions_in_one_lookup(&memory, &memory)
         .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_import_lists_with_its_origin(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_imports::an_import_lists_with_its_origin(&memory, &memory).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_harness_filter_and_the_lookups_leave_imports_to_their_own_key(
+    pool: PgPool,
+) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_imports::a_harness_filter_and_the_session_lookup_leave_imports_to_their_own_key(
+        &memory, &memory,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_import_moves_between_the_views_and_deletes(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_imports::an_import_moves_between_the_views_and_deletes(&memory, &memory, &memory).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn paging_walks_across_an_import(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    session_imports::paging_walks_across_an_import(&memory, &memory).await
 }

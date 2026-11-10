@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::filing::stored_keys;
+use kernel::memory::ImportOrigin;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -18,6 +19,8 @@ use kernel::memory::snippet;
 use kernel::topics::TopicId;
 use strum::IntoEnumIterator as _;
 use uuid::Uuid;
+use wire::JsonObject;
+use wire::capture::SessionOrigin;
 use wire::harness::HarnessId;
 use wire::session_id::SessionKey;
 
@@ -44,9 +47,10 @@ WITH conv AS (
                FILTER (WHERE c.title ~ '[^[:space:]]'))[1] AS title,
            array_agg(c.id) AS conversations
       FROM conv c
-     WHERE split_part(c.session_key, ':', 1) = ANY($1)
-       AND strpos(c.session_key, ':') > 0
-       AND substr(c.session_key, strpos(c.session_key, ':') + 1) <> ''
+     WHERE ((split_part(c.session_key, ':', 1) = ANY($1)
+             AND strpos(c.session_key, ':') > 0
+             AND substr(c.session_key, strpos(c.session_key, ':') + 1) <> '')
+            OR ($13::bool AND c.session_key ~ '^import:[0-9a-f]{64}$'))
        AND ($2::text[] IS NULL OR c.session_key = ANY($2))
        AND c.session_key <> ALL($3)
      GROUP BY c.session_key
@@ -109,6 +113,9 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
        (SELECT c.settings->>'cwd' FROM rh_conversations c
          WHERE c.id = ANY(g.conversations) AND jsonb_typeof(c.settings->'cwd') = 'string'
          ORDER BY c.updated_at DESC, c.id LIMIT 1) AS cwd,
+       (SELECT c.settings FROM rh_conversations c
+         WHERE c.id = ANY(g.conversations) AND g.session_key LIKE 'import:%'
+         ORDER BY c.updated_at DESC, c.id LIMIT 1) AS import_settings,
        (SELECT u.content FROM unnest(g.conversations) AS gc(id)
          CROSS JOIN LATERAL (
                SELECT left(m.content, 600) AS content, m.created_at, m.id FROM rh_messages m
@@ -140,7 +147,20 @@ struct Row {
     flagged: bool,
     summary: Option<String>,
     cwd: Option<String>,
+    import_settings: Option<sqlx::types::Json<JsonObject>>,
     first_user: Option<String>,
+}
+
+fn import_origin(settings: Option<sqlx::types::Json<JsonObject>>) -> ImportOrigin {
+    let origin = settings.and_then(|settings| SessionOrigin::of(&settings.0));
+    ImportOrigin {
+        author: origin
+            .as_ref()
+            .and_then(SessionOrigin::known_author)
+            .map(str::to_owned),
+        created_at: origin.as_ref().and_then(|origin| origin.created_at),
+        updated_at: origin.as_ref().and_then(|origin| origin.updated_at),
+    }
 }
 
 impl Row {
@@ -153,6 +173,10 @@ impl Row {
                 path: self.parent_name.into_iter().chain([name]).collect(),
             }),
             _ => None,
+        };
+        let origin = match id {
+            SessionKey::Import(_) => Some(import_origin(self.import_settings)),
+            SessionKey::Harness(_) => None,
         };
         Ok(SessionRecord {
             id,
@@ -171,7 +195,7 @@ impl Row {
             memory: memory_state(self.active, self.flagged, self.summarized),
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
-            origin: None,
+            origin,
         })
     }
 }
@@ -243,6 +267,7 @@ impl PostgresMemory {
             }))
             .bind(HarnessId::ClaudeCode.to_string())
             .bind(BARE_UUID)
+            .bind(select.harness.is_none())
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("session list", source))?;
