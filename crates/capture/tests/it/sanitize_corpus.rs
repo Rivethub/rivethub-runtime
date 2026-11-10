@@ -271,9 +271,6 @@ fn check(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::er
         Err(error) => return Ok(vec![tag("run", &format!("refused: {error}"))]),
     };
     let file = String::from_utf8(sanitized.sealed.text.clone())?;
-    for again in sanitize::secrets(&sanitized.sealed.bundle) {
-        found.push(tag("ingest rescan", &again.to_string()));
-    }
     match case.expect {
         Expect::Redact => {
             let report = sanitized.report.markdown("s.clean.json", "no rules");
@@ -302,6 +299,64 @@ fn check(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::er
         }
     }
     Ok(found)
+}
+
+fn rescan(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let sanitized = sanitize::run(
+        &bundle_with(position, &case.raw)?,
+        &Policy {
+            mapping: sanitize::mapping::Mapping::default(),
+            key: LocalKey::from_bytes([7; 32]),
+        },
+        at()?,
+    )?;
+    let mut found: Vec<String> = sanitize::secrets(&sanitized.sealed.bundle)
+        .iter()
+        .map(|again| format!("{} | {position:?} | {again}", case.shape))
+        .collect();
+    if sanitized.report.rechecked > 0 {
+        found.push(format!(
+            "{} | {position:?} | {} span(s) caught only by the re-check",
+            case.shape, sanitized.report.rechecked
+        ));
+    }
+    Ok(found)
+}
+
+#[test]
+fn every_corpus_case_sanitizes_to_a_bundle_ingest_accepts() -> TestResult {
+    let mut found = Vec::new();
+    let mut runs = 0;
+    for corpus in corpus_dirs()? {
+        for case in &cases(&corpus)? {
+            for position in positions(&case.position)? {
+                runs += 1;
+                found.extend(
+                    rescan(case, position)?
+                        .into_iter()
+                        .map(|line| format!("{corpus} | {line}")),
+                );
+            }
+        }
+    }
+    assert!(runs > 0, "no corpus cases ran");
+    assert!(
+        found.is_empty(),
+        "{} of {runs} sanitized bundles hold a match ingest refuses or needed the re-check (a sanitizer bug either way)\ncorpus | shape | position | match\n{}",
+        found.len(),
+        found.join("\n")
+    );
+    Ok(())
+}
+
+fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
+    let mut dirs: Vec<String> = std::fs::read_dir(fixture_dir())?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    dirs.sort();
+    Ok(dirs)
 }
 
 fn corpus_holds(corpus: &str) -> TestResult {
@@ -351,16 +406,12 @@ corpus_tests! {
     placement_and_assignment_forms_leave_no_survivor => "placement-and-forms";
     real_output_contexts_keep_their_text_and_lose_planted_secrets => "real-output-contexts-r3";
     round_3_fixes_hold => "round-3-fixes";
+    round_4_fixes_hold => "round-4-fixes";
 }
 
 #[test]
 fn every_corpus_directory_has_a_test() -> TestResult {
-    let mut dirs: Vec<String> = std::fs::read_dir(fixture_dir())?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    dirs.sort();
+    let dirs = corpus_dirs()?;
     let mut listed = vec![
         "vendor-shapes-r1",
         "unseen-shapes-r2",
@@ -368,6 +419,7 @@ fn every_corpus_directory_has_a_test() -> TestResult {
         "placement-and-forms",
         "real-output-contexts-r3",
         "round-3-fixes",
+        "round-4-fixes",
     ];
     listed.sort_unstable();
     assert_eq!(

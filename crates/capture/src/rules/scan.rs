@@ -21,7 +21,8 @@ const WINDOW: usize = 64 * 1024;
 const LOOKAHEAD_LINES: usize = 16;
 const DECODE_DEPTH: usize = 2;
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-const INFLATE_LIMIT: u64 = 4 << 20;
+const MESSAGE_DECODE_BYTES: u64 = 8 << 20;
+const BUNDLE_DECODE_BYTES: u64 = 64 << 20;
 const DER_SEQUENCE: u8 = 0x30;
 const DER_INTEGER: u8 = 0x02;
 const UTF8_BOM: char = '\u{feff}';
@@ -43,15 +44,77 @@ struct Scope {
 enum Decoded {
     Text(String),
     DerPrivateKey,
+    OverBudget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Budget {
+    message: u64,
+    bundle: u64,
+}
+
+impl Budget {
+    #[must_use]
+    pub fn after(spent: u64) -> Self {
+        Self {
+            message: MESSAGE_DECODE_BYTES,
+            bundle: BUNDLE_DECODE_BYTES.saturating_sub(spent),
+        }
+    }
+
+    #[must_use]
+    pub const fn spent(&self) -> u64 {
+        BUNDLE_DECODE_BYTES - self.bundle
+    }
+
+    #[must_use]
+    pub const fn leaves_room(spent: u64, next: u64) -> bool {
+        spent + next + MESSAGE_DECODE_BYTES <= BUNDLE_DECODE_BYTES
+    }
+
+    pub fn next_message(&mut self) {
+        self.message = MESSAGE_DECODE_BYTES;
+    }
+
+    fn fits(&mut self, bytes: usize) -> bool {
+        let fits = bytes as u64 <= self.left();
+        if !fits {
+            self.take(bytes);
+        }
+        fits
+    }
+
+    const fn left(&self) -> u64 {
+        if self.message < self.bundle {
+            self.message
+        } else {
+            self.bundle
+        }
+    }
+
+    fn take(&mut self, bytes: usize) -> bool {
+        let left = self.left();
+        let bytes = bytes as u64;
+        let fits = bytes <= left;
+        let spent = if fits { bytes } else { left };
+        self.message -= spent;
+        self.bundle -= spent;
+        fits
+    }
 }
 
 impl Ruleset {
     #[must_use]
     pub fn spans(&self, text: &str) -> Vec<Span<'_>> {
-        self.scan(text, 0)
+        self.spans_within(text, &mut Budget::after(0))
     }
 
-    fn scan(&self, text: &str, depth: usize) -> Vec<Span<'_>> {
+    #[must_use]
+    pub fn spans_within(&self, text: &str, budget: &mut Budget) -> Vec<Span<'_>> {
+        self.scan(text, 0, budget)
+    }
+
+    fn scan(&self, text: &str, depth: usize, budget: &mut Budget) -> Vec<Span<'_>> {
         let mut scanned: Vec<usize> = vec![0; self.rules.len()];
         let mut found: Vec<Span<'_>> = Vec::new();
         for hit in self.keywords.find_overlapping_iter(text) {
@@ -70,8 +133,8 @@ impl Ruleset {
                 let line = line_end(text, hit.end());
                 let end = if rule.multiline {
                     window_end(text, start)
-                } else if matches!(rule.matcher, Matcher::Names) && continues(text, start, line) {
-                    lookahead_end(text, line)
+                } else if matches!(rule.matcher, Matcher::Names) {
+                    names_end(text, start, line)
                 } else {
                     line
                 };
@@ -84,7 +147,7 @@ impl Ruleset {
                     offset: start,
                     depth,
                 };
-                self.matches(rule, slice, scope, &mut found);
+                self.matches(rule, slice, scope, budget, &mut found);
             }
         }
         for &index in &self.always {
@@ -94,7 +157,7 @@ impl Ruleset {
                     offset: 0,
                     depth,
                 };
-                self.matches(rule, text, scope, &mut found);
+                self.matches(rule, text, scope, budget, &mut found);
             }
         }
         found.sort_by_key(|span| (span.rule.source, span.range.start, span.order));
@@ -114,23 +177,34 @@ impl Ruleset {
         kept
     }
 
-    fn matches<'a>(&'a self, rule: &'a Rule, slice: &str, scope: Scope, out: &mut Vec<Span<'a>>) {
+    fn matches<'a>(
+        &'a self,
+        rule: &'a Rule,
+        slice: &str,
+        scope: Scope,
+        budget: &mut Budget,
+        out: &mut Vec<Span<'a>>,
+    ) {
         let Scope {
             order,
             offset,
             depth,
         } = scope;
         let regex = match &rule.matcher {
-            Matcher::Names => {
-                for range in self.names.hits(slice) {
-                    out.push(Span {
-                        range: offset + range.start..offset + range.end,
-                        rule,
-                        order,
-                    });
-                }
+            Matcher::Names | Matcher::Pairs => {
+                let ranges = if matches!(rule.matcher, Matcher::Names) {
+                    self.names.hits(slice)
+                } else {
+                    self.names.pair_hits(slice)
+                };
+                out.extend(ranges.into_iter().map(|range| Span {
+                    range: offset + range.start..offset + range.end,
+                    rule,
+                    order,
+                }));
                 return;
             }
+            Matcher::Budget => return,
             Matcher::Regex(regex) => regex,
         };
         let global = match rule.source {
@@ -164,17 +238,14 @@ impl Ruleset {
             if global.iter().any(allowed) || rule.allow.iter().any(allowed) {
                 continue;
             }
-            if rule.decode == Some(Decode::Base64) {
-                let hidden = depth < DECODE_DEPTH
-                    && match decoded(secret.as_str()) {
-                        Some(Decoded::DerPrivateKey) => true,
-                        Some(Decoded::Text(inner)) => !self.scan(&inner, depth + 1).is_empty(),
-                        None => false,
-                    };
-                if !hidden {
-                    continue;
+            let rule = if rule.decode == Some(Decode::Base64) {
+                match self.hidden(rule, secret.as_str(), depth, budget) {
+                    Some(rule) => rule,
+                    None => continue,
                 }
-            }
+            } else {
+                rule
+            };
             if let Some(each) = &rule.each {
                 for inner in each.captures_iter(secret.as_str()) {
                     if let Some(value) = inner.get(1).filter(|value| !value.is_empty()) {
@@ -193,6 +264,41 @@ impl Ruleset {
                 rule,
                 order,
             });
+        }
+    }
+}
+
+impl Ruleset {
+    fn budget_rule<'a>(&'a self, fallback: &'a Rule) -> &'a Rule {
+        self.rules.get(self.budget).unwrap_or(fallback)
+    }
+
+    fn hidden<'a>(
+        &'a self,
+        rule: &'a Rule,
+        blob: &str,
+        depth: usize,
+        budget: &mut Budget,
+    ) -> Option<&'a Rule> {
+        let found = if depth < DECODE_DEPTH {
+            decoded(blob, budget)?
+        } else {
+            Decoded::OverBudget
+        };
+        let undecoded = self.budget_rule(rule);
+        match found {
+            Decoded::Text(inner) => {
+                let inner = self.scan(&inner, depth + 1, budget);
+                if inner.is_empty() {
+                    None
+                } else if inner.iter().all(|span| std::ptr::eq(span.rule, undecoded)) {
+                    Some(undecoded)
+                } else {
+                    Some(rule)
+                }
+            }
+            Decoded::DerPrivateKey => Some(rule),
+            Decoded::OverBudget => Some(undecoded),
         }
     }
 }
@@ -220,7 +326,7 @@ impl Allow {
     }
 }
 
-fn decoded(blob: &str) -> Option<Decoded> {
+fn decoded(blob: &str, budget: &mut Budget) -> Option<Decoded> {
     let lines: Vec<&str> = blob.lines().map(str::trim).collect();
     let (&first, rest) = lines.split_first()?;
     let width = first.len();
@@ -235,15 +341,18 @@ fn decoded(blob: &str) -> Option<Decoded> {
             break;
         }
     }
-    decoded_joined(&body.concat()).or_else(|| {
+    decoded_joined(&body.concat(), budget).or_else(|| {
         body.pop();
         (!body.is_empty())
-            .then(|| decoded_joined(&body.concat()))
+            .then(|| decoded_joined(&body.concat(), budget))
             .flatten()
     })
 }
 
-fn decoded_joined(joined: &str) -> Option<Decoded> {
+fn decoded_joined(joined: &str, budget: &mut Budget) -> Option<Decoded> {
+    if !budget.fits(joined.len() / 4 * 3) {
+        return Some(Decoded::OverBudget);
+    }
     let config =
         GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
     let standard = GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(joined);
@@ -261,14 +370,20 @@ fn decoded_joined(joined: &str) -> Option<Decoded> {
             Err(_) => return None,
         },
     };
+    if !budget.take(bytes.len()) {
+        return Some(Decoded::OverBudget);
+    }
     let bytes = if bytes.starts_with(&GZIP_MAGIC) {
         let mut inflated = Vec::new();
         if flate2::read::GzDecoder::new(bytes.as_slice())
-            .take(INFLATE_LIMIT)
+            .take(budget.left().saturating_add(1))
             .read_to_end(&mut inflated)
             .is_err()
         {
             return None;
+        }
+        if !budget.take(inflated.len()) {
+            return Some(Decoded::OverBudget);
         }
         inflated
     } else {
@@ -324,9 +439,19 @@ fn line_end(text: &str, at: usize) -> usize {
         .map_or(text.len(), |found| at + found)
 }
 
-fn continues(text: &str, start: usize, line: usize) -> bool {
+fn names_end(text: &str, start: usize, line: usize) -> usize {
     let tail = text.get(start..line).unwrap_or_default().trim_end();
-    tail.ends_with(['=', ':', '|', '>']) || tail.ends_with("|-") || tail.ends_with(">-")
+    let indicator = tail.rsplit_once(':').map(|(_, after)| after.trim());
+    if matches!(indicator, Some("|" | "|-" | "|+" | ">" | ">-" | ">+")) {
+        window_end(text, start)
+    } else if tail.ends_with(['=', ':', '|', '>', '{', '['])
+        || tail.ends_with("|-")
+        || tail.ends_with(">-")
+    {
+        lookahead_end(text, line)
+    } else {
+        line
+    }
 }
 
 fn lookahead_end(text: &str, line: usize) -> usize {
@@ -367,23 +492,72 @@ mod tests {
     #[test]
     fn only_text_and_der_keys_decode() {
         let json = base64::engine::general_purpose::STANDARD.encode(r#"{"a": 1}"#);
-        assert!(matches!(decoded(&json), Some(Decoded::Text(text)) if text.starts_with('{')));
+        assert!(
+            matches!(decoded(&json, &mut Budget::after(0)), Some(Decoded::Text(text)) if text.starts_with('{'))
+        );
         let wrapped = format!("{}\n{}", &json[..6], &json[6..]);
-        assert!(matches!(decoded(&wrapped), Some(Decoded::Text(_))));
+        assert!(matches!(
+            decoded(&wrapped, &mut Budget::after(0)),
+            Some(Decoded::Text(_))
+        ));
         let env = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("A=b\n");
-        assert!(matches!(decoded(&env), Some(Decoded::Text(text)) if text == "A=b\n"));
+        assert!(
+            matches!(decoded(&env, &mut Budget::after(0)), Some(Decoded::Text(text)) if text == "A=b\n")
+        );
         let noise = base64::engine::general_purpose::STANDARD.encode([0xffu8, 0xfe, 0xfd, 0x00]);
-        assert!(decoded(&noise).is_none());
-        assert!(decoded("not base64 at all!").is_none());
+        assert!(decoded(&noise, &mut Budget::after(0)).is_none());
+        assert!(decoded("not base64 at all!", &mut Budget::after(0)).is_none());
         let pkcs8 = base64::engine::general_purpose::STANDARD
             .encode([0x30, 0x82, 0x04, 0xbd, 0x02, 0x01, 0x00, 0x30]);
-        assert!(matches!(decoded(&pkcs8), Some(Decoded::DerPrivateKey)));
+        assert!(matches!(
+            decoded(&pkcs8, &mut Budget::after(0)),
+            Some(Decoded::DerPrivateKey)
+        ));
         let certificate = base64::engine::general_purpose::STANDARD
             .encode([0x30, 0x82, 0x03, 0x5d, 0x30, 0x82, 0x02, 0x45]);
-        assert!(decoded(&certificate).is_none());
+        assert!(decoded(&certificate, &mut Budget::after(0)).is_none());
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         std::io::Write::write_all(&mut gz, b"token=x").expect("write");
         let gz = base64::engine::general_purpose::STANDARD.encode(gz.finish().expect("finish"));
-        assert!(matches!(decoded(&gz), Some(Decoded::Text(text)) if text == "token=x"));
+        assert!(
+            matches!(decoded(&gz, &mut Budget::after(0)), Some(Decoded::Text(text)) if text == "token=x")
+        );
+    }
+
+    fn gzip_base64(bytes: &[u8]) -> String {
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        std::io::Write::write_all(&mut gz, bytes).expect("write");
+        base64::engine::general_purpose::STANDARD.encode(gz.finish().expect("finish"))
+    }
+
+    #[test]
+    fn decoding_stops_at_the_message_budget() {
+        let blob = gzip_base64(&vec![b'A'; 5 << 20]);
+        let mut budget = Budget::after(0);
+        assert!(matches!(
+            decoded(&blob, &mut budget),
+            Some(Decoded::Text(_))
+        ));
+        assert!(matches!(
+            decoded(&blob, &mut budget),
+            Some(Decoded::OverBudget)
+        ));
+        budget.next_message();
+        assert!(matches!(
+            decoded(&blob, &mut budget),
+            Some(Decoded::Text(_))
+        ));
+    }
+
+    #[test]
+    fn decoding_stops_at_the_bundle_budget() {
+        let blob = gzip_base64(&vec![b'A'; 5 << 20]);
+        let mut budget = Budget::after(0);
+        let mut decoded_messages = 0;
+        while matches!(decoded(&blob, &mut budget), Some(Decoded::Text(_))) {
+            decoded_messages += 1;
+            budget.next_message();
+        }
+        assert_eq!(decoded_messages, BUNDLE_DECODE_BYTES / (5 << 20));
     }
 }

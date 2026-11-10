@@ -380,3 +380,70 @@ fn a_misspelled_rule_field_is_refused() {
         "{parsed:?}"
     );
 }
+
+#[test]
+fn a_mapped_placeholder_that_reads_as_a_secret_is_redacted_before_ingest_sees_it() -> TestResult {
+    let mapping = sanitize::mapping::parse(
+        "[[rule]]\nliteral = \"Nightjar\"\naction = \"map\"\nas = \"db_password=mapped-pw-0001\"\n",
+    )?;
+    let input = raw(vec![session(
+        "0195f0c2-0000-7000-8000-000000000003",
+        vec![message("evt-1", "ship Nightjar today".to_owned())],
+    )?])?;
+    let sanitized = sanitize::run(
+        &input,
+        &Policy {
+            mapping,
+            key: LocalKey::from_bytes([7; 32]),
+        },
+        at()?,
+    )?;
+    let file = String::from_utf8(sanitized.sealed.text.clone())?;
+    assert!(!file.contains("mapped-pw-0001"), "{file}");
+    assert_eq!(sanitize::secrets(&sanitized.sealed.bundle), []);
+    assert!(sanitized.report.rechecked > 0);
+    assert!(
+        sanitized
+            .report
+            .markdown("s.clean.json", "m.toml")
+            .contains("re-check")
+    );
+    Ok(())
+}
+
+fn gzip_base64(bytes: &[u8]) -> Result<String, std::io::Error> {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    gz.write_all(bytes)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gz.finish()?))
+}
+
+#[test]
+fn a_decode_bomb_is_redacted_whole_in_sanitize_and_ingest() -> TestResult {
+    let inner = gzip_base64(&vec![b'A'; 4 << 20])?;
+    let layer = [inner.as_str(); 12].join(" ");
+    let bomb = gzip_base64(layer.as_bytes())?;
+    let mut tool = message("evt-1", "x".to_owned());
+    tool.tool_result = Some(format!("blob {bomb}"));
+    let input = raw(vec![session(
+        "0195f0c2-0000-7000-8000-000000000004",
+        vec![tool],
+    )?])?;
+    assert!(
+        sanitize::secrets(&input)
+            .iter()
+            .any(|change| change.rule.to_string() == "undecoded_blob")
+    );
+    let sanitized = sanitize::run(&input, &policy()?, at()?)?;
+    let file = String::from_utf8(sanitized.sealed.text.clone())?;
+    assert!(!file.contains(&bomb[..40]));
+    assert!(file.contains("[REDACTED:undecoded_blob]"), "{file}");
+    assert!(
+        sanitized
+            .report
+            .markdown("s.clean.json", "m.toml")
+            .contains("undecoded_blob")
+    );
+    Ok(())
+}

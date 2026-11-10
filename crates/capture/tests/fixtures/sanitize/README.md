@@ -1,6 +1,6 @@
 # Sanitize corpora
 
-Each directory is one corpus of fake secrets and real-looking text that `rh memory sanitize` must handle. `tests/it/sanitize_corpus.rs` runs every `cases.jsonl` line through `capture::sanitize::run` with a fixed local key and no mapping, and one test per directory fails with the list of shapes that leaked or changed.
+Each directory is one corpus of fake secrets and real-looking text that `rh memory sanitize` must handle. `tests/it/sanitize_corpus.rs` runs every `cases.jsonl` line through `capture::sanitize::run` with a fixed local key and no mapping, and one test per directory fails with the list of shapes that leaked or changed. A second test runs every case of every corpus through `capture::sanitize::secrets`, the scan `rh memory ingest-bundle` runs on a sanitized bundle, and fails when a sanitized case still matches or needed sanitize's own re-check, because either one is a sanitizer bug.
 
 ## Case lines
 
@@ -21,10 +21,13 @@ Every value is fake. A planted value carries `PLANTED` where the format allows; 
 
 - `vendor-shapes-r1`: the round-1 vendor token, URL, PEM, env and config shapes (65).
 - `unseen-shapes-r2`: the round-2 vendor and cloud shapes the first ruleset had never seen (73).
-- `vendor-and-code-shapes-r3`: round-3 vendor CLIs, cookies, SQL, PHP, Ruby, Go, Java and Rust forms, plus two controls that must stay (83).
-- `placement-and-forms`: a planted value in every bundle field, assignment separators, base64 blobs, placeholder boundaries and name-table forms (102).
-- `real-output-contexts-r3`: snippets of real tool output (CI workflows, OAuth library source, lockfiles, OpenAPI specs, Rust code) that a sanitizer must leave alone, plus the planted secrets inside that corpus (242).
+- `vendor-and-code-shapes-r3`: round-3 vendor CLIs, cookies, SQL, PHP, Ruby, Go, Java and Rust forms, plus two controls that must stay (82).
+- `placement-and-forms`: a planted value in every bundle field, assignment separators, base64 blobs, placeholder boundaries and name-table forms (101).
+- `real-output-contexts-r3`: snippets of real tool output (CI workflows, OAuth library source, lockfiles, OpenAPI specs, Rust code) that a sanitizer must leave alone, plus the planted secrets inside that corpus (232).
 - `round-3-fixes`: the cases behind fix-list items 2, 4, 5, 7, 8 and 9-12 (47).
+- `round-4-fixes`: shell parameter expansions kept whole, URL users, bracket tails, long YAML block scalars, a PEM block followed by code, pretty-printed JSON under secret names, name/value pairs (Kubernetes env, ECS, HAR), `gh secret set`, and prose after a secret word (43).
+
+The corpora hold 643 cases.
 
 ## Adding a shape
 

@@ -1,6 +1,7 @@
 pub mod key;
 pub mod mapping;
 pub mod report;
+mod rescan;
 mod scrub;
 
 use chrono::DateTime;
@@ -8,6 +9,7 @@ use chrono::Utc;
 use serde::Serialize;
 use strum::IntoEnumIterator as _;
 use thiserror::Error;
+use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::Sanitization;
 use wire::capture::SanitizeStamp;
@@ -28,7 +30,10 @@ pub use report::Report;
 pub use report::RuleId;
 pub use report::SessionLine;
 pub use report::Spot;
+use rescan::Rescan;
 use scrub::Scrubber;
+
+const RECHECKS: usize = 4;
 
 #[derive(Debug, Error)]
 pub enum SanitizeError {
@@ -38,6 +43,10 @@ pub enum SanitizeError {
     Bundle(#[from] BundleError),
     #[error("sanitize policy does not serialize: {0}")]
     Policy(#[from] serde_json::Error),
+    #[error(
+        "the sanitized bundle still holds {0} secret pattern match(es) after every re-check; this is a sanitizer bug, so nothing was written"
+    )]
+    Unsettled(usize),
 }
 
 #[derive(Debug)]
@@ -121,6 +130,15 @@ pub fn run(
     }
     let mut exported_by = bundle.manifest.exported_by.clone();
     scrubber.manifest(&mut exported_by);
+    let first_pass = scrubber.changes.len();
+    recheck(
+        &mut scrubber,
+        &mut sessions,
+        &mut exported_by,
+        policy,
+        raw_digest,
+    );
+    let rechecked = scrubber.changes.len() - first_pass;
     let policy_sha256 = policy.hash(raw_digest)?;
     let sealed = crate::bundle::seal(
         exported_by,
@@ -133,6 +151,10 @@ pub fn run(
         }),
         sessions,
     )?;
+    let remaining = secrets(&sealed.bundle).len();
+    if remaining > 0 {
+        return Err(SanitizeError::Unsettled(remaining));
+    }
     let report = Report {
         at,
         policy_sha256,
@@ -146,28 +168,44 @@ pub fn run(
             .collect(),
         changes: scrubber.changes,
         collisions: scrubber.collisions,
+        rechecked,
     };
     Ok(Sanitized { sealed, report })
 }
 
+fn recheck(
+    scrubber: &mut Scrubber<'_>,
+    sessions: &mut [BundledSession],
+    exported_by: &mut BundleAuthor,
+    policy: &Policy,
+    digest: &str,
+) {
+    for round in 0..=RECHECKS {
+        let mut found = Rescan {
+            key: Some(&policy.key),
+            digest,
+            whole: round == RECHECKS,
+        }
+        .run(sessions, exported_by);
+        if found.changes.is_empty() {
+            return;
+        }
+        scrubber.changes.append(&mut found.changes);
+        scrubber.collisions.append(&mut found.collisions);
+    }
+}
+
 #[must_use]
 pub fn secrets(bundle: &SessionBundle) -> Vec<Change> {
-    let mapping = Mapping::default();
-    let mut scrubber = Scrubber::new(&mapping, None, &bundle.manifest.bundle_sha256);
-    for (index, session) in bundle.sessions.iter().enumerate() {
-        let mut copy = session.clone();
-        scrubber.session(index, &mut copy);
-        let ids: Vec<String> = session
-            .batch
-            .messages
-            .iter()
-            .map(|message| message.event_id.clone())
-            .collect();
-        scrubber.name_events(index, &ids);
-    }
+    let mut sessions = bundle.sessions.clone();
     let mut exported_by = bundle.manifest.exported_by.clone();
-    scrubber.manifest(&mut exported_by);
-    scrubber.changes
+    Rescan {
+        key: None,
+        digest: &bundle.manifest.bundle_sha256,
+        whole: false,
+    }
+    .run(&mut sessions, &mut exported_by)
+    .changes
 }
 
 fn event_ids(key: &LocalKey, session: &BundledSession) -> Vec<String> {

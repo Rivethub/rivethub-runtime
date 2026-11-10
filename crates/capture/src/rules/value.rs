@@ -54,19 +54,36 @@ pub(super) fn parse(rest: &str, placeholder_len: &dyn Fn(&str) -> usize) -> Opti
             shape: Shape::Bare,
         });
     }
-    if let Some((open, close)) = OPENERS.iter().find(|(open, _)| line.starts_with(open))
-        && let Some(end) = balanced_end(line, open, close)
-    {
-        return Some(Value {
-            range: 0..end,
-            shape: Shape::Bracketed,
-        });
+    if let Some((open, close)) = OPENERS.iter().find(|(open, _)| line.starts_with(open)) {
+        let end = match balanced_end(line, open, close) {
+            Some(end) => Some(end).filter(|&end| !word_follows(line, end)),
+            None if opens_json(rest, open) => balanced_end(rest, open, close),
+            None => None,
+        };
+        if let Some(end) = end {
+            return Some(Value {
+                range: 0..end,
+                shape: Shape::Bracketed,
+            });
+        }
     }
     let end = bare_end(line);
     (end > 0).then_some(Value {
         range: 0..end,
         shape: Shape::Bare,
     })
+}
+
+fn word_follows(line: &str, end: usize) -> bool {
+    line.get(end..)
+        .is_some_and(|tail| tail.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+}
+
+fn opens_json(rest: &str, open: &str) -> bool {
+    matches!(open, "{" | "[")
+        && rest
+            .get(open.len()..)
+            .is_some_and(|body| body.trim_start().starts_with(['"', '{', '[']))
 }
 
 fn next_line_value(
@@ -85,14 +102,14 @@ fn next_line_value(
         if line.trim().is_empty() {
             continue;
         }
-        if !line.starts_with([' ', '\t']) {
+        if !line.starts_with([' ', '\t', '{', '[']) {
             return None;
         }
         let indent = line.len() - line.trim_start().len();
         let start = at + indent;
         let body = rest.get(start..next_end)?;
-        if body.starts_with(['"', '\'']) {
-            let inner = parse(body, placeholder_len)?;
+        if body.starts_with(['"', '\'', '{', '[']) {
+            let inner = parse(rest.get(start..)?, placeholder_len)?;
             return Some(Value {
                 range: start + inner.range.start..start + inner.range.end,
                 shape: inner.shape,
@@ -105,6 +122,33 @@ fn next_line_value(
             shape: Shape::Bare,
         });
     }
+}
+
+pub(super) fn in_comment(
+    text: &str,
+    key_start: usize,
+    line_prefix: &regex::Regex,
+    openers: &[String],
+) -> bool {
+    let line_start = text
+        .get(..key_start)
+        .and_then(|head| head.rfind('\n'))
+        .map_or(0, |found| found + 1);
+    let prefix = text
+        .get(line_start..key_start)
+        .map(str::trim_start)
+        .unwrap_or_default();
+    let prefix = line_prefix
+        .find(prefix)
+        .map_or(prefix, |lead| prefix.get(lead.end()..).unwrap_or(prefix));
+    openers
+        .iter()
+        .any(|opener| prefix.starts_with(opener.as_str()))
+}
+
+pub(super) fn expansion_or_url_user(text: &str, key_start: usize) -> bool {
+    let head = text.get(..key_start).unwrap_or_default();
+    head.ends_with("${") || head.ends_with("://") || head.ends_with(":\\/\\/")
 }
 
 pub(super) fn prose_follows(rest: &str, value_end: usize) -> bool {
@@ -238,7 +282,7 @@ pub(super) fn unwrap_brackets(value: &str) -> &str {
 }
 
 pub(super) fn inner_strings(value: &str) -> Option<Vec<Range<usize>>> {
-    let body = value.trim_start_matches(['{', '[', ' ', '\t']);
+    let body = value.trim_start_matches(|c: char| c == '{' || c == '[' || c.is_whitespace());
     if !(value.starts_with('{') || value.starts_with('[')) || !body.starts_with(['"', '{', '[']) {
         return None;
     }

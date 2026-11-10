@@ -17,6 +17,7 @@ use compile::compile;
 use compile::compile_allow;
 pub use names::Family;
 pub use names::Names;
+pub use scan::Budget;
 pub use scan::Span;
 
 const GITLEAKS: &str = include_str!("gitleaks.toml");
@@ -60,6 +61,8 @@ pub enum RuleError {
     Pin { found: String, pinned: String },
     #[error("rivethub.toml has no [gitleaks] table pinning the vendored file")]
     Unpinned,
+    #[error("rivethub.toml has no rule of kind budget to name blobs left undecoded")]
+    NoBudget,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +125,8 @@ struct RawRule {
 #[serde(rename_all = "lowercase")]
 enum Kind {
     Names,
+    Pairs,
+    Budget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -196,6 +201,8 @@ impl Allow {
 enum Matcher {
     Regex(Regex),
     Names,
+    Pairs,
+    Budget,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,6 +238,7 @@ pub struct Ruleset {
     upstream: Upstream,
     digest: String,
     ours: usize,
+    budget: usize,
 }
 
 #[expect(
@@ -278,7 +286,8 @@ pub fn load() -> Result<Ruleset, RuleError> {
         let index = rules.len();
         let keywords = match raw.kind {
             Some(Kind::Names) => names.keywords(),
-            None => raw
+            Some(Kind::Budget) => Vec::new(),
+            Some(Kind::Pairs) | None => raw
                 .keywords
                 .iter()
                 .map(|word| word.to_lowercase())
@@ -297,6 +306,10 @@ pub fn load() -> Result<Ruleset, RuleError> {
         rules.push(rule(raw, source, &upstream.whole_match)?);
     }
     names.set_kinds(rules.iter().map(|rule| rule.id.clone()));
+    let budget = rules
+        .iter()
+        .position(|rule| matches!(rule.matcher, Matcher::Budget))
+        .ok_or(RuleError::NoBudget)?;
     let keywords = AhoCorasick::builder()
         .ascii_case_insensitive(true)
         .match_kind(MatchKind::Standard)
@@ -316,6 +329,7 @@ pub fn load() -> Result<Ruleset, RuleError> {
         upstream,
         digest: hex::encode(hasher.finalize()),
         ours: ours_count,
+        budget,
     })
 }
 
@@ -380,6 +394,8 @@ fn rule(raw: RawRule, source: Source, whole_match: &[String]) -> Result<Rule, Ru
     };
     let (matcher, multiline) = match (raw.kind, raw.regex) {
         (Some(Kind::Names), _) => (Matcher::Names, false),
+        (Some(Kind::Pairs), _) => (Matcher::Pairs, true),
+        (Some(Kind::Budget), _) => (Matcher::Budget, false),
         (None, Some(source)) => {
             let regex = compile(&source).map_err(|error| regex_error(&id, error))?;
             if let Some(group) = raw.secret_group

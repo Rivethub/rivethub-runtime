@@ -27,7 +27,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 deviations = [
-    "The vendored file is byte-identical to upstream; the loader applies these two changes.",
+    "The vendored file is byte-identical to upstream; the loader applies the changes below.",
     "An allowlist regex written ^a|b|c$ is compiled as ^(?:a|b|c)$, so the anchors cover every branch: upstream's (?i)^true|false|null$ would otherwise allow any secret that contains 'false' or ends in 'null'.",
     "The rules listed in whole_match redact the whole match: their first capture group is a repeated fragment of the match (a UUID segment), which gitleaks would report as the secret.",
     "gitleaks' global allowlist applies to gitleaks rules only; RivetHub rules use the [names] stopwords and templates.",
@@ -52,7 +52,7 @@ templates = [
     '''^\{\{[ \t]*[A-Za-z_][\w.|() -]*[ \t]*\}\}$''',
     '''^\$\{\{.*\}\}$''',
     '''^\{[A-Z_][A-Z0-9_]*\}$''',
-    '''^\$\{[A-Za-z_]\w*(?::-[^}]*)?\}$''',
+    '''^\$\{[A-Za-z_][\w.]*(?:[:?=+%#/-][^}]*)?\}$''',
     '''^\$[A-Z_][A-Z0-9_]*$''',
     '''^\$\(.*\)$''',
     '''^\$\d+$''',
@@ -94,8 +94,8 @@ keywords = ["bearer"]
 
 [[rules]]
 id = "pem_private_key"
-description = "PEM or PGP private key block, with or without its END line"
-regex = '''(?i)((?:-----BEGIN[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----|\[REDACTED:pem_private_key\])(?:(?:\\r|\\n|\r|\n|[ \t])+(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+:[ \t]*[^\r\n\\]*|\[REDACTED(?::[^\]]*)?\]))+(?:(?:\\r|\\n|\r|\n|[ \t])*(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*-----END[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----)?)'''
+description = "PEM or PGP private key block, with or without its END line; header lines count only right after BEGIN"
+regex = '''(?i)((?:-----BEGIN[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----(?:(?:\\r|\\n|\r|\n|[ \t])+(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*[A-Za-z-]+:[ \t]*[^\r\n\\]*)*|\[REDACTED:pem_private_key\])(?:(?:\\r|\\n|\r|\n|[ \t])+(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*(?:[A-Za-z0-9+/=]{16,}|\[REDACTED(?::[^\]]*)?\]))+(?:(?:\\r|\\n|\r|\n|[ \t])*(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*-----END[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----)?)'''
 keywords = ["-----begin", "[redacted:pem_private_key]"]
 
 [[rules]]
@@ -218,6 +218,25 @@ description = "value assigned to a password- or token-family name in shell, env,
 kind = "names"
 
 [[rules]]
+id = "name_value_pair"
+description = "value of a name/value pair whose name is password- or token-named: JSON {\"name\": \"DB_PASSWORD\", \"value\": \"x\"} on one line or pretty-printed (Kubernetes env, ECS task definitions, HAR headers and params) and YAML - name: DB_PASSWORD / value: x"
+kind = "pairs"
+keywords = ['"name"', 'name\"', "name:"]
+
+[[rules]]
+id = "har_cookie"
+description = "value of every cookie in a HAR cookies array, whatever the cookie is named"
+regex = '''(?s)"cookies"\s*:\s*\[([^\[\]]*)\]'''
+each = '''"value"\s*:\s*"((?:[^"\\]|\\.)*)"'''
+keywords = ['"cookies"']
+
+[[rules]]
+id = "gh_secret_set"
+description = "value given to gh secret set with --body or -b"
+regex = '''(?i)\bgh[ \t]+secret[ \t]+set\b[^\n]*?[ \t](?:--body|-b)(?:[ \t]+|=)(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"']+))'''
+keywords = ["secret set"]
+
+[[rules]]
 id = "curl_user"
 description = "password of curl -u user:password"
 regex = '''(?i)\bcurl\b[^\n]*?\s(?:-u|--user)(?:[ \t]+|=)(?:"[^"\n:]*:([^"\n]+)"|'[^'\n:]*:([^'\n]+)'|[^\s"':]+:([^\s"']+))'''
@@ -321,6 +340,11 @@ description = "base64 text of 40 or more characters, on one line or wrapped over
 regex = '''(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{40,}={0,2}(?:\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*)'''
 keywords = ["*"]
 decode = "base64"
+
+[[rules]]
+id = "undecoded_blob"
+description = "base64 text that would pass the decode budget (8 MiB of decoded bytes per message, 64 MiB per bundle, two nested layers), so it is redacted whole without being decoded"
+kind = "budget"
 
 [[rules]]
 id = "sql_password"

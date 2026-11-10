@@ -1,3 +1,5 @@
+mod pairs;
+
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -229,9 +231,7 @@ impl Names {
                 }
             }
         }
-        for variant in ["_key", "-key", "key=", "key:", "key ", "key\""] {
-            words.push(variant.to_owned());
-        }
+        words.extend(["_key", "-key", "key=", "key:", "key ", "key\""].map(str::to_owned));
         words.retain(|word| word != KEY_WORD);
         words
     }
@@ -417,7 +417,10 @@ impl Names {
                 break;
             };
             at = whole.end();
-            let Some(key) = captures.get(1) else {
+            let Some(key) = captures
+                .get(1)
+                .filter(|key| !value::expansion_or_url_user(text, key.start()))
+            else {
                 continue;
             };
             let Some(family) = self.family(key.as_str()) else {
@@ -433,7 +436,12 @@ impl Names {
             let ctx = Context {
                 key: key.as_str(),
                 key_quoted: captures.get(2).is_some(),
-                in_comment: self.in_comment(text, key.start()),
+                in_comment: value::in_comment(
+                    text,
+                    key.start(),
+                    &self.forms.line_prefix,
+                    &self.comment_openers,
+                ),
                 prose_follows: value::prose_follows(rest, value.range.end),
             };
             let base = whole.end();
@@ -484,7 +492,7 @@ impl Names {
             let Some(value) = rest.get(..end) else {
                 continue;
             };
-            if !self.forms.spaced_value.is_match(value) {
+            if !self.forms.spaced_value.is_match(value) || self.forms.word.is_match(value) {
                 continue;
             }
             let followed_by_separator = rest
@@ -504,25 +512,6 @@ impl Names {
                 found.push(whole.end()..whole.end() + end);
             }
         }
-    }
-
-    fn in_comment(&self, text: &str, key_start: usize) -> bool {
-        let line_start = text
-            .get(..key_start)
-            .and_then(|head| head.rfind('\n'))
-            .map_or(0, |found| found + 1);
-        let prefix = text
-            .get(line_start..key_start)
-            .map(str::trim_start)
-            .unwrap_or_default();
-        let prefix = self
-            .forms
-            .line_prefix
-            .find(prefix)
-            .map_or(prefix, |lead| prefix.get(lead.end()..).unwrap_or(prefix));
-        self.comment_openers
-            .iter()
-            .any(|opener| prefix.starts_with(opener.as_str()))
     }
 
     fn past_type_annotation(&self, rest: &str, value: Value) -> Value {

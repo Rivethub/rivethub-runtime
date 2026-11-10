@@ -3,6 +3,7 @@ use std::ops::Range;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
+use wire::capture::CaptureMessage;
 use wire::json::Scrub;
 use wire::json::member_path;
 
@@ -15,6 +16,7 @@ use super::report::Field;
 use super::report::RuleId;
 use super::report::Spot;
 use crate::redaction;
+use crate::rules::Budget;
 use crate::rules::Ruleset;
 
 const FINGERPRINT_HEX: usize = 12;
@@ -31,6 +33,8 @@ pub(super) struct Scrubber<'a> {
     rules: &'static Ruleset,
     key: Option<&'a LocalKey>,
     digest: &'a str,
+    pub(super) budget: Budget,
+    pub(super) whole: bool,
     pub(super) at: Location,
     pub(super) changes: Vec<Change>,
     pub(super) collisions: Vec<Collision>,
@@ -49,6 +53,8 @@ impl<'a> Scrubber<'a> {
             rules: crate::rules::ruleset(),
             key,
             digest,
+            budget: Budget::after(0),
+            whole: false,
             at: Location::default(),
             changes: Vec::new(),
             collisions: Vec::new(),
@@ -56,10 +62,18 @@ impl<'a> Scrubber<'a> {
     }
 
     pub(super) fn session(&mut self, index: usize, session: &mut BundledSession) {
+        self.header(index, session);
+        for (position, message) in session.batch.messages.iter_mut().enumerate() {
+            self.message(index, position, message);
+        }
+    }
+
+    pub(super) fn header(&mut self, index: usize, session: &mut BundledSession) {
         self.at = Location {
             session: Some(index),
             message: None,
         };
+        self.budget.next_message();
         self.secrets_only(&Field::OriginAuthor, &mut session.origin.author);
         self.text(&Field::OriginNode, &mut session.origin.node);
         self.text(
@@ -83,27 +97,38 @@ impl<'a> Scrubber<'a> {
         if let Some(settings) = &mut batch.settings {
             self.object(Field::Settings, settings);
         }
-        for (position, message) in batch.messages.iter_mut().enumerate() {
-            self.at.message = Some(position);
-            self.secrets_only(&Field::EventId, &mut message.event_id);
-            self.text(&Field::Content, &mut message.content);
-            if let Some(result) = &mut message.tool_result {
-                self.text(&Field::ToolResult, result);
-            }
-            if let Some(name) = &mut message.tool_name {
-                self.text(&Field::ToolName, name);
-            }
-            if let Some(arguments) = &mut message.tool_args {
-                self.object(Field::ToolArgs, arguments);
-            }
-            if let Some(metadata) = &mut message.metadata {
-                self.object(Field::Metadata, metadata);
-            }
+    }
+
+    pub(super) fn message(
+        &mut self,
+        session: usize,
+        position: usize,
+        message: &mut CaptureMessage,
+    ) {
+        self.at = Location {
+            session: Some(session),
+            message: Some(position),
+        };
+        self.budget.next_message();
+        self.secrets_only(&Field::EventId, &mut message.event_id);
+        self.text(&Field::Content, &mut message.content);
+        if let Some(result) = &mut message.tool_result {
+            self.text(&Field::ToolResult, result);
+        }
+        if let Some(name) = &mut message.tool_name {
+            self.text(&Field::ToolName, name);
+        }
+        if let Some(arguments) = &mut message.tool_args {
+            self.object(Field::ToolArgs, arguments);
+        }
+        if let Some(metadata) = &mut message.metadata {
+            self.object(Field::Metadata, metadata);
         }
     }
 
     pub(super) fn manifest(&mut self, exported_by: &mut BundleAuthor) {
         self.at = Location::default();
+        self.budget.next_message();
         self.text(&Field::ExporterUser, &mut exported_by.user);
         self.text(&Field::ExporterNode, &mut exported_by.node);
     }
@@ -116,9 +141,9 @@ impl<'a> Scrubber<'a> {
         object.scrub(&mut adapter);
     }
 
-    fn secret_hits(&self, text: &str) -> Vec<Hit> {
+    fn secret_hits(&mut self, text: &str) -> Vec<Hit> {
         self.rules
-            .spans(text)
+            .spans_within(text, &mut self.budget)
             .into_iter()
             .map(|span| Hit {
                 range: span.range,
@@ -171,6 +196,7 @@ impl<'a> Scrubber<'a> {
         let protected = protected(text, self.rules);
         let mut out = String::with_capacity(text.len());
         let mut copied = 0;
+        let whole = hits.first().map(|hit| hit.replacement.clone());
         for hit in hits {
             for piece in unprotected(&hit.range, &protected) {
                 if piece.start < copied {
@@ -189,6 +215,12 @@ impl<'a> Scrubber<'a> {
             }
         }
         if copied == 0 {
+            return;
+        }
+        if self.whole
+            && let Some(replacement) = whole
+        {
+            *text = replacement;
             return;
         }
         out.push_str(text.get(copied..).unwrap_or_default());

@@ -190,6 +190,7 @@ pub struct Report {
     pub rules: Vec<(usize, Action)>,
     pub changes: Vec<Change>,
     pub collisions: Vec<Collision>,
+    pub rechecked: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -264,6 +265,9 @@ impl Report {
             out,
             format_args!("# Sanitize report for {}\n", cell(bundle)),
         );
+        out.push_str(
+            "The sanitizer is best-effort. It reliably catches known vendor tokens, assignments to password- and token-named keys in env, JSON, YAML, XML, SQL and code, name/value pairs with such names, URL credentials, PEM and DER private keys, base64 blobs that decode to any of those, and mapped terms. It can miss unusual code forms, vendor shapes it has no rule for, and passwords written as bare words in prose or with spaces outside quotes. Read this report before the bundle leaves the machine.\n\n",
+        );
         push_line(
             out,
             format_args!(
@@ -275,9 +279,16 @@ impl Report {
                 totals.redacted,
             ),
         );
-        out.push_str(
-            "The sanitizer is best-effort. It reliably catches known vendor tokens, assignments to password- and token-named keys in env, JSON, YAML, XML, SQL and code, URL credentials, PEM and DER private keys, base64 blobs that decode to any of those, and mapped terms. It can miss unusual code forms and vendor shapes it has no rule for. Read this report before the bundle leaves the machine.\n\n",
-        );
+        if self.rechecked > 0 {
+            push_line(
+                out,
+                format_args!(
+                    "The re-check that ingest runs found {} more {} after the first pass; they are redacted below. Each one is a sanitizer bug worth reporting.\n",
+                    self.rechecked,
+                    plural(self.rechecked, "span", "spans"),
+                ),
+            );
+        }
         out.push_str(
             "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n",
         );
