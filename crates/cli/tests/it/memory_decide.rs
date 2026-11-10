@@ -193,8 +193,9 @@ async fn sanitize_with_decide(node: &Node, block: bool) -> Decided {
     assert_eq!(
         sanitize.stdout,
         format!(
-            "sanitized 1 session: 0 secrets, 0 mapped, 0 redacted; report at {}\ndecision pass: stub-model scored 2 chunks in 2 calls, 0 trivial chunks skipped; 1 flag for review (top 5 per session at or over 0.30); {next}\nreview summary: changes by rule: no rule matched\n{SUMMARY_TAIL}",
-            decided.report
+            "sanitized 1 session: 0 secrets, 0 mapped, 0 redacted; report at {}\ndecision pass: stub-model scored 2 chunks in 2 calls, 0 trivial chunks skipped; 1 flag for review (top 5 per session at or over 0.30); {next}\nlocal review file at {} holds the withheld text; never share it or the report, share only the bundle\nreview summary: changes by rule: no rule matched\n{SUMMARY_TAIL}",
+            decided.report,
+            decided.report.replace(".report.md", ".review.local.json")
         )
     );
     decided

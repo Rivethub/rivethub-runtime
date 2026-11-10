@@ -57,7 +57,7 @@ pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) 
         Mode::Block => push_line(
             out,
             format_args!(
-                "This review blocks. Until you mark a flag, {} holds `[FLAGGED:<n>]` in place of its text at every place, so that text leaves this machine only if you keep it. Ingest refuses the bundle while any flag is open.\n",
+                "This review blocks. Until you mark a flag, {} holds `[FLAGGED:<n>]` in place of its text at every exact occurrence the review found. The same text in another form, such as JSON-escaped in a tool result or inside a larger unflagged chunk, is not guaranteed to be withheld or marked. Ingest refuses the bundle while any flag is open.\n",
                 cell(bundle),
             ),
         ),

@@ -1998,7 +1998,7 @@ flag left with no place is dropped before numbering. Where places of several fla
 strongest mark among the flags covering it: `redact`, then (with `--block`) withheld while any covering flag is open,
 then `map`, then `keep`; a map term match that touches a redacted or withheld run joins it. The report keeps note
 136's layout and its best-effort paragraph first; after the totals line it says to never share the report, because
-its Flags section shows each flagged text (and in block mode the text the bundle withholds), and the sentence that the
+its Flags section shows each flagged text (and in block mode the text the bundle withholds), and that the same holds for `<out without .json>.review.local.json`, and the sentence that the
 report never shows replaced text names only the secrets and mapping passes. The header adds a
 `- Stamp: <sanitize time>` line after the bundle digest, and a `Flags to review` section follows the header, before
 the table of rules. The section names the model, gives the scored, call and trivial counts, an `Unreviewed: <open>
@@ -2018,7 +2018,7 @@ The places stay on the sender's machine in `<out without .json>.review.local.jso
 mode 0600 and never shipped: the stamp time, a SHA-256 of the sessions as the secrets and mapping passes left them,
 each flag's number, text and places (field, the ordinal of the key or string in that field, byte range), and the
 pre-review value of every field holding a place, sealed with an HMAC under the local key. The share skill (SS-6) must
-never send it. The review is advisory by default: the bundle keeps each flagged text, and ingest does not wait for
+never send it. A mark applies to every exact occurrence of the flagged text that the review found; the same text in another form (JSON-escaped in a tool result, or inside a larger unflagged chunk) is not guaranteed to be marked, and the report says so. The review is advisory by default: the bundle keeps each flagged text, and ingest does not wait for
 it. With `--block` or `block = true`, every place of each open flag shows `[FLAGGED:<n>]` (the lowest open number
 covering that run), except a task id, which becomes a UUID derived from the local key so it stays a UUID; two keys
 that become equal keep both values with note 136's `#2` suffix. `ingest-bundle` refuses a block bundle while any flag

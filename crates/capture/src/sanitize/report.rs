@@ -314,7 +314,7 @@ impl Report {
             if decision.review.mode == super::decide::Mode::Block {
                 out.push_str(", including the text the bundle withholds");
             }
-            out.push_str(", so it is for you alone; share only the bundle.\n\n");
+            out.push_str(", so it is for you alone. Never share `<out without .json>.review.local.json` either, which holds the withheld text; share only the bundle.\n\n");
         }
         if self.rechecked > 0 {
             push_line(

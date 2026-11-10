@@ -180,6 +180,13 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
         "sanitized {count} {noun}: {totals}; report at {}\n{decided}",
         report_path.display()
     );
+    if sanitized.local.is_some() {
+        out.push_str("local review file at ");
+        out.push_str(&local_path(&report_path).display().to_string());
+        out.push_str(
+            " holds the withheld text; never share it or the report, share only the bundle\n",
+        );
+    }
     out.push_str(&summary(&sanitized.report));
     Ok(Report::success(out))
 }
