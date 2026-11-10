@@ -2063,6 +2063,63 @@ Unreviewed line, so running it again changes neither file. The bundle defaults t
 `--learn` refuses a term under 3 non-space characters, parses the mapping file with the new rules and creates its
 folder before it writes anything, then writes the bundle, the report and the mapping file.
 
+(139) Session tools over MCP (Phil, 2026-11-10; session-sharing plan SS-5; uses notes 134 to 137): `rh mcp` serves four
+more tools, `session_find`, `session_export`, `session_sanitize` and `session_import`, only over stdio, the transport
+whose client runs on this machine as this user. It does not list or answer them when it serves a host or a socket, and
+`rh local` never serves them. Every input rejects an unknown field, and no input names a URL, host, gateway or other
+node: no MCP tool sends a bundle anywhere. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
+posts to `memory.capture.gateway` when set (note 135). `memory_write` still guards only tag writes; it does not gate
+these tools. `rh mcp` reads `memory.sanitize`, `memory.capture.redaction`, the users registry and the node name at
+startup, so a change to them needs a restart.
+
+`session_find {query, since?, before?, agent?, tag?, limit?}` (limit 1 to 25, default 10; times RFC 3339) is
+read-only. It runs a hybrid memory search for four hits per wanted session, at most 100, groups the hits by session
+key and ranks sessions by best score, then hit count, then latest hit. It reads the node owner's digest of each key
+(`SessionArchive::digests`: conversation id, title, agent, first and last message time, message count, and the origin
+author of an import) and drops hits whose key has no digest, such as a trashed session (note 127), saying how many.
+Each entry reads `<n>. <conversation id>  "<title>"  <agent>  <first> to <last>  <count> messages  best <score>
+(<hits> hits)`, plus `  from <author>` for an import, dates in the server's display zone, then up to three
+excerpts of at most 200 characters with whitespace collapsed.
+
+Files. Every write goes into the share directory, `$XDG_DATA_HOME/rivethub/share` (`~/.local/share/rivethub/share`
+when unset), created with mode 0700. An `out` is a bare file name: a letter or digit, then up to 99 letters, digits,
+`.`, `_` or `-`, then `.json`, and not ending `.review.local.json`, so a path, `..`, `~` or a URL cannot be written.
+A tool never replaces a file: it refuses an `out` whose bundle, report or local review file exists, and writes each
+file as note 134 does but renames without replacing, so a second run cannot wipe the marks typed into a report. A read
+(`in`, `path`, `mapping`) takes a bare share-directory name or an absolute path; it is resolved through symlinks first
+and must be a regular file under the home directory with no component starting with `.` below it, the share
+directory excepted, and must end `.json` (a bundle) or `.toml` (a mapping). A file that does not parse as a bundle is
+reported as `not a session bundle: <path>`, never with the parser's text. Replies give absolute paths.
+
+`session_export {conversation_ids, out}` takes 1 to 50 conversation ids (UUIDs, repeats dropped) and writes the raw
+bundle `rh memory bundle --session` writes for the node owner (note 134), refusing an unknown id by name with nothing
+written. It replies `bundled <n> sessions (raw, not sanitized) to <path>` and `sanitize it with session_sanitize
+before it leaves this machine`.
+
+`session_sanitize {in, out, mapping?, decide?}` runs the sequence `rh memory sanitize` runs (notes 136 and 137,
+through `capture::share`), with the mapping from `mapping` or `memory.sanitize.mapping` and, when `decide` is true,
+the review configured at `memory.sanitize.decide` (its `block` sets the mode); `decide` with no URL configured is an
+error naming that key. It writes the bundle, the report and, after a review, the local review file under the same
+names as the CLI. It replies with the totals, the three paths, the changes by rule and the best-effort sentence, and
+after a review the model, chunks scored, calls, trivial chunks skipped, mode and open flag count, then for each flag,
+highest score first and at most 50 (`and <n> more in the report`), its number, score, first place (session, message
+and field name) with the count of other places, the report line of its Mark line, and its length in characters. A
+reply never holds flagged text, a title or a key path, and no argument asks for them: the reply lands in an agent
+session that is itself captured. It ends `share only the bundle, never the report or the local review file; mark
+flags on their Mark lines in the report and run rh memory sanitize --resolve <report>`.
+
+`session_import {path, dry_run?}` captures into this node's own store only, as the gateway's `/api/capture` does,
+with no HTTP and no spool: per session it builds note 135's import batch, applies this node's capture redaction and
+size caps, and records it as the node owner with this node's name. It has no force. A bundle that does not parse or
+whose digest fails is an error. A raw bundle, version 1 included, is refused with or without `dry_run`, and its
+sessions are not listed. A sanitized bundle the ingest scan still matches is refused with the match count and the
+first match's place (session, message, field and rule, never the text); one with open withheld flags is refused with
+their count. With `dry_run` those two list each session as `ingest-bundle --dry-run` does, with matched fields
+masked, and end `refused: ...; nothing written`. Open advisory flags do not stop an import; the reply counts them. A
+clean bundle replies `ingested <n> sessions from <authors>: <i> inserted, <s> skipped` (`would import ...; nothing
+written` on a dry run). Importing the same bundle again inserts nothing, because the store keys an import by owner
+and origin and skips event ids it has (note 135).
+
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 
 (126) Models per memory job (Phil, 2026-11-06): `memory.models` names the model each memory job runs on. `default` is `{provider, model, effort?}` and is required when the section is present. `summarizer`, `categorizer` and `wiki_writer` take the same shape, and a role without an entry inherits `default`. `embedder` is `{provider, model?}` or `{endpoint, model}`, never both. `provider` names an entry under `providers`. `model` may be left out only when that provider names one. `effort` (low, medium or high) sets the reasoning effort of a CLI provider for that role, and on a server provider it is a validation warning. An embedder `provider` must be an openai-compatible or vllm provider: its `base_url` is the embeddings endpoint and its `api_key` or `token_command` authenticate. An embedder `endpoint` is a base URL, and the memory backend's `embed_api_key`, `embed_expected_dims`, `embed_timeout_ms` and `embed_query_instruction` still apply to it. A bad reference, a missing model, `provider` together with `endpoint`, and a `default` that is missing are validation errors; an unknown key under `memory.models` is a warning. The TypeScript runtime accepted any `memory.models` value as an unknown key, so one recorded case (`validate_config_memory.jsonl:747`, `models: ":memory:"`) is now rejected and sits in the deviations table.
