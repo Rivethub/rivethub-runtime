@@ -316,3 +316,55 @@ fn crafted_long_lines_sanitize_in_bounded_time() -> TestResult {
     assert!(pairs.len() < 1_000, "{pairs}");
     Ok(())
 }
+
+#[test]
+fn a_flag_written_in_the_session_is_escaped_so_ingest_never_counts_it_withheld() -> TestResult {
+    let bundle = raw(vec![session(
+        "claude-code:s",
+        vec![message(
+            "e1",
+            "the test expects a [FLAGGED:12] b [FLAGGED:x]",
+        )],
+    )])?;
+    let out = sanitize::run(&bundle, &policy("")?, at()?)?;
+    let text = String::from_utf8(out.sealed.text.clone())?;
+    assert_eq!(
+        first_content(&text)?,
+        "the test expects a [FLAGGED 12] b [FLAGGED:x]"
+    );
+    assert_eq!(sanitize::withheld(&out.sealed.bundle), 0);
+    assert_eq!(
+        out.report
+            .changes
+            .iter()
+            .map(|change| change.rule.to_string())
+            .collect::<Vec<_>>(),
+        ["[FLAGGED:<n>] written in the session"]
+    );
+    Ok(())
+}
+
+#[test]
+fn ingest_scan_accepts_the_flag_forms_after_secret_names() -> TestResult {
+    let mut tool = message(
+        "e2",
+        "DB_PASSWORD=[FLAGGED:3]\nexport API_TOKEN=\"[FLAGGED:12]\"\napi_token: [REDACTED:flagged]",
+    );
+    tool.tool_args = Some(serde_json::from_str(
+        r#"{"password": "[FLAGGED:4]", "token": "[REDACTED:flagged]"}"#,
+    )?);
+    let flagged = raw(vec![session("claude-code:s", vec![tool])])?;
+    assert_eq!(
+        sanitize::secrets(&flagged)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        Vec::<String>::new()
+    );
+    let lookalike = raw(vec![session(
+        "claude-code:s",
+        vec![message("e3", "DB_PASSWORD=[FLAGGED:x]")],
+    )])?;
+    assert_eq!(sanitize::secrets(&lookalike).len(), 1);
+    Ok(())
+}

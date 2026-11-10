@@ -148,6 +148,7 @@ pub fn scrub(bundle: &SessionBundle, policy: &Policy) -> Result<Scrubbed, Saniti
     }
     let raw_digest = &bundle.manifest.bundle_sha256;
     let mut scrubber = Scrubber::new(&policy.mapping, Some(&policy.key), raw_digest);
+    scrubber.escape_flags = true;
     let mut sessions = bundle.sessions.clone();
     for (index, session) in sessions.iter_mut().enumerate() {
         let ids = event_ids(&policy.key, session);
@@ -252,6 +253,7 @@ fn settled(sealed: Sealed) -> Result<Sealed, SanitizeError> {
 pub struct Resolved {
     pub sealed: Sealed,
     pub open: usize,
+    pub rechecked: Vec<Change>,
 }
 
 pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, SanitizeError> {
@@ -281,6 +283,14 @@ pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, 
         .collect();
     let mut sessions = bundle.sessions.clone();
     decide::resolve(&mut sessions, &marks);
+    let mut exported_by = bundle.manifest.exported_by.clone();
+    let rechecked = recheck(
+        &mut sessions,
+        &mut exported_by,
+        None,
+        &bundle.manifest.bundle_sha256,
+    )
+    .changes;
     let unmarked = flags
         .flags
         .iter()
@@ -288,7 +298,7 @@ pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, 
         .count();
     let open = unmarked.max(decide::withheld(&sessions));
     let sealed = settled(crate::bundle::seal(
-        bundle.manifest.exported_by.clone(),
+        exported_by,
         bundle.manifest.exported_at,
         Sanitization::Sanitized(SanitizeStamp {
             unresolved_flags: u32::try_from(open)?,
@@ -296,7 +306,11 @@ pub fn resolve(bundle: &SessionBundle, flags: &ReportFlags) -> Result<Resolved, 
         }),
         sessions,
     )?)?;
-    Ok(Resolved { sealed, open })
+    Ok(Resolved {
+        sealed,
+        open,
+        rechecked,
+    })
 }
 
 #[must_use]

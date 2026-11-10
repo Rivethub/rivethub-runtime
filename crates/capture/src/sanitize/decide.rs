@@ -20,7 +20,7 @@ use super::report::Spot;
 pub const QUESTION: &str = "This line comes from an AI coding session that will be shared outside the author's household. Should it be redacted before sharing?";
 pub const CHUNK_CHARS: usize = 1200;
 pub const REDACTED_FLAG: &str = "[REDACTED:flagged]";
-const FLAG_OPEN: &str = "[FLAGGED:";
+const FLAG_OPEN: &str = crate::rules::names::FLAGGED_OPEN;
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone)]
@@ -409,7 +409,11 @@ fn placeholder(number: usize) -> String {
     format!("{FLAG_OPEN}{number}]")
 }
 
-fn placeholders(text: &str) -> Vec<(Range<usize>, usize)> {
+pub(super) fn escaped(number: usize) -> String {
+    format!("[FLAGGED {number}]")
+}
+
+pub(super) fn placeholders(text: &str) -> Vec<(Range<usize>, usize)> {
     let mut found = Vec::new();
     let mut from = 0;
     while let Some(offset) = text[from..].find(FLAG_OPEN) {

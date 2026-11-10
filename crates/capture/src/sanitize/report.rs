@@ -91,6 +91,7 @@ pub enum RuleId {
     SecretKey,
     Mapped { line: usize },
     Redacted { line: usize },
+    FlagLiteral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,14 +106,14 @@ impl RuleId {
     pub const fn change_kind(self) -> ChangeKind {
         match self {
             Self::Pattern(_) | Self::SecretKey => ChangeKind::Secret,
-            Self::Mapped { .. } => ChangeKind::Mapped,
+            Self::Mapped { .. } | Self::FlagLiteral => ChangeKind::Mapped,
             Self::Redacted { .. } => ChangeKind::Redacted,
         }
     }
 
     const fn order(self) -> usize {
         match self {
-            Self::Pattern(_) | Self::SecretKey => 0,
+            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => 0,
             Self::Mapped { line } | Self::Redacted { line } => line,
         }
     }
@@ -120,7 +121,7 @@ impl RuleId {
     const fn pass(self) -> Pass {
         match self {
             Self::Pattern(_) | Self::SecretKey => Pass::Secrets,
-            Self::Mapped { .. } | Self::Redacted { .. } => Pass::Mapping,
+            Self::Mapped { .. } | Self::Redacted { .. } | Self::FlagLiteral => Pass::Mapping,
         }
     }
 }
@@ -132,6 +133,7 @@ impl fmt::Display for RuleId {
             Self::SecretKey => formatter.write_str("secret key name"),
             Self::Mapped { line } => write!(formatter, "rule at line {line} (map)"),
             Self::Redacted { line } => write!(formatter, "rule at line {line} (redact)"),
+            Self::FlagLiteral => formatter.write_str("[FLAGGED:<n>] written in the session"),
         }
     }
 }
