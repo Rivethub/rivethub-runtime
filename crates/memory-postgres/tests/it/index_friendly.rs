@@ -281,6 +281,56 @@ async fn a_common_literal_answers_with_its_newest_matches(pool: PgPool) -> TestR
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_literal_scan_asked_for_by_name_still_finds_short_tokens(pool: PgPool) -> TestResult {
+    conversation(&pool).await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let kernel_order = message(
+        &pool,
+        1,
+        "kernel order A/B on kern-v2x9 was faster",
+        None,
+        None,
+    )
+    .await?;
+    let banner = message(&pool, 2, "A/B testing of the banner", None, None).await?;
+    assert_eq!(
+        hit_ids(
+            &memory,
+            &search("A/B", SearchMode::Trigram, MemoryScope::Messages)
+        )
+        .await?,
+        [banner.to_string(), kernel_order.to_string()]
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tool_hit_shows_the_output_it_matched_on(pool: PgPool) -> TestResult {
+    conversation(&pool).await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let output = format!(
+        "{}retry with RETRY_WIDGET_STAGES=1 now\n",
+        "log line\n".repeat(400)
+    );
+    message(&pool, 1, "[tool call] Bash", Some(&output), None).await?;
+    let hits = memory
+        .search_outcome_for(&search(
+            "RETRY_WIDGET_STAGES=1",
+            SearchMode::Trigram,
+            MemoryScope::Messages,
+        ))
+        .await?
+        .hits;
+    let content = &hits.first().ok_or("no hit")?.content;
+    assert!(content.starts_with("[tool call] Bash\n"), "{content}");
+    assert!(
+        content.contains("retry with RETRY_WIDGET_STAGES=1"),
+        "{content}"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn unchunked_returns_the_rows_of_the_full_length_scan(pool: PgPool) -> TestResult {
     conversation(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());

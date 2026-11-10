@@ -28,6 +28,7 @@ mod search_complete;
 mod search_content;
 mod search_details;
 mod search_fts;
+mod search_literal;
 mod search_recent;
 mod search_sql;
 mod search_vector;

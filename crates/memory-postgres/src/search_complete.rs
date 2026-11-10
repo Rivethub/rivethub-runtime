@@ -135,6 +135,7 @@ impl crate::PostgresMemory {
             None
         };
         let outcome = self.search_outcome_for(&query).await?;
+        let literal_skipped = outcome.literal_skipped;
         let reason = match outcome.degraded {
             Some(reason) => Some(reason),
             None if self.embed.is_none()
@@ -161,10 +162,18 @@ impl crate::PostgresMemory {
         let mut response = SearchOutcome {
             summaries,
             results: outcome.hits.into_iter().map(search_result).collect(),
-            degraded: reason.map(|reason| MemoryDegraded {
-                reason,
-                effect: "Keyword / FTS ranking only — not meaning-based.".to_owned(),
-            }),
+            degraded: reason
+                .map(|reason| MemoryDegraded {
+                    reason,
+                    effect: "Keyword / FTS ranking only — not meaning-based.".to_owned(),
+                })
+                .or_else(|| {
+                    literal_skipped.then(|| MemoryDegraded {
+                        reason: "the exact-token scan ran out of time".to_owned(),
+                        effect: "Exact-token matches may be missing — results come from the other search arms."
+                            .to_owned(),
+                    })
+                }),
             fallback: outcome.fallback,
             expanded,
             synthesis: None,

@@ -87,6 +87,13 @@ impl Error {
         }
     }
 
+    pub(crate) fn timed_out(&self) -> bool {
+        matches!(self, Self::Operation { source, .. }
+            if source
+                .as_database_error()
+                .is_some_and(|error| error.code().as_deref() == Some("57014")))
+    }
+
     pub(crate) fn protocol(message: impl Into<String>) -> Self {
         Self::Connection(sqlx::Error::Protocol(message.into()))
     }
