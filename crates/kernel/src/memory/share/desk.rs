@@ -300,12 +300,30 @@ fn hidden(c: char) -> bool {
         )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum FlagState {
     Open,
     Keep,
     Redact,
     Map { term: String, placeholder: String },
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "CONTRACT note 151: a map term is flagged text; Debug never prints it or its placeholder"
+    )
+)]
+impl fmt::Debug for FlagState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Open => "Open",
+            Self::Keep => "Keep",
+            Self::Redact => "Redact",
+            Self::Map { .. } => "Map { .. }",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -315,11 +333,28 @@ pub struct Mark {
     pub learn: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum FlagChoice {
     Keep,
     Redact,
     Map { term: String, placeholder: String },
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "CONTRACT note 151: a map term is flagged text; Debug never prints it or its placeholder"
+    )
+)]
+impl fmt::Debug for FlagChoice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Keep => "Keep",
+            Self::Redact => "Redact",
+            Self::Map { .. } => "Map { .. }",
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -261,6 +261,27 @@ async fn debug_never_shows_text_or_code() -> TestResult {
     ] {
         assert!(!shown.contains(RISKY), "{shown}");
     }
+    let mark = Mark {
+        number: flag.number,
+        choice: FlagChoice::Map {
+            term: RISKY.to_owned(),
+            placeholder: "PLACEHOLDER_SHOWN".to_owned(),
+        },
+        learn: false,
+    };
+    let marked = desk.mark(draft.id, vec![mark.clone()]).await?;
+    let mapped = marked.draft.flags.first().ok_or("one flag")?;
+    assert!(matches!(mapped.state, FlagState::Map { .. }));
+    for shown in [
+        format!("{marked:?}"),
+        format!("{mapped:?}"),
+        format!("{:?}", mapped.state),
+        format!("{mark:?}"),
+        format!("{:?}", mark.choice),
+    ] {
+        assert!(!shown.contains(RISKY), "{shown}");
+        assert!(!shown.contains("PLACEHOLDER_SHOWN"), "{shown}");
+    }
     let sent = kernel::memory::share::desk::Sent {
         code: "rh1:127.0.0.1:9/Qm9iQm9iQm9iQm9iQm9iQg#secretkeypart".to_owned(),
         expires_at: Utc::now(),
