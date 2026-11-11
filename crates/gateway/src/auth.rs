@@ -24,7 +24,8 @@ use crate::error::ApiError;
 const CORS_METHODS: &str = "GET, POST, PATCH, DELETE, OPTIONS";
 const CORS_HEADERS: &str = "content-type, authorization, x-rivet-conversation, x-rivet-title";
 pub(crate) const CHALLENGE: &str = "Bearer realm=\"rivethub\"";
-const FORWARDER_HEADERS: [&str; 3] = ["forwarded", "x-real-ip", "via"];
+const X_REAL_IP: header::HeaderName = header::HeaderName::from_static("x-real-ip");
+const X_FORWARDED_PREFIX: &str = "x-forwarded-";
 const BUILTIN_ORIGIN: &str = "app://bundle";
 const DENIAL_LOG_CAP: usize = 100;
 
@@ -64,10 +65,12 @@ pub(crate) fn direct_local(parts: &Parts) -> bool {
         .extensions
         .get::<ConnectInfo<SocketAddr>>()
         .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
-    let forwarded = parts.headers.keys().any(|name| {
-        let name = name.as_str();
-        FORWARDER_HEADERS.contains(&name) || name.starts_with("x-forwarded-")
-    });
+    let forwarded = parts.headers.contains_key(header::FORWARDED)
+        || parts.headers.contains_key(X_REAL_IP)
+        || parts
+            .headers
+            .keys()
+            .any(|name| name.as_str().starts_with(X_FORWARDED_PREFIX));
     let host = header_text(&parts.headers, &header::HOST)
         .map(str::to_owned)
         .or_else(|| {

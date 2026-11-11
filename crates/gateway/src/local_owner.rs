@@ -64,10 +64,16 @@ impl OwnerToken {
         Ok(Self(URL_SAFE_NO_PAD.encode(bytes)))
     }
 
-    fn parse(text: &str) -> Option<Self> {
+    fn parse(text: &str, path: &Path) -> Result<Self, TokenError> {
+        let malformed = || TokenError::Malformed {
+            path: path.to_path_buf(),
+        };
         let trimmed = text.trim();
-        let decoded = URL_SAFE_NO_PAD.decode(trimmed).ok()?;
-        (decoded.len() == TOKEN_BYTES).then(|| Self(trimmed.to_owned()))
+        let decoded = URL_SAFE_NO_PAD.decode(trimmed).map_err(|_| malformed())?;
+        if decoded.len() != TOKEN_BYTES {
+            return Err(malformed());
+        }
+        Ok(Self(trimmed.to_owned()))
     }
 
     #[must_use]
@@ -122,11 +128,7 @@ fn read_file(path: &Path) -> Result<Option<OwnerToken>, TokenError> {
     file.take(READ_CAP)
         .read_to_string(&mut text)
         .map_err(|error| io(path, error))?;
-    OwnerToken::parse(&text)
-        .map(Some)
-        .ok_or_else(|| TokenError::Malformed {
-            path: path.to_path_buf(),
-        })
+    OwnerToken::parse(&text, path).map(Some)
 }
 
 fn write_temp(path: &Path, token: &OwnerToken) -> Result<PathBuf, TokenError> {
