@@ -169,6 +169,7 @@ impl SessionShare for NodeShare {
         let bundle = read_bundle(&job.input).await?;
         let outcome = share::sanitize(share::Job {
             bundle: &bundle,
+            sessions: &std::collections::BTreeMap::new(),
             mapping: &mapping,
             key: &self.key,
             decider,

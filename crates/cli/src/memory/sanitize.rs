@@ -151,6 +151,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     let paths = BundlePaths::beside(out);
     let outcome = share::sanitize(share::Job {
         bundle: &bundle,
+        sessions: &std::collections::BTreeMap::new(),
         mapping: &mapping,
         key: &share::key_path(env)?,
         decider: decider.as_ref(),

@@ -7,6 +7,7 @@ use wire::capture::CaptureMessage;
 use wire::json::Scrub;
 use wire::json::member_path;
 
+use super::chosen::SessionRules;
 use super::key::LocalKey;
 use super::mapping::Action;
 use super::mapping::Mapping;
@@ -18,6 +19,8 @@ use super::report::Spot;
 use crate::redaction;
 use crate::rules::Budget;
 use crate::rules::Ruleset;
+use crate::rules::names::DROP_TOOL_OUTPUTS_KIND;
+use crate::rules::names::SESSION_TERM_KIND;
 
 const FINGERPRINT_HEX: usize = 12;
 
@@ -35,6 +38,7 @@ pub(super) struct Scrubber<'a> {
     pub(super) budget: Budget<'a>,
     pub(super) whole: bool,
     pub(super) escape_flags: bool,
+    pub(super) sessions: &'a SessionRules,
     pub(super) at: Location,
     pub(super) changes: Vec<Change>,
     pub(super) collisions: Vec<Collision>,
@@ -56,6 +60,7 @@ impl<'a> Scrubber<'a> {
             budget: Budget::after(0),
             whole: false,
             escape_flags: false,
+            sessions: &super::chosen::NONE,
             at: Location::default(),
             changes: Vec::new(),
             collisions: Vec::new(),
@@ -114,7 +119,11 @@ impl<'a> Scrubber<'a> {
         self.secrets_only(&Field::EventId, &mut message.event_id);
         self.text(&Field::Content, &mut message.content);
         if let Some(result) = &mut message.tool_result {
-            self.text(&Field::ToolResult, result);
+            if self.sessions.drops_tool_outputs(session) {
+                self.drop_output(result);
+            } else {
+                self.text(&Field::ToolResult, result);
+            }
         }
         if let Some(name) = &mut message.tool_name {
             self.text(&Field::ToolName, name);
@@ -164,6 +173,20 @@ impl<'a> Scrubber<'a> {
 
     pub(super) fn text(&mut self, field: &Field, text: &mut String) {
         self.secrets_only(field, text);
+        let sessions = self.sessions;
+        if let Some(terms) = self.at.session.and_then(|session| sessions.terms(session)) {
+            let placeholder = redaction::placeholder(SESSION_TERM_KIND);
+            let hits = terms
+                .spans(text)
+                .into_iter()
+                .map(|(range, _)| Hit {
+                    range,
+                    rule: RuleId::SessionTerm,
+                    replacement: placeholder.clone(),
+                })
+                .collect();
+            self.apply(field, text, hits);
+        }
         if self.mapping.is_empty() {
             return;
         }
@@ -181,6 +204,17 @@ impl<'a> Scrubber<'a> {
             })
             .collect();
         self.apply(field, text, hits);
+    }
+
+    fn drop_output(&mut self, result: &mut String) {
+        let placeholder = redaction::placeholder(DROP_TOOL_OUTPUTS_KIND);
+        self.record(
+            Field::ToolResult,
+            RuleId::DropToolOutputs,
+            result,
+            &placeholder,
+        );
+        *result = placeholder;
     }
 
     fn escape_flags(&mut self, field: &Field, text: &mut String) {

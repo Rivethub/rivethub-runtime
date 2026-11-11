@@ -92,6 +92,8 @@ pub enum RuleId {
     Mapped { line: usize },
     Redacted { line: usize },
     FlagLiteral,
+    SessionTerm,
+    DropToolOutputs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +110,9 @@ impl RuleId {
         match self {
             Self::Pattern(_) | Self::SecretKey => ChangeKind::Secret,
             Self::Mapped { .. } => ChangeKind::Mapped,
-            Self::Redacted { .. } => ChangeKind::Redacted,
+            Self::Redacted { .. } | Self::SessionTerm | Self::DropToolOutputs => {
+                ChangeKind::Redacted
+            }
             Self::FlagLiteral => ChangeKind::Escaped,
         }
     }
@@ -117,13 +121,17 @@ impl RuleId {
         match self {
             Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => 0,
             Self::Mapped { line } | Self::Redacted { line } => line,
+            Self::SessionTerm | Self::DropToolOutputs => usize::MAX,
         }
     }
 
     const fn pass(self) -> Pass {
         match self {
             Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => Pass::Secrets,
-            Self::Mapped { .. } | Self::Redacted { .. } => Pass::Mapping,
+            Self::Mapped { .. }
+            | Self::Redacted { .. }
+            | Self::SessionTerm
+            | Self::DropToolOutputs => Pass::Mapping,
         }
     }
 }
@@ -137,6 +145,10 @@ impl fmt::Display for RuleId {
             Self::Redacted { line } => write!(formatter, "rule at line {line} (redact)"),
             Self::FlagLiteral => {
                 formatter.write_str("[FLAGGED:<n>] written in the session (escaped)")
+            }
+            Self::SessionTerm => formatter.write_str(crate::rules::names::SESSION_TERM_KIND),
+            Self::DropToolOutputs => {
+                formatter.write_str(crate::rules::names::DROP_TOOL_OUTPUTS_KIND)
             }
         }
     }

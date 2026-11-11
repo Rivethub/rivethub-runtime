@@ -9,16 +9,23 @@ use chrono::Utc;
 use config::Config;
 use config::Environment;
 use config::MappingFile;
+use kernel::memory::share::Choice;
+use kernel::memory::share::SessionRedaction;
 use thiserror::Error;
+use wire::capture::BundleAuthor;
+use wire::capture::BundledSession;
 use wire::capture::LOCAL_SUFFIX;
 use wire::capture::REPORT_SUFFIX;
+use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 
+use crate::bundle::BundleError;
 use crate::sanitize::KeyError;
 use crate::sanitize::LocalKey;
 use crate::sanitize::Policy;
 use crate::sanitize::Report;
 use crate::sanitize::SanitizeError;
+use crate::sanitize::SessionRules;
 use crate::sanitize::decide::DecideError;
 use crate::sanitize::decide::Endpoint;
 use crate::sanitize::decide::Mode;
@@ -38,6 +45,10 @@ pub enum ShareError {
         path: String,
         source: std::io::Error,
     },
+    #[error("the redact terms do not build a search: {0}")]
+    SessionTerms(MappingError),
+    #[error(transparent)]
+    Bundle(#[from] BundleError),
     #[error(transparent)]
     Setup(#[from] SetupError),
     #[error(transparent)]
@@ -176,6 +187,7 @@ pub fn key_path(env: &Environment) -> Result<PathBuf, config::ConfigError> {
 #[derive(Debug)]
 pub struct Job<'a> {
     pub bundle: &'a SessionBundle,
+    pub sessions: &'a BTreeMap<usize, SessionRedaction>,
     pub mapping: &'a MappingFile,
     pub key: &'a Path,
     pub decider: Option<&'a Decider>,
@@ -195,7 +207,11 @@ pub struct Outcome {
 pub async fn sanitize(job: Job<'_>) -> Result<Outcome, ShareError> {
     let (mapping, source) = rules(job.mapping).await?;
     let key = LocalKey::load_or_create(job.key)?;
-    let policy = Policy { mapping, key };
+    let policy = Policy {
+        mapping,
+        key,
+        sessions: SessionRules::new(job.sessions).map_err(ShareError::SessionTerms)?,
+    };
     let mut scrubbed = crate::sanitize::scrub(job.bundle, &policy)?;
     if let Some(decider) = job.decider {
         let candidates = scrubbed.candidates();
@@ -228,6 +244,31 @@ pub async fn sanitize(job: Job<'_>) -> Result<Outcome, ShareError> {
         sanitized: sanitized.sealed.bundle,
         local: sanitized.local.is_some(),
         mark_lines,
+    })
+}
+
+#[derive(Debug)]
+pub struct Chosen {
+    pub bundle: SessionBundle,
+    pub sessions: BTreeMap<usize, SessionRedaction>,
+}
+
+pub fn chosen(
+    author: BundleAuthor,
+    sessions: Vec<(BundledSession, Choice)>,
+    at: DateTime<Utc>,
+) -> Result<Chosen, BundleError> {
+    let mut rules = BTreeMap::new();
+    let mut kept = Vec::with_capacity(sessions.len());
+    for (index, (session, choice)) in sessions.into_iter().enumerate() {
+        if let Choice::Redact(redaction) = choice {
+            rules.insert(index, redaction);
+        }
+        kept.push(session);
+    }
+    Ok(Chosen {
+        bundle: crate::bundle::seal(author, at, Sanitization::Raw, kept)?.bundle,
+        sessions: rules,
     })
 }
 

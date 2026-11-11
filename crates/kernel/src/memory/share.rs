@@ -31,6 +31,105 @@ pub struct SanitizeJob {
     pub decide: bool,
 }
 
+pub const MAX_CHOSEN: usize = 50;
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ChoiceError {
+    #[error("a redact term is blank; name the text to redact")]
+    BlankTerm,
+    #[error("redact names no rule; give at least one term or drop_tool_outputs: true")]
+    NoRule,
+    #[error("{0} sessions are chosen; choose from 1 to {MAX_CHOSEN}")]
+    Count(usize),
+    #[error("the session {0} is chosen twice; give each session one decision")]
+    Duplicate(Uuid),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Term(String);
+
+impl Term {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for Term {
+    type Error = ChoiceError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        if text.trim().is_empty() {
+            return Err(ChoiceError::BlankTerm);
+        }
+        Ok(Self(text))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRedaction {
+    terms: Vec<Term>,
+    drop_tool_outputs: bool,
+}
+
+impl SessionRedaction {
+    pub fn new(terms: Vec<Term>, drop_tool_outputs: bool) -> Result<Self, ChoiceError> {
+        if terms.is_empty() && !drop_tool_outputs {
+            return Err(ChoiceError::NoRule);
+        }
+        Ok(Self {
+            terms,
+            drop_tool_outputs,
+        })
+    }
+
+    #[must_use]
+    pub fn terms(&self) -> &[Term] {
+        &self.terms
+    }
+
+    #[must_use]
+    pub const fn drops_tool_outputs(&self) -> bool {
+        self.drop_tool_outputs
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    Approve,
+    Redact(SessionRedaction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionChoices(Vec<(Uuid, Choice)>);
+
+impl SessionChoices {
+    #[must_use]
+    pub fn as_slice(&self) -> &[(Uuid, Choice)] {
+        &self.0
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.0.iter().map(|(id, _)| *id)
+    }
+}
+
+impl TryFrom<Vec<(Uuid, Choice)>> for SessionChoices {
+    type Error = ChoiceError;
+
+    fn try_from(chosen: Vec<(Uuid, Choice)>) -> Result<Self, Self::Error> {
+        if chosen.is_empty() || chosen.len() > MAX_CHOSEN {
+            return Err(ChoiceError::Count(chosen.len()));
+        }
+        for (index, (id, _)) in chosen.iter().enumerate() {
+            if chosen.iter().take(index).any(|(seen, _)| seen == id) {
+                return Err(ChoiceError::Duplicate(*id));
+            }
+        }
+        Ok(Self(chosen))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SanitizeSummary {
     pub sessions: usize,

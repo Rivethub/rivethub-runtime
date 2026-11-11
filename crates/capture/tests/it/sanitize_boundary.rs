@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
+use capture::sanitize::SessionRules;
 use chrono::DateTime;
 use chrono::Utc;
 use wire::capture::BundleAuthor;
@@ -84,6 +85,7 @@ fn keyed(mapping: &str, key: [u8; 32]) -> Result<Policy, Box<dyn std::error::Err
     Ok(Policy {
         mapping: sanitize::mapping::parse(mapping)?,
         key: LocalKey::from_bytes(key),
+        sessions: SessionRules::default(),
     })
 }
 

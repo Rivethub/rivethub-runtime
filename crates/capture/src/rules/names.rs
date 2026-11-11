@@ -22,6 +22,8 @@ const PATTERN_KIND: &str = "pattern:";
 const SECRET_KEY_KIND: &str = "secret_key";
 pub(crate) const FLAGGED_KIND: &str = "flagged";
 pub(crate) const FLAGGED_OPEN: &str = "[FLAGGED:";
+pub(crate) const SESSION_TERM_KIND: &str = "session_term";
+pub(crate) const DROP_TOOL_OUTPUTS_KIND: &str = "drop_tool_outputs";
 const KEY_WORD: &str = "key";
 const MIN_ECHO_LENGTH: usize = 4;
 const MAX_CODE_SEGMENT: usize = 40;
@@ -209,6 +211,8 @@ impl Names {
         self.kinds = kinds.into_iter().collect();
         self.kinds.insert(SECRET_KEY_KIND.to_owned());
         self.kinds.insert(FLAGGED_KIND.to_owned());
+        self.kinds.insert(SESSION_TERM_KIND.to_owned());
+        self.kinds.insert(DROP_TOOL_OUTPUTS_KIND.to_owned());
     }
 
     pub(super) fn allow(&self) -> Allow {

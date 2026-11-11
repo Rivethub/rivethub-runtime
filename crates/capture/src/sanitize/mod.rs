@@ -1,3 +1,4 @@
+mod chosen;
 pub mod decide;
 pub mod key;
 pub mod mapping;
@@ -19,6 +20,7 @@ use wire::capture::SessionBundle;
 
 use crate::bundle::BundleError;
 use crate::bundle::Sealed;
+pub use chosen::SessionRules;
 pub use decide::Candidates;
 pub use decide::Decision;
 pub use decide::LocalReview;
@@ -83,6 +85,7 @@ pub enum SanitizeError {
 pub struct Policy {
     pub mapping: Mapping,
     pub key: LocalKey,
+    pub sessions: SessionRules,
 }
 
 impl Policy {
@@ -101,6 +104,7 @@ impl Policy {
                     action: &rule.action,
                 })
                 .collect(),
+            sessions: self.sessions.text(),
         };
         Ok(self.key.hex(&[
             raw_bundle_sha256.as_bytes(),
@@ -113,6 +117,8 @@ impl Policy {
 struct PolicyText<'a> {
     rules: &'a str,
     mapping: Vec<RuleText<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    sessions: Vec<chosen::SessionText<'a>>,
 }
 
 #[derive(Serialize)]
@@ -162,6 +168,7 @@ pub fn scrub(bundle: &SessionBundle, policy: &Policy) -> Result<Scrubbed, Saniti
     let raw_digest = &bundle.manifest.bundle_sha256;
     let mut scrubber = Scrubber::new(&policy.mapping, Some(&policy.key), raw_digest);
     scrubber.escape_flags = true;
+    scrubber.sessions = &policy.sessions;
     let mut sessions = bundle.sessions.clone();
     for (index, session) in sessions.iter_mut().enumerate() {
         let ids = event_ids(&policy.key, session);
