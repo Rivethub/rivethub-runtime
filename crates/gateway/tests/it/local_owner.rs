@@ -187,7 +187,11 @@ fn concrete(path: &str) -> String {
 }
 
 const METHODS: [Method; 4] = [Method::GET, Method::POST, Method::PATCH, Method::DELETE];
-const OPEN_ROUTES: [&str; 4] = ["/", "/healthz", "/login", "/api/auth/session"];
+const OPEN_ROUTES: [&str; 3] = ["/", "/healthz", "/login"];
+
+fn is_open(method: &Method, route: &str) -> bool {
+    OPEN_ROUTES.contains(&route) || (route == "/api/auth/session" && method == Method::POST)
+}
 
 async fn call(
     app: &axum::Router,
@@ -233,11 +237,11 @@ fn the_route_table_is_found_in_the_router() {
 async fn every_route_refuses_a_loopback_caller_with_no_credential() -> TestResult {
     let app = gateway_router(false);
     for route in route_paths(&app) {
-        if OPEN_ROUTES.contains(&route.as_str()) {
-            continue;
-        }
         let path = concrete(&route);
         for method in &METHODS {
+            if is_open(method, &route) {
+                continue;
+            }
             let status = call(&app, method, &path, LOCAL, &[("host", HOST)]).await?;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {route}");
         }
@@ -252,12 +256,13 @@ async fn every_route_refuses_the_owner_token_behind_a_forwarder() -> TestResult 
     let forwarded = [
         vec![("host", "gateway.example.test")],
         vec![("host", HOST), ("x-forwarded-for", "203.0.113.9")],
+        vec![("host", HOST), ("x-forwarded", "for=203.0.113.9")],
         vec![("host", HOST), ("x-forwarded-host", "gateway.example.test")],
         vec![("host", HOST), ("forwarded", "for=203.0.113.9")],
         vec![("host", HOST), ("x-real-ip", "203.0.113.9")],
     ];
     for route in route_paths(&app) {
-        if OPEN_ROUTES.contains(&route.as_str()) {
+        if is_open(&Method::GET, &route) {
             continue;
         }
         let path = concrete(&route);
@@ -281,6 +286,7 @@ async fn a_forwarded_owner_token_is_unauthorized_on_the_api() -> TestResult {
     for headers in [
         vec![("host", HOST), ("x-forwarded-for", "203.0.113.9")],
         vec![("host", HOST), ("x-forwarded-proto", "https")],
+        vec![("host", HOST), ("x-forwarded", "for=203.0.113.9")],
         vec![("host", HOST), ("forwarded", "for=203.0.113.9")],
         vec![("host", HOST), ("x-real-ip", "203.0.113.9")],
     ] {
