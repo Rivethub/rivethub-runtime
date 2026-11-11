@@ -757,3 +757,45 @@ async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResu
     assert_eq!(fake.seen.requests.load(Ordering::SeqCst), before);
     Ok(())
 }
+
+async fn healthz_policy(yaml: &str) -> Result<Option<serde_json::Value>, Failure> {
+    let home = tempfile::tempdir()?;
+    let env = config::Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml)?;
+    let config = config::type_document(&document)?.config;
+    let settings =
+        gateway::Settings::from_config_in(&config, &env, "host".to_owned(), "node".to_owned())?;
+    let app = Arc::new(Gateway::new(
+        Arc::new(testkit::FakeMemoryStore::default()),
+        settings,
+    ))
+    .router(true);
+    let (status, body) = local(&app, Method::GET, "/healthz", "").await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let body: serde_json::Value = serde_json::from_str(&body)?;
+    Ok(body.get("policy").cloned())
+}
+
+#[tokio::test]
+async fn healthz_states_a_hub_policy_only_when_one_is_set() -> TestResult {
+    assert_eq!(
+        healthz_policy("memory:\n  backend: sqlite\ntelemetry:\n  disabled: true\n").await?,
+        None
+    );
+    assert_eq!(
+        healthz_policy(
+            "memory:\n  backend: sqlite\n  share:\n    allowed_servers: [team.example.com]\ncloud:\n  disabled: true\n"
+        )
+        .await?,
+        Some(serde_json::json!({"cloud": "disabled", "shareServers": ["team.example.com"]}))
+    );
+    assert_eq!(
+        healthz_policy("cloud:\n  disabled: true\n").await?,
+        Some(serde_json::json!({"cloud": "disabled"}))
+    );
+    assert_eq!(
+        healthz_policy("memory:\n  share:\n    allowed_servers: [team.example.com]\n").await?,
+        Some(serde_json::json!({"cloud": "enabled", "shareServers": ["team.example.com"]}))
+    );
+    Ok(())
+}

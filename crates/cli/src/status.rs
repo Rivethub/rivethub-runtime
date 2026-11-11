@@ -7,7 +7,7 @@ use gateway::server::BindSource;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use serde::Deserialize;
-use wire::gateway::HealthzResponse;
+use wire::gateway::{CloudPolicy, HealthzResponse, HubPolicy};
 use x509_parser::extensions::GeneralName;
 
 use crate::{Error, Report, configuration, process};
@@ -89,6 +89,9 @@ async fn health(env: &Environment) -> Result<Report, Error> {
         parts.push(format!("; uptime {uptime}s"));
     }
     parts.push("\n".to_owned());
+    if let Some(policy) = &health.response.policy {
+        parts.push(policy_line(policy));
+    }
     for provider in &health.response.degraded_providers {
         parts.push(format!(
             "Provider {} is degraded ({}): {}\n",
@@ -127,6 +130,20 @@ async fn detailed_health(
 pub(crate) enum Redirects {
     Follow,
     Refuse,
+}
+
+fn policy_line(policy: &HubPolicy) -> String {
+    let mut rules = Vec::new();
+    if policy.cloud == CloudPolicy::Disabled {
+        rules.push("cloud disabled".to_owned());
+    }
+    if !policy.share_servers.is_empty() {
+        rules.push(format!(
+            "share servers limited to {}",
+            policy.share_servers.join(", ")
+        ));
+    }
+    format!("Hub policy: {}\n", rules.join("; "))
 }
 
 pub(crate) async fn endpoint(env: &Environment, config: &Config) -> Result<Endpoint, Error> {

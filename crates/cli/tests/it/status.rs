@@ -28,6 +28,7 @@ async fn status_reads_health_and_optional_version_and_uptime() {
                     degraded_providers: Vec::new(),
                     version: Some("1.2.3".to_owned()),
                     revision: None,
+                    policy: None,
                 },
                 uptime: 12.5,
             })
@@ -96,6 +97,7 @@ async fn ordinary_redirects_reach_the_health_route() {
                         degraded_providers: Vec::new(),
                         version: None,
                         revision: None,
+                        policy: None,
                     })
                 }),
             ),
@@ -194,6 +196,7 @@ async fn status_names_each_degraded_provider() {
                 ],
                 version: None,
                 revision: None,
+                policy: None,
             })
         }),
     ))
@@ -299,6 +302,7 @@ async fn the_owner_sees_provider_causes_that_an_anonymous_probe_does_not() {
                     }],
                     version: None,
                     revision: None,
+                    policy: None,
                 })
             }
         }),

@@ -217,6 +217,7 @@ pub(crate) fn settings(home: &Path) -> gateway::Settings {
         state_dir: home.join("gateway"),
         private_ca: None,
         request_deadline: gateway::REQUEST_DEADLINE,
+        policy: None,
     }
 }
 

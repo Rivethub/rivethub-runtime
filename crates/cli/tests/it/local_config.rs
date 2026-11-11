@@ -19,6 +19,7 @@ fn healthy() -> HealthzResponse {
         degraded_providers: Vec::new(),
         version: Some("1.2.3".to_owned()),
         revision: None,
+        policy: None,
     }
 }
 
@@ -104,4 +105,72 @@ async fn validate_holds_a_postgres_config_to_what_rh_start_requires() {
             validate.stdout
         );
     }
+}
+
+#[tokio::test]
+async fn status_and_doctor_state_the_hub_policy() {
+    let stub = testkit::stub_server(Router::new().route(
+        "/healthz",
+        get(|| async {
+            Json(HealthzResponse {
+                policy: Some(wire::gateway::HubPolicy {
+                    cloud: wire::gateway::CloudPolicy::Disabled,
+                    share_servers: vec!["team.example.com".to_owned()],
+                }),
+                ..healthy()
+            })
+        }),
+    ))
+    .await
+    .expect("health route");
+    let home = home();
+    let env = local_config(&home, stub.addr.port(), "cloud:\n  disabled: true\n");
+    let status = run(&["status"], &env).await;
+    stub.close().await.expect("stub shuts down");
+    assert_eq!(
+        status.stdout,
+        "RivetHub is running (v1.2.3)\nHub policy: cloud disabled; share servers limited to team.example.com\n"
+    );
+    let doctor = run(&["doctor"], &env).await;
+    assert!(
+        doctor
+            .stdout
+            .contains("pass: policy — cloud off, telemetry off, sharing with no share server"),
+        "{}",
+        doctor.stdout
+    );
+
+    let (_, open) = status_and_doctor(1, "").await;
+    assert!(
+        open.stdout
+            .contains("pass: policy — cloud on, telemetry on, sharing with any share server"),
+        "{}",
+        open.stdout
+    );
+}
+
+#[tokio::test]
+async fn doctor_fails_a_share_server_list_entry_that_is_not_a_host() {
+    let home = home();
+    let env = local_config(&home, 1, "");
+    let path = home.path().join(".rivethub/config.yaml");
+    let text = std::fs::read_to_string(&path).expect("config");
+    std::fs::write(
+        &path,
+        text.replacen(
+            "memory:\n",
+            "memory:\n  share:\n    allowed_servers: [team.example.com, \"ftp://team.example.com\"]\n",
+            1,
+        ),
+    )
+    .expect("config");
+    let doctor = run(&["doctor"], &env).await;
+    assert_eq!(doctor.exit, Exit::Failure, "{}", doctor.stdout);
+    assert!(
+        doctor
+            .stdout
+            .contains("fail: policy — memory.share.allowed_servers: \"ftp://team.example.com\""),
+        "{}",
+        doctor.stdout
+    );
 }
