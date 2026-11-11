@@ -10,7 +10,7 @@ pub(crate) async fn load(env: &Environment) -> Result<(ConfigLocation, Loaded), 
     let env = env.clone();
     tokio::task::spawn_blocking(move || {
         let location = config::resolve_config_path(&env)?.ok_or(Error::NoConfig)?;
-        let loaded = Config::load(&env, &location, Profile::Node)?;
+        let loaded = Config::load(&env, &location, Profile::Standalone)?;
         Ok((location, loaded))
     })
     .await?
@@ -42,7 +42,7 @@ async fn validate(path: Option<PathBuf>, env: &Environment) -> Result<Report, Er
             Some(path) => ConfigLocation::Current(path),
             None => config::resolve_config_path(&env)?.ok_or(Error::NoConfig)?,
         };
-        Ok::<_, Error>(Config::load(&env, &location, Profile::Node))
+        Ok::<_, Error>(Config::load(&env, &location, Profile::Standalone))
     })
     .await??;
     let (result, stderr) = match loaded {

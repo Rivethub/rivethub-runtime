@@ -9,6 +9,7 @@ mod cli_docs;
 mod contract;
 mod db;
 mod local;
+mod local_config;
 mod logs;
 mod memory;
 mod memory_bundle;
