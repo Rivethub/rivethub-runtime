@@ -1,4 +1,5 @@
 mod argv;
+mod auth;
 pub mod capture_hook;
 mod configuration;
 pub mod db;
@@ -162,6 +163,7 @@ async fn command_dispatch(
         Command::Version => Ok(Report::success(version())),
         Command::Config { command } => configuration::run(command, env).await,
         Command::Doctor { json } => doctor::run(env, json).await,
+        Command::Auth { command } => auth::run(command, env).await,
         Command::Status => Ok(status::run(env).await),
         Command::Stop => process::stop(env).await,
         Command::Service { command } => service::Scope::for_uid(nix::unistd::geteuid().as_raw())

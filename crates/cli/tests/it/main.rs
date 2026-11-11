@@ -2,6 +2,7 @@ mod support;
 #[cfg(test)]
 mod wiki_support;
 
+mod auth;
 mod bundle_import;
 mod capture_hook;
 mod cleanup_guard;

@@ -46,6 +46,8 @@ pub enum Error {
     Signal(#[from] nix::errno::Errno),
     #[error("gateway health request failed: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("the gateway refused the token rotation with HTTP {status}")]
+    AuthRotate { status: u16 },
     #[error("invalid gateway URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]

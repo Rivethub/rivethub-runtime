@@ -62,6 +62,11 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Manage the local owner token")]
+    Auth {
+        #[command(subcommand)]
+        command: crate::auth::AuthCommand,
+    },
     #[command(about = "Report gateway health")]
     Status,
     #[command(about = "Signal the running instance to stop")]
