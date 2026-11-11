@@ -60,6 +60,7 @@ rustls.workspace = true
 tokio-rustls.workspace = true
 axum = { workspace = true }
 testkit = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["process", "rt-multi-thread", "test-util"] }
 
 [[bin]]

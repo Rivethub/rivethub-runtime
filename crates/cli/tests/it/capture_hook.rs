@@ -381,3 +381,59 @@ async fn with_no_token_file_the_client_sends_no_authorization_header()
     server.abort();
     Ok(())
 }
+
+#[derive(Clone, Default)]
+struct LogBuffer(Arc<parking_lot::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuffer {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn the_token_never_reaches_logs_or_error_text()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let logs = LogBuffer::default();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    let home = home();
+    let env = environment(&home);
+    let store = Arc::new(FakeMemoryStore::default());
+    let owner = Arc::new(gateway::local_owner::LocalOwner::unpersisted()?);
+    let (port, stop, server) = local_gateway(&store, home.path(), owner).await?;
+    let token = support::local_owner(home.path()).current();
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let mut text = cli::capture_hook::hook(&env, TOOL, now()?).await.stderr;
+    text.push_str(&format!(
+        "{:?}",
+        cli::capture_hook::replay_spool(&env, now()?).await
+    ));
+    text.push_str(&run(&["auth", "token-path"], &env).await.stdout);
+    text.push_str(&String::from_utf8(logs.0.lock().clone())?);
+    assert!(text.contains("401"), "{text}");
+    assert!(!text.contains(token.expose()), "{text}");
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
