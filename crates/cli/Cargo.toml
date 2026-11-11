@@ -13,6 +13,7 @@ bytes = { workspace = true }
 memory-postgres.workspace = true
 sha2.workspace = true
 hex.workspace = true
+oauth2.workspace = true
 memory-sqlite.workspace = true
 base64.workspace = true
 capture.workspace = true
@@ -57,6 +58,7 @@ workers = { workspace = true }
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util.workspace = true
 parking_lot.workspace = true
+serde_urlencoded.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
 axum = { workspace = true }

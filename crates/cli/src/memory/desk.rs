@@ -1,4 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use capture::seal::Sealed;
@@ -15,34 +18,35 @@ use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::ServerKind;
 use kernel::memory::share::desk::ServerView;
 use kernel::memory::share::desk::Servers;
+use oauth2::DeviceCodeErrorResponseType;
+use oauth2::EndpointNotSet;
+use oauth2::EndpointSet;
+use oauth2::RefreshToken;
+use oauth2::RequestTokenError;
+use oauth2::Scope;
+use oauth2::StandardDeviceAuthorizationResponse;
+use oauth2::StandardRevocableToken;
+use oauth2::basic::BasicClient;
 use reqwest::StatusCode;
 use serde::Deserialize;
-use serde::Serialize;
+use tokio_util::task::AbortOnDropHandle;
 
 use super::dropbox::DropBox;
 use super::dropbox::DropError;
 use super::share::ShareError;
 use crate::Error;
-use crate::share_server::CLIENT_ID;
-use crate::share_server::DEVICE_GRANT;
-use crate::share_server::DEVICE_PATH;
-use crate::share_server::Grant;
 use crate::share_server::Login;
 use crate::share_server::ME_PATH;
-use crate::share_server::OauthCode;
-use crate::share_server::OauthError;
 use crate::share_server::REQUEST_TIMEOUT;
-use crate::share_server::REVOKE_PATH;
 use crate::share_server::SCOPE;
-use crate::share_server::SLOW_DOWN;
 use crate::share_server::Server;
 use crate::share_server::ServerError;
 use crate::share_server::ShareServers;
-use crate::share_server::TOKEN_PATH;
 use crate::share_server::TeamLogin;
+use crate::share_server::Tokens;
 use crate::share_server::checked;
+use crate::share_server::oauth;
 use crate::share_server::read_logins;
-use crate::share_server::tokens_from;
 use crate::share_server::write_logins;
 
 pub fn node_key(env: &Environment) -> Result<PublicKey, Error> {
@@ -126,28 +130,13 @@ pub async fn upload_to(
     })
 }
 
+type DeviceClient =
+    BasicClient<EndpointNotSet, EndpointSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
+
 async fn connect(env: &Environment, server: Option<&str>) -> Result<Server, Error> {
     let servers = ShareServers::from_env(env).await?;
     let host = servers.pick(server)?;
     Ok(servers.connect(&host, REQUEST_TIMEOUT).await?)
-}
-
-#[derive(Deserialize)]
-struct Device {
-    #[serde(rename = "device_code")]
-    code: String,
-    user_code: String,
-    verification_uri: String,
-    verification_uri_complete: Option<String>,
-    expires_in: u64,
-    interval: Option<u64>,
-}
-
-#[derive(Serialize)]
-struct DeviceRequest<'a> {
-    client_id: &'a str,
-    scope: &'a str,
-    client_name: &'a str,
 }
 
 #[derive(Debug)]
@@ -161,9 +150,9 @@ pub struct DeviceLogin {
 
 pub struct PendingLogin {
     server: ShareServer,
-    device_code: String,
-    interval: Duration,
+    interval: Arc<AtomicU64>,
     expires_at: DateTime<Utc>,
+    task: Option<AbortOnDropHandle<Result<Approval, Error>>>,
 }
 
 #[cfg_attr(
@@ -186,20 +175,35 @@ impl PendingLogin {
     }
 
     #[must_use]
-    pub const fn interval(&self) -> Duration {
-        self.interval
+    pub fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval.load(Ordering::Relaxed).max(1))
     }
 
     #[must_use]
     pub const fn expires_at(&self) -> DateTime<Utc> {
         self.expires_at
     }
+
+    pub async fn poll(&mut self) -> Result<Option<Approval>, Error> {
+        match &self.task {
+            None => Err(ServerError::Finished.into()),
+            Some(task) if !task.is_finished() => Ok(None),
+            Some(_) => self.finished().await.map(Some),
+        }
+    }
+
+    pub async fn finish(mut self) -> Result<Approval, Error> {
+        self.finished().await
+    }
+
+    async fn finished(&mut self) -> Result<Approval, Error> {
+        let task = self.task.take().ok_or(ServerError::Finished)?;
+        task.await.map_err(std::io::Error::other)?
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Polled {
-    Pending,
-    SlowDown { interval: Duration },
+pub enum Approval {
     SignedIn { scope: String },
     Denied,
     Expired,
@@ -211,92 +215,82 @@ pub async fn start(
     client: &str,
 ) -> Result<DeviceLogin, Error> {
     let server = connect(env, server).await?;
-    let client_name = format!("{client} on {}", host_name()?);
-    let device: Device = checked(
-        server
-            .client()
-            .post(server.endpoint(DEVICE_PATH)?)
-            .json(&DeviceRequest {
-                client_id: CLIENT_ID,
-                scope: SCOPE,
-                client_name: &client_name,
-            })
-            .send()
-            .await
-            .map_err(ServerError::from)?,
-    )
-    .await?
-    .json()
-    .await
-    .map_err(ServerError::from)?;
-    let expires_in = Duration::from_secs(device.expires_in);
+    let endpoints = server.endpoints().await?;
+    let device = endpoints
+        .device
+        .clone()
+        .ok_or_else(|| ServerError::NoDeviceFlow(server.host().clone()))?;
+    let oauth = Server::token_client(&endpoints).set_device_authorization_url(device);
+    let details: StandardDeviceAuthorizationResponse = oauth
+        .exchange_device_code()
+        .add_scope(Scope::new(SCOPE.to_owned()))
+        .add_extra_param("client_name", format!("{client} on {}", host_name()?))
+        .request_async(&server)
+        .await
+        .map_err(oauth::failed)?;
+    let expires_in = details.expires_in();
     let lifetime = chrono::TimeDelta::from_std(expires_in)
-        .map_err(|_| ServerError::Lifetime(device.expires_in))?;
+        .map_err(|_| ServerError::Lifetime(expires_in.as_secs()))?;
     let expires_at = Utc::now()
         .checked_add_signed(lifetime)
-        .ok_or(ServerError::Lifetime(device.expires_in))?;
+        .ok_or(ServerError::Lifetime(expires_in.as_secs()))?;
+    let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
+    let verification_uri_complete = details.verification_uri_complete().map_or_else(
+        || details.verification_uri().to_string(),
+        |complete| complete.secret().clone(),
+    );
+    let user_code = details.user_code().secret().clone();
+    let host = server.host().clone();
+    let task = tokio::spawn(approval(server, oauth, details, Arc::clone(&interval)));
     Ok(DeviceLogin {
-        verification_uri_complete: device
-            .verification_uri_complete
-            .unwrap_or(device.verification_uri),
-        user_code: device.user_code,
+        verification_uri_complete,
+        user_code,
         expires_in,
         expires_at,
         pending: PendingLogin {
-            server: server.host().clone(),
-            device_code: device.code,
-            interval: Duration::from_secs(device.interval.unwrap_or(5).max(1)),
+            server: host,
+            interval,
             expires_at,
+            task: Some(AbortOnDropHandle::new(task)),
         },
     })
 }
 
-pub async fn poll(env: &Environment, pending: &mut PendingLogin) -> Result<Polled, Error> {
-    if Utc::now() > pending.expires_at {
-        return Ok(Polled::Expired);
-    }
-    let server = connect(env, Some(pending.server.as_str())).await?;
-    let response = server
-        .client()
-        .post(server.endpoint(TOKEN_PATH)?)
-        .json(&Grant {
-            kind: DEVICE_GRANT,
-            client_id: CLIENT_ID,
-            device_code: Some(&pending.device_code),
-            refresh_token: None,
-        })
-        .send()
-        .await
-        .map_err(ServerError::from)?;
-    if response.status().is_success() {
-        let tokens = tokens_from(response.json().await.map_err(ServerError::from)?);
-        let scope = tokens.scope.clone();
-        let _lock = server.lock().await?;
-        server.keep(Login::Device(tokens))?;
-        return Ok(Polled::SignedIn { scope });
-    }
-    let status = response.status().as_u16();
-    let body = response.text().await.map_err(ServerError::from)?;
-    let error: OauthError = serde_json::from_str(&body).map_err(|_| ServerError::Status {
-        status,
-        body: body.clone(),
-    })?;
-    Ok(match error.error {
-        OauthCode::AuthorizationPending => Polled::Pending,
-        OauthCode::SlowDown => {
-            pending.interval = error
-                .interval
-                .map_or(pending.interval + SLOW_DOWN, Duration::from_secs);
-            Polled::SlowDown {
-                interval: pending.interval,
+async fn approval(
+    server: Server,
+    oauth: DeviceClient,
+    details: StandardDeviceAuthorizationResponse,
+    interval: Arc<AtomicU64>,
+) -> Result<Approval, Error> {
+    let asked = oauth
+        .exchange_device_access_token(&details)
+        .request_async(
+            &server,
+            |wait| {
+                interval.store(wait.as_secs(), Ordering::Relaxed);
+                tokio::time::sleep(wait)
+            },
+            None,
+        )
+        .await;
+    let issued = match asked {
+        Ok(issued) => issued,
+        Err(RequestTokenError::ServerResponse(refusal)) => match refusal.error() {
+            DeviceCodeErrorResponseType::AccessDenied => return Ok(Approval::Denied),
+            DeviceCodeErrorResponseType::ExpiredToken => return Ok(Approval::Expired),
+            DeviceCodeErrorResponseType::AuthorizationPending
+            | DeviceCodeErrorResponseType::SlowDown
+            | DeviceCodeErrorResponseType::Basic(_) => {
+                return Err(ServerError::Refused(refusal.to_string()).into());
             }
-        }
-        OauthCode::AccessDenied => Polled::Denied,
-        OauthCode::ExpiredToken => Polled::Expired,
-        OauthCode::InvalidGrant | OauthCode::Other => {
-            return Err(ServerError::Status { status, body }.into());
-        }
-    })
+        },
+        Err(other) => return Err(oauth::failed(other).into()),
+    };
+    let tokens = Tokens::issued(&issued, None)?;
+    let scope = tokens.scope.clone();
+    let _lock = server.lock().await?;
+    server.keep(Login::Device(tokens))?;
+    Ok(Approval::SignedIn { scope })
 }
 
 #[derive(Deserialize)]
@@ -336,17 +330,12 @@ pub async fn login_team(env: &Environment, server: &str, token: String) -> Resul
     Ok(me.user)
 }
 
-#[derive(Serialize)]
-struct Revoke<'a> {
-    client_id: &'a str,
-    token: &'a str,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoggedOut {
     NotSignedIn,
     Revoked,
     Forgotten,
+    NotRevocable,
 }
 
 pub async fn logout(
@@ -361,20 +350,22 @@ pub async fn logout(
         None => return Ok((host, LoggedOut::NotSignedIn)),
         Some(Login::Team(_)) => LoggedOut::Forgotten,
         Some(Login::Device(tokens)) => {
-            checked(
-                server
-                    .client()
-                    .post(server.endpoint(REVOKE_PATH)?)
-                    .json(&Revoke {
-                        client_id: CLIENT_ID,
-                        token: &tokens.refresh_token,
-                    })
-                    .send()
-                    .await
-                    .map_err(ServerError::from)?,
-            )
-            .await?;
-            LoggedOut::Revoked
+            let endpoints = server.endpoints().await?;
+            match endpoints.revocation.clone() {
+                None => LoggedOut::NotRevocable,
+                Some(revocation) => {
+                    Server::token_client(&endpoints)
+                        .set_revocation_url(revocation)
+                        .revoke_token(StandardRevocableToken::RefreshToken(RefreshToken::new(
+                            tokens.refresh_token.clone(),
+                        )))
+                        .map_err(|error| ServerError::Protocol(error.to_string()))?
+                        .request_async(&server)
+                        .await
+                        .map_err(oauth::failed)?;
+                    LoggedOut::Revoked
+                }
+            }
         }
     };
     logins.logins.remove(host.as_str());
@@ -521,12 +512,17 @@ fn server_error(error: ServerError) -> DeskError {
             message: body,
         },
         ServerError::Http(error) => DeskError::Unreachable(error.to_string()),
+        ServerError::Finished => DeskError::UnknownLogin,
+        error @ ServerError::RateLimited(_) => DeskError::Unreachable(error.to_string()),
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
         other @ (ServerError::Store(_)
         | ServerError::Ca { .. }
         | ServerError::File(_)
         | ServerError::Io(_)
         | ServerError::Lifetime(_)
+        | ServerError::Refused(_)
+        | ServerError::Protocol(_)
+        | ServerError::NoDeviceFlow(_)
         | ServerError::Cancelled) => DeskError::Failed(other.to_string()),
     }
 }

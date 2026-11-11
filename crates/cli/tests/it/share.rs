@@ -33,6 +33,7 @@ use crate::support;
 
 const CANARY: &str = "p2canary-7f3a9c";
 const DROP_ID: &str = "Qm9iQm9iQm9iQm9iQm9iQg";
+const JSON: [(&str, &str); 1] = [("content-type", "application/json")];
 
 #[derive(Default)]
 struct Seen {
@@ -117,7 +118,7 @@ struct Refresh {
     refresh_token: String,
 }
 
-async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Refresh>) -> Response {
+async fn refresh(State(drops): State<DropBox>, axum::Form(asked): axum::Form<Refresh>) -> Response {
     let asked_for = asked.refresh_token;
     let accepted = {
         let mut seen = drops.0.lock();
@@ -130,10 +131,16 @@ async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Ref
         asked_for == current
     };
     if !accepted {
-        return (StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            JSON,
+            r#"{"error":"invalid_grant"}"#,
+        )
+            .into_response();
     }
     (
         StatusCode::OK,
+        JSON,
         format!(
             r#"{{"access_token":"rhca_{asked_for}","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_{asked_for}","scope":"drops:write"}}"#
         ),
@@ -146,7 +153,7 @@ struct Revoked {
     token: String,
 }
 
-async fn revoke(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Revoked>) -> Response {
+async fn revoke(State(drops): State<DropBox>, axum::Form(asked): axum::Form<Revoked>) -> Response {
     let status = {
         let mut seen = drops.0.lock();
         seen.revokes.push(asked.token);
@@ -154,7 +161,7 @@ async fn revoke(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Revo
     };
     match status {
         Some(status) => (status, "down").into_response(),
-        None => (StatusCode::OK, "{}").into_response(),
+        None => (StatusCode::OK, JSON, "{}").into_response(),
     }
 }
 

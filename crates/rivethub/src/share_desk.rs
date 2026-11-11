@@ -591,23 +591,24 @@ impl ShareDesk for NodeDesk {
             .map(|pending| Arc::clone(&pending.login))
             .ok_or(DeskError::UnknownLogin)?;
         let mut pending = pending.lock().await;
-        let polled = cli_desk::poll(&self.env, &mut pending)
-            .await
-            .map_err(cli_desk::desk_error)?;
+        let polled = pending.poll().await;
         let (interval, origin) = (
             pending.interval().as_secs(),
             ServerOrigin::from(pending.server().to_string()),
         );
         drop(pending);
         let step = match polled {
-            cli_desk::Polled::Pending | cli_desk::Polled::SlowDown { .. } => {
-                return Ok(LoginStep::Pending { interval });
+            Ok(None) => return Ok(LoginStep::Pending { interval }),
+            Ok(Some(cli_desk::Approval::SignedIn { .. })) => {
+                Ok(LoginStep::SignedIn { origin, user: None })
             }
-            cli_desk::Polled::SignedIn { .. } => Ok(LoginStep::SignedIn { origin, user: None }),
-            cli_desk::Polled::Denied => Err(DeskError::LoginDenied("denied in the browser")),
-            cli_desk::Polled::Expired => {
+            Ok(Some(cli_desk::Approval::Denied)) => {
+                Err(DeskError::LoginDenied("denied in the browser"))
+            }
+            Ok(Some(cli_desk::Approval::Expired)) => {
                 Err(DeskError::LoginDenied("not given before the code expired"))
             }
+            Err(error) => Err(cli_desk::desk_error(error)),
         };
         self.logins.lock().remove(&login);
         step
