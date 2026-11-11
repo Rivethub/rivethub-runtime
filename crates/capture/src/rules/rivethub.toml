@@ -88,8 +88,8 @@ key_min_entropy = 3.5
 
 [[rules]]
 id = "rivethub_share_code"
-description = "the key part of a RivetHub share code (rhb1:[<server>/]<bundle id>#<key>); the server and bundle id stay"
-regex = '''(?i)\brhb1:(?:[a-z0-9.-]{1,253}(?::[0-9]{1,5})?/)?[A-Za-z0-9_-]{22}#([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{58})\b'''
+description = "the key part of a RivetHub share code (rhb1:[<server>/]<bundle id>#<key>, the # also as %23); the server and bundle id stay"
+regex = '''(?i)\brhb1:(?:[a-z0-9.-]{1,253}(?::[0-9]{1,5})?/)?[A-Za-z0-9_-]{22}(?:#|%23)([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{58})'''
 keywords = ["rhb1:"]
 
 [[rules]]

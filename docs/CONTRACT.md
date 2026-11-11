@@ -2234,14 +2234,16 @@ no code and keeps the bundle. The code is `rhb1:<id>#<key>` for rivethub.cloud a
 other server, because a drop lives on exactly one server and the receiver should need no configuration. The key is the
 age identity's bech32 text, lowercased, without `age-secret-key-1`; its checksum rejects a mistyped code before any
 request. The key is never part of a URL or a log line. The `rivethub_share_code` rule (rivethub.toml) replaces only the
-key and keeps `rhb1:[<server>/]<id>#`: the sanitizer applies it with the other rules, and the hook-side writer runs it
+58-character key, bounded by length rather than a word edge, after `#` or its URL encoding `%23`, and keeps
+`rhb1:[<server>/]<id>#`: the sanitizer applies it with the other rules, and the hook-side writer runs it
 as a pass of its own before and apart from every other rule, on every batch, whatever `memory.capture.redaction` says
 (enabled, `builtins: false` or off, note 15), because a share code is a live secret rh mints. Unlinking does not scrub
 copy-on-write or SSD blocks; the plaintext that existed is the sanitized bundle the sender already reviewed.
 
 Receive. `rh memory receive <code> [--dry-run]` checks the code first, removes inbox files older than 7 days, and
-answers "already received" without a request when `$XDG_STATE_HOME/rivethub/inbox/<id>.received` exists. Otherwise it
-uses `inbox/<id>.age` when present, else prints `downloading from <server>` and downloads `GET <server>/api/drops/<id>`
+answers "already received" without a request when `$XDG_STATE_HOME/rivethub/inbox/<server>~<id>.received` exists (the
+server's `:` written as `_`, so the same id on two servers never collides). Otherwise it uses `inbox/<server>~<id>.age`
+when present, else prints `downloading from <server>` and downloads `GET <server>/api/drops/<id>`
 from the server the code names (no account, no bearer token; a 5xx, which carries no drop bytes, is retried at most
 twice after 0.5 and 1 s, and a 404 after a 5xx reports that the server failed mid-download and the sender must share
 again) into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a

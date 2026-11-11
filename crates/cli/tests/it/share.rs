@@ -229,6 +229,18 @@ impl Node {
         Self { home, environment }
     }
 
+    fn sign_in_also(&self, cloud: &str) {
+        let path = self.home.path().join("state/rivethub/share-logins.json");
+        let text = std::fs::read_to_string(&path).expect("logins");
+        let entry = r#"{"access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}"#;
+        let joined = text.replacen(
+            r#"{"logins":{"#,
+            &format!(r#"{{"logins":{{"{}":{entry},"#, host_of(cloud)),
+            1,
+        );
+        std::fs::write(&path, joined).expect("logins");
+    }
+
     fn sign_in(&self, cloud: &str) {
         self.sign_in_until(cloud, "2099-01-01T00:00:00Z");
     }
@@ -519,7 +531,7 @@ async fn receive_keeps_ciphertext_on_failure() {
     let receiver = Node::new("alex", &served.url, Some(closed));
     let failed = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(failed.exit, Exit::Failure, "{}", failed.stdout);
-    let kept = receiver.inbox().join(format!("{DROP_ID}.age"));
+    let kept = receiver.inbox().join(inbox_name(&served.url, "age"));
     let ciphertext = std::fs::read(&kept).expect("the ciphertext stays in the inbox");
     assert!(ciphertext.starts_with(b"age-encryption.org/v1\n"));
     assert_eq!(
@@ -615,7 +627,12 @@ async fn bundle_receipt_is_stripped(pool: PgPool) {
     assert_eq!(receipt.bundle_id, DROP_ID);
     assert_eq!(receipt.verification, ReceiptVerification::Unsigned);
     assert_eq!(receipt.key_fingerprint, None);
-    assert!(!receiver.inbox().join(format!("{DROP_ID}.age")).exists());
+    assert!(
+        !receiver
+            .inbox()
+            .join(inbox_name(&served.url, "age"))
+            .exists()
+    );
     let twice = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(twice.exit, Exit::Ok);
     assert!(
@@ -1055,4 +1072,68 @@ async fn a_bad_trusted_ca_names_its_server() {
     );
     assert_eq!(served.drops.0.lock().revokes.len(), 0);
     served.stop.cancel();
+}
+
+fn inbox_name(url: &str, extension: &str) -> String {
+    format!("{}~{DROP_ID}.{extension}", host_of(url).replace(':', "_"))
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
+    let first = drop_box().await;
+    let second = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("phil", &first.url, None);
+    sender.sign_in(&first.url);
+    sender.sign_in_also(&second.url);
+    let one = sanitized(&sender, outside.path(), None).await;
+    let shared_one = sender
+        .run(&["memory", "share", &one.display().to_string()])
+        .await;
+    let two = sanitized(&sender, outside.path(), None).await;
+    let shared_two = sender
+        .run(&[
+            "memory",
+            "share",
+            &two.display().to_string(),
+            "--server",
+            &second.url,
+        ])
+        .await;
+    let (code_one, code_two) = (code_of(&shared_one.stdout), code_of(&shared_two.stdout));
+    assert!(
+        code_one.contains(&format!("/{DROP_ID}#")) && code_two.contains(&format!("/{DROP_ID}#"))
+    );
+    assert_ne!(code_one, code_two);
+
+    let store = Arc::new(PostgresMemory::new(pool.clone()));
+    let probe = support::home();
+    let gateway = gateway_for(&store, "alex", probe.path()).await;
+    let receiver = Node::new("alex", &first.url, Some(gateway.port));
+    let got_one = receiver.run(&["memory", "receive", &code_one]).await;
+    assert_eq!(got_one.exit, Exit::Ok, "{}", got_one.stderr);
+    assert!(
+        got_one.stdout.starts_with("received 1 session from phil"),
+        "{}",
+        got_one.stdout
+    );
+    let got_two = receiver.run(&["memory", "receive", &code_two]).await;
+    assert_eq!(got_two.exit, Exit::Ok, "{}", got_two.stderr);
+    assert!(
+        got_two.stdout.starts_with("received 1 session from phil"),
+        "{}",
+        got_two.stdout
+    );
+    assert_eq!(first.drops.0.lock().gets, 1);
+    assert_eq!(second.drops.0.lock().gets, 1);
+    for url in [&first.url, &second.url] {
+        assert!(
+            receiver.inbox().join(inbox_name(url, "received")).exists(),
+            "{url}"
+        );
+    }
+    gateway.stop.cancel();
+    drop(tokio::time::timeout(Duration::from_secs(5), gateway.task).await);
+    first.stop.cancel();
+    second.stop.cancel();
 }

@@ -235,6 +235,9 @@ fn a_share_code_key_never_survives_any_redaction_setting() -> Result<(), Box<dyn
         format!("password={code}"),
         format!("https://alex:{code}@team.example.com/x"),
         format!("{{\"token\": \"{code}\"}}"),
+        format!("https://u:{}@team.example.com/x", code.replace('#', "%23")),
+        format!("{code}_x"),
+        format!("see {code}abc"),
     ];
     let settings = [
         ("redaction on", redaction(true, true, &[])),
@@ -256,6 +259,15 @@ fn a_share_code_key_never_survives_any_redaction_setting() -> Result<(), Box<dyn
         off.redact_text(&format!("password={code}")),
         "password=rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]",
         "with redaction off only the key part changes"
+    );
+    assert_eq!(
+        off.redact_text(&format!("u:{}@h", code.replace('#', "%23"))),
+        "u:rhb1:AAAAAAAAAAAAAAAAAAAAAA%23[REDACTED:rivethub_share_code]@h",
+        "an encoded # keeps the server and id part"
+    );
+    assert_eq!(
+        off.redact_text(&format!("{code}_x")),
+        "rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]_x"
     );
     Ok(())
 }

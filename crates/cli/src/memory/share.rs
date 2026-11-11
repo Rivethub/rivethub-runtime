@@ -30,6 +30,7 @@ use super::dropbox::DropBox;
 use super::dropbox::DropError;
 use super::dropbox::MAX_DROP_BYTES;
 use super::inbox::Inbox;
+use super::inbox::Slot;
 use super::parse::MemoryCommand;
 use super::parse::reject;
 use crate::Error;
@@ -435,12 +436,13 @@ async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Re
     let inbox = Inbox::in_state(&capture::share::state_home(env)?);
     inbox.prune(SystemTime::now())?;
     let id = code.id.clone();
-    if inbox.was_received(&id) {
+    let slot = Slot::of(&code.server, &id);
+    if inbox.was_received(&slot) {
         return Ok(Report::success(format!(
             "bundle {id} was already received on this machine; nothing was downloaded\n"
         )));
     }
-    let ciphertext = if let Some(kept) = inbox.read(&id, MAX_DROP_BYTES)? {
+    let ciphertext = if let Some(kept) = inbox.read(&slot, MAX_DROP_BYTES)? {
         kept
     } else {
         let servers = ShareServers::from_env(env).await?;
@@ -448,9 +450,9 @@ async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Re
         writeln!(std::io::stderr(), "downloading from {}", code.server)?;
         let partial = inbox.partial()?;
         drops.download(&id, partial.as_file().try_clone()?).await?;
-        inbox.keep(&id, partial)?;
+        inbox.keep(&slot, partial)?;
         inbox
-            .read(&id, MAX_DROP_BYTES)?
+            .read(&slot, MAX_DROP_BYTES)?
             .ok_or_else(|| std::io::Error::other("the inbox lost the download"))?
     };
     let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
@@ -466,14 +468,14 @@ async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Re
     if dry_run {
         return Ok(Report::success(format!(
             "would import {sessions} from {user} ({reason}); nothing written, and the ciphertext stays in {}\n",
-            inbox.ciphertext_path(&id).display()
+            inbox.ciphertext_path(&slot).display()
         )));
     }
     let now = Utc::now();
     let receipt = receipt(&id, now, &opened.verification);
     let totals =
         crate::capture_hook::ingest_bundle(env, &opened.bundle, Some(&receipt), now).await?;
-    inbox.mark_received(&id)?;
+    inbox.mark_received(&slot)?;
     Ok(Report::success(format!(
         "received {sessions} from {user} ({reason}); imported {}: {} messages inserted, {} skipped\n",
         opened.bundle.sessions.len(),

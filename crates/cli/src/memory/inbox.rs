@@ -5,11 +5,21 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use capture::seal::DropId;
+use capture::seal::ShareServer;
 
 const INBOX_DIR: &str = "inbox";
 const CIPHERTEXT: &str = "age";
 const RECEIVED: &str = "received";
 const KEEP_FOR: Duration = Duration::from_hours(7 * 24);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Slot(String);
+
+impl Slot {
+    pub(super) fn of(server: &ShareServer, id: &DropId) -> Self {
+        Self(format!("{}~{id}", server.as_str().replace(':', "_")))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(super) struct Inbox {
@@ -25,16 +35,16 @@ impl Inbox {
         }
     }
 
-    fn file(&self, id: &DropId, extension: &str) -> PathBuf {
-        self.dir.join(format!("{id}.{extension}"))
+    fn file(&self, slot: &Slot, extension: &str) -> PathBuf {
+        self.dir.join(format!("{}.{extension}", slot.0))
     }
 
-    pub(super) fn ciphertext_path(&self, id: &DropId) -> PathBuf {
-        self.file(id, CIPHERTEXT)
+    pub(super) fn ciphertext_path(&self, slot: &Slot) -> PathBuf {
+        self.file(slot, CIPHERTEXT)
     }
 
-    pub(super) fn was_received(&self, id: &DropId) -> bool {
-        self.file(id, RECEIVED).symlink_metadata().is_ok()
+    pub(super) fn was_received(&self, slot: &Slot) -> bool {
+        self.file(slot, RECEIVED).symlink_metadata().is_ok()
     }
 
     pub(super) fn prune(&self, now: SystemTime) -> std::io::Result<usize> {
@@ -63,7 +73,7 @@ impl Inbox {
         Ok(removed)
     }
 
-    pub(super) fn read(&self, id: &DropId, cap: usize) -> std::io::Result<Option<Vec<u8>>> {
+    pub(super) fn read(&self, slot: &Slot, cap: usize) -> std::io::Result<Option<Vec<u8>>> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -71,7 +81,7 @@ impl Inbox {
             use std::os::unix::fs::OpenOptionsExt as _;
             options.custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits());
         }
-        let file = match options.open(self.ciphertext_path(id)) {
+        let file = match options.open(self.ciphertext_path(slot)) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
@@ -81,7 +91,7 @@ impl Inbox {
         if bytes.len() > cap {
             return Err(std::io::Error::other(format!(
                 "the inbox file {} is larger than any drop",
-                self.ciphertext_path(id).display()
+                self.ciphertext_path(slot).display()
             )));
         }
         Ok(Some(bytes))
@@ -96,20 +106,20 @@ impl Inbox {
 
     pub(super) fn keep(
         &self,
-        id: &DropId,
+        slot: &Slot,
         partial: tempfile::NamedTempFile,
     ) -> std::io::Result<()> {
         partial.as_file().sync_all()?;
         partial
-            .persist_noclobber(self.ciphertext_path(id))
+            .persist_noclobber(self.ciphertext_path(slot))
             .map_err(|error| error.error)?;
         std::fs::File::open(&self.dir)?.sync_all()
     }
 
-    pub(super) fn mark_received(&self, id: &DropId) -> std::io::Result<()> {
+    pub(super) fn mark_received(&self, slot: &Slot) -> std::io::Result<()> {
         create_private_dir(&self.dir)?;
-        std::fs::File::create(self.file(id, RECEIVED))?;
-        std::fs::remove_file(self.ciphertext_path(id))?;
+        std::fs::File::create(self.file(slot, RECEIVED))?;
+        std::fs::remove_file(self.ciphertext_path(slot))?;
         std::fs::File::open(&self.dir)?.sync_all()
     }
 }
