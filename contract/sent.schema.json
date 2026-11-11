@@ -4674,6 +4674,23 @@
       ],
       "type": "string"
     },
+    "LoginCodeResponse": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/Secret"
+        },
+        "expiresInSecs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "expiresInSecs"
+      ],
+      "type": "object"
+    },
     "MeResponse": {
       "properties": {
         "settings": {
@@ -8412,6 +8429,17 @@
       ],
       "type": "string"
     },
+    "RotateResponse": {
+      "properties": {
+        "rotated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rotated"
+      ],
+      "type": "object"
+    },
     "RouteName": {
       "maxLength": 64,
       "pattern": "^[a-z0-9][a-z0-9_-]*$",
@@ -8493,6 +8521,10 @@
         "trigram",
         "regex"
       ],
+      "type": "string"
+    },
+    "Secret": {
+      "description": "A one-time code, session token or CSRF token. Debug never prints it, so logging a body cannot leak it.",
       "type": "string"
     },
     "SessionBroadcast": {
@@ -9029,6 +9061,29 @@
         "kind",
         "id",
         "title"
+      ],
+      "type": "object"
+    },
+    "SessionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/Secret"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "SessionResponse": {
+      "properties": {
+        "csrf": {
+          "$ref": "#/$defs/Secret"
+        }
+      },
+      "required": [
+        "csrf"
       ],
       "type": "object"
     },
