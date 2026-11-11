@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::de::Error as _;
 use sha2::Digest as _;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -20,13 +22,33 @@ pub struct LocalReview {
     pub unreviewed_sha256: String,
     pub flags: Vec<LocalFlag>,
     pub fields: Vec<BaseField>,
-    #[serde(default = "v1", skip_serializing_if = "is_v1")]
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            customserde,
+            reason = "CONTRACT note 144: format 1 is the absence of the field, so an explicit \"v1\" must not deserialize"
+        )
+    )]
+    #[serde(
+        default = "v1",
+        deserialize_with = "only_v2",
+        skip_serializing_if = "is_v1"
+    )]
     pub mac_format: MacFormat,
     pub seal: String,
 }
 
 const fn v1() -> MacFormat {
     MacFormat::V1
+}
+
+fn only_v2<'de, D: Deserializer<'de>>(deserializer: D) -> Result<MacFormat, D::Error> {
+    match MacFormat::deserialize(deserializer)? {
+        MacFormat::V2 => Ok(MacFormat::V2),
+        MacFormat::V1 => Err(D::Error::custom(
+            "mac_format is \"v2\" or absent; format 1 is the absence of the field",
+        )),
+    }
 }
 
 #[expect(

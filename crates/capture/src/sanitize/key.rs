@@ -147,7 +147,11 @@ impl LocalKey {
 
     #[must_use]
     pub fn verifies(&self, parts: &[&[u8]], hex_tag: &str) -> bool {
-        hex::decode(hex_tag).is_ok_and(|tag| self.hmac(parts).verify_slice(&tag).is_ok())
+        hex_tag.len() == 2 * KEY_BYTES
+            && hex_tag
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            && hex::decode(hex_tag).is_ok_and(|tag| self.hmac(parts).verify_slice(&tag).is_ok())
     }
 
     #[must_use]
@@ -374,6 +378,7 @@ mod tests {
         assert!(!key.verifies(&EVENT, rest));
         assert!(!key.verifies(&EVENT, &"z".repeat(tag.len())));
         assert!(!key.verifies(&EVENT, ""));
+        assert!(!key.verifies(&EVENT, &tag.to_uppercase()));
         assert!(!key.verifies(&EVENT, &key.in_format(MacFormat::V1).hex(&EVENT)));
         assert!(
             key.in_format(MacFormat::V1)

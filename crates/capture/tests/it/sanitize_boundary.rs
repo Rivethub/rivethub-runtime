@@ -150,6 +150,35 @@ fn event_ids_are_keyed_hmacs_of_the_raw_id_and_session() -> TestResult {
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct EmptyPolicyText<'a> {
+    rules: &'a str,
+    mapping: Vec<String>,
+}
+
+#[test]
+fn the_policy_hash_and_fingerprints_are_tagged_macs_of_their_inputs() -> TestResult {
+    let secret = format!("deploy with password {PASSWORD}");
+    let input = raw(vec![session("sess", vec![message("e1", &secret)])])?;
+    let key = LocalKey::from_bytes([7; 32]);
+    let digest = input.manifest.bundle_sha256.as_bytes();
+    let out = sanitize::run(&input, &policy("")?, at()?)?;
+
+    let text = wire::json::canonical_json(&EmptyPolicyText {
+        rules: capture::rules::ruleset().digest(),
+        mapping: Vec::new(),
+    })?;
+    assert_eq!(
+        out.report.policy_sha256,
+        key.hex(&[b"policy", digest, &text])
+    );
+
+    let change = out.report.changes.first().ok_or("no change")?;
+    let tag = key.hex(&[b"fingerprint", digest, PASSWORD.as_bytes()]);
+    assert_eq!(Some(change.fingerprint.as_str()), tag.get(..12));
+    Ok(())
+}
+
 #[test]
 fn the_policy_hash_depends_on_the_raw_bundle() -> TestResult {
     let mapping = "[[rule]]\nliteral = \"Dana\"\naction = \"redact\"\n";

@@ -108,6 +108,7 @@ impl Policy {
             sessions: self.sessions.text(),
         };
         Ok(self.key.hex(&[
+            b"policy",
             raw_bundle_sha256.as_bytes(),
             &wire::json::canonical_json(&text)?,
         ]))

@@ -20,6 +20,7 @@ use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
+use wire::capture::FlagMark;
 use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 use wire::capture::SessionOrigin;
@@ -689,5 +690,78 @@ async fn a_local_review_stripped_of_its_format_is_refused() -> TestResult {
         "{error:?}"
     );
     stub.close().await?;
+    Ok(())
+}
+
+fn open_flag_marked_keep(bundle: &mut SessionBundle) -> TestResult {
+    let Sanitization::Sanitized(stamp) = &mut bundle.manifest.sanitization else {
+        return Err("not sanitized".into());
+    };
+    let review = stamp.review.as_mut().ok_or("no review table")?;
+    let flag = review
+        .flags
+        .iter_mut()
+        .find(|flag| flag.mark == FlagMark::Open)
+        .ok_or("no open flag")?;
+    flag.mark = FlagMark::Keep;
+    Ok(())
+}
+
+#[test]
+fn an_edited_review_table_is_refused_in_a_0_8_0_run() -> TestResult {
+    let mut bundle: SessionBundle = serde_json::from_str(V080_BUNDLE)?;
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+    open_flag_marked_keep(&mut bundle)?;
+    let flags = sanitize::marks::read_flags(V080_REPORT)?;
+
+    let error = sanitize::resolve(&bundle, &flags, &local, &LocalKey::from_bytes([7; 32])).err();
+
+    assert!(
+        matches!(
+            error,
+            Some(sanitize::SanitizeError::Resolve(ResolveError::Table))
+        ),
+        "{error:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_edited_review_table_is_refused_in_a_fresh_run() -> TestResult {
+    let (stub, _) = model().await?;
+    let sanitized = advisory(format!("http://{}", stub.addr)).await?;
+    let local = sanitized.local.ok_or("no local review")?;
+    let mut bundle = sanitized.sealed.bundle;
+    open_flag_marked_keep(&mut bundle)?;
+    let flags = sanitize::marks::read_flags(&sanitized.report.markdown("s.clean.json", "none"))?;
+
+    let error = sanitize::resolve(&bundle, &flags, &local, &policy()?.key).err();
+
+    assert!(
+        matches!(
+            error,
+            Some(sanitize::SanitizeError::Resolve(ResolveError::Table))
+        ),
+        "{error:?}"
+    );
+    stub.close().await?;
+    Ok(())
+}
+
+#[test]
+fn only_a_missing_mac_format_reads_as_v1() -> TestResult {
+    let with = |format: &str| {
+        V080_LOCAL.replacen(
+            r#""seal""#,
+            &format!(r#""mac_format": "{format}", "seal""#),
+            1,
+        )
+    };
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+    assert_eq!(local.mac_format, MacFormat::V1);
+
+    assert!(serde_json::from_str::<sanitize::decide::LocalReview>(&with("v1")).is_err());
+    let v2: sanitize::decide::LocalReview = serde_json::from_str(&with("v2"))?;
+    assert_eq!(v2.mac_format, MacFormat::V2);
     Ok(())
 }

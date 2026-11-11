@@ -279,7 +279,7 @@ impl<'a> Scrubber<'a> {
 
     fn record(&mut self, field: Field, rule: RuleId, original: &str, replacement: &str) {
         let fingerprint = self.key.map_or_else(String::new, |key| {
-            let mut hex = key.hex(&[self.digest.as_bytes(), original.as_bytes()]);
+            let mut hex = key.hex(&[b"fingerprint", self.digest.as_bytes(), original.as_bytes()]);
             hex.truncate(FINGERPRINT_HEX);
             hex
         });
