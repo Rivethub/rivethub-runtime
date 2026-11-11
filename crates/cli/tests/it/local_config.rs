@@ -82,3 +82,26 @@ async fn status_and_doctor_still_report_broken_agents_and_providers() {
         assert!(doctor.stdout.contains(expected), "{}", doctor.stdout);
     }
 }
+
+#[tokio::test]
+async fn validate_holds_a_postgres_config_to_what_rh_start_requires() {
+    let home = home();
+    let state = home.path().join(".rivethub");
+    std::fs::create_dir_all(&state).expect("state directory");
+    std::fs::write(
+        state.join("config.yaml"),
+        "memory:\n  backend: postgres\n  postgres:\n    url: postgres://rh@127.0.0.1:1/rh\ngateway:\n  host: 127.0.0.1\n  port: 1\n",
+    )
+    .expect("config");
+    let validate = run(&["config", "validate"], &environment(&home)).await;
+    assert_eq!(validate.exit, Exit::Failure, "{}", validate.stdout);
+    for section in ["runtime", "agents", "providers"] {
+        assert!(
+            validate
+                .stdout
+                .contains(&format!("Missing required section \"{section}\"")),
+            "{}",
+            validate.stdout
+        );
+    }
+}

@@ -99,7 +99,7 @@ limits are in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 `rh` reads `RIVETHUB_CONFIG`, else `~/.rivethub/config.yaml` (or `.yml`), else the legacy `~/.rivetos/config.yaml`,
 else `./config.yaml`; every service command also takes `-c FILE`. `${NAME}` in a value is replaced from the environment.
 State lives in `~/.rivethub/`. `rh config path`, `rh config show` and `rh config validate` inspect the file; validation
-requires `runtime`, `agents` and `providers` (only `rh local` runs without them).
+requires `runtime`, `agents` and `providers`, except for a SQLite config like the one `rh local` writes.
 
 ```yaml
 runtime:

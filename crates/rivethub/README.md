@@ -1,6 +1,6 @@
 # Service composition
 
-`Config::load` with `Profile::Node`, and `rh config validate`, still require the `runtime`, `agents`, and `providers` sections. `rh local` does not invent an agent, a provider, or an endpoint. When no config file resolves it writes only the SQLite database path and the gateway bind, then loads that file with `Profile::Standalone`, which does not require those sections. A present section is still validated. `rh local` composes the gateway, configured workers, and MCP sidecar in one process over SQLite; `memory.sqlite.wiki_dir` enables the wiki builder. Standalone and service roots resolve the node identity through the same resolver.
+`Config::load` with `Profile::Node` still requires the `runtime`, `agents`, and `providers` sections; `rh config validate` also accepts a SQLite config that passes with `Profile::Standalone`. `rh local` does not invent an agent, a provider, or an endpoint. When no config file resolves it writes only the SQLite database path and the gateway bind, then loads that file with `Profile::Standalone`, which does not require those sections. A present section is still validated. `rh local` composes the gateway, configured workers, and MCP sidecar in one process over SQLite; `memory.sqlite.wiki_dir` enables the wiki builder. Standalone and service roots resolve the node identity through the same resolver.
 
 `rh gateway`, `rh worker`, and `rh mcp` are the composition roots. Each one
 runs on the multithreaded Tokio runtime built in `rh`'s `main`, with one

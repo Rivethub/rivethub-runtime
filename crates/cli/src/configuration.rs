@@ -10,10 +10,21 @@ pub(crate) async fn load(env: &Environment) -> Result<(ConfigLocation, Loaded), 
     let env = env.clone();
     tokio::task::spawn_blocking(move || {
         let location = config::resolve_config_path(&env)?.ok_or(Error::NoConfig)?;
-        let loaded = Config::load(&env, &location, Profile::Standalone)?;
+        let loaded = load_at(&env, &location)?;
         Ok((location, loaded))
     })
     .await?
+}
+
+fn load_at(env: &Environment, location: &ConfigLocation) -> Result<Loaded, config::ConfigError> {
+    let node_error = match Config::load(env, location, Profile::Node) {
+        Ok(loaded) => return Ok(loaded),
+        Err(error) => error,
+    };
+    match Config::load(env, location, Profile::Standalone) {
+        Ok(standalone) if standalone.config.sqlite_selected() => Ok(standalone),
+        Ok(_) | Err(_) => Err(node_error),
+    }
 }
 
 pub(crate) async fn run(command: ConfigCommand, env: &Environment) -> Result<Report, Error> {
@@ -42,7 +53,7 @@ async fn validate(path: Option<PathBuf>, env: &Environment) -> Result<Report, Er
             Some(path) => ConfigLocation::Current(path),
             None => config::resolve_config_path(&env)?.ok_or(Error::NoConfig)?,
         };
-        Ok::<_, Error>(Config::load(&env, &location, Profile::Standalone))
+        Ok::<_, Error>(load_at(&env, &location))
     })
     .await??;
     let (result, stderr) = match loaded {

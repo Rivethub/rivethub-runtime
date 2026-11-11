@@ -138,7 +138,7 @@ B12) → Wave 3 agent (providers, agent-loop, mcp; B7 B8 B15) → Wave 4 platfor
 mesh, memory-sqlite; B5 B13 B14) → Wave 5 operations (cli incl. CA, standalone on SQLite, update/doctor/service; B9 B10 B11
 B16) → cutover. Each wave's gate is a boundary working end to end against the recordings.
 
-Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the wiki builder when `memory.sqlite.wiki_dir` is set. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them.
+Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the wiki builder when `memory.sqlite.wiki_dir` is set. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them, and `rh config validate`, `rh status` and `rh doctor` accept such a SQLite config.
 16 crates (the mesh, the agent loop, the terminal and the PKI left with note 132).
 Schema changes never run inside the runtime: `rivethub-migrate postgres|sqlite` applies them (Postgres from the
 `migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation, the v1→v7 upgrade ladder and the steps to v35, with a
