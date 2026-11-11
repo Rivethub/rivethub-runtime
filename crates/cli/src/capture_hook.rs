@@ -339,48 +339,317 @@ async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoi
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
+    use capture::writer::PostError;
     use chrono::Utc;
     use config::Environment;
+    use tokio::io::AsyncReadExt as _;
 
     const CONFIG: &str = "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1/v1\n    model: m\n    api_key: secret\n";
     const TOOL: &str = r#"{"session_id":"55555555-5555-5555-5555-555555555555","cwd":"/work/demo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"toolu_1"}"#;
 
+    enum Reply {
+        None,
+        Ok,
+        Status(u16),
+        Garbage,
+        Hangup,
+    }
+
+    enum Token {
+        Valid,
+        Missing,
+        Symlink,
+        Shared,
+        Fifo,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Outcome {
+        Delivered,
+        Spooled,
+        DeadLettered,
+        Lost,
+    }
+
+    fn expected(error: &PostError) -> Outcome {
+        match error {
+            PostError::Unauthorized
+            | PostError::Refused { .. }
+            | PostError::Server { .. }
+            | PostError::Network { .. } => Outcome::Spooled,
+            PostError::Client { .. } => Outcome::DeadLettered,
+        }
+    }
+
+    struct Row {
+        name: &'static str,
+        reply: Reply,
+        token: Token,
+        foreign: bool,
+        error: Option<PostError>,
+        needle: &'static str,
+    }
+
+    #[expect(clippy::too_many_lines, reason = "one table, one loop")]
     #[tokio::test]
-    async fn a_squatter_receives_nothing_and_the_batch_is_spooled() {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = std::sync::Arc::clone(&received);
-        let app = axum::Router::new().fallback(move || {
-            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async { axum::http::StatusCode::OK }
-        });
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
-        let home = tempfile::tempdir().expect("home");
-        let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
-        let state = gateway::state_dir(&env).expect("state");
-        std::fs::create_dir_all(&state).expect("state dir");
-        let token = gateway::local_owner::OwnerToken::generate().expect("token");
-        let path = gateway::local_owner::token_path(&state);
-        std::fs::write(&path, token.expose()).expect("token file");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
-        std::fs::write(
-            home.path().join(".rivethub/config.yaml"),
-            format!("{CONFIG}gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-        )
-        .expect("config");
-        let foreign = nix::unistd::getuid().as_raw().wrapping_add(1);
-        let report = super::hook_as(&env, TOOL, Utc::now(), foreign).await;
-        assert!(
-            report.stderr.contains("not owned by this user"),
-            "{}",
-            report.stderr
-        );
-        let spooled = std::fs::read_dir(state.join("capture-spool")).map_or(0, Iterator::count);
-        assert_eq!(spooled, 1, "the batch was lost");
-        assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 0);
-        server.abort();
+    async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothing() {
+        let rows = [
+            Row {
+                name: "delivered",
+                reply: Reply::Ok,
+                token: Token::Valid,
+                foreign: false,
+                error: None,
+                needle: "",
+            },
+            Row {
+                name: "no token file",
+                reply: Reply::Ok,
+                token: Token::Missing,
+                foreign: false,
+                error: None,
+                needle: "",
+            },
+            Row {
+                name: "port closed",
+                reply: Reply::None,
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Refused {
+                    reason: String::new(),
+                }),
+                needle: "is not running",
+            },
+            Row {
+                name: "foreign listener",
+                reply: Reply::Ok,
+                token: Token::Valid,
+                foreign: true,
+                error: Some(PostError::Refused {
+                    reason: String::new(),
+                }),
+                needle: "not owned by this user",
+            },
+            Row {
+                name: "symlinked token",
+                reply: Reply::Ok,
+                token: Token::Symlink,
+                foreign: false,
+                error: Some(PostError::Refused {
+                    reason: String::new(),
+                }),
+                needle: "local owner token",
+            },
+            Row {
+                name: "mode 0640 token",
+                reply: Reply::Ok,
+                token: Token::Shared,
+                foreign: false,
+                error: Some(PostError::Refused {
+                    reason: String::new(),
+                }),
+                needle: "readable by other users",
+            },
+            Row {
+                name: "fifo token",
+                reply: Reply::Ok,
+                token: Token::Fifo,
+                foreign: false,
+                error: Some(PostError::Refused {
+                    reason: String::new(),
+                }),
+                needle: "local owner token",
+            },
+            Row {
+                name: "401",
+                reply: Reply::Status(401),
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Unauthorized),
+                needle: "401",
+            },
+            Row {
+                name: "400",
+                reply: Reply::Status(400),
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Client { status: 400 }),
+                needle: "HTTP 400",
+            },
+            Row {
+                name: "500",
+                reply: Reply::Status(500),
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Server { status: 500 }),
+                needle: "HTTP 500",
+            },
+            Row {
+                name: "connection dropped",
+                reply: Reply::Hangup,
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Network {
+                    message: String::new(),
+                }),
+                needle: "capture request failed",
+            },
+            Row {
+                name: "200 with a garbage body",
+                reply: Reply::Garbage,
+                token: Token::Valid,
+                foreign: false,
+                error: Some(PostError::Network {
+                    message: String::new(),
+                }),
+                needle: "capture request failed",
+            },
+        ];
+        for Row {
+            name,
+            reply,
+            token: token_file,
+            foreign,
+            error,
+            needle,
+        } in rows
+        {
+            let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .expect("bind");
+            let port = listener.local_addr().expect("addr").port();
+            let server = match reply {
+                Reply::None => {
+                    drop(listener);
+                    None
+                }
+                Reply::Hangup => {
+                    let seen = std::sync::Arc::clone(&seen);
+                    Some(tokio::spawn(async move {
+                        loop {
+                            let Ok((mut stream, _)) = listener.accept().await else {
+                                break;
+                            };
+                            let mut buffer = vec![0; 65536];
+                            let read = stream.read(&mut buffer).await.unwrap_or(0);
+                            seen.lock().push(
+                                String::from_utf8_lossy(buffer.get(..read).unwrap_or_default())
+                                    .into_owned(),
+                            );
+                        }
+                    }))
+                }
+                Reply::Ok | Reply::Status(_) | Reply::Garbage => {
+                    let seen = std::sync::Arc::clone(&seen);
+                    let canned = match reply {
+                        Reply::Ok => (
+                            axum::http::StatusCode::OK,
+                            r#"{"ok":true,"conversation_id":"c","inserted":1,"skipped":0}"#,
+                        ),
+                        Reply::Garbage => (axum::http::StatusCode::OK, "not json"),
+                        Reply::Status(code) => {
+                            (axum::http::StatusCode::from_u16(code).expect("status"), "")
+                        }
+                        Reply::None | Reply::Hangup => unreachable!(),
+                    };
+                    let app = axum::Router::new().fallback(
+                        move |headers: axum::http::HeaderMap, body: String| {
+                            seen.lock().push(format!("{headers:?} {body}"));
+                            async move { canned }
+                        },
+                    );
+                    Some(tokio::spawn(async move {
+                        axum::serve(listener, app).await.expect("serve");
+                    }))
+                }
+            };
+            let home = tempfile::tempdir().expect("home");
+            let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+            let state = gateway::state_dir(&env).expect("state");
+            std::fs::create_dir_all(&state).expect("state dir");
+            let path = gateway::local_owner::token_path(&state);
+            let secret = gateway::local_owner::OwnerToken::generate().expect("token");
+            let write = |mode| {
+                std::fs::write(&path, secret.expose()).expect("token file");
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                    .expect("chmod");
+            };
+            match token_file {
+                Token::Valid => write(0o600),
+                Token::Shared => write(0o640),
+                Token::Missing => {}
+                Token::Symlink => {
+                    let elsewhere = home.path().join("elsewhere");
+                    std::fs::write(&elsewhere, secret.expose()).expect("target");
+                    std::os::unix::fs::symlink(&elsewhere, &path).expect("symlink");
+                }
+                Token::Fifo => {
+                    nix::unistd::mkfifo(&path, nix::sys::stat::Mode::S_IRUSR).expect("fifo");
+                }
+            }
+            std::fs::write(
+                home.path().join(".rivethub/config.yaml"),
+                format!("{CONFIG}gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+            )
+            .expect("config");
+            let uid = nix::unistd::getuid().as_raw();
+            let uid = if foreign { uid.wrapping_add(1) } else { uid };
+            let report = super::hook_as(&env, TOOL, Utc::now(), uid).await;
+            if let Some(server) = server {
+                server.abort();
+            }
+            let files = |dir: std::path::PathBuf| {
+                std::fs::read_dir(dir).map_or(0, |entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .filter(|entry| entry.path().is_file())
+                        .count()
+                })
+            };
+            let spool = state.join("capture-spool");
+            let seen = seen.lock().clone();
+            let observed = match (files(spool.clone()), files(spool.join("dead")), seen.len()) {
+                (1, 0, _) => Outcome::Spooled,
+                (0, 1, _) => Outcome::DeadLettered,
+                (0, 0, 1) => Outcome::Delivered,
+                _ => Outcome::Lost,
+            };
+            let want = error.as_ref().map_or(Outcome::Delivered, expected);
+            assert_eq!(observed, want, "{name}: {}", report.stderr);
+            assert!(report.stderr.contains(needle), "{name}: {}", report.stderr);
+            let refused = matches!(error, Some(PostError::Refused { .. }));
+            if refused {
+                assert!(seen.is_empty(), "{name}: a request left the hook");
+            }
+            if refused || matches!(token_file, Token::Missing) {
+                assert!(
+                    seen.iter()
+                        .all(|request| !request.contains(secret.expose())),
+                    "{name}: the token was sent"
+                );
+            }
+            if matches!(token_file, Token::Missing) {
+                assert!(
+                    seen.iter()
+                        .all(|request| !request.contains("authorization")),
+                    "{name}: an Authorization header was sent"
+                );
+            }
+            if name == "delivered" {
+                let bearer = format!("Bearer {}", secret.expose());
+                assert!(
+                    seen.first()
+                        .is_some_and(|request| request.contains(&bearer)),
+                    "{name}: the owner token is not sent"
+                );
+            }
+            if refused {
+                assert!(
+                    seen.iter().all(|request| !request.contains("toolu_1")),
+                    "{name}: the payload was sent"
+                );
+            }
+        }
     }
 }

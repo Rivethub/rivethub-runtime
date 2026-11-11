@@ -41,27 +41,6 @@ async fn the_hook_never_fails_the_harness_without_a_config()
 }
 
 #[tokio::test]
-async fn an_unreachable_gateway_spools_the_batch() -> Result<(), Box<dyn std::error::Error>> {
-    let port = testkit::ports::claim()?;
-    let home = home();
-    let env = environment(&home);
-    config(
-        &home,
-        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-    );
-    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
-    assert_eq!(report.exit, Exit::Ok);
-    assert!(
-        report.stderr.starts_with("capture request failed"),
-        "{}",
-        report.stderr
-    );
-    let spooled = std::fs::read_dir(home.path().join(".rivethub/capture-spool"))?.count();
-    assert_eq!(spooled, 1);
-    Ok(())
-}
-
-#[tokio::test]
 async fn the_capture_command_lists_the_hook_subcommand() {
     let home = home();
     let env = environment(&home);
@@ -301,29 +280,6 @@ async fn the_hook_captures_through_the_local_gateway_with_the_owner_token()
 }
 
 #[tokio::test]
-async fn a_refused_token_spools_the_batch_instead_of_losing_it()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let home = home();
-    let env = environment(&home);
-    let store = Arc::new(FakeMemoryStore::default());
-    let other = Arc::new(gateway::local_owner::LocalOwner::unpersisted()?);
-    let (port, stop, server) = local_gateway(&store, home.path(), other).await?;
-    support::local_owner(home.path());
-    config(
-        &home,
-        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-    );
-    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
-    assert!(report.stderr.contains("401"), "{}", report.stderr);
-    assert_eq!(appended_owners(store.requests().await).len(), 0);
-    let spooled = std::fs::read_dir(home.path().join(".rivethub/capture-spool"))?.count();
-    assert_eq!(spooled, 1);
-    stop.cancel();
-    tokio::time::timeout(Duration::from_secs(5), server).await???;
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_batch_spooled_on_401_replays_once_the_token_is_right()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let home = home();
@@ -343,42 +299,6 @@ async fn a_batch_spooled_on_401_replays_once_the_token_is_right()
     assert_eq!(appended_owners(store.requests().await), ["owner"]);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(5), server).await???;
-    Ok(())
-}
-
-#[tokio::test]
-async fn with_no_token_file_the_client_sends_no_authorization_header()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let seen = Arc::new(parking_lot::Mutex::new(Vec::<Option<String>>::new()));
-    let recorder = Arc::clone(&seen);
-    let app = axum::Router::new().fallback(move |headers: axum::http::HeaderMap| {
-        let recorder = Arc::clone(&recorder);
-        async move {
-            recorder.lock().push(
-                headers
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned),
-            );
-            axum::http::StatusCode::UNAUTHORIZED
-        }
-    });
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
-    let port = listener.local_addr()?.port();
-    let server = tokio::spawn(async move { axum::serve(listener, app).await });
-    let home = home();
-    let env = environment(&home);
-    config(
-        &home,
-        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-    );
-    cli::capture_hook::hook(&env, TOOL, now()?).await;
-    assert_eq!(seen.lock().as_slice(), [None]);
-    let token = support::local_owner(home.path()).current();
-    cli::capture_hook::hook(&env, TOOL, now()?).await;
-    let last = seen.lock().last().cloned().flatten();
-    assert_eq!(last, Some(format!("Bearer {}", token.expose())));
-    server.abort();
     Ok(())
 }
 
@@ -425,30 +345,6 @@ async fn a_batch_survives_a_stopped_gateway_when_the_token_exists_and_the_port_n
     assert_eq!(appended_owners(store.requests().await), ["owner", "owner"]);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(5), server).await???;
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_refused_token_file_spools_the_batch_too() -> Result<(), Box<dyn std::error::Error>> {
-    let port = testkit::ports::claim()?.number();
-    let home = home();
-    let env = environment(&home);
-    config(
-        &home,
-        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-    );
-    let state = gateway::state_dir(&env)?;
-    std::fs::create_dir_all(&state)?;
-    let elsewhere = home.path().join("elsewhere");
-    std::fs::write(&elsewhere, "x")?;
-    std::os::unix::fs::symlink(&elsewhere, gateway::local_owner::token_path(&state))?;
-    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
-    assert!(
-        report.stderr.contains("local owner token"),
-        "{}",
-        report.stderr
-    );
-    assert_eq!(spool_entries(home.path()), 1);
     Ok(())
 }
 
