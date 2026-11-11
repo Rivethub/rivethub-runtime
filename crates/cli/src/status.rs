@@ -51,13 +51,11 @@ pub(crate) struct Endpoint {
 async fn health(env: &Environment) -> Result<Report, Error> {
     let (_, loaded) = configuration::load(env).await?;
     let Endpoint { url, client } = endpoint(env, &loaded.config).await?;
-    let health: Health = client
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let mut health: Health = fetch(&client, url).await?;
+    let uid = nix::unistd::getuid().as_raw();
+    if let Some(detailed) = detailed_health(env, &loaded.config, uid).await {
+        health = detailed;
+    }
     let text = if health.response.ok {
         "RivetHub is running".to_owned()
     } else {
@@ -80,6 +78,25 @@ async fn health(env: &Environment) -> Result<Report, Error> {
     let mut report = Report::success(parts.join(""));
     report.stderr = configuration::notices(&loaded);
     Ok(report)
+}
+
+async fn fetch(client: &reqwest::Client, url: url::Url) -> Result<Health, Error> {
+    Ok(client
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+async fn detailed_health(env: &Environment, config: &Config, owner_uid: u32) -> Option<Health> {
+    let state = gateway::state_dir(env).ok()?;
+    gateway::local_owner::read_token(&state).ok()??;
+    let Endpoint { url, client } = gateway_as(env, config, Duration::from_secs(3), Some(owner_uid))
+        .await
+        .ok()?;
+    fetch(&client, url.join("healthz").ok()?).await.ok()
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -320,6 +337,7 @@ mod tests {
         if let Ok(endpoint) = &built {
             endpoint.client.get(endpoint.url.clone()).send().await.ok();
         }
+        super::detailed_health(&env, &loaded.config, owner_uid).await;
         server.abort();
         let seen = seen.lock().clone();
         (built, seen)
@@ -337,6 +355,9 @@ mod tests {
         assert!(seen.is_empty(), "nothing was sent: {seen:?}");
         let (accepted, seen) = squatted(uid).await;
         assert!(accepted.is_ok());
-        assert!(matches!(seen.as_slice(), [Some(value)] if value.starts_with("Bearer ")));
+        assert!(
+            matches!(seen.as_slice(), [Some(first), Some(second)] if first.starts_with("Bearer ") && first == second),
+            "{seen:?}"
+        );
     }
 }

@@ -267,3 +267,69 @@ async fn health_probes_never_carry_the_owner_token() -> Result<(), std::io::Erro
     task.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn the_owner_sees_provider_causes_that_an_anonymous_probe_does_not() {
+    let token = gateway::local_owner::OwnerToken::generate().expect("token");
+    let expected = format!("Bearer {}", token.expose());
+    let stub = testkit::stub_server(Router::new().route(
+        "/healthz",
+        get(move |headers: axum::http::HeaderMap| {
+            let expected = expected.clone();
+            async move {
+                let owner = headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    == Some(expected.as_str());
+                let reason = if owner {
+                    "ACP discovery timed out after 30000ms"
+                } else {
+                    "unavailable; see the gateway log"
+                };
+                Json(HealthzResponse {
+                    ok: true,
+                    sessions: 0,
+                    name: "host".to_owned(),
+                    node: "node".to_owned(),
+                    degraded: None,
+                    degraded_providers: vec![wire::gateway::DegradedProvider {
+                        id: "hermes-cli".to_owned(),
+                        recovery: wire::gateway::ProviderRecovery::Retrying,
+                        reason: reason.to_owned(),
+                    }],
+                    version: None,
+                    revision: None,
+                })
+            }
+        }),
+    ))
+    .await
+    .expect("health route");
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!(
+            "gateway:\n  host: 127.0.0.1\n  port: {}\n",
+            stub.addr.port()
+        ),
+    );
+    let anonymous = run(&["status"], &env).await;
+    assert!(
+        anonymous
+            .stdout
+            .contains("unavailable; see the gateway log"),
+        "{}",
+        anonymous.stdout
+    );
+    support::install_owner_token(&env, &token);
+    let owner = run(&["status"], &env).await;
+    assert!(
+        owner
+            .stdout
+            .contains("ACP discovery timed out after 30000ms"),
+        "{}",
+        owner.stdout
+    );
+    stub.close().await.expect("stub shuts down");
+}
