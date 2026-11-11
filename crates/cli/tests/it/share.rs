@@ -1013,6 +1013,11 @@ async fn logout_keeps_the_login_when_the_revoke_fails_and_touches_only_its_serve
         "{}",
         status.stdout
     );
+    assert!(
+        status.stdout.contains("share-logins.json (mode 0600)"),
+        "status names the token store: {}",
+        status.stdout
+    );
     team.stop.cancel();
     other.stop.cancel();
 }

@@ -45,9 +45,8 @@ use crate::share_server::ShareServers;
 use crate::share_server::TeamLogin;
 use crate::share_server::Tokens;
 use crate::share_server::checked;
+use crate::share_server::logins::Listed;
 use crate::share_server::oauth;
-use crate::share_server::read_logins;
-use crate::share_server::write_logins;
 
 pub fn node_key(env: &Environment) -> Result<PublicKey, Error> {
     Ok(NodeKey::load_or_create(&signing_key_path(env)?)
@@ -289,7 +288,7 @@ async fn approval(
     let tokens = Tokens::issued(&issued, None)?;
     let scope = tokens.scope.clone();
     let _lock = server.lock().await?;
-    server.keep(Login::Device(tokens))?;
+    server.keep(&Login::Device(tokens)).await?;
     Ok(Approval::SignedIn { scope })
 }
 
@@ -323,10 +322,12 @@ pub async fn login_team(env: &Environment, server: &str, token: String) -> Resul
         .await
         .map_err(ServerError::from)?;
     let _lock = server.lock().await?;
-    server.keep(Login::Team(TeamLogin {
-        team_token: token,
-        user: me.user.clone(),
-    }))?;
+    server
+        .keep(&Login::Team(TeamLogin {
+            team_token: token,
+            user: me.user.clone(),
+        }))
+        .await?;
     Ok(me.user)
 }
 
@@ -345,11 +346,13 @@ pub async fn logout(
     let server = connect(env, server).await?;
     let host = server.host().clone();
     let _lock = server.lock().await?;
-    let mut logins = read_logins(server.store())?;
-    let outcome = match logins.logins.get(host.as_str()) {
-        None => return Ok((host, LoggedOut::NotSignedIn)),
-        Some(Login::Team(_)) => LoggedOut::Forgotten,
-        Some(Login::Device(tokens)) => {
+    let login = match server.logins().load(&host).await {
+        Err(ServerError::LoggedOut(_)) => return Ok((host, LoggedOut::NotSignedIn)),
+        loaded => loaded?,
+    };
+    let outcome = match login {
+        Login::Team(_) => LoggedOut::Forgotten,
+        Login::Device(tokens) => {
             let endpoints = server.endpoints().await?;
             match endpoints.revocation.clone() {
                 None => LoggedOut::NotRevocable,
@@ -368,17 +371,17 @@ pub async fn logout(
             }
         }
     };
-    logins.logins.remove(host.as_str());
-    write_logins(server.store(), &logins)?;
+    server.logins().forget(&host).await?;
     Ok((host, outcome))
 }
 
 pub async fn servers(env: &Environment) -> Result<Servers, Error> {
     let servers = ShareServers::from_env(env).await?;
     let configured = servers.configured().as_str();
-    let logins = servers.logins()?;
+    let store = servers.logins();
+    let logins = store.list()?;
     let mut views: Vec<ServerView> = Vec::new();
-    if !logins.logins.contains_key(configured) {
+    if !logins.contains_key(configured) {
         views.push(ServerView {
             origin: configured.to_owned().into(),
             kind: ServerKind::Cloud,
@@ -387,10 +390,10 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
             default: true,
         });
     }
-    for (host, login) in logins.logins {
+    for (host, login) in logins {
         let (kind, user) = match login {
-            Login::Device(_) => (ServerKind::Cloud, None),
-            Login::Team(team) => (ServerKind::Team, Some(team.user)),
+            Listed::Device { .. } => (ServerKind::Cloud, None),
+            Listed::Team { user } => (ServerKind::Team, Some(user)),
         };
         views.push(ServerView {
             default: host == configured,
@@ -403,7 +406,8 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
     views.sort_by_key(|view| !view.default);
     Ok(Servers {
         servers: views,
-        logins_file: servers.store().display().to_string(),
+        logins_file: store.file().display().to_string(),
+        token_store: store.kind(),
     })
 }
 
@@ -516,6 +520,7 @@ fn server_error(error: ServerError) -> DeskError {
         error @ ServerError::RateLimited(_) => DeskError::Unreachable(error.to_string()),
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
         other @ (ServerError::Store(_)
+        | ServerError::Keyring(_)
         | ServerError::Ca { .. }
         | ServerError::File(_)
         | ServerError::Io(_)

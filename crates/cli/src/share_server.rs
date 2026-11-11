@@ -1,22 +1,19 @@
-use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use capture::sanitize::KeyError;
-use capture::sanitize::key::PrivateFile;
 use capture::seal::CodeError;
 use capture::seal::ShareServer;
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
 use config::Environment;
+use kernel::memory::share::desk::TokenStore;
 use oauth2::RefreshToken;
 use oauth2::RequestTokenError;
 use oauth2::TokenResponse as _;
 use oauth2::basic::BasicTokenResponse;
-use serde::Deserialize;
-use serde::Serialize;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -25,7 +22,10 @@ use crate::Report;
 use crate::memory::desk;
 use crate::memory::desk::Approval;
 use crate::memory::desk::LoggedOut;
+use logins::Listed;
+use logins::LoginStore;
 
+pub(crate) mod logins;
 pub(crate) mod oauth;
 
 pub(crate) const CLIENT_ID: &str = "rivethub-cli";
@@ -36,8 +36,6 @@ pub(crate) const REVOKE_PATH: &str = "api/cli/revoke";
 pub(crate) const STORE_FILE: &str = "share-logins.json";
 pub(crate) const ME_PATH: &str = "api/me";
 const LOCK_FILE: &str = "share-logins.json.lock";
-const STORE_NAME: &str = "share server logins";
-const STORE_CAP: u64 = 256 * 1024;
 const CA_CAP: u64 = 1024 * 1024;
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -94,6 +92,10 @@ pub enum ServerError {
     Lifetime(u64),
     #[error("the share login file is unreadable: {0}")]
     Store(String),
+    #[error(
+        "the OS keyring could not be used: {0}; set RIVETHUB_TOKEN_STORE=file to keep share tokens in the 0600 login file"
+    )]
+    Keyring(String),
     #[error("the CA file {path} for {host} in memory.share.trusted_cas cannot be used: {reason}")]
     Ca {
         host: String,
@@ -110,12 +112,11 @@ pub enum ServerError {
     Finished,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
 pub(crate) struct Tokens {
-    access_token: String,
+    pub(crate) access_token: String,
     pub(crate) refresh_token: String,
-    expires_at: DateTime<Utc>,
+    pub(crate) expires_at: DateTime<Utc>,
     pub(crate) scope: String,
 }
 
@@ -132,8 +133,7 @@ impl std::fmt::Debug for Tokens {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
 pub(crate) struct TeamLogin {
     pub(crate) team_token: String,
     pub(crate) user: String,
@@ -152,23 +152,16 @@ impl std::fmt::Debug for TeamLogin {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub(crate) enum Login {
     Device(Tokens),
     Team(TeamLogin),
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Logins {
-    pub(crate) logins: BTreeMap<String, Login>,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct ShareServers {
     configured: ShareServer,
-    store: PathBuf,
+    logins: LoginStore,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
 }
@@ -178,7 +171,7 @@ pub(crate) struct Server {
     host: ShareServer,
     base: Url,
     client: reqwest::Client,
-    store: PathBuf,
+    logins: LoginStore,
     lock: PathBuf,
 }
 
@@ -192,7 +185,7 @@ impl ShareServers {
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
             configured,
-            store: state.join(STORE_FILE),
+            logins: LoginStore::choose(env, state.join(STORE_FILE)).await?,
             lock: state.join(LOCK_FILE),
             cas: loaded.config.share_trusted_cas().to_vec(),
         })
@@ -230,7 +223,7 @@ impl ShareServers {
             host: host.clone(),
             base,
             client: builder.build()?,
-            store: self.store.clone(),
+            logins: self.logins.clone(),
             lock: self.lock.clone(),
         })
     }
@@ -239,44 +232,48 @@ impl ShareServers {
         &self.configured
     }
 
-    pub(crate) const fn store(&self) -> &PathBuf {
-        &self.store
-    }
-
-    pub(crate) fn logins(&self) -> Result<Logins, ServerError> {
-        read_logins(&self.store)
+    pub(crate) const fn logins(&self) -> &LoginStore {
+        &self.logins
     }
 
     fn status(&self) -> Result<Report, ServerError> {
-        let logins = read_logins(&self.store)?;
-        if logins.logins.is_empty() {
+        let listed = self.logins.list()?;
+        let kept = match self.logins.kind() {
+            TokenStore::Keyring => "tokens are kept in the OS keyring\n".to_owned(),
+            TokenStore::File => format!(
+                "tokens are kept in {} (mode 0600)\n",
+                self.logins.file().display()
+            ),
+        };
+        if listed.is_empty() {
             return Ok(Report::success(format!(
-                "not signed in to any share server; rh share login signs in to {}\n",
+                "not signed in to any share server; rh share login signs in to {}\n{kept}",
                 self.configured
             )));
         }
-        Ok(Report::success(logins.logins.iter().fold(
-            String::new(),
-            |mut lines, (server, login)| {
+        let mut lines = listed
+            .iter()
+            .fold(String::new(), |mut lines, (server, login)| {
                 lines.push_str("signed in to ");
                 lines.push_str(server);
                 match login {
-                    Login::Device(tokens) => {
+                    Listed::Device { scope, expires_at } => {
                         lines.push_str(" (scope ");
-                        lines.push_str(&tokens.scope);
+                        lines.push_str(scope);
                         lines.push_str("); the access token renews itself, next at ");
-                        lines.push_str(&tokens.expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
+                        lines.push_str(&expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
                     }
-                    Login::Team(team) => {
+                    Listed::Team { user } => {
                         lines.push_str(" as ");
-                        lines.push_str(&team.user);
+                        lines.push_str(user);
                         lines.push_str(" with a team token");
                     }
                 }
                 lines.push('\n');
                 lines
-            },
-        )))
+            });
+        lines.push_str(&kept);
+        Ok(Report::success(lines))
     }
 }
 
@@ -296,32 +293,6 @@ async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certific
         .await
         .map_err(|error| failed(error.to_string()))?;
     reqwest::Certificate::from_pem(&pem).map_err(|error| failed(error.to_string()))
-}
-
-pub(crate) fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
-    let bytes = match PrivateFile::new(store, STORE_NAME, STORE_CAP).read() {
-        Ok(bytes) => bytes,
-        Err(KeyError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Logins::default());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    serde_json::from_slice(&bytes).map_err(|error| ServerError::Store(error.to_string()))
-}
-
-pub(crate) fn write_logins(store: &std::path::Path, logins: &Logins) -> Result<(), ServerError> {
-    let parent = store.parent().unwrap_or_else(|| std::path::Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let mut partial = tempfile::Builder::new()
-        .prefix(".share-logins-")
-        .tempfile_in(parent)?;
-    let text = serde_json::to_vec(logins).map_err(|error| ServerError::Store(error.to_string()))?;
-    partial.write_all(&text)?;
-    partial.as_file().sync_all()?;
-    partial
-        .persist(store)
-        .map_err(|error| ServerError::Io(error.error))?;
-    Ok(())
 }
 
 impl Server {
@@ -354,19 +325,12 @@ impl Server {
             .map_err(ServerError::from)
     }
 
-    pub(crate) fn store(&self) -> &std::path::Path {
-        &self.store
+    pub(crate) const fn logins(&self) -> &LoginStore {
+        &self.logins
     }
 
-    fn mine(&self) -> Result<Login, ServerError> {
-        read_logins(&self.store)?
-            .logins
-            .remove(self.host.as_str())
-            .ok_or_else(|| ServerError::LoggedOut(self.host.clone()))
-    }
-
-    fn device(&self, rejected: Option<&str>) -> Result<Result<Tokens, String>, ServerError> {
-        match self.mine()? {
+    async fn device(&self, rejected: Option<&str>) -> Result<Result<Tokens, String>, ServerError> {
+        match self.logins.load(&self.host).await? {
             Login::Device(tokens) => Ok(Ok(tokens)),
             Login::Team(team) if rejected.is_none() => Ok(Err(team.team_token)),
             Login::Team(_) => Err(ServerError::TokenRefused {
@@ -376,14 +340,12 @@ impl Server {
         }
     }
 
-    pub(crate) fn keep(&self, login: Login) -> Result<(), ServerError> {
-        let mut logins = read_logins(&self.store)?;
-        logins.logins.insert(self.host.to_string(), login);
-        write_logins(&self.store, &logins)
+    pub(crate) async fn keep(&self, login: &Login) -> Result<(), ServerError> {
+        self.logins.save(&self.host, login).await
     }
 
     pub(crate) async fn access_token(&self, rejected: Option<&str>) -> Result<String, ServerError> {
-        let tokens = match self.device(rejected)? {
+        let tokens = match self.device(rejected).await? {
             Ok(tokens) => tokens,
             Err(team) => return Ok(team),
         };
@@ -391,7 +353,7 @@ impl Server {
             return Ok(tokens.access_token);
         }
         let _lock = self.lock().await?;
-        let tokens = match self.device(rejected)? {
+        let tokens = match self.device(rejected).await? {
             Ok(tokens) => tokens,
             Err(team) => return Ok(team),
         };
@@ -417,7 +379,7 @@ impl Server {
             Err(other) => return Err(oauth::failed(other)),
         };
         let access = renewed.access_token.clone();
-        self.keep(Login::Device(renewed))?;
+        self.keep(&Login::Device(renewed)).await?;
         Ok(access)
     }
 }
@@ -522,35 +484,5 @@ async fn login(
         ))),
         Approval::Denied => Err(ServerError::Denied("denied in the browser").into()),
         Approval::Expired => Err(ServerError::Denied("not given before the code expired").into()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_logins_file_holds_device_and_team_logins_side_by_side() {
-        let written = r#"{"logins":{"rivethub.cloud":{"access_token":"rhca_x","refresh_token":"rhcr_x","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}}}"#;
-        let mut logins: Logins = serde_json::from_str(written).expect("a file the old code wrote");
-        assert!(matches!(
-            logins.logins.get("rivethub.cloud"),
-            Some(Login::Device(_))
-        ));
-        logins.logins.insert(
-            "team.example.com".to_owned(),
-            Login::Team(TeamLogin {
-                team_token: "rht_x".to_owned(),
-                user: "phil".to_owned(),
-            }),
-        );
-        let text = serde_json::to_string(&logins).expect("serialize");
-        assert!(text.contains(r#""team.example.com":{"team_token":"rht_x","user":"phil"}"#));
-        let read: Logins = serde_json::from_str(&text).expect("read back");
-        assert!(matches!(
-            read.logins.get("team.example.com"),
-            Some(Login::Team(team)) if team.user == "phil"
-        ));
-        assert!(!format!("{read:?}").contains("rht_x"));
     }
 }

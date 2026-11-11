@@ -9402,11 +9402,15 @@
             "$ref": "#/$defs/ServerView"
           },
           "type": "array"
+        },
+        "token_store": {
+          "$ref": "#/$defs/TokenStore"
         }
       },
       "required": [
         "servers",
-        "logins_file"
+        "logins_file",
+        "token_store"
       ],
       "type": "object"
     },
@@ -11697,6 +11701,13 @@
         "changes"
       ],
       "type": "object"
+    },
+    "TokenStore": {
+      "enum": [
+        "keyring",
+        "file"
+      ],
+      "type": "string"
     },
     "ToolCall": {
       "properties": {

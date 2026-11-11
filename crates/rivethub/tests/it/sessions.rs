@@ -190,6 +190,7 @@ impl Node {
         let env = config::Environment::from_vars([
             (OsStr::new("HOME"), self.home.path().as_os_str()),
             (OsStr::new("RIVETHUB_NODE_NAME"), OsStr::new("desk")),
+            (OsStr::new("RIVETHUB_TOKEN_STORE"), OsStr::new("file")),
         ]);
         let loaded = config::Config::load(
             &env,

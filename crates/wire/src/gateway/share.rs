@@ -323,6 +323,14 @@ impl fmt::Debug for SentReply {
 pub struct ServersReply {
     pub servers: Vec<ServerView>,
     pub logins_file: String,
+    pub token_store: TokenStore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenStore {
+    Keyring,
+    File,
 }
 
 #[serde_with::skip_serializing_none]

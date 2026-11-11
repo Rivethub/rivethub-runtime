@@ -45,14 +45,15 @@ httparse = "1"
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
 kernel = { path = "crates/kernel", version = "0.8.1" }
+keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 landlock = "0.4.7"
 libtest-mimic = "0.8"
 mcp = { path = "crates/mcp", version = "0.8.1" }
 memory-postgres = { path = "crates/memory-postgres", version = "0.8.1" }
 memory-sqlite = { path = "crates/memory-sqlite", version = "0.8.1" }
 migrate = { path = "crates/migrate", version = "0.8.1" }
-oauth2 = { version = "5.0.0", default-features = false }
 nix = { version = "0.30", features = ["process", "signal", "fs", "user"] }
+oauth2 = { version = "5.0.0", default-features = false }
 opener = "0.9"
 parking_lot = "0.12"
 percent-encoding = "2"

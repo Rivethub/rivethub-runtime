@@ -12,7 +12,7 @@ use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
     DeskError, Draft, DraftId, DraftRequest, DraftSession, DraftTotals, EscapedText, FindQuery,
     FlagState, FlagView, Found, LoginId, LoginRequest, LoginStep, Mark, Marked, NodeKeyView,
-    SendRequest, Sent, ServerOrigin, Servers, ShareDesk,
+    SendRequest, Sent, ServerOrigin, Servers, ShareDesk, TokenStore,
 };
 use parking_lot::Mutex;
 use tower::ServiceExt as _;
@@ -133,6 +133,7 @@ impl ShareDesk for FakeDesk {
         Ok(Servers {
             servers: Vec::new(),
             logins_file: "share-logins.json".to_owned(),
+            token_store: TokenStore::File,
         })
     }
 

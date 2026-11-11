@@ -442,3 +442,16 @@ async fn a_team_login_is_checked_with_api_me() {
     );
     assert!(!other.logins().contains(&served.host));
 }
+
+#[tokio::test]
+async fn the_servers_listing_names_the_token_store() {
+    let node = node();
+
+    let servers = desk::servers(&node.env).await.expect("servers");
+
+    assert_eq!(
+        servers.token_store,
+        kernel::memory::share::desk::TokenStore::File
+    );
+    assert!(servers.logins_file.ends_with("share-logins.json"));
+}

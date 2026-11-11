@@ -447,6 +447,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::share::ServersReply>,
     SchemaGenerator::subschema_for::<crate::gateway::share::ServerView>,
     SchemaGenerator::subschema_for::<crate::gateway::share::ServerKind>,
+    SchemaGenerator::subschema_for::<crate::gateway::share::TokenStore>,
     SchemaGenerator::subschema_for::<crate::gateway::share::LoginRequest>,
     SchemaGenerator::subschema_for::<crate::gateway::share::LoginStep>,
     SchemaGenerator::subschema_for::<crate::gateway::share::PollRequest>,

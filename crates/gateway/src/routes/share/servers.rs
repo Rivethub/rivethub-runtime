@@ -37,6 +37,10 @@ pub(super) async fn list(
             })
             .collect(),
         logins_file: servers.logins_file,
+        token_store: match servers.token_store {
+            desk::TokenStore::Keyring => body::TokenStore::Keyring,
+            desk::TokenStore::File => body::TokenStore::File,
+        },
     }))
 }
 

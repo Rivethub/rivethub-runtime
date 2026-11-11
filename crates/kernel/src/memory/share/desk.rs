@@ -403,6 +403,13 @@ pub enum ServerKind {
 pub struct Servers {
     pub servers: Vec<ServerView>,
     pub logins_file: String,
+    pub token_store: TokenStore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenStore {
+    Keyring,
+    File,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

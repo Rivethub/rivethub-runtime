@@ -2228,7 +2228,13 @@ the token endpoint at the given interval, honouring `authorization_pending`, `sl
 at most twice; a missing or unreadable `Retry-After`, a longer wait or a 5xx is an error (while polling, a backoff). A
 loopback server is reached over http for every endpoint; because `oauth2` accepts only an https revocation URL (RFC 7009
 §2), rh hands it the https form of that loopback URL and sends the request over http. Logins are kept per server in
-`$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers. Every change to
+`$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers. When an OS
+keyring is available (Secret Service on Linux, the macOS Keychain, the Windows Credential Manager, through the `keyring`
+crate) the access, refresh and team tokens live there under the service `rivethub share login` and the server's host,
+and the file keeps only the expiry, scope and user, so listing reads no secret. rh decides the store once per process:
+`RIVETHUB_TOKEN_STORE=file` forces the file, `=keyring` requires the keyring, and unset means the keyring when it opens
+(on Linux only when `DBUS_SESSION_BUS_ADDRESS` names a session bus), else the file. A file entry holding its tokens, as
+older rh wrote them, still reads, and moves into the keyring on its next write; logout erases the keyring entry. Every change to
 that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and re-reads the file first, so
 concurrent runs never replay a rotated refresh token (a server revokes the login on reuse). The access token is
 refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share logout [<server>]` posts
@@ -2565,7 +2571,8 @@ snake_case name of the port's failure (`unknown_draft` 404, `unknown_login` 404,
 span with hidden and bidi characters written as `<U+XXXX>`. It leaves rh only in these bodies, only to the local owner, and
 never in a log: the report, flag and mark types print counts, not text, in `Debug`. The code. `send` returns the share code
 once in `SentReply.code`; rh keeps no copy, and its `Debug` shows only the drop id. A team token arrives in `LoginRequest`
-and is never returned. Drafts live in rh's memory only, at most 4, 30 minutes idle.
+and is never returned. `ServersReply.token_store` is `keyring` or `file`, the store this rh process keeps share tokens in
+(note 140). Drafts live in rh's memory only, at most 4, 30 minutes idle.
 
 ## 4. Gaps to close before building the affected slice
 
