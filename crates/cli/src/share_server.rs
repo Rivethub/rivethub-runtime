@@ -7,6 +7,7 @@ use capture::sanitize::KeyError;
 use capture::sanitize::key::PrivateFile;
 use capture::seal::CodeError;
 use capture::seal::ShareServer;
+use capture::share_policy::{BadAllowedServer, SharePolicy, ShareRefused};
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -60,6 +61,10 @@ pub enum ShareCommand {
 pub enum ServerError {
     #[error(transparent)]
     Server(#[from] CodeError),
+    #[error(transparent)]
+    AllowedServer(#[from] BadAllowedServer),
+    #[error(transparent)]
+    Refused(#[from] ShareRefused),
     #[error("this machine is not signed in to {0}; run rh share login {0}")]
     LoggedOut(ShareServer),
     #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
@@ -181,7 +186,8 @@ struct Revoke<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ShareServers {
-    configured: ShareServer,
+    policy: SharePolicy,
+    default: Result<ShareServer, ShareRefused>,
     store: PathBuf,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
@@ -200,12 +206,14 @@ impl ShareServers {
     pub(crate) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
         let loaded = crate::db::load(env, None).await?;
         let configured = match loaded.config.share_server() {
-            Some(section) => section.url.parse().map_err(ServerError::from)?,
-            None => ShareServer::rivethub_cloud(),
+            Some(section) => Some(section.url.parse().map_err(ServerError::from)?),
+            None => None,
         };
+        let policy = SharePolicy::from_config(&loaded.config).map_err(ServerError::from)?;
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
-            configured,
+            default: policy.default_server(configured),
+            policy,
             store: state.join(STORE_FILE),
             lock: state.join(LOCK_FILE),
             cas: loaded.config.share_trusted_cas().to_vec(),
@@ -215,7 +223,7 @@ impl ShareServers {
     pub(crate) fn pick(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
         match named {
             Some(text) => Ok(text.parse()?),
-            None => Ok(self.configured.clone()),
+            None => Ok(self.default.clone()?),
         }
     }
 
@@ -224,6 +232,7 @@ impl ShareServers {
         host: &ShareServer,
         timeout: Duration,
     ) -> Result<Server, ServerError> {
+        self.policy.admit(host)?;
         let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server(host.to_string()))?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
@@ -252,10 +261,12 @@ impl ShareServers {
     fn status(&self) -> Result<Report, ServerError> {
         let logins = read_logins(&self.store)?;
         if logins.logins.is_empty() {
-            return Ok(Report::success(format!(
-                "not signed in to any share server; rh share login signs in to {}\n",
-                self.configured
-            )));
+            return Ok(Report::success(match &self.default {
+                Ok(host) => format!(
+                    "not signed in to any share server; rh share login signs in to {host}\n"
+                ),
+                Err(refused) => format!("not signed in to any share server; {refused}\n"),
+            }));
         }
         Ok(Report::success(logins.logins.iter().fold(
             String::new(),

@@ -1152,3 +1152,54 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
     first.stop.cancel();
     second.stop.cancel();
 }
+
+#[tokio::test]
+async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
+    let node = Node::new("phil", "https://unused.example.com/", None);
+    support::config(&node.home, "cloud:\n  disabled: true\n");
+    for args in [["share", "login"], ["share", "logout"]] {
+        let report = node.run(&args).await;
+        assert_eq!(report.exit, Exit::Failure, "{args:?}: {}", report.stdout);
+        assert!(
+            report
+                .stderr
+                .contains("sharing is disabled by this hub's policy"),
+            "{args:?}: {}",
+            report.stderr
+        );
+        assert!(
+            report.stderr.contains("memory.share.allowed_servers"),
+            "{args:?}: {}",
+            report.stderr
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_disabled_cloud_reaches_only_listed_share_servers() {
+    let served = drop_box().await;
+    let node = Node::new("phil", &served.url, None);
+    let server = format!("memory:\n  share:\n    server:\n      url: {}\n", served.url);
+    support::config(&node.home, &format!("{server}cloud:\n  disabled: true\n"));
+    node.sign_in(&served.url);
+    let refused = node.run(&["share", "logout"]).await;
+    assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
+    assert!(
+        refused.stderr.contains("disabled by this hub's policy"),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(served.drops.0.lock().revokes.len(), 0);
+
+    support::config(
+        &node.home,
+        &format!(
+            "{server}    allowed_servers:\n      - {}\ncloud:\n  disabled: true\n",
+            host_of(&served.url)
+        ),
+    );
+    let allowed = node.run(&["share", "logout"]).await;
+    assert_eq!(allowed.exit, Exit::Ok, "{}", allowed.stderr);
+    assert_eq!(served.drops.0.lock().revokes.len(), 1);
+    served.stop.cancel();
+}
