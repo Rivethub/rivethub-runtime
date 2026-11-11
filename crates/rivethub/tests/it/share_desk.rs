@@ -294,6 +294,41 @@ async fn debug_never_shows_text_or_code() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_failing_decision_model_never_echoes_into_the_error() -> TestResult {
+    let model = testkit::stub_server(
+        axum::Router::new()
+            .route(
+                "/v1/decide",
+                axum::routing::post(|body: String| async move {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("cannot score {body}"),
+                    )
+                }),
+            )
+            .route(
+                "/v1/decide/info",
+                axum::routing::get(|| async { r#"{"model": "stub-model"}"# }),
+            ),
+    )
+    .await?;
+    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&phil)?;
+    let desk = desk(&phil, false)?;
+
+    let refused = desk.draft(request(&[&gamma], true)?).await;
+
+    let Err(DeskError::Failed(message)) = refused else {
+        return Err(format!("{refused:?}").into());
+    };
+    assert!(message.contains("500"), "{message}");
+    assert!(!message.contains(RISKY), "{message}");
+    assert!(!message.contains("cannot score"), "{message}");
+    model.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn drafts_are_capped_and_expire_when_idle() -> TestResult {
     let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
     let (alpha, _, _) = chosen(&phil)?;

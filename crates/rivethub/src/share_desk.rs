@@ -6,6 +6,7 @@ use capture::bundle::Sealed;
 use capture::sanitize::LocalKey;
 use capture::sanitize::LocalReview;
 use capture::sanitize::ReportFlags;
+use capture::sanitize::decide::DecideError;
 use capture::sanitize::decide::Mode;
 use capture::sanitize::decide::Resolution;
 use capture::share;
@@ -302,6 +303,25 @@ fn failed(error: impl std::fmt::Display) -> DeskError {
     DeskError::Failed(error.to_string())
 }
 
+fn sanitize_failed(error: share::ShareError) -> DeskError {
+    let share::ShareError::Decide(decide) = error else {
+        return failed(error);
+    };
+    DeskError::Failed(match decide {
+        DecideError::Status { url, status, .. } => {
+            format!("the decision pass failed: the decision model at {url} answered HTTP {status}")
+        }
+        DecideError::Answer { url, .. } | DecideError::Info { url, .. } => format!(
+            "the decision pass failed: the decision model at {url} sent an answer rh could not read"
+        ),
+        other @ (DecideError::Client(_)
+        | DecideError::Unreachable { .. }
+        | DecideError::TooLarge { .. }) => {
+            format!("the decision pass failed: {other}")
+        }
+    })
+}
+
 fn share_failure(error: ShareFailure) -> DeskError {
     match error {
         ShareFailure::DecideUnconfigured => DeskError::DecideUnconfigured,
@@ -417,7 +437,7 @@ impl ShareDesk for NodeDesk {
             DRAFT_LABEL,
         )
         .await
-        .map_err(failed)?;
+        .map_err(sanitize_failed)?;
         let bytes = outcome.sanitized.text.len();
         let state = DraftState {
             sealed: outcome.sanitized,
