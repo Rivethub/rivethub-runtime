@@ -1,0 +1,65 @@
+{"shape": "openai_sk", "position": "*", "raw": "key is sk-tes\u0074-PLANTEDCO07abcdefghij0123456789 ok", "planted": ["sk-tes\u0074-PLANTEDCO07abcdefghij0123456789"], "expect": "redact"}
+{"shape": "openai_proj", "position": "*", "raw": "using sk-pro\u006a-PLANTEDCO07abcdefghij0123456789_xyz", "planted": ["sk-pro\u006a-PLANTEDCO07abcdefghij0123456789_xyz"], "expect": "redact"}
+{"shape": "anthropic", "position": "*", "raw": "ANTHROPIC key sk-ant\u002dapi03-PLANTEDCO07abcdefghij0123456789-xyzAA", "planted": ["sk-ant\u002dapi03-PLANTEDCO07abcdefghij0123456789-xyzAA"], "expect": "redact"}
+{"shape": "stripe_sk_live", "position": "*", "raw": "stripe sk_liv\u0065_PLANTEDCO07abcdefghij0123456789", "planted": ["sk_liv\u0065_PLANTEDCO07abcdefghij0123456789"], "expect": "redact"}
+{"shape": "stripe_rk_live", "position": "*", "raw": "stripe restricted rk_liv\u0065_PLANTEDCO07abcdefghij0123456789", "planted": ["rk_liv\u0065_PLANTEDCO07abcdefghij0123456789"], "expect": "redact"}
+{"shape": "google_api_key", "position": "*", "raw": "maps key AIzaSy\u0050LANTEDCO07abcdefghij0123456789xy", "planted": ["AIzaSy\u0050LANTEDCO07abcdefghij0123456789xy"], "expect": "redact"}
+{"shape": "gitlab_pat", "position": "*", "raw": "gitlab glpat-\u0050LANTEDCO07abcdefghi", "planted": ["glpat-\u0050LANTEDCO07abcdefghi"], "expect": "redact"}
+{"shape": "npm_token", "position": "*", "raw": "npm npm_PL\u0041NTEDCO07abcdefghij0123456789ab000", "planted": ["npm_PL\u0041NTEDCO07abcdefghij0123456789ab000"], "expect": "redact"}
+{"shape": "huggingface", "position": "*", "raw": "hf hf_PLA\u004eTEDCO07abcdefghij0123456789abcd", "planted": ["hf_PLA\u004eTEDCO07abcdefghij0123456789abcd"], "expect": "redact"}
+{"shape": "sendgrid", "position": "*", "raw": "mail SG.PLA\u004eTEDCO07abcdefghij.PLANTEDxyzCO070123456789abcdefghijklmnopq", "planted": ["SG.PLA\u004eTEDCO07abcdefghij.PLANTEDxyzCO070123456789abcdefghijklmnopq"], "expect": "redact"}
+{"shape": "bearer_header", "position": "*", "raw": "Authorization: Bearer PLANTE\u0044bearerCO070123456789abcdef", "planted": ["PLANTE\u0044bearerCO070123456789abcdef"], "expect": "redact"}
+{"shape": "bearer_lower", "position": "*", "raw": "curl -H 'authorization: bearer PLANTE\u0044bearerlcCO070123456789abcdef'", "planted": ["PLANTE\u0044bearerlcCO070123456789abcdef"], "expect": "redact"}
+{"shape": "jwt_bare", "position": "*", "raw": "token was eyJhbG\u0063iOiJIUzI1NiJ9.eyJzdWIiOiJQTEFOVEVEIn0CO07.PLANTEDjwtsigCO07abcdefgh", "planted": ["eyJhbG\u0063iOiJIUzI1NiJ9.eyJzdWIiOiJQTEFOVEVEIn0CO07.PLANTEDjwtsigCO07abcdefgh", "PLANTE\u0044jwtsigCO07abcdefgh"], "expect": "redact"}
+{"shape": "basic_auth", "position": "*", "raw": "Authorization: Basic dXNlcj\u0070QTEFOVEVEYmFzaWNDTzA3", "planted": ["dXNlcj\u0070QTEFOVEVEYmFzaWNDTzA3"], "expect": "redact"}
+{"shape": "pem_rsa", "position": "*", "raw": "-----BEGIN RSA PRIVATE KEY-----\nMIIEp\u0050LANTEDpemRSACO07AAAAbbbbCCCC\nPLANT\u0045Dpemline2RSACO07ddddEEEE\n-----END RSA PRIVATE KEY-----", "planted": ["MIIEpP\u004cANTEDpemRSACO07AAAAbbbbCCCC", "PLANTE\u0044pemline2RSACO07ddddEEEE"], "expect": "redact"}
+{"shape": "pem_pkcs8", "position": "*", "raw": "-----BEGIN PRIVATE KEY-----\nMIIEv\u0050LANTEDpemPKCS8CO07AAAAbbbbCCCC\nPLANT\u0045Dpemline2PKCS8CO07ddddEEEE\n-----END PRIVATE KEY-----", "planted": ["MIIEvP\u004cANTEDpemPKCS8CO07AAAAbbbbCCCC", "PLANTE\u0044pemline2PKCS8CO07ddddEEEE"], "expect": "redact"}
+{"shape": "pem_openssh", "position": "*", "raw": "-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEp\u0050LANTEDpemOPENSSHCO07AAAAbbbbCCCC\nPLANT\u0045Dpemline2OPENSSHCO07ddddEEEE\n-----END OPENSSH PRIVATE KEY-----", "planted": ["MIIEpP\u004cANTEDpemOPENSSHCO07AAAAbbbbCCCC", "PLANTE\u0044pemline2OPENSSHCO07ddddEEEE"], "expect": "redact"}
+{"shape": "pem_ec", "position": "*", "raw": "-----BEGIN EC PRIVATE KEY-----\nMIIEp\u0050LANTEDpemECCO07AAAAbbbbCCCC\nPLANT\u0045Dpemline2ECCO07ddddEEEE\n-----END EC PRIVATE KEY-----", "planted": ["MIIEpP\u004cANTEDpemECCO07AAAAbbbbCCCC", "PLANTE\u0044pemline2ECCO07ddddEEEE"], "expect": "redact"}
+{"shape": "pem_encrypted", "position": "*", "raw": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIEp\u0050LANTEDpemENCRYPTEDCO07AAAAbbbbCCCC\nPLANT\u0045Dpemline2ENCRYPTEDCO07ddddEEEE\n-----END ENCRYPTED PRIVATE KEY-----", "planted": ["MIIEpP\u004cANTEDpemENCRYPTEDCO07AAAAbbbbCCCC", "PLANTE\u0044pemline2ENCRYPTEDCO07ddddEEEE"], "expect": "redact"}
+{"shape": "pem_crlf", "position": "*", "raw": "-----BEGIN RSA PRIVATE KEY-----\r\nMIIEp\u0050LANTEDpemRSACO07CRAAAAbbbbCCCC\r\nPLANT\u0045Dpemline2RSACO07CRddddEEEE\r\n-----END RSA PRIVATE KEY-----", "planted": ["MIIEpP\u004cANTEDpemRSACO07CRAAAAbbbbCCCC", "PLANTE\u0044pemline2RSACO07CRddddEEEE"], "expect": "redact"}
+{"shape": "pem_gcp_json_escaped", "position": "*", "raw": "{\"type\": \"service_account\", \"private_key\": \"-----BEGIN PRIVATE KEY-----\\nMIIEv\u0050LANTEDgcpCO07AAAAbbbb\\n-----END PRIVATE KEY-----\\n\"}", "planted": ["MIIEvP\u004cANTEDgcpCO07AAAAbbbb"], "expect": "redact"}
+{"shape": "pem_pgp", "position": "*", "raw": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQPGB\u0050LANTEDpgpCO07xxxxYYYY\n-----END PGP PRIVATE KEY BLOCK-----", "planted": ["lQPGBP\u004cANTEDpgpCO07xxxxYYYY"], "expect": "redact"}
+{"shape": "pem_truncated", "position": "*", "raw": "$ head -2 id_rsa\n-----BEGIN RSA PRIVATE KEY-----\nMIIEp\u0050LANTEDtruncCO07AAAAbbbb", "planted": ["MIIEpP\u004cANTEDtruncCO07AAAAbbbb"], "expect": "redact"}
+{"shape": "postgres_url", "position": "*", "raw": "postgres://app:PLANTEDpgCO07@db.example.test:5432/app", "planted": ["PLANTEDpgCO07"], "expect": "redact"}
+{"shape": "postgresql_url", "position": "*", "raw": "DATABASE_URL=postgresql://app:PLANTEDpgqlCO07@db.example.test/app", "planted": ["PLANTEDpgqlCO07"], "expect": "redact"}
+{"shape": "mysql_url", "position": "*", "raw": "mysql://root:PLANTEDmyCO07@127.0.0.1:3306/db", "planted": ["PLANTEDmyCO07"], "expect": "redact"}
+{"shape": "mongodb_srv", "position": "*", "raw": "mongodb+srv://admin:PLANTE\u0044mongoCO07@cluste\u00720.example.mongodb.net/test", "planted": ["PLANTE\u0044mongoCO07"], "expect": "redact"}
+{"shape": "redis_user", "position": "*", "raw": "redis://default:PLANTE\u0044redisdefCO07@cache.example.test:6379/0", "planted": ["PLANTE\u0044redisdefCO07"], "expect": "redact"}
+{"shape": "redis_empty_user", "position": "*", "raw": "redis://:PLANTE\u0044redisCO07@cache.example.test:6379/0", "planted": ["PLANTE\u0044redisCO07"], "expect": "redact"}
+{"shape": "https_url_password", "position": "*", "raw": "git clone https://deploy:PLANTEDhttpCO07@git.example.test/repo.git", "planted": ["PLANTEDhttpCO07"], "expect": "redact"}
+{"shape": "url_pw_pct_encoded", "position": "*", "raw": "postgres://u:PLANTED%2FpctCO07@h.example.test/db", "planted": ["PLANTED%2FpctCO07"], "expect": "redact"}
+{"shape": "url_pw_raw_slash", "position": "*", "raw": "postgres://u:PLANTE\u0044sl/ashCO07@h.example.test/db", "planted": ["PLANTE\u0044sl/ashCO07", "ashCO07@"], "expect": "redact"}
+{"shape": "url_pw_raw_at", "position": "*", "raw": "postgres://u:PLANTEDatACO07@PLANTEDatBCO07@h.example.test/db", "planted": ["PLANTEDatACO07", "PLANTEDatBCO07"], "expect": "redact"}
+{"shape": "ado_connstr", "position": "*", "raw": "Server=db;User Id=sa;Password=PLANTEDadoCO07;", "planted": ["PLANTEDadoCO07"], "expect": "redact"}
+{"shape": "jdbc_query_pw", "position": "*", "raw": "jdbc:postgresql://db:5432/app?user=app&password=PLANTEDjdbcCO07", "planted": ["PLANTEDjdbcCO07"], "expect": "redact"}
+{"shape": "libpq_kv", "position": "*", "raw": "host=db user=app password=PLANTE\u0044libpqCO07 dbname=app", "planted": ["PLANTE\u0044libpqCO07"], "expect": "redact"}
+{"shape": "azure_accountkey", "position": "*", "raw": "DefaultEndpointsProtocol=https;AccountName=x;AccountKey=PLANTE\u0044azureCO07abc==;", "planted": ["PLANTE\u0044azureCO07abc=="], "expect": "redact"}
+{"shape": "env_password", "position": "*", "raw": "DATABASE_PASSWORD=PLANTE\u0044envpwCO07", "planted": ["PLANTE\u0044envpwCO07"], "expect": "redact"}
+{"shape": "env_export_dq", "position": "*", "raw": "export OPENAI_API_KEY=\"PLANTE\u0044envdqCO07\"", "planted": ["PLANTE\u0044envdqCO07"], "expect": "redact"}
+{"shape": "env_sq", "position": "*", "raw": "STRIPE_SECRET_KEY='PLANTE\u0044envsqCO07'", "planted": ["PLANTE\u0044envsqCO07"], "expect": "redact"}
+{"shape": "env_multiline_file", "position": "*", "raw": "# .env\nPORT=3000\nJWT_SECRET=PLANTE\u0044envf1CO07\nGITHUB_TOKEN=PLANTE\u0044envf2CO07\n", "planted": ["PLANTE\u0044envf1CO07", "PLANTE\u0044envf2CO07"], "expect": "redact"}
+{"shape": "env_db_pass", "position": "*", "raw": "DB_PASS=PLANTE\u0044dbpassCO07", "planted": ["PLANTE\u0044dbpassCO07"], "expect": "redact"}
+{"shape": "env_app_key", "position": "*", "raw": "APP_KEY=base64:PLANTE\u0044appkeyCO07", "planted": ["PLANTE\u0044appkeyCO07"], "expect": "redact"}
+{"shape": "pgpassword_env", "position": "*", "raw": "PGPASSWORD=PLANTEDpgpwCO07 psql -h db", "planted": ["PLANTEDpgpwCO07"], "expect": "redact"}
+{"shape": "yaml_password", "position": "*", "raw": "database:\n  user: app\n  password: PLANTEDyamlCO07\n", "planted": ["PLANTEDyamlCO07"], "expect": "redact"}
+{"shape": "toml_db_password", "position": "*", "raw": "db_password = \"PLANTEDtomlCO07\"", "planted": ["PLANTEDtomlCO07"], "expect": "redact"}
+{"shape": "assign_api_key", "position": "*", "raw": "api_key: PLANTE\u0044assignCO07", "planted": ["PLANTE\u0044assignCO07"], "expect": "redact"}
+{"shape": "x_api_key_header", "position": "*", "raw": "X-Api-Key: PLANTEDxapiCO07", "planted": ["PLANTEDxapiCO07"], "expect": "redact"}
+{"shape": "query_access_token", "position": "*", "raw": "https://api.\u0065xample.test/v1?access_token=PLANTEDqatCO07", "planted": ["PLANTEDqatCO07"], "expect": "redact"}
+{"shape": "client_secret", "position": "*", "raw": "client_secret=PLANTEDcsCO07", "planted": ["PLANTEDcsCO07"], "expect": "redact"}
+{"shape": "aws_akia", "position": "*", "raw": "aws key AKIAPL\u0041NTEDCO07XXXXX", "planted": ["AKIAPL\u0041NTEDCO07XXXXX"], "expect": "redact"}
+{"shape": "aws_asia", "position": "*", "raw": "sts key ASIAPL\u0041NTEDCO07XXXXX", "planted": ["ASIAPL\u0041NTEDCO07XXXXX"], "expect": "redact"}
+{"shape": "aws_secret_ini", "position": "*", "raw": "[default]\naws_secret_access_key = PLANTE\u0044awssecCO07/abcdEFGHijklMNOP\n", "planted": ["PLANTE\u0044awssecCO07/abcdEFGHijklMNOP"], "expect": "redact"}
+{"shape": "aws_secret_env", "position": "*", "raw": "AWS_SECRET_ACCESS_KEY=PLANTE\u0044awsenvCO07/abcdEFGH", "planted": ["PLANTE\u0044awsenvCO07/abcdEFGH"], "expect": "redact"}
+{"shape": "gh_ghp", "position": "*", "raw": "gh ghp_PL\u0041NTEDCO07abcdefghij012345678900000", "planted": ["ghp_PL\u0041NTEDCO07abcdefghij012345678900000"], "expect": "redact"}
+{"shape": "gh_gho", "position": "*", "raw": "gh gho_PL\u0041NTEDCO07abcdefghij012345678900000", "planted": ["gho_PL\u0041NTEDCO07abcdefghij012345678900000"], "expect": "redact"}
+{"shape": "gh_ghs", "position": "*", "raw": "gh ghs_PL\u0041NTEDCO07abcdefghij012345678900000", "planted": ["ghs_PL\u0041NTEDCO07abcdefghij012345678900000"], "expect": "redact"}
+{"shape": "gh_fine_grained", "position": "*", "raw": "gh github\u005fpat_11PLANTEDCO07abcdefghi_PLANTEDCO07xyz000000000000000000000000000000000000000000000", "planted": ["github\u005fpat_11PLANTEDCO07abcdefghi_PLANTEDCO07xyz000000000000000000000000000000000000000000000"], "expect": "redact"}
+{"shape": "slack_xoxb", "position": "*", "raw": "slack xoxb-0\u003000-PLANTEDCO07-abcdefghij", "planted": ["xoxb-0\u003000-PLANTEDCO07-abcdefghij"], "expect": "redact"}
+{"shape": "slack_xoxp", "position": "*", "raw": "slack xoxp-0\u003000-PLANTEDCO07-abcdefghij", "planted": ["xoxp-0\u003000-PLANTEDCO07-abcdefghij"], "expect": "redact"}
+{"shape": "slack_xapp", "position": "*", "raw": "slack xapp-1\u002dPLANTEDCO07-0000-abcdefghij", "planted": ["xapp-1\u002dPLANTEDCO07-0000-abcdefghij"], "expect": "redact"}
+{"shape": "slack_webhook", "position": "*", "raw": "https://hook\u0073.slack.com/services/T0000/B0000/PLANTEDhookCO07abcdefgh", "planted": ["PLANTE\u0044hookCO07abcdefgh"], "expect": "redact"}
+{"shape": "cookie_header", "position": "*", "raw": "Cookie: sessionid=PLANTE\u0044cookieCO07", "planted": ["PLANTE\u0044cookieCO07"], "expect": "redact"}
+{"shape": "curl_u", "position": "*", "raw": "curl -u admin:PLANTE\u0044curluCO07 https://h.example.test", "planted": ["PLANTE\u0044curluCO07"], "expect": "redact"}
+{"shape": "mysql_p_flag", "position": "*", "raw": "mysql -u root -pPLAN\u0054EDmypCO07 app", "planted": ["PLANTEDmypCO07"], "expect": "redact"}

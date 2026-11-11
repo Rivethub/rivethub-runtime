@@ -23,7 +23,7 @@ Reference material that survives from the first attempt (read-only; `/rivet-shar
 | B7 | MCP sidecar: RivetHub's own tools only, exactly seven (`memory_search`, `memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`; `delegate_task` and `list_agents` were removed by note 132); `echo`, `skill_list`, `skill_manage`, `internet_search` and `web_fetch` are removed (Phil, 2026-10-13). Their schemas, transports (stdio, streamable HTTP, unix socket) | Claude Code, codex, every MCP client | mcp-tools-providers.md §2–§3 | `golden/mcp/` (`tools-list.json`, `calls.json`) | `tools/list` for the seven equals the recording after the RivetOS→RivetHub name translation, compared as parsed values; recorded calls give the same results |
 | B8 | Provider wire traffic: the OpenAI-compatible chat (streamed) and embeddings API as spoken to vLLM, SGLang and hosted OpenAI-compatible endpoints through one client (no Ollama, no llama-server type) | the model servers | mcp-tools-providers.md §5.4–§5.5 | the vllm scenarios in `golden/providers/` (request+response) | byte-equal request bodies (headers filtered) except the intentional wire deltas of one typed table (testkit `B8_OMITTED_REQUEST_FIELDS`): the runtime sends NO sampling fields where the TypeScript sent hard-coded `temperature: 0.7`/`top_p: 0.95`, never sends `tool_choice` (the server's own `auto` default applies when `tools` are present), and sends `max_tokens` only when the provider config sets it (the TypeScript's 4096 default is gone); same parsed responses and stream chunks |
 | B9 | CLI: command tree, flags, output text, exit codes, prompts (`rh agent` is gone, note 74; `rh mesh`, `rh ca`, `rh cert` and `rh update --mesh` are gone, note 132) | operators, systemd units, scripts | cli.md §0–§19 | `tests` listed in cli.md §21; (recording to add: CLI golden transcripts) | same stdout/stderr/exit for the same argv on the same state |
-| B10 | `config.yaml` keys, defaults, validation messages; environment variables (`tasks.pricing`, `tasks.eval` and `runtime.heartbeats` are retired, note 74; `memory.models` assigns a model to each memory job, note 126; the keys and variables note 132 retires load with one warning each and are ignored) | operators, deploy tooling | config-and-boot.md §1–§2 | `golden/diff/config/` (realistic cases) | same accept/reject and same messages for the same file |
+| B10 | `config.yaml` keys, defaults, validation messages; environment variables (`tasks.pricing`, `tasks.eval` and `runtime.heartbeats` are retired, note 74; `memory.models` assigns a model to each memory job, note 126; `memory.sanitize.mapping` names the sanitize mapping file, note 136; the keys and variables note 132 retires load with one warning each and are ignored) | operators, deploy tooling | config-and-boot.md §1–§2 | `golden/diff/config/` (realistic cases) | same accept/reject and same messages for the same file |
 | B11 | On-disk state: `~/.rivethub/` layout, pid and lock files, the session owners file, the account folder, the capture spool, wiki pages (markdown + frontmatter), skills `_meta.json`, `codex-threads.json` (`mesh.json`, agent presets, device and pairing files and uploads are no longer read or written, note 132) | other nodes, backups, humans, TypeScript during cutover | config-and-boot.md §3.9; core-domain.md §1.11; gateway-api.md §8 | fixtures under `golden/` and the inventories' documented formats | files written by Rust are read by TypeScript and vice versa |
 | B12 | Harness protocol: ACP (`session/*`) natively or through the codex-acp and claude-code-acp adapter binaries, used only to start the CLI model providers (note 132; herdr control and the terminal WS framing were removed) | the harness binaries, herdr, RivetHub clients terminal | harness-control-plane.md §1–§2; standardize/SESSION-MODEL.md | `golden/term/` (PTY, WS, roster) ; ACP conformance via the `agent-client-protocol` crate's schema | real binaries: new/resume/prompt/cancel work on every installed harness; term replays pass |
 | B13 | Workers: graphile job names, payloads, keys, priorities (sweeps ahead of work, recent conversations ahead of old backlog, note 78), cron entries (no `run-task` job is written any more, note 132); worker role split (the summarizer also claims `sync-topic-page` and runs its hourly `topic-page-sweep`, note 22; `extract-wiki` writes a placed session's summary into its topic page and files people, hosts and tools under category topics, note 23) | the shared Postgres queue, other nodes' workers | data-layer.md §2.3–§2.6 | `golden/capture/pg/` job rows | same jobs enqueued; same job handled with the same result rows |
@@ -1596,11 +1596,11 @@ onto `--out`; a failed write removes it, and a killed export leaves no partial f
 `manifest` holds `exported_at` (RFC 3339), `exported_by` (`user`, the node owner, and `node`, the node name from
 `mesh.node_name`, `RIVETHUB_NODE_NAME` or the hostname), `sanitization`, `session_count` and `bundle_sha256`.
 `sanitization` is `{"state": "raw"}`, or `{"state": "sanitized", "at", "policy_sha256", "passes", "unresolved_flags"}`
-once a sanitizer stamps the file; `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
+once `rh memory sanitize` stamps the file (note 136); `rh memory bundle` always writes raw. Each session is `{origin, batch}`. `origin`
 holds `author` (the conversation's stored owner; on SQLite a row whose owner is NULL is credited to the node owner),
 `node` (the node that captured the conversation, else the exporting node), `conversation_id`, `session_key`, `agent`,
-and the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
-files). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
+the conversation's own `created_at` and `updated_at` (RFC 3339, or null when unknown, as for some version 1
+files), and `identity`, which only a sanitized bundle carries and which is absent otherwise (note 136). `batch` is the `CaptureBatchRequest` of version 1, now with the conversation's `settings`. Sessions are
 ordered by conversation `created_at`, then id. Messages are ordered by `created_at`, then row order on SQLite and id
 on Postgres. A Postgres capture stamps a message that carries no `created_at` with a base time plus its index in the
 batch in microseconds. The capture takes the base after it holds the session's lock: the transaction time, or one
@@ -1633,7 +1633,7 @@ says what ingest keeps.
 
 (135) Importing a bundle keeps its origin and dates (Phil, 2026-11-08; session-sharing plan SS-2): `rh memory
 ingest-bundle <file> [--force] [--dry-run]` refuses a bundle whose `sanitization` is raw unless `--force` is given,
-version 1 files included, and writes nothing. `--dry-run` reads and checks the file, prints one line per session
+version 1 files included, and writes nothing. Note 136 adds a secret scan of a sanitized bundle. `--dry-run` reads and checks the file, prints one line per session
 (`<session_key> (<agent>): <n> messages from <author>, <created> to <updated>`, or `undated`) and a total, and writes
 nothing; it needs no `--force`. The report reads `ingested <n> sessions from <authors>[ (raw bundle forced)]:
 <inserted> inserted, <skipped> skipped`. An author of `unknown` (every version 1 session) reads `an unknown author`.
@@ -1700,6 +1700,258 @@ An import has no live session and no registry entry, so the registry's owners (n
 A trashed import is left out of a whole-store bundle and exported only when named by id (note 135), as the trash mark is keyed by the import key. The `purge-deleted-sessions` job deletes it after `RIVETHUB_TRASH_DAYS` days like a native session, through note 75's deletion, which writes a tombstone for its key. Today (note 130) and the trash review list harness sessions only: an import is not that day's work and is never an empty-session candidate.
 
 `wire::gateway::session_catalog::SessionSummaryRow` makes `harness` optional and adds `origin`; `SessionDeleteRequest.sessions` and the `session` of `SessionDeleted` and `SessionDeleteRefused` are session keys. The JSON of a harness session is unchanged, and `contract/sent.schema.json` and `contract/accepted.schema.json` carry the new fields (`SessionKey`, a string, `SessionOriginLabel`). The routes of note 127 have no TypeScript recording, so no recording changes.
+
+(136) Sanitizing a bundle (Phil, 2026-11-08; session-sharing plan SS-3): `rh memory sanitize <bundle> --out <file>
+[--mapping <file>]` reads a raw version 1 or 2 bundle and writes a sanitized copy to `--out` and a report beside it,
+`<out without a .json extension>.report.md`. It refuses a bundle whose `sanitization` is already sanitized, and an
+`--out` that is a directory, and writes nothing then. Both files are written as `rh memory bundle` writes its file
+(note 134). Before it writes either file, `sanitize` runs the scan `ingest-bundle` runs (below) over its own output:
+a span that scan still matches is redacted too, up to four times, then a field that still matches is replaced whole
+by the first match's placeholder; the report counts these spans in a line under its totals, because each one is a
+sanitizer bug to add to the committed corpus. When the exact `ingest-bundle` scan of the sealed bundle still finds a
+match after that, `sanitize` writes nothing and fails, so it never writes a bundle the receiver refuses. Both scans
+run in parallel over the bundle's messages, and the decode budget gives the same result as one pass in order. It prints `sanitized <n> sessions: <s> secrets, <m> mapped, <r> redacted; report at <path>` and then a
+review summary: `review summary: changes by rule: <rule> <count>, ...`, `not scanned: dates, roles, finalize; numbers,
+booleans and null stay typed`, and the best-effort line. The sanitizer is best-effort (Phil, 2026-11-09): it reliably
+catches known vendor tokens, assignments to password- and token-named keys in env, JSON, YAML, XML, SQL and code,
+name/value pairs with such names, URL credentials, PEM and DER private keys, base64 blobs that decode to any of those,
+and mapped terms; it can miss unusual code forms, vendor shapes it has no rule for, and passwords written as bare
+words in prose or with spaces outside quotes (`The vault password is X`, `echo X > .vault_pass`). The report says so
+in its first paragraph, right under its title, and `rh memory --help` says so; the share skill (SS-6) will show the
+report before a bundle leaves the machine once it lands. The ruleset grows as data:
+`crates/capture/tests/fixtures/sanitize/<corpus>/cases.jsonl` holds every shape as a fake case (`redact` or `keep`),
+one test per corpus runs them all, and a new shape is a case line plus a rule in `rivethub.toml` (see that folder's
+README.md).
+
+Every stored text field is scrubbed. Per session: `origin.author` (secrets only), `origin.node`,
+`origin.conversation_id`, `origin.session_key`, `origin.agent`, the batch's `session_key`, `agent`, `channel`,
+`task_id` (secrets only), `title` and `settings`, each message's `event_id` (secrets only), `content`, `tool_result`,
+`tool_name`, `tool_args` and `metadata`; then `manifest.exported_by.user` and `.node`. Not scrubbed: dates, roles and
+`finalize`. The author and task id are never mapped, so the sessions stay credited and a task id stays a UUID; a task
+id in which a secret rule matches becomes a UUID derived from the local key (below) and the raw task id. In a JSON
+object every key and every string value is scrubbed at every depth. A member whose key is a secret name (below) before
+a mapping rule renames it, or after, has each string value under it, at any depth, replaced by `[REDACTED:secret_key]`
+when the value passes the stricter of the two families' value tests (`api_token` mapped to `db_password` redacts
+`hunter2`), so the output always passes ingest's rescan; numbers, booleans and null under it stay typed, and a key
+that is exactly a placeholder (`[REDACTED]`, `[REDACTED:<kind>]` for a kind the sanitizer emits, with an optional
+`#n`) is never a secret name. When two keys of one object scrub to the same text, the keys are ordered by the HMAC of
+their original text under the local key: the first keeps the name and the others get `#2`, `#3` and so on before their
+values are scrubbed, so no value is lost and the suffix order says nothing about the input order. Every report row
+names the suffixed key that holds its change, and the report lists each renamed key under its path.
+
+Ids, fingerprints and the policy hash are HMAC-SHA256 under a local key: 32 random bytes created once at
+`$XDG_STATE_HOME/rivethub/sanitize.key`, else `~/.local/state/rivethub/sanitize.key`, mode 0600, never shipped. The
+key is written to a temporary file beside it and linked into place, so concurrent first runs end with one key and
+never read a half-written file. A key file that is not a regular file (a directory, FIFO, device or symlink), that
+group or others can read, or that is not exactly 32 bytes (at most 64 are read) is refused with its path and the
+reason. Each `event_id` becomes the lowercase hex HMAC of the parts `event_id`, the raw `origin.node`, the raw
+`origin.conversation_id`, the batch's raw `session_key` and the raw `event_id`, joined by zero bytes, so the same raw
+bundle gives the same ids on the same machine (the receiver's dedupe stays idempotent), two sessions whose first
+messages are byte-identical never merge at the receiver, and nothing about the original message can be tested against
+an id. `origin.identity` is set to the hex HMAC of the parts `conversation`, the raw `origin.node` and the raw
+`origin.conversation_id`; `ingest-bundle` keys the imported conversation by `[origin.node, origin.identity]` when the
+field is present (note 135's `[node, conversation_id]` otherwise), so two raw conversations that a mapping rule folds
+into one display id stay two conversations at the receiver, while `origin.conversation_id` carries the mapped text for
+display. A new key makes the receiver see new ids, so a re-import after rotation duplicates every message; bundles
+sanitized on two machines of one user dedupe only if the key file is copied.
+
+Two passes run over each text. The secrets pass applies the secret rules, data in `crates/capture/src/rules/`:
+RivetHub's 67 rules in `rivethub.toml` first (`bearer`, `pem_private_key` for PEM and PGP blocks with or without their
+END line, with header lines right after BEGIN, placeholder lines and line-numbered bodies as Claude Code's Read tool
+prints them (so code that follows a redacted block is never read as a header line on the re-check),
+`aws_access_key`, `aws_secret_near_id`, `github_token`, `slack_token`, `slack_webhook`, `sk_token`, `stripe_key`,
+`stripe_webhook_secret`, `google_api_key`, `gitlab_token`, `npm_token`, `huggingface_token`, `sendgrid_key`, `jwt`,
+`http_auth`, `authorization_header` for any scheme and for `key=` forms, `cookie_header`, `url_password` with a
+placeholder allowed as the host, `secret_assignment` (the names rule, below), `name_value_pair` for the value of a JSON
+`{"name": "DB_PASSWORD", "value": "x"}` pair on one line or pretty-printed, or a YAML `- name: DB_PASSWORD` line
+followed by `value: x`, whose name is in a family (Kubernetes env, ECS task definitions, HAR headers and params; the
+value is judged as a password-family value), `har_cookie` for every `value` in a HAR `cookies` array whatever the
+cookie is named, `gh_secret_set` for the `--body` or `-b` of `gh secret set`, `curl_user`, `mysql_password_flag`,
+`cli_credential_flag` for `sshpass -p`, `docker login -p`, `az login -p`, `redis-cli -a` and `--password`, `--token`,
+`--pat`, `--api-key`, `--secret`, `--auth`, `--management-token` and their kin, taking a quoted value whole,
+`openssl_pass_arg`, `netrc_password`, `sentry_dsn`, `discord_bot_token`, `discord_webhook`, `telegram_bot_token`,
+`azure_sas`, `doppler_service_token`, `mailchimp_key`, `datadog_app_key`, `twilio_auth_token`, `jwk_private`,
+`k8s_secret_data` and `k8s_secret_json` for the `data` or `stringData` block of a Kubernetes Secret in YAML or JSON,
+`base64_secret`, `undecoded_blob` (below), `sql_password` for `PASSWORD '...'` and `IDENTIFIED BY '...'`, `xml_element_secret` and
+`xml_key_value_secret` for `<password>` elements and `key="..." value="..."` settings, `setter_call` for
+`setPassword("...")` and its kin, `php_define_secret`, `pgpass_line`, `crypt_hash` for shadow, htpasswd, bcrypt and
+argon2 hashes, `aws_configure_set`, `cli_login_token` for `cargo login`, `snyk auth` and similar, `piped_login_stdin`
+for a secret echoed into `docker login --password-stdin`, `fly_token`, `vault_unseal_key`, `curl_cookie`,
+`cookie_jar_line`, `algolia_admin_key`, `resend_key`, `launchdarkly_sdk_key`, `asana_pat`, `saml_response`,
+`reset_password_output`, `atlassian_api_token`, `netlify_pat`, `dockerhub_pat` and `contentful_pat`), then the default
+gitleaks configuration in `gitleaks.toml`, vendored byte-identical (its version, commit, SHA-256 and MIT license are
+recorded in `rivethub.toml`). The loader applies the deviations `rivethub.toml` lists: rules that need a file path,
+`generic-api-key` and `private-key` are not loaded (215 of 222 are), `microsoft-teams-webhook` redacts its whole
+match, and an allowlist regex written `^a|b|c$` is compiled as `^(?:a|b|c)$`. Each rule names keywords; one
+Aho-Corasick automaton over every keyword prefilters the text, and a rule whose keyword appears runs its regex on that
+line, or, when its regex spans lines, on a 64 KiB window that starts at the line's start, or 16 KiB before the
+keyword on a longer line; a rule with the keyword `*` runs over the whole text. The
+names rule reads on to the next 16 lines when its line ends with `=`, `:`, `{` or `[`, and to the end of a 64 KiB
+window when the line opens a YAML block scalar (`password: |`), so a block scalar longer than 16 lines is redacted
+whole. A value is read at most 64 KiB past its name, and a JSON object or array that does not close on the name's line
+at most 16 lines down. A value judged not secret is still searched for names inside it; once the values one text kept
+add up to eight times its length plus 64 KiB, every later value under a secret name in that text is redacted, so no
+text costs the scan more than linear time (80 KB of repeated `{"name":"DB_PASSWORD","value":` took over 60 s at
+8a1ccf13 and takes 0.13 s now). The
+secret is the rule's `secretGroup`, else its first non-empty capture group, else the whole match, so a name and its
+separator stay (`api_key: [REDACTED:secret_assignment]`). `base64_secret` takes any run of 40 or more base64
+characters, on one line or wrapped over lines of one width with a shorter last line, decodes it (standard or URL-safe
+alphabet, gzip inflated, a BOM dropped), scans the decoded text with every rule, one nested base64 layer included, and
+redacts the whole blob when a rule matches inside or when the bytes are a DER private key (a SEQUENCE whose first
+element is the version INTEGER 0 or 1; certificates and public keys start with a nested SEQUENCE and stay). Decoding
+has a budget: 8 MiB of decoded and inflated bytes per message (the session's own fields count as one message, the
+manifest as another), 64 MiB per bundle, and two nested layers. A blob whose decoding would pass the budget, or a
+base64 run found inside the second decoded layer, is not decoded and is redacted whole as `undecoded_blob`, which the
+report lists like any rule; once a blob passes the budget, the rest of that message's budget is spent. `ingest-bundle`
+applies the same budget, so neither command spends unbounded time on a gzip or nested-base64 bomb (a 1.7 KB blob that
+inflated to 160 MB took 44 s at 1d687186 and takes 0.2 s now). The scan that `ingest-bundle` runs, and that `sanitize`
+runs on its own output, works on messages in parallel. Every worker takes each inflated gzip byte from one shared 64 MiB
+bundle budget before it inflates it, in steps of at most 64 KiB of output. A plain base64 decode is charged after it
+runs, so each worker thread can decode one blob of up to about 6 MiB past the budget. A message that ran short of
+that shared budget, or that would leave the bundle less than 8 MiB in an in-order scan, is scanned again in order with
+what the bundle has left. A scan therefore decodes at most 128 MiB plus one such blob per worker thread however many messages the bundle holds,
+and refuses or accepts exactly as an in-order scan would (a 2.67 MB forged bundle of 2000 such blobs took 13.2 s at
+04a237d5 and takes 0.75 s now). A rule
+with `each` redacts each match of that regex inside the secret. A match is dropped when the Shannon entropy of the
+secret is at or under the rule's `entropy`, or when an allowlist matches it: gitleaks' global allowlist applies to
+gitleaks rules only, RivetHub rules use the `[names]` stopwords and templates (exact words such as `null`, `none`,
+`true`, `false`, `changeme`, `include`, `prompt`, `default`; whole-value templates `{{ name }}`, `{NAME}`, `${VAR}`,
+`$VAR`, `$(cmd)`, `%VAR%`, `<name>`, `***`, `xxx`, `...`, a prefix and `...`, a prefix and eight or more `x`, a file
+path, `your-key-here` and the like, and a word such as `placeholder`, `example`, `dummy` or `no-key` inside the
+value), and a rule's own allowlists apply to it. Where matches overlap, a RivetHub rule's span wins over a gitleaks
+rule's span, then the earliest start, then rule order.
+
+`secret_assignment` is the name-based rule, driven by the `[names]` table. A key is split into lower-case segments at
+`_`, `-`, `.` and camel-case boundaries (`X-Api-Key`, `clientSecret` and `CLIENT_SECRET` all read `client_secret`); a
+plural reads as its singular (`passwords`), and a key whose last segment is `value`, `data`, `plaintext`,
+`secret_string` or `string` is judged without it (`outputs.db_password.value`, `secret_value`, `tokenValue`). The
+password family is `password`, `passwd`, `pwd`, `passphrase`, `pin`, `secret`, `private_key`, `ssh_key`, `secret_value`,
+as the whole key or its last segments, `pass` only as a last segment (`db_pass`), and `pgpassword`; it redacts any value
+that is not a stopword, a template, a JSON number or code. The token family is `token`, `api_key`, `apikey`, `access_key`,
+`secret_key`, `app_key`, `account_key`, `signing_key`, `encryption_key`, `master_key`, `auth_key`, `auth`,
+`credentials`, `credential`, `creds`, `cookie`, `session_cookie`, `license_key`, `routing_key`, `write_key`,
+`client_key`, `consumer_key`, `unseal_key`, and exactly `identitytoken`, `authtoken`, `secret_key_base`, `phpsessid`,
+`jsessionid`, `asp_net_sessionid` and `connect_sid`; it redacts a value that starts with a known vendor prefix, or has
+12 or more characters and Shannon entropy of at least 3.0 (a UUID under `api_key` is redacted). The key family is any
+other key whose last segment is `key`, and exactly `key` or `pass` (`exact_key`), except the ids in `key_never`
+(`session_key`, `public_key`, `primary_key`, `cache_key`, `idempotency_key` and the like); it redacts a value with a
+vendor prefix, or one of 20 or more characters and entropy 3.5 or more that holds a digit and no whitespace, so
+`key:"getGridPositionOfRect"` and `pass:"Element has a tabindex"` in minified JavaScript stay. A key whose last
+segment is anything else is never a secret name: `token_count`, `max_tokens`, `api_key_id`, `private_key_id`,
+`secret_ref`, `secretName`, `password_last_changed_at`, `token_endpoint`. In text the rule reads
+`<key><separator><value>` with the separators `=`, `:`, `=>` and `:=`, an optional quote after the key, and a
+password- or token-family word followed by a space and a token-like value (`password hunter2x9` in HOCON or nginx,
+`secret <value>`), where a value of letters only is prose and stays (`token authentication`, `auth configuration`,
+`password authentication failed`); a value opened by `"`, `'`, `\"` or `\'` runs to the matching quote (`'a;b&c'` and `"one two"` are
+one value), a bare value runs to whitespace or `, ; & ) ] }` outside balanced brackets and quotes (`os.environ["X"]`,
+`Option<&str>` are one value) and keeps the separator and the punctuation after it (`"token_count": 7958,` stays valid
+JSON), a value that is `|` or `>` is a YAML block scalar and the indented lines under it are the value, a separator
+that ends its line takes the next indented line when that line is a quoted string or a single token (`"password":`
+over two lines), and a bare value that opens with a placeholder is judged on the text after it. A name right after `${` is a
+shell parameter expansion and a name right after `://` is a URL user, so neither one starts an assignment: a
+`${NAME:-default}`, `${NAME-default}`, `${NAME:=default}`, `${NAME:?message}`, `${NAME:+alt}` or Spring
+`${name:default}` value is a template and stays whole, default included, and a vendor token inside the default is
+still redacted by its own rule. A bracketed value followed directly by a letter, digit or `_` is one bare value
+(`[a]b`), and a JSON `{` or `[` value that continues over the next lines (pretty-printed `terraform output -json`) is
+read to its closing bracket. A bare value that
+opens with `${{`, `${`, `$(`, `{{`, `{`, `[`, `(`, `<` or `%` runs to its closer: a template stays whole (`${{
+secrets.X }}`), a JSON object or array has each string inside it judged as a value (`{"value": "x"}`, `["x"]`; a plain
+word shorter than 12 characters stays, so `["text", "search"]` under `new-password` does), and any other bracketed
+value is redacted whole (`password={pwd}`). A quoted or bare value is kept when it is a stopword, a template, contains
+a template reference (`"Bearer ${{secrets.TOKEN}}"`), or is a JSON number under a quoted key; a digit-only password
+elsewhere (`PIN=4711`, `"password": "12345678"`) is redacted. A bare value is also kept when it is code: a dotted
+identifier path (`process.env.X`, `settings.database.password`), a dotted path followed by a colon (a minified
+ternary), a call or index (`config.get("password")`, `os.environ["X"]`), a `::` path, a reference or generic type
+(`&str`, `Option<String>`), a type word (`String`, `bool`), a keyword expression (`Some(...)`, `await ...`), an
+identifier that echoes the key (`self.client_secret = client_secret`, `token = refresh_token`), a version under a
+token-family key (`next-auth: 4.20.1_...`), or, on a comment line (`#`, `//`, `*`, `--`, `;`, `/*`, `<!--`, `"""`,
+`:param`, `@param`, after a line number or diff marker), a word followed by more prose (`# PASSWORD: Set this to
+...`); a value with a vendor prefix is never code (`hvs.` tokens). A declaration whose bare value is a type and is
+followed by `=` is judged on the value after the `=` (`const SIGNING_SECRET: &str = "..."`).
+
+Only the secret span is replaced, by `[REDACTED:<rule id>]`, the text live capture redaction writes. Text a pass
+already replaced is protected: a `[REDACTED]` or `[REDACTED:<kind>]` span is protected only when `<kind>` is a rule id
+the sanitizer emits, `secret_key`, or `pattern:<n>` (a live capture pattern); any other `[REDACTED:...]` text is
+ordinary text and is scanned and redacted, so brackets wrapped around a secret do not hide it and
+`password=[REDACTED:<unknown kind>]` does not pass ingest. A match that runs into a protected span is trimmed to the
+text outside it and each remaining piece is replaced, so a PEM body after a placeholder line, the password of
+`postgres://[REDACTED]:pw@[REDACTED]` and a mapping regex that runs into a placeholder are still scrubbed. The rules
+compile once per process; a test fails when a rule does not compile or when the vendored file's digest differs from
+the pin.
+
+Live capture redaction, when it is on, uses the same rules, the same `[names]` table and the same JSON walk, so a
+value under a token-family key is redacted only when it passes the likeness test and a key ending in `_id`, `_count`
+or `_at` keeps its value. Rows already stored keep their old text. Against the builtins before note 136
+(`git show 136bc066:crates/capture/src/redaction.rs`), two forms change their placeholder:
+`Authorization: Bearer abc...` becomes `Authorization: Bearer [REDACTED:bearer]` (was `Authorization[REDACTED:assignment]`,
+the name's colon and the scheme swallowed), `api_key: sk-...` and `api_key: X` become
+`api_key: [REDACTED:secret_assignment]` or the vendor rule's placeholder (was `api_key[REDACTED:assignment]`); a JSON
+value under a secret key still becomes `[REDACTED:secret_key]`. The builtins had no `env_secret` rule and kept every one
+of these, which are now redacted: `DB_PASSWORD=X` and any other env, shell, YAML, TOML, JSON or query assignment to a
+password-family name (`password: X`, `pass=hunter2`, a digit-only password, a bare password in braces or parentheses,
+a YAML block scalar or next-line value, a bracketed value followed by more text such as `[a]b`, a pretty-printed JSON
+object or array under the name); a token-like value under `Cookie`, `credential`, `credentials`, `creds`,
+`license_key`, `routing_key`, `write_key` or any other `*_key` outside `key_never` (20 characters, entropy 3.5), or a
+bare `pass` key; the password of a URL (`postgres://app:X@db/app`, `https://x-access-token:X@github.com`);
+`mysql -pX`, `sshpass -p`, `docker login -p` and the other CLI flags; PHP, Ruby, Go, SQL, XML, Java setter and PHP
+define forms; the value of a name/value pair whose name is in a family (Kubernetes env, ECS task definitions, HAR
+headers and params); every HAR cookie value; the body of `gh secret set`; a base64 blob over the decode budget
+(`undecoded_blob`); and everything the gitleaks rules, `cookie_header`, `authorization_header`, `netrc_password`, the
+CLI, cookie and login rules and `base64_secret` match. Kept where the old builtins redacted: a JSON value under
+`Authorization`, `session_key` or a key ending in `_id` or `_count`; a token-family value shorter than 12 characters
+or of low entropy (`token: box7`, `api_key = hunter2`); a code value (`password = get_password()`, `token: &str`); a
+`${{ secrets.X }}` reference and a `${NAME:-default}` expansion. On a base64 dump of a binary gitleaks'
+`square-access-token` rule produces false positives, and a placeholder in a vendor token's shape (a Slack prefix
+followed by runs of X) is redacted like the token.
+
+The mapping pass applies the rules of the mapping file: every literal and every regex is matched over the whole text
+(literals through one automaton that reports every occurrence, a `\b` in a regex as a Unicode word boundary, which
+the scan swaps for the equal ASCII boundary on text with no non-ASCII word character to stay on the regex engine's fast path), and where matches overlap the earlier rule in the file wins, then the
+earlier start: with the rules `abc` then `zab`, `zabc` becomes `z<abc's placeholder>`. `map` writes the rule's
+placeholder and `redact` writes `[REDACTED]`. A `settings.origin` the scrubber changed does not change credit: ingest
+replaces `settings.origin` with the session's `origin` (note 135).
+
+The mapping file is `--mapping`, else `memory.sanitize.mapping` in config.yaml (`~` expands to the home folder),
+else `~/.config/rivethub/redactions.toml`. A file named by `--mapping` or the config must exist; the default file may
+be absent, and then no rule runs. It is TOML: a list of `[[rule]]` tables, each with exactly one of `literal =
+"<text>"` or `regex = '<pattern>'` (the Rust `regex` syntax, which runs in linear time), and `action = "map"` with
+`as = "<placeholder>"`, or `action = "redact"`, which writes `[REDACTED]` and takes no `as`. A file that is not TOML,
+a rule with no matcher, both matchers, an empty matcher or placeholder, a `map` without `as`, a `redact` with `as`,
+or a regex that does not compile is refused with the line of the rule's `[[rule]]` header, and nothing is written.
+
+The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (both fields scrubbed
+and mapped) and `sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets",
+"mapping"], "unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex
+HMAC-SHA256, under the local key, of the raw bundle's `bundle_sha256`, a zero byte and the canonical JSON of the
+secret rules' digest (SHA-256 over both rule files) and the mapping rules in order (matcher and action). Neither the
+key nor the raw digest ships, so the hash tells its owner whether one raw bundle was sanitized twice with the same
+policy, and nobody else can test a guessed mapping rule or a reconstructed raw bundle against it.
+
+The report never holds replaced text. It names the bundle, the time, the totals, what is and is not scanned, the
+secret rule counts by source file with the gitleaks version, the mapping file and its rule count, the policy and
+bundle digests, a table of every rule with its change count (a mapping rule by its line number, since a `redact`
+rule's literal is the secret itself), and, for each session (headed by its scrubbed conversation id) and then the
+manifest, one row per event, field and rule: the first 12 hex characters of the event id, the field (`title`,
+`content`, `tool_result`, `tool_name`, `event_id`, `session_key`, `agent`, `channel`, `task_id`, `origin.author`,
+`origin.node`, `origin.conversation_id`, `origin.session_key`, `origin.agent`, `manifest.exported_by.user`,
+`manifest.exported_by.node`, or `settings`, `tool_args` or `metadata` with the JSON path built from the scrubbed and
+suffixed keys, and ` (a key)` naming the scrubbed key when the key itself changed), the rule, the replacement, the
+number of changes and an Original column, then the keys a collision renamed, each under its suffixed path. The
+Original column lists fingerprints, each the first 12 hex characters of the HMAC-SHA256, under the local key, of the
+raw bundle's `bundle_sha256`, a zero byte and the replaced span, so spans with the same text share a fingerprint and
+nobody without the key can test a guess against it.
+
+`ingest-bundle` does not trust the stamp. Before it posts anything, it runs the secrets pass over every field of a
+sanitized bundle it reads, event ids, task ids, the author and `exported_by` included, with the same placeholder
+protection and the same name tests, so a bundle `sanitize` wrote always passes and a forged stamp on a bundle with a
+secret-shaped id or author does not. When a rule still matches, it refuses the bundle with the match count and the
+first match's session number, message position, field and rule (never the text, and never a raw event id), and writes
+nothing, unless `--force` is given. Then it ingests it and its report adds `(<n> secret pattern matches forced)`.
+`--dry-run` lists the bundle as before, prints a session key, agent or author that matched a rule as that rule's
+placeholder, and adds the match count to its total line. The receiver cannot re-apply the sender's mapping rules,
+which never ship: a raw bundle relabelled sanitized with a recomputed digest passes the scan when only mapping terms
+(names, hosts, projects) remain in it, so the receiver trusts the sender for mapping and only the secret rules for
+secrets.
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is not embedded in rh but installed from the file named by `RIVETHUB_OPENCODE_PLUGIN` (`src/capture.ts` of the TypeScript repo's `integrations/opencode`, a template whose `'__COMMAND__'` literal becomes rh's hook command), and connecting capture without it is `422` `opencode plug-in not available; build it from the rivethub repo`, copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for), and prints the diff and the backup path. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 

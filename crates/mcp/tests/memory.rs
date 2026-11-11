@@ -465,6 +465,7 @@ fn bundled(
             agent: "rivet".into(),
             created_at: created.map(at),
             updated_at: created.map(at),
+            identity: None,
         },
         batch: wire::capture::CaptureBatchRequest {
             session_key: format!("claude-code:{conversation}"),

@@ -1,0 +1,501 @@
+title = "RivetHub secret rules"
+
+[gitleaks]
+version = "v8.30.1"
+commit = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"
+file = "config/gitleaks.toml"
+sha256 = "e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf"
+license = "MIT"
+copyright = "Copyright (c) 2019 Zachary Rice"
+license_text = """
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+deviations = [
+    "The vendored file is byte-identical to upstream; the loader applies the changes below.",
+    "An allowlist regex written ^a|b|c$ is compiled as ^(?:a|b|c)$, so the anchors cover every branch: upstream's (?i)^true|false|null$ would otherwise allow any secret that contains 'false' or ends in 'null'.",
+    "The rules listed in whole_match redact the whole match: their first capture group is a repeated fragment of the match (a UUID segment), which gitleaks would report as the secret.",
+    "gitleaks' global allowlist applies to gitleaks rules only; RivetHub rules use the [names] stopwords and templates.",
+    "Rules that need a file path are skipped; bundles have no paths.",
+    "The rules listed in skip are not loaded: generic-api-key fires on any name that contains key, token or secret (api_key_id, session_key, token_count) and on identifiers under them, and private-key swallows prose between a BEGIN marker in documentation and the next END; RivetHub's secret_assignment and pem_private_key rules cover the same ground with the name, value and body tests described in CONTRACT note 136.",
+]
+whole_match = ["microsoft-teams-webhook"]
+skip = ["generic-api-key", "private-key"]
+
+[names]
+password = ["password", "passwd", "pwd", "passphrase", "pass", "pin", "secret", "private_key", "ssh_key", "secret_value"]
+suffix_only = ["pass"]
+token = ["token", "api_key", "apikey", "access_key", "secret_key", "app_key", "account_key", "signing_key", "encryption_key", "master_key", "auth_key", "auth", "credentials", "credential", "creds", "cookie", "session_cookie", "license_key", "routing_key", "write_key", "client_key", "consumer_key", "unseal_key", "token_value"]
+exact_key = ["key", "pass"]
+key_never = ["session_key", "public_key", "primary_key", "foreign_key", "partition_key", "sort_key", "hash_key", "range_key", "cache_key", "idempotency_key", "row_key", "host_key", "ssh_public_key", "i18n_key", "translation_key", "label_key", "object_key", "file_key", "s3_key", "storage_key", "bucket_key", "map_key", "dict_key", "composite_key", "unique_key", "index_key", "search_key", "lookup_key", "group_key", "tab_key", "react_key", "node_key", "item_key", "message_key", "event_key", "shortcut_key", "hot_key", "function_key"]
+exact_password = ["pgpassword"]
+exact_token = ["identitytoken", "authtoken", "secret_key_base", "phpsessid", "jsessionid", "asp_net_sessionid", "connect_sid"]
+value_suffixes = ["value", "data", "plaintext", "secret_string", "string"]
+vendor_prefixes = ["sk-", "sk_", "rk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xox", "xapp-", "glpat-", "npm_", "hf_", "AIza", "AKIA", "ASIA", "ya29.", "dop_v1_", "doo_v1_", "hvs.", "hvb.", "dp.", "lin_api_", "shpat_", "shpss_", "whsec_", "sntry", "pypi-", "glsa_", "pul-", "PMAK-", "HRKU-", "EAAA", "SG.", "key-", "xkeysib-", "nfp_", "dckr_pat_", "CFPAT-", "fm2_", "glc_", "ATATT3"]
+stopwords = ["none", "null", "nil", "undefined", "true", "false", "yes", "no", "required", "optional", "string", "str", "int", "bool", "changeme", "change_me", "change-me", "placeholder", "example", "password", "secret", "token", "redacted", "bearer", "basic", "include", "same-origin", "omit", "prompt", "keyring", "default", "auto", "unset", "empty", "blank", "hidden", "masked", "omitted", "sensitive", "protected", "encrypted", "hashed", "n/a", "na", "tbd", "todo", "text", "json", "file", "env", "value", "object", "array", "number", "boolean", "integer", "any", "unknown", "void", "dict", "list", "auth", "session", "cookie", "header", "query", "body", "form", "oauth", "oauth2", "apikey", "api_key", "jwt", "hmac", "sha256", "md5", "plain", "scram-sha-256", "trust", "peer", "ident", "ldap", "pam", "cert", "gss", "sspi", "disabled", "enabled", "off", "on"]
+templates = [
+    '''^\{\{[ \t]*[A-Za-z_][\w.|() -]*[ \t]*\}\}$''',
+    '''^\$\{\{.*\}\}$''',
+    '''^\{[A-Z_][A-Z0-9_]*\}$''',
+    '''^\$\{[A-Za-z_][\w.]*(?:[:?=+%#/-][^}]*)?\}$''',
+    '''^\$[A-Z_][A-Z0-9_]*$''',
+    '''^\$\(.*\)$''',
+    '''^\$\d+$''',
+    '''^%[A-Z_][A-Z0-9_]*%$''',
+    '''^<[^<>\s]+>$''',
+    '''^\*{3,}$''',
+    '''^[xX]{3,}$''',
+    '''^[A-Za-z0-9_-]{0,8}[xX]{8,}$''',
+    '''^(?i)[\w-]*(?:no-key|not-needed|not-required|unused|dummy|placeholder|example|sample|redacted|removed|changeme)[\w-]*$''',
+    '''^\.{3,}$''',
+    '''^[\w.-]{0,24}\.{3}$''',
+    '''^(?:~|\.{1,2})?/[^\s]*$''',
+    '''^(?i:your|my|the|a|an|some|insert|put|paste|replace|enter|add)[-_ ](?:[A-Za-z]+[-_ ])*(?i:here|key|token|secret|password|value|id)$''',
+]
+separators = ["=>", ":=", "=", ":"]
+comment_openers = ["#", "//", "*", "--", ";", "/*", "<!--", '"""', ":param", "@param", "'''", "rem "]
+code_values = [
+    '''^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+[!?]?$''',
+    '''^[A-Za-z_][A-Za-z0-9_.]*(?:::[A-Za-z_][A-Za-z0-9_]*)*!?(?:\(.*\)|\[.*\])(?:\.[A-Za-z_]\w*(?:\(.*\))?)*\??$''',
+    '''^[A-Za-z_][\w.:]*!?\([^)]*$''',
+    '''^[A-Z][A-Za-z0-9_]*(?:::[A-Z][A-Za-z0-9_]*)*<[^<>]*(?:<[^<>]*>)?[^<>]*>\??$''',
+    '''^\d\w*;[ \t]*\d+$''',
+    '''^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+(?:\(.*\))?$''',
+    '''^&(?:'static[ \t]+)?(?:mut[ \t]+)?[A-Za-z_][\w:<>,\[\] ]*$''',
+    '''^(?:Option|Vec|Box|Arc|Rc|Result|Secret|SecretString|Zeroizing|Cow|HashMap|BTreeMap|Mutex|RwLock|Promise|Array|Record|Map|Set|List|Dict|Optional|Union|Tuple|Sequence|Iterable|Callable|Type|Literal|Maybe|Nullable|Readonly|Partial)\s*[<\[].*[>\]]\??$''',
+    '''^(?:str|string|String|bool|boolean|int|integer|float|double|long|number|bytes|u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|f32|f64|char|Text|text|any|unknown|never|void|null|None|object|Object|Buffer|Uint8Array|SecStr|SecretString|SecretBox|Zeroizing|PathBuf|Path|OsString|Duration|Instant|Bytes|BytesMut)\??$''',
+    '''^(?:new|await|async|return|yield|typeof|instanceof|lambda|fn|def|class|struct|enum|impl|match|if|else|case|try|catch|throw|raise|print|unwrap|expect|clone|into|as_ref|to_string|to_owned|borrow|deref|Some|Ok|Err|Default|Self|self|this|super|cls)\b.*$''',
+]
+min_length = 12
+min_entropy = 3.0
+key_min_length = 20
+key_min_entropy = 3.5
+
+[[rules]]
+id = "bearer"
+description = "HTTP bearer token"
+regex = '''(?i)\bbearer[ \t]+([A-Za-z0-9\-._~+/=]{16,})'''
+keywords = ["bearer"]
+
+[[rules]]
+id = "pem_private_key"
+description = "PEM or PGP private key block, with or without its END line; header lines count only right after BEGIN"
+regex = '''(?i)((?:-----BEGIN[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----(?:(?:\\r|\\n|\r|\n|[ \t])+(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*[A-Za-z-]+:[ \t]*[^\r\n\\]*)*|\[REDACTED:pem_private_key\])(?:(?:\\r|\\n|\r|\n|[ \t])+(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*(?:[A-Za-z0-9+/=]{16,}|\[REDACTED(?::[^\]]*)?\]))+(?:(?:\\r|\\n|\r|\n|[ \t])*(?:\d+[ \t]*(?:\\r|\\n|\r|\n|[ \t])*)*-----END[ A-Z0-9_-]*PRIVATE KEY(?: BLOCK)?-----)?)'''
+keywords = ["-----begin", "[redacted:pem_private_key]"]
+
+[[rules]]
+id = "aws_access_key"
+description = "AWS access key id"
+regex = '''((?:AKIA|ASIA|ABIA|ACCA|A3T[A-Z0-9])[A-Z0-9]{16})'''
+keywords = ["akia", "asia", "abia", "acca", "a3t"]
+entropy = 3.0
+
+[[rules]]
+id = "aws_secret_near_id"
+description = "bare 40-character AWS secret key within 160 bytes after an AWS access key id"
+regex = '''\b(?:AKIA|ASIA)[A-Z0-9]{16,}[\s\S]{0,160}?(?:^|[\s"'=:,])([A-Za-z0-9/+=]{40})(?:[\s"',;]|$)'''
+keywords = ["akia", "asia"]
+entropy = 3.5
+
+[[rules]]
+id = "github_token"
+description = "GitHub token"
+regex = '''\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{60,})'''
+keywords = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"]
+
+[[rules]]
+id = "slack_token"
+description = "Slack token"
+regex = '''\b((?:xox[aebprs]|xapp)-[A-Za-z0-9\-]{10,})'''
+keywords = ["xox", "xapp-"]
+
+[[rules]]
+id = "slack_webhook"
+description = "Slack webhook path"
+regex = '''hooks\.slack\.com/(?:services|workflows|triggers)/([A-Za-z0-9+/_-]{20,})'''
+keywords = ["hooks.slack.com"]
+
+[[rules]]
+id = "sk_token"
+description = "sk- or sk_ prefixed API key (OpenAI, Anthropic, Stripe)"
+regex = '''\b(sk[_-][A-Za-z0-9_-]{20,})'''
+keywords = ["sk-", "sk_"]
+
+[[rules]]
+id = "stripe_key"
+description = "Stripe restricted key"
+regex = '''\b(rk_(?:live|test|prod)_[A-Za-z0-9]{10,})'''
+keywords = ["rk_live", "rk_test", "rk_prod"]
+
+[[rules]]
+id = "stripe_webhook_secret"
+description = "Stripe webhook signing secret"
+regex = '''\b(whsec_[A-Za-z0-9]{24,})'''
+keywords = ["whsec_"]
+
+[[rules]]
+id = "google_api_key"
+description = "Google API key"
+regex = '''\b(AIza[0-9A-Za-z_-]{35})'''
+keywords = ["aiza"]
+
+[[rules]]
+id = "gitlab_token"
+description = "GitLab personal access token"
+regex = '''\b(glpat-[A-Za-z0-9_-]{20,})'''
+keywords = ["glpat-"]
+
+[[rules]]
+id = "npm_token"
+description = "npm access token"
+regex = '''\b(npm_[A-Za-z0-9]{36})'''
+keywords = ["npm_"]
+
+[[rules]]
+id = "huggingface_token"
+description = "Hugging Face access token"
+regex = '''\b(hf_[A-Za-z0-9]{30,})'''
+keywords = ["hf_"]
+
+[[rules]]
+id = "sendgrid_key"
+description = "SendGrid API key"
+regex = '''\b(SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,})'''
+keywords = ["sg."]
+
+[[rules]]
+id = "jwt"
+description = "JSON web token"
+regex = '''\b(ey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})'''
+keywords = ["ey"]
+
+[[rules]]
+id = "http_auth"
+description = "HTTP Basic, Digest, Negotiate or NTLM credential"
+regex = '''\b(?:Basic|Digest|Negotiate|NTLM) ([A-Za-z0-9+/=._~\-]{8,})'''
+keywords = ["basic ", "digest ", "negotiate ", "ntlm "]
+
+[[rules.allowlists]]
+regexes = ['''^[a-z]+$''']
+
+[[rules]]
+id = "authorization_header"
+description = "credential of an Authorization header with any scheme, key=value forms included"
+regex = '''(?i)\bauthorization:[ \t]*(?:[A-Za-z][A-Za-z0-9-]*[ \t]+)?([A-Za-z0-9\-._~+/=:]{16,})'''
+keywords = ["authorization:"]
+
+[[rules]]
+id = "cookie_header"
+description = "value of a Cookie or Set-Cookie header"
+regex = '''(?i)\bcookie:[ \t]*([^\s=;]+=[^\r\n]+)'''
+keywords = ["cookie:"]
+
+[[rules]]
+id = "url_password"
+description = "password in the userinfo of a URL, including a JSON-escaped :\\/\\/ URL"
+regex = '''(?i)\b[a-z][a-z0-9+.-]*:(?:\\?/){2}([^\s:/@\\]*):([^\s]+)@(?:[A-Za-z0-9._-]+|\[REDACTED(?::[^\]]*)?\])(?::\d+)?(?:[/?#\\]|\s|$)'''
+keywords = ["://", ":\\/\\/"]
+secretGroup = 2
+
+[[rules]]
+id = "secret_assignment"
+description = "value assigned to a password- or token-family name in shell, env, YAML, TOML, JSON, query, header or CLI form"
+kind = "names"
+
+[[rules]]
+id = "name_value_pair"
+description = "value of a name/value pair whose name is password- or token-named: JSON {\"name\": \"DB_PASSWORD\", \"value\": \"x\"} on one line or pretty-printed (Kubernetes env, ECS task definitions, HAR headers and params) and YAML - name: DB_PASSWORD / value: x"
+kind = "pairs"
+keywords = ['"name"', 'name\"', "name:"]
+
+[[rules]]
+id = "har_cookie"
+description = "value of every cookie in a HAR cookies array, whatever the cookie is named"
+regex = '''(?s)"cookies"\s*:\s*\[([^\[\]]*)\]'''
+each = '''"value"\s*:\s*"((?:[^"\\]|\\.)*)"'''
+keywords = ['"cookies"']
+
+[[rules]]
+id = "gh_secret_set"
+description = "value given to gh secret set with --body or -b"
+regex = '''(?i)\bgh[ \t]+secret[ \t]+set\b[^\n]*?[ \t](?:--body|-b)(?:[ \t]+|=)(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"']+))'''
+keywords = ["secret set"]
+
+[[rules]]
+id = "curl_user"
+description = "password of curl -u user:password"
+regex = '''(?i)\bcurl\b[^\n]*?\s(?:-u|--user)(?:[ \t]+|=)(?:"[^"\n:]*:([^"\n]+)"|'[^'\n:]*:([^'\n]+)'|[^\s"':]+:([^\s"']+))'''
+keywords = ["curl"]
+
+[[rules]]
+id = "mysql_password_flag"
+description = "password glued to the -p flag of a MySQL or MariaDB client"
+regex = '''(?i)\b(?:mysql|mysqldump|mariadb)\b[^\n]*?\s-p([^\s"']+)'''
+keywords = ["mysql", "mariadb"]
+
+[[rules]]
+id = "cli_credential_flag"
+description = "credential passed to a command-line flag (sshpass -p, docker login -p, az login -p, redis-cli -a, --password, --token, --pat, --api-key, --secret, --auth, --management-token and the like); a quoted value is taken whole"
+regex = '''(?i)(?:\bsshpass[ \t]+-p|\bdocker[ \t]+login\b[^\n]*?[ \t](?:-p|--password)|\baz[ \t]+login\b[^\n]*?[ \t]-p|\bredis-cli\b[^\n]*?[ \t]-a|--(?:password|passwd|token|pat|api-key|apikey|api-token|secret|secret-key|access-key|auth|auth-token|access-token|client-secret|management-token|passphrase|private-key))(?:[ \t]+|=)(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"'$][^\s"']*))'''
+keywords = ["sshpass", "docker login", "az login", "redis-cli", "--password", "--passwd", "--token", "--pat", "--api-key", "--apikey", "--api-token", "--secret", "--access-key", "--auth", "--access-token", "--client-secret", "--management-token", "--passphrase", "--private-key"]
+
+[[rules]]
+id = "openssl_pass_arg"
+description = "password of an openssl -passin or -passout pass: argument"
+regex = '''(?i)(?:^|\s)-pass(?:in|out)[ \t]+pass:([^\s"']+)'''
+keywords = ["-passin", "-passout"]
+
+[[rules]]
+id = "netrc_password"
+description = "password of a .netrc machine entry, on one line or spread over lines"
+regex = '''(?i)\bmachine[ \t]+\S+(?:[ \t]+|[ \t]*\n[ \t]+)login[ \t]+\S+(?:[ \t]+|[ \t]*\n[ \t]+)password[ \t]+(\S+)'''
+keywords = ["machine"]
+
+[[rules]]
+id = "sentry_dsn"
+description = "public key of a Sentry DSN"
+regex = '''(?i)https?://([a-f0-9]{32})(?::[a-f0-9]{32})?@[a-z0-9.-]*sentry\.io/\d+'''
+keywords = ["sentry.io"]
+
+[[rules]]
+id = "discord_bot_token"
+description = "Discord bot token (base64 user id, timestamp and HMAC)"
+regex = '''\b([MNO][A-Za-z0-9_-]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})'''
+keywords = ["*"]
+
+[[rules]]
+id = "discord_webhook"
+description = "Discord webhook token"
+regex = '''discord(?:app)?\.com/api/webhooks/\d+/([A-Za-z0-9_-]{60,})'''
+keywords = ["/api/webhooks/"]
+
+[[rules]]
+id = "telegram_bot_token"
+description = "Telegram bot token in a URL or in code"
+regex = '''(?:bot|\b)(\d{8,10}:AA[A-Za-z0-9_-]{33})'''
+keywords = [":aa"]
+
+[[rules]]
+id = "azure_sas"
+description = "signature of an Azure shared access signature URL"
+regex = '''[?&]sig=([A-Za-z0-9%+/=]{40,})'''
+keywords = ["sig="]
+
+[[rules]]
+id = "doppler_service_token"
+description = "Doppler service, CLI, service-account, SCIM or audit token"
+regex = '''\b(dp\.(?:st|ct|sa|scim|audit)\.(?:[a-z0-9_]+\.)?[A-Za-z0-9]{40,})'''
+keywords = ["dp."]
+
+[[rules]]
+id = "mailchimp_key"
+description = "Mailchimp API key with its data-center suffix"
+regex = '''\b([a-f0-9]{32}-us\d{1,2})\b'''
+keywords = ["-us"]
+
+[[rules]]
+id = "datadog_app_key"
+description = "Datadog application key header"
+regex = '''(?i)\bdd-application-key:[ \t]*([a-f0-9]{40})'''
+keywords = ["dd-application-key"]
+
+[[rules]]
+id = "twilio_auth_token"
+description = "Twilio auth token passed beside an account SID"
+regex = '''\bAC[a-f0-9]{32}["']?[ \t]*,[ \t]*["']?([a-f0-9]{32})\b'''
+keywords = ["ac"]
+
+[[rules]]
+id = "jwk_private"
+description = "private parameters of a JSON web key"
+regex = '''"kty"[ \t]*:[ \t]*"(?:EC|RSA|OKP|oct)"([\s\S]{0,3000}?)\}'''
+each = '''"(?:d|k|p|q|dp|dq|qi)"[ \t]*:[ \t]*"([A-Za-z0-9_=-]{16,})"'''
+keywords = ["\"kty\""]
+
+[[rules]]
+id = "k8s_secret_data"
+description = "values of the data or stringData block of a Kubernetes Secret manifest"
+regex = '''(?i)(?:\bkind:[ \t]*["']?secret["']?[ \t]*\n[\s\S]{0,600}?\n(?:string)?data:[ \t]*\n((?:[ \t]+[\w.-]+:[ \t]*\S[^\n]*\n?)+)|(?:^|\n)(?:string)?data:[ \t]*\n((?:[ \t]+[\w.-]+:[ \t]*\S[^\n]*\n?)+)[\s\S]{0,600}?\bkind:[ \t]*["']?secret\b)'''
+each = '''(?m)^[ \t]+[\w.-]+:[ \t]*(\S.*?)[ \t]*$'''
+keywords = ["kind:", "data:"]
+
+[[rules]]
+id = "base64_secret"
+description = "base64 text of 40 or more characters, on one line or wrapped over lines, that decodes (gzip and one nested base64 layer included) to text in which a rule matches, or to a DER private key"
+regex = '''(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{40,}={0,2}(?:\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*)'''
+keywords = ["*"]
+decode = "base64"
+
+[[rules]]
+id = "undecoded_blob"
+description = "base64 text that would pass the decode budget (8 MiB of decoded bytes per message, 64 MiB per bundle, two nested layers), so it is redacted whole without being decoded"
+kind = "budget"
+
+[[rules]]
+id = "sql_password"
+description = "password literal of CREATE USER, ALTER USER or IDENTIFIED BY"
+regex = '''(?i)\b(?:PASSWORD|IDENTIFIED(?:[ \t]+WITH[ \t]+\w+)?[ \t]+BY)[ \t]+(?:'((?:[^'\\]|\\.)+)'|"((?:[^"\\]|\\.)+)")'''
+keywords = ["password ", "identified"]
+
+[[rules]]
+id = "xml_element_secret"
+description = "text of an XML element named like a password or token (Maven settings.xml, web.config and the like)"
+regex = '''(?i)<(?:[a-z]+:)?([a-z_]*(?:password|passwd|passphrase|secret|token|apikey|api_key|accesskey|access_key|private_key|privatekey|credential)s?)>([^<\r\n]{1,512})</'''
+keywords = ["</"]
+secretGroup = 2
+
+[[rules]]
+id = "xml_key_value_secret"
+description = "value attribute of an XML add or setting element whose key names a password or token (appSettings, NuGet, web.config)"
+regex = '''(?i)\bkey=["'][^"'<>]*(?:password|passwd|passphrase|secret|token|apikey|api_key|accesskey|access_key|private_key|credential)[^"'<>]*["'][ \t]+value=(?:"([^"\r\n]+)"|'([^'\r\n]+)')'''
+keywords = ["value="]
+
+[[rules]]
+id = "setter_call"
+description = "quoted argument of a setPassword, setSecret, setToken or setApiKey style call"
+regex = '''(?i)\bset(?:password|passwd|passphrase|secret|token|apikey|api_key|accesskey|access_key|privatekey|private_key|credential)s?[ \t]*\([ \t]*(?:"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)')[ \t]*\)'''
+keywords = ["setpassword", "setpasswd", "setpassphrase", "setsecret", "settoken", "setapikey", "setapi_key", "setaccesskey", "setaccess_key", "setprivatekey", "setprivate_key", "setcredential"]
+
+[[rules]]
+id = "php_define_secret"
+description = "value of a PHP define() whose constant names a password or token"
+regex = '''(?i)\bdefine[ \t]*\([ \t]*["'][A-Za-z_]*(?:password|passwd|passphrase|secret|token|apikey|api_key|accesskey|access_key|private_key)[A-Za-z_]*["'][ \t]*,[ \t]*(?:"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)')'''
+keywords = ["define"]
+
+[[rules]]
+id = "pgpass_line"
+description = "password field of a .pgpass line (host:port:database:user:password)"
+regex = '''(?m)^[ \t]*([\w.*-]+):(?:\d{1,5}|\*):[^\s:]+:[^\s:]+:(\S+)[ \t]*$'''
+keywords = ["*"]
+secretGroup = 2
+
+[[rules]]
+id = "crypt_hash"
+description = "password hash in crypt, bcrypt, yescrypt, argon2 or Apache MD5 form (/etc/shadow, .htpasswd)"
+regex = '''(\$(?:2[abxy]|1|5|6|7|y|apr1|argon2id?|argon2|scrypt|pbkdf2[\w-]*|sha1|md5)\$[^\s:'"]{8,})'''
+keywords = ["$2", "$1$", "$5$", "$6$", "$7$", "$y$", "$apr1$", "$argon2", "$scrypt", "$pbkdf2", "$sha1$", "$md5$"]
+
+[[rules]]
+id = "aws_configure_set"
+description = "secret passed to aws configure set aws_secret_access_key or aws_session_token"
+regex = '''(?i)\baws[ \t]+configure[ \t]+set[ \t]+(?:aws_secret_access_key|aws_session_token)[ \t]+(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"']+))'''
+keywords = ["aws configure set"]
+
+[[rules]]
+id = "cli_login_token"
+description = "token given to cargo login, snyk auth, vault login, gh auth login --with-token echo and similar login commands"
+regex = '''(?i)\b(?:cargo[ \t]+login|snyk[ \t]+auth|vault[ \t]+login|doctl[ \t]+auth[ \t]+init[ \t]+-t|flyctl?[ \t]+auth[ \t]+token|wrangler[ \t]+login[ \t]+--api-token|heroku[ \t]+login[ \t]+--token)[ \t]+(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"'|;&]+))'''
+keywords = ["cargo login", "snyk auth", "vault login", "doctl auth", "auth token", "wrangler login", "heroku login"]
+
+[[rules]]
+id = "piped_login_stdin"
+description = "secret echoed into a login command that reads it from stdin (docker, podman, helm, crane, gh auth)"
+regex = '''(?i)\b(?:echo|printf)[ \t]+(?:-n[ \t]+)?(?:"([^"\n]+)"|'([^'\n]+)'|([^\s"'|]+))[ \t]*\|[ \t]*(?:docker|podman|nerdctl|helm[ \t]+registry|crane[ \t]+auth|gh[ \t]+auth|oras|skopeo)[ \t]+login\b[^\n]*--(?:password-stdin|with-token)'''
+keywords = ["--password-stdin", "--with-token"]
+
+[[rules]]
+id = "fly_token"
+description = "Fly.io macaroon token, one or several fm2_ parts"
+regex = '''\b(fm2_[A-Za-z0-9+/=]{20,}(?:,fm2_[A-Za-z0-9+/=]{20,})*)'''
+keywords = ["fm2_"]
+
+[[rules]]
+id = "vault_unseal_key"
+description = "unseal key printed by vault operator init"
+regex = '''(?i)\bunseal[ \t]+key(?:[ \t]+\d+)?:[ \t]*([A-Za-z0-9+/=]{20,})'''
+keywords = ["unseal key"]
+
+[[rules]]
+id = "curl_cookie"
+description = "cookie string passed to curl -b or --cookie"
+regex = '''(?i)\bcurl\b[^\n]*?\s(?:-b|--cookie)(?:[ \t]+|=)(?:"([^"\n]*=[^"\n]*)"|'([^'\n]*=[^'\n]*)'|([^\s"']*=[^\s"']*))'''
+keywords = ["curl"]
+
+[[rules]]
+id = "cookie_jar_line"
+description = "value column of a Netscape cookie jar line"
+regex = '''(?m)^\S+\t(?:TRUE|FALSE)\t\S+\t(?:TRUE|FALSE)\t\d+\t\S+\t(\S+)[ \t]*$'''
+keywords = ["\ttrue\t", "\tfalse\t"]
+
+[[rules]]
+id = "algolia_admin_key"
+description = "Algolia API key passed as the second argument of algoliasearch()"
+regex = '''(?i)\balgoliasearch[ \t]*\([ \t]*["'][^"']+["'][ \t]*,[ \t]*["']([A-Za-z0-9]{32})["']'''
+keywords = ["algoliasearch"]
+
+[[rules]]
+id = "resend_key"
+description = "Resend API key"
+regex = '''\b(re_[A-Za-z0-9]{8}_[A-Za-z0-9]{20,})'''
+keywords = ["re_"]
+entropy = 3.5
+
+[[rules]]
+id = "launchdarkly_sdk_key"
+description = "LaunchDarkly SDK, API or mobile key"
+regex = '''\b((?:sdk|api|mob)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'''
+keywords = ["sdk-", "api-", "mob-"]
+
+[[rules]]
+id = "asana_pat"
+description = "Asana personal access token"
+regex = '''\b(\d+/\d{10,}:[a-f0-9]{32})\b'''
+keywords = ["/"]
+
+[[rules]]
+id = "saml_response"
+description = "base64 SAMLResponse of a POST binding"
+regex = '''(?i)\bSAMLResponse=([A-Za-z0-9+/=%]{40,})'''
+keywords = ["samlresponse="]
+
+[[rules]]
+id = "reset_password_output"
+description = "new password printed by elasticsearch-reset-password and similar tools"
+regex = '''(?im)^[ \t]*New (?:value|password):[ \t]*(\S+)[ \t]*$'''
+keywords = ["new value:", "new password:"]
+
+[[rules]]
+id = "atlassian_api_token"
+description = "Atlassian API token of any length over 100 characters"
+regex = '''\b(ATATT3[A-Za-z0-9_\-=]{100,})'''
+keywords = ["atatt3"]
+
+[[rules]]
+id = "netlify_pat"
+description = "Netlify personal access token"
+regex = '''\b(nfp_[A-Za-z0-9]{30,})'''
+keywords = ["nfp_"]
+
+[[rules]]
+id = "dockerhub_pat"
+description = "Docker Hub personal access token"
+regex = '''\b(dckr_pat_[A-Za-z0-9_-]{20,})'''
+keywords = ["dckr_pat_"]
+
+[[rules]]
+id = "contentful_pat"
+description = "Contentful personal access token"
+regex = '''\b(CFPAT-[A-Za-z0-9_-]{30,})'''
+keywords = ["cfpat-"]
+
+[[rules]]
+id = "k8s_secret_json"
+description = "values of the data or stringData map of a Kubernetes Secret in JSON (kubectl get secret -o json)"
+regex = '''(?i)(?:"kind"[ \t]*:[ \t]*"Secret"[\s\S]{0,800}?"(?:string)?data"[ \t]*:[ \t]*\{([^{}]*)\}|"(?:string)?data"[ \t]*:[ \t]*\{([^{}]*)\}[\s\S]{0,800}?"kind"[ \t]*:[ \t]*"Secret")'''
+each = '''"[^"]+"[ \t]*:[ \t]*"([^"]+)"'''
+keywords = ["\"kind\"", "\"data\"", "\"stringdata\""]

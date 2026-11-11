@@ -11,7 +11,7 @@ mod time;
 
 pub use canonical::canonical_json;
 pub use harness::HarnessId;
-pub use json::{Extra, JsonObject};
+pub use json::{Extra, JsonObject, Scrub, member_path};
 pub use message::{ContentPart, MediaFields, Message, MessageContent, Role, ToolCall, ToolResult};
 pub use model::{LlmUsage, ThinkingLevel};
 pub use model_call::{CallOutcome, CallUsage};

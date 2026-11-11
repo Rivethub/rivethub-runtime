@@ -2,6 +2,8 @@ use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
+use capture::sanitize::Change;
+use capture::sanitize::Field;
 use chrono::Utc;
 use config::Config;
 use config::Environment;
@@ -114,14 +116,43 @@ pub(super) async fn ingest(
             path: path.display().to_string(),
         });
     }
-    let state = match (raw, force) {
-        (false, _) => "",
-        (true, true) => " (raw bundle forced)",
-        (true, false) => " (raw bundle; ingest needs --force)",
+    let secrets = if raw {
+        Vec::new()
+    } else {
+        capture::sanitize::secrets(&bundle)
     };
-    let sessions = sessions_from(&bundle);
+    if let Some(first) = secrets.first()
+        && !force
+        && !dry_run
+    {
+        return Err(Error::BundleSecrets {
+            path: path.display().to_string(),
+            count: secrets.len(),
+            first: first.to_string(),
+        });
+    }
+    let unscrubbed;
+    let state = match (raw, secrets.len(), force) {
+        (false, 0, _) => "",
+        (false, count, true) => {
+            unscrubbed = format!(" ({count} secret pattern matches forced)");
+            &unscrubbed
+        }
+        (false, count, false) => {
+            unscrubbed = format!(" ({count} secret pattern matches; ingest needs --force)");
+            &unscrubbed
+        }
+        (true, _, true) => " (raw bundle forced)",
+        (true, _, false) => " (raw bundle; ingest needs --force)",
+    };
+    let sessions = sessions_from(&bundle, &secrets);
     if dry_run {
-        let mut lines: Vec<String> = bundle.sessions.iter().map(listed).collect();
+        let mut lines: Vec<String> = bundle
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(index, session)| listed(index, session, &secrets))
+            .collect();
         lines.push(format!("would ingest {sessions}{state}; nothing written\n"));
         return Ok(Report::success(lines.concat()));
     }
@@ -132,10 +163,10 @@ pub(super) async fn ingest(
     )))
 }
 
-fn sessions_from(bundle: &SessionBundle) -> String {
-    let mut authors: Vec<&str> = Vec::new();
-    for session in &bundle.sessions {
-        let author = author_of(session);
+fn sessions_from(bundle: &SessionBundle, secrets: &[Change]) -> String {
+    let mut authors: Vec<String> = Vec::new();
+    for (index, session) in bundle.sessions.iter().enumerate() {
+        let author = shown(index, &Field::OriginAuthor, author_of(session), secrets);
         if !authors.contains(&author) {
             authors.push(author);
         }
@@ -149,7 +180,7 @@ fn sessions_from(bundle: &SessionBundle) -> String {
     }
 }
 
-fn listed(session: &BundledSession) -> String {
+fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> String {
     let origin = &session.origin;
     let count = session.batch.messages.len();
     let noun = if count == 1 { "message" } else { "messages" };
@@ -163,10 +194,22 @@ fn listed(session: &BundledSession) -> String {
     };
     format!(
         "{} ({}): {count} {noun} from {}, {dates}\n",
-        origin.session_key,
-        origin.agent,
-        author_of(session),
+        shown(
+            index,
+            &Field::OriginSessionKey,
+            &origin.session_key,
+            secrets
+        ),
+        shown(index, &Field::OriginAgent, &origin.agent, secrets),
+        shown(index, &Field::OriginAuthor, author_of(session), secrets),
     )
+}
+
+fn shown(index: usize, field: &Field, text: &str, secrets: &[Change]) -> String {
+    secrets
+        .iter()
+        .find(|change| change.session == Some(index) && change.field == *field)
+        .map_or_else(|| text.to_owned(), |change| change.replacement.clone())
 }
 
 fn author_of(session: &BundledSession) -> &str {
@@ -211,7 +254,7 @@ pub(super) async fn share(
         .map(BundledSession::forwarding_stored_origin)
         .collect();
     let count = sessions.len();
-    let mut text = capture::bundle::seal(author, Utc::now(), sessions)?.text;
+    let mut text = capture::bundle::seal(author, Utc::now(), Sanitization::Raw, sessions)?.text;
     text.push(b'\n');
     write_whole(out.clone(), text).await?;
     let noun = if count == 1 { "session" } else { "sessions" };
@@ -245,7 +288,7 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
+pub(super) async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
     tokio::task::spawn_blocking(move || {
         let parent = match out.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent,

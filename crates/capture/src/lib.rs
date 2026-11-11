@@ -8,6 +8,8 @@ pub mod payload;
 pub mod readers;
 pub mod records;
 pub mod redaction;
+pub mod rules;
+pub mod sanitize;
 pub mod spool;
 pub mod store_path;
 pub mod transcript;

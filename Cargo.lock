@@ -476,14 +476,20 @@ dependencies = [
 name = "capture"
 version = "0.7.0"
 dependencies = [
+ "aho-corasick",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "config",
+ "flate2",
  "futures",
+ "getrandom 0.4.3",
  "hex",
  "kernel",
+ "nix 0.30.1",
  "parking_lot",
+ "regex",
  "regress",
  "reqwest",
  "rusqlite",

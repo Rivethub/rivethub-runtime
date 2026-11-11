@@ -44,6 +44,7 @@ pub(crate) fn phils_session() -> Result<BundledSession, Box<dyn std::error::Erro
             agent: "rivet".to_owned(),
             created_at: Some(at("2026-10-14T09:00:00Z")?),
             updated_at: Some(at("2026-10-14T11:30:00Z")?),
+            identity: None,
         },
         batch: CaptureBatchRequest {
             session_key: "claude-code:shared".to_owned(),

@@ -450,6 +450,7 @@ fn imported(
             agent: "rivet".to_owned(),
             created_at: Some(instant("2026-10-14T09:00:00.000Z")?),
             updated_at: Some(instant(origin_updated_at)?),
+            identity: None,
         },
         batch: serde_json::from_value(serde_json::to_value(shared)?)?,
     };

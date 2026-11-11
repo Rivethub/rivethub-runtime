@@ -230,4 +230,28 @@ pub enum Error {
     BundleRaw { path: String },
     #[error(transparent)]
     Bundle(#[from] capture::bundle::BundleError),
+    #[error(
+        "{path} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again, or pass --force to ingest it as it is"
+    )]
+    BundleSecrets {
+        path: String,
+        count: usize,
+        first: String,
+    },
+    #[error(transparent)]
+    Sanitize(#[from] capture::sanitize::SanitizeError),
+    #[error(transparent)]
+    SanitizeKey(#[from] capture::sanitize::KeyError),
+    #[error("the mapping file {path} is invalid: {source}")]
+    Mapping {
+        path: String,
+        source: capture::sanitize::mapping::MappingError,
+    },
+    #[error("the mapping file {path} could not be read: {source}")]
+    MappingRead {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("--mapping requires a file")]
+    MappingRequired,
 }

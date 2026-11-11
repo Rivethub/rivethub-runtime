@@ -64,6 +64,7 @@ pub struct Sealed {
 pub fn seal(
     exported_by: BundleAuthor,
     exported_at: DateTime<Utc>,
+    sanitization: Sanitization,
     sessions: Vec<BundledSession>,
 ) -> Result<Sealed, BundleError> {
     let mut bundle = SessionBundle {
@@ -71,7 +72,7 @@ pub fn seal(
         manifest: BundleManifest {
             exported_at,
             exported_by,
-            sanitization: Sanitization::Raw,
+            sanitization,
             session_count: sessions.len(),
             bundle_sha256: String::new(),
         },
@@ -169,6 +170,7 @@ fn upgrade(first: FirstBundle) -> Result<SessionBundle, BundleError> {
             node: UNKNOWN_ORIGIN.to_owned(),
         },
         exported_at,
+        Sanitization::Raw,
         sessions,
     )?
     .bundle)
@@ -190,6 +192,7 @@ fn inferred(batch: CaptureBatchRequest) -> BundledSession {
             agent: batch.agent.clone(),
             created_at,
             updated_at,
+            identity: None,
         },
         batch,
     }

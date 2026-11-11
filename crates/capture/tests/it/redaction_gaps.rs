@@ -52,19 +52,30 @@ fn text_at<'a>(object: Option<&'a wire::JsonObject>, key: &str) -> Option<&'a st
 #[test]
 fn tool_arg_keys_containing_a_secret_word_are_replaced() -> Result<(), Box<dyn std::error::Error>> {
     let secret_keys = [
+        "Cookie",
         "access_token",
         "auth_token",
         "client_secret",
-        "Authorization",
         "X-Api-Key",
         "db_password",
         "aws_secret_access_key",
-        "SESSION_KEY",
-        "Cookie",
+        "clientSecret",
         "pwd",
         "auth",
     ];
-    let ordinary_keys = ["command", "file_path", "description", "query", "url"];
+    let ordinary_keys = [
+        "command",
+        "file_path",
+        "description",
+        "query",
+        "url",
+        "Authorization",
+        "SESSION_KEY",
+        "token_count",
+        "api_key_id",
+        "secretName",
+        "password_last_changed_at",
+    ];
     let redaction = builtins()?;
     for key in secret_keys {
         let mut message = message("");
@@ -143,12 +154,21 @@ fn json_quoted_assignments_are_redacted() -> Result<(), Box<dyn std::error::Erro
     for shape in shapes {
         let (redacted, spans) = redacted_content(&shape)?;
         assert!(!redacted.contains(value), "value survived: {redacted}");
-        assert!(redacted.contains("[REDACTED:assignment]"), "{redacted}");
+        assert!(
+            redacted.contains("[REDACTED:secret_assignment]"),
+            "{redacted}"
+        );
         assert_eq!(spans, 1);
     }
     assert_eq!(
         redacted_content("api_key: hunter2 next")?.0,
-        "api_key[REDACTED:assignment] next"
+        "api_key: hunter2 next",
+        "a short plain word under a token name is not a token"
+    );
+    assert_eq!(
+        redacted_content("password: hunter2 next")?.0,
+        "password: [REDACTED:secret_assignment] next",
+        "any value under a password name is a password"
     );
     Ok(())
 }
@@ -158,12 +178,12 @@ fn title_settings_and_metadata_are_scanned() -> Result<(), Box<dyn std::error::E
     let github = concat!("ghp_", "abcdefghijklmnopqrstuvwx0123456789");
     let mut batch: CaptureBatchRequest = serde_json::from_str(&format!(
         r#"{{"session_key":"s","agent":"a","title":"deploy with {AWS_KEY}",
-        "settings":{{"cwd":"/work","api_token":"opaque","note":"Bearer abcdefghijklmnop1234"}},
+        "settings":{{"cwd":"/work","api_token":"opaque-token-value-0192","note":"Bearer abcdefghijklmnop1234"}},
         "messages":[{{"event_id":"e1","role":"user","content":"hi",
         "metadata":{{"note":"{github}","ingest_key":"k-1","client_secret":"x"}}}}]}}"#
     ))?;
     let spans = builtins()?.redact_batch(&mut batch);
-    assert_eq!(spans, 3);
+    assert_eq!(spans, 5);
     assert_eq!(
         batch.title.as_deref(),
         Some("deploy with [REDACTED:aws_access_key]")
@@ -174,7 +194,7 @@ fn title_settings_and_metadata_are_scanned() -> Result<(), Box<dyn std::error::E
         text_at(settings, "api_token"),
         Some("[REDACTED:secret_key]")
     );
-    assert_eq!(text_at(settings, "note"), Some("[REDACTED:bearer]"));
+    assert_eq!(text_at(settings, "note"), Some("Bearer [REDACTED:bearer]"));
     let metadata = batch.messages.first().and_then(|m| m.metadata.as_ref());
     assert_eq!(text_at(metadata, "note"), Some("[REDACTED:github_token]"));
     assert_eq!(text_at(metadata, "ingest_key"), Some("k-1"));
@@ -247,7 +267,7 @@ fn batch_of(message: CaptureMessage) -> CaptureBatchRequest {
 
 #[tokio::test]
 async fn no_unscanned_text_reaches_the_capped_content() -> Result<(), Box<dyn std::error::Error>> {
-    let bearer = format!("Bearer {}", "a".repeat(9000));
+    let bearer = format!("Bearer {}", "ab".repeat(4500));
     let filler = "x".repeat(16_000 - bearer.chars().count() - 1);
     let shrunk = format!("{bearer} {filler}{AWS_KEY}{}", "y".repeat(100));
     let posted = posted_message(batch_of(message(&shrunk))).await?;
@@ -257,7 +277,7 @@ async fn no_unscanned_text_reaches_the_capped_content() -> Result<(), Box<dyn st
     );
     assert_eq!(
         posted.content.chars().count(),
-        16_000 - bearer.chars().count() + 17 + 25 + 100
+        16_000 - bearer.chars().count() + 24 + 25 + 100
     );
     let straddling = format!("{}{AWS_KEY}{}", "x".repeat(15_990), "y".repeat(100));
     let posted = posted_message(batch_of(message(&straddling))).await?;

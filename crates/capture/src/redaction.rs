@@ -1,134 +1,20 @@
-use std::sync::LazyLock;
-
 use config::Environment;
 use regress::Regex;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
+use wire::json::Scrub;
+
+use crate::rules::Ruleset;
 
 pub const ENV_VARIABLE: &str = "RIVETHUB_CAPTURE_REDACTION";
 const SCAN_LIMIT: usize = 16_000;
 const SCAN_MARGIN: usize = 8_192;
-const SECRET_KEY_SOURCE: &str = "^(?:pwd|pass|auth)$|passw(?:or)?d|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|auth[_-]?header|cookie|session[_-]?key";
-const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Replacement {
-    Whole,
-    FirstGroup,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Case {
-    Insensitive,
-    Sensitive,
-}
-
-impl Case {
-    const fn flags(self) -> &'static str {
-        match self {
-            Self::Insensitive => "i",
-            Self::Sensitive => "",
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Builtin {
-    name: &'static str,
-    regex: Regex,
-    replacement: Replacement,
-}
-
-const BUILTIN_SOURCES: [(&str, &str, Replacement, Case); 9] = [
-    (
-        "bearer",
-        r"Bearer [A-Za-z0-9\-._~+/=]{16,}",
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "pem_private_key",
-        concat!(
-            "-----BEGIN [A-Z ]*PRIVATE ",
-            r"KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE ",
-            "KEY-----"
-        ),
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "aws_access_key",
-        r"AKIA[0-9A-Z]{16}",
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "github_token",
-        r"gh[pousr]_[A-Za-z0-9]{30,}",
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "slack_token",
-        r"xox[aebprs]-[A-Za-z0-9\-]{10,}",
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "sk_token",
-        concat!("sk", r"[_\-][A-Za-z0-9_\-]{20,}"),
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "jwt",
-        r"ey[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
-        Replacement::Whole,
-        Case::Insensitive,
-    ),
-    (
-        "http_auth",
-        r"\b(?:Basic|Digest|Negotiate|NTLM) (?=[A-Za-z0-9+/=._~\-]*[A-Z0-9+/=])[A-Za-z0-9+/=._~\-]{8,}",
-        Replacement::Whole,
-        Case::Sensitive,
-    ),
-    (
-        "assignment",
-        r#"\b(api[_-]?key|apikey|access[_-]?key|access[_-]?token|auth[_-]?token|secret|token|authorization|credential)["']?[ \t]*[=:][ \t]*\S+"#,
-        Replacement::FirstGroup,
-        Case::Insensitive,
-    ),
-];
-
-#[expect(
-    clippy::expect_used,
-    reason = "the builtin sources are constants; the redaction tests compile every one of them"
-)]
-static SECRET_KEYS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::with_flags(SECRET_KEY_SOURCE, "i")
-        .expect("the secret-key pattern is a constant that compiles")
-});
-
-#[expect(
-    clippy::expect_used,
-    reason = "the builtin sources are constants; the redaction tests compile every one of them"
-)]
-static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
-    BUILTIN_SOURCES
-        .into_iter()
-        .map(|(name, source, replacement, case)| Builtin {
-            name,
-            regex: Regex::with_flags(source, case.flags())
-                .expect("builtin redaction patterns are constants that compile"),
-            replacement,
-        })
-        .collect()
-});
+pub(crate) const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
 
 #[derive(Debug)]
 pub struct Redaction {
-    builtins: &'static [Builtin],
+    rules: Option<&'static Ruleset>,
     patterns: Vec<Regex>,
 }
 
@@ -162,9 +48,8 @@ pub fn resolve(
             }
         }
     }
-    let builtins: &'static [Builtin] = if builtins_on { &BUILTINS } else { &[] };
     Some(Redaction {
-        builtins,
+        rules: builtins_on.then(crate::rules::ruleset),
         patterns: compiled,
     })
 }
@@ -217,36 +102,92 @@ impl Redaction {
     }
 
     fn redact_object(&self, object: &mut JsonObject) -> u64 {
-        let mut spans = 0;
-        object.visit_strings_mut(&mut |name, text| {
-            let (redacted, count) = apply_spans(text, self);
-            spans += count;
-            if secret_key(name) {
-                SECRET_KEY_PLACEHOLDER.clone_into(text);
-            } else {
-                *text = redacted;
-            }
-        });
-        spans
+        let mut live = LiveScrub {
+            redaction: self,
+            spans: 0,
+        };
+        object.scrub(&mut live);
+        live.spans
+    }
+}
+
+struct LiveScrub<'a> {
+    redaction: &'a Redaction,
+    spans: u64,
+}
+
+impl Scrub for LiveScrub<'_> {
+    fn is_secret_name(&self, key: &str) -> bool {
+        self.redaction
+            .rules
+            .is_some_and(|rules| rules.is_secret_name(key))
+    }
+
+    fn rank(&self, _key: &str) -> u64 {
+        0
+    }
+
+    fn key(&mut self, _parent: &str, key: &mut String) -> usize {
+        let (redacted, count) = apply_spans(key, self.redaction);
+        *key = redacted;
+        self.spans += count;
+        0
+    }
+
+    fn renamed(
+        &mut self,
+        _parent: &str,
+        _markers: (usize, Option<usize>),
+        _key: &str,
+        _renamed: &str,
+    ) {
+    }
+
+    fn text(&mut self, _path: &str, text: &mut String) {
+        let (redacted, count) = apply_spans(text, self.redaction);
+        *text = redacted;
+        self.spans += count;
+    }
+
+    fn secret(&mut self, _path: &str, key: &str, text: &mut String) -> bool {
+        let redacts = self
+            .redaction
+            .rules
+            .is_some_and(|rules| rules.names().redacts(key, text));
+        if redacts {
+            SECRET_KEY_PLACEHOLDER.clone_into(text);
+            self.spans += 1;
+        }
+        redacts
     }
 }
 
 fn apply_spans(text: &str, redaction: &Redaction) -> (String, u64) {
     let mut out = text.to_owned();
     let mut count = 0;
-    for builtin in redaction.builtins {
-        let placeholder = format!("[REDACTED:{}]", builtin.name);
-        let (next, hits) = replace_matches(&out, &builtin.regex, builtin.replacement, &placeholder);
-        count += hits;
-        out = next;
+    if let Some(rules) = redaction.rules {
+        let found = rules.spans(&out);
+        let replaced: Vec<(std::ops::Range<usize>, String)> = found
+            .iter()
+            .map(|span| (span.range.clone(), placeholder(&span.rule.id)))
+            .collect();
+        count += replaced.len() as u64;
+        out = replace_spans(&out, &replaced);
     }
     for (index, pattern) in redaction.patterns.iter().enumerate() {
-        let placeholder = format!("[REDACTED:pattern:{index}]");
-        let (next, hits) = replace_matches(&out, pattern, Replacement::Whole, &placeholder);
-        count += hits;
-        out = next;
+        let spans: Vec<_> = pattern
+            .find_iter(&out)
+            .map(|found| (found.range(), format!("[REDACTED:pattern:{index}]")))
+            .collect();
+        count += spans.len() as u64;
+        out = replace_spans(&out, &spans);
     }
     (out, count)
+}
+
+#[must_use]
+pub fn placeholder(kind: &str) -> String {
+    format!("[REDACTED:{kind}]")
 }
 
 fn scan_text(text: &str, redaction: &Redaction) -> Option<(String, u64)> {
@@ -271,43 +212,19 @@ fn split_at_char(text: &str, chars: usize) -> (&str, &str) {
         .map_or((text, ""), |(end, _)| text.split_at(end))
 }
 
-fn secret_key(key: &str) -> bool {
-    SECRET_KEYS
-        .find(key)
-        .is_some_and(|found| !found.range().is_empty())
-}
-
-fn replace_matches(
-    text: &str,
-    regex: &Regex,
-    replacement: Replacement,
-    placeholder: &str,
-) -> (String, u64) {
-    let mut out = String::new();
+fn replace_spans(text: &str, spans: &[(std::ops::Range<usize>, String)]) -> String {
+    let mut out = String::with_capacity(text.len());
     let mut copied = 0;
-    let mut count = 0;
-    for found in regex.find_iter(text) {
-        let range = found.range();
-        out.push_str(&text[copied..range.start]);
-        match replacement {
-            Replacement::Whole => out.push_str(placeholder),
-            Replacement::FirstGroup => {
-                out.push_str(first_group_or_empty(text, &found));
-                out.push_str(placeholder);
-            }
+    for (span, placeholder) in spans {
+        if span.start < copied {
+            continue;
         }
-        copied = range.end;
-        count += 1;
+        out.push_str(text.get(copied..span.start).unwrap_or_default());
+        out.push_str(placeholder);
+        copied = span.end;
     }
-    out.push_str(&text[copied..]);
-    (out, count)
-}
-
-fn first_group_or_empty<'a>(text: &'a str, found: &regress::Match) -> &'a str {
-    found
-        .group(1)
-        .and_then(|group| text.get(group))
-        .unwrap_or("")
+    out.push_str(text.get(copied..).unwrap_or_default());
+    out
 }
 
 fn unsafe_source(source: &str) -> bool {
@@ -353,65 +270,4 @@ fn ends_quantified(body: &[char]) -> bool {
         || trimmed.ends_with('*')
         || trimmed.ends_with('?')
         || trimmed.ends_with('}')
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builtin_patterns_are_constants_that_compile() {
-        assert_eq!(BUILTINS.len(), BUILTIN_SOURCES.len());
-        let canaries = [
-            ("bearer", "Bearer abcdefghijklmnop1234"),
-            (
-                "pem_private_key",
-                concat!(
-                    "-----BEGIN ",
-                    "PRIVATE KEY-----\nx\n-----END ",
-                    "PRIVATE KEY-----"
-                ),
-            ),
-            ("aws_access_key", concat!("AKIA", "ABCDEFGHIJKLMNOP")),
-            (
-                "github_token",
-                concat!("ghp_", "abcdefghijklmnopqrstuvwx0123456789"),
-            ),
-            ("slack_token", concat!("xoxb-", "abcdefghij")),
-            ("sk_token", concat!("sk-", "abcdefghijklmnopqrst")),
-            (
-                "jwt",
-                concat!(
-                    "eyJhbGciOiJIUzI1NiJ9",
-                    ".eyJzdWIiOiIxIn0",
-                    ".SflKxwRJSMeKKF2QT4"
-                ),
-            ),
-            ("http_auth", concat!("Basic ", "dXNlcjpwYXNz")),
-            ("assignment", "api_key = hunter2"),
-        ];
-        for (name, canary) in canaries {
-            let builtin = BUILTINS
-                .iter()
-                .find(|builtin| builtin.name == name)
-                .unwrap_or_else(|| panic!("builtin {name} is missing"));
-            assert!(
-                builtin.regex.find(canary).is_some(),
-                "builtin {name} does not match its canary"
-            );
-        }
-        assert!(
-            SECRET_KEYS.find("api_key").is_some(),
-            "the secret-key pattern is missing"
-        );
-    }
-
-    #[test]
-    fn a_capture_group_that_does_not_participate_contributes_nothing() {
-        let regex = Regex::new("x(?:-(y))?").expect("the test pattern is a constant that compiles");
-        let bare = regex.find("x").expect("the bare form matches");
-        assert_eq!(first_group_or_empty("x", &bare), "");
-        let grouped = regex.find("x-y").expect("the grouped form matches");
-        assert_eq!(first_group_or_empty("x-y", &grouped), "y");
-    }
 }

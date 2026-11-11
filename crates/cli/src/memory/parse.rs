@@ -75,6 +75,11 @@ pub(super) enum MemoryCommand {
         force: bool,
         dry_run: bool,
     },
+    Sanitize {
+        input: PathBuf,
+        out: PathBuf,
+        mapping: Option<PathBuf>,
+    },
 }
 
 enum Verb {
@@ -92,6 +97,7 @@ enum Verb {
     MergeStore,
     Bundle,
     IngestBundle,
+    Sanitize,
 }
 
 fn verb(text: &str) -> Option<Verb> {
@@ -110,6 +116,7 @@ fn verb(text: &str) -> Option<Verb> {
         "merge-store" => Some(Verb::MergeStore),
         "bundle" => Some(Verb::Bundle),
         "ingest-bundle" => Some(Verb::IngestBundle),
+        "sanitize" => Some(Verb::Sanitize),
         _ => None,
     }
 }
@@ -148,6 +155,7 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
             .map(Some),
         Verb::Bundle => super::bundle::args(rest).map(Some),
         Verb::IngestBundle => super::bundle::ingest_args(rest).map(Some),
+        Verb::Sanitize => super::sanitize::args(rest).map(Some),
     }
 }
 

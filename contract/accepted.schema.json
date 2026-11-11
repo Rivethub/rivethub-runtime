@@ -8776,6 +8776,12 @@
             "null"
           ]
         },
+        "identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "node": {
           "type": "string"
         },
