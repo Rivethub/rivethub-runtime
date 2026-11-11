@@ -425,10 +425,8 @@ async fn the_token_never_reaches_logs_or_error_text()
         &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
     );
     let mut text = cli::capture_hook::hook(&env, TOOL, now()?).await.stderr;
-    text.push_str(&format!(
-        "{:?}",
-        cli::capture_hook::replay_spool(&env, now()?).await
-    ));
+    let replayed_text = format!("{:?}", cli::capture_hook::replay_spool(&env, now()?).await);
+    text.push_str(&replayed_text);
     text.push_str(&run(&["auth", "token-path"], &env).await.stdout);
     text.push_str(&String::from_utf8(logs.0.lock().clone())?);
     assert!(text.contains("401"), "{text}");
