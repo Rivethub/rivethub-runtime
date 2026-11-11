@@ -2486,13 +2486,19 @@ users-file token are presented on every request, so they are always fresh. The s
 `POST /api/auth/rotate`, `PATCH /api/account`, `DELETE /api/account`, `POST /api/account/signin`,
 `POST /api/account/signout` and `GET /api/memory/export`. Harness connect only edits local hook files, so it is not
 included. `/api/share/**` does not exist on this base. `gateway::auth::FreshLogin` is a public extractor, and a handler
-takes it as its first argument after `State`, so SS-9a adopts it on its share routes without new code.
+takes it as its first argument after `State`, so SS-9a adopts it on its share routes without new code. SS-9a must adopt
+`FreshLogin` on every `/api/share/**` route that exports, seals, uploads or signs in. A stale session on any of them then
+gets `reauth_required` instead of acting on a login that may be days old.
 
 **Origins and CORS.** The `Origin` check on every request stays: absent, same-origin or listed passes, and `null`
 fails. CORS is the `tower_http` `CorsLayer`, with the origins from `gateway.allowed_origins` plus `app://bundle`,
 credentials on, methods `GET, POST, PATCH, DELETE`, and headers `authorization, content-type, x-rh-csrf,
-x-rivet-conversation, x-rivet-title`. A same-origin page needs none of it. An unlisted origin and `null` get no
-`Access-Control-Allow-Origin`. A plain `OPTIONS` without preflight headers is not answered by the layer. The `*.localhost`
+x-rivet-conversation, x-rivet-title`. A same-origin page needs none of it. Only an exact match of a normalized listed
+origin (scheme and host lowercase, no path, no trailing slash, no default port) is echoed in `Access-Control-Allow-Origin`.
+Anything else gets none: an unlisted origin, `null`, `*`, a different case or a spelling with a path. The answer is never
+a wildcard, and `Access-Control-Allow-Credentials: true` is sent only together with an echoed listed origin. A preflight
+(`OPTIONS`) gets 200 with the allowed methods and headers whether or not the origin is listed, and the browser then
+refuses the actual request when no origin was echoed. The `*.localhost`
 host exemption is gone.
 
 **Headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
