@@ -16,12 +16,14 @@ use capture::share::Clobber;
 use capture::share::Decider;
 use capture::share::Outcome;
 use capture::share::SetupError;
+use capture::sign::NodeKey;
 use chrono::Utc;
 use cli::memory::SessionStore;
 use config::Config;
 use config::Environment;
 use config::MappingFile;
 use kernel::memory::SessionDigest;
+use kernel::memory::share::Consent;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::DecisionSummary;
 use kernel::memory::share::FlagPlace;
@@ -33,7 +35,10 @@ use kernel::memory::share::SanitizeSummary;
 use kernel::memory::share::SanitizedBundle;
 use kernel::memory::share::Secrets;
 use kernel::memory::share::SessionShare;
+use kernel::memory::share::ShareConsent;
 use kernel::memory::share::ShareFailure;
+use kernel::memory::share::ShareOutcome;
+use kernel::memory::share::SharePreview;
 use kernel::owner::Owner;
 use mcp::sessions::Sessions;
 use mcp::sessions::ShareFiles;
@@ -56,6 +61,8 @@ struct NodeShare {
     decider: Result<Decider, SetupError>,
     redaction: Option<Redaction>,
     excerpts: Redaction,
+    signing_key: PathBuf,
+    env: Environment,
 }
 
 pub fn kit(
@@ -82,6 +89,8 @@ pub fn kit(
         decider: share::decider(config, false),
         redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
         excerpts: Redaction::builtins(),
+        signing_key: NodeKey::path_in(&share::state_home(env)?),
+        env: env.clone(),
     };
     Ok(Sessions {
         share: Arc::new(share),
@@ -137,6 +146,53 @@ impl SessionShare for NodeShare {
         .await
         .map_err(failed)?;
         Ok(summary(&outcome, paths))
+    }
+
+    async fn share(
+        &self,
+        path: PathBuf,
+        consent: &dyn ShareConsent,
+    ) -> Result<ShareOutcome, ShareFailure> {
+        let bundle = read_bundle(&path).await?;
+        if bundle.manifest.sanitization == Sanitization::Raw {
+            return Err(ShareFailure::RawShare(path));
+        }
+        let flags = capture::sanitize::open_flags(&bundle).map_err(failed)?;
+        if flags.withheld > 0 {
+            return Err(failed(capture::seal::SealError::Withheld(flags.withheld)));
+        }
+        let signer = NodeKey::load_or_create(&self.signing_key).map_err(failed)?;
+        let preview = SharePreview {
+            titles: bundle
+                .sessions
+                .iter()
+                .map(|session| {
+                    session
+                        .batch
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "(untitled)".to_owned())
+                })
+                .collect(),
+            author: bundle.manifest.exported_by.user.clone(),
+            signed_by: signer.public_key().fingerprint(),
+            bytes: tokio::fs::metadata(&path).await?.len(),
+            unreviewed: flags.unreviewed,
+        };
+        drop(bundle);
+        let Consent::Share { unreviewed } = consent.consent(&preview).await? else {
+            return Ok(ShareOutcome::Declined);
+        };
+        let sealed = cli::memory::seal_file(&self.env, &path, true, unreviewed)
+            .await
+            .map_err(failed)?;
+        let shared = cli::memory::upload(&self.env, sealed)
+            .await
+            .map_err(failed)?;
+        Ok(ShareOutcome::Shared {
+            sessions: shared.sessions,
+            line: cli::memory::code_line(&shared),
+        })
     }
 
     fn redact(&self, text: &str) -> String {

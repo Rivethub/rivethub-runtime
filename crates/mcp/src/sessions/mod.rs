@@ -3,6 +3,7 @@ mod files;
 mod find;
 mod flow;
 mod import;
+mod share;
 
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ pub use files::refuse_existing;
 pub(crate) use find::find;
 pub(crate) use flow::sanitize;
 pub(crate) use import::import;
+pub(crate) use share::share;
 
 #[derive(Debug)]
 pub struct Sessions {
@@ -126,6 +128,31 @@ impl crate::catalog::ToolInput for Import {
             Some(false),
             Some(true),
             Some(false),
+        ))
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Share {
+    #[schemars(
+        description = "The sanitized bundle to share: a file name in the share directory, or an absolute path under your home directory",
+        with = "String"
+    )]
+    pub(crate) bundle: ReadPath,
+}
+
+impl crate::catalog::ToolInput for Share {
+    const NAME: &'static str = "session_share";
+    const DESCRIPTION: &'static str = "Seal a sanitized bundle (encrypted, signed with this node's key) and upload the ciphertext to the RivetHub Cloud drop box, after the user confirms in a prompt that shows the session count, titles, author, signature and size. Needs a client that supports elicitation; otherwise it refuses and the user runs rh memory share. Returns the one-time share code for the user to send privately; no tool sends, posts or stores the code, and there is no receive tool.";
+
+    fn annotations() -> Option<ToolAnnotations> {
+        Some(ToolAnnotations::from_raw(
+            None,
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(true),
         ))
     }
 }

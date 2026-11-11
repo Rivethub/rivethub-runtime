@@ -153,6 +153,25 @@ pub struct BundledSession {
     pub batch: CaptureBatchRequest,
 }
 
+pub const RECEIPT_KEY: &str = "receipt";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptVerification {
+    Verified,
+    Unsigned,
+    UnknownKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Receipt {
+    pub bundle_id: String,
+    pub received_at: DateTime<Utc>,
+    pub verification: ReceiptVerification,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_fingerprint: Option<String>,
+}
+
 pub use values::IMPORTED_SESSION_PREFIX;
 
 #[must_use]
@@ -219,10 +238,9 @@ impl BundledSession {
             "{IMPORTED_SESSION_PREFIX}{}",
             serde_json::to_string(&self.import_identity())?
         );
-        batch
-            .settings
-            .get_or_insert_default()
-            .insert("origin", &self.origin)?;
+        let settings = batch.settings.get_or_insert_default();
+        settings.retain(|key| key != RECEIPT_KEY);
+        settings.insert("origin", &self.origin)?;
         batch.created_at = self.origin.created_at.or(batch.created_at);
         batch.updated_at = self
             .origin

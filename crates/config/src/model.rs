@@ -178,6 +178,19 @@ pub struct MemorySection {
     pub capture: CaptureSection,
     pub models: Option<crate::memory_models::MemoryModels>,
     pub sanitize: SanitizeSection,
+    pub share: ShareSection,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ShareSection {
+    pub cloud: Option<ShareCloud>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareCloud {
+    pub url: String,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -483,6 +496,10 @@ impl Config {
     #[must_use]
     pub fn sanitize_decide(&self) -> Option<&DecideSection> {
         self.memory.as_ref()?.sanitize.decide.as_ref()
+    }
+
+    pub fn share_cloud(&self) -> Option<&ShareCloud> {
+        self.memory.as_ref()?.share.cloud.as_ref()
     }
 
     pub fn provider_kind(&self, name: &str) -> Option<ProviderType> {

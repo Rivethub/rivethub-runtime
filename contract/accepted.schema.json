@@ -8058,6 +8058,40 @@
       ],
       "type": "string"
     },
+    "Receipt": {
+      "properties": {
+        "bundle_id": {
+          "type": "string"
+        },
+        "key_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "received_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/ReceiptVerification"
+        }
+      },
+      "required": [
+        "bundle_id",
+        "received_at",
+        "verification"
+      ],
+      "type": "object"
+    },
+    "ReceiptVerification": {
+      "enum": [
+        "verified",
+        "unsigned",
+        "unknown_key"
+      ],
+      "type": "string"
+    },
     "RecentSession": {
       "properties": {
         "agent": {

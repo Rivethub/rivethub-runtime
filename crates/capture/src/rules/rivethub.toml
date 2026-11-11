@@ -87,6 +87,12 @@ key_min_length = 20
 key_min_entropy = 3.5
 
 [[rules]]
+id = "rivethub_share_code"
+description = "the key part of a RivetHub share code (rhb1:<bundle id>#<key>); the bundle id stays"
+regex = '''(?i)\brhb1:[A-Za-z0-9_-]{22}#([qpzry9x8gf2tvdw0s3jn54khce6mua7l]{58})\b'''
+keywords = ["rhb1:"]
+
+[[rules]]
 id = "bearer"
 description = "HTTP bearer token"
 regex = '''(?i)\bbearer[ \t]+([A-Za-z0-9\-._~+/=]{16,})'''

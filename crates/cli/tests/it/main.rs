@@ -24,6 +24,7 @@ mod process;
 mod search_eval;
 mod search_eval_mcp;
 mod service;
+mod share;
 mod status;
 mod status_tls;
 mod supervise;

@@ -2073,7 +2073,8 @@ first, sanitize last, no raw file; uses notes 134 to 137): `rh mcp` serves three
 `session_sanitize` and `session_import`, only over stdio, the transport
 whose client runs on this machine as this user. It does not list or answer them when it serves a host or a socket, and
 `rh local` never serves them. Every input rejects an unknown field, and no input names a URL, host, gateway or other
-node: no MCP tool sends a bundle anywhere. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
+node: no MCP tool sends a bundle anywhere except `session_share` (note 140), which uploads only ciphertext to the
+configured drop box after the user confirms. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
 posts to `memory.capture.gateway` when set (note 135). `memory_write` still guards only tag writes; it does not gate
 these tools. `rh mcp` reads `memory.sanitize`, `memory.capture.redaction`, the users registry and the node name at
 startup, so a change to them needs a restart.
@@ -2189,6 +2190,60 @@ dropped, a later fact of the same key in one patch wins, and a summary whose ses
 the tables.
 
 (129) Review queue (proposed 2026-11-07): everything the agents propose waits for you on one screen. `GET /api/review` answers a JSON array of `wire::gateway::review::ReviewItem` (the RivetHub web contract `ReviewItem`: `id`, `group`, `subject` `{kind: topic | entity | session, id, title}`, `text`, `before?`, `after?`, `options?` `[{label, value, source?}]`, `evidence` `[{session: {id, title}, at, quote, highlight?}]`, `createdAt`), newest `createdAt` first, gathered at read time from the stores that already hold the proposals and read in the caller's visibility scope, as each source's own route reads it. `conflict`: a fact of note 128 with conflict candidates; `text` is the key, `before` the value it holds, `after` the first rival, `options` the held value first (with no source when you set it) and then each candidate with its source, and `evidence` each candidate's quoted claim words (the value when the writer quoted none) with the value as `highlight` when the quote contains it. `fact`: a fact whose value a wiki-writer claim holds, that is not pinned, whose newest claim was recorded in the last 30 days (`kernel::review::FACT_NEW_FOR`) and whose value you have never set; that is what "not seen" means, together with a decision on its item; `text` is `key: value`, `before` the previous value, `after` the value. `filing`: a session with a topic suggestion and no placement that the session catalog (note 127) shows and has not trashed; `text` is `→ ` and the topic path joined with ` › ` (a new topic adds ` (new topic)`), `after` the topic id (a new topic's name), the evidence the session's gist or title, and `createdAt` the session's end, else its start. `tag`: a pending tag suggestion (`/api/memory/tags/pending`) on a conversation whose session key names a session (a bare Claude Code id reads as `claude-code:<id>`); others are left out. `text` is `Add key: value` or `Remove key: value`, and the evidence is the conversation's opening excerpt. `tidy`: a pending Tidy proposal; `text` describes the change and appends the reason, the subject is the topic it changes (a page edit names the page slug), and the evidence is the proposal's sample sessions. No `new-entity` group is produced: the wiki writer creates an entity once a second session names it (note on entity candidates) and records no creator, so rh cannot tell a writer's entity from yours, and the only undo would be deleting it. An item `id` encodes its source and the version it shows: `conflict.<fact id>.<ms>` and `fact.<fact id>.<ms>` (the newest claim's `recorded_at` in epoch milliseconds, so a new claim makes a new item), `filing.<session id>.<topic id>` or `filing.<session id>.new-<slug>`, `tag.<tag id>` and `tidy.<proposal id>` (`kernel::review::ReviewKey`). `POST /api/review/{id}/decision` takes `{kind: accept | reject | later | choose | edit, value?}` (`ReviewDecision`) and answers `204`. It applies the decision through the domain operations the item came from: a conflict's `accept` and `choose` (one of its `options`, else `400`) and a fact's `edit` record your claim through the fact store as `PUT /api/entities/{id}/facts` does, keeping the pin the fact had; a conflict's `edit` records your value; a fact's `accept` changes nothing; a fact's `reject` restores the previous value as your claim (with no previous value it changes nothing, since claims are never deleted); `reject` on a conflict changes nothing. Filing `accept` places the session as `PUT /api/sessions/{session}/placement` does (a new topic is created as a work topic under the suggested parent first, or the work topic with that slug is used), `edit` places it in the topic `value` names (an id or slug, `404` when unknown), and `reject` changes nothing. Tag `accept` and `reject` decide the suggestion as `/api/memory/tags/decide` does, and `edit` adds the tag literal `value` as your tag and rejects the suggestion. Tidy `accept` and `reject` approve or reject the proposal as `/api/tidy/proposals/{id}/approve` and `/reject` do. `choose` on anything but a conflict, and `edit` on a tidy proposal, is `422`. `later` hides the item for 24 hours (`kernel::review::SNOOZE`) and changes nothing else. After any other decision the item is decided for you: it leaves your queue and a repeated decision on the same id answers `204` without acting again. An id that names no item in your queue now (unknown, malformed or already superseded) is `404`. What you decided is kept per person (`rh_review_marks` `{owner_user_id, item_key, state (decided or snoozed), at}`, keyed by person and item; Postgres migration 0059 with row security to its owner, SQLite schema v33) behind `kernel::review::ReviewStore`. The routes are new, with no TypeScript recording, and are mounted on every surface that mounts the entity routes.
+
+(140) Sealing and sharing a bundle (Phil, 2026-11-10; session-sharing phase 2, SS-6b; uses notes 134 to 139): a
+sanitized bundle leaves the machine only as ciphertext, through the RivetHub Cloud drop box, and the share code goes to
+the receiver privately. Seal. `rh memory share <sanitized bundle> [--unsigned] [--flags <n>]` reads the file (at most
+64 MiB), parses it with the note 134 digest check, refuses a raw bundle and one that still withholds `[FLAGGED:<n>]`
+chunks, and refuses one with unmarked advisory flags unless `--flags` repeats their count. It builds in memory
+`RHB1\n<header json>\n<zstd(bundle bytes)>` and encrypts it with age (format v1, crate `age` 0.11.5: 0.12 pulls
+`crypto-bigint` 0.5 with RUSTSEC-2026-0387) to a fresh X25519 identity per bundle; nothing but the ciphertext is
+produced. Signing is on by default: the node key is Ed25519 (aws-lc-rs), PKCS#8 at
+`$XDG_STATE_HOME/rivethub/node-signing.key` (else `~/.local/state/...`), mode 0600, created on first use and read with
+the same regular-file and permission checks as the sanitize key (note 136). The signed message is
+`"rivethub-bundle-sig-v1\n" || sha256(bundle bytes) || manifest.exported_by.user`; the header carries `{alg: "ed25519",
+public_key: "ed25519:<base64>", sig}` inside the ciphertext, so the cloud never sees the sender key. `rh memory key
+show` prints the key line and a fingerprint (`ed25519:` and the first 16 hex digits of its SHA-256).
+
+Share. The upload is `POST <memory.share.cloud.url>/api/drops` with the body `application/octet-stream` and the
+`rh cloud login` access token as a bearer token; on 401 the token is refreshed once and the upload retried. On 201
+`{id, expires_at, bytes}` rh unlinks the sanitized bundle and prints `share code (works once, expires <date>; send it
+privately): rhb1:<id>#<key>` once. On any failure it prints no code and keeps the bundle. The key is the age identity's
+bech32 text, lowercased, without `age-secret-key-1`; its checksum rejects a mistyped code before any request. The key is
+never part of a URL or a log line, and the `rivethub_share_code` rule (rivethub.toml) redacts it at capture time and in
+the sanitizer, keeping `rhb1:<id>#`. Unlinking does not scrub copy-on-write or SSD blocks; the plaintext that existed is
+the sanitized bundle the sender already reviewed. The client uses rustls, no proxy, no redirects, HTTPS unless the
+address is loopback, and timeouts.
+
+Login. `rh cloud login` runs the OAuth 2.0 device grant (RFC 8628) against `memory.share.cloud.url`: `POST
+/api/cli/device/code {client_id: "rivethub-cli", scope: "drops:write", client_name}`, prints the
+`verification_uri_complete` and user code, and polls `POST /api/cli/token` (device grant) at the given interval,
+honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. Tokens are kept at
+`$XDG_STATE_HOME/rivethub/cloud.json` (0600) with the cloud address they belong to; the access token is refreshed
+(`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh cloud logout` posts the refresh token
+to `/api/cli/revoke` and deletes the file; `rh cloud status` shows the login without a request.
+
+Receive. `rh memory receive <code> [--dry-run]` checks the code first, removes inbox files older than 7 days, and
+answers "already received" without a request when `$XDG_STATE_HOME/rivethub/inbox/<id>.received` exists. Otherwise it
+uses `inbox/<id>.age` when present, else downloads `GET /api/drops/<id>` (no account; a 5xx is retried at most twice)
+into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a broken
+stream, is a hard error that says the drop is burned, and nothing is kept. It then decrypts in memory, decompresses at
+most 256 MiB, parses the bundle (digest), checks the signature, and runs the note 136 ingest checks without a
+`--force`: a raw bundle, a secret match or an open withheld flag refuses it. A signature that does not verify refuses
+it. Verified means a valid signature by a key listed under the bundle's `exported_by.user` in
+`$XDG_CONFIG_HOME/rivethub/trusted-senders.toml` (`[[sender]] name, key`), which only `rh memory trust add <name>
+<key>` writes; an unsigned bundle, an unknown key or a key trusted under another name imports as unverified with that
+reason. It imports through the note 135 path and records in each conversation's settings `receipt = {bundle_id,
+received_at, verification: verified|unsigned|unknown_key, key_fingerprint?}`; `import_batch` drops any `receipt` a
+bundle carries, so only the receiver's own rh writes one. After a successful import the ciphertext is deleted and the
+`.received` marker written; any failure keeps the ciphertext, so a rerun needs no network. A failed post to the
+gateway spools decrypted batches to the capture spool as any capture does (note 84).
+
+MCP. `session_share {bundle}` (stdio only, note 139) needs a client that declared the elicitation capability; without
+it, it refuses and asks the user to run `rh memory share`. It asks the human with a form showing the session count,
+titles (first 20), author, signer fingerprint, size and the 7-day expiry, with a required `share` boolean and, when
+advisory flags are unmarked, their count typed back. Any other answer uploads nothing. It returns the code line and
+says no tool sends it. No tool sends, posts or stores a code, and there is no receive tool.
 
 (130) Today and the change feed (proposed 2026-11-07): a change is one thing memory recorded, read from the records the stores already keep. `kernel::changes::ChangeFeed::changes(window)` answers the changes whose time is in `[from, to)` (an absent `from` is the beginning), newest first, ties by kind then text, scoped to the caller as the records themselves are (Postgres row security; SQLite keeps one user). Kinds: `fact` and `conflict` from fact claims, derived per entity by note 128's timeline (`<key>: <value>`, `You pinned <key>: <value>`, `Sources disagree on <key>: <a> or <b>`; the actor is the wiki writer for a writer claim, you otherwise; the source is the claim's session); `decision` from `rh_topic_decisions` at `created_at` (the decision text, by you, sourced to its session); `new` from a work topic or an entity at `created_at` (`New topic <name>.` by you, `New entity <name>.` by the wiki writer: the store records no creator, so the actor follows the kind); `filed` from a session placement at `placed_at` (subject the topic, `Filed under <name>.`, actor `placed_by`, source the session); `tag` from an accepted tag on a conversation or one of its summaries at `decided_at` (else `updated_at`), subject and source the session (`Tagged <key>: <value>.`, by you; a bare Claude Code key reads as `claude-code:<id>`, as in the session list; a tag on a conversation that names no harness session is not a change); `merge` from a merge redirect at its `created_at` (subject the surviving topic, `Merged <source name> into <name>.`, by you). A topic merge records the source's name on its redirect (`rh_topic_redirects.merged_from`; a rename clears it), so redirects written before this note read as renames. `GET /api/changes?from=&to=&subject=&limit=` (B1, new, no TypeScript recording) answers a JSON array of `wire::gateway::today::Change` (the web contract's `Change`); `to` defaults to now, `limit` to 200 (1 to 1000), and `subject` is a topic or entity id, which keeps the changes whose subject it is, or a canonical session id, which keeps the changes whose subject or source it is; anything else is `400`. A session's title is the session list's title (note 127), else its native id.
 

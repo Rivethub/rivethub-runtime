@@ -1,5 +1,6 @@
 mod argv;
 pub mod capture_hook;
+pub mod cloud;
 mod configuration;
 pub mod db;
 pub mod doctor;
@@ -163,6 +164,7 @@ async fn command_dispatch(
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,
+        Command::Cloud { command } => cloud::run(command, env, shutdown).await,
         Command::Harness { command } => harness::run(command, env).await,
         Command::Memory { args } => Ok(memory::execute(
             &args,

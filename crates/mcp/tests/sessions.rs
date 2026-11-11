@@ -9,6 +9,8 @@ pub mod support;
 
 #[path = "sessions/fixture.rs"]
 mod fixture;
+#[path = "sessions/share.rs"]
+mod share;
 
 use fixture::RISKY;
 use fixture::appended;
@@ -494,7 +496,12 @@ async fn no_tool_writes_a_raw_bundle() {
         .collect();
     assert_eq!(
         names,
-        ["session_find", "session_sanitize", "session_import"]
+        [
+            "session_find",
+            "session_sanitize",
+            "session_import",
+            "session_share"
+        ]
     );
     let mut request = rmcp::model::CallToolRequestParams::new("session_export".to_owned());
     request.arguments = Some(

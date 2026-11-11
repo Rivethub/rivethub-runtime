@@ -154,5 +154,29 @@
       "idempotentHint": true,
       "openWorldHint": false
     }
+  },
+  {
+    "name": "session_share",
+    "description": "Seal a sanitized bundle (encrypted, signed with this node's key) and upload the ciphertext to the RivetHub Cloud drop box, after the user confirms in a prompt that shows the session count, titles, author, signature and size. Needs a client that supports elicitation; otherwise it refuses and the user runs rh memory share. Returns the one-time share code for the user to send privately; no tool sends, posts or stores the code, and there is no receive tool.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "bundle": {
+          "description": "The sanitized bundle to share: a file name in the share directory, or an absolute path under your home directory",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "bundle"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
   }
 ]

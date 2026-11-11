@@ -1,13 +1,16 @@
 mod bundle;
 mod chosen;
 mod cleanup;
+mod dropbox;
 mod export;
+mod inbox;
 mod io;
 mod merge;
 mod parse;
 mod recompile;
 mod run;
 mod sanitize;
+mod share;
 mod store;
 mod target;
 mod titles;
@@ -17,7 +20,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Report;
 
+pub use dropbox::DropError;
 pub use export::MemoryExporter;
+pub use share::SealedFile;
+pub use share::ShareError;
+pub use share::Shared;
+pub use share::code_line;
+pub use share::seal_file;
+pub use share::upload;
 pub use store::SessionStore;
 
 pub async fn execute(
@@ -59,6 +69,10 @@ Commands:\n\
   sanitize --session <id>... [--redact-term <id>=<term>]... [--drop-tool-outputs <id>]... --out <file> [--mapping <file>] [--decide [--block]] [--sqlite <file>]\n\
   sanitize [<bundle>] --resolve <report> [--mapping <file>] [--learn]\n\
   ingest-bundle <file> [--force] [--dry-run]\n\
+  share <sanitized bundle> [--unsigned] [--flags <n>]\n\
+  receive <share code> [--dry-run]\n\
+  key show\n\
+  trust add <name> <key> | trust list | trust remove <name> [<key>]\n\
   import <file> [--dry-run] [--sqlite <file>]\n\
   backfill-titles [--dry-run] [--json] [--sqlite <file>] [--model <name> --model-url <url> [--concurrency <n>]]\n\
   reembed [--dry-run] [--sqlite <file>]\n\

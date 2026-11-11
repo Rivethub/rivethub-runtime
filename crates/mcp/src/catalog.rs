@@ -40,6 +40,7 @@ pub fn session_definitions() -> Result<Vec<Tool>, serde_json::Error> {
         definition::<sessions::Find>()?,
         definition::<sessions::Sanitize>()?,
         definition::<sessions::Import>()?,
+        definition::<sessions::Share>()?,
     ])
 }
 

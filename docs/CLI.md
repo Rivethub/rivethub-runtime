@@ -26,7 +26,8 @@ the existing service startup codes. Every visible command:
 | `rh service start`, `rh service stop`, `rh service restart` | | Control the systemd unit |
 | `rh service status` | | Show the systemd unit status |
 | `rh service logs` | | Print the unit's journal |
-| `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store` | Administer memory; `rh memory --help` lists each command's flags |
+| `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store`, `share`, `receive`, `key show`, `trust add\|list\|remove` | Administer memory; `rh memory --help` lists each command's flags |
+| `rh cloud login`, `rh cloud logout`, `rh cloud status` | | Sign this machine in to RivetHub Cloud (device code in the browser), revoke and forget the login, or show it; `rh memory share` uploads with this login |
 | `rh capture hook` | `[--harness claude-code\|grok-build\|opencode\|codex\|dsh]` | Capture one harness hook payload read from stdin |
 | `rh harness status` | `[--json]` | Show which harnesses are found, how they capture and whether recall is wired |
 | `rh harness connect` | `<id> [--capture \| --recall] [--dry-run]` | Add rh's hook or plug-in and its MCP entry to a harness, printing the diff and backing the file up first; for `opencode --capture` the plug-in is copied from the file named by `RIVETHUB_OPENCODE_PLUGIN` |

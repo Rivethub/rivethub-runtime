@@ -27,6 +27,12 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
+    Sharing(#[from] crate::memory::ShareError),
+    #[error(transparent)]
+    Cloud(#[from] crate::cloud::CloudError),
+    #[error(transparent)]
+    Drop(#[from] crate::memory::DropError),
+    #[error(transparent)]
     Capture(#[from] capture::writer::WriteError),
     #[error(transparent)]
     Harness(#[from] kernel::harness_setup::SetupError),

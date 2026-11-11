@@ -76,6 +76,7 @@ pub(super) enum MemoryCommand {
         dry_run: bool,
     },
     Sanitize(super::sanitize::Job),
+    Share(super::share::ShareCommand),
     Resolve {
         report: PathBuf,
         bundle: Option<PathBuf>,
@@ -100,6 +101,10 @@ enum Verb {
     Bundle,
     IngestBundle,
     Sanitize,
+    Share,
+    Receive,
+    Key,
+    Trust,
 }
 
 fn verb(text: &str) -> Option<Verb> {
@@ -119,6 +124,10 @@ fn verb(text: &str) -> Option<Verb> {
         "bundle" => Some(Verb::Bundle),
         "ingest-bundle" => Some(Verb::IngestBundle),
         "sanitize" => Some(Verb::Sanitize),
+        "share" => Some(Verb::Share),
+        "receive" => Some(Verb::Receive),
+        "key" => Some(Verb::Key),
+        "trust" => Some(Verb::Trust),
         _ => None,
     }
 }
@@ -158,6 +167,10 @@ pub(super) fn parse(args: &[String]) -> Result<Option<MemoryCommand>, Error> {
         Verb::Bundle => super::bundle::args(rest).map(Some),
         Verb::IngestBundle => super::bundle::ingest_args(rest).map(Some),
         Verb::Sanitize => super::sanitize::args(rest).map(Some),
+        Verb::Share => super::share::share_args(rest).map(Some),
+        Verb::Receive => super::share::receive_args(rest).map(Some),
+        Verb::Key => super::share::key_args(rest).map(Some),
+        Verb::Trust => super::share::trust_args(rest).map(Some),
     }
 }
 

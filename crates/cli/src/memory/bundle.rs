@@ -172,7 +172,7 @@ pub(super) async fn ingest(
         lines.push(format!("would ingest {sessions}{state}; nothing written\n"));
         return Ok(Report::success(lines.concat()));
     }
-    let totals = crate::capture_hook::ingest_bundle(env, &bundle, Utc::now()).await?;
+    let totals = crate::capture_hook::ingest_bundle(env, &bundle, None, Utc::now()).await?;
     Ok(Report::success(format!(
         "ingested {sessions}{state}: {} inserted, {} skipped\n",
         totals.inserted, totals.skipped
