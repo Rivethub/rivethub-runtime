@@ -98,6 +98,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionMemoryState>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::TopicPath>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SharedWith>,
+    SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionOriginLabel>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionSummaryRow>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionSummaryPage>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionChange>,

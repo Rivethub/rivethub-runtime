@@ -1,4 +1,6 @@
 use crate::common;
+use crate::common::PROBE;
+use crate::common::probe;
 
 use chrono::DateTime;
 use chrono::Duration;
@@ -42,7 +44,6 @@ const SECOND: &str = "claude-code:00000000-0000-4000-8000-0000000000b2";
 const LATER: &str = "claude-code:00000000-0000-4000-8000-0000000000b3";
 const UNCAPTURED: &str = "claude-code:00000000-0000-4000-8000-0000000000b4";
 const THIRD: &str = "claude-code:00000000-0000-4000-8000-0000000000b5";
-const PROBE: &str = "rh_rls_probe";
 const PERSON: &str = "rh_rls_person";
 const OWNER: &str = "rh_rls_owner";
 const GROUP: &str = "rh_rls_group";
@@ -80,34 +81,6 @@ fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
         Owner::new(name.to_owned())?,
         vec![household()?],
     ))
-}
-
-async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "DO $$ BEGIN CREATE ROLE {PROBE} NOLOGIN; \
-         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
-    )))
-    .execute(pool)
-    .await?;
-    for grant in [
-        format!("GRANT USAGE ON SCHEMA public TO {PROBE}"),
-        format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {PROBE}"),
-        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {PROBE}"),
-    ] {
-        sqlx::query(sqlx::AssertSqlSafe(grant))
-            .execute(pool)
-            .await?;
-    }
-    let options = pool
-        .connect_options()
-        .as_ref()
-        .clone()
-        .options([("role", PROBE)]);
-    Ok(
-        memory_postgres::scoped(PgPoolOptions::new().max_connections(2))
-            .connect_with(options)
-            .await?,
-    )
 }
 
 async fn seed(

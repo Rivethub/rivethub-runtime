@@ -94,6 +94,7 @@ fn record(key: &str, title: &str, started: &str) -> SessionRecord {
         memory: MemoryState::Summarized,
         gist: None,
         cwd: None,
+        origin: None,
     }
 }
 

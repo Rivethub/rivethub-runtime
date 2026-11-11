@@ -8,7 +8,7 @@ use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
 use kernel::memory::SessionDeletion;
 use parking_lot::Mutex;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 type Tombstone = (DateTime<Utc>, Option<String>);
 
@@ -22,10 +22,10 @@ pub struct FakeSessionDeletion {
 
 impl FakeSessionDeletion {
     #[must_use]
-    pub fn with_activity(self, session: &SessionId, activity: SessionActivity) -> Self {
+    pub fn with_activity(self, session: impl Into<SessionKey>, activity: SessionActivity) -> Self {
         self.activity
             .lock()
-            .insert(session.as_str().to_owned(), activity);
+            .insert(session.into().as_str().to_owned(), activity);
         self
     }
 
@@ -42,13 +42,13 @@ impl FakeSessionDeletion {
     }
 
     #[must_use]
-    pub fn is_kept(&self, session: &SessionId) -> bool {
-        self.keeps.lock().contains_key(session.as_str())
+    pub fn is_kept(&self, session: impl Into<SessionKey>) -> bool {
+        self.keeps.lock().contains_key(session.into().as_str())
     }
 
     #[must_use]
-    pub fn is_trashed(&self, session: &SessionId) -> bool {
-        self.trash.lock().contains_key(session.as_str())
+    pub fn is_trashed(&self, session: impl Into<SessionKey>) -> bool {
+        self.trash.lock().contains_key(session.into().as_str())
     }
 
     #[must_use]
@@ -57,10 +57,10 @@ impl FakeSessionDeletion {
     }
 
     #[must_use]
-    pub fn deleted_by(&self, session: &SessionId) -> Option<Option<String>> {
+    pub fn deleted_by(&self, session: impl Into<SessionKey>) -> Option<Option<String>> {
         self.tombstones
             .lock()
-            .get(session.as_str())
+            .get(session.into().as_str())
             .map(|(_, deleted_by)| deleted_by.clone())
     }
 }

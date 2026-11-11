@@ -17,7 +17,7 @@ use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+pub(crate) fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
     Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
 }
 
@@ -34,7 +34,7 @@ fn said(event_id: &str, content: &str, created_at: DateTime<Utc>) -> CaptureMess
     }
 }
 
-fn phils_session() -> Result<BundledSession, Box<dyn std::error::Error>> {
+pub(crate) fn phils_session() -> Result<BundledSession, Box<dyn std::error::Error>> {
     Ok(BundledSession {
         origin: SessionOrigin {
             author: "phil".to_owned(),
@@ -67,7 +67,7 @@ fn phils_session() -> Result<BundledSession, Box<dyn std::error::Error>> {
     })
 }
 
-async fn import(
+pub(crate) async fn import(
     store: &PostgresMemory,
     receiver: &str,
     session: &BundledSession,
@@ -82,7 +82,7 @@ async fn import(
         .await?)
 }
 
-fn receiver_key(
+pub(crate) fn receiver_key(
     owner: &str,
     session: &BundledSession,
 ) -> Result<String, Box<dyn std::error::Error>> {

@@ -6,18 +6,20 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use kernel::memory::{
-    MemoryState, SessionCatalog, SessionCursor, SessionQuery, SessionRecord, SessionView,
+    ImportOrigin, MemoryState, SessionCatalog, SessionCursor, SessionQuery, SessionRecord,
+    SessionView,
 };
 use kernel::transcript::ListLimit;
 use serde::Deserialize;
 use wire::gateway::roster::resume_command;
+use wire::gateway::session_catalog::SessionOriginLabel;
 use wire::gateway::session_catalog::{
     SessionDetail, SessionMemoryState, SessionSummaryPage, SessionSummaryRow, SharedWith, TopicPath,
 };
 use wire::harness::HarnessId;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
-use super::{NOT_FOUND, deletions, known, segment_session, visible};
+use super::{NOT_FOUND, deletions, ensure_reachable, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -96,7 +98,7 @@ fn decode_cursor(text: &str) -> Result<SessionCursor, ApiError> {
     let (millis, key) = text.split_once('.').ok_or_else(invalid)?;
     let millis: i64 = millis.parse().map_err(|_| invalid())?;
     let started_at = DateTime::from_timestamp_millis(millis).ok_or_else(invalid)?;
-    key.parse::<SessionId>().map_err(|_| invalid())?;
+    key.parse::<SessionKey>().map_err(|_| invalid())?;
     Ok(SessionCursor {
         started_at,
         key: key.to_owned(),
@@ -134,12 +136,21 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
     }
 }
 
-pub(crate) fn row(
-    record: SessionRecord,
+fn label(origin: ImportOrigin) -> SessionOriginLabel {
+    SessionOriginLabel {
+        author: origin.author,
+        created_at: origin.created_at,
+        updated_at: origin.updated_at,
+    }
+}
+
+pub(crate) fn row<K: Into<SessionKey>>(
+    record: SessionRecord<K>,
     visibility: SharedWith,
     lineage: &Lineage,
 ) -> SessionSummaryRow {
-    let key = record.id.to_string();
+    let id: SessionKey = record.id.into();
+    let key = id.to_string();
     let parent_id = lineage.parents.get(&key).cloned();
     let child_count = lineage
         .children
@@ -147,9 +158,10 @@ pub(crate) fn row(
         .copied()
         .filter(|count| *count > 0);
     SessionSummaryRow {
-        harness: record.id.harness(),
-        id: record.id,
+        harness: id.harness(),
+        id,
         title: record.title,
+        origin: record.origin.map(label),
         started_at: record.started_at,
         ended_at: record.ended_at,
         message_count: record.message_count,
@@ -189,11 +201,18 @@ pub(crate) async fn visibilities(
         .collect())
 }
 
-pub(crate) fn shown(gateway: &Gateway, user: &UserId, record: &SessionRecord) -> bool {
+pub(crate) fn registered(gateway: &Gateway, user: &UserId, session: &SessionId) -> bool {
     matches!(
-        gateway.sessions().visible(user, record.id.native(), None),
+        gateway.sessions().visible(user, session.native(), None),
         Ok(true)
     )
+}
+
+fn shown(gateway: &Gateway, user: &UserId, key: &SessionKey) -> bool {
+    match key {
+        SessionKey::Harness(session) => registered(gateway, user, session),
+        SessionKey::Import(_) => true,
+    }
 }
 
 pub(super) async fn list(
@@ -204,18 +223,23 @@ pub(super) async fn list(
     let lineage = lineage(&gateway).await;
     let query = query(&gateway, params, &lineage).await?;
     let page = catalog(&gateway)?.list(&query).await?;
-    let records: Vec<SessionRecord> = page
+    let records: Vec<SessionRecord<SessionKey>> = page
         .items
         .into_iter()
-        .filter(|record| shown(&gateway, &user, record))
+        .filter(|record| shown(&gateway, &user, &record.id))
         .collect();
-    let ids: Vec<SessionId> = records.iter().map(|record| record.id.clone()).collect();
+    let ids: Vec<SessionId> = records
+        .iter()
+        .filter_map(|record| record.id.session().cloned())
+        .collect();
     let marks = visibilities(&gateway, &user, &ids).await?;
     let items = records
         .into_iter()
         .map(|record| {
-            let visibility = marks
-                .get(&record.id)
+            let visibility = record
+                .id
+                .session()
+                .and_then(|session| marks.get(session))
                 .cloned()
                 .unwrap_or(SharedWith::Private);
             row(record, visibility, &lineage)
@@ -232,18 +256,24 @@ pub(super) async fn detail(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDetail>, ApiError> {
-    let session = segment_session(&segment)?;
+    let key = segment_key(&segment)?;
     let lineage = lineage(&gateway).await;
     let record = catalog(&gateway)?
-        .get(&session)
+        .get(&key)
         .await?
-        .filter(|record| shown(&gateway, &user, record))
+        .filter(|record| shown(&gateway, &user, &record.id))
         .ok_or(ApiError::NotFound(NOT_FOUND))?;
-    let marks = visibilities(&gateway, &user, std::slice::from_ref(&session)).await?;
-    let visibility = marks.get(&session).cloned().unwrap_or(SharedWith::Private);
+    let session = key.session();
+    let wanted: Vec<SessionId> = session.cloned().into_iter().collect();
+    let marks = visibilities(&gateway, &user, &wanted).await?;
+    let visibility = session
+        .and_then(|session| marks.get(session))
+        .cloned()
+        .unwrap_or(SharedWith::Private);
     let cwd = record.cwd.clone();
     Ok(Json(SessionDetail {
-        resume_command: resume_command(session.harness(), session.native()),
+        resume_command: session
+            .and_then(|session| resume_command(session.harness(), session.native())),
         row: row(record, visibility, &lineage),
         cwd,
         changed: Vec::new(),
@@ -252,26 +282,17 @@ pub(super) async fn detail(
     }))
 }
 
-async fn reachable(gateway: &Gateway, user: &UserId, session: &SessionId) -> Result<(), ApiError> {
-    let deletions = deletions(gateway)?;
-    if visible(gateway, user, session).await? && known(gateway, deletions, session).await? {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound(NOT_FOUND))
-    }
-}
-
 pub(super) async fn trash(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
     deletions(&gateway)?
-        .trash_session(session.as_str(), Some(user.as_str()), Utc::now())
+        .trash_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;
-    tracing::info!(session = %session, "session moved to the trash");
+    tracing::info!(session = %key, "session moved to the trash");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -280,12 +301,10 @@ pub(super) async fn restore(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
-    deletions(&gateway)?
-        .restore_session(session.as_str())
-        .await?;
-    tracing::info!(session = %session, "session restored from the trash");
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?.restore_session(key.as_str()).await?;
+    tracing::info!(session = %key, "session restored from the trash");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -294,11 +313,9 @@ pub(super) async fn unkeep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    reachable(&gateway, &user, &session).await?;
-    deletions(&gateway)?
-        .unkeep_session(session.as_str())
-        .await?;
-    tracing::info!(session = %session, "session no longer kept out of the trash review");
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?.unkeep_session(key.as_str()).await?;
+    tracing::info!(session = %key, "session no longer kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)
 }

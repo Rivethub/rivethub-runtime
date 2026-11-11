@@ -1,8 +1,9 @@
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use kernel::filing::conversation_keys;
 use kernel::filing::session_key;
+use kernel::filing::stored_keys;
+use kernel::memory::ImportOrigin;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -19,8 +20,10 @@ use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::named_params;
 use strum::IntoEnumIterator as _;
+use wire::JsonObject;
+use wire::capture::SessionOrigin;
 use wire::harness::HarnessId;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
@@ -40,7 +43,9 @@ WITH conv AS (
            max(c.active) AS active,
            json_group_array(c.id) AS conversations
       FROM conv c
-     WHERE substr(c.skey, 1, instr(c.skey, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
+     WHERE (substr(c.skey, 1, instr(c.skey, ':') - 1) IN (SELECT value FROM json_each(:harnesses))
+            OR (:imports AND length(c.skey) = 71 AND substr(c.skey, 1, 7) = 'import:'
+                AND NOT substr(c.skey, 8) GLOB '*[^0-9a-f]*'))
        AND (:sessions IS NULL OR c.skey IN (SELECT value FROM json_each(:sessions)))
        AND c.skey NOT IN (SELECT value FROM json_each(:exclude))
      GROUP BY c.skey
@@ -104,6 +109,9 @@ SELECT g.key,
          WHERE c.id IN (SELECT value FROM json_each(g.conversations)) AND json_valid(c.settings)
            AND json_type(c.settings, '$.cwd') = 'text'
          ORDER BY julianday(c.updated_at) DESC LIMIT 1),
+       (SELECT CASE WHEN json_valid(c.settings) THEN c.settings END FROM ros_conversations c
+         WHERE c.id IN (SELECT value FROM json_each(g.conversations)) AND g.key LIKE 'import:%'
+         ORDER BY julianday(c.updated_at) DESC LIMIT 1),
        (SELECT substr(m.content, 1, 600) FROM ros_messages m
          WHERE m.conversation_id IN (SELECT value FROM json_each(g.conversations)) AND m.role = 'user' AND trim(m.content) <> ''
          ORDER BY julianday(m.created_at), m.rowid LIMIT 1),
@@ -127,8 +135,29 @@ struct Row {
     flagged: i64,
     summary: Option<String>,
     cwd: Option<String>,
+    import_settings: Option<String>,
     first_user: Option<String>,
     native: String,
+}
+
+fn import_origin(settings: Option<&str>) -> Result<ImportOrigin, SqliteError> {
+    let settings: Option<JsonObject> = settings
+        .map(|text| {
+            serde_json::from_str(text).map_err(|source| SqliteError::StoredJson {
+                column: "settings",
+                source,
+            })
+        })
+        .transpose()?;
+    let origin = settings.and_then(|settings| SessionOrigin::of(&settings));
+    Ok(ImportOrigin {
+        author: origin
+            .as_ref()
+            .and_then(SessionOrigin::known_author)
+            .map(str::to_owned),
+        created_at: origin.as_ref().and_then(|origin| origin.created_at),
+        updated_at: origin.as_ref().and_then(|origin| origin.updated_at),
+    })
 }
 
 impl Row {
@@ -149,13 +178,14 @@ impl Row {
             flagged: row.get(12)?,
             summary: row.get(13)?,
             cwd: row.get(14)?,
-            first_user: row.get(15)?,
-            native: row.get(16)?,
+            import_settings: row.get(15)?,
+            first_user: row.get(16)?,
+            native: row.get(17)?,
         })
     }
 
-    fn record(self) -> Result<SessionRecord, SqliteError> {
-        let id = SessionId::from_str(&self.key).map_err(|_| SqliteError::StoredSession {
+    fn record(self) -> Result<SessionRecord<SessionKey>, SqliteError> {
+        let id = SessionKey::from_str(&self.key).map_err(|_| SqliteError::StoredSession {
             value: self.key.clone(),
         })?;
         let topic = match (self.topic, self.topic_name) {
@@ -168,6 +198,10 @@ impl Row {
             _ => None,
         };
         let updated = time::stored(&self.updated, "ros_conversations.updated_at")?;
+        let origin = match id {
+            SessionKey::Import(_) => Some(import_origin(self.import_settings.as_deref())?),
+            SessionKey::Harness(_) => None,
+        };
         Ok(SessionRecord {
             id,
             title: session_title(
@@ -185,6 +219,7 @@ impl Row {
             memory: memory_state(self.active != 0, self.flagged != 0, self.summarized != 0),
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
+            origin,
         })
     }
 }
@@ -221,6 +256,7 @@ fn keys_json(keys: &[String]) -> Result<String, SqliteError> {
 
 struct Scope<'a> {
     view: Option<SessionView>,
+    imports: bool,
     harnesses: &'a str,
     exclude: &'a str,
     sessions: Option<&'a str>,
@@ -242,7 +278,7 @@ fn select(
     scope: &Scope<'_>,
     query: Option<&SessionQuery>,
     limit: i64,
-) -> Result<Vec<SessionRecord>, SqliteError> {
+) -> Result<Vec<SessionRecord<SessionKey>>, SqliteError> {
     let sql = SESSIONS.replace("VIEW_CONDITION", view_condition(scope.view));
     let mut statement = conn
         .prepare(&sql)
@@ -262,6 +298,7 @@ fn select(
         .query_map(
             named_params! {
                 ":harnesses": scope.harnesses,
+                ":imports": scope.imports,
                 ":sessions": scope.sessions,
                 ":keys": scope.keys,
                 ":topic": query.and_then(|query| query.topic).map(|topic| topic.to_string()),
@@ -284,6 +321,7 @@ fn page(conn: &Connection, query: &SessionQuery) -> Result<SessionPage, SqliteEr
     let wanted = i64::from(size) + 1;
     let scope = Scope {
         view: Some(query.view),
+        imports: query.harness.is_none(),
         harnesses: &harnesses(query.harness)?,
         exclude: &keys_json(&query.exclude)?,
         sessions: None,
@@ -312,15 +350,18 @@ impl SessionCatalog for SqliteStore {
             .map_err(Into::into)
     }
 
-    async fn records(
+    async fn entries(
         &self,
-        sessions: &[SessionId],
-    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
-        if sessions.is_empty() {
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError> {
+        if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let wanted: Vec<String> = sessions.iter().map(ToString::to_string).collect();
-        let stored: Vec<String> = sessions.iter().flat_map(conversation_keys).collect();
+        let wanted: Vec<String> = keys.iter().map(ToString::to_string).collect();
+        let stored: Vec<String> = keys
+            .iter()
+            .flat_map(|key| stored_keys(key.as_str()))
+            .collect();
         let limit = i64::try_from(wanted.len()).map_err(SqliteError::Count)?;
         let wanted = keys_json(&wanted)?;
         let stored = keys_json(&stored)?;
@@ -329,6 +370,7 @@ impl SessionCatalog for SqliteStore {
                 conn,
                 &Scope {
                     view: None,
+                    imports: true,
                     harnesses: &harnesses(None)?,
                     exclude: "[]",
                     sessions: Some(&wanted),

@@ -223,11 +223,18 @@ impl<'a> CaptureWriter<'a> {
         Ok(())
     }
 
-    pub async fn finalize_conversation(&mut self, id: Uuid) -> Result<(), Error> {
+    pub async fn finalize_conversation(
+        &mut self,
+        id: Uuid,
+        keeps_updated_at: bool,
+    ) -> Result<(), Error> {
         sqlx::query!(
-            "update rh_conversations set active = false, updated_at = now()
+            "update rh_conversations
+                set active = false,
+                    updated_at = case when $2 then updated_at else now() end
               where id = $1 and active = true",
-            id
+            id,
+            keeps_updated_at
         )
         .execute(&mut *self.tx)
         .await

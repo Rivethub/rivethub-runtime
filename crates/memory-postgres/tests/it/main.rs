@@ -8,6 +8,7 @@ mod embedding_store;
 mod final_fix;
 mod flagged;
 mod import;
+mod import_sessions;
 mod index_friendly;
 mod memory_golden;
 mod merge;

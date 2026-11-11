@@ -72,6 +72,7 @@ pub use records::{
 };
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
+pub use sessions::ImportOrigin;
 pub use sessions::MemoryState;
 pub use sessions::SESSION_PAGE_DEFAULT;
 pub use sessions::SESSION_PAGE_MAX;

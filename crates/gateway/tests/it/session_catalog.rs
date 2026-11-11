@@ -39,6 +39,7 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
         memory: MemoryState::Summarized,
         gist: Some("gist".to_owned()),
         cwd: Some("/home/user/app".to_owned()),
+        origin: None,
     }
 }
 
@@ -142,7 +143,7 @@ async fn trash_restore_and_unkeep_move_a_session_between_views() {
 
     let (status, _) = call(&setup, "POST", &format!("/api/sessions/{solo}/trash")).await;
     assert_eq!(status, 204);
-    assert!(setup.deletion.is_trashed(&claude("solo")));
+    assert!(setup.deletion.is_trashed(claude("solo")));
     let (_, body) = call(&setup, "GET", "/api/sessions").await;
     assert_eq!(titles(&body), ["Parent"]);
     let (_, body) = call(&setup, "GET", "/api/sessions?view=trash").await;

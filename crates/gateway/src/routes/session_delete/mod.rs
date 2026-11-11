@@ -13,7 +13,7 @@ use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteRefused, SessionDeleteRequest, SessionDeleteResult,
     SessionDeleteResults, SessionDeleted,
 };
-use wire::session_id::{SessionId, SessionRef, decode_segment};
+use wire::session_id::{SessionId, SessionKey, SessionKeyError, SessionRef, decode_segment};
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -122,10 +122,15 @@ fn deletions(gateway: &Gateway) -> Result<&dyn SessionDeletion, ApiError> {
         .ok_or_else(|| ApiError::Unavailable("session deletion unavailable".to_owned()))
 }
 
-fn segment_session(segment: &str) -> Result<SessionId, ApiError> {
-    if let Ok(session) = segment.parse::<SessionId>() {
-        return Ok(session);
+fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
+    match segment.parse::<SessionKey>() {
+        Ok(key) => Ok(key),
+        Err(error @ SessionKeyError::Import(_)) => Err(ApiError::BadRequest(error.to_string())),
+        Err(SessionKeyError::Harness(_)) => encoded_session(segment).map(SessionKey::Harness),
     }
+}
+
+fn encoded_session(segment: &str) -> Result<SessionId, ApiError> {
     let decoded =
         decode_segment(segment).map_err(|error| ApiError::BadRequest(error.to_string()))?;
     match decoded.session {
@@ -166,23 +171,48 @@ async fn known(
     {
         return Ok(true);
     }
-    let key = session.as_str().to_owned();
-    let activity = deletions
-        .session_activity(std::slice::from_ref(&key))
-        .await?;
-    Ok(activity.get(&key).is_some_and(SessionActivity::recorded))
+    recorded(deletions, session.as_str()).await
+}
+
+async fn recorded(deletions: &dyn SessionDeletion, key: &str) -> Result<bool, ApiError> {
+    let keys = [key.to_owned()];
+    let activity = deletions.session_activity(&keys).await?;
+    Ok(activity.get(key).is_some_and(SessionActivity::recorded))
+}
+
+async fn reachable(
+    gateway: &Gateway,
+    user: &UserId,
+    deletions: &dyn SessionDeletion,
+    key: &SessionKey,
+) -> Result<bool, ApiError> {
+    match key {
+        SessionKey::Harness(session) => Ok(
+            visible(gateway, user, session).await? && known(gateway, deletions, session).await?
+        ),
+        SessionKey::Import(_) => recorded(deletions, key.as_str()).await,
+    }
+}
+
+async fn ensure_reachable(
+    gateway: &Gateway,
+    user: &UserId,
+    key: &SessionKey,
+) -> Result<(), ApiError> {
+    if reachable(gateway, user, deletions(gateway)?, key).await? {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound(NOT_FOUND))
+    }
 }
 
 async fn erase(
     gateway: &Gateway,
     user: &UserId,
-    session: &SessionId,
+    session: &SessionKey,
 ) -> Result<Result<DeletedSession, Refusal>, ApiError> {
     let deletions = deletions(gateway)?;
-    if !visible(gateway, user, session).await? {
-        return Ok(Err(Refusal::NotFound));
-    }
-    if !known(gateway, deletions, session).await? {
+    if !reachable(gateway, user, deletions, session).await? {
         return Ok(Err(Refusal::NotFound));
     }
     let deleted = deletions
@@ -198,7 +228,7 @@ async fn erase(
     Ok(Ok(deleted))
 }
 
-fn deleted_reply(session: SessionId, deleted: DeletedSession) -> SessionDeleted {
+fn deleted_reply(session: SessionKey, deleted: DeletedSession) -> SessionDeleted {
     SessionDeleted {
         ok: true,
         session,
@@ -213,14 +243,14 @@ async fn delete_one(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDeleted>, ApiError> {
-    let session = segment_session(&segment)?;
+    let session = segment_key(&segment)?;
     match erase(&gateway, &user, &session).await? {
         Ok(deleted) => Ok(Json(deleted_reply(session, deleted))),
         Err(Refusal::NotFound) => Err(ApiError::NotFound(NOT_FOUND)),
     }
 }
 
-fn refused(session: SessionId, error: SessionDeleteError) -> SessionDeleteResult {
+fn refused(session: SessionKey, error: SessionDeleteError) -> SessionDeleteResult {
     SessionDeleteResult::Refused(SessionDeleteRefused {
         session,
         ok: false,
@@ -235,7 +265,7 @@ async fn delete_many(
 ) -> Result<Json<SessionDeleteResults>, ApiError> {
     deletions(&gateway)?;
     let mut seen = BTreeSet::new();
-    let sessions: Vec<SessionId> = request
+    let sessions: Vec<SessionKey> = request
         .sessions
         .into_iter()
         .filter(|session| seen.insert(session.clone()))

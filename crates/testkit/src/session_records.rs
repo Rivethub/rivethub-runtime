@@ -11,6 +11,7 @@ use wire::session_id::SessionId;
 use crate::session_catalog::BARE;
 use crate::session_catalog::capture_stored;
 use crate::session_catalog::seed;
+use crate::session_imports::record_of;
 use crate::topics::Outcome;
 use crate::topics::same;
 
@@ -36,7 +37,10 @@ pub async fn records_answer_bare_and_keyed_sessions_in_one_lookup(
         catalog
             .list(&SessionQuery::new(SessionView::All))
             .await?
-            .items,
+            .items
+            .into_iter()
+            .filter_map(SessionRecord::narrow)
+            .collect(),
     );
     let asked = [
         bare.clone(),
@@ -65,7 +69,7 @@ pub async fn records_answer_bare_and_keyed_sessions_in_one_lookup(
     )?;
     same(
         "get answers like a one-session lookup",
-        catalog.get(&seeded.gamma).await?.as_ref(),
+        record_of(catalog, &seeded.gamma).await?.as_ref(),
         found.get(&seeded.gamma.to_string()),
     )?;
     same(

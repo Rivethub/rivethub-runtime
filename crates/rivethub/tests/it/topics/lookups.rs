@@ -7,7 +7,7 @@ use kernel::memory::SessionPage;
 use kernel::memory::SessionQuery;
 use kernel::memory::SessionRecord;
 use parking_lot::Mutex;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct Calls {
@@ -38,6 +38,13 @@ impl SessionCatalog for Lookups {
     async fn list(&self, query: &SessionQuery) -> Result<SessionPage, MemoryStoreError> {
         self.calls.lock().lists += 1;
         self.inner.list(query).await
+    }
+
+    async fn entries(
+        &self,
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError> {
+        self.inner.entries(keys).await
     }
 
     async fn records(

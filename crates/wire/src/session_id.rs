@@ -4,7 +4,7 @@ use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use percent_encoding::percent_decode_str;
 use thiserror::Error;
 
-pub use values::{SessionId, SessionIdError};
+pub use values::{ImportKey, SessionId, SessionIdError, SessionKey, SessionKeyError};
 
 const SEGMENT: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,

@@ -7,13 +7,13 @@ use kernel::memory::SessionPage;
 use kernel::memory::SessionQuery;
 use kernel::memory::SessionRecord;
 use kernel::memory::SessionView;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use super::FakeSessionDeletion;
 
 #[derive(Debug)]
 pub struct FakeSessionCatalog {
-    records: Vec<SessionRecord>,
+    records: Vec<SessionRecord<SessionKey>>,
     marks: Arc<FakeSessionDeletion>,
 }
 
@@ -28,14 +28,20 @@ impl FakeSessionCatalog {
 
     #[must_use]
     pub fn with_record(mut self, record: SessionRecord) -> Self {
+        self.records.push(record.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_entry(mut self, record: SessionRecord<SessionKey>) -> Self {
         self.records.push(record);
         self
     }
 
-    fn marked(&self, record: &SessionRecord) -> SessionRecord {
+    fn marked(&self, record: &SessionRecord<SessionKey>) -> SessionRecord<SessionKey> {
         SessionRecord {
-            kept: self.marks.is_kept(&record.id),
-            trashed: self.marks.is_trashed(&record.id),
+            kept: self.marks.is_kept(record.id.clone()),
+            trashed: self.marks.is_trashed(record.id.clone()),
             ..record.clone()
         }
     }
@@ -44,7 +50,7 @@ impl FakeSessionCatalog {
 #[async_trait]
 impl SessionCatalog for FakeSessionCatalog {
     async fn list(&self, query: &SessionQuery) -> Result<SessionPage, MemoryStoreError> {
-        let mut items: Vec<SessionRecord> = self
+        let mut items: Vec<SessionRecord<SessionKey>> = self
             .records
             .iter()
             .map(|record| self.marked(record))
@@ -57,7 +63,7 @@ impl SessionCatalog for FakeSessionCatalog {
             .filter(|record| {
                 query
                     .harness
-                    .is_none_or(|harness| record.id.harness() == harness)
+                    .is_none_or(|harness| record.id.harness() == Some(harness))
             })
             .filter(|record| !query.exclude.contains(&record.id.to_string()))
             .collect();
@@ -70,14 +76,14 @@ impl SessionCatalog for FakeSessionCatalog {
         Ok(SessionPage { items, next: None })
     }
 
-    async fn records(
+    async fn entries(
         &self,
-        sessions: &[SessionId],
-    ) -> Result<Vec<SessionRecord>, MemoryStoreError> {
+        keys: &[SessionKey],
+    ) -> Result<Vec<SessionRecord<SessionKey>>, MemoryStoreError> {
         Ok(self
             .records
             .iter()
-            .filter(|record| sessions.contains(&record.id))
+            .filter(|record| keys.contains(&record.id))
             .map(|record| self.marked(record))
             .collect())
     }
