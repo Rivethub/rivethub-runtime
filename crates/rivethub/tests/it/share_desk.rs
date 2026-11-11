@@ -4,6 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
@@ -235,6 +236,112 @@ async fn send_refuses_open_flags_and_wrong_counts() -> TestResult {
         Err(DeskError::UnknownDraft)
     ));
     model.close().await?;
+    drop_box.close().await?;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct Gated {
+    arrived: Arc<tokio::sync::Notify>,
+    gate: Arc<tokio::sync::Semaphore>,
+    uploaded: Arc<AtomicUsize>,
+}
+
+async fn gated_upload(
+    axum::extract::State(drops): axum::extract::State<Gated>,
+) -> axum::response::Response {
+    drops.arrived.notify_one();
+    let Ok(permit) = drops.gate.acquire().await else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    permit.forget();
+    drops.uploaded.fetch_add(1, Ordering::SeqCst);
+    (
+        StatusCode::CREATED,
+        r#"{"id":"Qm9iQm9iQm9iQm9iQm9iQg","expires_at":"2026-11-17T12:00:00Z","bytes":512}"#,
+    )
+        .into_response()
+}
+
+async fn gated_drop_box(phil: &Node) -> TestResult<(Gated, testkit::Stub)> {
+    let drops = Gated {
+        arrived: Arc::default(),
+        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        uploaded: Arc::default(),
+    };
+    let drop_box = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/drops", axum::routing::post(gated_upload))
+            .with_state(drops.clone()),
+    )
+    .await?;
+    sign_in(phil, &drop_box.addr.to_string())?;
+    Ok((drops, drop_box))
+}
+
+#[tokio::test]
+async fn a_draft_sent_twice_at_once_uploads_once() -> TestResult {
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&phil)?;
+    let (drops, drop_box) = gated_drop_box(&phil).await?;
+    let host = drop_box.addr.to_string();
+    let desk = desk(&phil, false)?;
+    let draft = desk.draft(request(&[&alpha], false)?).await?;
+
+    let (first, second, ()) = tokio::join!(
+        desk.send(draft.id, send(&host, 1, 0)),
+        desk.send(draft.id, send(&host, 1, 0)),
+        async {
+            drops.arrived.notified().await;
+            drops.gate.add_permits(2);
+        },
+    );
+
+    let codes = [&first, &second].iter().filter(|sent| sent.is_ok()).count();
+    assert_eq!(codes, 1, "{first:?} {second:?}");
+    assert!(
+        [&first, &second]
+            .iter()
+            .any(|sent| matches!(sent, Err(DeskError::UnknownDraft))),
+        "{first:?} {second:?}"
+    );
+    assert_eq!(drops.uploaded.load(Ordering::SeqCst), 1);
+    drop_box.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn nothing_uploads_after_a_discard_returns() -> TestResult {
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&phil)?;
+    let (drops, drop_box) = gated_drop_box(&phil).await?;
+    let host = drop_box.addr.to_string();
+    let desk = desk(&phil, false)?;
+    let draft = desk.draft(request(&[&alpha], false)?).await?;
+    let discarding = tokio::sync::Notify::new();
+
+    let (sent, (discarded, uploaded_by_then), ()) = tokio::join!(
+        desk.send(draft.id, send(&host, 1, 0)),
+        async {
+            drops.arrived.notified().await;
+            discarding.notify_one();
+            let discarded = desk.discard(draft.id).await;
+            (discarded, drops.uploaded.load(Ordering::SeqCst))
+        },
+        async {
+            discarding.notified().await;
+            drops.gate.add_permits(1);
+        },
+    );
+
+    assert_eq!(
+        drops.uploaded.load(Ordering::SeqCst),
+        uploaded_by_then,
+        "an upload finished after discard returned: {sent:?} {discarded:?}"
+    );
+    assert!(sent.is_ok() != discarded.is_ok(), "{sent:?} {discarded:?}");
+    let late = desk.send(draft.id, send(&host, 1, 0)).await;
+    assert!(matches!(late, Err(DeskError::UnknownDraft)), "{late:?}");
     drop_box.close().await?;
     Ok(())
 }

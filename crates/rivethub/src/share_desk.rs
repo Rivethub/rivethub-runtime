@@ -79,11 +79,28 @@ struct Slot {
 }
 
 struct DraftState {
+    phase: Phase,
     sealed: Sealed,
     local: Option<LocalReview>,
     report: capture::sanitize::Report,
     resolved: BTreeMap<usize, Resolution>,
     conversations: Vec<Uuid>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Open,
+    Sending,
+    Closed,
+}
+
+impl DraftState {
+    fn open(&self) -> Result<(), DeskError> {
+        match self.phase {
+            Phase::Open => Ok(()),
+            Phase::Sending | Phase::Closed => Err(DeskError::UnknownDraft),
+        }
+    }
 }
 
 struct Pending {
@@ -261,6 +278,15 @@ fn view(id: DraftId, state: &DraftState, expires_at: DateTime<Utc>) -> Draft {
 }
 
 impl NodeDesk {
+    async fn upload(&self, text: &[u8], send: &SendRequest) -> Result<cli_desk::Shared, DeskError> {
+        let sealed = cli_desk::seal_bytes(&self.env, with_newline(text), send.signed, 0)
+            .await
+            .map_err(cli_desk::desk_error)?;
+        cli_desk::upload_to(&self.env, Some(send.server.as_str()), sealed)
+            .await
+            .map_err(cli_desk::desk_error)
+    }
+
     async fn learned(&self, marks: &[Mark]) -> Result<Option<String>, DeskError> {
         let maps: Vec<(&str, &str)> = marks
             .iter()
@@ -440,6 +466,7 @@ impl ShareDesk for NodeDesk {
         .map_err(sanitize_failed)?;
         let bytes = outcome.sanitized.text.len();
         let state = DraftState {
+            phase: Phase::Open,
             sealed: outcome.sanitized,
             local: outcome.local,
             report: outcome.report,
@@ -467,6 +494,7 @@ impl ShareDesk for NodeDesk {
     async fn report(&self, id: DraftId) -> Result<Draft, DeskError> {
         let slot = self.slot(id)?;
         let state = slot.lock().await;
+        state.open()?;
         let expires_at = self.resized(id, state.sealed.text.len());
         let draft = view(id, &state, expires_at);
         drop(state);
@@ -476,6 +504,7 @@ impl ShareDesk for NodeDesk {
     async fn mark(&self, id: DraftId, marks: Vec<Mark>) -> Result<Marked, DeskError> {
         let slot = self.slot(id)?;
         let mut state = slot.lock().await;
+        state.open()?;
         let local = state.local.as_ref().ok_or_else(|| {
             DeskError::Marks("the draft was made without decide, so it has no flags".to_owned())
         })?;
@@ -510,7 +539,8 @@ impl ShareDesk for NodeDesk {
 
     async fn send(&self, id: DraftId, send: SendRequest) -> Result<Sent, DeskError> {
         let slot = self.slot(id)?;
-        let state = slot.lock().await;
+        let mut state = slot.lock().await;
+        state.open()?;
         let flags = state
             .report
             .decision
@@ -534,14 +564,15 @@ impl ShareDesk for NodeDesk {
                 confirmed_kept: send.confirm.kept_flags,
             });
         }
-        let sealed =
-            cli_desk::seal_bytes(&self.env, with_newline(&state.sealed.text), send.signed, 0)
-                .await
-                .map_err(cli_desk::desk_error)?;
-        let shared = cli_desk::upload_to(&self.env, Some(send.server.as_str()), sealed)
-            .await
-            .map_err(cli_desk::desk_error)?;
+        state.phase = Phase::Sending;
+        let shared = self.upload(&state.sealed.text, &send).await;
+        state.phase = if shared.is_ok() {
+            Phase::Closed
+        } else {
+            Phase::Open
+        };
         drop(state);
+        let shared = shared?;
         self.drafts.lock().remove(&id);
         Ok(Sent {
             code: shared.code,
@@ -552,12 +583,15 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn discard(&self, id: DraftId) -> Result<(), DeskError> {
-        self.sweep();
-        self.drafts
-            .lock()
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(DeskError::UnknownDraft)
+        let slot = self.slot(id)?;
+        let mut state = slot.lock().await;
+        if state.phase == Phase::Closed {
+            return Err(DeskError::UnknownDraft);
+        }
+        state.phase = Phase::Closed;
+        drop(state);
+        self.drafts.lock().remove(&id);
+        Ok(())
     }
 
     async fn servers(&self) -> Result<Servers, DeskError> {
