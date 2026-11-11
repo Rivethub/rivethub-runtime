@@ -1648,7 +1648,8 @@ key into the conversation's key, `import:` and the lowercase hex SHA-256 of the 
 records the batch as (the user the gateway authenticated) followed by the posted strings: `[owner, node,
 conversation_id]` or `[owner, "unknown", session_key, agent, event_id]`. A client names only the origin, never the
 owner, so it cannot post into another user's import; a batch whose key starts with `import:` but is not followed by one of
-those two arrays (two strings, neither `unknown`, or four strings whose first is `unknown`) is an invalid request
+those arrays (two strings, neither `unknown`, or four strings whose first is `unknown`, each optionally followed by a
+signer, `unsigned` or `ed25519:<fingerprint>`, which only `rh memory receive` adds, note 140) is an invalid request
 (HTTP 400 from the gateway). The readable node, conversation id
 and session key stay in `settings.origin`, which holds the session's `origin`. Ingesting the same bundle again as the
 same user reaches the same conversation and adds no messages, since event ids it already has are skipped; when the
@@ -2205,6 +2206,8 @@ the same regular-file and permission checks as the sanitize key (note 136). The 
 public_key: "ed25519:<base64>", sig}` inside the ciphertext, so the cloud never sees the sender key. `rh memory key
 show` prints the key line and a fingerprint (`ed25519:` and the first 16 hex digits of its SHA-256).
 
+`rh memory share` and `session_share` read the bundle once: the elicitation preview and the seal use the same bytes.
+
 Share. The upload is `POST <memory.share.cloud.url>/api/drops` with the body `application/octet-stream` and the
 `rh cloud login` access token as a bearer token; on 401 the token is refreshed once and the upload retried. On 201
 `{id, expires_at, bytes}` rh unlinks the sanitized bundle and prints `share code (works once, expires <date>; send it
@@ -2220,12 +2223,15 @@ Login. `rh cloud login` runs the OAuth 2.0 device grant (RFC 8628) against `memo
 `verification_uri_complete` and user code, and polls `POST /api/cli/token` (device grant) at the given interval,
 honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. Tokens are kept at
 `$XDG_STATE_HOME/rivethub/cloud.json` (0600) with the cloud address they belong to; the access token is refreshed
-(`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh cloud logout` posts the refresh token
+(`grant_type=refresh_token`, rotated every time) a minute before it expires, under an exclusive lock on
+`cloud.json.lock` that re-reads the file first, so concurrent runs never replay a rotated refresh token (CD-1 revokes the
+login on reuse). `rh cloud logout` posts the refresh token
 to `/api/cli/revoke` and deletes the file; `rh cloud status` shows the login without a request.
 
 Receive. `rh memory receive <code> [--dry-run]` checks the code first, removes inbox files older than 7 days, and
 answers "already received" without a request when `$XDG_STATE_HOME/rivethub/inbox/<id>.received` exists. Otherwise it
-uses `inbox/<id>.age` when present, else downloads `GET /api/drops/<id>` (no account; a 5xx is retried at most twice)
+uses `inbox/<id>.age` when present, else downloads `GET /api/drops/<id>` (no account; a 5xx, which carries no drop bytes, is retried at most twice after 0.5 and 1 s, and a 404 after a 5xx
+reports that the server failed mid-download and the sender must share again)
 into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a broken
 stream, is a hard error that says the drop is burned, and nothing is kept. It then decrypts in memory, decompresses at
 most 256 MiB, parses the bundle (digest), checks the signature, and runs the note 136 ingest checks without a
@@ -2233,9 +2239,12 @@ most 256 MiB, parses the bundle (digest), checks the signature, and runs the not
 it. Verified means a valid signature by a key listed under the bundle's `exported_by.user` in
 `$XDG_CONFIG_HOME/rivethub/trusted-senders.toml` (`[[sender]] name, key`), which only `rh memory trust add <name>
 <key>` writes; an unsigned bundle, an unknown key or a key trusted under another name imports as unverified with that
-reason. It imports through the note 135 path and records in each conversation's settings `receipt = {bundle_id,
-received_at, verification: verified|unsigned|unknown_key, key_fingerprint?}`; `import_batch` drops any `receipt` a
-bundle carries, so only the receiver's own rh writes one. After a successful import the ciphertext is deleted and the
+reason. It imports through the note 135 path with the signer (the key fingerprint, else `unsigned`) appended to the origin
+array, so content from different signers, or a plain `ingest-bundle`, never shares a conversation, while the same
+signer's re-share reaches the same conversation and adds nothing. It records in each conversation's settings `receipt =
+{bundle_id, received_at, verification: verified|unsigned|unknown_key, key_fingerprint?}`; `import_batch` drops any
+`receipt` a bundle carries, so only the receiver's own rh writes one, and both stores refuse (HTTP 400) a batch whose
+receipt signer, or the lack of one, differs from the stored conversation's instead of merging it. After a successful import the ciphertext is deleted and the
 `.received` marker written; any failure keeps the ciphertext, so a rerun needs no network. A failed post to the
 gateway spools decrypted batches to the capture spool as any capture does (note 84).
 

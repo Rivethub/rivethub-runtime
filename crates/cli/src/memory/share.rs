@@ -2,6 +2,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use tokio::io::AsyncReadExt as _;
+
 use capture::seal::CodeError;
 use capture::seal::MAX_BUNDLE_BYTES;
 use capture::seal::OpenError;
@@ -269,17 +271,37 @@ pub async fn seal_file(
     sign: bool,
     flags: usize,
 ) -> Result<SealedFile, Error> {
+    let text = read_bundle_file(path).await?;
+    seal_bytes(env, path, text, sign, flags).await
+}
+
+pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
     let metadata = tokio::fs::symlink_metadata(path).await?;
     if !metadata.is_file() {
         return Err(ShareError::NotFile(path.to_path_buf()).into());
     }
-    if metadata.len() > MAX_BUNDLE_BYTES as u64 {
+    let mut text = Vec::new();
+    tokio::fs::File::open(path)
+        .await?
+        .take(MAX_BUNDLE_BYTES as u64 + 1)
+        .read_to_end(&mut text)
+        .await?;
+    if text.len() > MAX_BUNDLE_BYTES {
         return Err(ShareError::Seal(SealError::TooLarge {
-            bytes: metadata.len(),
+            bytes: metadata.len().max(text.len() as u64),
         })
         .into());
     }
-    let text = tokio::fs::read(path).await?;
+    Ok(text)
+}
+
+pub async fn seal_bytes(
+    env: &Environment,
+    path: &Path,
+    text: Vec<u8>,
+    sign: bool,
+    flags: usize,
+) -> Result<SealedFile, Error> {
     let signer = if sign {
         Some(NodeKey::load_or_create(&signing_key_path(env)?).map_err(ShareError::from)?)
     } else {
@@ -298,7 +320,6 @@ pub async fn seal_file(
     })
 }
 
-#[derive(Debug)]
 pub struct Shared {
     pub sessions: usize,
     pub signed: Option<PublicKey>,
@@ -306,6 +327,27 @@ pub struct Shared {
     pub expires_at: DateTime<Utc>,
     pub code: String,
     pub kept: Option<String>,
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
+    )
+)]
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let id = self
+            .code
+            .split_once('#')
+            .map_or(self.code.as_str(), |(id, _)| id);
+        formatter
+            .debug_struct("Shared")
+            .field("sessions", &self.sessions)
+            .field("code", &format_args!("{id}#.."))
+            .finish_non_exhaustive()
+    }
 }
 
 pub async fn upload(env: &Environment, sealed: SealedFile) -> Result<Shared, Error> {

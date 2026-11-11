@@ -39,7 +39,9 @@ struct Seen {
     uris: Vec<String>,
     tokens: Vec<String>,
     bodies: Vec<Vec<u8>>,
+    taken: Vec<bool>,
     gets: usize,
+    refreshes: Vec<String>,
     upload_status: Option<StatusCode>,
 }
 
@@ -63,16 +65,21 @@ async fn upload(
         seen.tokens.push(token);
         if seen.upload_status.is_none() {
             seen.bodies.push(body.to_vec());
+            seen.taken.push(false);
         }
-        seen.upload_status
+        (seen.upload_status, seen.bodies.len())
     };
+    let (refused, count) = refused;
     if let Some(status) = refused {
         return (status, "refused").into_response();
     }
     let bytes = body.len();
     (
         StatusCode::CREATED,
-        format!(r#"{{"id":"{DROP_ID}","expires_at":"2026-11-17T12:00:00Z","bytes":{bytes}}}"#),
+        format!(
+            r#"{{"id":"{}","expires_at":"2026-11-17T12:00:00Z","bytes":{bytes}}}"#,
+            drop_id(count - 1)
+        ),
     )
         .into_response()
 }
@@ -82,15 +89,61 @@ async fn download(
     uri: Uri,
     UrlPath(id): UrlPath<String>,
 ) -> Response {
-    let mut seen = drops.0.lock();
-    seen.uris.push(uri.to_string());
-    seen.gets += 1;
-    if id != DROP_ID {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    match seen.bodies.pop() {
+    let body = {
+        let mut seen = drops.0.lock();
+        seen.uris.push(uri.to_string());
+        seen.gets += 1;
+        let found = (0..seen.bodies.len()).find(|index| drop_id(*index) == id);
+        match found {
+            Some(index) if seen.taken.get(index) == Some(&false) => {
+                if let Some(taken) = seen.taken.get_mut(index) {
+                    *taken = true;
+                }
+                seen.bodies.get(index).cloned()
+            }
+            Some(_) | None => None,
+        }
+    };
+    match body {
         Some(body) => (StatusCode::OK, body).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Refresh {
+    refresh_token: String,
+}
+
+async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Refresh>) -> Response {
+    let asked_for = asked.refresh_token;
+    let accepted = {
+        let mut seen = drops.0.lock();
+        let current = seen.refreshes.last().map_or_else(
+            || "rhcr_throwaway".to_owned(),
+            |last| format!("rhcr_{last}"),
+        );
+        seen.refreshes.push(asked_for.clone());
+        drop(seen);
+        asked_for == current
+    };
+    if !accepted {
+        return (StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#).into_response();
+    }
+    (
+        StatusCode::OK,
+        format!(
+            r#"{{"access_token":"rhca_{asked_for}","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_{asked_for}","scope":"drops:write"}}"#
+        ),
+    )
+        .into_response()
+}
+
+fn drop_id(index: usize) -> String {
+    if index == 0 {
+        DROP_ID.to_owned()
+    } else {
+        format!("{}{index:02}", &DROP_ID[..20])
     }
 }
 
@@ -104,6 +157,7 @@ async fn drop_box() -> Served {
     let drops = DropBox::default();
     let app = Router::new()
         .route("/api/drops", axum::routing::post(upload))
+        .route("/api/cli/token", axum::routing::post(refresh))
         .route("/api/drops/{id}", axum::routing::get(download))
         .with_state(drops.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -156,12 +210,16 @@ impl Node {
     }
 
     fn sign_in(&self, cloud: &str) {
+        self.sign_in_until(cloud, "2099-01-01T00:00:00Z");
+    }
+
+    fn sign_in_until(&self, cloud: &str, expires_at: &str) {
         let path = self.home.path().join("state/rivethub/cloud.json");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("state dir");
         std::fs::write(
             &path,
             format!(
-                r#"{{"url":"{cloud}","access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}}"#
+                r#"{{"url":"{cloud}","access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"{expires_at}","scope":"drops:write"}}"#
             ),
         )
         .expect("cloud login");
@@ -653,4 +711,178 @@ async fn a_truncated_download_is_a_burned_drop_and_leaves_nothing() {
         .map(|entry| entry.expect("entry").file_name())
         .collect();
     assert_eq!(left, Vec::<std::ffi::OsString>::new());
+}
+
+async fn messages_by_verification(pool: &PgPool) -> Vec<(Option<String>, i64)> {
+    sqlx::query_as::<_, (Option<String>, i64)>(
+        "SELECT c.settings -> 'receipt' ->> 'verification', count(m.id)
+         FROM ros_conversations c JOIN ros_messages m ON m.conversation_id = c.id
+         GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("conversations")
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
+    let served = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let alice = Node::new("phil", &served.url, None);
+    alice.sign_in(&served.url);
+    let key = alice.run(&["memory", "key", "show"]).await.stdout;
+    let key = key.lines().next().expect("key line").to_owned();
+    let bundle = sanitized(&alice, outside.path(), None).await;
+    let mut forged =
+        capture::bundle::parse(&std::fs::read_to_string(&bundle).expect("bundle")).expect("parse");
+    let shared = alice
+        .run(&["memory", "share", &bundle.display().to_string()])
+        .await;
+    let verified_code = code_of(&shared.stdout);
+
+    let session = forged.sessions.first_mut().expect("session");
+    session.origin.updated_at = Some(chrono::DateTime::UNIX_EPOCH);
+    let message = session.batch.messages.first_mut().expect("message");
+    message.event_id = "mallory-evt".to_owned();
+    message.content = "planted by mallory".to_owned();
+    let resealed = capture::bundle::seal(
+        forged.manifest.exported_by.clone(),
+        forged.manifest.exported_at,
+        forged.manifest.sanitization.clone(),
+        forged.sessions,
+    )
+    .expect("reseal");
+    let mallory = Node::new("phil", &served.url, None);
+    mallory.sign_in(&served.url);
+    let planted = mallory.home.path().join("forged.clean.json");
+    std::fs::write(&planted, resealed.text).expect("forged bundle");
+    let forged_share = mallory
+        .run(&[
+            "memory",
+            "share",
+            &planted.display().to_string(),
+            "--unsigned",
+        ])
+        .await;
+    assert_eq!(forged_share.exit, Exit::Ok, "{}", forged_share.stderr);
+    let forged_code = code_of(&forged_share.stdout);
+
+    let store = Arc::new(PostgresMemory::new(pool.clone()));
+    let probe = support::home();
+    let gateway = gateway_for(&store, "alex", probe.path()).await;
+    let receiver = Node::new("alex", &served.url, Some(gateway.port));
+    let trusted = receiver
+        .run(&["memory", "trust", "add", "phil", &key])
+        .await;
+    assert_eq!(trusted.exit, Exit::Ok, "{}", trusted.stderr);
+    let first = receiver.run(&["memory", "receive", &verified_code]).await;
+    assert!(
+        first.stdout.contains("(verified, signed by"),
+        "{}",
+        first.stdout
+    );
+    let second = receiver.run(&["memory", "receive", &forged_code]).await;
+    assert_eq!(second.exit, Exit::Ok, "{}", second.stderr);
+    assert!(
+        second
+            .stdout
+            .contains("(unverified: the bundle is unsigned)"),
+        "{}",
+        second.stdout
+    );
+    assert_eq!(
+        messages_by_verification(&pool).await,
+        [
+            (Some("unsigned".to_owned()), 1),
+            (Some("verified".to_owned()), 1)
+        ],
+        "the forged message lands in a conversation of its own"
+    );
+    gateway.stop.cancel();
+    drop(tokio::time::timeout(Duration::from_secs(5), gateway.task).await);
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn concurrent_shares_refresh_the_login_once() {
+    let served = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("phil", &served.url, None);
+    sender.sign_in_until(&served.url, "2020-01-01T00:00:00Z");
+    let first = sanitized(&sender, outside.path(), None).await;
+    let one = first.with_file_name("one.clean.json");
+    std::fs::rename(&first, &one).expect("rename");
+    let second = sanitized(&sender, outside.path(), None).await;
+    let one_text = one.display().to_string();
+    let two_text = second.display().to_string();
+    let one_args = ["memory", "share", one_text.as_str()];
+    let two_args = ["memory", "share", two_text.as_str()];
+    let (a, b) = tokio::join!(sender.run(&one_args), sender.run(&two_args));
+    assert_eq!(a.exit, Exit::Ok, "{}", a.stderr);
+    assert_eq!(b.exit, Exit::Ok, "{}", b.stderr);
+    let seen = served.drops.0.lock();
+    assert_eq!(seen.refreshes, ["rhcr_throwaway"], "one refresh, no reuse");
+    assert_eq!(seen.tokens.len(), 2);
+    assert!(
+        seen.tokens
+            .iter()
+            .all(|token| token == "Bearer rhca_rhcr_throwaway")
+    );
+    drop(seen);
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_server_error_then_a_miss_says_the_drop_failed_midway() {
+    let calls = Arc::new(Mutex::new(0_usize));
+    let counted = Arc::clone(&calls);
+    let app = Router::new().route(
+        "/api/drops/{id}",
+        axum::routing::get(move || async move {
+            let mut calls = counted.lock();
+            *calls += 1;
+            if *calls == 1 {
+                StatusCode::INTERNAL_SERVER_ERROR
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listener");
+    let url = format!("http://{}/", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let receiver = Node::new("alex", &url, None);
+    let code = format!(
+        "rhb1:{DROP_ID}#{}",
+        capture::seal::ShareKey::generate().reveal()
+    );
+    let report = receiver.run(&["memory", "receive", &code]).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report
+            .stderr
+            .contains("failed while serving bundle Qm9iQm9iQm9iQm9iQm9iQg and the drop is now gone; ask the sender to share it again"),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(*calls.lock(), 2);
+    server.abort();
+}
+
+#[test]
+fn a_shared_code_never_prints_its_key_in_debug() {
+    let key = capture::seal::ShareKey::generate().reveal();
+    let shared = cli::memory::Shared {
+        sessions: 1,
+        signed: None,
+        uploaded: 1,
+        expires_at: chrono::DateTime::UNIX_EPOCH,
+        code: format!("rhb1:{DROP_ID}#{key}"),
+        kept: None,
+    };
+    let shown = format!("{shared:?}");
+    assert!(!shown.contains(&key), "{shown}");
+    assert!(shown.contains(&format!("rhb1:{DROP_ID}#..")), "{shown}");
 }

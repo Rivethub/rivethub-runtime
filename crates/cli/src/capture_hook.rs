@@ -106,13 +106,10 @@ pub(crate) async fn ingest_bundle(
         conversation_id: String::new(),
     };
     for session in &bundle.sessions {
-        let mut batch = session.import_batch()?;
-        if let Some(receipt) = receipt {
-            batch
-                .settings
-                .get_or_insert_default()
-                .insert(wire::capture::RECEIPT_KEY, receipt)?;
-        }
+        let batch = match receipt {
+            Some(receipt) => session.received_batch(receipt)?,
+            None => session.import_batch()?,
+        };
         let written = writer.write(&batch, now).await?;
         totals.inserted += written.inserted;
         totals.skipped += written.skipped;

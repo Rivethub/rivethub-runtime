@@ -250,6 +250,24 @@ impl Cloud {
         Ok(())
     }
 
+    async fn lock(&self) -> Result<std::fs::File, CloudError> {
+        let mut name = self.store.clone().into_os_string();
+        name.push(".lock");
+        let path = PathBuf::from(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+            .await
+            .map_err(std::io::Error::other)?
+            .map_err(CloudError::from)
+    }
+
     fn mine(&self, tokens: Tokens) -> Result<Tokens, CloudError> {
         if tokens.url == self.url.as_str() {
             Ok(tokens)
@@ -261,9 +279,16 @@ impl Cloud {
         }
     }
 
-    pub(crate) async fn access_token(&self, force_refresh: bool) -> Result<String, CloudError> {
+    pub(crate) async fn access_token(&self, rejected: Option<&str>) -> Result<String, CloudError> {
         let tokens = self.mine(self.stored()?.ok_or(CloudError::LoggedOut)?)?;
-        if !force_refresh && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
+        if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
+            return Ok(tokens.access_token);
+        }
+        let _lock = self.lock().await?;
+        let tokens = self.mine(self.stored()?.ok_or(CloudError::LoggedOut)?)?;
+        let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
+        let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
+        if (fresh && rejected.is_none()) || renewed_elsewhere {
             return Ok(tokens.access_token);
         }
         let response = self

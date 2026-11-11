@@ -16,7 +16,8 @@ use crate::cloud::CloudError;
 const DROPS_PATH: &str = "api/drops";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const MAX_DROP_BYTES: usize = 64 << 20;
-const SERVER_RETRIES: usize = 2;
+const SERVER_RETRIES: u32 = 2;
+const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(super) struct DropBox {
@@ -47,6 +48,10 @@ pub enum DropError {
         "the download of bundle {0} stopped before the end; a drop burns once its download starts, so ask the sender to share it again"
     )]
     Burned(DropId),
+    #[error(
+        "the drop box failed while serving bundle {0} and the drop is now gone; ask the sender to share it again"
+    )]
+    FailedMidway(DropId),
     #[error("the inbox could not hold the download: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -63,20 +68,20 @@ impl DropBox {
         ciphertext: bytes::Bytes,
     ) -> Result<(DropId, Uploaded), DropError> {
         let url = self.cloud.endpoint(DROPS_PATH)?;
-        let mut refreshed = false;
+        let mut rejected: Option<String> = None;
         loop {
-            let token = self.cloud.access_token(refreshed).await?;
+            let token = self.cloud.access_token(rejected.as_deref()).await?;
             let response = self
                 .transfer
                 .post(url.clone())
-                .bearer_auth(token)
+                .bearer_auth(&token)
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .body(ciphertext.clone())
                 .send()
                 .await
                 .map_err(CloudError::from)?;
-            if response.status() == StatusCode::UNAUTHORIZED && !refreshed {
-                refreshed = true;
+            if response.status() == StatusCode::UNAUTHORIZED && rejected.is_none() {
+                rejected = Some(token);
                 continue;
             }
             let uploaded: Uploaded = crate::cloud::checked(response)
@@ -94,7 +99,7 @@ impl DropBox {
 
     pub(super) async fn download(&self, id: &DropId, sink: std::fs::File) -> Result<(), DropError> {
         let url = self.cloud.endpoint(&format!("{DROPS_PATH}/{id}"))?;
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         let response = loop {
             let response = self
                 .transfer
@@ -102,12 +107,16 @@ impl DropBox {
                 .send()
                 .await
                 .map_err(CloudError::from)?;
-            attempts += 1;
-            if response.status().is_server_error() && attempts <= SERVER_RETRIES {
+            if response.status().is_server_error() && attempts < SERVER_RETRIES {
+                attempts += 1;
+                tokio::time::sleep(RETRY_DELAY * attempts).await;
                 continue;
             }
             break response;
         };
+        if response.status() == StatusCode::NOT_FOUND && attempts > 0 {
+            return Err(DropError::FailedMidway(id.clone()));
+        }
         if response.status() == StatusCode::NOT_FOUND {
             return Err(DropError::Gone(id.clone()));
         }

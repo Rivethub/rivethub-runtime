@@ -14,6 +14,7 @@ mod mcp_sqlite;
 mod node_name;
 mod roots;
 mod sessions;
+mod share;
 mod startup;
 mod store_roots;
 mod tls_fallback;

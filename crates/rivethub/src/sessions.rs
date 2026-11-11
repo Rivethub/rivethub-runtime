@@ -153,7 +153,12 @@ impl SessionShare for NodeShare {
         path: PathBuf,
         consent: &dyn ShareConsent,
     ) -> Result<ShareOutcome, ShareFailure> {
-        let bundle = read_bundle(&path).await?;
+        let text = cli::memory::read_bundle_file(&path).await.map_err(failed)?;
+        let not_bundle = |_| ShareFailure::NotBundle(path.clone());
+        let bundle = capture::bundle::parse(
+            std::str::from_utf8(&text).map_err(|_| ShareFailure::NotBundle(path.clone()))?,
+        )
+        .map_err(not_bundle)?;
         if bundle.manifest.sanitization == Sanitization::Raw {
             return Err(ShareFailure::RawShare(path));
         }
@@ -176,14 +181,14 @@ impl SessionShare for NodeShare {
                 .collect(),
             author: bundle.manifest.exported_by.user.clone(),
             signed_by: signer.public_key().fingerprint(),
-            bytes: tokio::fs::metadata(&path).await?.len(),
+            bytes: text.len() as u64,
             unreviewed: flags.unreviewed,
         };
         drop(bundle);
         let Consent::Share { unreviewed } = consent.consent(&preview).await? else {
             return Ok(ShareOutcome::Declined);
         };
-        let sealed = cli::memory::seal_file(&self.env, &path, true, unreviewed)
+        let sealed = cli::memory::seal_bytes(&self.env, &path, text, true, unreviewed)
             .await
             .map_err(failed)?;
         let shared = cli::memory::upload(&self.env, sealed)

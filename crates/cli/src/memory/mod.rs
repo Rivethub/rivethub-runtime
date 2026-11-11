@@ -26,6 +26,8 @@ pub use share::SealedFile;
 pub use share::ShareError;
 pub use share::Shared;
 pub use share::code_line;
+pub use share::read_bundle_file;
+pub use share::seal_bytes;
 pub use share::seal_file;
 pub use share::upload;
 pub use store::SessionStore;
