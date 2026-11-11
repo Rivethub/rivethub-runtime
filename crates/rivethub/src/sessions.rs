@@ -124,16 +124,18 @@ impl SessionShare for NodeShare {
             .chosen(&self.author, &self.owner, &job.sessions)
             .await?;
         let chosen = share::chosen(self.author.clone(), sessions, Utc::now()).map_err(failed)?;
-        let outcome = share::sanitize(share::Job {
-            bundle: &chosen.bundle,
-            sessions: &chosen.sessions,
-            mapping: &mapping,
-            key: &self.key,
-            decider: decider.as_ref(),
-            paths: &paths,
-            clobber: Clobber::Refuse,
-            at: Utc::now(),
-        })
+        let outcome = share::sanitize(
+            share::Job {
+                bundle: &chosen.bundle,
+                sessions: &chosen.sessions,
+                mapping: &mapping,
+                key: &self.key,
+                decider: decider.as_ref(),
+                at: Utc::now(),
+            },
+            &paths,
+            Clobber::Refuse,
+        )
         .await
         .map_err(failed)?;
         Ok(summary(&outcome, paths))
@@ -211,12 +213,12 @@ async fn read_bundle(path: &Path) -> Result<SessionBundle, ShareFailure> {
 fn summary(outcome: &Outcome, paths: BundlePaths) -> SanitizeSummary {
     let report = &outcome.report;
     SanitizeSummary {
-        sessions: outcome.sanitized.sessions.len(),
+        sessions: outcome.sanitized.bundle.sessions.len(),
         totals: report.totals().to_string(),
         rule_counts: share::rule_counts(report),
         not_scanned: share::NOT_SCANNED.to_owned(),
         best_effort: share::BEST_EFFORT.to_owned(),
-        local: outcome.local.then_some(paths.local),
+        local: outcome.local.is_some().then_some(paths.local),
         bundle: paths.bundle,
         report: paths.report,
         decision: report.decision.as_ref().map(|decision| DecisionSummary {

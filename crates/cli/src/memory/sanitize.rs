@@ -166,16 +166,18 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     };
     let mapping = mapping_file(mapping, env)?;
     let paths = BundlePaths::beside(out);
-    let outcome = share::sanitize(share::Job {
-        bundle: &bundle,
-        sessions: &sessions,
-        mapping: &mapping,
-        key: &share::key_path(env)?,
-        decider: decider.as_ref(),
-        paths: &paths,
-        clobber: Clobber::Replace,
-        at: Utc::now(),
-    })
+    let outcome = share::sanitize(
+        share::Job {
+            bundle: &bundle,
+            sessions: &sessions,
+            mapping: &mapping,
+            key: &share::key_path(env)?,
+            decider: decider.as_ref(),
+            at: Utc::now(),
+        },
+        &paths,
+        Clobber::Replace,
+    )
     .await?;
     let decision = if let Some(decision) = &outcome.report.decision {
         decision_line(decision, &paths.report)
@@ -189,7 +191,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
         "sanitized {count} {noun}: {totals}; report at {}\n{decision}",
         paths.report.display()
     );
-    if outcome.local {
+    if outcome.local.is_some() {
         out.push_str("local review file at ");
         out.push_str(&paths.local.display().to_string());
         out.push_str(

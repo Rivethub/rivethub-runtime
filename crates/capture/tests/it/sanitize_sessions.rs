@@ -132,16 +132,18 @@ async fn sanitized_sessions(
         at()?,
     )?;
     let paths = BundlePaths::beside(&directory.join("work.clean.json"));
-    let outcome = share::sanitize(share::Job {
-        bundle: &chosen.bundle,
-        sessions: &chosen.sessions,
-        mapping: &MappingFile::Default(directory.join("absent.toml")),
-        key,
-        decider: None,
-        paths: &paths,
-        clobber: Clobber::Refuse,
-        at: at()?,
-    })
+    let outcome = share::sanitize(
+        share::Job {
+            bundle: &chosen.bundle,
+            sessions: &chosen.sessions,
+            mapping: &MappingFile::Default(directory.join("absent.toml")),
+            key,
+            decider: None,
+            at: at()?,
+        },
+        &paths,
+        Clobber::Refuse,
+    )
     .await?;
     let report = std::fs::read_to_string(&paths.report)?;
     Ok((outcome, report))
@@ -161,7 +163,7 @@ async fn a_session_term_redacts_only_its_session_and_only_that_text() -> TestRes
     )
     .await?;
 
-    let [chosen, approved] = outcome.sanitized.sessions.as_slice() else {
+    let [chosen, approved] = outcome.sanitized.bundle.sessions.as_slice() else {
         return Err("two sessions".into());
     };
     assert_eq!(
@@ -189,7 +191,10 @@ async fn a_session_term_redacts_only_its_session_and_only_that_text() -> TestRes
     );
     assert!(report.contains("| mapping | session_term | `[REDACTED:session_term]` | 3 |"));
     assert!(!report.contains(CLIENT), "{report}");
-    assert_eq!(capture::sanitize::secrets(&outcome.sanitized), Vec::new());
+    assert_eq!(
+        capture::sanitize::secrets(&outcome.sanitized.bundle),
+        Vec::new()
+    );
     Ok(())
 }
 
@@ -203,7 +208,7 @@ async fn drop_tool_outputs_replaces_only_that_sessions_tool_results() -> TestRes
     )
     .await?;
 
-    let [approved, dropped] = outcome.sanitized.sessions.as_slice() else {
+    let [approved, dropped] = outcome.sanitized.bundle.sessions.as_slice() else {
         return Err("two sessions".into());
     };
     let call = dropped.batch.messages.get(1).ok_or("tool call")?;
@@ -228,7 +233,10 @@ async fn drop_tool_outputs_replaces_only_that_sessions_tool_results() -> TestRes
         "github_token 2, drop_tool_outputs 1"
     );
     assert!(!report.contains(OUTPUT), "{report}");
-    assert_eq!(capture::sanitize::secrets(&outcome.sanitized), Vec::new());
+    assert_eq!(
+        capture::sanitize::secrets(&outcome.sanitized.bundle),
+        Vec::new()
+    );
     Ok(())
 }
 
@@ -286,7 +294,12 @@ async fn drop_tool_outputs_also_drops_the_output_a_reader_puts_in_content() -> T
     )
     .await?;
 
-    let dropped = outcome.sanitized.sessions.first().ok_or("one session")?;
+    let dropped = outcome
+        .sanitized
+        .bundle
+        .sessions
+        .first()
+        .ok_or("one session")?;
     let output = dropped
         .batch
         .messages

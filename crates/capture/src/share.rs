@@ -20,8 +20,10 @@ use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 
 use crate::bundle::BundleError;
+use crate::bundle::Sealed;
 use crate::sanitize::KeyError;
 use crate::sanitize::LocalKey;
+use crate::sanitize::LocalReview;
 use crate::sanitize::Policy;
 use crate::sanitize::Report;
 use crate::sanitize::SanitizeError;
@@ -209,20 +211,19 @@ pub struct Job<'a> {
     pub mapping: &'a MappingFile,
     pub key: &'a Path,
     pub decider: Option<&'a Decider>,
-    pub paths: &'a BundlePaths,
-    pub clobber: Clobber,
     pub at: DateTime<Utc>,
 }
 
 #[derive(Debug)]
 pub struct Outcome {
     pub report: Report,
-    pub sanitized: SessionBundle,
-    pub local: bool,
+    pub sanitized: Sealed,
+    pub local: Option<LocalReview>,
+    pub markdown: String,
     pub mark_lines: BTreeMap<usize, NonZeroUsize>,
 }
 
-pub async fn sanitize(job: Job<'_>) -> Result<Outcome, ShareError> {
+pub async fn sanitize_in_memory(job: Job<'_>, label: &str) -> Result<Outcome, ShareError> {
     let (mapping, source) = rules(job.mapping).await?;
     let key = LocalKey::load_or_create(job.key)?;
     let policy = Policy {
@@ -237,10 +238,7 @@ pub async fn sanitize(job: Job<'_>) -> Result<Outcome, ShareError> {
         scrubbed.flag(candidates, &scores, decider.review)?;
     }
     let sanitized = scrubbed.seal(&policy, job.at)?;
-    let paths = job.paths;
-    let markdown = sanitized
-        .report
-        .markdown(&paths.bundle.display().to_string(), &source);
+    let markdown = sanitized.report.markdown(label, &source);
     let mark_lines = match &sanitized.report.decision {
         Some(_) => crate::sanitize::marks::read_flags(&markdown)
             .map_err(ShareError::Report)?
@@ -250,19 +248,39 @@ pub async fn sanitize(job: Job<'_>) -> Result<Outcome, ShareError> {
             .collect(),
         None => BTreeMap::new(),
     };
-    write_file(paths.report.clone(), markdown.into_bytes(), job.clobber).await?;
-    if let Some(local) = &sanitized.local {
-        write_file(paths.local.clone(), serde_json::to_vec(local)?, job.clobber).await?;
-    }
-    let mut text = sanitized.sealed.text;
-    text.push(b'\n');
-    write_file(paths.bundle.clone(), text, job.clobber).await?;
     Ok(Outcome {
         report: sanitized.report,
-        sanitized: sanitized.sealed.bundle,
-        local: sanitized.local.is_some(),
+        sanitized: sanitized.sealed,
+        local: sanitized.local,
+        markdown,
         mark_lines,
     })
+}
+
+pub async fn sanitize(
+    job: Job<'_>,
+    paths: &BundlePaths,
+    clobber: Clobber,
+) -> Result<Outcome, ShareError> {
+    let outcome = sanitize_in_memory(job, &paths.bundle.display().to_string()).await?;
+    write_file(
+        paths.report.clone(),
+        outcome.markdown.clone().into_bytes(),
+        clobber,
+    )
+    .await?;
+    if let Some(local) = &outcome.local {
+        write_file(paths.local.clone(), serde_json::to_vec(local)?, clobber).await?;
+    }
+    write_file(paths.bundle.clone(), line(&outcome.sanitized.text), clobber).await?;
+    Ok(outcome)
+}
+
+fn line(text: &[u8]) -> Vec<u8> {
+    let mut line = Vec::with_capacity(text.len() + 1);
+    line.extend_from_slice(text);
+    line.push(b'\n');
+    line
 }
 
 #[derive(Debug)]
