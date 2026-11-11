@@ -226,6 +226,8 @@ pub enum Error {
         path: String,
         source: serde_json::Error,
     },
+    #[error("{path} is a raw bundle that was never sanitized; pass --force to ingest it as it is")]
+    BundleRaw { path: String },
     #[error(transparent)]
     Bundle(#[from] capture::bundle::BundleError),
 }

@@ -40,7 +40,8 @@ struct PreparedBatch {
     key: ConversationKey,
     channel: Option<String>,
     title: Option<String>,
-    settings: Option<String>,
+    settings: Option<JsonObject>,
+    imported: bool,
     task_id: Option<String>,
     node: Option<String>,
     finalize: bool,
@@ -72,7 +73,7 @@ impl SqliteStore {
         node: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<CaptureResult, SqliteError> {
-        let prepared = PreparedBatch::new(batch, node)?;
+        let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
         let embed = self.embed_armed();
         let result = self
@@ -100,14 +101,18 @@ impl SqliteStore {
 }
 
 impl PreparedBatch {
-    fn new(batch: CaptureBatchRequest, node: Option<&str>) -> Result<Self, SqliteError> {
+    fn new(
+        batch: CaptureBatchRequest,
+        owner: &Owner,
+        node: Option<&str>,
+    ) -> Result<Self, SqliteError> {
         let created_at = crate::time::Stamp::from(batch.created_at);
         let updated_at = crate::time::Stamp::from(batch.updated_at);
-        let settings = batch
-            .settings
-            .as_ref()
-            .map(|settings| encode(settings, "settings"))
-            .transpose()?;
+        let owned_key = wire::capture::owned_import_key(owner.as_str(), &batch.session_key)
+            .map_err(|error| SqliteError::Invalid {
+                message: error.to_string(),
+            })?;
+        let imported = owned_key.is_some();
         let messages = batch
             .messages
             .iter()
@@ -115,7 +120,7 @@ impl PreparedBatch {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             key: ConversationKey {
-                session_key: batch.session_key,
+                session_key: owned_key.unwrap_or(batch.session_key),
                 agent: batch.agent,
             },
             channel: batch.channel,
@@ -124,7 +129,8 @@ impl PreparedBatch {
                 .as_deref()
                 .and_then(spoken_title)
                 .map(str::to_owned),
-            settings,
+            settings: batch.settings,
+            imported,
             task_id: batch.task_id,
             node: node.map(str::to_owned),
             finalize: batch.finalize == Some(true),
@@ -169,7 +175,12 @@ impl PreparedBatch {
                 key: &self.key,
                 channel: self.channel.as_deref(),
                 title: self.title.as_deref(),
-                settings: self.settings.as_deref(),
+                settings: self
+                    .settings
+                    .as_ref()
+                    .map(|settings| encode(settings, "settings"))
+                    .transpose()?
+                    .as_deref(),
                 task_id: self.task_id.as_deref(),
                 owner,
                 created_at: self.created_at.at(now),
@@ -234,6 +245,22 @@ impl PreparedBatch {
         now: DateTime<Utc>,
     ) -> Result<(), SqliteError> {
         let updated_at = self.updated_at.at(now).max(stored_updated_at);
+        let (settings, title) = if self.imported {
+            let stored = stored_settings(tx, id)?;
+            let merged =
+                wire::capture::merge_imported_settings(stored.as_ref(), self.settings.as_ref())
+                    .map_err(|source| SqliteError::Encode {
+                        column: "settings",
+                        source,
+                    })?;
+            let title = self.title.as_ref().filter(|_| merged.incoming_is_newer);
+            (Some(merged.settings), title)
+        } else {
+            (self.settings.clone(), self.title.as_ref())
+        };
+        let settings = settings
+            .map(|settings| encode(&settings, "settings"))
+            .transpose()?;
         tx.execute(
             "UPDATE ros_conversations
                 SET updated_at = ?2,
@@ -245,8 +272,8 @@ impl PreparedBatch {
             params![
                 id,
                 time::stamp(updated_at),
-                self.title,
-                self.settings,
+                title,
+                settings,
                 self.task_id,
                 owner,
             ],
@@ -445,6 +472,23 @@ fn stored_metadata(metadata: &StoredMetadata<'_>) -> Result<String, SqliteError>
     };
     let merged = serde_json::to_value(metadata).map_err(failed)?;
     serde_json::to_string(&merged).map_err(failed)
+}
+
+fn stored_settings(tx: &Transaction<'_>, id: &str) -> Result<Option<JsonObject>, SqliteError> {
+    let text: Option<String> = tx
+        .query_row(
+            "SELECT settings FROM ros_conversations WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(SqliteError::query("conversation settings"))?;
+    text.map(|text| {
+        serde_json::from_str(&text).map_err(|source| SqliteError::StoredJson {
+            column: "settings",
+            source,
+        })
+    })
+    .transpose()
 }
 
 pub(crate) fn encode(object: &JsonObject, column: &'static str) -> Result<String, SqliteError> {

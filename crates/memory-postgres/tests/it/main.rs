@@ -7,6 +7,7 @@ mod deadline;
 mod embedding_store;
 mod final_fix;
 mod flagged;
+mod import;
 mod index_friendly;
 mod memory_golden;
 mod merge;

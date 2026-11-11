@@ -105,7 +105,7 @@ pub(crate) async fn ingest_bundle(
         conversation_id: String::new(),
     };
     for session in &bundle.sessions {
-        let written = writer.write(&session.batch, now).await?;
+        let written = writer.write(&session.import_batch()?, now).await?;
         totals.inserted += written.inserted;
         totals.skipped += written.skipped;
         totals.conversation_id = written.conversation_id;

@@ -9,6 +9,8 @@ use memory_postgres::PostgresMemory;
 use uuid::Uuid;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
+use wire::capture::Sanitization;
+use wire::capture::SessionBundle;
 use wire::gateway::users::DEFAULT_OWNER_ID;
 use wire::gateway::users::UsersRegistry;
 
@@ -66,6 +68,111 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
     })
 }
 
+pub(super) fn ingest_args(args: &[String]) -> Result<MemoryCommand, Error> {
+    let mut scan = Scan::new(args);
+    let mut path = None;
+    let mut force = false;
+    let mut dry_run = false;
+    while let Some(token) = scan.current().map(str::to_owned) {
+        if scan.flag("--force") {
+            force = true;
+            continue;
+        }
+        if scan.flag("--dry-run") {
+            dry_run = true;
+            continue;
+        }
+        if token.starts_with('-') {
+            return Err(Error::UnknownOption(token));
+        }
+        if path.is_some() {
+            return Err(Error::ImportOne);
+        }
+        path = Some(PathBuf::from(token));
+        scan.bump();
+    }
+    let Some(path) = path else {
+        return Err(Error::ImportPath);
+    };
+    Ok(MemoryCommand::IngestBundle {
+        path,
+        force,
+        dry_run,
+    })
+}
+
+pub(super) async fn ingest(
+    path: &Path,
+    force: bool,
+    dry_run: bool,
+    env: &Environment,
+) -> Result<Report, Error> {
+    let bundle = capture::bundle::parse(&tokio::fs::read_to_string(path).await?)?;
+    let raw = bundle.manifest.sanitization == Sanitization::Raw;
+    if raw && !force && !dry_run {
+        return Err(Error::BundleRaw {
+            path: path.display().to_string(),
+        });
+    }
+    let state = match (raw, force) {
+        (false, _) => "",
+        (true, true) => " (raw bundle forced)",
+        (true, false) => " (raw bundle; ingest needs --force)",
+    };
+    let sessions = sessions_from(&bundle);
+    if dry_run {
+        let mut lines: Vec<String> = bundle.sessions.iter().map(listed).collect();
+        lines.push(format!("would ingest {sessions}{state}; nothing written\n"));
+        return Ok(Report::success(lines.concat()));
+    }
+    let totals = crate::capture_hook::ingest_bundle(env, &bundle, Utc::now()).await?;
+    Ok(Report::success(format!(
+        "ingested {sessions}{state}: {} inserted, {} skipped\n",
+        totals.inserted, totals.skipped
+    )))
+}
+
+fn sessions_from(bundle: &SessionBundle) -> String {
+    let mut authors: Vec<&str> = Vec::new();
+    for session in &bundle.sessions {
+        let author = author_of(session);
+        if !authors.contains(&author) {
+            authors.push(author);
+        }
+    }
+    let count = bundle.sessions.len();
+    let noun = if count == 1 { "session" } else { "sessions" };
+    if authors.is_empty() {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun} from {}", authors.join(", "))
+    }
+}
+
+fn listed(session: &BundledSession) -> String {
+    let origin = &session.origin;
+    let count = session.batch.messages.len();
+    let noun = if count == 1 { "message" } else { "messages" };
+    let dates = match (origin.created_at, origin.updated_at) {
+        (Some(created), Some(updated)) => format!(
+            "{} to {}",
+            created.format("%Y-%m-%d"),
+            updated.format("%Y-%m-%d")
+        ),
+        _ => "undated".to_owned(),
+    };
+    format!(
+        "{} ({}): {count} {noun} from {}, {dates}\n",
+        origin.session_key,
+        origin.agent,
+        author_of(session),
+    )
+}
+
+fn author_of(session: &BundledSession) -> &str {
+    session.origin.known_author().unwrap_or("an unknown author")
+}
+
 pub(super) async fn share(
     out: PathBuf,
     wanted: Vec<String>,
@@ -99,6 +206,10 @@ pub(super) async fn share(
     if let Some(named) = &named {
         refuse_missing(named, &sessions)?;
     }
+    let sessions: Vec<BundledSession> = sessions
+        .into_iter()
+        .map(BundledSession::forwarding_stored_origin)
+        .collect();
     let count = sessions.len();
     let mut text = capture::bundle::seal(author, Utc::now(), sessions)?.text;
     text.push(b'\n');

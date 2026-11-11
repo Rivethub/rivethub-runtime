@@ -195,6 +195,15 @@ impl MemoryStore for SqliteStore {
         self.tags_lookup(lookup).await
     }
 
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        self.with_conn(move |conn| crate::conversation::origins(conn, &session_keys))
+            .await
+            .map_err(MemoryStoreError::from)
+    }
+
     async fn upsert_tag_taxonomy(
         &self,
         upsert: TagTaxonomyUpsert,

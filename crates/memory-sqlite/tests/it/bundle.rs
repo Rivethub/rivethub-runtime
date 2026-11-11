@@ -9,7 +9,12 @@ use common::message;
 use common::object;
 use common::table;
 use kernel::memory::CaptureBatchRequest;
+use kernel::memory::MemoryStore as _;
+use kernel::memory::SessionCatalog as _;
 use kernel::memory::SessionDeletion as _;
+use kernel::memory::SessionQuery;
+use kernel::memory::SessionView;
+use kernel::memory::SummaryStore as _;
 use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
 use wire::message::Role;
@@ -258,5 +263,366 @@ async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_ro
             ("c-second", vec!["third"]),
         ]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
+    let source = fresh_store()?;
+    let phil_owner = Owner::new("phil".to_owned())?;
+    let mut shared = batch("claude-code:shared", "rivet", "claude-code");
+    shared
+        .messages
+        .push(message("evt-1", Role::User, "move the bundle reader"));
+    source
+        .store
+        .capture(
+            shared,
+            &phil_owner,
+            None,
+            instant("2026-10-14T09:00:00.000Z")?,
+        )
+        .await?;
+    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let session = exported.first().ok_or("exported session")?;
+    let received: CaptureBatchRequest =
+        serde_json::from_str(&serde_json::to_string(&session.import_batch()?)?)?;
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+
+    let first = destination
+        .store
+        .capture(received.clone(), &bob, None, later)
+        .await?;
+    let again = destination
+        .store
+        .capture(received, &bob, None, later)
+        .await?;
+
+    assert_eq!((first.inserted, again.inserted), (1, 0));
+    let conversations = table(&destination.store, "ros_conversations").await?;
+    let conversation = conversations.first().ok_or("imported conversation")?;
+    let column = |name: &str| conversation.get(name).and_then(testkit::Json::as_str);
+    assert_eq!(column("created_at"), Some("2026-10-14T09:00:00.000Z"));
+    assert_eq!(column("updated_at"), Some("2026-10-14T09:00:00.000Z"));
+    assert_eq!(column("owner_user_id"), Some("bob"));
+    let receiver_key =
+        wire::capture::owned_import_key("bob", &session.import_batch()?.session_key)?
+            .ok_or("an import key")?;
+    assert_eq!(column("session_key"), Some(receiver_key.as_str()));
+    let origins = destination
+        .store
+        .lookup_origins(vec![receiver_key.clone()])
+        .await?;
+    let origin: wire::capture::SessionOrigin =
+        origins.get(&receiver_key).ok_or("origin")?.deserialize()?;
+    assert_eq!(origin, session.origin);
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult {
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let tied = instant("2026-10-14T09:00:00.123Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
+    for step in &steps {
+        let mut said = message(step, Role::User, step);
+        said.created_at = Some(tied);
+        tied_batch.messages.push(said);
+    }
+    store
+        .store
+        .capture(
+            tied_batch,
+            &alex,
+            None,
+            instant("2026-11-08T12:00:00.000Z")?,
+        )
+        .await?;
+
+    let exported = store
+        .store
+        .bundled_sessions(
+            BundleAuthor {
+                user: "alex".to_owned(),
+                node: "team".to_owned(),
+            },
+            None,
+        )
+        .await?;
+
+    let session = exported.first().ok_or("exported session")?;
+    let order: Vec<&str> = session
+        .batch
+        .messages
+        .iter()
+        .map(|message| message.event_id.as_str())
+        .collect();
+    assert_eq!(order, steps);
+    Ok(())
+}
+
+#[tokio::test]
+async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult
+{
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let tied = instant("2026-10-14T09:00:00.123Z")?;
+    let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
+    let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
+    for step in &steps {
+        let mut said = message(step, Role::User, step);
+        said.created_at = Some(tied);
+        tied_batch.messages.push(said);
+    }
+    let captured = store
+        .store
+        .capture(
+            tied_batch,
+            &alex,
+            None,
+            instant("2026-11-08T12:00:00.000Z")?,
+        )
+        .await?;
+
+    let window = store
+        .store
+        .conversation(uuid::Uuid::parse_str(&captured.conversation_id)?)
+        .await?
+        .ok_or("summary window")?;
+    let summarized: Vec<&str> = window
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(summarized, steps);
+
+    let context = store
+        .store
+        .context("claude-code:tied", instant("2026-11-08T12:00:00.000Z")?)
+        .await?;
+    let (older, newest) = steps.split_at(3);
+    let recent = newest.iter().map(|step| format!("[user] {step}"));
+    let relevant = older.iter().map(|step| format!("[rivet/user] {step}"));
+    assert!(
+        context.contains(&recent.collect::<Vec<_>>().join("\n")),
+        "{context}"
+    );
+    assert!(
+        context.contains(&relevant.collect::<Vec<_>>().join("\n")),
+        "{context}"
+    );
+
+    let page = store
+        .store
+        .list(&SessionQuery::new(SessionView::All))
+        .await?;
+    let row = page.items.first().ok_or("catalog row")?;
+    assert_eq!(row.title, "step-1");
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct Settings {
+    pinned: Option<bool>,
+    model: Option<String>,
+    origin: Option<wire::capture::SessionOrigin>,
+}
+
+fn imported(
+    origin_updated_at: &str,
+    model: &str,
+) -> Result<CaptureBatchRequest, Box<dyn std::error::Error>> {
+    let mut shared = batch("claude-code:shared", "rivet", "claude-code");
+    shared.settings = Some(serde_json::from_str(&format!(r#"{{"model":"{model}"}}"#))?);
+    shared
+        .messages
+        .push(message("evt-1", Role::User, "move the bundle reader"));
+    let session = wire::capture::BundledSession {
+        origin: wire::capture::SessionOrigin {
+            author: "phil".to_owned(),
+            node: "desk".to_owned(),
+            conversation_id: "7b0e7d1c-0000-4000-8000-000000000001".to_owned(),
+            session_key: "claude-code:shared".to_owned(),
+            agent: "rivet".to_owned(),
+            created_at: Some(instant("2026-10-14T09:00:00.000Z")?),
+            updated_at: Some(instant(origin_updated_at)?),
+        },
+        batch: serde_json::from_value(serde_json::to_value(shared)?)?,
+    };
+    Ok(serde_json::from_str(&serde_json::to_string(
+        &session.import_batch()?,
+    )?)?)
+}
+
+#[tokio::test]
+async fn a_reimport_merges_settings_and_keeps_the_newest_origin() -> TestResult {
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+    let first = destination
+        .store
+        .capture(
+            imported("2026-10-15T00:00:00.000Z", "opus")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    execute(
+        &destination.store,
+        &format!(
+            "UPDATE ros_conversations SET settings = json_set(settings, '$.pinned', json('true')) \
+             WHERE id = '{}'",
+            first.conversation_id
+        ),
+    )
+    .await?;
+    let settings = || async {
+        let rows = table(&destination.store, "ros_conversations").await?;
+        let row = rows.first().ok_or("conversation")?;
+        let text = row
+            .get("settings")
+            .and_then(testkit::Json::as_str)
+            .ok_or("settings")?;
+        Ok::<Settings, Box<dyn std::error::Error>>(serde_json::from_str(text)?)
+    };
+
+    destination
+        .store
+        .capture(
+            imported("2026-10-14T00:00:00.000Z", "sonnet")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let after_older = settings().await?;
+    destination
+        .store
+        .capture(
+            imported("2026-10-20T00:00:00.000Z", "haiku")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let after_newer = settings().await?;
+
+    let updated = |settings: &Settings| {
+        settings
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.updated_at)
+    };
+    assert_eq!(after_older.pinned, Some(true));
+    assert_eq!(after_older.model.as_deref(), Some("opus"));
+    assert_eq!(
+        updated(&after_older),
+        Some(instant("2026-10-15T00:00:00.000Z")?)
+    );
+    assert_eq!(after_newer.pinned, Some(true));
+    assert_eq!(after_newer.model.as_deref(), Some("haiku"));
+    assert_eq!(
+        updated(&after_newer),
+        Some(instant("2026-10-20T00:00:00.000Z")?)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_older_bundle_keeps_a_newer_title() -> TestResult {
+    let destination = fresh_store()?;
+    let bob = Owner::new("bob".to_owned())?;
+    let later = instant("2026-11-08T12:00:00.000Z")?;
+    let titled = |updated: &str, title: &str| {
+        let mut batch = imported(updated, "opus")?;
+        batch.title = Some(title.to_owned());
+        Ok::<_, Box<dyn std::error::Error>>(batch)
+    };
+    let title = || async {
+        let rows = table(&destination.store, "ros_conversations").await?;
+        let row = rows.first().ok_or("conversation")?;
+        Ok::<_, Box<dyn std::error::Error>>(
+            row.get("title")
+                .and_then(testkit::Json::as_str)
+                .map(str::to_owned),
+        )
+    };
+    let first = destination
+        .store
+        .capture(
+            titled("2026-10-20T00:00:00.000Z", "Wombat plan final")?,
+            &bob,
+            None,
+            later,
+        )
+        .await?;
+    let older = titled("2026-10-02T00:00:00.000Z", "Wombat draft")?;
+    destination
+        .store
+        .capture(older.clone(), &bob, None, later)
+        .await?;
+    let after_older = title().await?;
+    execute(
+        &destination.store,
+        &format!(
+            "UPDATE ros_conversations SET title = 'Receiver title' WHERE id = '{}'",
+            first.conversation_id
+        ),
+    )
+    .await?;
+
+    destination.store.capture(older, &bob, None, later).await?;
+
+    assert_eq!(after_older.as_deref(), Some("Wombat plan final"));
+    assert_eq!(title().await?.as_deref(), Some("Receiver title"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named() -> TestResult {
+    let store = fresh_store()?;
+    let alex = Owner::new("alex".to_owned())?;
+    let now = instant("2026-11-08T12:00:00.000Z")?;
+    let posted = imported("2026-10-14T11:30:00.000Z", "opus")?;
+    let key = wire::capture::owned_import_key("alex", &posted.session_key)?.ok_or("import key")?;
+    let first = store
+        .store
+        .capture(posted.clone(), &alex, None, now)
+        .await?;
+    store.store.trash_session(&key, Some("alex"), now).await?;
+
+    let again = store.store.capture(posted, &alex, None, now).await?;
+
+    assert_eq!(again.conversation_id, first.conversation_id);
+    assert_eq!((again.inserted, again.skipped), (0, 1));
+    assert!(
+        store
+            .store
+            .trashed(std::slice::from_ref(&key))
+            .await?
+            .contains_key(&key)
+    );
+    let team = BundleAuthor {
+        user: "alex".to_owned(),
+        node: "team".to_owned(),
+    };
+    let everything = store.store.bundled_sessions(team.clone(), None).await?;
+    assert_eq!(everything.len(), 0);
+    let named = store
+        .store
+        .bundled_sessions(team, Some(vec![first.conversation_id.clone()]))
+        .await?;
+    let forwarded = named
+        .into_iter()
+        .next()
+        .ok_or("the named trashed import")?
+        .forwarding_stored_origin();
+    assert_eq!(forwarded.origin.author, "phil");
+    assert_eq!(forwarded.batch.session_key, "claude-code:shared");
     Ok(())
 }

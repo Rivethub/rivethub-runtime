@@ -1,3 +1,4 @@
+mod origins;
 mod suggestions;
 
 use std::collections::BTreeMap;
@@ -57,6 +58,7 @@ pub struct FakeMemoryStore {
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
     capture_activity: Mutex<Vec<kernel::harness_setup::CaptureActivity>>,
+    origins: origins::Origins,
 }
 
 impl FakeMemoryStore {
@@ -274,6 +276,7 @@ impl MemoryStore for FakeMemoryStore {
         let mut entries = batch.entries();
         self.record(MemoryRequest::Append(owner.clone(), entries.clone()))
             .await;
+        self.origins.remember(&batch).await;
         let now = Utc::now();
         let total = entries.len() as u64;
         let inserted = {
@@ -532,6 +535,13 @@ impl MemoryStore for FakeMemoryStore {
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError> {
         self.record(MemoryRequest::LookupTags(lookup)).await;
         Ok(BTreeMap::new())
+    }
+
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        Ok(self.origins.lookup(session_keys).await)
     }
 
     async fn upsert_tag_taxonomy(

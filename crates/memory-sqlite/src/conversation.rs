@@ -101,3 +101,36 @@ impl NewConversation<'_> {
         })
     }
 }
+
+pub(crate) fn origins(
+    conn: &rusqlite::Connection,
+    session_keys: &[String],
+) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, SqliteError> {
+    if session_keys.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let wanted = vec!["?"; session_keys.len()].join(", ");
+    let mut statement = conn
+        .prepare(&format!(
+            "SELECT session_key, settings -> '$.origin' FROM ros_conversations
+              WHERE session_key IN ({wanted}) AND json_type(settings, '$.origin') = 'object'"
+        ))
+        .map_err(SqliteError::query("origin lookup"))?;
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(session_keys), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(SqliteError::query("origin lookup"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SqliteError::query("origin lookup"))?;
+    rows.into_iter()
+        .map(|(session_key, origin)| {
+            let origin =
+                serde_json::from_str(&origin).map_err(|source| SqliteError::StoredJson {
+                    column: "settings",
+                    source,
+                })?;
+            Ok((session_key, origin))
+        })
+        .collect()
+}
