@@ -102,6 +102,15 @@ mod tests {
     }
 
     #[test]
+    fn only_a_cancelled_statement_counts_as_timed_out() {
+        use crate::error::Error;
+        assert!(Error::operation("search", database("57014")).timed_out());
+        assert!(!Error::operation("search", database("42P01")).timed_out());
+        assert!(!Error::operation("search", database("08006")).timed_out());
+        assert!(!Error::operation("search", sqlx::Error::RowNotFound).timed_out());
+    }
+
+    #[test]
     fn statement_timeout_stays_a_query_failure() {
         assert!(!unreachable(&database("57014")));
         assert!(!unreachable(&sqlx::Error::RowNotFound));

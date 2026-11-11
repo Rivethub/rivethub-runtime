@@ -54,6 +54,7 @@ impl crate::PostgresMemory {
         let context = ArmContext {
             options,
             tag_filter,
+            patience: crate::search_literal::Patience::Asked,
         };
         let messages = matches!(options.scope, MemoryScope::Messages | MemoryScope::Both);
         let summaries = matches!(options.scope, MemoryScope::Summaries | MemoryScope::Both);

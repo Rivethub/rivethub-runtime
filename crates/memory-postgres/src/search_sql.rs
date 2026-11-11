@@ -3,12 +3,13 @@ use crate::search::ArmKind;
 use crate::search::ArmRow;
 use crate::search::SearchOptions;
 use crate::search::TagFilter;
+use crate::search_literal::Patience;
+use crate::search_literal::literal_tokens;
 use chrono::Utc;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
 use kernel::memory_core::hybrid_pool;
 use kernel::memory_core::recency_boost;
-use kernel::memory_core::should_trigram_fallback;
 use pgvector::HalfVector;
 use sqlx::QueryBuilder;
 use std::str::FromStr as _;
@@ -145,20 +146,6 @@ pub(crate) fn push_option_conditions(
         query.push(" AND m.tool_name = ");
         query.push_bind(tool_name.clone());
     }
-}
-
-fn literal_tokens(text: &str) -> Vec<String> {
-    let mut tokens: Vec<String> = Vec::new();
-    for token in text.split_whitespace() {
-        if should_trigram_fallback(token) && !tokens.iter().any(|seen| seen == token) {
-            tokens.push(token.to_owned());
-        }
-    }
-    let whole = text.trim();
-    if tokens.is_empty() && !whole.is_empty() {
-        tokens.push(whole.to_owned());
-    }
-    tokens
 }
 
 fn like_escaped(token: &str) -> String {
@@ -385,9 +372,8 @@ pub(crate) fn push_embedded_semantic(
 pub(crate) struct ArmContext<'a> {
     pub(crate) options: &'a SearchOptions,
     pub(crate) tag_filter: Option<&'a TagFilter>,
+    pub(crate) patience: Patience,
 }
-
-const ESCAPE_HATCH_TIMEOUT: &str = "30s";
 
 impl crate::PostgresMemory {
     pub(crate) async fn arm_rows(
@@ -397,9 +383,44 @@ impl crate::PostgresMemory {
         tag_filter: Option<&TagFilter>,
         query_vector: Option<&[f32]>,
     ) -> Result<Vec<ArmRow>, Error> {
+        self.arm_rows_with(options, kind, tag_filter, query_vector, Patience::Asked)
+            .await
+    }
+
+    pub(crate) async fn optional_literal_rows(
+        &self,
+        options: &SearchOptions,
+        tag_filter: Option<&TagFilter>,
+        query_vector: Option<&[f32]>,
+    ) -> Result<Option<Vec<ArmRow>>, Error> {
+        match self
+            .arm_rows_with(
+                options,
+                ArmKind::Trigram,
+                tag_filter,
+                query_vector,
+                Patience::Optional,
+            )
+            .await
+        {
+            Ok(rows) => Ok(Some(rows)),
+            Err(error) if error.timed_out() => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn arm_rows_with(
+        &self,
+        options: &SearchOptions,
+        kind: ArmKind,
+        tag_filter: Option<&TagFilter>,
+        query_vector: Option<&[f32]>,
+        patience: Patience,
+    ) -> Result<Vec<ArmRow>, Error> {
         let context = ArmContext {
             options,
             tag_filter,
+            patience,
         };
         let messages = async {
             if matches!(options.scope, MemoryScope::Messages | MemoryScope::Both) {
@@ -442,7 +463,7 @@ impl crate::PostgresMemory {
         let alias = if is_message { "m" } else { "s" };
         let literal = LiteralText::of(options, is_message);
         let tokens = if kind == ArmKind::Trigram {
-            literal_tokens(&options.text)
+            literal_tokens(&options.text, context.patience)
         } else {
             Vec::new()
         };
@@ -545,7 +566,7 @@ impl crate::PostgresMemory {
                 .await
                 .map_err(|source| Error::operation("search", source))?;
             sqlx::query("select set_config('statement_timeout', $1, true)")
-                .bind(ESCAPE_HATCH_TIMEOUT)
+                .bind(context.patience.statement_timeout())
                 .execute(&mut *tx)
                 .await
                 .map_err(|source| Error::operation("search", source))?;
