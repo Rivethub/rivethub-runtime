@@ -8,6 +8,41 @@ use wire::gateway::HealthzResponse;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case", deny_unknown_fields)]
+enum Summary {
+    Started(Running),
+    AlreadyRunning(Running),
+    Failed(Failure),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Running {
+    origin: String,
+    port: u16,
+    pid: Option<i32>,
+    node: String,
+    version: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Failure {
+    reason: Reason,
+    error: String,
+    origin: Option<String>,
+    port: Option<u16>,
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Reason {
+    PortInUse,
+    NotReady,
+    Error,
+}
+
 struct Node {
     home: tempfile::TempDir,
 }
@@ -49,6 +84,19 @@ impl Node {
             "local", "--ensure", "--port", &port, "--no-lan", "--wait", wait,
         ])
         .await
+    }
+
+    async fn ensure_json(&self, port: u16, wait: &str) -> TestResult<(Output, Summary)> {
+        let port = port.to_string();
+        let output = self
+            .rh(&[
+                "local", "--ensure", "--port", &port, "--no-lan", "--wait", wait, "--json",
+            ])
+            .await?;
+        let line = text(&output.stdout)?;
+        assert_eq!(line.lines().count(), 1, "{line}");
+        let value = serde_json::from_str(&line)?;
+        Ok((output, value))
     }
 
     fn pid(&self) -> TestResult<i32> {
@@ -141,28 +189,71 @@ async fn concurrent_ensures_start_a_single_node() -> TestResult {
 }
 
 #[tokio::test]
-async fn ensure_leaves_an_answering_port_alone() -> TestResult {
+async fn ensure_json_reports_started_then_already_running() -> TestResult {
     let node = Node::new()?;
+    let claim = testkit::ports::claim()?;
+    let port = claim.number();
+    let (first, started) = node.ensure_json(port, "30").await?;
+    assert!(first.status.success(), "{first:?}");
+    let health = healthz(port).await?;
+    let pid = node.pid()?;
+    let expected = Running {
+        origin: format!("http://127.0.0.1:{port}"),
+        port,
+        pid: Some(pid),
+        node: health.node.clone(),
+        version: health.version.clone(),
+    };
+    assert_eq!(started, Summary::Started(expected.clone()));
+    assert!(health.version.is_some());
+    let (second, running) = node.ensure_json(port, "30").await?;
+    assert!(second.status.success(), "{second:?}");
+    assert_eq!(running, Summary::AlreadyRunning(expected));
+    node.stop().await
+}
+
+async fn foreign_server() -> TestResult<(u16, tokio::task::JoinHandle<std::io::Result<()>>)> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let port = listener.local_addr()?.port();
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await?;
-        let mut request = [0_u8; 1024];
-        let read = stream.read(&mut request).await?;
-        stream
-            .write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-            .await?;
-        Ok::<_, std::io::Error>(read)
+        loop {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = [0_u8; 1024];
+            let read = stream.read(&mut request).await?;
+            assert!(read > 0);
+            stream
+                .write_all(b"HTTP/1.0 200 OK\r\ncontent-type: text/html\r\ncontent-length: 13\r\nconnection: close\r\n\r\n<html></html>")
+                .await?;
+        }
     });
-    let output = node.ensure(port, "2").await?;
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(
-        text(&output.stdout)?,
-        format!("RivetHub local node is running at http://127.0.0.1:{port}\n")
+    Ok((port, server))
+}
+
+#[tokio::test]
+async fn ensure_refuses_a_port_held_by_something_that_is_not_rivethub() -> TestResult {
+    let node = Node::new()?;
+    let (port, server) = foreign_server().await?;
+    let message = format!(
+        "port {port} is in use by something that is not a RivetHub node (http://127.0.0.1:{port}/healthz answered 200 OK without a RivetHub health body); stop it or use --port"
     );
-    assert!(server.await?? > 0);
+    let output = node.ensure(port, "2").await?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(text(&output.stdout)?, "");
+    assert_eq!(text(&output.stderr)?, format!("Error: {message}\n"));
+    let (json, failed) = node.ensure_json(port, "30").await?;
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert_eq!(
+        failed,
+        Summary::Failed(Failure {
+            reason: Reason::PortInUse,
+            error: message,
+            origin: Some(format!("http://127.0.0.1:{port}")),
+            port: Some(port),
+        })
+    );
     assert!(!node.pid_file().exists());
     assert!(!node.log_file().exists());
+    server.abort();
     Ok(())
 }
 
@@ -182,6 +273,20 @@ async fn ensure_fails_with_the_log_path_when_the_node_cannot_serve() -> TestResu
         "{stderr}"
     );
     assert!(node.log_file().is_file());
+    let (json, failed) = node.ensure_json(port, "1").await?;
+    assert_eq!(json.status.code(), Some(1), "{json:?}");
+    assert_eq!(
+        failed,
+        Summary::Failed(Failure {
+            reason: Reason::NotReady,
+            error: format!(
+                "RivetHub local node did not answer at http://127.0.0.1:{port} within 1s; its output is in {}",
+                node.log_file().display()
+            ),
+            origin: Some(format!("http://127.0.0.1:{port}")),
+            port: Some(port),
+        })
+    );
     drop(silent);
     Ok(())
 }

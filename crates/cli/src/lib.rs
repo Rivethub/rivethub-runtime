@@ -45,7 +45,7 @@ impl Report {
         }
     }
 
-    pub fn failure(error: &Error) -> Self {
+    pub fn failure(error: &impl std::fmt::Display) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("Error: {error}\n"),
@@ -129,13 +129,20 @@ async fn command_dispatch(
             no_lan,
             ensure,
             wait,
+            json,
         } => {
             let request = local::Ensure {
                 port,
                 no_lan,
                 wait_seconds: wait,
             };
-            return run_local(env, request, ensure, shutdown).await;
+            if ensure {
+                return Ok(Dispatch::Complete(local::render(
+                    local::ensure(env, request).await,
+                    json,
+                )));
+            }
+            return run_local(env, request, shutdown).await;
         }
         Command::Gateway { check, config } => {
             return Ok(Dispatch::Gateway { check, config });
@@ -189,12 +196,8 @@ async fn command_dispatch(
 async fn run_local(
     env: &Environment,
     request: local::Ensure,
-    ensure: bool,
     shutdown: &CancellationToken,
 ) -> Result<Dispatch, Error> {
-    if ensure {
-        return local::ensure(env, request).await.map(Dispatch::Complete);
-    }
     let prepared = local::prepare(env, request.port, request.no_lan).await?;
     if shutdown.is_cancelled() {
         prepared.release()?;
