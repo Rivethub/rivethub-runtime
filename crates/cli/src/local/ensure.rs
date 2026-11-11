@@ -52,6 +52,21 @@ struct NodeIdentity {
     name: String,
     node: String,
     version: Option<String>,
+    policy: Option<NodePolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodePolicy {
+    cloud: Option<String>,
+}
+
+impl NodeIdentity {
+    fn cloud_disabled(&self) -> bool {
+        self.policy
+            .as_ref()
+            .and_then(|policy| policy.cloud.as_deref())
+            == Some("disabled")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +186,11 @@ pub(crate) async fn ensure(
             Err(refusal) => return Ok(Err(refusal)),
         },
     };
+    if request.no_cloud && !health.cloud_disabled() {
+        return Err(Error::NodeCloudLeftOn {
+            origin: target.origin,
+        });
+    }
     #[cfg_attr(
         dylint_lib = "rr_lints",
         expect(

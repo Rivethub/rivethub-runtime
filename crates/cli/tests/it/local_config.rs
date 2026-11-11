@@ -174,3 +174,51 @@ async fn doctor_fails_a_share_server_list_entry_that_is_not_a_host() {
         doctor.stdout
     );
 }
+
+#[tokio::test]
+async fn ensure_no_cloud_refuses_a_running_node_that_lacks_the_policy() {
+    let stub =
+        testkit::stub_server(Router::new().route("/healthz", get(|| async { Json(healthy()) })))
+            .await
+            .expect("health route");
+    let home = home();
+    let env = local_config(&home, stub.addr.port(), "cloud:\n  disabled: true\n");
+    let report = run(&["local", "--ensure", "--no-cloud"], &env).await;
+    stub.close().await.expect("stub shuts down");
+    assert_eq!(report.exit, Exit::Failure, "{}", report.stdout);
+    assert!(
+        report
+            .stderr
+            .contains("is running without this hub's cloud policy; restart it"),
+        "{}",
+        report.stderr
+    );
+}
+
+#[tokio::test]
+async fn ensure_no_cloud_accepts_a_running_node_under_the_policy_even_when_degraded() {
+    let stub = testkit::stub_server(Router::new().route(
+        "/healthz",
+        get(|| async {
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                Json(HealthzResponse {
+                    ok: false,
+                    policy: Some(wire::gateway::HubPolicy {
+                        cloud: wire::gateway::CloudPolicy::Disabled,
+                        share_servers: Vec::new(),
+                    }),
+                    ..healthy()
+                }),
+            )
+        }),
+    ))
+    .await
+    .expect("health route");
+    let home = home();
+    let env = local_config(&home, stub.addr.port(), "cloud:\n  disabled: true\n");
+    let report = run(&["local", "--ensure", "--no-cloud"], &env).await;
+    stub.close().await.expect("stub shuts down");
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(report.stdout.contains("is running at"), "{}", report.stdout);
+}

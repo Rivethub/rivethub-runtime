@@ -2448,8 +2448,11 @@ The config validator does not check the entries, because the host grammar lives 
 Install time. `rh local --no-cloud`, or `RIVETHUB_CLOUD=off`, writes `cloud: {disabled: true}` into the config
 `rh local` generates. When a config already exists without `cloud.disabled: true`, `rh local` (with or without
 `--ensure`) exits 1 and tells the operator to add `cloud: {disabled: true}` to that file. It never edits an existing
-config and never starts a node with the cloud on after the operator asked for it off. `RIVETHUB_CLOUD=on` or unset
-changes nothing, and any other value exits 1.
+config and never starts a node with the cloud on after the operator asked for it off. `rh local --ensure` with the
+switch also reads the running node's `/healthz` `policy`, whether it found the node already running or started it; when
+`cloud` is not `disabled` (a node started before the policy), it exits 1 and tells the operator to restart the node so
+the policy applies. It never restarts the node itself. `RIVETHUB_CLOUD=on` or unset changes nothing, and any other value
+exits 1.
 
 Status. `/healthz` adds `policy` (`wire::gateway::HubPolicy`: `cloud` is `enabled` or `disabled`, and `shareServers`
 lists `memory.share.allowed_servers` as written, omitted when empty) only when `cloud.disabled` is set or the list is
