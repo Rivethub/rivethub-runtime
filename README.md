@@ -46,7 +46,7 @@ installation current:
   unless `--no-restart` is given. On macOS restarting is up to you, so pass `--no-restart`.
 - `--channel nightly` builds from the clean `main` checkout named by `RIVETHUB_INSTALL_ROOT` instead.
 
-Every merge to `main` publishes the next patch version as a beta prerelease; the Promote workflow marks a beta stable.
+Every merge to `main` publishes a beta prerelease versioned as the higher of the workspace version and the last tag plus one patch; the Promote workflow marks a beta stable.
 [docs/CLI.md](docs/CLI.md) has the release layout and every command.
 
 ## Run a node
