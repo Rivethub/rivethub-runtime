@@ -110,3 +110,15 @@ fn a_list_entry_that_is_not_a_host_is_a_config_error() -> TestResult {
     assert!(error.contains("ftp://team.example.com"), "{error}");
     Ok(())
 }
+
+#[test]
+fn a_disabled_cloud_refuses_rivethub_cloud_however_it_is_spelled() -> TestResult {
+    let closed = policy(true, &["rivethub.cloud:443", "Team.Example.com:443"])?;
+    for spelling in ["RivetHub.Cloud", "rivethub.cloud.", "rivethub.cloud:443"] {
+        let refused = refusal(closed.admit(&host(spelling)?));
+        assert!(refused.contains("cloud.disabled"), "{spelling}: {refused}");
+    }
+    assert!(closed.admit(&host("team.example.com")?).is_ok());
+    assert_eq!(closed.to_string(), "only team.example.com");
+    Ok(())
+}

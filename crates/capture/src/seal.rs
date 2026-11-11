@@ -98,7 +98,17 @@ pub enum CodeError {
 pub const DEFAULT_SERVER: &str = "rivethub.cloud";
 const MAX_HOST: usize = 253;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
+)]
 pub struct ShareServer(String);
 
 impl ShareServer {
@@ -157,6 +167,7 @@ impl FromStr for ShareServer {
             Some((host, port)) => (host, Some(port)),
             None => (authority.as_str(), None),
         };
+        let host = host.strip_suffix('.').unwrap_or(host);
         let host_ok = !host.is_empty()
             && host.len() <= MAX_HOST
             && host.split('.').all(|label| {
@@ -167,11 +178,20 @@ impl FromStr for ShareServer {
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
             });
-        let port_ok = port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port > 0));
-        if !host_ok || !port_ok {
+        if !host_ok {
             return Err(invalid());
         }
-        let server = Self(authority.clone());
+        let port = match port.map(str::parse::<u16>) {
+            None => None,
+            Some(Ok(port)) if port > 0 => Some(port),
+            Some(_) => return Err(invalid()),
+        };
+        let bare = Self(host.to_owned());
+        let server = match port {
+            Some(443) if !bare.is_loopback() => bare,
+            Some(port) => Self(format!("{host}:{port}")),
+            None => bare,
+        };
         let scheme_ok = match scheme.as_deref() {
             None | Some("https") => true,
             Some("http") => server.is_loopback(),

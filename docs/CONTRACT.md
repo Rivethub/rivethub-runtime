@@ -2443,7 +2443,14 @@ Share servers. `capture::share_policy::SharePolicy` holds the rules, and the CLI
 is refused. A non-empty list admits only its servers. Otherwise any server is admitted, as before. A refusal says
 `disabled by this hub's policy` and names the key that controls it. A list entry that is not a share server is an error
 naming `memory.share.allowed_servers` and the entry, from every command that loads the policy and from `rh doctor`.
-The config validator does not check the entries, because the host grammar lives in `capture`, which `config` cannot use.
+The config validator does not check the entries, because the host grammar lives in `capture`, which `config` cannot use. Every
+share server is compared in one canonical form, which `ShareServer` takes when it is parsed: lowercase host, trailing
+dot dropped, port written as a plain number, and `:443` dropped for a non-loopback host (it is reached over https).
+`rivethub.cloud:443`, `RivetHub.Cloud` and `rivethub.cloud.` are therefore rivethub.cloud, in the policy, in
+`--server`, in `memory.share.server.url` and in a share code, which prints its server in that form. The login store
+(`share-logins.json`) is keyed by the same form; a login stored under another spelling (`team.example.com:443` from
+before this note) is read as its canonical server and written back in that form on the next login, refresh or logout,
+so nobody signs in again.
 
 Install time. `rh local --no-cloud`, or `RIVETHUB_CLOUD=off`, writes `cloud: {disabled: true}` into the config
 `rh local` generates. When a config already exists without `cloud.disabled: true`, `rh local` (with or without

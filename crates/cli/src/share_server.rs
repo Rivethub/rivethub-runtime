@@ -119,7 +119,7 @@ impl std::fmt::Debug for Tokens {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Logins {
-    logins: BTreeMap<String, Tokens>,
+    logins: BTreeMap<ShareServer, Tokens>,
 }
 
 #[derive(Deserialize)]
@@ -274,7 +274,7 @@ impl ShareServers {
             String::new(),
             |mut lines, (server, tokens)| {
                 lines.push_str("signed in to ");
-                lines.push_str(server);
+                lines.push_str(server.as_str());
                 lines.push_str(" (scope ");
                 lines.push_str(&tokens.scope);
                 lines.push_str("); the access token renews itself, next at ");
@@ -363,13 +363,13 @@ impl Server {
     fn mine(&self) -> Result<Tokens, ServerError> {
         read_logins(&self.store)?
             .logins
-            .remove(self.host.as_str())
+            .remove(&self.host)
             .ok_or_else(|| ServerError::LoggedOut(self.host.clone()))
     }
 
     fn keep(&self, tokens: Tokens) -> Result<(), ServerError> {
         let mut logins = read_logins(&self.store)?;
-        logins.logins.insert(self.host.to_string(), tokens);
+        logins.logins.insert(self.host.clone(), tokens);
         write_logins(&self.store, &logins)
     }
 
@@ -507,7 +507,7 @@ impl Server {
     async fn logout(&self) -> Result<Report, ServerError> {
         let _lock = self.lock().await?;
         let mut logins = read_logins(&self.store)?;
-        let Some(tokens) = logins.logins.get(self.host.as_str()) else {
+        let Some(tokens) = logins.logins.get(&self.host) else {
             return Ok(Report::success(format!(
                 "this machine is not signed in to {}\n",
                 self.host
@@ -524,7 +524,7 @@ impl Server {
                 .await?,
         )
         .await?;
-        logins.logins.remove(self.host.as_str());
+        logins.logins.remove(&self.host);
         write_logins(&self.store, &logins)?;
         Ok(Report::success(format!(
             "signed out of {} and revoked this machine's login there\n",

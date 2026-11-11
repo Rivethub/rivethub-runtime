@@ -1209,3 +1209,18 @@ async fn a_disabled_cloud_reaches_only_listed_share_servers() {
     assert_eq!(served.drops.0.lock().revokes.len(), 1);
     served.stop.cancel();
 }
+
+#[tokio::test]
+async fn a_login_stored_under_another_spelling_reads_as_its_server() {
+    let node = Node::new("phil", "https://team.example.com/", None);
+    node.sign_in("Team.Example.com:443");
+    let status = node.run(&["share", "status"]).await;
+    assert_eq!(status.exit, Exit::Ok, "{}", status.stderr);
+    assert!(
+        status
+            .stdout
+            .starts_with("signed in to team.example.com (scope"),
+        "{}",
+        status.stdout
+    );
+}
