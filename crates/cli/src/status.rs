@@ -53,8 +53,15 @@ async fn health(env: &Environment) -> Result<Report, Error> {
     let Endpoint { url, client } = endpoint(env, &loaded.config).await?;
     let mut health: Health = fetch(&client, url).await?;
     let uid = nix::unistd::getuid().as_raw();
-    if let Some(detailed) = detailed_health(env, &loaded.config, uid).await {
-        health = detailed;
+    let mut notices = configuration::notices(&loaded);
+    match detailed_health(env, &loaded.config, uid).await {
+        Ok(Some(detailed)) => health = detailed,
+        Ok(None) => {}
+        Err(error) => {
+            notices.push_str("Detailed health unavailable: ");
+            notices.push_str(&error.to_string());
+            notices.push('\n');
+        }
     }
     let text = if health.response.ok {
         "RivetHub is running".to_owned()
@@ -76,7 +83,7 @@ async fn health(env: &Environment) -> Result<Report, Error> {
         ));
     }
     let mut report = Report::success(parts.join(""));
-    report.stderr = configuration::notices(&loaded);
+    report.stderr = notices;
     Ok(report)
 }
 
@@ -90,13 +97,17 @@ async fn fetch(client: &reqwest::Client, url: url::Url) -> Result<Health, Error>
         .await?)
 }
 
-async fn detailed_health(env: &Environment, config: &Config, owner_uid: u32) -> Option<Health> {
-    let state = gateway::state_dir(env).ok()?;
-    gateway::local_owner::read_token(&state).ok()??;
-    let Endpoint { url, client } = gateway_as(env, config, Duration::from_secs(3), Some(owner_uid))
-        .await
-        .ok()?;
-    fetch(&client, url.join("healthz").ok()?).await.ok()
+async fn detailed_health(
+    env: &Environment,
+    config: &Config,
+    owner_uid: u32,
+) -> Result<Option<Health>, Error> {
+    if gateway::local_owner::read_token(&gateway::state_dir(env)?)?.is_none() {
+        return Ok(None);
+    }
+    let Endpoint { url, client } =
+        gateway_as(env, config, Duration::from_secs(3), Some(owner_uid)).await?;
+    fetch(&client, url.join("healthz")?).await.map(Some)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -337,7 +348,11 @@ mod tests {
         if let Ok(endpoint) = &built {
             endpoint.client.get(endpoint.url.clone()).send().await.ok();
         }
-        super::detailed_health(&env, &loaded.config, owner_uid).await;
+        let detailed = super::detailed_health(&env, &loaded.config, owner_uid).await;
+        assert_eq!(
+            matches!(detailed, Err(crate::Error::ListenerNotOurs { .. })),
+            owner_uid != nix::unistd::getuid().as_raw()
+        );
         server.abort();
         let seen = seen.lock().clone();
         (built, seen)
