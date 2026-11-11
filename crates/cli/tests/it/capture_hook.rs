@@ -240,7 +240,7 @@ pub(crate) fn settings(home: &Path) -> gateway::Settings {
     }
 }
 
-async fn local_gateway(
+pub(crate) async fn local_gateway(
     store: &Arc<FakeMemoryStore>,
     home: &Path,
     owner: Arc<gateway::local_owner::LocalOwner>,

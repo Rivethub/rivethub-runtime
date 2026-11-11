@@ -10,6 +10,7 @@ mod harness;
 mod local;
 pub mod logs;
 pub mod memory;
+mod open;
 mod process;
 mod roots;
 pub mod service;
@@ -164,6 +165,7 @@ async fn command_dispatch(
         Command::Config { command } => configuration::run(command, env).await,
         Command::Doctor { json } => doctor::run(env, json).await,
         Command::Auth { command } => auth::run(command, env).await,
+        Command::Open { no_browser } => open::run(env, no_browser).await,
         Command::Status => Ok(status::run(env).await),
         Command::Stop => process::stop(env).await,
         Command::Service { command } => service::Scope::for_uid(nix::unistd::geteuid().as_raw())

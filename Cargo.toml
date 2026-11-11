@@ -52,6 +52,7 @@ memory-postgres = { path = "crates/memory-postgres", version = "0.8.0" }
 memory-sqlite = { path = "crates/memory-sqlite", version = "0.8.0" }
 migrate = { path = "crates/migrate", version = "0.8.0" }
 nix = { version = "0.30", features = ["process", "signal", "fs", "user"] }
+opener = "0.9"
 parking_lot = "0.12"
 percent-encoding = "2"
 pgvector = { version = "0.4", features = ["sqlx"] }

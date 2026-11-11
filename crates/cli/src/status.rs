@@ -32,6 +32,12 @@ pub(crate) async fn run(env: &Environment) -> Report {
                 }
             };
             report.stderr = format!("{}Health unavailable: {error}\n", report.stderr);
+            if matches!(&error, Error::Http(source) if source.status() == Some(reqwest::StatusCode::UNAUTHORIZED))
+            {
+                report
+                    .stderr
+                    .push_str("The gateway wants a login. Run `rh open` to sign in.\n");
+            }
             report
         }
     }

@@ -15,6 +15,7 @@ the existing service startup codes. Every visible command:
 | `rh doctor` | `[--json]` | Check this node without applying migrations |
 | `rh auth token-path` | `[--json]` | Print where the local owner token file lives |
 | `rh auth rotate` | | Replace the local owner token and end every browser session |
+| `rh open` | `[--no-browser]` | Open the web app in your browser, signed in with a one-time code |
 | `rh status` | | Report gateway health |
 | `rh stop` | | Signal the running instance to stop |
 | `rh gateway` | `[--check] [-c, --config FILE]` | Run the composed gateway service |
@@ -157,4 +158,4 @@ The update/db skip list is empty and checked; the fixture inventory check fails 
 README contract tests remain unchanged. Historical update/db wording and exit-code parity cannot be established without
 those recordings; no transcript or TypeScript artifact was invented to fill that gap.
 
-`rh auth token-path` prints the path of `<state>/local-owner.token` (`--json` prints `{"path": "..."}`) so a script can read the token for `Authorization: Bearer $(cat $(rh auth token-path))`. `rh auth rotate` posts to `/api/auth/rotate` with the current token; the gateway writes the new file and ends every browser session. With the gateway down it deletes the token file and the next start makes a new one. Every command that calls the local gateway reads that file through one constructor and sends no `Authorization` header when it is missing, so a new `rh` still works against a running 0.8.0 gateway.
+`rh auth token-path` prints the path of `<state>/local-owner.token` (`--json` prints `{"path": "..."}`) so a script can read the token for `Authorization: Bearer $(cat $(rh auth token-path))`. `rh auth rotate` posts to `/api/auth/rotate` with the current token; the gateway writes the new file and ends every browser session. With the gateway down it deletes the token file and the next start makes a new one. Every command that calls the local gateway reads that file through one constructor and sends no `Authorization` header when it is missing, so a new `rh` still works against a running 0.8.0 gateway. `rh open` reads the token the same way, posts to `/api/auth/login-codes`, prints `<origin>/login#code=<code>` (the code rides in the fragment, which browsers never send) and opens it with the system opener. `--no-browser`, or a Linux session with neither `DISPLAY` nor `WAYLAND_DISPLAY`, only prints the URL. The code lives 60 seconds and works once. `rh status` points at `rh open` when the gateway answers 401.

@@ -31,6 +31,7 @@ gateway = { workspace = true }
 mcp = { workspace = true }
 migrate = { workspace = true }
 nix = { workspace = true, features = ["hostname"] }
+opener.workspace = true
 regex = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, features = ["client", "transport-child-process"] }

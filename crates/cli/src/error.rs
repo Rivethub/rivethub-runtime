@@ -48,6 +48,10 @@ pub enum Error {
     Http(#[from] reqwest::Error),
     #[error("the gateway refused the token rotation with HTTP {status}")]
     AuthRotate { status: u16 },
+    #[error(
+        "the gateway refused to mint a login code with HTTP {status}; the token file may be stale, restart the gateway or run `rh auth rotate`"
+    )]
+    AuthOpen { status: u16 },
     #[error("invalid gateway URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]
