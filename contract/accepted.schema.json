@@ -1866,7 +1866,6 @@
           ]
         },
         "draft": {
-          "format": "uuid",
           "type": "string"
         },
         "expires_at": {
@@ -5193,7 +5192,6 @@
               "type": "integer"
             },
             "login": {
-              "format": "uuid",
               "type": "string"
             },
             "state": {
@@ -8582,7 +8580,6 @@
       "additionalProperties": false,
       "properties": {
         "login": {
-          "format": "uuid",
           "type": "string"
         }
       },

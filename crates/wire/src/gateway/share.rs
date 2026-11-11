@@ -87,7 +87,7 @@ pub struct RedactRules {
 #[serde_with::skip_serializing_none]
 #[derive(Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DraftReport {
-    pub draft: Uuid,
+    pub draft: String,
     pub expires_at: DateTime<Utc>,
     pub totals: Totals,
     pub rules: Vec<RuleCount>,
@@ -371,7 +371,7 @@ impl fmt::Debug for LoginRequest {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LoginStep {
     Started {
-        login: Uuid,
+        login: String,
         user_code: String,
         verification_uri_complete: String,
         interval: u64,
@@ -387,10 +387,10 @@ pub enum LoginStep {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PollRequest {
-    pub login: Uuid,
+    pub login: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
