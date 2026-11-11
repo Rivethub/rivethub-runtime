@@ -286,7 +286,7 @@ pub(super) async fn resolve(
     let offered = if maps.is_empty() {
         None
     } else {
-        Some(offer(&mapping_file(mapping, env)?, &maps, learn).await?)
+        Some(super::desk::offer(&mapping_file(mapping, env)?, &maps, learn).await?)
     };
     if resolved.sealed.bundle != bundle {
         let mut sealed = resolved.sealed.text.clone();
@@ -311,11 +311,6 @@ pub(super) async fn resolve(
         message.push_str(&offered.message);
     }
     Ok(Report::success(message))
-}
-
-struct Offered {
-    message: String,
-    write: Option<(PathBuf, String)>,
 }
 
 fn resolved_line(resolved: &capture::sanitize::Resolved, bundle: &Path) -> String {
@@ -367,77 +362,6 @@ async fn bundle_beside(report: &Path) -> Result<PathBuf, Error> {
         return Ok(json);
     }
     Ok(PathBuf::from(stem))
-}
-
-async fn offer(
-    mapping: &MappingFile,
-    maps: &[(&str, &str)],
-    learn: bool,
-) -> Result<Offered, Error> {
-    let path = match mapping {
-        MappingFile::Configured(path) | MappingFile::Default(path) => path,
-    };
-    let existing = match tokio::fs::read_to_string(path).await {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => {
-            return Err(ShareError::MappingRead {
-                path: path.display().to_string(),
-                source,
-            }
-            .into());
-        }
-    };
-    let invalid = |source| -> Error {
-        ShareError::Mapping {
-            path: path.display().to_string(),
-            source,
-        }
-        .into()
-    };
-    let known = capture::sanitize::mapping::parse(&existing).map_err(invalid)?;
-    let fresh: Vec<String> = maps
-        .iter()
-        .filter(|(term, _)| !known.learned(term))
-        .map(|(term, placeholder)| capture::sanitize::mapping::map_rule(term, placeholder))
-        .collect();
-    let display = path.display();
-    let told = |message: String| Offered {
-        message,
-        write: None,
-    };
-    if fresh.is_empty() {
-        return Ok(told(format!(
-            "{display} already has a rule for each map mark\n"
-        )));
-    }
-    let count = fresh.len();
-    let noun = if count == 1 { "rule" } else { "rules" };
-    let rules = fresh.join("\n");
-    if !learn {
-        return Ok(told(format!(
-            "rerun with --learn to add {count} map {noun} to {display}:\n\n{rules}"
-        )));
-    }
-    let mut text = existing;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    if !text.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&rules);
-    capture::sanitize::mapping::parse(&text).map_err(invalid)?;
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    Ok(Offered {
-        message: format!("added {count} map {noun} to {display}\n"),
-        write: Some((path.clone(), text)),
-    })
 }
 
 #[cfg(test)]

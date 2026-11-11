@@ -939,7 +939,6 @@ fn a_shared_code_never_prints_its_key_in_debug() {
         uploaded: 1,
         expires_at: chrono::DateTime::UNIX_EPOCH,
         code: format!("rhb1:{DROP_ID}#{key}"),
-        kept: None,
     };
     let shown = format!("{shared:?}");
     assert!(!shown.contains(&key), "{shown}");

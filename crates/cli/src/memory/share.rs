@@ -9,10 +9,8 @@ use capture::seal::CodeError;
 use capture::seal::MAX_BUNDLE_BYTES;
 use capture::seal::OpenError;
 use capture::seal::SealError;
-use capture::seal::Sealed;
 use capture::seal::ShareCode;
 use capture::sign::KeyParseError;
-use capture::sign::NodeKey;
 use capture::sign::PublicKey;
 use capture::sign::SignError;
 use capture::sign::TrustError;
@@ -26,8 +24,8 @@ use wire::capture::Receipt;
 use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 
+use super::desk::Shared;
 use super::dropbox::DropBox;
-use super::dropbox::DropError;
 use super::dropbox::MAX_DROP_BYTES;
 use super::inbox::Inbox;
 use super::inbox::Slot;
@@ -206,8 +204,16 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
             signed,
             flags,
         } => {
-            let sealed = seal_file(env, &path, signed, flags).await?;
-            Ok(share_report(&upload(env, sealed, server.as_deref()).await?))
+            let text = read_bundle_file(&path).await?;
+            let sealed = super::desk::seal_bytes(env, text, signed, flags).await?;
+            let shared = super::desk::upload_to(env, server.as_deref(), sealed).await?;
+            let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
+                format!(
+                    "warning: the bundle was shared but {} could not be removed ({error}); delete it yourself\n",
+                    path.display()
+                )
+            });
+            Ok(share_report(&shared, kept.as_deref()))
         }
         ShareCommand::Receive { code, dry_run } => receive(env, code, dry_run).await,
         ShareCommand::KeyShow => key_show(env),
@@ -235,19 +241,12 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
     }
 }
 
-fn signing_key_path(env: &Environment) -> Result<PathBuf, Error> {
-    Ok(NodeKey::path_in(&capture::share::state_home(env)?))
-}
-
 fn trust_path(env: &Environment) -> Result<PathBuf, Error> {
     Ok(TrustStore::path_in(&capture::share::config_home(env)?))
 }
 
 fn key_show(env: &Environment) -> Result<Report, Error> {
-    let path = signing_key_path(env)?;
-    let key = NodeKey::load_or_create(&path)
-        .map_err(ShareError::from)?
-        .public_key();
+    let key = super::desk::node_key(env)?;
     Ok(Report::success(format!(
         "{key}\nfingerprint {}\nsend the key line to the people you share with; they run rh memory trust add <your name> <key> after checking the fingerprint with you\n",
         key.fingerprint()
@@ -275,23 +274,6 @@ fn trust_list(env: &Environment) -> Result<Report, Error> {
     )))
 }
 
-#[derive(Debug)]
-pub struct SealedFile {
-    pub path: PathBuf,
-    pub bytes: usize,
-    pub sealed: Sealed,
-}
-
-pub async fn seal_file(
-    env: &Environment,
-    path: &Path,
-    sign: bool,
-    flags: usize,
-) -> Result<SealedFile, Error> {
-    let text = read_bundle_file(path).await?;
-    seal_bytes(env, path, text, sign, flags).await
-}
-
 pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
     let metadata = tokio::fs::symlink_metadata(path).await?;
     if !metadata.is_file() {
@@ -312,92 +294,6 @@ pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
     Ok(text)
 }
 
-pub async fn seal_bytes(
-    env: &Environment,
-    path: &Path,
-    text: Vec<u8>,
-    sign: bool,
-    flags: usize,
-) -> Result<SealedFile, Error> {
-    let signer = if sign {
-        Some(NodeKey::load_or_create(&signing_key_path(env)?).map_err(ShareError::from)?)
-    } else {
-        None
-    };
-    let bytes = text.len();
-    let sealed =
-        tokio::task::spawn_blocking(move || capture::seal::seal(&text, signer.as_ref(), flags))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ShareError::from)?;
-    Ok(SealedFile {
-        path: path.to_path_buf(),
-        bytes,
-        sealed,
-    })
-}
-
-pub struct Shared {
-    pub sessions: usize,
-    pub signed: Option<PublicKey>,
-    pub uploaded: u64,
-    pub expires_at: DateTime<Utc>,
-    pub code: String,
-    pub kept: Option<String>,
-}
-
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
-    )
-)]
-impl std::fmt::Debug for Shared {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let id = self
-            .code
-            .split_once('#')
-            .map_or(self.code.as_str(), |(id, _)| id);
-        formatter
-            .debug_struct("Shared")
-            .field("sessions", &self.sessions)
-            .field("code", &format_args!("{id}#.."))
-            .finish_non_exhaustive()
-    }
-}
-
-pub async fn upload(
-    env: &Environment,
-    sealed: SealedFile,
-    server: Option<&str>,
-) -> Result<Shared, Error> {
-    let servers = ShareServers::from_env(env).await?;
-    let host = servers.pick(server).map_err(DropError::from)?;
-    let drops = DropBox::on(&servers, &host).await?;
-    let SealedFile { path, sealed, .. } = sealed;
-    let (id, uploaded) = drops.upload(bytes::Bytes::from(sealed.ciphertext)).await?;
-    let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
-        format!(
-            "warning: the bundle was shared but {} could not be removed ({error}); delete it yourself\n",
-            path.display()
-        )
-    });
-    Ok(Shared {
-        sessions: sealed.titles.len(),
-        signed: sealed.signed,
-        uploaded: uploaded.bytes,
-        expires_at: uploaded.expires_at,
-        code: ShareCode {
-            server: drops.host().clone(),
-            id,
-            key: sealed.key,
-        }
-        .reveal(),
-        kept,
-    })
-}
-
 #[must_use]
 pub fn code_line(shared: &Shared) -> String {
     format!(
@@ -407,7 +303,7 @@ pub fn code_line(shared: &Shared) -> String {
     )
 }
 
-fn share_report(shared: &Shared) -> Report {
+fn share_report(shared: &Shared, kept: Option<&str>) -> Report {
     let signed = shared.signed.map_or_else(
         || "unsigned".to_owned(),
         |key| format!("signed {}", key.fingerprint()),
@@ -418,7 +314,7 @@ fn share_report(shared: &Shared) -> Report {
         shared.uploaded.div_ceil(1024),
         code_line(shared)
     ));
-    if let Some(kept) = &shared.kept {
+    if let Some(kept) = kept {
         report.stderr.push_str(kept);
     }
     report

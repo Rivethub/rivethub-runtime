@@ -18,22 +18,26 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::Report;
+use crate::memory::desk;
+use crate::memory::desk::LoggedOut;
+use crate::memory::desk::Polled;
 
-const CLIENT_ID: &str = "rivethub-cli";
-const SCOPE: &str = "drops:write";
-const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
+pub(crate) const CLIENT_ID: &str = "rivethub-cli";
+pub(crate) const SCOPE: &str = "drops:write";
+pub(crate) const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_GRANT: &str = "refresh_token";
-const DEVICE_PATH: &str = "api/cli/device/code";
-const TOKEN_PATH: &str = "api/cli/token";
-const REVOKE_PATH: &str = "api/cli/revoke";
-const STORE_FILE: &str = "share-logins.json";
+pub(crate) const DEVICE_PATH: &str = "api/cli/device/code";
+pub(crate) const TOKEN_PATH: &str = "api/cli/token";
+pub(crate) const REVOKE_PATH: &str = "api/cli/revoke";
+pub(crate) const STORE_FILE: &str = "share-logins.json";
+pub(crate) const ME_PATH: &str = "api/me";
 const LOCK_FILE: &str = "share-logins.json.lock";
 const STORE_NAME: &str = "share server logins";
 const STORE_CAP: u64 = 256 * 1024;
 const CA_CAP: u64 = 1024 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const SLOW_DOWN: Duration = Duration::from_secs(5);
+pub(crate) const SLOW_DOWN: Duration = Duration::from_secs(5);
 const REFRESH_MARGIN: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 #[derive(Debug, Subcommand)]
@@ -69,10 +73,14 @@ pub enum ServerError {
     },
     #[error("the browser approval was {0}; run rh share login to try again")]
     Denied(&'static str),
+    #[error("{server} refused the team token (HTTP {status}); sign in again with a valid token")]
+    TokenRefused { server: ShareServer, status: u16 },
     #[error("the share server answered {status}: {body}")]
     Status { status: u16, body: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("the share server gave a device code lifetime of {0} seconds, which is out of range")]
+    Lifetime(u64),
     #[error("the share login file is unreadable: {0}")]
     Store(String),
     #[error("the CA file {path} for {host} in memory.share.trusted_cas cannot be used: {reason}")]
@@ -91,11 +99,11 @@ pub enum ServerError {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Tokens {
+pub(crate) struct Tokens {
     access_token: String,
-    refresh_token: String,
+    pub(crate) refresh_token: String,
     expires_at: DateTime<Utc>,
-    scope: String,
+    pub(crate) scope: String,
 }
 
 #[cfg_attr(
@@ -111,14 +119,41 @@ impl std::fmt::Debug for Tokens {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TeamLogin {
+    pub(crate) team_token: String,
+    pub(crate) user: String,
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "CONTRACT note 140: a team token never reaches a log; Debug prints only its user"
+    )
+)]
+impl std::fmt::Debug for TeamLogin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "TeamLogin({})", self.user)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Login {
+    Device(Tokens),
+    Team(TeamLogin),
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Logins {
-    logins: BTreeMap<String, Tokens>,
+pub(crate) struct Logins {
+    pub(crate) logins: BTreeMap<String, Login>,
 }
 
 #[derive(Deserialize)]
-struct Issued {
+pub(crate) struct Issued {
     access_token: String,
     refresh_token: String,
     expires_in: i64,
@@ -126,20 +161,9 @@ struct Issued {
 }
 
 #[derive(Deserialize)]
-struct Device {
-    #[serde(rename = "device_code")]
-    code: String,
-    user_code: String,
-    verification_uri: String,
-    verification_uri_complete: Option<String>,
-    expires_in: u64,
-    interval: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct OauthError {
-    error: OauthCode,
-    interval: Option<u64>,
+pub(crate) struct OauthError {
+    pub(crate) error: OauthCode,
+    pub(crate) interval: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, strum::Display)]
@@ -156,27 +180,14 @@ pub enum OauthCode {
 }
 
 #[derive(Serialize)]
-struct DeviceRequest<'a> {
-    client_id: &'a str,
-    scope: &'a str,
-    client_name: &'a str,
-}
-
-#[derive(Serialize)]
-struct Grant<'a> {
+pub(crate) struct Grant<'a> {
     #[serde(rename = "grant_type")]
-    kind: &'a str,
-    client_id: &'a str,
+    pub(crate) kind: &'a str,
+    pub(crate) client_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    device_code: Option<&'a str>,
+    pub(crate) device_code: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    refresh_token: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct Revoke<'a> {
-    client_id: &'a str,
-    token: &'a str,
+    pub(crate) refresh_token: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +260,18 @@ impl ShareServers {
         })
     }
 
+    pub(crate) const fn configured(&self) -> &ShareServer {
+        &self.configured
+    }
+
+    pub(crate) const fn store(&self) -> &PathBuf {
+        &self.store
+    }
+
+    pub(crate) fn logins(&self) -> Result<Logins, ServerError> {
+        read_logins(&self.store)
+    }
+
     fn status(&self) -> Result<Report, ServerError> {
         let logins = read_logins(&self.store)?;
         if logins.logins.is_empty() {
@@ -259,13 +282,22 @@ impl ShareServers {
         }
         Ok(Report::success(logins.logins.iter().fold(
             String::new(),
-            |mut lines, (server, tokens)| {
+            |mut lines, (server, login)| {
                 lines.push_str("signed in to ");
                 lines.push_str(server);
-                lines.push_str(" (scope ");
-                lines.push_str(&tokens.scope);
-                lines.push_str("); the access token renews itself, next at ");
-                lines.push_str(&tokens.expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
+                match login {
+                    Login::Device(tokens) => {
+                        lines.push_str(" (scope ");
+                        lines.push_str(&tokens.scope);
+                        lines.push_str("); the access token renews itself, next at ");
+                        lines.push_str(&tokens.expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
+                    }
+                    Login::Team(team) => {
+                        lines.push_str(" as ");
+                        lines.push_str(&team.user);
+                        lines.push_str(" with a team token");
+                    }
+                }
                 lines.push('\n');
                 lines
             },
@@ -291,7 +323,7 @@ async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certific
     reqwest::Certificate::from_pem(&pem).map_err(|error| failed(error.to_string()))
 }
 
-fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
+pub(crate) fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
     let bytes = match PrivateFile::new(store, STORE_NAME, STORE_CAP).read() {
         Ok(bytes) => bytes,
         Err(KeyError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
@@ -302,7 +334,7 @@ fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
     serde_json::from_slice(&bytes).map_err(|error| ServerError::Store(error.to_string()))
 }
 
-fn write_logins(store: &std::path::Path, logins: &Logins) -> Result<(), ServerError> {
+pub(crate) fn write_logins(store: &std::path::Path, logins: &Logins) -> Result<(), ServerError> {
     let parent = store.parent().unwrap_or_else(|| std::path::Path::new("."));
     std::fs::create_dir_all(parent)?;
     let mut partial = tempfile::Builder::new()
@@ -332,7 +364,7 @@ impl Server {
         &self.client
     }
 
-    async fn lock(&self) -> Result<std::fs::File, ServerError> {
+    pub(crate) async fn lock(&self) -> Result<std::fs::File, ServerError> {
         if let Some(parent) = self.lock.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -347,26 +379,47 @@ impl Server {
             .map_err(ServerError::from)
     }
 
-    fn mine(&self) -> Result<Tokens, ServerError> {
+    pub(crate) fn store(&self) -> &std::path::Path {
+        &self.store
+    }
+
+    fn mine(&self) -> Result<Login, ServerError> {
         read_logins(&self.store)?
             .logins
             .remove(self.host.as_str())
             .ok_or_else(|| ServerError::LoggedOut(self.host.clone()))
     }
 
-    fn keep(&self, tokens: Tokens) -> Result<(), ServerError> {
+    fn device(&self, rejected: Option<&str>) -> Result<Result<Tokens, String>, ServerError> {
+        match self.mine()? {
+            Login::Device(tokens) => Ok(Ok(tokens)),
+            Login::Team(team) if rejected.is_none() => Ok(Err(team.team_token)),
+            Login::Team(_) => Err(ServerError::TokenRefused {
+                server: self.host.clone(),
+                status: 401,
+            }),
+        }
+    }
+
+    pub(crate) fn keep(&self, login: Login) -> Result<(), ServerError> {
         let mut logins = read_logins(&self.store)?;
-        logins.logins.insert(self.host.to_string(), tokens);
+        logins.logins.insert(self.host.to_string(), login);
         write_logins(&self.store, &logins)
     }
 
     pub(crate) async fn access_token(&self, rejected: Option<&str>) -> Result<String, ServerError> {
-        let tokens = self.mine()?;
+        let tokens = match self.device(rejected)? {
+            Ok(tokens) => tokens,
+            Err(team) => return Ok(team),
+        };
         if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
             return Ok(tokens.access_token);
         }
         let _lock = self.lock().await?;
-        let tokens = self.mine()?;
+        let tokens = match self.device(rejected)? {
+            Ok(tokens) => tokens,
+            Err(team) => return Ok(team),
+        };
         let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
         let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
         if (fresh && rejected.is_none()) || renewed_elsewhere {
@@ -395,132 +448,12 @@ impl Server {
         }
         let renewed = tokens_from(checked(response).await?.json().await?);
         let access = renewed.access_token.clone();
-        self.keep(renewed)?;
+        self.keep(Login::Device(renewed))?;
         Ok(access)
-    }
-
-    async fn start(&self, client_name: &str) -> Result<Device, ServerError> {
-        let device: Device = checked(
-            self.client
-                .post(self.endpoint(DEVICE_PATH)?)
-                .json(&DeviceRequest {
-                    client_id: CLIENT_ID,
-                    scope: SCOPE,
-                    client_name,
-                })
-                .send()
-                .await?,
-        )
-        .await?
-        .json()
-        .await?;
-        let link = device
-            .verification_uri_complete
-            .as_deref()
-            .unwrap_or(&device.verification_uri);
-        writeln!(
-            std::io::stderr(),
-            "Open {link} and approve the code {} (it expires in {} minutes).",
-            device.user_code,
-            device.expires_in.div_ceil(60)
-        )?;
-        Ok(device)
-    }
-
-    async fn login(
-        &self,
-        client_name: &str,
-        shutdown: &CancellationToken,
-    ) -> Result<Report, ServerError> {
-        let device = self.start(client_name).await?;
-        let mut interval = Duration::from_secs(device.interval.unwrap_or(5).max(1));
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(device.expires_in);
-        loop {
-            tokio::select! {
-                () = shutdown.cancelled() => return Err(ServerError::Cancelled),
-                () = tokio::time::sleep(interval) => {}
-            }
-            if tokio::time::Instant::now() > deadline {
-                return Err(ServerError::Denied("not given before the code expired"));
-            }
-            let response = self
-                .client
-                .post(self.endpoint(TOKEN_PATH)?)
-                .json(&Grant {
-                    kind: DEVICE_GRANT,
-                    client_id: CLIENT_ID,
-                    device_code: Some(&device.code),
-                    refresh_token: None,
-                })
-                .send()
-                .await?;
-            if response.status().is_success() {
-                let tokens = tokens_from(response.json().await?);
-                let scope = tokens.scope.clone();
-                let _lock = self.lock().await?;
-                self.keep(tokens)?;
-                return Ok(Report::success(format!(
-                    "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
-                    self.host, self.host
-                )));
-            }
-            let status = response.status().as_u16();
-            let body = response.text().await?;
-            let error: OauthError =
-                serde_json::from_str(&body).map_err(|_| ServerError::Status {
-                    status,
-                    body: body.clone(),
-                })?;
-            match error.error {
-                OauthCode::AuthorizationPending => {}
-                OauthCode::SlowDown => {
-                    interval = error
-                        .interval
-                        .map_or(interval + SLOW_DOWN, Duration::from_secs);
-                }
-                OauthCode::AccessDenied => {
-                    return Err(ServerError::Denied("denied in the browser"));
-                }
-                OauthCode::ExpiredToken => {
-                    return Err(ServerError::Denied("not given before the code expired"));
-                }
-                OauthCode::InvalidGrant | OauthCode::Other => {
-                    return Err(ServerError::Status { status, body });
-                }
-            }
-        }
-    }
-
-    async fn logout(&self) -> Result<Report, ServerError> {
-        let _lock = self.lock().await?;
-        let mut logins = read_logins(&self.store)?;
-        let Some(tokens) = logins.logins.get(self.host.as_str()) else {
-            return Ok(Report::success(format!(
-                "this machine is not signed in to {}\n",
-                self.host
-            )));
-        };
-        checked(
-            self.client
-                .post(self.endpoint(REVOKE_PATH)?)
-                .json(&Revoke {
-                    client_id: CLIENT_ID,
-                    token: &tokens.refresh_token,
-                })
-                .send()
-                .await?,
-        )
-        .await?;
-        logins.logins.remove(self.host.as_str());
-        write_logins(&self.store, &logins)?;
-        Ok(Report::success(format!(
-            "signed out of {} and revoked this machine's login there\n",
-            self.host
-        )))
     }
 }
 
-fn tokens_from(issued: Issued) -> Tokens {
+pub(crate) fn tokens_from(issued: Issued) -> Tokens {
     Tokens {
         access_token: issued.access_token,
         refresh_token: issued.refresh_token,
@@ -548,31 +481,84 @@ pub async fn run(
 ) -> Result<Report, crate::Error> {
     let servers = ShareServers::from_env(env).await?;
     Ok(match command {
-        ShareCommand::Login { server } => {
-            let host = servers.pick(server.as_deref())?;
-            let name = format!("RivetHub CLI on {}", host_name()?);
-            servers
-                .connect(&host, REQUEST_TIMEOUT)
-                .await?
-                .login(&name, shutdown)
-                .await?
-        }
+        ShareCommand::Login { server } => login(env, server.as_deref(), shutdown).await?,
         ShareCommand::Logout { server } => {
-            let host = servers.pick(server.as_deref())?;
-            servers
-                .connect(&host, REQUEST_TIMEOUT)
-                .await?
-                .logout()
-                .await?
+            let (host, outcome) = desk::logout(env, server.as_deref()).await?;
+            Report::success(match outcome {
+                LoggedOut::NotSignedIn => format!("this machine is not signed in to {host}\n"),
+                LoggedOut::Revoked => {
+                    format!("signed out of {host} and revoked this machine's login there\n")
+                }
+                LoggedOut::Forgotten => {
+                    format!("signed out of {host} and forgot its team token on this machine\n")
+                }
+            })
         }
         ShareCommand::Status => servers.status()?,
     })
 }
 
-fn host_name() -> Result<String, crate::Error> {
-    let name = nix::unistd::gethostname()
-        .map_err(|_| crate::Error::HostName)?
-        .into_string()
-        .map_err(|_| crate::Error::HostName)?;
-    Ok(name.trim().to_owned())
+async fn login(
+    env: &Environment,
+    server: Option<&str>,
+    shutdown: &CancellationToken,
+) -> Result<Report, crate::Error> {
+    let started = desk::start(env, server, "RivetHub CLI").await?;
+    writeln!(
+        std::io::stderr(),
+        "Open {} and approve the code {} (it expires in {} minutes).",
+        started.verification_uri_complete,
+        started.user_code,
+        started.expires_in.as_secs().div_ceil(60)
+    )?;
+    let mut pending = started.pending;
+    loop {
+        tokio::select! {
+            () = shutdown.cancelled() => return Err(ServerError::Cancelled.into()),
+            () = tokio::time::sleep(pending.interval()) => {}
+        }
+        match desk::poll(env, &mut pending).await? {
+            Polled::Pending | Polled::SlowDown { .. } => {}
+            Polled::SignedIn { scope } => {
+                let host = pending.server();
+                return Ok(Report::success(format!(
+                    "signed in to {host} (scope {scope}); the login lasts until rh share logout {host} or a revoke on the server\n"
+                )));
+            }
+            Polled::Denied => return Err(ServerError::Denied("denied in the browser").into()),
+            Polled::Expired => {
+                return Err(ServerError::Denied("not given before the code expired").into());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_logins_file_holds_device_and_team_logins_side_by_side() {
+        let written = r#"{"logins":{"rivethub.cloud":{"access_token":"rhca_x","refresh_token":"rhcr_x","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}}}"#;
+        let mut logins: Logins = serde_json::from_str(written).expect("a file the old code wrote");
+        assert!(matches!(
+            logins.logins.get("rivethub.cloud"),
+            Some(Login::Device(_))
+        ));
+        logins.logins.insert(
+            "team.example.com".to_owned(),
+            Login::Team(TeamLogin {
+                team_token: "rht_x".to_owned(),
+                user: "phil".to_owned(),
+            }),
+        );
+        let text = serde_json::to_string(&logins).expect("serialize");
+        assert!(text.contains(r#""team.example.com":{"team_token":"rht_x","user":"phil"}"#));
+        let read: Logins = serde_json::from_str(&text).expect("read back");
+        assert!(matches!(
+            read.logins.get("team.example.com"),
+            Some(Login::Team(team)) if team.user == "phil"
+        ));
+        assert!(!format!("{read:?}").contains("rht_x"));
+    }
 }
