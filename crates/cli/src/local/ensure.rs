@@ -14,7 +14,7 @@ use tokio::time::Instant;
 
 use super::{apply_bind, bind_host, bind_port};
 use crate::exit::Exit;
-use crate::status::{Endpoint, endpoint};
+use crate::status::{Endpoint, probe_endpoint};
 use crate::{Error, Report, process};
 
 const LOCK_DIRECTORY: &str = "run";
@@ -153,7 +153,7 @@ pub(crate) async fn ensure(
         return Err(Error::GatewayPort);
     }
     let (config, adopted) = bound_config(env, request.port, request.no_lan).await?;
-    let endpoint = endpoint(env, &config).await?;
+    let endpoint = probe_endpoint(env, &config).await?;
     let origin = endpoint.url.origin().ascii_serialization();
     let port = endpoint.url.port_or_known_default().ok_or(Error::Address)?;
     let target = Target {
@@ -356,10 +356,12 @@ async fn probe(target: &Target, timeout: Duration) -> Result<Probe, Error> {
     }
     let body = response.bytes().await?;
     Ok(match serde_json::from_slice::<NodeIdentity>(&body) {
-        Ok(health) if health.name.is_empty() || health.node.is_empty() => Probe::Foreign {
-            status,
-            source: Unrecognized::Anonymous,
-        },
+        Ok(health) if health.name.trim().is_empty() || health.node.trim().is_empty() => {
+            Probe::Foreign {
+                status,
+                source: Unrecognized::Anonymous,
+            }
+        }
         Ok(health) => Probe::Node(Box::new(health)),
         Err(source) => Probe::Foreign {
             status,

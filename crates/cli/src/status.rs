@@ -76,8 +76,27 @@ async fn health(env: &Environment) -> Result<Report, Error> {
     Ok(report)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Redirects {
+    Follow,
+    Refuse,
+}
+
 pub(crate) async fn endpoint(env: &Environment, config: &Config) -> Result<Endpoint, Error> {
-    let Endpoint { url, client } = gateway(env, config, Duration::from_secs(3)).await?;
+    health_endpoint(env, config, Redirects::Follow).await
+}
+
+pub(crate) async fn probe_endpoint(env: &Environment, config: &Config) -> Result<Endpoint, Error> {
+    health_endpoint(env, config, Redirects::Refuse).await
+}
+
+async fn health_endpoint(
+    env: &Environment,
+    config: &Config,
+    redirects: Redirects,
+) -> Result<Endpoint, Error> {
+    let Endpoint { url, client } =
+        gateway_with(env, config, Duration::from_secs(3), redirects).await?;
     Ok(Endpoint {
         url: url.join("healthz")?,
         client,
@@ -88,6 +107,15 @@ pub(crate) async fn gateway(
     env: &Environment,
     config: &Config,
     timeout: Duration,
+) -> Result<Endpoint, Error> {
+    gateway_with(env, config, timeout, Redirects::Follow).await
+}
+
+async fn gateway_with(
+    env: &Environment,
+    config: &Config,
+    timeout: Duration,
+    redirects: Redirects,
 ) -> Result<Endpoint, Error> {
     let hostname = host_name()?;
     let node = config::resolve_node_name(config, env, &hostname)?;
@@ -121,9 +149,13 @@ pub(crate) async fn gateway(
     }
     url.set_port(Some(source.port))
         .map_err(|()| Error::Address)?;
+    let policy = match redirects {
+        Redirects::Follow => reqwest::redirect::Policy::default(),
+        Redirects::Refuse => reqwest::redirect::Policy::none(),
+    };
     let builder = reqwest::Client::builder()
         .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(policy)
         .timeout(timeout);
     let ca = gateway::private_ca(env, &config::shared_dir(env));
     let client = match (&source.tls_cert, &ca) {
