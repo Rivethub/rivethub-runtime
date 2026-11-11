@@ -99,3 +99,19 @@ fn allowed_share_servers_read_in_either_spelling() -> Result<(), Box<dyn std::er
     }
     Ok(())
 }
+
+#[test]
+fn a_disabled_cloud_still_refuses_a_cloud_url_that_is_not_http()
+-> Result<(), Box<dyn std::error::Error>> {
+    let yaml = document(
+        "memory:\n  backend: sqlite\ncloud:\n  disabled: true\n  url: ftp://cloud.example.com/\n",
+    )?;
+    let result = validate_document(&yaml, Profile::Standalone);
+    let paths: Vec<_> = result
+        .errors
+        .iter()
+        .map(|finding| finding.path.as_str())
+        .collect();
+    assert_eq!(paths, vec!["cloud.url"]);
+    Ok(())
+}

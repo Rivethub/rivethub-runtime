@@ -2420,8 +2420,12 @@ once. The policy hash and the report fingerprints of a re-run also differ from t
 (145) Hub cloud policy (SS-12). Phil decided, 2026-11-11: an operator who must keep every byte inside their environment
 can turn the cloud off for the whole hub at install time, and no user can turn it back on. Cloud features stay on by
 default. The policy lives only in config.yaml, which the operator owns; no route, CLI flag or account setting changes it.
+This hub's gateway and the `rh` CLI enforce it, each reading this hub's config.yaml, including the share rules below.
+It governs the hub, not every binary on the machine: a shell user who runs `rh` with a config of their own (through
+`RIVETHUB_CONFIG`, `RIVETHUB_HOME` or their own home directory) is not bound by it, and keeping such a user off the network is the operator's job.
 
-Keys. `cloud: {disabled: true}` turns the cloud off; a `cloud.url` that is also set is ignored, not an error. It implies
+Keys. `cloud: {disabled: true}` turns the cloud off; an http or https `cloud.url` that is also set is ignored, not an
+error, while any other `cloud.url` is still the config error `The cloud url must be http or https`. It implies
 `telemetry: {disabled: true}` (`Config::telemetry_disabled` is true when either key is set, and `Config::cloud_disabled`
 reads the first). `memory.share.allowed_servers` (also `allowedServers`) lists share servers, each a host with an
 optional `:port` in the grammar `--server` takes (note 140); a missing or empty list allows any server.

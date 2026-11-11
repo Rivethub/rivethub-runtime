@@ -283,6 +283,10 @@ or usage count is written or sent, `rh update` fetches GitHub releases, and noth
 Users cannot turn any of it back on; only an edit to config.yaml does. `rh status`, `rh doctor` and `/healthz` report
 the policy. CONTRACT note 145 has the full rules.
 
+This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
+config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config
+of their own is not bound by it; to keep such users off the network, restrict their outbound traffic as well.
+
 To share only with your own team servers, list them. Each entry is a host with an optional `:port`:
 
 ```yaml
