@@ -351,7 +351,7 @@ pub(crate) fn harden(router: axum::Router) -> axum::Router {
     router
         .layer(fixed(
             header::CONTENT_SECURITY_POLICY,
-            "default-src 'self'; frame-ancestors 'none'",
+            "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
         ))
         .layer(fixed(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
         .layer(fixed(header::REFERRER_POLICY, "no-referrer"))

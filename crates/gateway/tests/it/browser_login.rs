@@ -806,6 +806,17 @@ fn assert_hardened(reply: &Reply, what: &str) {
     assert!(csp.contains("frame-ancestors 'none'"), "{what}: {csp}");
 }
 
+const SHELL_POLICY: &str = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+
+fn assert_shell_policy(reply: &Reply, what: &str) {
+    assert_hardened(reply, what);
+    assert_eq!(
+        reply.header("content-security-policy"),
+        Some(SHELL_POLICY),
+        "{what}"
+    );
+}
+
 #[tokio::test]
 async fn pages_and_the_api_carry_the_security_headers() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -828,7 +839,7 @@ async fn pages_and_the_api_carry_the_security_headers() -> TestResult {
     };
     let shell = rig.call("GET", "/").send().await?;
     assert_eq!(shell.status, StatusCode::OK);
-    assert_hardened(&shell, "static shell");
+    assert_shell_policy(&shell, "static shell");
     assert!(
         shell
             .header("content-security-policy")
@@ -836,20 +847,22 @@ async fn pages_and_the_api_carry_the_security_headers() -> TestResult {
             .contains("default-src 'self'")
     );
     let spa = rig.call("GET", "/somewhere").send().await?;
-    assert_hardened(&spa, "spa route");
+    assert_shell_policy(&spa, "spa route");
+    let asset = rig.call("GET", "/index.html").send().await?;
+    assert_shell_policy(&asset, "static file");
     let page = rig.call("GET", "/login").send().await?;
     assert_hardened(&page, "login");
     let wiki = rig.call("GET", "/wiki").owner().send().await?;
     assert_hardened(&wiki, "wiki");
     let refused = rig.call("GET", "/api/memory/stats").send().await?;
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
-    assert_hardened(&refused, "401");
+    assert_shell_policy(&refused, "401");
     assert_eq!(refused.header("cache-control"), Some("no-store"));
     let api = rig.call("GET", "/api/memory/stats").owner().send().await?;
-    assert_hardened(&api, "api");
+    assert_shell_policy(&api, "api");
     assert_eq!(api.header("cache-control"), Some("no-store"));
     let health = rig.call("GET", "/healthz").send().await?;
-    assert_hardened(&health, "healthz");
+    assert_shell_policy(&health, "healthz");
     Ok(())
 }
 
