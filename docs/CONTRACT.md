@@ -2118,7 +2118,8 @@ this run; `block` without `decide` is refused); `decide` with no URL configured 
 session's rules are part of the sanitizer policy: a term is redacted to `[REDACTED:session_term]` in that session only,
 in the fields and JSON keys mapping rules cover, matched literally and case-sensitively after the secrets pass and
 before the mapping rules, an earlier term winning where matches overlap; `drop_tool_outputs` turns every `tool_result`
-of that session into `[REDACTED:drop_tool_outputs]` while its tool names and arguments go through the sanitizer as
+of that session, and the `content` of each of its `tool` messages, which a reader fills with the same output, into
+`[REDACTED:drop_tool_outputs]` while its tool names and arguments go through the sanitizer as
 usual. The report counts them under the rules `session_term` and `drop_tool_outputs` (pass `mapping`, counted as
 redacted) with fingerprints only, never the term; the keyed policy hash covers each session's rules, and a run with no
 rules hashes as before. It writes only the sanitized bundle, the report and, after a review, the local review file,

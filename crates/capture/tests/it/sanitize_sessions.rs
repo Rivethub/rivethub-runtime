@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use capture::readers::StoreReader;
 use capture::share;
 use capture::share::BundlePaths;
 use capture::share::Clobber;
@@ -16,7 +17,9 @@ use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
 use wire::capture::SessionOrigin;
+use wire::harness::HarnessId;
 use wire::message::Role;
+use wire::session_id::SessionId;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -112,6 +115,14 @@ async fn sanitized(
         .zip(1..)
         .map(|(choice, n)| Ok((session(n)?, choice)))
         .collect::<TestResult<Vec<_>>>()?;
+    sanitized_sessions(directory, key, sessions).await
+}
+
+async fn sanitized_sessions(
+    directory: &Path,
+    key: &Path,
+    sessions: Vec<(BundledSession, Choice)>,
+) -> TestResult<(Outcome, String)> {
     let chosen = share::chosen(
         BundleAuthor {
             user: "phil".to_owned(),
@@ -239,5 +250,55 @@ async fn the_policy_hash_changes_with_the_terms_but_never_names_them() -> TestRe
     }
     hashes.dedup();
     assert_eq!(hashes.len(), 3, "{hashes:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn drop_tool_outputs_also_drops_the_output_a_reader_puts_in_content() -> TestResult {
+    const NATIVE: &str = "33333333-3333-3333-3333-333333333333";
+    let store = tempfile::tempdir()?;
+    let project = store.path().join("projects").join("-work-demo");
+    std::fs::create_dir_all(&project)?;
+    std::fs::copy(
+        testkit::recording("capture/claude-hook/transcript.jsonl"),
+        project.join(format!("{NATIVE}.jsonl")),
+    )?;
+    let reader = StoreReader::open(HarnessId::ClaudeCode, store.path().to_path_buf())
+        .ok_or("claude reader")?;
+    let read = reader
+        .messages(&SessionId::new(HarnessId::ClaudeCode, NATIVE), 0)
+        .await?;
+    let listed = read
+        .messages
+        .iter()
+        .find(|message| message.role == Role::Tool)
+        .ok_or("a tool turn")?;
+    assert_eq!(listed.content, "a.txt\nb.txt");
+    assert_eq!(listed.tool_result.as_deref(), Some("a.txt\nb.txt"));
+
+    let mut session = session(1)?;
+    session.batch.messages = read.messages;
+    let directory = tempfile::tempdir()?;
+    let (outcome, report) = sanitized_sessions(
+        directory.path(),
+        &directory.path().join("sanitize.key"),
+        vec![(session, redact(&[], true)?)],
+    )
+    .await?;
+
+    let dropped = outcome.sanitized.sessions.first().ok_or("one session")?;
+    let output = dropped
+        .batch
+        .messages
+        .iter()
+        .find(|message| message.role == Role::Tool)
+        .ok_or("the tool turn")?;
+    assert_eq!(output.content, "[REDACTED:drop_tool_outputs]");
+    assert_eq!(
+        output.tool_result.as_deref(),
+        Some("[REDACTED:drop_tool_outputs]")
+    );
+    assert!(!texts(dropped)?.contains("a.txt"));
+    assert!(!report.contains("a.txt"), "{report}");
     Ok(())
 }

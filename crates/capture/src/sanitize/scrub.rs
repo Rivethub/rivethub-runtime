@@ -6,6 +6,7 @@ use wire::capture::BundledSession;
 use wire::capture::CaptureMessage;
 use wire::json::Scrub;
 use wire::json::member_path;
+use wire::message::Role;
 
 use super::chosen::SessionRules;
 use super::key::LocalKey;
@@ -117,10 +118,15 @@ impl<'a> Scrubber<'a> {
         };
         self.budget.next_message();
         self.secrets_only(&Field::EventId, &mut message.event_id);
-        self.text(&Field::Content, &mut message.content);
+        let drops_outputs = self.sessions.drops_tool_outputs(session);
+        if drops_outputs && message.role == Role::Tool && !message.content.is_empty() {
+            self.drop_output(Field::Content, &mut message.content);
+        } else {
+            self.text(&Field::Content, &mut message.content);
+        }
         if let Some(result) = &mut message.tool_result {
-            if self.sessions.drops_tool_outputs(session) {
-                self.drop_output(result);
+            if drops_outputs {
+                self.drop_output(Field::ToolResult, result);
             } else {
                 self.text(&Field::ToolResult, result);
             }
@@ -206,15 +212,10 @@ impl<'a> Scrubber<'a> {
         self.apply(field, text, hits);
     }
 
-    fn drop_output(&mut self, result: &mut String) {
+    fn drop_output(&mut self, field: Field, output: &mut String) {
         let placeholder = redaction::placeholder(DROP_TOOL_OUTPUTS_KIND);
-        self.record(
-            Field::ToolResult,
-            RuleId::DropToolOutputs,
-            result,
-            &placeholder,
-        );
-        *result = placeholder;
+        self.record(field, RuleId::DropToolOutputs, output, &placeholder);
+        *output = placeholder;
     }
 
     fn escape_flags(&mut self, field: &Field, text: &mut String) {
