@@ -4,12 +4,15 @@ use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
-use sha2::Digest as _;
+use hmac::Hmac;
+use hmac::Mac as _;
+use serde::Deserialize;
+use serde::Serialize;
 use sha2::Sha256;
 use thiserror::Error;
 
 const KEY_BYTES: usize = 32;
-const BLOCK: usize = 64;
+const V2_DOMAIN: &[u8] = b"rivethub sanitize mac v2";
 const READ_CAP: u64 = 64;
 const OWNER_ONLY: u32 = 0o600;
 const SHARED_BITS: u32 = 0o077;
@@ -46,8 +49,18 @@ pub enum KeyError {
 
 const NAME: &str = "local sanitize key";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MacFormat {
+    V1,
+    V2,
+}
+
 #[derive(Clone)]
-pub struct LocalKey([u8; KEY_BYTES]);
+pub struct LocalKey {
+    bytes: [u8; KEY_BYTES],
+    format: MacFormat,
+}
 
 #[cfg_attr(
     dylint_lib = "rr_lints",
@@ -58,14 +71,30 @@ pub struct LocalKey([u8; KEY_BYTES]);
 )]
 impl std::fmt::Debug for LocalKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("LocalKey(..)")
+        write!(formatter, "LocalKey(.., {:?})", self.format)
     }
 }
 
 impl LocalKey {
     #[must_use]
     pub const fn from_bytes(bytes: [u8; KEY_BYTES]) -> Self {
-        Self(bytes)
+        Self {
+            bytes,
+            format: MacFormat::V2,
+        }
+    }
+
+    #[must_use]
+    pub fn in_format(&self, format: MacFormat) -> Self {
+        Self {
+            format,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub const fn format(&self) -> MacFormat {
+        self.format
     }
 
     pub fn path_in(state_dir: &Path) -> PathBuf {
@@ -86,25 +115,39 @@ impl LocalKey {
             path: path.to_path_buf(),
             found: found.len(),
         })?;
-        Ok(Self(bytes))
+        Ok(Self::from_bytes(bytes))
+    }
+
+    fn hmac(&self, parts: &[&[u8]]) -> Hmac<Sha256> {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.bytes)
+            .unwrap_or_else(|error| unreachable!("HMAC takes a key of any length: {error}"));
+        match self.format {
+            MacFormat::V1 => {
+                for (index, part) in parts.iter().enumerate() {
+                    if index > 0 {
+                        mac.update(&[0]);
+                    }
+                    mac.update(part);
+                }
+            }
+            MacFormat::V2 => {
+                for part in std::iter::once(V2_DOMAIN).chain(parts.iter().copied()) {
+                    mac.update(&(part.len() as u64).to_be_bytes());
+                    mac.update(part);
+                }
+            }
+        }
+        mac
     }
 
     #[must_use]
     pub fn mac(&self, parts: &[&[u8]]) -> [u8; KEY_BYTES] {
-        let mut inner = Sha256::new();
-        inner.update(self.0.map(|byte| byte ^ 0x36));
-        inner.update([0x36u8; BLOCK - KEY_BYTES]);
-        for (index, part) in parts.iter().enumerate() {
-            if index > 0 {
-                inner.update([0]);
-            }
-            inner.update(part);
-        }
-        let mut outer = Sha256::new();
-        outer.update(self.0.map(|byte| byte ^ 0x5c));
-        outer.update([0x5cu8; BLOCK - KEY_BYTES]);
-        outer.update(inner.finalize());
-        outer.finalize().into()
+        self.hmac(parts).finalize().into_bytes().into()
+    }
+
+    #[must_use]
+    pub fn verifies(&self, parts: &[&[u8]], hex_tag: &str) -> bool {
+        hex::decode(hex_tag).is_ok_and(|tag| self.hmac(parts).verify_slice(&tag).is_ok())
     }
 
     #[must_use]
@@ -229,19 +272,113 @@ impl<'a> PrivateFile<'a> {
 mod tests {
     use super::*;
 
+    const EVENT: [&[u8]; 5] = [b"event_id", b"desk", b"c1", b"claude-code:c1", b"evt-1"];
+
+    fn padded(key: &[u8]) -> LocalKey {
+        let mut bytes = [0u8; KEY_BYTES];
+        for (slot, byte) in bytes.iter_mut().zip(key) {
+            *slot = *byte;
+        }
+        LocalKey::from_bytes(bytes)
+    }
+
     #[test]
-    fn the_mac_is_keyed_and_separates_its_parts() {
+    fn the_v1_mac_is_hmac_sha256_per_rfc_4231() {
+        let cases: [(Vec<u8>, Vec<u8>, &str); 4] = [
+            (
+                vec![0x0b; 20],
+                b"Hi There".to_vec(),
+                "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+            ),
+            (
+                b"Jefe".to_vec(),
+                b"what do ya want for nothing?".to_vec(),
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+            ),
+            (
+                vec![0xaa; 20],
+                vec![0xdd; 50],
+                "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
+            ),
+            (
+                (1..=25).collect(),
+                vec![0xcd; 50],
+                "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b",
+            ),
+        ];
+        for (key, data, expected) in cases {
+            let key = padded(&key).in_format(MacFormat::V1);
+            assert_eq!(key.hex(&[&data]), expected);
+        }
+    }
+
+    #[test]
+    fn v1_joins_parts_ambiguously_and_v2_does_not() {
+        let v1 = LocalKey::from_bytes([0x0b; 32]).in_format(MacFormat::V1);
+        assert_eq!(
+            v1.hex(&[b"a\0".as_slice(), b"b"]),
+            v1.hex(&[b"a".as_slice(), b"\0b"])
+        );
+
+        let v2 = LocalKey::from_bytes([0x0b; 32]);
+        assert_eq!(v2.format(), MacFormat::V2);
+        let tags = [
+            v2.hex(&[b"a\0".as_slice(), b"b"]),
+            v2.hex(&[b"a".as_slice(), b"\0b"]),
+            v2.hex(&[b"a".as_slice(), b"b"]),
+            v2.hex(&[b"ab"]),
+            v2.hex(&[b"a\0b"]),
+        ];
+        let distinct: std::collections::HashSet<_> = tags.iter().collect();
+        assert_eq!(distinct.len(), tags.len(), "two part lists collide");
+    }
+
+    #[test]
+    fn the_formats_match_independently_computed_vectors() {
         let key = LocalKey::from_bytes([0x0b; 32]);
-        assert_eq!(key.hex(&[b"a", b"b"]), key.hex(&[b"a\0b"]));
-        assert_ne!(key.hex(&[b"a", b"b"]), key.hex(&[b"ab"]));
+        assert_eq!(
+            key.hex(&EVENT),
+            "b03ee87689cb560078ad309e6d32f6f73c823d5e177c4ca93e29f110cefcd20b"
+        );
+        assert_eq!(
+            key.in_format(MacFormat::V1).hex(&EVENT),
+            "11ecb4e82f405d2e76b9d35a457a28da01df6103284e613315ec108b007c597e"
+        );
+        assert_eq!(
+            key.hex(&[b"a\0".as_slice(), b"b"]),
+            "a32047473d14518acd7b793bc8f107ce579f5e244cf6fc6a5f232a67108c5da7"
+        );
+    }
+
+    #[test]
+    fn the_mac_depends_on_the_key_and_yields_a_v4_uuid() {
+        let key = LocalKey::from_bytes([0x0b; 32]);
         assert_ne!(
             key.hex(&[b"x"]),
             LocalKey::from_bytes([0x0c; 32]).hex(&[b"x"])
         );
-        assert_eq!(key.hex(&[b"Hi There"]), key.hex(&[b"Hi There"]),);
         let id = key.uuid(&[b"task_id", b"raw"]);
         assert_eq!(id.len(), 36);
         assert_eq!(id.as_bytes().get(14), Some(&b'4'));
+    }
+
+    #[test]
+    fn verifies_accepts_only_the_exact_tag_of_its_own_format() {
+        let key = LocalKey::from_bytes([0x0b; 32]);
+        let tag = key.hex(&EVENT);
+        assert!(key.verifies(&EVENT, &tag));
+
+        let rest = tag.get(1..).unwrap_or_default();
+        let first = if tag.starts_with('0') { '1' } else { '0' };
+        assert!(!key.verifies(&EVENT, &format!("{first}{rest}")));
+        assert!(!key.verifies(&EVENT, rest));
+        assert!(!key.verifies(&EVENT, &"z".repeat(tag.len())));
+        assert!(!key.verifies(&EVENT, ""));
+        assert!(!key.verifies(&EVENT, &key.in_format(MacFormat::V1).hex(&EVENT)));
+        assert!(
+            key.in_format(MacFormat::V1)
+                .verifies(&EVENT, &key.in_format(MacFormat::V1).hex(&EVENT))
+        );
     }
 
     #[test]

@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use capture::sanitize;
 use capture::sanitize::LocalKey;
+use capture::sanitize::MacFormat;
 use capture::sanitize::Policy;
 use capture::sanitize::Sanitized;
 use capture::sanitize::SessionRules;
 use capture::sanitize::decide::DecideError;
 use capture::sanitize::decide::Endpoint;
 use capture::sanitize::decide::Mode;
+use capture::sanitize::decide::ResolveError;
 use capture::sanitize::decide::Review;
 use capture::sanitize::marks::MarkProblem;
 use capture::sanitize::marks::ReportError;
@@ -650,5 +652,42 @@ fn a_0_8_0_decide_run_still_resolves() -> TestResult {
     )?;
     assert_eq!(again.open, 1);
     assert_eq!(&again.sealed.bundle, clean);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fresh_run_seals_its_mac_format_into_the_local_review() -> TestResult {
+    let (stub, _) = model().await?;
+    let sanitized = advisory(format!("http://{}", stub.addr)).await?;
+    let local = sanitized.local.ok_or("no local review")?;
+    assert_eq!(local.mac_format, MacFormat::V2);
+    assert!(serde_json::to_string(&local)?.contains(r#""mac_format":"v2""#));
+    stub.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_local_review_stripped_of_its_format_is_refused() -> TestResult {
+    let (stub, _) = model().await?;
+    let sanitized = advisory(format!("http://{}", stub.addr)).await?;
+    let mut json = serde_json::to_value(sanitized.local.ok_or("no local review")?)?;
+    json.as_object_mut()
+        .ok_or("not an object")?
+        .remove("mac_format")
+        .ok_or("no mac_format field")?;
+    let stripped: sanitize::decide::LocalReview = serde_json::from_value(json)?;
+    let flags = sanitize::marks::read_flags(&sanitized.report.markdown("s.clean.json", "none"))?;
+
+    let error =
+        sanitize::resolve(&sanitized.sealed.bundle, &flags, &stripped, &policy()?.key).err();
+
+    assert!(
+        matches!(
+            error,
+            Some(sanitize::SanitizeError::Resolve(ResolveError::OtherKey))
+        ),
+        "{error:?}"
+    );
+    stub.close().await?;
     Ok(())
 }

@@ -9,6 +9,7 @@ use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 
 use super::super::key::LocalKey;
+use super::super::key::MacFormat;
 use super::places::Place;
 use super::slots::BaseValue;
 use super::slots::FieldAt;
@@ -19,7 +20,21 @@ pub struct LocalReview {
     pub unreviewed_sha256: String,
     pub flags: Vec<LocalFlag>,
     pub fields: Vec<BaseField>,
+    #[serde(default = "v1", skip_serializing_if = "is_v1")]
+    pub mac_format: MacFormat,
     pub seal: String,
+}
+
+const fn v1() -> MacFormat {
+    MacFormat::V1
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde calls skip_serializing_if with a reference to the field"
+)]
+fn is_v1(format: &MacFormat) -> bool {
+    *format == MacFormat::V1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,17 +56,21 @@ impl LocalReview {
         Ok(self)
     }
 
-    fn mac(&self, key: &LocalKey) -> Result<String, serde_json::Error> {
-        let unsealed = Self {
+    fn unsealed(&self) -> Result<Vec<u8>, serde_json::Error> {
+        wire::json::canonical_json(&Self {
             seal: String::new(),
             ..self.clone()
-        };
-        Ok(key.hex(&[b"local review", &wire::json::canonical_json(&unsealed)?]))
+        })
+    }
+
+    fn mac(&self, key: &LocalKey) -> Result<String, serde_json::Error> {
+        Ok(key.hex(&[b"local review", &self.unsealed()?]))
     }
 
     #[must_use]
     pub fn holds_its_seal(&self, key: &LocalKey) -> bool {
-        self.mac(key).is_ok_and(|mac| mac == self.seal)
+        self.unsealed()
+            .is_ok_and(|unsealed| key.verifies(&[b"local review", &unsealed], &self.seal))
     }
 
     pub(super) fn bases(&self) -> BTreeMap<FieldAt, BaseValue> {

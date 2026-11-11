@@ -19,6 +19,7 @@ chrono = { workspace = true }
 config = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
+hmac = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
