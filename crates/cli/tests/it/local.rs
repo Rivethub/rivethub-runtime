@@ -265,27 +265,37 @@ async fn a_lan_bind_without_tls_names_the_ways_out() {
     assert!(!database.exists());
 }
 
-async fn first_run(env: &config::Environment, args: &[&str]) -> String {
-    let home = env.home().expect("home").to_owned();
-    let cli = Cli::parse_args(args.iter().map(|arg| (*arg).into())).expect("parse");
+async fn first_run(
+    env: &config::Environment,
+    args: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let home = env.home().ok_or("no HOME")?.to_owned();
+    let cli =
+        Cli::parse_args(args.iter().map(|arg| (*arg).into())).map_err(|report| report.stderr)?;
     let dispatch = cli::dispatch(cli, env, &tokio_util::sync::CancellationToken::new()).await;
     let Dispatch::Local(prepared) = dispatch else {
-        panic!("local did not prepare");
+        return Err("local did not prepare".into());
     };
-    assert!(prepared.config.cloud_disabled());
-    prepared.release().expect("release");
-    std::fs::read_to_string(std::path::Path::new(&home).join(".rivethub/config.yaml"))
-        .expect("config")
+    let disabled = prepared.config.cloud_disabled();
+    prepared.release()?;
+    if !disabled {
+        return Err("the prepared config keeps the cloud on".into());
+    }
+    Ok(std::fs::read_to_string(
+        std::path::Path::new(&home).join(".rivethub/config.yaml"),
+    )?)
 }
 
 #[tokio::test]
 async fn a_cloud_off_first_run_writes_the_policy_into_the_new_config() {
     let flagged = home();
-    let text = first_run(&without_tls(&flagged), &["rh", "local", "--no-cloud"]).await;
+    let text = first_run(&without_tls(&flagged), &["rh", "local", "--no-cloud"])
+        .await
+        .expect("first run");
     assert!(text.contains("cloud:\n  disabled: true\n"), "{text}");
     let variable = home();
     let env = without_tls(&variable).with_override("RIVETHUB_CLOUD", "off");
-    let text = first_run(&env, &["rh", "local"]).await;
+    let text = first_run(&env, &["rh", "local"]).await.expect("first run");
     assert!(text.contains("cloud:\n  disabled: true\n"), "{text}");
 }
 

@@ -1179,11 +1179,14 @@ async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
 async fn a_disabled_cloud_reaches_only_listed_share_servers() {
     let served = drop_box().await;
     let node = Node::new("phil", &served.url, None);
-    let server = format!(
+    let share_config = format!(
         "memory:\n  share:\n    server:\n      url: {}\n",
         served.url
     );
-    support::config(&node.home, &format!("{server}cloud:\n  disabled: true\n"));
+    support::config(
+        &node.home,
+        &format!("{share_config}cloud:\n  disabled: true\n"),
+    );
     node.sign_in(&served.url);
     let refused = node.run(&["share", "logout"]).await;
     assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
@@ -1197,7 +1200,7 @@ async fn a_disabled_cloud_reaches_only_listed_share_servers() {
     support::config(
         &node.home,
         &format!(
-            "{server}    allowed_servers:\n      - {}\ncloud:\n  disabled: true\n",
+            "{share_config}    allowed_servers:\n      - {}\ncloud:\n  disabled: true\n",
             host_of(&served.url)
         ),
     );

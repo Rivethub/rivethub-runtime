@@ -14,7 +14,7 @@ fn policy(
     if !allowed.is_empty() {
         yaml.push_str("  share:\n    allowed_servers:\n");
         for host in allowed {
-            yaml.push_str(&format!("      - {host}\n"));
+            yaml.extend(["      - ", host, "\n"]);
         }
     }
     if cloud_disabled {
