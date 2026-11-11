@@ -122,7 +122,9 @@ async fn forget_session(
               history AS (DELETE FROM rh_session_history
                            WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)),
               trash AS (DELETE FROM rh_session_trash
-                         WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2))
+                         WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2)),
+              model_calls AS (DELETE FROM rh_model_calls
+                               WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2))
          DELETE FROM rh_filing_corrections WHERE session_id = $1 AND ($2::text IS NULL OR owner_user_id = $2)",
     )
     .bind(session_key)

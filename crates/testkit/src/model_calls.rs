@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use kernel::memory::SessionDeletion;
 use kernel::model_calls::{CallTotals, ModelCall, ModelCallStore, TurnMetadata};
 use wire::model_call::{CallOutcome, CallUsage};
 use wire::session_id::SessionId;
@@ -140,6 +141,42 @@ pub async fn a_session_reads_its_own_calls_in_start_order_with_every_field(
             },
             models: BTreeMap::from([("model-a".to_owned(), 1), ("unknown".to_owned(), 1)]),
         },
+    )?;
+    Ok(())
+}
+
+pub async fn deleting_a_session_deletes_its_model_calls<S>(store: &S) -> Outcome
+where
+    S: ModelCallStore + SessionDeletion,
+{
+    let owner = crate::owner()?;
+    let deleted = call(
+        "00000000-0000-4000-8000-0000000000e1",
+        0,
+        Some(CLAUDE_SESSION),
+    )?;
+    let kept = call(
+        "00000000-0000-4000-8000-0000000000e2",
+        1,
+        Some(CODEX_SESSION),
+    )?;
+    store.record(&owner, &[deleted, kept.clone()]).await?;
+
+    store
+        .delete_session(CLAUDE_SESSION, Some(crate::OWNER), at(5))
+        .await?;
+
+    let claude: SessionId = CLAUDE_SESSION.parse()?;
+    same(
+        "deleted session's calls",
+        store.session_calls(&claude).await?,
+        Vec::new(),
+    )?;
+    let codex: SessionId = CODEX_SESSION.parse()?;
+    same(
+        "other session's calls",
+        store.session_calls(&codex).await?,
+        vec![kept],
     )?;
     Ok(())
 }

@@ -1,3 +1,4 @@
+use kernel::memory::SessionDeletion as _;
 use kernel::model_calls::ModelCallStore as _;
 use kernel::owner::Owner;
 use kernel::tenancy::{Scope, Viewer};
@@ -39,6 +40,12 @@ async fn a_session_reads_its_own_calls_in_start_order_with_every_field(pool: PgP
             .await?;
     assert_eq!(unclaimed, 1);
     Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_a_session_deletes_its_model_calls(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    model_calls::deleting_a_session_deletes_its_model_calls(&store).await
 }
 
 async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
@@ -157,5 +164,37 @@ async fn the_same_call_id_from_two_people_is_stored_for_each(pool: PgPool) -> Te
     );
     let seen_by_bob = viewer("bob")?.run(store.session_calls(&session)).await?;
     assert_eq!(seen_by_bob, [bob_call]);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_a_session_deletes_only_the_deleting_persons_calls(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(probe(&pool).await?);
+    let session: SessionId = CLAUDE_SESSION.parse()?;
+    let alice_call = call(
+        "00000000-0000-4000-8000-0000000000e1",
+        0,
+        Some(CLAUDE_SESSION),
+    )?;
+    let bob_call = call(
+        "00000000-0000-4000-8000-0000000000e2",
+        1,
+        Some(CLAUDE_SESSION),
+    )?;
+    viewer("alice")?
+        .run(store.record(&owner("alice")?, std::slice::from_ref(&alice_call)))
+        .await?;
+    viewer("bob")?
+        .run(store.record(&owner("bob")?, std::slice::from_ref(&bob_call)))
+        .await?;
+
+    viewer("alice")?
+        .run(store.delete_session(CLAUDE_SESSION, Some("alice"), testkit::topics::at(5)))
+        .await?;
+
+    let left = Scope::Maintenance
+        .run(store.session_calls(&session))
+        .await?;
+    assert_eq!(left, [bob_call], "only alice's calls go with her deletion");
     Ok(())
 }

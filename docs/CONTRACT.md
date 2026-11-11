@@ -1872,7 +1872,8 @@ owner the gateway authenticated for the request, as `POST /api/capture` does (no
 /api/sessions/{session}/model-calls` answers `{totals, calls}` for a canonical session key, oldest call first: `totals`
 holds `calls`, `errors` (every call whose outcome is not `completed`), `usage` (the sums) and `models` (a count per
 `model_served`, else `model_requested`, else `unknown`). A session another person owns answers 404 as the session's
-other routes do, and on Postgres row-level security shows a login only the calls it recorded. Postgres migration 0062 adds `rh_model_calls` (keyed on
+other routes do, and on Postgres row-level security shows a login only the calls it recorded. Deleting a session for good
+(note 75) deletes its model calls in the same transaction, on Postgres only the calls of the session's owner. Postgres migration 0062 adds `rh_model_calls` (keyed on
 `owner_user_id` and `call_id`, indexed by `session_key` and `started_at`, owner-scoped like the session ledgers) and SQLite schema v35 adds
 the same table, so `memory_postgres::SCHEMA_VERSION` is 62 and `memory_sqlite::SCHEMA_VERSION` is 35. What a sink sends:
 one POST per batch with a JSON body as above, the request headers copied from the client's request minus every

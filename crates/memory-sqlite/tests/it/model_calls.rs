@@ -40,3 +40,10 @@ async fn a_session_reads_its_own_calls_in_start_order_with_every_field() -> Test
     assert_eq!(unclaimed, 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn deleting_a_session_deletes_its_model_calls() -> TestResult {
+    let (_directory, store) = store()?;
+    model_calls::deleting_a_session_deletes_its_model_calls(&store).await?;
+    Ok(())
+}
