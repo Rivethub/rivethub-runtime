@@ -20,6 +20,7 @@ mod sanitize_decide;
 mod sanitize_sessions;
 mod seal;
 mod session_titles;
+mod share_policy;
 mod session_transcripts;
 mod spool_and_transport;
 mod spool_recovery;
