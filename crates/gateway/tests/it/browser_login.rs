@@ -1012,13 +1012,19 @@ async fn reauth_rig(fresh: Duration) -> TestResult<(Rig, Browser)> {
     Ok((rig, browser))
 }
 
-const STEP_UP: [(&str, &str); 6] = [
+const STEP_UP: [(&str, &str); 9] = [
     ("POST", "/api/auth/rotate"),
     ("PATCH", "/api/account"),
     ("DELETE", "/api/account"),
     ("POST", "/api/account/signin"),
     ("POST", "/api/account/signout"),
     ("GET", "/api/memory/export"),
+    (
+        "POST",
+        "/api/share/drafts/0b7a7c62-3c43-4a1e-8d57-6d7a4f2a9e01/send",
+    ),
+    ("POST", "/api/share/servers/login"),
+    ("POST", "/api/share/servers/logout"),
 ];
 
 fn reauth_body(reply: &Reply) -> TestResult<bool> {
