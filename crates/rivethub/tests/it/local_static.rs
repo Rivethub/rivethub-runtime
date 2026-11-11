@@ -70,3 +70,73 @@ async fn a_bundled_web_build_loads_without_a_credential_while_the_api_still_need
     assert!(stopped.status.success(), "{stopped:?}");
     Ok(())
 }
+
+enum Shape {
+    Symlink,
+    GroupReadable,
+    Fifo,
+}
+
+async fn ensure_with_refused_token(shape: Shape, expected: &str) -> TestResult {
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = tempfile::tempdir()?;
+    let state = home.path().join(".rivethub");
+    std::fs::create_dir_all(&state)?;
+    let token = state.join("local-owner.token");
+    match shape {
+        Shape::Symlink => {
+            let real = home.path().join("elsewhere");
+            std::fs::write(&real, "x")?;
+            std::os::unix::fs::symlink(&real, &token)?;
+        }
+        Shape::GroupReadable => {
+            std::fs::write(&token, "x")?;
+            std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o640))?;
+        }
+        Shape::Fifo => {
+            nix::unistd::mkfifo(&token, nix::sys::stat::Mode::from_bits_truncate(0o600))?
+        }
+    }
+    let build = tempfile::tempdir()?;
+    let claim = testkit::ports::claim()?;
+    let port = claim.number();
+    let output = rh(
+        home.path(),
+        build.path(),
+        &[
+            "local",
+            "--ensure",
+            "--port",
+            &port.to_string(),
+            "--no-lan",
+            "--wait",
+            "3",
+        ],
+    )
+    .await?;
+    assert!(!output.status.success(), "{output:?}");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("did not answer"), "{text}");
+    assert!(text.contains("local owner token"), "{text}");
+    assert!(text.contains(expected), "{text}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn ensure_names_a_symlinked_token_file() -> TestResult {
+    ensure_with_refused_token(Shape::Symlink, "symbolic links").await
+}
+
+#[tokio::test]
+async fn ensure_names_a_group_readable_token_file() -> TestResult {
+    ensure_with_refused_token(Shape::GroupReadable, "mode 640").await
+}
+
+#[tokio::test]
+async fn ensure_names_a_fifo_token_file() -> TestResult {
+    ensure_with_refused_token(Shape::Fifo, "not a regular file").await
+}
