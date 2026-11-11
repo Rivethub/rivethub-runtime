@@ -444,10 +444,16 @@ async fn healthz_stays_open_and_hides_the_database_detail_from_an_anonymous_call
         "{text}"
     );
     assert!(!text.contains("down"), "{text}");
+    assert!(!text.contains("\"revision\":\""), "{text}");
     let bearer = format!("Bearer {}", common::owner_token());
     let (_, detailed) = healthz_body(&app, &[("authorization", &bearer)]).await?;
     assert!(
         detailed.contains("database unreachable: down"),
+        "{detailed}"
+    );
+    assert_eq!(
+        detailed.contains("\"revision\":\""),
+        gateway::REVISION.is_some(),
         "{detailed}"
     );
     Ok(())

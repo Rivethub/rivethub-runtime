@@ -2450,7 +2450,7 @@
             ],
             "framing": "chunked",
             "chunks": 1,
-            "body": "{\"ok\":true,\"sessions\":0,\"name\":\"{{HOSTNAME}}\",\"node\":\"golden-node\",\"version\":\"{{VERSION}}\",\"revision\":\"{{REVISION}}\"}",
+            "body": "{\"ok\":true,\"sessions\":0,\"name\":\"{{HOSTNAME}}\",\"node\":\"golden-node\",\"version\":\"{{VERSION}}\"}",
             "bodyLength": null,
             "bodyMasked": true,
             "serverClosed": false
@@ -2604,7 +2604,7 @@
             ],
             "framing": "chunked",
             "chunks": 1,
-            "body": "{\"ok\":true,\"sessions\":0,\"name\":\"{{HOSTNAME}}\",\"node\":\"golden-node\",\"version\":\"{{VERSION}}\",\"revision\":\"{{REVISION}}\"}",
+            "body": "{\"ok\":true,\"sessions\":0,\"name\":\"{{HOSTNAME}}\",\"node\":\"golden-node\",\"version\":\"{{VERSION}}\"}",
             "bodyLength": null,
             "bodyMasked": true,
             "serverClosed": false
