@@ -244,7 +244,7 @@ pub async fn sanitize_in_memory(job: Job<'_>, label: &str) -> Result<Outcome, Sh
             .map_err(ShareError::Report)?
             .flags
             .iter()
-            .map(|flag| (flag.number, flag.mark_line()))
+            .filter_map(|flag| Some((flag.number, flag.mark_line()?)))
             .collect(),
         None => BTreeMap::new(),
     };
