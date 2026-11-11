@@ -127,7 +127,8 @@ accepted and ignored with a warning. (13) Workflows kept but outside the runtime
 (14) Clients stay in the monorepo under `apps/`; the gateway serves the RivetHub web build from `static_dir`.
 (15) Capture redaction is a configuration option, off by default: `memory.capture.redaction.{enabled,builtins,patterns}` and
 `RIVETHUB_CAPTURE_REDACTION` are honoured by the hook-side writer; the YAML keys are actually passed to the hook process (the
-TypeScript validated them but did not). Nothing is redacted unless enabled.
+TypeScript validated them but did not). Nothing is redacted unless enabled, except the key part of a RivetHub share
+code, which the hook-side writer always redacts (note 140).
 (16) Memory search (B6, B7) narrows message hits by `role` and `tool_name` on `GET /api/memory/search`, the
 `memory_search` tool route and the MCP `memory_search` schema; summaries carry neither and stay in the result unless
 `scope` excludes them (Phil, 2026-10-19).
@@ -2213,8 +2214,10 @@ Share. The upload is `POST <memory.share.cloud.url>/api/drops` with the body `ap
 `{id, expires_at, bytes}` rh unlinks the sanitized bundle and prints `share code (works once, expires <date>; send it
 privately): rhb1:<id>#<key>` once. On any failure it prints no code and keeps the bundle. The key is the age identity's
 bech32 text, lowercased, without `age-secret-key-1`; its checksum rejects a mistyped code before any request. The key is
-never part of a URL or a log line, and the `rivethub_share_code` rule (rivethub.toml) redacts it at capture time and in
-the sanitizer, keeping `rhb1:<id>#`. Unlinking does not scrub copy-on-write or SSD blocks; the plaintext that existed is
+never part of a URL or a log line, and the `rivethub_share_code` rule (rivethub.toml) redacts it in the sanitizer and at
+capture time, keeping `rhb1:<id>#`. The hook-side writer applies that one rule to every batch even when capture
+redaction is off (note 15), because a share code is a live secret rh itself mints; with redaction off no other rule
+runs. Unlinking does not scrub copy-on-write or SSD blocks; the plaintext that existed is
 the sanitized bundle the sender already reviewed. The client uses rustls, no proxy, no redirects, HTTPS unless the
 address is loopback, and timeouts.
 

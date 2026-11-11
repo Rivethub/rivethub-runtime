@@ -430,7 +430,7 @@ async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Re
     };
     let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
     let opened =
-        tokio::task::spawn_blocking(move || capture::seal::open(&ciphertext, &code.key, &trust))
+        tokio::task::spawn_blocking(move || capture::seal::open(ciphertext, &code.key, &trust))
             .await
             .map_err(std::io::Error::other)?
             .map_err(ShareError::from)?;

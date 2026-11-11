@@ -107,7 +107,7 @@ fn round_trips_in_memory() -> TestResult {
     assert_eq!(sealed.author, "phil");
     let parsed: ShareCode = code(&sealed.key).parse()?;
     assert_eq!(parsed.id.as_str(), DROP_ID);
-    let opened = capture::seal::open(&sealed.ciphertext, &parsed.key, &TrustStore::default())?;
+    let opened = capture::seal::open(sealed.ciphertext, &parsed.key, &TrustStore::default())?;
     assert_eq!(
         opened.bundle,
         capture::bundle::parse(std::str::from_utf8(&text)?)?
@@ -165,12 +165,12 @@ fn a_flipped_ciphertext_byte_fails() -> TestResult {
         let mut flipped = sealed.ciphertext.clone();
         *flipped.get_mut(index).ok_or("index")? ^= 0x01;
         assert!(matches!(
-            capture::seal::open(&flipped, &sealed.key, &trust),
+            capture::seal::open(flipped, &sealed.key, &trust),
             Err(OpenError::Decrypt)
         ));
     }
     assert!(matches!(
-        capture::seal::open(&sealed.ciphertext, &ShareKey::generate(), &trust),
+        capture::seal::open(sealed.ciphertext, &ShareKey::generate(), &trust),
         Err(OpenError::Decrypt)
     ));
     Ok(())
@@ -186,7 +186,7 @@ fn decompression_is_capped() -> TestResult {
     let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
     assert!(ciphertext.len() < 1 << 20, "a small download");
     assert!(matches!(
-        capture::seal::open(&ciphertext, &full.key, &TrustStore::default()),
+        capture::seal::open(ciphertext, &full.key, &TrustStore::default()),
         Err(OpenError::TooLarge)
     ));
     Ok(())
@@ -208,7 +208,7 @@ fn signature_states_map_to_verification() -> TestResult {
     let unsigned = capture::seal::seal(&text, None, 0)?;
     let mut trust = TrustStore::default();
     let open = |sealed: &capture::seal::Sealed, trust: &TrustStore| {
-        capture::seal::open(&sealed.ciphertext, &sealed.key, trust)
+        capture::seal::open(sealed.ciphertext.clone(), &sealed.key, trust)
             .map(|opened| opened.verification)
     };
     assert_eq!(open(&unsigned, &trust)?, Verification::Unsigned);
@@ -279,7 +279,7 @@ fn a_bad_signature_refuses() -> TestResult {
     let key = ShareKey::generate();
     let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
     assert!(matches!(
-        capture::seal::open(&ciphertext, &key, &trust),
+        capture::seal::open(ciphertext, &key, &trust),
         Err(OpenError::Signature(_))
     ));
     Ok(())

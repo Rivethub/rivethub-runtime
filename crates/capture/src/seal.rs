@@ -239,30 +239,33 @@ pub fn seal(
     }
     let signature = signer.map(|key| key.sign(text, &bundle.manifest.exported_by.user));
     let signer_key = signature.as_ref().map(|signature| signature.public_key);
+    let titles = bundle
+        .sessions
+        .iter()
+        .map(|session| {
+            session
+                .batch
+                .title
+                .clone()
+                .unwrap_or_else(|| "(untitled)".to_owned())
+        })
+        .collect();
+    let author = bundle.manifest.exported_by.user;
+    drop(bundle.sessions);
     let header = serde_json::to_vec(&Header { signature })?;
-    let compressed = zstd::bulk::compress(text, ZSTD_LEVEL).map_err(SealError::Compress)?;
-    let mut plaintext = Vec::with_capacity(MAGIC.len() + header.len() + 1 + compressed.len());
+    let mut plaintext = Vec::with_capacity(MAGIC.len() + header.len() + 1 + text.len() / 4);
     plaintext.extend_from_slice(MAGIC);
     plaintext.extend_from_slice(&header);
     plaintext.push(b'\n');
-    plaintext.extend_from_slice(&compressed);
+    zstd::stream::copy_encode(text, &mut plaintext, ZSTD_LEVEL).map_err(SealError::Compress)?;
     let key = ShareKey::generate();
     let ciphertext = age::encrypt(&key.0.to_public(), &plaintext)?;
+    drop(plaintext);
     Ok(Sealed {
         ciphertext,
         key,
-        titles: bundle
-            .sessions
-            .iter()
-            .map(|session| {
-                session
-                    .batch
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| "(untitled)".to_owned())
-            })
-            .collect(),
-        author: bundle.manifest.exported_by.user,
+        titles,
+        author,
         signed: signer_key,
     })
 }
@@ -273,8 +276,9 @@ pub struct Opened {
     pub verification: Verification,
 }
 
-pub fn open(ciphertext: &[u8], key: &ShareKey, trust: &TrustStore) -> Result<Opened, OpenError> {
-    let plaintext = age::decrypt(&key.0, ciphertext).map_err(|_| OpenError::Decrypt)?;
+pub fn open(ciphertext: Vec<u8>, key: &ShareKey, trust: &TrustStore) -> Result<Opened, OpenError> {
+    let plaintext = age::decrypt(&key.0, &ciphertext).map_err(|_| OpenError::Decrypt)?;
+    drop(ciphertext);
     let rest = plaintext.strip_prefix(MAGIC).ok_or(OpenError::Envelope)?;
     let split = rest
         .iter()
@@ -283,6 +287,7 @@ pub fn open(ciphertext: &[u8], key: &ShareKey, trust: &TrustStore) -> Result<Ope
     let (header, body) = rest.split_at(split);
     let header: Header = serde_json::from_slice(header).map_err(|_| OpenError::Envelope)?;
     let text = decompress(body.get(1..).unwrap_or_default())?;
+    drop(plaintext);
     let bundle = parse(&text)?;
     let verification = trust.verification(
         header.signature.as_ref(),

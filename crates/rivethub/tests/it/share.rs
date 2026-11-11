@@ -161,7 +161,7 @@ async fn share_seals_the_bytes_the_human_confirmed() -> TestResult {
     };
     let code: capture::seal::ShareCode = line.split_whitespace().last().ok_or("code")?.parse()?;
     let uploaded = uploads.lock().first().cloned().ok_or("an upload")?;
-    let opened = capture::seal::open(&uploaded, &code.key, &capture::sign::TrustStore::default())?;
+    let opened = capture::seal::open(uploaded, &code.key, &capture::sign::TrustStore::default())?;
     assert_eq!(
         opened.bundle,
         capture::bundle::parse(std::str::from_utf8(&confirmed)?)?,
