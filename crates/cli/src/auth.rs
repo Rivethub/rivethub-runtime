@@ -4,7 +4,7 @@ use clap::Subcommand;
 use config::Environment;
 
 use crate::status::{self, Endpoint};
-use crate::{Error, Report, configuration};
+use crate::{Error, Report, configuration, process};
 
 const ROTATE_TIMEOUT: Duration = Duration::from_secs(10);
 const ROTATE_PATH: &str = "api/auth/rotate";
@@ -44,25 +44,36 @@ fn token_path(env: &Environment, json: bool) -> Result<Report, Error> {
 
 async fn rotate(env: &Environment) -> Result<Report, Error> {
     let (_, loaded) = configuration::load(env).await?;
-    let Endpoint { url, client } = status::gateway(env, &loaded.config, ROTATE_TIMEOUT).await?;
-    match client.post(url.join(ROTATE_PATH)?).send().await {
+    let reached = match status::gateway(env, &loaded.config, ROTATE_TIMEOUT).await {
+        Ok(Endpoint { url, client }) => client.post(url.join(ROTATE_PATH)?).send().await,
+        Err(Error::ListenerNotOurs { .. }) => return remove_unowned(env).await,
+        Err(error) => return Err(error),
+    };
+    match reached {
         Ok(response) if response.status().is_success() => {
             Ok(Report::success("Rotated the local owner token.\n"))
         }
         Ok(response) => Err(Error::AuthRotate {
             status: response.status().as_u16(),
         }),
-        Err(error) if error.is_connect() => {
-            let path = gateway::local_owner::token_path(&gateway::state_dir(env)?);
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            Ok(Report::success(
-                "The gateway is not running; removed the local owner token file. The next start makes a new one.\n",
-            ))
-        }
+        Err(error) if error.is_connect() => remove_unowned(env).await,
         Err(error) => Err(error.into()),
     }
+}
+
+async fn remove_unowned(env: &Environment) -> Result<Report, Error> {
+    if let Some(pid) = process::read_pid(env).await?
+        && nix::sys::signal::kill(pid, None).is_ok()
+    {
+        return Err(Error::AuthRotateUnreachable { pid: pid.as_raw() });
+    }
+    let path = gateway::local_owner::token_path(&gateway::state_dir(env)?);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(Report::success(
+        "No gateway of this state directory is running; removed the local owner token file. The next start makes a new one.\n",
+    ))
 }

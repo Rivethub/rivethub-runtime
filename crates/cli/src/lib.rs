@@ -7,6 +7,7 @@ pub mod doctor;
 mod error;
 mod exit;
 mod harness;
+mod listener;
 mod local;
 pub mod logs;
 pub mod memory;

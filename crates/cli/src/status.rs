@@ -102,7 +102,7 @@ async fn health_endpoint(
     redirects: Redirects,
 ) -> Result<Endpoint, Error> {
     let Endpoint { url, client } =
-        gateway_with(env, config, Duration::from_secs(3), redirects).await?;
+        gateway_with(env, config, Duration::from_secs(3), redirects, None).await?;
     Ok(Endpoint {
         url: url.join("healthz")?,
         client,
@@ -114,7 +114,16 @@ pub(crate) async fn gateway(
     config: &Config,
     timeout: Duration,
 ) -> Result<Endpoint, Error> {
-    gateway_with(env, config, timeout, Redirects::Follow).await
+    gateway_as(env, config, timeout, Some(nix::unistd::getuid().as_raw())).await
+}
+
+async fn gateway_as(
+    env: &Environment,
+    config: &Config,
+    timeout: Duration,
+    owner_uid: Option<u32>,
+) -> Result<Endpoint, Error> {
+    gateway_with(env, config, timeout, Redirects::Follow, owner_uid).await
 }
 
 async fn gateway_with(
@@ -122,6 +131,7 @@ async fn gateway_with(
     config: &Config,
     timeout: Duration,
     redirects: Redirects,
+    owner_uid: Option<u32>,
 ) -> Result<Endpoint, Error> {
     let hostname = host_name()?;
     let node = config::resolve_node_name(config, env, &hostname)?;
@@ -163,11 +173,21 @@ async fn gateway_with(
         .no_proxy()
         .redirect(policy)
         .timeout(timeout);
-    let builder = match gateway::local_owner::read_token(&gateway::state_dir(env)?)? {
-        Some(token) => builder.default_headers(owner_header(token.expose())?),
-        None => builder,
-    };
     let ca = gateway::private_ca(env, &config::shared_dir(env));
+    let verified_tls = source.tls_cert.is_some() && ca.is_some();
+    let token = match owner_uid {
+        Some(_) => gateway::local_owner::read_token(&gateway::state_dir(env)?)?,
+        None => None,
+    };
+    let builder = match (token, owner_uid) {
+        (Some(token), Some(uid)) => {
+            if !verified_tls {
+                crate::listener::require_ours(source.port, uid).await?;
+            }
+            builder.default_headers(owner_header(token.expose())?)
+        }
+        _ => builder,
+    };
     let client = match (&source.tls_cert, &ca) {
         (Some(cert), Some(ca)) => verified(builder, &mut url, cert, ca, source.port)?,
         _ => builder,
@@ -241,5 +261,82 @@ fn host_name() -> Result<String, Error> {
         Ok(String::new())
     } else {
         Ok(trimmed.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use config::Environment;
+
+    use super::gateway_as;
+
+    const CONFIG: &str = "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1/v1\n    model: m\n    api_key: secret\n";
+
+    async fn squatted(
+        owner_uid: u32,
+    ) -> (Result<super::Endpoint, crate::Error>, Vec<Option<String>>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let recorder = std::sync::Arc::clone(&seen);
+        let app = axum::Router::new().fallback(move |headers: axum::http::HeaderMap| {
+            let recorder = std::sync::Arc::clone(&recorder);
+            async move {
+                recorder.lock().push(
+                    headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned),
+                );
+                axum::http::StatusCode::OK
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let home = tempfile::tempdir().expect("home");
+        let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+        let state = gateway::state_dir(&env).expect("state");
+        std::fs::create_dir_all(&state).expect("state dir");
+        let token = gateway::local_owner::OwnerToken::generate().expect("token");
+        let path = gateway::local_owner::token_path(&state);
+        std::fs::write(&path, token.expose()).expect("token file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        std::fs::write(
+            home.path().join(".rivethub/config.yaml"),
+            format!("{CONFIG}gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+        )
+        .expect("config");
+        let (_, loaded) = crate::configuration::load(&env).await.expect("config");
+        let built = gateway_as(
+            &env,
+            &loaded.config,
+            std::time::Duration::from_secs(3),
+            Some(owner_uid),
+        )
+        .await;
+        if let Ok(endpoint) = &built {
+            endpoint.client.get(endpoint.url.clone()).send().await.ok();
+        }
+        server.abort();
+        let seen = seen.lock().clone();
+        (built, seen)
+    }
+
+    #[tokio::test]
+    async fn the_token_goes_only_to_a_listener_of_the_current_user() {
+        let uid = nix::unistd::getuid().as_raw();
+        let (refused, seen) = squatted(uid.wrapping_add(1)).await;
+        assert!(
+            matches!(refused, Err(crate::Error::ListenerNotOurs { .. })),
+            "{:?}",
+            refused.err()
+        );
+        assert!(seen.is_empty(), "nothing was sent: {seen:?}");
+        let (accepted, seen) = squatted(uid).await;
+        assert!(accepted.is_ok());
+        assert!(matches!(seen.as_slice(), [Some(value)] if value.starts_with("Bearer ")));
     }
 }

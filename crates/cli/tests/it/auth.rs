@@ -125,3 +125,24 @@ async fn rotate_with_the_gateway_down_deletes_the_token_file()
     assert!(!token_path(&gateway::state_dir(&env)?).exists());
     Ok(())
 }
+
+#[tokio::test]
+async fn rotate_keeps_the_token_file_when_a_gateway_owns_the_state_dir_but_is_unreachable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let port = testkit::ports::claim()?;
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let token = OwnerToken::generate()?;
+    install_owner_token(&env, &token);
+    let pid = config::Paths::new(&env)?.pid_file();
+    std::fs::write(&pid, std::process::id().to_string())?;
+    let report = run(&["auth", "rotate"], &env).await;
+    assert_ne!(report.exit, Exit::Ok);
+    assert!(report.stderr.contains("rh stop"), "{}", report.stderr);
+    assert!(token_path(&gateway::state_dir(&env)?).exists());
+    Ok(())
+}

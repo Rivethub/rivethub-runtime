@@ -8,6 +8,10 @@ pub enum Error {
     MemoryBackend,
     #[error("memory.capture.gateway.token is not a valid header value")]
     CaptureToken,
+    #[error(
+        "the listener on port {port} is not owned by this user, so the owner token was not sent; stop whatever holds the port and run `rh local --ensure`"
+    )]
+    ListenerNotOurs { port: u16 },
     #[error(transparent)]
     LocalOwnerToken(#[from] gateway::local_owner::TokenError),
     #[error("{0}")]
@@ -46,6 +50,10 @@ pub enum Error {
     Signal(#[from] nix::errno::Errno),
     #[error("gateway health request failed: {0}")]
     Http(#[from] reqwest::Error),
+    #[error(
+        "a gateway (pid {pid}) holds this state directory but could not be reached, so the token file was kept; run `rh stop`, then `rh auth rotate` again"
+    )]
+    AuthRotateUnreachable { pid: i32 },
     #[error("the gateway refused the token rotation with HTTP {status}")]
     AuthRotate { status: u16 },
     #[error(

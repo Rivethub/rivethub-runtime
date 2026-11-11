@@ -216,3 +216,54 @@ async fn status_names_each_degraded_provider() {
     );
     stub.close().await.expect("stub shuts down");
 }
+
+type Squatter = (
+    u16,
+    std::sync::Arc<parking_lot::Mutex<Vec<Option<String>>>>,
+    tokio::task::JoinHandle<()>,
+);
+
+async fn squatter() -> Result<Squatter, std::io::Error> {
+    let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let recorder = std::sync::Arc::clone(&seen);
+    let app = Router::new().fallback(move |headers: axum::http::HeaderMap| {
+        let recorder = std::sync::Arc::clone(&recorder);
+        async move {
+            recorder.lock().push(
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned),
+            );
+            axum::http::StatusCode::NOT_FOUND
+        }
+    });
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let task = tokio::spawn(async move {
+        drop(axum::serve(listener, app).await);
+    });
+    Ok((port, seen, task))
+}
+
+#[tokio::test]
+async fn health_probes_never_carry_the_owner_token() -> Result<(), std::io::Error> {
+    let (port, seen, task) = squatter().await?;
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    support::local_owner(home.path());
+    run(&["status"], &env).await;
+    run(&["local", "--ensure", "--port", &port.to_string()], &env).await;
+    let seen = seen.lock().clone();
+    assert!(!seen.is_empty(), "the probes reached the listener");
+    assert!(
+        seen.iter().all(Option::is_none),
+        "a health probe carried a credential: {seen:?}"
+    );
+    task.abort();
+    Ok(())
+}
