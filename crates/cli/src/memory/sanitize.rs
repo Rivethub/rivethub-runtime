@@ -29,6 +29,7 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut decide = false;
     let mut block = false;
     let mut learn = false;
+    let mut chosen = super::chosen::Options::default();
     while let Some(token) = scan.current().map(str::to_owned) {
         if let Some(set) = [
             ("--decide", &mut decide),
@@ -54,6 +55,7 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
                 || Error::ResolveRequired,
                 &mut report,
             )?
+            || chosen.take(&mut scan)?
         {
             continue;
         }
@@ -67,7 +69,7 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
         scan.bump();
     }
     if let Some(report) = report {
-        if out.is_some() || decide || block {
+        if out.is_some() || decide || block || !chosen.is_empty() {
             return Err(Error::ResolveAlone);
         }
         return Ok(MemoryCommand::Resolve {
@@ -83,8 +85,11 @@ pub(super) fn args(args: &[String]) -> Result<MemoryCommand, Error> {
     if block && !decide {
         return Err(Error::BlockWithoutDecide);
     }
-    let Some(input) = input else {
-        return Err(Error::ImportPath);
+    let input = match (input, chosen.store()?) {
+        (Some(_), Some(_)) => return Err(Error::SessionWithBundle),
+        (Some(path), None) => Source::File(path),
+        (None, Some(store)) => Source::Store(store),
+        (None, None) => return Err(Error::ImportPath),
     };
     let Some(out) = out else {
         return Err(Error::OutRequired);
@@ -115,8 +120,14 @@ fn path_option(
 }
 
 #[derive(Debug)]
+enum Source {
+    File(PathBuf),
+    Store(super::chosen::Store),
+}
+
+#[derive(Debug)]
 pub(super) struct Job {
-    input: PathBuf,
+    input: Source,
     out: PathBuf,
     mapping: Option<PathBuf>,
     decide: bool,
@@ -131,7 +142,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
         decide,
         block,
     } = job;
-    let (input, out) = (input.as_path(), out.as_path());
+    let out = out.as_path();
     if tokio::fs::metadata(out)
         .await
         .is_ok_and(|metadata| metadata.is_dir())
@@ -146,12 +157,18 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
     } else {
         None
     };
-    let bundle = capture::bundle::parse(&tokio::fs::read_to_string(input).await?)?;
+    let share::Chosen { bundle, sessions } = match input {
+        Source::File(path) => share::Chosen {
+            bundle: capture::bundle::parse(&tokio::fs::read_to_string(path).await?)?,
+            sessions: std::collections::BTreeMap::new(),
+        },
+        Source::Store(store) => super::chosen::load(store, env).await?,
+    };
     let mapping = mapping_file(mapping, env)?;
     let paths = BundlePaths::beside(out);
     let outcome = share::sanitize(share::Job {
         bundle: &bundle,
-        sessions: &std::collections::BTreeMap::new(),
+        sessions: &sessions,
         mapping: &mapping,
         key: &share::key_path(env)?,
         decider: decider.as_ref(),
@@ -440,7 +457,7 @@ mod tests {
         ]));
         assert!(matches!(
             parsed,
-            Ok(MemoryCommand::Sanitize(Job { input, out, mapping: Some(mapping), decide: false, block: false }))
+            Ok(MemoryCommand::Sanitize(Job { input: Source::File(input), out, mapping: Some(mapping), decide: false, block: false }))
                 if input == Path::new("s.json") && out == Path::new("s.clean.json") && mapping == Path::new("m.toml")
         ));
         assert!(matches!(
@@ -450,6 +467,51 @@ mod tests {
         assert!(matches!(
             args(&strings(&["--out", "s.clean.json"])),
             Err(Error::ImportPath)
+        ));
+    }
+
+    #[test]
+    fn sanitize_reads_chosen_sessions_or_a_bundle_never_both() {
+        let id = "00000000-0000-4000-8000-00000000000a";
+        assert!(matches!(
+            args(&strings(&[
+                "--session",
+                id,
+                "--out",
+                "s.clean.json",
+                "--decide",
+                "--block"
+            ])),
+            Ok(MemoryCommand::Sanitize(Job {
+                input: Source::Store(_),
+                decide: true,
+                block: true,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            args(&strings(&[
+                "s.json",
+                "--session",
+                id,
+                "--out",
+                "s.clean.json"
+            ])),
+            Err(Error::SessionWithBundle)
+        ));
+        assert!(matches!(
+            args(&strings(&[
+                "s.json",
+                "--sqlite",
+                "m.sqlite",
+                "--out",
+                "s.clean.json"
+            ])),
+            Err(Error::SqliteWithoutSession)
+        ));
+        assert!(matches!(
+            args(&strings(&["--session", id, "--resolve", "s.report.md"])),
+            Err(Error::ResolveAlone)
         ));
     }
 }

@@ -249,7 +249,7 @@ pub enum Error {
     #[error("--resolve requires the report file sanitize wrote")]
     ResolveRequired,
     #[error(
-        "--resolve takes the report, an optional bundle, --mapping and --learn; it does not take --out, --decide or --block"
+        "--resolve takes the report, an optional bundle, --mapping and --learn; it does not take --out, --decide, --block or the --session options"
     )]
     ResolveAlone,
     #[error("--learn adds map marks to the mapping file and needs --resolve <report>")]
@@ -265,6 +265,26 @@ pub enum Error {
     },
     #[error("--block makes the decision-model review block ingest and needs --decide")]
     BlockWithoutDecide,
+    #[error("{0} requires a value")]
+    OptionValue(&'static str),
+    #[error("{0} is not a conversation id; give the UUID of a stored session")]
+    ConversationId(String),
+    #[error("--redact-term takes <conversation id>=<term>, not {0}")]
+    RedactTermForm(String),
+    #[error("{flag} {id} names a session no --session gives; choose it with --session {id} first")]
+    ChoiceWithoutSession { flag: &'static str, id: String },
+    #[error("--sqlite names the store --session reads from, so it needs --session")]
+    SqliteWithoutSession,
+    #[error(
+        "--session reads the chosen sessions from the store, so it does not take a bundle file; give one or the other"
+    )]
+    SessionWithBundle,
+    #[error(transparent)]
+    Choice(#[from] kernel::memory::share::ChoiceError),
+    #[error(transparent)]
+    Chosen(#[from] crate::memory::ChosenError),
+    #[error(transparent)]
+    Owner(#[from] kernel::owner::InvalidOwner),
     #[error(
         "{path} withholds {count} flagged chunk(s) until you mark them; mark them in the report and run rh memory sanitize --resolve <report>, or pass --force to ingest it with the chunks withheld"
     )]

@@ -304,7 +304,7 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
+pub(super) async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
     let config = super::target::load(env)?.unwrap_or_default();
     let hostname = nix::unistd::gethostname()
         .map_err(|_| Error::HostName)?
