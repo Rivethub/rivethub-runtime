@@ -15,6 +15,7 @@ mod memory_bundle;
 mod memory_decide;
 mod memory_jobs;
 mod memory_review;
+mod memory_sanitize_sessions;
 mod memory_titles;
 mod migrate_binary;
 mod pg_import;

@@ -10,6 +10,7 @@ pub mod records;
 pub mod redaction;
 pub mod rules;
 pub mod sanitize;
+pub mod share;
 pub mod spool;
 pub mod store_path;
 pub mod transcript;

@@ -159,14 +159,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         now: DateTime<Utc>,
     ) -> Result<Totals, WriteError> {
         self.replay(now).await?;
-        let mut prepared = batch.clone();
-        if let Some(redaction) = &self.redaction {
-            let spans = redaction.redact_batch(&mut prepared);
-            if spans > 0 {
-                tracing::info!("redacted {spans} spans");
-            }
-        }
-        cap_batch(&mut prepared)?;
+        let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;
         let mut totals = Totals::default();
         let mut rejected = None;
@@ -198,6 +191,21 @@ impl<T: CaptureTransport> CaptureWriter<T> {
             None => Ok(totals),
         }
     }
+}
+
+pub fn prepare(
+    batch: &CaptureBatchRequest,
+    redaction: Option<&Redaction>,
+) -> Result<CaptureBatchRequest, WriteError> {
+    let mut prepared = batch.clone();
+    if let Some(redaction) = redaction {
+        let spans = redaction.redact_batch(&mut prepared);
+        if spans > 0 {
+            tracing::info!("redacted {spans} spans");
+        }
+    }
+    cap_batch(&mut prepared)?;
+    Ok(prepared)
 }
 
 fn body_text(batch: &CaptureBatchRequest) -> Result<String, WriteError> {

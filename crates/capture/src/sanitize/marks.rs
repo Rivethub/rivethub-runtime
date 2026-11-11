@@ -323,6 +323,11 @@ impl ReportFlag {
     }
 
     #[must_use]
+    pub fn mark_line(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::MIN.saturating_add(self.line)
+    }
+
+    #[must_use]
     pub fn shows_its_text(&self) -> bool {
         let lines = |text: &str| -> Vec<String> {
             text.lines()

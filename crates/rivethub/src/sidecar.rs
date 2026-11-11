@@ -11,6 +11,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::Exit;
 use crate::service::{StartupError, announce, load, postgres, report};
+use cli::memory::SessionStore;
 use memory_postgres::Pooling;
 
 #[derive(Debug, Error)]
@@ -64,7 +65,12 @@ fn mcp_exit(error: &mcp::Error) -> Exit {
         | mcp::Error::Task(_)
         | mcp::Error::Initialize(_)
         | mcp::Error::Service(_)
-        | mcp::Error::Format(_) => Exit::Failure,
+        | mcp::Error::Format(_)
+        | mcp::Error::Path(_)
+        | mcp::Error::Share(_)
+        | mcp::Error::RawBundle(_)
+        | mcp::Error::BundleSecrets { .. }
+        | mcp::Error::BundleWithheld { .. } => Exit::Failure,
     }
 }
 
@@ -158,20 +164,31 @@ async fn run(
         select(&config)?
     };
     crate::identity::announce_resolved("mcp", &config, env).map_err(StartupError::from)?;
-    let memory: Arc<dyn MemoryStore> = if config.sqlite_selected() {
-        sqlite(&config, env, &shutdown, activities).await?
+    let (memory, backend): (Arc<dyn MemoryStore>, SessionStore) = if config.sqlite_selected() {
+        let store = sqlite(&config, env, &shutdown, activities).await?;
+        (Arc::new(store.clone()), SessionStore::Sqlite(store))
     } else {
-        Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?)
+        let store =
+            Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?);
+        (store.clone(), SessionStore::Postgres(store))
     };
-    let scope = crate::composition::identities::load(&config, env)
-        .await?
-        .owner_scope();
-    let result = scope
+    let identity = crate::composition::identities::load(&config, env).await?;
+    let sessions = match selected {
+        Selected::Stdio => Some(crate::sessions::kit(
+            &config,
+            env,
+            identity.primary(),
+            backend,
+        )?),
+        Selected::Network { .. } => None,
+    };
+    let result = identity
+        .owner_scope()
         .run(run_server(
             &config,
             env,
             Arc::clone(&memory),
-            selected,
+            Served { selected, sessions },
             &shutdown,
         ))
         .await;
@@ -183,21 +200,28 @@ async fn run(
     Ok(())
 }
 
+struct Served {
+    selected: Selected,
+    sessions: Option<mcp::sessions::Sessions>,
+}
+
 async fn run_server(
     config: &Config,
     env: &Environment,
     memory: Arc<dyn MemoryStore>,
-    selected: Selected,
+    served: Served,
     shutdown: &CancellationToken,
 ) -> Result<(), SidecarError> {
     let folder = crate::composition::plugins::tools_folder(config, env)?;
     let plugins =
         mcp::plugins::SocketTools::new(folder.join("tools.sock"), folder.join("tools.token"))?;
-    let server = mcp::Server::builder(memory, false, shutdown.child_token())
+    let mut builder = mcp::Server::builder(memory, false, shutdown.child_token())
         .display_zone(display_zone(env))
-        .plugins(Arc::new(plugins))
-        .build()?;
-    serve(server, selected, shutdown.clone()).await
+        .plugins(Arc::new(plugins));
+    if let Some(sessions) = served.sessions {
+        builder = builder.sessions(sessions);
+    }
+    serve(builder.build()?, served.selected, shutdown.clone()).await
 }
 
 pub(crate) fn memory_future(
@@ -247,7 +271,7 @@ async fn sqlite(
     env: &Environment,
     shutdown: &CancellationToken,
     activities: &kernel::shutdown::Activities,
-) -> Result<Arc<dyn MemoryStore>, SidecarError> {
+) -> Result<memory_sqlite::SqliteStore, SidecarError> {
     let path = config
         .memory
         .as_ref()
@@ -266,10 +290,10 @@ async fn sqlite(
         }
         None => store,
     };
-    Ok(Arc::new(match model {
+    Ok(match model {
         Some(model) => store.with_embed_model(&model),
         None => store,
-    }))
+    })
 }
 
 fn select(config: &Config) -> Result<Selected, SidecarError> {

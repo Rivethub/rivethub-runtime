@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
+use capture::sanitize::SessionRules;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
@@ -264,6 +265,7 @@ fn check(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::er
         &Policy {
             mapping: sanitize::mapping::Mapping::default(),
             key: LocalKey::from_bytes([7; 32]),
+            sessions: SessionRules::default(),
         },
         at()?,
     ) {
@@ -307,6 +309,7 @@ fn rescan(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::e
         &Policy {
             mapping: sanitize::mapping::Mapping::default(),
             key: LocalKey::from_bytes([7; 32]),
+            sessions: SessionRules::default(),
         },
         at()?,
     )?;

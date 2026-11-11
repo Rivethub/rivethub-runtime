@@ -5,6 +5,7 @@ use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::Sanitized;
+use capture::sanitize::SessionRules;
 use capture::sanitize::decide::DecideError;
 use capture::sanitize::decide::Endpoint;
 use capture::sanitize::decide::Mode;
@@ -171,6 +172,7 @@ fn policy() -> Result<Policy, sanitize::mapping::MappingError> {
     Ok(Policy {
         mapping: sanitize::mapping::parse("")?,
         key: LocalKey::from_bytes([7; 32]),
+        sessions: SessionRules::default(),
     })
 }
 

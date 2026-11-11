@@ -13,6 +13,7 @@ mod mcp_memory;
 mod mcp_sqlite;
 mod node_name;
 mod roots;
+mod sessions;
 mod startup;
 mod store_roots;
 mod tls_fallback;

@@ -78,6 +78,13 @@ pub struct Decision {
     bases: BTreeMap<FieldAt, BaseValue>,
 }
 
+impl Flag {
+    #[must_use]
+    pub fn places(&self) -> &[Place] {
+        &self.places
+    }
+}
+
 impl Decision {
     pub(super) fn stamp(&self, key: &LocalKey, at: DateTime<Utc>) -> ReviewStamp {
         sealed(

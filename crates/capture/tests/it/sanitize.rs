@@ -2,6 +2,7 @@ use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::SanitizeError;
+use capture::sanitize::SessionRules;
 use capture::sanitize::mapping::MappingError;
 use capture::sanitize::mapping::RuleProblem;
 use chrono::DateTime;
@@ -78,6 +79,7 @@ fn policy() -> Result<Policy, MappingError> {
     Ok(Policy {
         mapping: sanitize::mapping::parse(MAPPING)?,
         key: LocalKey::from_bytes([7; 32]),
+        sessions: SessionRules::default(),
     })
 }
 
@@ -397,6 +399,7 @@ fn a_mapped_placeholder_that_reads_as_a_secret_is_redacted_before_ingest_sees_it
         &Policy {
             mapping,
             key: LocalKey::from_bytes([7; 32]),
+            sessions: SessionRules::default(),
         },
         at()?,
     )?;

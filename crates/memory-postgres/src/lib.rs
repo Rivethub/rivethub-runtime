@@ -7,6 +7,7 @@ mod changes;
 mod cleanup;
 mod conversation;
 mod deletion;
+mod digest;
 pub mod dump;
 pub mod embed;
 mod embedding_store;

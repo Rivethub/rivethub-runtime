@@ -1,4 +1,3 @@
-use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -273,7 +272,7 @@ pub(super) async fn share(
     let count = sessions.len();
     let mut text = capture::bundle::seal(author, Utc::now(), Sanitization::Raw, sessions)?.text;
     text.push(b'\n');
-    write_whole(out.clone(), text).await?;
+    capture::share::write_file(out.clone(), text, capture::share::Clobber::Replace).await?;
     let noun = if count == 1 { "session" } else { "sessions" };
     Ok(Report::success(format!(
         "bundled {count} {noun} (raw, not sanitized) to {}\n",
@@ -305,25 +304,7 @@ fn refuse_missing(wanted: &[String], sessions: &[BundledSession]) -> Result<(), 
     }
 }
 
-pub(super) async fn write_whole(out: PathBuf, bytes: Vec<u8>) -> Result<(), Error> {
-    tokio::task::spawn_blocking(move || {
-        let parent = match out.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => parent,
-            Some(_) | None => Path::new("."),
-        };
-        let mut partial = tempfile::Builder::new()
-            .prefix(".rh-bundle-")
-            .suffix(".tmp")
-            .tempfile_in(parent)?;
-        partial.write_all(&bytes)?;
-        partial.persist(&out).map_err(|error| error.error)?;
-        Ok::<_, std::io::Error>(())
-    })
-    .await??;
-    Ok(())
-}
-
-async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
+pub(super) async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
     let config = super::target::load(env)?.unwrap_or_default();
     let hostname = nix::unistd::gethostname()
         .map_err(|_| Error::HostName)?

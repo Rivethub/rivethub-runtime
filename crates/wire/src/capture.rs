@@ -65,6 +65,10 @@ impl CaptureBatchRequest {
 
 pub const SESSION_BUNDLE_VERSION: u32 = 2;
 
+pub const REPORT_SUFFIX: &str = ".report.md";
+
+pub const LOCAL_SUFFIX: &str = ".review.local.json";
+
 pub const UNKNOWN_ORIGIN: &str = "unknown";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

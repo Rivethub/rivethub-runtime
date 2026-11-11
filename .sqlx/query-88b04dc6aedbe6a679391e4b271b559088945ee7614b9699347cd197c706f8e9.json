@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select c.session_key as key, c.id as conversation_id, c.title, c.agent, min(m.created_at) as \"first!\", max(m.created_at) as \"last!\", count(m.id) as \"messages!\", case when c.session_key like 'import:%' then c.settings -> 'origin' ->> 'author' end as imported_from from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and c.session_key = any($2) and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key) group by c.id order by c.session_key, c.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "session_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "conversation_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "agent",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "agent"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "first!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "last!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "messages!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "imported_from",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "88b04dc6aedbe6a679391e4b271b559088945ee7614b9699347cd197c706f8e9"
+}

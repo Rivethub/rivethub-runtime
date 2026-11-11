@@ -5,6 +5,7 @@ mod changes;
 mod context;
 mod conversation;
 mod deletion;
+mod digest;
 mod embed_store;
 pub mod error;
 pub mod export;

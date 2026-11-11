@@ -8,6 +8,7 @@ use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::Sanitized;
+use capture::sanitize::SessionRules;
 use capture::sanitize::decide::Endpoint;
 use capture::sanitize::decide::Mode;
 use capture::sanitize::decide::Review;
@@ -70,6 +71,7 @@ fn policy() -> Policy {
     Policy {
         mapping: sanitize::mapping::Mapping::default(),
         key: LocalKey::from_bytes([7; 32]),
+        sessions: SessionRules::default(),
     }
 }
 

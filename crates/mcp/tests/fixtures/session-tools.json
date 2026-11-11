@@ -1,0 +1,158 @@
+[
+  {
+    "name": "session_find",
+    "description": "Find this node's captured sessions related to a prompt, best match first. Each entry gives the conversation id that session_sanitize takes, the title, agent, first and last date, message count, best score and up to three matching excerpts. Read-only.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "What the sessions were about: a question, a prompt or keywords",
+          "type": "string"
+        },
+        "since": {
+          "description": "Only sessions with a matching message after this time (ISO UTC timestamp)",
+          "type": "string"
+        },
+        "before": {
+          "description": "Only sessions with a matching message before this time (ISO UTC timestamp)",
+          "type": "string"
+        },
+        "agent": {
+          "description": "Only sessions of this agent (opus, codex, etc.)",
+          "type": "string"
+        },
+        "tag": {
+          "description": "Only sessions whose conversation carries this accepted key:value tag (e.g. project:acmeapp)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max sessions (1-25, default 10)",
+          "type": "integer",
+          "maximum": 25,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "query"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "session_sanitize",
+    "description": "Sanitize the sessions you chose into a bundle in the share directory, reading them straight from this node's store, so no raw bundle is ever written. Give each session to share a decision: approve, or redact with terms to redact in that session only and/or drop_tool_outputs to replace its tool outputs; sessions you leave out are denied. A report and, after a decision-model review, a local review file are written beside the bundle. Returns totals, the absolute paths, changes by rule and, with decide, each flag's number, score, place, report line and length. It never returns flagged text. Share only the bundle; the report and the local review file stay on this machine.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "description": "The sessions to share, each from session_find with your decision; leave out the sessions you deny, which never leave the store (1-50, each id once)",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "A conversation id from session_find",
+                "type": "string"
+              },
+              "decision": {
+                "description": "approve shares the session as the sanitizer leaves it; redact also applies the rules in redact",
+                "type": "string",
+                "enum": [
+                  "approve",
+                  "redact"
+                ]
+              },
+              "redact": {
+                "description": "Required with decision redact, refused with approve: at least one term or drop_tool_outputs true",
+                "type": "object",
+                "properties": {
+                  "terms": {
+                    "description": "Texts to redact in this session only, each matched exactly as written (case-sensitive); the report counts them without showing them",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "drop_tool_outputs": {
+                    "description": "Replace every tool output of this session with a placeholder; tool names and arguments stay and are sanitized as usual",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "decision"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 50
+        },
+        "out": {
+          "description": "Sanitized bundle file name in the share directory, such as work.clean.json; the report and the local review file are written beside it and no existing file is replaced",
+          "type": "string"
+        },
+        "mapping": {
+          "description": "Mapping file (.toml): a file name in the share directory, or an absolute path under your home directory. Default: memory.sanitize.mapping from the config",
+          "type": "string"
+        },
+        "decide": {
+          "description": "Also run the decision-model review configured at memory.sanitize.decide (default false)",
+          "type": "boolean"
+        },
+        "block": {
+          "description": "With decide, withhold every flagged chunk until it is marked, whatever memory.sanitize.decide.block says (default: the config)",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "sessions",
+        "out"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "session_import",
+    "description": "Import a sanitized session bundle into this node's own memory, keeping each session's original dates and crediting its author. Refuses a raw bundle, a bundle the secret scan still matches and a bundle with open withheld flags. dry_run lists the sessions and the verdict and writes nothing. Importing the same bundle again adds nothing.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The sanitized bundle: a file name in the share directory, or an absolute path under your home directory",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "List the sessions and the verdict without writing (default false)",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]
