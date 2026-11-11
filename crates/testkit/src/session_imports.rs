@@ -60,6 +60,7 @@ fn bundle(author: &str, node: &str, conversation: &str, minute: u32) -> BundledS
             agent: "rivet".to_owned(),
             created_at: Some(at(minute)),
             updated_at: Some(at(minute + 5)),
+            identity: None,
         },
         batch: wire::capture::CaptureBatchRequest {
             session_key: "claude-code:shared".to_owned(),
