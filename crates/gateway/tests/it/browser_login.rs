@@ -990,8 +990,11 @@ const STEP_UP: [(&str, &str); 6] = [
 ];
 
 fn reauth_body(reply: &Reply) -> TestResult<bool> {
+    if reply.status != StatusCode::UNAUTHORIZED {
+        return Ok(false);
+    }
     let body: GatewayError = reply.json()?;
-    Ok(reply.status == StatusCode::UNAUTHORIZED && body == GatewayError::new(REAUTH_REQUIRED))
+    Ok(body == GatewayError::new(REAUTH_REQUIRED))
 }
 
 #[tokio::test]

@@ -4,6 +4,9 @@ pub const REAUTH_REQUIRED: &str = "reauth_required";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
+#[schemars(
+    description = "A one-time code, session token or CSRF token. Debug never prints it, so logging a body cannot leak it."
+)]
 pub struct Secret(String);
 
 #[cfg_attr(
