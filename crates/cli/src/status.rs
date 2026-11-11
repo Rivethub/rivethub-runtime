@@ -157,6 +157,10 @@ async fn gateway_with(
         .no_proxy()
         .redirect(policy)
         .timeout(timeout);
+    let builder = match gateway::local_owner::read_token(&gateway::state_dir(env)?)? {
+        Some(token) => builder.default_headers(owner_header(token.expose())?),
+        None => builder,
+    };
     let ca = gateway::private_ca(env, &config::shared_dir(env));
     let client = match (&source.tls_cert, &ca) {
         (Some(cert), Some(ca)) => verified(builder, &mut url, cert, ca, source.port)?,
@@ -164,6 +168,15 @@ async fn gateway_with(
     }
     .build()?;
     Ok(Endpoint { url, client })
+}
+
+fn owner_header(token: &str) -> Result<reqwest::header::HeaderMap, Error> {
+    let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|_| Error::CaptureToken)?;
+    value.set_sensitive(true);
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::AUTHORIZATION, value);
+    Ok(headers)
 }
 
 fn verified(

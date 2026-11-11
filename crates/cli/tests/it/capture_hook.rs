@@ -239,3 +239,122 @@ pub(crate) fn settings(home: &Path) -> gateway::Settings {
         request_deadline: gateway::REQUEST_DEADLINE,
     }
 }
+
+async fn local_gateway(
+    store: &Arc<FakeMemoryStore>,
+    home: &Path,
+    owner: Arc<gateway::local_owner::LocalOwner>,
+) -> Result<
+    (
+        u16,
+        CancellationToken,
+        tokio::task::JoinHandle<Result<(), gateway::server::ServeError>>,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let gateway = gateway::Gateway::new(Arc::clone(store) as _, settings(home))
+        .with_local_owner(owner)
+        .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(gateway::server::serve(
+        listener,
+        Arc::new(gateway),
+        None,
+        stop.clone(),
+    ));
+    Ok((port, stop, server))
+}
+
+fn appended_owners(requests: Vec<MemoryRequest>) -> Vec<String> {
+    requests
+        .into_iter()
+        .filter_map(|request| {
+            if let MemoryRequest::Append(owner, _) = request {
+                Some(owner.as_str().to_owned())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_hook_captures_through_the_local_gateway_with_the_owner_token()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let home = home();
+    let env = environment(&home);
+    let store = Arc::new(FakeMemoryStore::default());
+    let (port, stop, server) =
+        local_gateway(&store, home.path(), support::local_owner(home.path())).await?;
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert_eq!(report.stderr, "");
+    assert_eq!(appended_owners(store.requests().await), ["owner"]);
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_token_spools_the_batch_instead_of_losing_it()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let home = home();
+    let env = environment(&home);
+    let store = Arc::new(FakeMemoryStore::default());
+    let other = Arc::new(gateway::local_owner::LocalOwner::unpersisted()?);
+    let (port, stop, server) = local_gateway(&store, home.path(), other).await?;
+    support::local_owner(home.path());
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert!(report.stderr.contains("401"), "{}", report.stderr);
+    assert_eq!(appended_owners(store.requests().await).len(), 0);
+    let spooled = std::fs::read_dir(home.path().join(".rivethub/capture-spool"))?.count();
+    assert_eq!(spooled, 1);
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_no_token_file_the_client_sends_no_authorization_header()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let seen = Arc::new(parking_lot::Mutex::new(Vec::<Option<String>>::new()));
+    let recorder = Arc::clone(&seen);
+    let app = axum::Router::new().fallback(move |headers: axum::http::HeaderMap| {
+        let recorder = Arc::clone(&recorder);
+        async move {
+            recorder.lock().push(
+                headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned),
+            );
+            axum::http::StatusCode::UNAUTHORIZED
+        }
+    });
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let port = listener.local_addr()?.port();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await });
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert_eq!(seen.lock().as_slice(), [None]);
+    let token = support::local_owner(home.path()).current();
+    cli::capture_hook::hook(&env, TOOL, now()?).await;
+    let last = seen.lock().last().cloned().flatten();
+    assert_eq!(last, Some(format!("Bearer {}", token.expose())));
+    server.abort();
+    Ok(())
+}

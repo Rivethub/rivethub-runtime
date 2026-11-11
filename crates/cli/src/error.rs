@@ -8,6 +8,8 @@ pub enum Error {
     MemoryBackend,
     #[error("memory.capture.gateway.token is not a valid header value")]
     CaptureToken,
+    #[error(transparent)]
+    LocalOwnerToken(#[from] gateway::local_owner::TokenError),
     #[error("{0}")]
     GatewayCertificate(&'static str),
     #[error(transparent)]
