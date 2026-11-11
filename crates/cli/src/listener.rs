@@ -64,6 +64,8 @@ pub(crate) fn judge_lsof(output: &str, uid: u32) -> Verdict {
                 Some(_) => return Verdict::Foreign,
                 None => return Verdict::Absent,
             },
+            'a' | 'c' | 'd' | 'f' | 'g' | 'G' | 'i' | 'k' | 'l' | 'L' | 'o' | 'P' | 'R' | 's'
+            | 'S' | 't' | 'T' | 'z' | 'Z' => {}
             _ => return Verdict::Absent,
         }
     }
@@ -158,6 +160,13 @@ mod tests {
         );
         assert_eq!(judge_lsof("p1\nuroot\nn*:1\n", 501), Verdict::Absent);
         assert_eq!(judge_lsof("n*:62834\n", 501), Verdict::Absent);
-        assert_eq!(judge_lsof(&format!("{OWN}garbage\n"), 501), Verdict::Absent);
+        assert_eq!(
+            judge_lsof(&format!("{OWN}!garbage\n"), 501),
+            Verdict::Absent
+        );
+        assert_eq!(
+            judge_lsof("p1\nu501\nf12\nPTCP\nn*:1\n", 501),
+            Verdict::Ours
+        );
     }
 }
