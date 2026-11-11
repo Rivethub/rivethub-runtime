@@ -47,11 +47,8 @@ pub struct HubPolicy {
     pub share_servers: Vec<String>,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, strum::Display,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case")]
 pub enum CloudPolicy {
     Enabled,
     Disabled,

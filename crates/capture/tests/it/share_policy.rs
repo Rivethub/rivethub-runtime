@@ -6,7 +6,10 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const POLICY: &str = "disabled by this hub's policy";
 const LIST_KEY: &str = "memory.share.allowed_servers";
 
-fn policy(cloud_disabled: bool, allowed: &[&str]) -> Result<SharePolicy, Box<dyn std::error::Error>> {
+fn policy(
+    cloud_disabled: bool,
+    allowed: &[&str],
+) -> Result<SharePolicy, Box<dyn std::error::Error>> {
     let mut yaml = String::from("memory:\n  backend: sqlite\n");
     if !allowed.is_empty() {
         yaml.push_str("  share:\n    allowed_servers:\n");
@@ -18,7 +21,9 @@ fn policy(cloud_disabled: bool, allowed: &[&str]) -> Result<SharePolicy, Box<dyn
         yaml.push_str("cloud:\n  disabled: true\n");
     }
     let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml)?;
-    Ok(SharePolicy::from_config(&config::type_document(&document)?.config)?)
+    Ok(SharePolicy::from_config(
+        &config::type_document(&document)?.config,
+    )?)
 }
 
 fn host(text: &str) -> Result<ShareServer, Box<dyn std::error::Error>> {
@@ -43,7 +48,10 @@ fn an_open_hub_with_no_list_admits_any_host() -> TestResult {
 
 #[test]
 fn a_list_admits_only_its_hosts() -> TestResult {
-    let listed = policy(false, &["https://Team.Example.com/", "drops.example.com:8443"])?;
+    let listed = policy(
+        false,
+        &["https://Team.Example.com/", "drops.example.com:8443"],
+    )?;
     assert!(listed.admit(&host("team.example.com")?).is_ok());
     assert!(listed.admit(&host("drops.example.com:8443")?).is_ok());
     for outside in ["other.example.com", "drops.example.com", "rivethub.cloud"] {
@@ -53,7 +61,11 @@ fn a_list_admits_only_its_hosts() -> TestResult {
     }
     let refused = refusal(listed.default_server(None));
     assert!(refused.contains(POLICY), "{refused}");
-    assert!(policy(false, &["rivethub.cloud"])?.default_server(None).is_ok());
+    assert!(
+        policy(false, &["rivethub.cloud"])?
+            .default_server(None)
+            .is_ok()
+    );
     Ok(())
 }
 

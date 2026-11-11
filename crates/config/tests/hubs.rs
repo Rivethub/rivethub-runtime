@@ -57,14 +57,21 @@ fn a_disabled_cloud_turns_telemetry_off_too() -> Result<(), Box<dyn std::error::
             (true, true),
         ),
         ("telemetry:\n  disabled: true\n", (false, true)),
-        ("cloud:\n  url: https://cloud.example.com/\n", (false, false)),
+        (
+            "cloud:\n  url: https://cloud.example.com/\n",
+            (false, false),
+        ),
         ("", (false, false)),
     ];
     for (policy, expected) in cases {
         let yaml = document(&format!("memory:\n  backend: sqlite\n{policy}"))?;
         let result = validate_document(&yaml, Profile::Standalone);
         assert!(result.errors.is_empty(), "{policy}: {:?}", result.errors);
-        assert!(result.warnings.is_empty(), "{policy}: {:?}", result.warnings);
+        assert!(
+            result.warnings.is_empty(),
+            "{policy}: {:?}",
+            result.warnings
+        );
         let typed = type_document(&yaml)?.config;
         assert_eq!(
             (typed.cloud_disabled(), typed.telemetry_disabled()),

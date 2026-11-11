@@ -331,8 +331,12 @@ async fn a_cloud_off_switch_refuses_a_config_without_the_policy() {
 
     config(&home, &format!("{without}cloud:\n  disabled: true\n"));
     let cli = Cli::parse_args(["rh", "local", "--no-cloud"].map(Into::into)).expect("parse");
-    let dispatch =
-        cli::dispatch(cli, &environment(&home), &tokio_util::sync::CancellationToken::new()).await;
+    let dispatch = cli::dispatch(
+        cli,
+        &environment(&home),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
     let Dispatch::Local(prepared) = dispatch else {
         panic!("a config with the policy did not prepare");
     };

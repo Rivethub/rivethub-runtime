@@ -17,8 +17,8 @@ use chrono::{DateTime, Utc};
 use config::HubEntry;
 use gateway::Gateway;
 use gateway::account::{
-    AccountFiles, AccountService, CloudAccess, CloudOs, CloudSettings, CrashJob, CrashReport, Hubs, PanicSite,
-    UpdateKey, queue, queued,
+    AccountFiles, AccountService, CloudAccess, CloudOs, CloudSettings, CrashJob, CrashReport, Hubs,
+    PanicSite, UpdateKey, queue, queued,
 };
 use gateway::tenancy::{Tenancy, UserId};
 use parking_lot::Mutex;
@@ -733,9 +733,17 @@ async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResu
     assert_eq!(shown.update_source, UpdateSource::Github);
     assert_eq!((shown.crash_reports, shown.usage_counts), (false, false));
     for (method, path, body) in [
-        (Method::POST, "/api/account/signin", r#"{"email":"user@example.com"}"#),
+        (
+            Method::POST,
+            "/api/account/signin",
+            r#"{"email":"user@example.com"}"#,
+        ),
         (Method::POST, "/api/account/signin/poll", ""),
-        (Method::PATCH, "/api/account", r#"{"updateSource":"rivethub-cloud"}"#),
+        (
+            Method::PATCH,
+            "/api/account",
+            r#"{"updateSource":"rivethub-cloud"}"#,
+        ),
         (Method::DELETE, "/api/account", ""),
     ] {
         let (status, text) = local(&node.app, method.clone(), path, body).await?;

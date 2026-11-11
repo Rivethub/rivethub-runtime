@@ -205,10 +205,12 @@ pub(crate) struct Server {
 impl ShareServers {
     pub(crate) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
         let loaded = crate::db::load(env, None).await?;
-        let configured = match loaded.config.share_server() {
-            Some(section) => Some(section.url.parse().map_err(ServerError::from)?),
-            None => None,
-        };
+        let configured = loaded
+            .config
+            .share_server()
+            .map(|section| section.url.parse())
+            .transpose()
+            .map_err(ServerError::from)?;
         let policy = SharePolicy::from_config(&loaded.config).map_err(ServerError::from)?;
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
