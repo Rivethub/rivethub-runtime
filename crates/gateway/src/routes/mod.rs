@@ -1,4 +1,5 @@
 mod account;
+mod auth;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
@@ -60,6 +61,7 @@ pub(crate) async fn contract_header(
 
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
     harnesses::mount(wiki::router())
+        .merge(auth::router())
         .merge(notices::router())
         .merge(account::router())
         .merge(history::router())

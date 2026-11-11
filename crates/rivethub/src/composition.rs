@@ -358,6 +358,7 @@ impl Composition {
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
             .with_local_owner(local_owner)
+            .with_auth_policy(gateway::AuthPolicy::from_config(config))
             .with_sessions(sessions);
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         let tracker = tokio_util::task::TaskTracker::new();

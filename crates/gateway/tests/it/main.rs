@@ -4,6 +4,7 @@ mod session_support;
 
 mod account;
 mod auth;
+mod browser_login;
 mod capture;
 mod capture_owner;
 mod harness_setup;

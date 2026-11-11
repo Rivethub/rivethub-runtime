@@ -135,36 +135,85 @@ impl FromRequestParts<std::sync::Arc<crate::Gateway>> for UserId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Credential {
+    Plugin,
+    Bearer,
+    Session { auth_time: i64 },
+}
+
 pub(crate) fn caller(gateway: &crate::Gateway, parts: &Parts) -> Result<UserId, ApiError> {
+    authenticate(gateway, parts).map(|(user, _)| user)
+}
+
+pub(crate) fn authenticate(
+    gateway: &crate::Gateway,
+    parts: &Parts,
+) -> Result<(UserId, Credential), ApiError> {
+    let local = || {
+        gateway
+            .tenancy
+            .local_user()
+            .cloned()
+            .ok_or(ApiError::Unauthorized)
+    };
     if parts
         .extensions
         .get::<crate::plugins::PluginCaller>()
         .is_some()
     {
-        return gateway
-            .tenancy
-            .local_user()
-            .cloned()
-            .ok_or(ApiError::Unauthorized);
+        return Ok((local()?, Credential::Plugin));
     }
-    let presented = parts
+    let Some(presented) = parts
         .headers
         .typed_try_get::<Authorization<Bearer>>()
         .map_err(|_| ApiError::Unauthorized)?
-        .ok_or(ApiError::Unauthorized)?;
+    else {
+        let auth_time = session(parts)?;
+        return Ok((local()?, Credential::Session { auth_time }));
+    };
     let token = presented.token();
     if crate::auth::direct_local(parts)
         && gateway
             .local_owner()
             .is_some_and(|owner| owner.verify(token))
     {
-        return gateway
-            .tenancy
-            .local_user()
-            .cloned()
-            .ok_or(ApiError::Unauthorized);
+        return Ok((local()?, Credential::Bearer));
     }
-    gateway.tenancy.resolve_bearer(token)
+    Ok((gateway.tenancy.resolve_bearer(token)?, Credential::Bearer))
+}
+
+pub(crate) fn owner_token_presented(gateway: &crate::Gateway, parts: &Parts) -> bool {
+    parts
+        .headers
+        .typed_get::<Authorization<Bearer>>()
+        .is_some_and(|presented| {
+            crate::auth::direct_local(parts)
+                && gateway
+                    .local_owner()
+                    .is_some_and(|owner| owner.verify(presented.token()))
+        })
+}
+
+fn session(parts: &Parts) -> Result<i64, ApiError> {
+    let login = parts
+        .extensions
+        .get::<crate::login::BrowserLogin>()
+        .filter(|_| crate::auth::direct_local(parts))
+        .ok_or(ApiError::Unauthorized)?;
+    if crate::auth::csrf_exempt(parts) {
+        return Ok(login.auth_time);
+    }
+    let sent: [u8; 32] = parts
+        .headers
+        .get(crate::login::CSRF_HEADER)
+        .map(|value| Sha256::digest(value.as_bytes()).into())
+        .ok_or(ApiError::Unauthorized)?;
+    if bool::from(sent.ct_eq(&login.csrf)) {
+        Ok(login.auth_time)
+    } else {
+        Err(ApiError::Unauthorized)
+    }
 }
 
 #[cfg(test)]

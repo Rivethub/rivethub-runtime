@@ -187,7 +187,7 @@ fn concrete(path: &str) -> String {
 }
 
 const METHODS: [Method; 4] = [Method::GET, Method::POST, Method::PATCH, Method::DELETE];
-const OPEN_ROUTES: [&str; 2] = ["/", "/healthz"];
+const OPEN_ROUTES: [&str; 4] = ["/", "/healthz", "/login", "/api/auth/session"];
 
 async fn call(
     app: &axum::Router,

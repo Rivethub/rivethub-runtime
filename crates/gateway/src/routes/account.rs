@@ -16,6 +16,7 @@ use wire::gateway::account::{
 
 use crate::Gateway;
 use crate::account::AccountError;
+use crate::auth::FreshLogin;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::tenancy::UserId;
@@ -101,7 +102,7 @@ impl IntoResponse for Refused {
     }
 }
 
-struct LocalOwner;
+pub(super) struct LocalOwner;
 
 impl FromRequestParts<Arc<Gateway>> for LocalOwner {
     type Rejection = ApiError;
@@ -132,6 +133,7 @@ async fn show(
 
 async fn change(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
     Body(body): Body<AccountUpdate>,
 ) -> Result<Json<Account>, Refused> {
@@ -140,6 +142,7 @@ async fn change(
 
 async fn delete(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
 ) -> Result<Json<Account>, Refused> {
     Ok(Json(gateway.account()?.delete().await?))
@@ -147,6 +150,7 @@ async fn delete(
 
 async fn sign_in(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
     Body(body): Body<SignInRequest>,
 ) -> Result<Json<SignInStarted>, Refused> {
@@ -162,6 +166,7 @@ async fn poll(
 
 async fn sign_out(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
 ) -> Result<Json<Account>, Refused> {
     Ok(Json(gateway.account()?.sign_out().await?))

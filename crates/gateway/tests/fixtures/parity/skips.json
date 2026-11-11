@@ -1870,5 +1870,45 @@
   {
     "id": "plain-main/files-bare-path",
     "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-failclosed/failclosed-options",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-api",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-api-disallowed-origin",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-api-preflight-app-bundle",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-asterisk",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-healthz",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-healthz-same-origin",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/options-unknown-path",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "plain-main/remote-plain-options",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
+  },
+  {
+    "id": "tls-main/tls-options-no-cert",
+    "reason": "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204. browser_login covers the new rules."
   }
 ]

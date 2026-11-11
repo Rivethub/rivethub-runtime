@@ -5,6 +5,7 @@ pub mod error;
 pub mod extract;
 mod history;
 pub mod local_owner;
+mod login;
 mod memory_body;
 mod models;
 pub mod plugins;
@@ -32,6 +33,7 @@ use tower_http::compression::predicate::NotForContentType;
 
 use crate::auth::DenialLog;
 
+pub use crate::login::AuthPolicy;
 pub use crate::models::ModelAssignment;
 pub use crate::settings::{REQUEST_DEADLINE, Settings, SettingsError, state_dir};
 pub use crate::tls_resolve::private_ca;
@@ -57,6 +59,7 @@ pub struct Gateway {
     denials: DenialLog,
     tenancy: tenancy::Tenancy,
     local_owner: Option<Arc<local_owner::LocalOwner>>,
+    browser: login::Browser,
     sessions: Arc<sessions::SessionRegistry>,
     transcript: Option<Arc<dyn kernel::transcript::TranscriptReader>>,
     session_lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
@@ -100,6 +103,7 @@ impl Gateway {
             denials: DenialLog::default(),
             tenancy: tenancy::Tenancy::default(),
             local_owner: None,
+            browser: login::Browser::new(AuthPolicy::default()),
             sessions: Arc::new(sessions::SessionRegistry::default()),
             transcript: None,
             session_lister: None,
@@ -157,6 +161,16 @@ impl Gateway {
     pub fn with_local_owner(mut self, owner: Arc<local_owner::LocalOwner>) -> Self {
         self.local_owner = Some(owner);
         self
+    }
+
+    #[must_use]
+    pub fn with_auth_policy(mut self, policy: AuthPolicy) -> Self {
+        self.browser = login::Browser::new(policy);
+        self
+    }
+
+    pub(crate) fn browser(&self) -> &login::Browser {
+        &self.browser
     }
 
     #[must_use]
@@ -283,7 +297,7 @@ impl Gateway {
                     )),
             )
             .nest("/api/memory", routes::memory::router());
-        routes::mount(routed.merge(routes::router()))
+        let layered = routes::mount(routed.merge(routes::router()))
             .layer(middleware::from_fn(routes::contract_header))
             .with_state(Arc::clone(self))
             .layer(middleware::from_fn_with_state(
@@ -291,13 +305,19 @@ impl Gateway {
                 scope::scope_request,
             ))
             .layer(middleware::from_fn_with_state(guard_state, auth::guard))
-            .layer(
-                CompressionLayer::new()
-                    .gzip(true)
-                    .br(true)
-                    .quality(CompressionLevel::Fastest)
-                    .compress_when(compressible()),
-            )
+            .layer(middleware::from_fn_with_state(
+                Arc::clone(self),
+                login::resolve,
+            ))
+            .layer(self.browser.layer())
+            .layer(auth::cors_layer(&self.settings.allowed_origins));
+        auth::harden(layered).layer(
+            CompressionLayer::new()
+                .gzip(true)
+                .br(true)
+                .quality(CompressionLevel::Fastest)
+                .compress_when(compressible()),
+        )
     }
 }
 

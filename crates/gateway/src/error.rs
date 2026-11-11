@@ -51,6 +51,10 @@ pub enum ApiError {
     RequestTimeout,
     #[error("unauthorized")]
     Unauthorized,
+    #[error("reauthentication required")]
+    ReauthRequired,
+    #[error("too many requests")]
+    RateLimited(std::time::Duration),
     #[error("forbidden origin")]
     ForbiddenOrigin,
     #[error("serialization failed: {0}")]
@@ -118,6 +122,14 @@ impl ApiError {
                 GatewayError::new("request timeout"),
             ),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized")),
+            Self::ReauthRequired => (
+                StatusCode::UNAUTHORIZED,
+                GatewayError::new(wire::gateway::auth::REAUTH_REQUIRED),
+            ),
+            Self::RateLimited(_) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                GatewayError::new("too many requests"),
+            ),
             Self::ForbiddenOrigin => (StatusCode::FORBIDDEN, GatewayError::new("forbidden origin")),
             Self::Store(MemoryStoreError::InvalidRequest { message }) => {
                 (StatusCode::BAD_REQUEST, GatewayError::new(message))
@@ -166,8 +178,18 @@ pub fn harness_status(code: wire::harness::HarnessCode) -> StatusCode {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let retry_after = if let Self::RateLimited(wait) = &self {
+            Some((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1))
+        } else {
+            None
+        };
         let (status, body) = self.status_and_body();
         let mut response = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, secs.into());
+        }
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 axum::http::header::WWW_AUTHENTICATE,

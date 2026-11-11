@@ -308,7 +308,7 @@ async fn auth_origin_preflight_and_methods_use_existing_gateway_policy() {
             .push(("Origin".to_owned(), "https://evil.example".to_owned()));
         assert_eq!(answer(&app, hostile).await.status, 403);
         assert_eq!(answer(&app, request("POST", path)).await.status, 405);
-        assert_eq!(answer(&app, request("OPTIONS", path)).await.status, 204);
+        assert_eq!(answer(&app, request("OPTIONS", path)).await.status, 200);
     }
     assert_eq!(store.requests().await.len(), 0);
     let mut legitimate = request("GET", "/api/wiki");

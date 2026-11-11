@@ -137,7 +137,11 @@ async fn health_and_a_preflight_answer_a_caller_without_a_token() -> TestResult 
     }
     .send(&composed.router)
     .await?;
-    assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+    assert!(preflight.status().is_success());
+    assert_eq!(
+        preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&axum::http::HeaderValue::from_static("app://bundle"))
+    );
     composed.close().await
 }
 

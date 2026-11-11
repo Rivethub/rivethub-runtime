@@ -22,7 +22,6 @@ use tower::ServiceExt;
 
 const OWN: &[&str] = &[
     "plain-failclosed/failclosed-healthz",
-    "plain-failclosed/failclosed-options",
     "plain-failclosed/failclosed-static",
     "plain-main/event-get",
     "plain-main/host-empty",
@@ -47,7 +46,6 @@ const OWN: &[&str] = &[
     "tls-main/tls-api-serverauth-only",
     "tls-main/tls-api-wrong-ca",
     "tls-main/tls-enroll-no-cert",
-    "tls-main/tls-options-no-cert",
     "tls-main/tls-origin-disallowed",
     "tls-main/tls-post-no-cert-html",
     "tls-main/tls-root-no-cert-json",
@@ -306,7 +304,11 @@ async fn play(
     chunks: &BTreeMap<String, String>,
     app: &axum::Router,
 ) -> Result<(), String> {
-    let prepared = prepare(case, chunks)?;
+    let mut prepared = prepare(case, chunks)?;
+    prepared.response.headers.retain(|(name, _)| {
+        let lower = name.to_ascii_lowercase();
+        !lower.starts_with("access-control-") && lower != "vary"
+    });
     let request = recorded_request(&prepared)?;
     let actual = answer(app.clone(), request).await?;
     testkit::http::replay(&prepared, &masks(), |_| actual).map_err(|mismatch| mismatch.detail)
