@@ -36,6 +36,12 @@ async fn stub(
     Ok((port, seen, server))
 }
 
+#[derive(Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenPathJson {
+    path: String,
+}
+
 #[tokio::test]
 async fn token_path_prints_the_path_as_text_and_json() -> Result<(), Box<dyn std::error::Error>> {
     let home = home();
@@ -45,10 +51,12 @@ async fn token_path_prints_the_path_as_text_and_json() -> Result<(), Box<dyn std
     assert_eq!(text.exit, Exit::Ok);
     assert_eq!(text.stdout, format!("{}\n", expected.display()));
     let json = run(&["auth", "token-path", "--json"], &env).await;
-    let value: serde_json::Value = serde_json::from_str(&json.stdout)?;
+    let value: TokenPathJson = serde_json::from_str(&json.stdout)?;
     assert_eq!(
         value,
-        serde_json::json!({ "path": expected.display().to_string() })
+        TokenPathJson {
+            path: expected.display().to_string()
+        }
     );
     Ok(())
 }

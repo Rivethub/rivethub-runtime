@@ -17,8 +17,11 @@ use kernel::memory::MemoryStore;
 use parking_lot::Mutex;
 use testkit::FakeMemoryStore;
 use tower::ServiceExt as _;
+use wire::gateway::GatewayError;
 use wire::gateway::auth::LoginCodeResponse;
+use wire::gateway::auth::REAUTH_REQUIRED;
 use wire::gateway::auth::RotateResponse;
+use wire::gateway::auth::Secret;
 use wire::gateway::auth::SessionRequest;
 use wire::gateway::auth::SessionResponse;
 
@@ -186,9 +189,15 @@ async fn mint(rig: &Rig) -> TestResult<String> {
     Ok(body.code.expose().to_owned())
 }
 
+fn session_request(code: &str) -> SessionRequest {
+    SessionRequest {
+        code: Secret::new(code.to_owned()),
+    }
+}
+
 async fn exchange(rig: &Rig, code: &str) -> TestResult<Reply> {
     rig.call("POST", "/api/auth/session")
-        .json(&serde_json::json!({ "code": code }))?
+        .json(&session_request(code))?
         .send()
         .await
 }
@@ -294,7 +303,7 @@ async fn an_exchange_is_refused_behind_a_forwarder_and_keeps_the_code() -> TestR
     ] {
         let mut call = rig
             .call("POST", "/api/auth/session")
-            .json(&serde_json::json!({ "code": code }))?;
+            .json(&session_request(&code))?;
         for (name, value) in headers {
             call = call.header(name, value);
         }
@@ -312,7 +321,7 @@ async fn an_exchange_is_refused_behind_a_forwarder_and_keeps_the_code() -> TestR
     let from_afar = rig
         .call("POST", "/api/auth/session")
         .peer("192.0.2.7:41000")
-        .json(&serde_json::json!({ "code": code }))?
+        .json(&session_request(&code))?
         .send()
         .await?;
     assert_eq!(from_afar.status, StatusCode::UNAUTHORIZED);
@@ -481,6 +490,13 @@ async fn a_session_idle_past_its_limit_is_refused() -> TestResult {
     let browser = login(&rig).await?;
     let probe = || rig.call("GET", "/api/memory/stats").browser(&browser);
     assert_eq!(probe().send().await?.status, StatusCode::OK);
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            sleep,
+            reason = "tower-sessions expires on inactivity against the wall clock, which a paused tokio clock does not move"
+        )
+    )]
     tokio::time::sleep(Duration::from_millis(2100)).await;
     assert_eq!(probe().send().await?.status, StatusCode::UNAUTHORIZED);
     Ok(())
@@ -587,7 +603,7 @@ async fn the_cookie_round_trips_from_127_0_0_1_and_localhost_origins() -> TestRe
             .call("POST", "/api/auth/session")
             .header("host", authority)
             .header("origin", &origin)
-            .json(&serde_json::json!({ "code": code }))?
+            .json(&session_request(&code))?
             .send()
             .await?;
         assert_eq!(reply.status, StatusCode::OK, "{authority}");
@@ -610,7 +626,7 @@ async fn an_exchange_cycles_the_session_id() -> TestResult {
     let planted = rig
         .call("POST", "/api/auth/session")
         .header("cookie", &format!("{COOKIE}=planted-by-an-attacker"))
-        .json(&serde_json::json!({ "code": mint(&rig).await? }))?
+        .json(&session_request(&mint(&rig).await?))?
         .send()
         .await?;
     let adopted = browser_of(&planted)?;
@@ -620,7 +636,7 @@ async fn an_exchange_cycles_the_session_id() -> TestResult {
     let second = rig
         .call("POST", "/api/auth/session")
         .header("cookie", &format!("{COOKIE}={}", first.session))
-        .json(&serde_json::json!({ "code": mint(&rig).await? }))?
+        .json(&session_request(&mint(&rig).await?))?
         .send()
         .await?;
     let second = browser_of(&second)?;
@@ -675,7 +691,7 @@ async fn login_attempts_are_rate_limited_per_peer_failures_included() -> TestRes
 async fn attempt(rig: &Rig, peer: &'static str) -> TestResult<Reply> {
     rig.call("POST", "/api/auth/session")
         .peer(peer)
-        .json(&serde_json::json!({ "code": "wrong" }))?
+        .json(&session_request("wrong"))?
         .send()
         .await
 }
@@ -708,7 +724,7 @@ async fn a_cross_origin_unlisted_or_null_exchange_is_refused() -> TestResult {
         let reply = rig
             .call("POST", "/api/auth/session")
             .header("origin", origin)
-            .json(&serde_json::json!({ "code": code }))?
+            .json(&session_request(&code))?
             .send()
             .await?;
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{origin}");
@@ -974,9 +990,8 @@ const STEP_UP: [(&str, &str); 6] = [
 ];
 
 fn reauth_body(reply: &Reply) -> TestResult<bool> {
-    let body: serde_json::Value = reply.json()?;
-    Ok(reply.status == StatusCode::UNAUTHORIZED
-        && body == serde_json::json!({ "error": "reauth_required" }))
+    let body: GatewayError = reply.json()?;
+    Ok(reply.status == StatusCode::UNAUTHORIZED && body == GatewayError::new(REAUTH_REQUIRED))
 }
 
 #[tokio::test]
@@ -1092,7 +1107,7 @@ async fn no_secret_reaches_the_logs_or_a_debug_string() -> TestResult {
 
     let body: SessionResponse = reply.json()?;
     let request = SessionRequest {
-        code: wire::gateway::auth::Secret::new(code.clone()),
+        code: Secret::new(code.clone()),
     };
     let debugged = format!("{body:?} {request:?} {:?}", rig.owner);
     let logs = String::from_utf8_lossy(&captured.0.lock()).into_owned();

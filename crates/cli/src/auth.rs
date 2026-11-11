@@ -27,14 +27,16 @@ pub(crate) async fn run(command: AuthCommand, env: &Environment) -> Result<Repor
     }
 }
 
+#[derive(serde::Serialize)]
+struct TokenPath<'a> {
+    path: &'a str,
+}
+
 fn token_path(env: &Environment, json: bool) -> Result<Report, Error> {
     let path = gateway::local_owner::token_path(&gateway::state_dir(env)?);
     let text = path.display().to_string();
     Ok(Report::success(if json {
-        format!(
-            "{}\n",
-            serde_json::to_string(&serde_json::json!({ "path": text }))?
-        )
+        format!("{}\n", serde_json::to_string(&TokenPath { path: &text })?)
     } else {
         format!("{text}\n")
     }))

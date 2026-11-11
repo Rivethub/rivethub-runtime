@@ -26,6 +26,13 @@ async fn gone(pid: u32) -> bool {
         if !alive(pid) {
             return true;
         }
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                sleep,
+                reason = "the kernel offers no wait for an unrelated pid to exit, so poll its state"
+            )
+        )]
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     false
