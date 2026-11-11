@@ -9,6 +9,7 @@ mod doctor;
 mod e2e;
 mod local;
 mod local_ensure;
+mod local_static;
 mod mcp_memory;
 mod mcp_sqlite;
 mod node_name;
