@@ -13,6 +13,7 @@ pub mod json;
 pub mod mcp_text;
 pub mod memory;
 mod memory_request;
+pub mod model_calls;
 pub mod naming;
 pub mod paths;
 pub mod pgdump;

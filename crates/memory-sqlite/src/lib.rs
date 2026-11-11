@@ -17,6 +17,7 @@ mod job_rank;
 mod memory_port;
 mod message;
 mod meta;
+mod model_calls;
 mod port;
 mod queue;
 mod read;
@@ -99,7 +100,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 34;
+pub const SCHEMA_VERSION: i64 = 35;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -332,7 +333,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 75));
+        assert_eq!(state, (crate::SCHEMA_VERSION, 76));
     }
 
     #[tokio::test]

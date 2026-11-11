@@ -12,6 +12,7 @@ mod close;
 mod embed_store;
 mod import;
 mod local_ports;
+mod model_calls;
 mod open;
 mod queue_port;
 mod reembed;

@@ -16,7 +16,7 @@ fn fixture(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn a_missing_file_is_not_initialised_and_is_never_created() -> TestResult {
-    assert_eq!(SCHEMA_VERSION, 34);
+    assert_eq!(SCHEMA_VERSION, 35);
     let dir = tempdir()?;
     let path = dir.path().join("memory.sqlite");
     match SqliteStore::open(&path) {
