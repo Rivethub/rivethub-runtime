@@ -493,3 +493,35 @@ async fn token_replies_never_reach_an_error() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_verification_url_must_open_in_a_browser() {
+    for (uri, opens) in [
+        ("javascript:alert(1)", false),
+        ("file:///etc/passwd", false),
+        ("https://share.example.com/device#user_code=ABCD-EFGH", true),
+        ("http://127.0.0.1:9/device#user_code=ABCD-EFGH", true),
+    ] {
+        let served = serve().await;
+        served.auth.queue(
+            "/api/cli/device/code",
+            [ok(&format!(
+                r#"{{"device_code":"rhcd_x","user_code":"ABCD-EFGH","verification_uri":"https://share.example.com/device","verification_uri_complete":"{uri}","expires_in":600,"interval":1}}"#
+            ))],
+        );
+        let node = node();
+
+        let started = desk::start(&node.env, Some(&served.host), "RivetHub test").await;
+
+        match started {
+            Ok(started) => {
+                assert!(opens, "{uri} was offered");
+                assert_eq!(started.verification_uri_complete, uri);
+            }
+            Err(error) => {
+                assert!(!opens, "{uri}: {error}");
+                assert!(error.to_string().contains("https"), "{error}");
+            }
+        }
+    }
+}

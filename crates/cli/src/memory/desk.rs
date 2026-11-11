@@ -234,10 +234,13 @@ pub async fn start(
         .checked_add_signed(lifetime)
         .ok_or(ServerError::Lifetime(expires_in.as_secs()))?;
     let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
-    let verification_uri_complete = details.verification_uri_complete().map_or_else(
-        || details.verification_uri().to_string(),
-        |complete| complete.secret().clone(),
-    );
+    let verification_uri_complete = openable(
+        details.verification_uri_complete().map_or_else(
+            || details.verification_uri().to_string(),
+            |complete| complete.secret().clone(),
+        ),
+        server.host(),
+    )?;
     let user_code = details.user_code().secret().clone();
     let host = server.host().clone();
     let task = tokio::spawn(approval(server, oauth, details, Arc::clone(&interval)));
@@ -253,6 +256,19 @@ pub async fn start(
             task: Some(AbortOnDropHandle::new(task)),
         },
     })
+}
+
+fn openable(uri: String, server: &ShareServer) -> Result<String, ServerError> {
+    let url = url::Url::parse(&uri).map_err(|error| {
+        ServerError::Protocol(format!("its verification URL is invalid: {error}"))
+    })?;
+    if url.scheme() == "https" || (url.scheme() == "http" && server.is_loopback()) {
+        return Ok(uri);
+    }
+    Err(ServerError::Protocol(format!(
+        "its verification URL uses {}; only https opens in the browser (http only for a loopback share server)",
+        url.scheme()
+    )))
 }
 
 async fn approval(
@@ -529,5 +545,25 @@ fn server_error(error: ServerError) -> DeskError {
         | ServerError::Protocol(_)
         | ServerError::NoDeviceFlow(_)
         | ServerError::Cancelled) => DeskError::Failed(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_http_opens_only_for_a_loopback_share_server() {
+        let page = "http://share.example.com/device";
+        let loopback: ShareServer = "127.0.0.1:8443".parse().expect("loopback");
+        let remote: ShareServer = "share.example.com".parse().expect("remote");
+
+        assert_eq!(
+            openable(page.to_owned(), &loopback).ok().as_deref(),
+            Some(page)
+        );
+        assert!(openable(page.to_owned(), &remote).is_err());
+        assert!(openable("https://share.example.com/device".to_owned(), &remote).is_ok());
+        assert!(openable("data:text/html,hi".to_owned(), &loopback).is_err());
     }
 }
