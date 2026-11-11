@@ -10,6 +10,7 @@ pub mod memory;
 mod memory_archive;
 mod memory_models;
 mod memory_snippet;
+pub(crate) mod model_calls;
 pub(crate) mod notices;
 mod notifications;
 mod plugins;
@@ -67,6 +68,7 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(today::router())
         .merge(plugins::router())
         .merge(session_delete::router())
+        .merge(model_calls::router())
 }
 
 pub(crate) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {

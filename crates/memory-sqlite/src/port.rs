@@ -286,6 +286,7 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         | SqliteError::MissingJob { .. }
         | SqliteError::Clock
         | SqliteError::StoredState { .. }
+        | SqliteError::StoredValue { .. }
         | SqliteError::EmbedAlreadyQueued { .. }
         | SqliteError::InsertRejected
         | SqliteError::InvertedRange

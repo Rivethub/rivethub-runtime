@@ -8,6 +8,7 @@ mod capture;
 mod capture_owner;
 mod harness_setup;
 mod memory_api;
+mod model_calls;
 mod parity;
 mod parity_play;
 mod plugin_creator;

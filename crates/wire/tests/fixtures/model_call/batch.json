@@ -1,0 +1,113 @@
+{
+  "requests": [
+    {
+      "calls": [
+        {
+          "call_id": "00000000-0000-4000-8000-0000000000e1",
+          "started_at": "2026-11-08T12:00:00Z",
+          "finished_at": "2026-11-08T12:00:02.500Z",
+          "provider": "anthropic",
+          "model_requested": "model-alias",
+          "model_served": "model-a-20260101",
+          "account": "work",
+          "status_code": 200,
+          "outcome": "completed",
+          "usage": {
+            "input": 120,
+            "output": 45,
+            "cache_read": 3000,
+            "cache_write": 200,
+            "reasoning": 0
+          },
+          "headers": {
+            "x-claude-code-session-id": "00000000-0000-4000-8000-0000000000c1",
+            "user-agent": "claude-cli/2.1.319 (external, cli)"
+          }
+        },
+        {
+          "call_id": "00000000-0000-4000-8000-0000000000e2",
+          "started_at": "2026-11-08T12:01:00Z",
+          "provider": "openai",
+          "model_requested": "model-b",
+          "status_code": 429,
+          "outcome": "rate_limited",
+          "retry_after_secs": 30,
+          "headers": {
+            "session-id": "00000000-0000-7000-8000-0000000000c2",
+            "user-agent": "codex_exec/0.167.0 (Linux; x86_64)",
+            "x-codex-turn-metadata": "{\"turn_id\":\"00000000-0000-7000-8000-0000000000d1\",\"request_kind\":\"turn\"}"
+          }
+        },
+        {
+          "call_id": "00000000-0000-4000-8000-0000000000e3",
+          "started_at": "2026-11-08T12:02:00Z",
+          "provider": "anthropic",
+          "outcome": "aborted",
+          "headers": {}
+        }
+      ]
+    },
+    {
+      "calls": []
+    }
+  ],
+  "results": [
+    {
+      "ok": true,
+      "inserted": 2,
+      "duplicate": 1,
+      "matched": 2,
+      "unmatched": 1
+    }
+  ],
+  "sessions": [
+    {
+      "totals": {
+        "calls": 2,
+        "errors": 1,
+        "usage": {
+          "input": 120,
+          "output": 45,
+          "cache_read": 3000,
+          "cache_write": 200,
+          "reasoning": 0
+        },
+        "models": {
+          "model-a-20260101": 1,
+          "model-b": 1
+        }
+      },
+      "calls": [
+        {
+          "call_id": "00000000-0000-4000-8000-0000000000e1",
+          "started_at": "2026-11-08T12:00:00Z",
+          "finished_at": "2026-11-08T12:00:02.500Z",
+          "provider": "anthropic",
+          "model_requested": "model-alias",
+          "model_served": "model-a-20260101",
+          "account": "work",
+          "status_code": 200,
+          "outcome": "completed",
+          "usage": {
+            "input": 120,
+            "output": 45,
+            "cache_read": 3000,
+            "cache_write": 200,
+            "reasoning": 0
+          }
+        },
+        {
+          "call_id": "00000000-0000-4000-8000-0000000000e2",
+          "started_at": "2026-11-08T12:01:00Z",
+          "provider": "openai",
+          "model_requested": "model-b",
+          "status_code": 429,
+          "outcome": "rate_limited",
+          "retry_after_secs": 30,
+          "turn_id": "00000000-0000-7000-8000-0000000000d1",
+          "request_kind": "turn"
+        }
+      ]
+    }
+  ]
+}

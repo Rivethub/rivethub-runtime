@@ -147,6 +147,11 @@ fn purge(conn: &Connection, session_key: &str) -> Result<DeletedSession, SqliteE
         [session_key],
     )
     .map_err(SqliteError::query("session trash delete"))?;
+    conn.execute(
+        "DELETE FROM rh_model_calls WHERE session_key = ?1",
+        [session_key],
+    )
+    .map_err(SqliteError::query("session model calls delete"))?;
     let conversations = conn
         .execute(
             "DELETE FROM ros_conversations WHERE session_key = ?1",

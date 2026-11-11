@@ -223,6 +223,23 @@ impl Gateway {
         self.deletions.as_deref()
     }
 
+    #[must_use]
+    pub fn with_model_calls(
+        mut self,
+        model_calls: Arc<dyn kernel::model_calls::ModelCallStore>,
+    ) -> Self {
+        self.model_calls = Some(model_calls);
+        self
+    }
+
+    pub(crate) fn model_calls(
+        &self,
+    ) -> Result<&dyn kernel::model_calls::ModelCallStore, crate::error::ApiError> {
+        self.model_calls.as_deref().ok_or_else(|| {
+            crate::error::ApiError::Unavailable("model call store unavailable".into())
+        })
+    }
+
     pub(crate) fn memory_export(&self) -> Option<&Arc<dyn kernel::memory::MemoryExport>> {
         self.memory_export.as_ref()
     }

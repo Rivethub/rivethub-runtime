@@ -10,6 +10,7 @@ mod embed;
 mod import;
 #[path = "local/memory_http.rs"]
 mod memory_http;
+mod model_calls;
 #[path = "local/summarize.rs"]
 mod summarize;
 

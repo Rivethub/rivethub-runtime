@@ -1,6 +1,6 @@
 # memory-sqlite
 
-`SqliteStore` is the standalone SQLite adapter for the kernel memory ports. It opens a file that `rivethub-migrate sqlite` created or upgraded to `SCHEMA_VERSION` (30) and refuses an older one. Every statement runs on `spawn_blocking` through `with_conn`.
+`SqliteStore` is the standalone SQLite adapter for the kernel memory ports. It opens a file that `rivethub-migrate sqlite` created or upgraded to `SCHEMA_VERSION` (35) and refuses an older one. Every statement runs on `spawn_blocking` through `with_conn`.
 
 The store implements `kernel::memory::MemoryStore`, `EmbeddingStore` and `SummaryStore`, the `JobQueue` (`port.rs`), and the topic, topic-page, decision, filing, tidy, wiki-builder, tenancy, session-deletion and task ports that `rh local` composes.
 

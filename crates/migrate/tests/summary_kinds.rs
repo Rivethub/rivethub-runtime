@@ -105,7 +105,7 @@ fn legacy_summary_kinds_follow_depth_and_keep_the_v8_backup() -> TestResult {
     assert_eq!(std::fs::read(&bak)?, original);
     assert_eq!(rows(&bak)?, before);
     assert_eq!(rows(&path)?, owned(MAPPED));
-    assert_eq!(user_version(&path)?, 34);
+    assert_eq!(user_version(&path)?, 35);
     let settled = std::fs::read(&path)?;
     let saved = std::fs::read(&bak)?;
     migrate::sqlite(&path)?;

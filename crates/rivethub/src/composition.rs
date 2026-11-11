@@ -96,6 +96,7 @@ struct Backing {
         Arc<dyn kernel::changes::ChangeFeed>,
         Arc<dyn kernel::changes::DigestStore>,
     )>,
+    model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
     tenancy: Option<Arc<dyn kernel::tenancy::TenancyStore>>,
 }
 
@@ -142,6 +143,10 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
     };
     let gateway = match backing.changes.clone() {
         Some((changes, digests)) => gateway.with_changes(changes, digests),
+        None => gateway,
+    };
+    let gateway = match backing.model_calls.clone() {
+        Some(model_calls) => gateway.with_model_calls(model_calls),
         None => gateway,
     };
     let gateway = match backing.tenancy.clone() {
@@ -246,6 +251,7 @@ impl Composition {
             deletions: Some(memory.clone()),
             catalog: Some(memory.clone()),
             changes: Some((memory.clone(), memory.clone())),
+            model_calls: Some(memory.clone()),
             summaries: Some(memory.clone()),
             tenancy: Some(Arc::new(memory_postgres::PostgresTenancy::new(
                 memory.pool().clone(),
@@ -283,6 +289,7 @@ impl Composition {
             deletions: Some(store.clone()),
             catalog: Some(store.clone()),
             changes: Some((store.clone(), store.clone())),
+            model_calls: Some(store.clone()),
             summaries: Some(store.clone()),
             tenancy: Some(store.clone()),
         };

@@ -10,6 +10,7 @@ pub mod harness_setup;
 pub mod memory;
 pub mod memory_core;
 pub mod model;
+pub mod model_calls;
 pub mod owner;
 pub mod plugins;
 pub mod preview;

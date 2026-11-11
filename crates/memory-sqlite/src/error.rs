@@ -61,6 +61,8 @@ pub enum SqliteError {
     Clock,
     #[error("stored job state \"{value}\" is not queued, running, or dead")]
     StoredState { value: String },
+    #[error("stored {column} \"{value}\" is not a valid value")]
+    StoredValue { column: &'static str, value: String },
     #[error("embed job for {id} was already queued")]
     EmbedAlreadyQueued { id: String },
     #[error("job payload is not a JSON object")]
@@ -134,6 +136,7 @@ impl From<SqliteError> for MemoryStoreError {
             | SqliteError::MissingJob { .. }
             | SqliteError::Clock
             | SqliteError::StoredState { .. }
+            | SqliteError::StoredValue { .. }
             | SqliteError::EmbedAlreadyQueued { .. }
             | SqliteError::PayloadNotObject
             | SqliteError::ClaimRejected { .. }

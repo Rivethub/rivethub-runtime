@@ -1,9 +1,11 @@
 mod catalog;
 mod deletion;
+mod model_calls;
 mod provider;
 mod reader;
 pub use catalog::FakeSessionCatalog;
 pub use deletion::FakeSessionDeletion;
+pub use model_calls::FakeModelCallStore;
 pub use provider::{FakeProvider, Script};
 pub use reader::FakeReader;
 mod queue;

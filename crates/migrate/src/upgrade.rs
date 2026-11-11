@@ -86,6 +86,9 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
             tx.execute_batch(include_str!("schema/review_marks_v33.sql"))
         }),
         SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
+        SchemaVersion::V35 => in_transaction(conn, to, |tx| {
+            tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
+        }),
     }
 }
 
