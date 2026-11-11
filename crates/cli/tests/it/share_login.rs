@@ -455,3 +455,41 @@ async fn the_servers_listing_names_the_token_store() {
     );
     assert!(servers.logins_file.ends_with("share-logins.json"));
 }
+
+#[tokio::test]
+async fn token_replies_never_reach_an_error() {
+    let unparsable = ok(
+        r#"{"access_token":"rhca_LEAKED","token_type":"Bearer","expires_in":"900","refresh_token":"rhcr_LEAKED","scope":"drops:write"}"#,
+    );
+    let failing = Reply {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        retry_after: None,
+        body: r#"{"access_token":"rhca_LEAKED","refresh_token":"rhcr_LEAKED"}"#.to_owned(),
+    };
+    for (path, reply) in [
+        ("/api/cli/token", unparsable),
+        ("/api/cli/device/code", failing),
+    ] {
+        let served = serve().await;
+        served.auth.queue("/api/cli/device/code", [device(1)]);
+        served
+            .auth
+            .0
+            .lock()
+            .replies
+            .insert(path.to_owned(), [reply].into());
+        let node = node();
+
+        let error = signed_in(&node, &served.host)
+            .await
+            .expect_err("the token reply is refused");
+
+        let text = format!("{error} {error:?}");
+        let desk = desk::desk_error(error);
+        for shown in [text, format!("{desk} {desk:?}")] {
+            for token in ["rhca_LEAKED", "rhcr_LEAKED"] {
+                assert!(!shown.contains(token), "{path}: {shown}");
+            }
+        }
+    }
+}

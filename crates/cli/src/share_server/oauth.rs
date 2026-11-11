@@ -55,8 +55,8 @@ struct Metadata {
 pub(crate) enum Transport {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
-    #[error("the share server answered {status}: {body}")]
-    Status { status: u16, body: String },
+    #[error("the share server's OAuth endpoint answered {0}")]
+    Status(u16),
     #[error("the share server is rate limiting this machine")]
     RateLimited { retry_after: Option<Duration> },
     #[error("the OAuth request names an invalid URL: {0}")]
@@ -163,11 +163,7 @@ impl Server {
                 }
             }
             if status.is_server_error() {
-                let body = response.text().await?;
-                return Err(Transport::Status {
-                    status: status.as_u16(),
-                    body: body.chars().take(200).collect(),
-                });
+                return Err(Transport::Status(status.as_u16()));
             }
             let headers = response.headers().clone();
             let mut answer = HttpResponse::new(response.bytes().await?.to_vec());
@@ -212,22 +208,17 @@ pub(crate) fn failed<T: ErrorResponse + 'static>(
     match error {
         RequestTokenError::ServerResponse(refusal) => ServerError::Refused(refusal.to_string()),
         RequestTokenError::Request(Transport::Http(error)) => ServerError::Http(error),
-        RequestTokenError::Request(Transport::Status { status, body }) => {
-            ServerError::Status { status, body }
-        }
+        RequestTokenError::Request(error @ Transport::Status(status)) => ServerError::Status {
+            status,
+            body: error.to_string(),
+        },
         RequestTokenError::Request(Transport::RateLimited { retry_after }) => {
             ServerError::RateLimited(retry_after.map_or(0, |wait| wait.as_secs()))
         }
         RequestTokenError::Request(Transport::Url(reason)) | RequestTokenError::Other(reason) => {
             ServerError::Protocol(reason)
         }
-        RequestTokenError::Parse(error, body) => ServerError::Protocol(format!(
-            "{error}: {}",
-            String::from_utf8_lossy(&body)
-                .chars()
-                .take(200)
-                .collect::<String>()
-        )),
+        RequestTokenError::Parse(error, _) => ServerError::Protocol(error.to_string()),
     }
 }
 
