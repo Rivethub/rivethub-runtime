@@ -27,6 +27,7 @@ pub use decide::LocalReview;
 pub use decide::ResolveError;
 pub use key::KeyError;
 pub use key::LocalKey;
+pub use key::MacFormat;
 use mapping::Action;
 use mapping::Mapping;
 use mapping::Matcher;
@@ -107,6 +108,7 @@ impl Policy {
             sessions: self.sessions.text(),
         };
         Ok(self.key.hex(&[
+            b"policy",
             raw_bundle_sha256.as_bytes(),
             &wire::json::canonical_json(&text)?,
         ]))
@@ -328,6 +330,7 @@ pub fn resolve(
         });
     }
     let review = stamp.review.as_ref().ok_or(ResolveError::NoReview)?;
+    let key = &key.in_format(local.mac_format);
     let marks = decide::marks(
         review,
         &flags.flags,
