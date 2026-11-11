@@ -115,7 +115,10 @@ async fn status_and_doctor_state_the_hub_policy() {
             Json(HealthzResponse {
                 policy: Some(wire::gateway::HubPolicy {
                     cloud: wire::gateway::CloudPolicy::Disabled,
-                    share_servers: vec!["team.example.com".to_owned()],
+                    share_servers: vec![
+                        "team.example.com".to_owned(),
+                        "rivethub.cloud:443".to_owned(),
+                    ],
                 }),
                 ..healthy()
             })
@@ -129,7 +132,7 @@ async fn status_and_doctor_state_the_hub_policy() {
     stub.close().await.expect("stub shuts down");
     assert_eq!(
         status.stdout,
-        "RivetHub is running (v1.2.3)\nHub policy: cloud disabled; share servers limited to team.example.com\n"
+        "RivetHub is running (v1.2.3)\nHub policy: cloud disabled; sharing with only team.example.com; cloud.disabled refuses rivethub.cloud:443\n"
     );
     let doctor = run(&["doctor"], &env).await;
     assert!(

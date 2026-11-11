@@ -2463,8 +2463,9 @@ exits 1.
 
 Status. `/healthz` adds `policy` (`wire::gateway::HubPolicy`: `cloud` is `enabled` or `disabled`, and `shareServers`
 lists `memory.share.allowed_servers` as written, omitted when empty) only when `cloud.disabled` is set or the list is
-non-empty, so the healthz goldens are unchanged. `rh status` prints `Hub policy: cloud disabled; share servers limited
-to <servers>` from it. `rh doctor` adds a `policy` check that passes with `cloud on|off, telemetry on|off, sharing with
+non-empty, so the healthz goldens are unchanged. `rh status` prints `Hub policy: cloud disabled; sharing with only
+<servers>` from it, naming the servers the policy admits (the same words `rh doctor` uses), and adds
+`cloud.disabled refuses <entries>` for list entries the policy refuses, as written in config.yaml. `rh doctor` adds a `policy` check that passes with `cloud on|off, telemetry on|off, sharing with
 any share server|only <servers>|no share server`, and fails on a bad list entry. No table is added.
 
 (146) `rh local --ensure` checks who answers (2026-11-11; desktop plan G1 and G3): B9 changes for one argv. Before,

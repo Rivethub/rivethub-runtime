@@ -34,13 +34,16 @@ pub struct SharePolicy {
 
 impl SharePolicy {
     pub fn from_config(config: &Config) -> Result<Self, BadAllowedServer> {
-        let listed = config
-            .share_allowed_servers()
+        Self::new(config.cloud_disabled(), config.share_allowed_servers())
+    }
+
+    pub fn new(cloud_disabled: bool, allowed_servers: &[String]) -> Result<Self, BadAllowedServer> {
+        let listed = allowed_servers
             .iter()
             .map(|entry| entry.parse())
             .collect::<Result<BTreeSet<ShareServer>, CodeError>>()?;
         Ok(Self {
-            cloud_disabled: config.cloud_disabled(),
+            cloud_disabled,
             allowed: (!listed.is_empty()).then_some(listed),
         })
     }
