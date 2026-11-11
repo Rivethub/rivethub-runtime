@@ -224,3 +224,38 @@ async fn the_writer_redacts_share_codes_with_redaction_off()
     );
     Ok(())
 }
+
+#[test]
+fn a_share_code_key_never_survives_any_redaction_setting() -> Result<(), Box<dyn std::error::Error>>
+{
+    let key = capture::seal::ShareKey::generate().reveal();
+    let code = format!("rhb1:AAAAAAAAAAAAAAAAAAAAAA#{key}");
+    let texts = [
+        format!("send {code} privately"),
+        format!("password={code}"),
+        format!("https://alex:{code}@team.example.com/x"),
+        format!("{{\"token\": \"{code}\"}}"),
+    ];
+    let settings = [
+        ("redaction on", redaction(true, true, &[])),
+        (
+            "builtins off with a pattern",
+            redaction(true, false, &["zzz-never"]),
+        ),
+        ("off", Some(capture::redaction::Redaction::share_codes())),
+    ];
+    for (name, redaction) in &settings {
+        let redaction = redaction.as_ref().ok_or("resolves")?;
+        for text in &texts {
+            let redacted = redaction.redact_text(text);
+            assert!(!redacted.contains(&key), "{name}: {text} -> {redacted}");
+        }
+    }
+    let off = capture::redaction::Redaction::share_codes();
+    assert_eq!(
+        off.redact_text(&format!("password={code}")),
+        "password=rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]",
+        "with redaction off only the key part changes"
+    );
+    Ok(())
+}

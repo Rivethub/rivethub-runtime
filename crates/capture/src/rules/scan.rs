@@ -40,6 +40,25 @@ impl Ruleset {
     }
 
     #[must_use]
+    pub fn spans_of_rule(&self, id: &str, text: &str) -> Vec<Span<'_>> {
+        let mut found = Vec::new();
+        if let Some((index, rule)) = self
+            .rules
+            .iter()
+            .enumerate()
+            .find(|(_, rule)| rule.id == id)
+        {
+            let scope = Scope {
+                order: index,
+                offset: 0,
+                depth: 0,
+            };
+            self.matches(rule, text, scope, &mut Budget::after(0), &mut found);
+        }
+        found
+    }
+
+    #[must_use]
     pub fn spans_within(&self, text: &str, budget: &mut Budget<'_>) -> Vec<Span<'_>> {
         self.scan(text, 0, budget)
     }

@@ -16,7 +16,6 @@ pub(crate) const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
 pub struct Redaction {
     rules: Option<&'static Ruleset>,
     patterns: Vec<Regex>,
-    only: Option<&'static str>,
 }
 
 pub const SHARE_CODE_RULE: &str = "rivethub_share_code";
@@ -54,7 +53,6 @@ pub fn resolve(
     Some(Redaction {
         rules: builtins_on.then(crate::rules::ruleset),
         patterns: compiled,
-        only: None,
     })
 }
 
@@ -73,16 +71,14 @@ impl Redaction {
         Self {
             rules: Some(crate::rules::ruleset()),
             patterns: Vec::new(),
-            only: None,
         }
     }
 
     #[must_use]
-    pub fn share_codes() -> Self {
+    pub const fn share_codes() -> Self {
         Self {
-            rules: Some(crate::rules::ruleset()),
+            rules: None,
             patterns: Vec::new(),
-            only: Some(SHARE_CODE_RULE),
         }
     }
 
@@ -148,11 +144,9 @@ struct LiveScrub<'a> {
 
 impl Scrub for LiveScrub<'_> {
     fn is_secret_name(&self, key: &str) -> bool {
-        self.redaction.only.is_none()
-            && self
-                .redaction
-                .rules
-                .is_some_and(|rules| rules.is_secret_name(key))
+        self.redaction
+            .rules
+            .is_some_and(|rules| rules.is_secret_name(key))
     }
 
     fn rank(&self, _key: &str) -> u64 {
@@ -182,11 +176,10 @@ impl Scrub for LiveScrub<'_> {
     }
 
     fn secret(&mut self, _path: &str, key: &str, text: &mut String) -> bool {
-        let redacts = self.redaction.only.is_none()
-            && self
-                .redaction
-                .rules
-                .is_some_and(|rules| rules.names().redacts(key, text));
+        let redacts = self
+            .redaction
+            .rules
+            .is_some_and(|rules| rules.names().redacts(key, text));
         if redacts {
             SECRET_KEY_PLACEHOLDER.clone_into(text);
             self.spans += 1;
@@ -196,13 +189,17 @@ impl Scrub for LiveScrub<'_> {
 }
 
 fn apply_spans(text: &str, redaction: &Redaction) -> (String, u64) {
-    let mut out = text.to_owned();
-    let mut count = 0;
+    let codes: Vec<(std::ops::Range<usize>, String)> = crate::rules::ruleset()
+        .spans_of_rule(SHARE_CODE_RULE, text)
+        .iter()
+        .map(|span| (span.range.clone(), placeholder(&span.rule.id)))
+        .collect();
+    let mut count = codes.len() as u64;
+    let mut out = replace_spans(text, &codes);
     if let Some(rules) = redaction.rules {
         let found = rules.spans(&out);
         let replaced: Vec<(std::ops::Range<usize>, String)> = found
             .iter()
-            .filter(|span| redaction.only.is_none_or(|id| span.rule.id == id))
             .map(|span| (span.range.clone(), placeholder(&span.rule.id)))
             .collect();
         count += replaced.len() as u64;
