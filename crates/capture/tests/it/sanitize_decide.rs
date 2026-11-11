@@ -220,6 +220,10 @@ fn command(bundle: &SessionBundle, index: usize) -> Option<String> {
     Some(typed.command)
 }
 
+fn task_id(bundle: &SessionBundle) -> Option<String> {
+    bundle.sessions.first()?.batch.task_id.clone()
+}
+
 fn stamp_flags(bundle: &SessionBundle) -> Option<u32> {
     match &bundle.manifest.sanitization {
         Sanitization::Sanitized(stamp) => Some(stamp.unresolved_flags),
@@ -601,5 +605,50 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
         "{error:?}"
     );
     stub.close().await?;
+    Ok(())
+}
+
+const V080_BUNDLE: &str = include_str!("../fixtures/decide-v0.8.0/bundle.json");
+const V080_REPORT: &str = include_str!("../fixtures/decide-v0.8.0/report.md");
+const V080_LOCAL: &str = include_str!("../fixtures/decide-v0.8.0/review.local.json");
+
+#[test]
+fn a_0_8_0_decide_run_still_resolves() -> TestResult {
+    let bundle: SessionBundle = serde_json::from_str(V080_BUNDLE)?;
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+    let key = LocalKey::from_bytes([7; 32]);
+    assert_eq!(stamp_flags(&bundle), Some(3));
+
+    let report = mark(V080_REPORT, 1, "redact");
+    let report = mark(&report, 2, "keep");
+    let flags = sanitize::marks::read_flags(&report)?;
+    let resolved = sanitize::resolve(&bundle, &flags, &local, &key)?;
+
+    let clean = &resolved.sealed.bundle;
+    assert_eq!(contents(clean).first().copied(), Some("[REDACTED:flagged]"));
+    assert_eq!(command(clean, 1), Some(risky_command()));
+    assert_eq!(
+        command(clean, 3),
+        Some(risky_command()),
+        "keep puts the withheld text back"
+    );
+    assert_eq!(
+        task_id(clean).as_deref(),
+        Some("9057fcb5-48da-405e-9d4d-a7637a9f53ce")
+    );
+    assert_eq!((resolved.open, resolved.total), (1, 3));
+    assert_eq!(stamp_flags(clean), Some(1));
+    let applied: Vec<usize> = resolved.applied.iter().map(|(number, _)| *number).collect();
+    assert_eq!(applied, [1, 2]);
+
+    let rewritten = flags.rewrite(&report, resolved.open, resolved.total, &applied);
+    let again = sanitize::resolve(
+        clean,
+        &sanitize::marks::read_flags(&rewritten)?,
+        &local,
+        &key,
+    )?;
+    assert_eq!(again.open, 1);
+    assert_eq!(&again.sealed.bundle, clean);
     Ok(())
 }
