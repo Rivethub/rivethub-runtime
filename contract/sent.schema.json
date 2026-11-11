@@ -13953,8 +13953,8 @@
       "type": "object"
     }
   },
-  "$id": "https://github.com/philbert440/rivethub-runtime/contract/0.8.0/sent.schema.json",
+  "$id": "https://github.com/philbert440/rivethub-runtime/contract/0.8.1/sent.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RivetHub contract (sent by the runtime)",
-  "version": "0.8.0"
+  "version": "0.8.1"
 }
