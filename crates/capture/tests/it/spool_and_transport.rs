@@ -251,3 +251,55 @@ async fn write_replays_the_spool_first() -> Result<(), Box<dyn std::error::Error
     assert_eq!(remaining, 0);
     Ok(())
 }
+
+#[tokio::test]
+async fn many_401_replays_keep_the_batch_spooled_until_a_200_delivers_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let gate = refusing.clone();
+    let routes = axum::Router::new().route(
+        "/api/capture",
+        axum::routing::post(move || {
+            let refusing = gate.clone();
+            async move {
+                if refusing.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(axum::http::StatusCode::UNAUTHORIZED);
+                }
+                Ok(axum::Json(spool_ok("c-9")))
+            }
+        }),
+    );
+    let stub = testkit::stub_server(routes).await?;
+    let dir = tempfile::tempdir()?;
+    let spool = capture::spool::CaptureSpool::new(dir.path().to_path_buf());
+    let start = now_at("2026-10-10T12:00:00Z")?;
+    spool
+        .spool(r#"{"session_key":"a","messages":[]}"#, start)
+        .await?;
+    let writer = capture::writer::CaptureWriter::new(
+        capture::writer::HttpCaptureTransport::new(
+            format!("http://{}", stub.addr),
+            reqwest_client()?,
+        ),
+        spool,
+        None,
+        None,
+    );
+    let count = |path: std::path::PathBuf| std::fs::read_dir(path).map(Iterator::count);
+    for hour in 1..=3 * i64::try_from(capture::spool::MAX_TRANSIENT_ATTEMPTS)? {
+        writer
+            .replay(start + chrono::TimeDelta::hours(hour))
+            .await?;
+        assert_eq!(count(dir.path().to_path_buf())?, 1, "hour {hour}");
+        assert!(
+            !dir.path().join("dead").exists(),
+            "dead-lettered at hour {hour}"
+        );
+    }
+    refusing.store(false, std::sync::atomic::Ordering::SeqCst);
+    writer.replay(start + chrono::TimeDelta::hours(100)).await?;
+    assert_eq!(count(dir.path().to_path_buf())?, 0);
+    assert!(!dir.path().join("dead").exists());
+    stub.close().await.expect("stub shuts down");
+    Ok(())
+}

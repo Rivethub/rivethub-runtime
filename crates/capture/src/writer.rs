@@ -35,6 +35,8 @@ pub(crate) fn metadata_keep() -> &'static [&'static str] {
 
 #[derive(Debug, Error)]
 pub enum PostError {
+    #[error("capture HTTP 401: the owner token is missing or stale")]
+    Unauthorized,
     #[error("capture HTTP {status}")]
     Client { status: u16 },
     #[error("capture HTTP {status}")]
@@ -108,8 +110,10 @@ impl CaptureTransport for HttpCaptureTransport {
             })?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
-            // A 401 means the token is missing or stale; the batch is valid and must replay.
-            if (400..500).contains(&status) && status != 401 {
+            if status == 401 {
+                return Err(PostError::Unauthorized);
+            }
+            if (400..500).contains(&status) {
                 return Err(PostError::Client { status });
             }
             return Err(PostError::Server { status });

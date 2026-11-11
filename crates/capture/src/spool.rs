@@ -138,6 +138,13 @@ impl CaptureSpool {
                         );
                     }
                 }
+                Err(error @ PostError::Unauthorized) => {
+                    tracing::warn!(
+                        "spooled capture batch {} kept: {error}",
+                        entry.path.display()
+                    );
+                    break;
+                }
                 Err(error) => {
                     self.defer(&entry, now, &error).await?;
                     break;
