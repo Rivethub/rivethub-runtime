@@ -96,6 +96,7 @@ pub async fn store_hook(
 pub(crate) async fn ingest_bundle(
     env: &Environment,
     bundle: &wire::capture::SessionBundle,
+    receipt: Option<&wire::capture::Receipt>,
     now: DateTime<Utc>,
 ) -> Result<capture::writer::Totals, Error> {
     let (writer, _) = writer(env).await?;
@@ -105,7 +106,11 @@ pub(crate) async fn ingest_bundle(
         conversation_id: String::new(),
     };
     for session in &bundle.sessions {
-        let written = writer.write(&session.import_batch()?, now).await?;
+        let batch = match receipt {
+            Some(receipt) => session.received_batch(receipt)?,
+            None => session.import_batch()?,
+        };
+        let written = writer.write(&batch, now).await?;
         totals.inserted += written.inserted;
         totals.skipped += written.skipped;
         totals.conversation_id = written.conversation_id;

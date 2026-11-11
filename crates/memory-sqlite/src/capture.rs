@@ -249,9 +249,16 @@ impl PreparedBatch {
             let stored = stored_settings(tx, id)?;
             let merged =
                 wire::capture::merge_imported_settings(stored.as_ref(), self.settings.as_ref())
-                    .map_err(|source| SqliteError::Encode {
-                        column: "settings",
-                        source,
+                    .map_err(|error| match error {
+                        wire::capture::MergeError::Json(source) => SqliteError::Encode {
+                            column: "settings",
+                            source,
+                        },
+                        conflict @ wire::capture::MergeError::ReceiptConflict { .. } => {
+                            SqliteError::Invalid {
+                                message: conflict.to_string(),
+                            }
+                        }
                     })?;
             let title = self.title.as_ref().filter(|_| merged.incoming_is_newer);
             (Some(merged.settings), title)

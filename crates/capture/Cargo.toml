@@ -11,7 +11,9 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+age = { workspace = true }
 aho-corasick = { workspace = true }
+aws-lc-rs = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 config = { workspace = true }

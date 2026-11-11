@@ -177,3 +177,97 @@ async fn the_writer_redacts_the_session_title() -> Result<(), Box<dyn std::error
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn the_writer_redacts_share_codes_with_redaction_off()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert!(
+        redaction(false, true, &[]).is_none(),
+        "general redaction is off"
+    );
+    let transport = KeptBodies::default();
+    let dir = tempfile::tempdir()?;
+    let writer = capture::writer::CaptureWriter::new(
+        &transport,
+        capture::spool::CaptureSpool::new(dir.path().to_path_buf()),
+        None,
+        None,
+    );
+    let key = capture::seal::ShareKey::generate().reveal();
+    let code = format!("rhb1:AAAAAAAAAAAAAAAAAAAAAA#{key}");
+    let mut batch = capture::batch::parse_batch(
+        r#"{"session_key":"s","agent":"a","messages":[{"event_id":"e1","role":"assistant","content":"hi"}]}"#,
+    )?;
+    batch.title = Some(format!("shared {code}"));
+    let message = batch.messages.first_mut().ok_or("message")?;
+    message.content = format!("send privately: {code} and Bearer abcdefghijklmnop1234");
+    message.tool_result = Some(code.clone());
+    message.tool_args = Some(serde_json::from_str(&format!(
+        r#"{{"command":"rh memory receive {code}","password":"hunter2hunter2"}}"#
+    ))?);
+    writer
+        .write(&batch, "2026-10-10T12:00:00Z".parse()?)
+        .await?;
+    let bodies = transport.bodies.lock().clone();
+    let [body] = bodies.as_slice() else {
+        return Err("expected one capture post".into());
+    };
+    assert!(!body.contains(&key), "{body}");
+    assert_eq!(
+        body.matches("rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]")
+            .count(),
+        4
+    );
+    assert!(
+        body.contains("Bearer abcdefghijklmnop1234") && body.contains("hunter2hunter2"),
+        "only share codes are redacted while general redaction is off"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_share_code_key_never_survives_any_redaction_setting() -> Result<(), Box<dyn std::error::Error>>
+{
+    let key = capture::seal::ShareKey::generate().reveal();
+    let code = format!("rhb1:AAAAAAAAAAAAAAAAAAAAAA#{key}");
+    let texts = [
+        format!("send {code} privately"),
+        format!("password={code}"),
+        format!("https://alex:{code}@team.example.com/x"),
+        format!("{{\"token\": \"{code}\"}}"),
+        format!("https://u:{}@team.example.com/x", code.replace('#', "%23")),
+        format!("{code}_x"),
+        format!("see {code}abc"),
+    ];
+    let settings = [
+        ("redaction on", redaction(true, true, &[])),
+        (
+            "builtins off with a pattern",
+            redaction(true, false, &["zzz-never"]),
+        ),
+        ("off", Some(capture::redaction::Redaction::share_codes())),
+    ];
+    for (name, redaction) in &settings {
+        let redaction = redaction.as_ref().ok_or("resolves")?;
+        for text in &texts {
+            let redacted = redaction.redact_text(text);
+            assert!(!redacted.contains(&key), "{name}: {text} -> {redacted}");
+        }
+    }
+    let off = capture::redaction::Redaction::share_codes();
+    assert_eq!(
+        off.redact_text(&format!("password={code}")),
+        "password=rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]",
+        "with redaction off only the key part changes"
+    );
+    assert_eq!(
+        off.redact_text(&format!("u:{}@h", code.replace('#', "%23"))),
+        "u:rhb1:AAAAAAAAAAAAAAAAAAAAAA%23[REDACTED:rivethub_share_code]@h",
+        "an encoded # keeps the server and id part"
+    );
+    assert_eq!(
+        off.redact_text(&format!("{code}_x")),
+        "rhb1:AAAAAAAAAAAAAAAAAAAAAA#[REDACTED:rivethub_share_code]_x"
+    );
+    Ok(())
+}

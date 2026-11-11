@@ -178,6 +178,27 @@ pub struct MemorySection {
     pub capture: CaptureSection,
     pub models: Option<crate::memory_models::MemoryModels>,
     pub sanitize: SanitizeSection,
+    pub share: ShareSection,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ShareSection {
+    pub server: Option<ShareServerSection>,
+    pub trusted_cas: Vec<TrustedCa>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareServerSection {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedCa {
+    pub host: String,
+    pub ca: PathBuf,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -483,6 +504,16 @@ impl Config {
     #[must_use]
     pub fn sanitize_decide(&self) -> Option<&DecideSection> {
         self.memory.as_ref()?.sanitize.decide.as_ref()
+    }
+
+    pub fn share_server(&self) -> Option<&ShareServerSection> {
+        self.memory.as_ref()?.share.server.as_ref()
+    }
+
+    pub fn share_trusted_cas(&self) -> &[TrustedCa] {
+        self.memory
+            .as_ref()
+            .map_or(&[], |memory| memory.share.trusted_cas.as_slice())
     }
 
     pub fn provider_kind(&self, name: &str) -> Option<ProviderType> {

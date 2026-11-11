@@ -198,11 +198,12 @@ pub fn prepare(
     redaction: Option<&Redaction>,
 ) -> Result<CaptureBatchRequest, WriteError> {
     let mut prepared = batch.clone();
-    if let Some(redaction) = redaction {
-        let spans = redaction.redact_batch(&mut prepared);
-        if spans > 0 {
-            tracing::info!("redacted {spans} spans");
-        }
+    let share_codes = Redaction::share_codes();
+    let spans = redaction
+        .unwrap_or(&share_codes)
+        .redact_batch(&mut prepared);
+    if spans > 0 {
+        tracing::info!("redacted {spans} spans");
     }
     cap_batch(&mut prepared)?;
     Ok(prepared)

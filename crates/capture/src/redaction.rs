@@ -18,6 +18,8 @@ pub struct Redaction {
     patterns: Vec<Regex>,
 }
 
+pub const SHARE_CODE_RULE: &str = "rivethub_share_code";
+
 #[must_use]
 pub fn resolve(
     settings: Option<config::RedactionSettings>,
@@ -68,6 +70,14 @@ impl Redaction {
     pub fn builtins() -> Self {
         Self {
             rules: Some(crate::rules::ruleset()),
+            patterns: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub const fn share_codes() -> Self {
+        Self {
+            rules: None,
             patterns: Vec::new(),
         }
     }
@@ -179,8 +189,13 @@ impl Scrub for LiveScrub<'_> {
 }
 
 fn apply_spans(text: &str, redaction: &Redaction) -> (String, u64) {
-    let mut out = text.to_owned();
-    let mut count = 0;
+    let codes: Vec<(std::ops::Range<usize>, String)> = crate::rules::ruleset()
+        .spans_of_rule(SHARE_CODE_RULE, text)
+        .iter()
+        .map(|span| (span.range.clone(), placeholder(&span.rule.id)))
+        .collect();
+    let mut count = codes.len() as u64;
+    let mut out = replace_spans(text, &codes);
     if let Some(rules) = redaction.rules {
         let found = rules.spans(&out);
         let replaced: Vec<(std::ops::Range<usize>, String)> = found

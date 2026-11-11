@@ -163,3 +163,73 @@ fn a_sanitized_identity_keys_the_conversation_instead_of_its_display_id() -> Tes
     );
     Ok(())
 }
+
+fn receipt(fingerprint: Option<&str>) -> wire::capture::Receipt {
+    wire::capture::Receipt {
+        bundle_id: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+        received_at: chrono::DateTime::UNIX_EPOCH,
+        verification: if fingerprint.is_some() {
+            wire::capture::ReceiptVerification::Verified
+        } else {
+            wire::capture::ReceiptVerification::Unsigned
+        },
+        key_fingerprint: fingerprint.map(str::to_owned),
+    }
+}
+
+fn received(
+    owner: &str,
+    session: &BundledSession,
+    fingerprint: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let batch = session.received_batch(&receipt(fingerprint))?;
+    Ok(owned_import_key(owner, &batch.session_key)?.ok_or("an import key")?)
+}
+
+#[test]
+fn a_received_conversation_is_keyed_by_its_signer_too() -> TestResult {
+    let alice = session("desk", "c1", "evt-1");
+    let forged = session("desk", "c1", "evt-9");
+    let signed = received("ana", &alice, Some("ed25519:0011223344556677"))?;
+    assert_eq!(
+        signed,
+        received("ana", &alice, Some("ed25519:0011223344556677"))?,
+        "the same signer lands in the same conversation, so a re-share adds nothing"
+    );
+    assert_ne!(signed, received("ana", &forged, None)?);
+    assert_ne!(
+        signed,
+        received("ana", &forged, Some("ed25519:8899aabbccddeeff"))?
+    );
+    assert_ne!(signed, owned("ana", &forged)?);
+    let unknown = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
+    assert_ne!(received("ana", &unknown, None)?, owned("ana", &unknown)?);
+    assert!(
+        owned_import_key("ana", r#"import:["desk","c1","nobody"]"#).is_err(),
+        "a third element must name a signer"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_stored_receipt_from_another_signer_refuses_the_merge() -> TestResult {
+    let alice = session("desk", "c1", "evt-1");
+    let stored = alice
+        .received_batch(&receipt(Some("ed25519:0011223344556677")))?
+        .settings
+        .ok_or("settings")?;
+    let mallory = alice
+        .received_batch(&receipt(None))?
+        .settings
+        .ok_or("settings")?;
+    let plain = alice.import_batch()?.settings.ok_or("settings")?;
+    for incoming in [&mallory, &plain] {
+        assert!(matches!(
+            wire::capture::merge_imported_settings(Some(&stored), Some(incoming)),
+            Err(wire::capture::MergeError::ReceiptConflict { .. })
+        ));
+    }
+    assert!(wire::capture::merge_imported_settings(Some(&stored), Some(&stored)).is_ok());
+    assert!(wire::capture::merge_imported_settings(Some(&plain), Some(&plain)).is_ok());
+    Ok(())
+}

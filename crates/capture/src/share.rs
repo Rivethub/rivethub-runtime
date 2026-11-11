@@ -177,11 +177,29 @@ pub fn decider(config: &Config, block: bool) -> Result<Decider, SetupError> {
 }
 
 pub fn key_path(env: &Environment) -> Result<PathBuf, config::ConfigError> {
-    let state = match env.text("XDG_STATE_HOME").filter(|text| !text.is_empty()) {
-        Some(text) => PathBuf::from(text),
-        None => config::Paths::new(env)?.home().join(".local").join("state"),
-    };
-    Ok(LocalKey::path_in(&state))
+    Ok(LocalKey::path_in(&state_home(env)?))
+}
+
+pub fn state_home(env: &Environment) -> Result<PathBuf, config::ConfigError> {
+    xdg_home(env, "XDG_STATE_HOME", &[".local", "state"])
+}
+
+pub fn config_home(env: &Environment) -> Result<PathBuf, config::ConfigError> {
+    xdg_home(env, "XDG_CONFIG_HOME", &[".config"])
+}
+
+fn xdg_home(
+    env: &Environment,
+    variable: &str,
+    fallback: &[&str],
+) -> Result<PathBuf, config::ConfigError> {
+    match env.text(variable).filter(|text| !text.is_empty()) {
+        Some(text) => Ok(PathBuf::from(text)),
+        None => Ok(fallback.iter().fold(
+            config::Paths::new(env)?.home().to_path_buf(),
+            |path, part| path.join(part),
+        )),
+    }
 }
 
 #[derive(Debug)]

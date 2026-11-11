@@ -12,6 +12,7 @@ pub mod memory;
 mod process;
 mod roots;
 pub mod service;
+pub mod share_server;
 mod status;
 pub mod supervise;
 pub mod tree;
@@ -163,6 +164,7 @@ async fn command_dispatch(
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,
+        Command::Share { command } => share_server::run(command, env, shutdown).await,
         Command::Harness { command } => harness::run(command, env).await,
         Command::Memory { args } => Ok(memory::execute(
             &args,

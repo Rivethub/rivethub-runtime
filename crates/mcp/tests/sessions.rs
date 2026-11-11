@@ -507,3 +507,17 @@ async fn no_tool_writes_a_raw_bundle() {
     assert!(phil.server.call(request).await.is_err());
     assert!(!phil.share.join("work.json").exists());
 }
+
+#[tokio::test]
+async fn no_tool_shares_receives_or_takes_a_code() {
+    let phil = node("phil", sessions(), None).await;
+    for tool in phil.server.tools() {
+        let schema = serde_json::to_string(&tool.input_schema).expect("schema");
+        assert!(!schema.contains("\"code\""), "{} takes a code", tool.name);
+        assert!(
+            !tool.name.contains("share") && !tool.name.contains("receive"),
+            "{} pushes or pulls a bundle",
+            tool.name
+        );
+    }
+}

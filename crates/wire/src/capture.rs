@@ -153,6 +153,54 @@ pub struct BundledSession {
     pub batch: CaptureBatchRequest,
 }
 
+pub const RECEIPT_KEY: &str = "receipt";
+pub const UNSIGNED: &str = "unsigned";
+const SIGNER_PREFIX: &str = "ed25519:";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptVerification {
+    Verified,
+    Unsigned,
+    UnknownKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Receipt {
+    pub bundle_id: String,
+    pub received_at: DateTime<Utc>,
+    pub verification: ReceiptVerification,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_fingerprint: Option<String>,
+}
+
+impl Receipt {
+    #[must_use]
+    pub fn signer(&self) -> &str {
+        self.key_fingerprint.as_deref().unwrap_or(UNSIGNED)
+    }
+}
+
+fn receipt_signer(settings: &JsonObject) -> Result<Option<String>, serde_json::Error> {
+    settings
+        .get(RECEIPT_KEY)
+        .map(|value| {
+            serde_json::from_value::<Receipt>(value.clone())
+                .map(|receipt| receipt.signer().to_owned())
+        })
+        .transpose()
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MergeError {
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(
+        "this import would join a conversation received from {stored}, but it comes from {incoming}; content from different signers never shares a conversation"
+    )]
+    ReceiptConflict { stored: String, incoming: String },
+}
+
 pub use values::IMPORTED_SESSION_PREFIX;
 
 #[must_use]
@@ -178,7 +226,13 @@ pub fn owned_import_key(owner: &str, session_key: &str) -> Result<Option<String>
     let identity: Vec<String> = serde_json::from_str(identity).map_err(|_| malformed())?;
     let names_an_origin = match identity.as_slice() {
         [node, conversation_id] => node != UNKNOWN_ORIGIN && conversation_id != UNKNOWN_ORIGIN,
+        [node, conversation_id, signer] => {
+            node != UNKNOWN_ORIGIN && conversation_id != UNKNOWN_ORIGIN && is_signer(signer)
+        }
         [unknown, _session_key, _agent, _event_id] => unknown == UNKNOWN_ORIGIN,
+        [unknown, _session_key, _agent, _event_id, signer] => {
+            unknown == UNKNOWN_ORIGIN && is_signer(signer)
+        }
         _ => false,
     };
     if !names_an_origin {
@@ -192,6 +246,10 @@ pub fn owned_import_key(owner: &str, session_key: &str) -> Result<Option<String>
         "{IMPORTED_SESSION_PREFIX}{}",
         hex::encode(Sha256::digest(canonical))
     )))
+}
+
+fn is_signer(text: &str) -> bool {
+    text == UNSIGNED || text.starts_with(SIGNER_PREFIX)
 }
 
 impl BundledSession {
@@ -214,15 +272,35 @@ impl BundledSession {
     }
 
     pub fn import_batch(&self) -> Result<CaptureBatchRequest, serde_json::Error> {
-        let mut batch = self.batch.clone();
-        batch.session_key = format!(
-            "{IMPORTED_SESSION_PREFIX}{}",
-            serde_json::to_string(&self.import_identity())?
-        );
+        self.batch_with_identity(&self.import_identity())
+    }
+
+    pub fn received_batch(
+        &self,
+        receipt: &Receipt,
+    ) -> Result<CaptureBatchRequest, serde_json::Error> {
+        let mut identity = self.import_identity();
+        identity.push(receipt.signer());
+        let mut batch = self.batch_with_identity(&identity)?;
         batch
             .settings
             .get_or_insert_default()
-            .insert("origin", &self.origin)?;
+            .insert(RECEIPT_KEY, receipt)?;
+        Ok(batch)
+    }
+
+    fn batch_with_identity(
+        &self,
+        identity: &[&str],
+    ) -> Result<CaptureBatchRequest, serde_json::Error> {
+        let mut batch = self.batch.clone();
+        batch.session_key = format!(
+            "{IMPORTED_SESSION_PREFIX}{}",
+            serde_json::to_string(&identity)?
+        );
+        let settings = batch.settings.get_or_insert_default();
+        settings.retain(|key| key != RECEIPT_KEY);
+        settings.insert("origin", &self.origin)?;
         batch.created_at = self.origin.created_at.or(batch.created_at);
         batch.updated_at = self
             .origin
@@ -258,7 +336,7 @@ pub struct ImportedSettings {
 pub fn merge_imported_settings(
     stored: Option<&JsonObject>,
     incoming: Option<&JsonObject>,
-) -> Result<ImportedSettings, serde_json::Error> {
+) -> Result<ImportedSettings, MergeError> {
     let empty = JsonObject::default();
     let incoming = incoming.unwrap_or(&empty);
     let Some(stored) = stored else {
@@ -267,6 +345,14 @@ pub fn merge_imported_settings(
             incoming_is_newer: true,
         });
     };
+    let (was, now) = (receipt_signer(stored)?, receipt_signer(incoming)?);
+    if was != now {
+        let name = |side: Option<String>| side.unwrap_or_else(|| "a plain import".to_owned());
+        return Err(MergeError::ReceiptConflict {
+            stored: name(was),
+            incoming: name(now),
+        });
+    }
     let updated =
         |settings: &JsonObject| SessionOrigin::of(settings).and_then(|origin| origin.updated_at);
     let incoming_is_newer = updated(incoming) >= updated(stored);
