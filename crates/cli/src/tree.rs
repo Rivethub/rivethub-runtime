@@ -85,6 +85,12 @@ pub enum Command {
             help = "Seconds --ensure waits for the node to answer"
         )]
         wait: u64,
+        #[arg(
+            long,
+            requires = "ensure",
+            help = "Print the --ensure result as one JSON object"
+        )]
+        json: bool,
     },
     #[command(about = "Administer memory", disable_help_flag = true)]
     Memory {

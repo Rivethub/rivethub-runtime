@@ -39,6 +39,7 @@ fn clap_parses_port_and_no_lan_and_rejects_unknown_flags() {
             no_lan: true,
             ensure: false,
             wait: 2,
+            json: false,
         })
     ));
     let unknown = Cli::parse_args(["rh", "local", "--yes"].map(Into::into)).expect_err("flag");
@@ -62,11 +63,15 @@ fn clap_parses_ensure_with_a_bounded_wait() {
             no_lan: true,
             ensure: true,
             wait: 7,
+            json: false,
         })
     ));
     let alone = Cli::parse_args(["rh", "local", "--wait", "7"].map(Into::into)).expect_err("wait");
     assert_eq!(alone.exit, Exit::Failure);
     assert!(alone.stderr.contains("--ensure"), "{}", alone.stderr);
+    let json = Cli::parse_args(["rh", "local", "--json"].map(Into::into)).expect_err("json");
+    assert_eq!(json.exit, Exit::Failure);
+    assert!(json.stderr.contains("--ensure"), "{}", json.stderr);
     let zero = Cli::parse_args(["rh", "local", "--ensure", "--wait", "0"].map(Into::into))
         .expect_err("zero wait");
     assert_eq!(zero.exit, Exit::Failure);

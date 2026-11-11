@@ -8,7 +8,7 @@ use config::{Config, ConfigLocation, Environment};
 
 use crate::Error;
 
-pub(crate) use ensure::{Ensure, ensure};
+pub(crate) use ensure::{Ensure, ensure, render};
 
 const DEFAULT_GATEWAY_PORT: u16 = 5174;
 const LOOPBACK_HOST: &str = "127.0.0.1";

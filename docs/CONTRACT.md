@@ -2416,6 +2416,17 @@ receiver never recomputes them. If you sanitize the same raw input again after t
 new `origin.identity`, as after a key rotation (note 136). A re-import of such a bundle then duplicates its sessions
 once. The policy hash and the report fingerprints of a re-run also differ from the 0.8.0 run.
 
+(146) `rh local --ensure` checks who answers (2026-11-11; desktop plan G1 and G3): B9 changes for one argv. Before,
+`rh local --ensure` exited 0 when anything answered the address's `/healthz`, so a foreign server on the port read as a
+running node. Now only a 200 or a degraded 503, not followed through any redirect, whose body names a node (non-empty
+`name` and `node`; every other health field is ignored so a newer node still counts) is a RivetHub node; any other answer starts nothing and exits 1 with `Error: port N is in use by something that is not a
+RivetHub node (...); stop it or use --port`. `--json` (only with `--ensure`) prints one line instead of the sentence:
+`{outcome, origin, port, pid, node, version}` with `outcome` `started` or `already_running` on exit 0, and `{outcome:
+"failed", reason, error, origin, port}` with `reason` `port_in_use`, `not_ready` or `error` on exit 1. The fields and
+values are pinned by `crates/rivethub/tests/it/local_ensure.rs`; docs/CLI.md has the full shape. The desktop app reads
+this object and never the prose. `pid` is null when the pid file is missing or unreadable; a node that answers is still
+reported as running.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
