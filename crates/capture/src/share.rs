@@ -339,7 +339,7 @@ async fn rules(mapping: &MappingFile) -> Result<(Mapping, String), ShareError> {
 }
 
 #[must_use]
-pub fn rule_counts(report: &Report) -> String {
+pub fn rule_totals(report: &Report) -> Vec<(String, usize)> {
     let mut by_rule: Vec<(String, usize)> = Vec::new();
     for change in &report.changes {
         let name = change.rule.to_string();
@@ -349,6 +349,12 @@ pub fn rule_counts(report: &Report) -> String {
         }
     }
     by_rule.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    by_rule
+}
+
+#[must_use]
+pub fn rule_counts(report: &Report) -> String {
+    let by_rule = rule_totals(report);
     if by_rule.is_empty() {
         return "no rule matched".to_owned();
     }

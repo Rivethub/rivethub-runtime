@@ -47,15 +47,65 @@ use crate::service::StartupError;
 const SHARE_DIR: &str = "rivethub/share";
 
 #[derive(Debug)]
-struct NodeShare {
-    store: SessionStore,
-    owner: Owner,
-    author: BundleAuthor,
-    mapping: MappingFile,
-    key: PathBuf,
+pub(crate) struct NodeShare {
+    pub(crate) store: SessionStore,
+    pub(crate) owner: Owner,
+    pub(crate) author: BundleAuthor,
+    pub(crate) mapping: MappingFile,
+    pub(crate) key: PathBuf,
     decider: Result<Decider, SetupError>,
     redaction: Option<Redaction>,
     excerpts: Redaction,
+}
+
+impl NodeShare {
+    pub(crate) fn new<E>(
+        config: &Config,
+        env: &Environment,
+        owner: Owner,
+        store: SessionStore,
+    ) -> Result<Self, E>
+    where
+        E: From<config::ConfigError> + From<crate::NodeError>,
+    {
+        let node = crate::identity::resolve(config, env)?.name;
+        Ok(Self {
+            store,
+            author: BundleAuthor {
+                user: owner.as_str().to_owned(),
+                node,
+            },
+            owner,
+            mapping: config.sanitize_mapping(env)?,
+            key: share::key_path(env)?,
+            decider: share::decider(config, false),
+            redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
+            excerpts: Redaction::builtins(),
+        })
+    }
+
+    pub(crate) fn decider(
+        &self,
+        decide: bool,
+        block: bool,
+    ) -> Result<Option<Decider>, ShareFailure> {
+        match (decide, &self.decider) {
+            (false, _) => Ok(None),
+            (true, Ok(decider)) => Ok(Some(Decider {
+                review: Review {
+                    mode: if block {
+                        Mode::Block
+                    } else {
+                        decider.review.mode
+                    },
+                    ..decider.review
+                },
+                ..decider.clone()
+            })),
+            (true, Err(SetupError::Unconfigured)) => Err(ShareFailure::DecideUnconfigured),
+            (true, Err(error)) => Err(failed(error)),
+        }
+    }
 }
 
 pub fn kit(
@@ -64,30 +114,17 @@ pub fn kit(
     owner: Owner,
     store: SessionStore,
 ) -> Result<Sessions, StartupError> {
-    let node = crate::identity::resolve(config, env)?.name;
+    let share = NodeShare::new::<StartupError>(config, env, owner.clone(), store)?;
     let home = config::Paths::new(env)?.home().to_path_buf();
     let data = match env.text("XDG_DATA_HOME").filter(|text| !text.is_empty()) {
         Some(text) => PathBuf::from(text),
         None => home.join(".local").join("share"),
     };
-    let share = NodeShare {
-        store,
-        owner: owner.clone(),
-        author: BundleAuthor {
-            user: owner.as_str().to_owned(),
-            node: node.clone(),
-        },
-        mapping: config.sanitize_mapping(env)?,
-        key: share::key_path(env)?,
-        decider: share::decider(config, false),
-        redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
-        excerpts: Redaction::builtins(),
-    };
     Ok(Sessions {
+        node: share.author.node.clone(),
         share: Arc::new(share),
         files: ShareFiles::new(data.join(SHARE_DIR), home),
         owner,
-        node,
     })
 }
 
@@ -98,22 +135,7 @@ impl SessionShare for NodeShare {
     }
 
     async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
-        let decider = match (job.decide, &self.decider) {
-            (false, _) => None,
-            (true, Ok(decider)) => Some(Decider {
-                review: Review {
-                    mode: if job.block {
-                        Mode::Block
-                    } else {
-                        decider.review.mode
-                    },
-                    ..decider.review
-                },
-                ..decider.clone()
-            }),
-            (true, Err(SetupError::Unconfigured)) => return Err(ShareFailure::DecideUnconfigured),
-            (true, Err(error)) => return Err(failed(error)),
-        };
+        let decider = self.decider(job.decide, job.block)?;
         let mapping = job
             .mapping
             .map_or_else(|| self.mapping.clone(), MappingFile::Configured);
@@ -239,16 +261,20 @@ fn summary(outcome: &Outcome, paths: BundlePaths) -> SanitizeSummary {
     }
 }
 
+pub(crate) fn flag_place(flag: &Flag) -> Option<FlagPlace> {
+    flag.places().split_first().map(|(place, more)| FlagPlace {
+        session: place.field.session,
+        message: place.field.message,
+        field: place.field.name.to_string(),
+        more: more.len(),
+    })
+}
+
 fn flag_summary(flag: &Flag, outcome: &Outcome) -> FlagSummary {
     FlagSummary {
         number: flag.number,
         score: flag.score,
-        place: flag.places().split_first().map(|(place, more)| FlagPlace {
-            session: place.field.session,
-            message: place.field.message,
-            field: place.field.name.to_string(),
-            more: more.len(),
-        }),
+        place: flag_place(flag),
         report_line: outcome.mark_lines.get(&flag.number).map(|line| line.get()),
         chars: flag.text.chars().count(),
     }

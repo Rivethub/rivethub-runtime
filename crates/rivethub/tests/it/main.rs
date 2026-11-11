@@ -18,6 +18,7 @@ mod pgdb;
 mod process_guard;
 mod roots;
 mod sessions;
+mod share_desk;
 mod startup;
 mod store_roots;
 mod tls_fallback;
