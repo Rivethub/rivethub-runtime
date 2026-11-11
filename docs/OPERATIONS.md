@@ -266,3 +266,36 @@ the first person login.
 hand and keeps a `<file>.v<N>.bak` copy before upgrading. Back up `~/.rivethub/memory.sqlite` by copying it while `rh
 local` is stopped, or with `sqlite3 ~/.rivethub/memory.sqlite ".backup <file>"` while it runs, along with the wiki
 directory `memory.sqlite.wiki_dir` names. SQLite has no row-level security and serves one person.
+
+## Keeping data on your network
+
+RivetHub Cloud features are on by default: sign-in, crash reports and usage counts, update checks against
+rivethub.cloud, and sharing through the rivethub.cloud drop box. To turn all of them off for every user of a hub, put
+this in config.yaml:
+
+```yaml
+cloud:
+  disabled: true
+```
+
+With the policy on, sign-in and the cloud update source answer `409` (`disabled by this hub's policy`), no crash report
+or usage count is written or sent, `rh update` fetches GitHub releases, and nothing is shared through rivethub.cloud.
+Users cannot turn any of it back on; only an edit to config.yaml does. `rh status`, `rh doctor` and `/healthz` report
+the policy. CONTRACT note 145 has the full rules.
+
+To share only with your own team servers, list them. Each entry is a host with an optional `:port`:
+
+```yaml
+memory:
+  share:
+    server:
+      url: team.example.com
+    allowed_servers: [team.example.com]
+```
+
+A non-empty list admits only those servers, with or without `cloud.disabled`. With `cloud.disabled` and no list,
+sharing is off. A list entry that is not a valid host makes every share command and `rh doctor` fail and name it.
+
+At install time, `curl -fsSL https://get.rivethub.io/local.sh | bash -s -- --no-cloud`, `rh local --no-cloud`, or
+`RIVETHUB_CLOUD=off` writes `cloud: {disabled: true}` into the config `rh local` generates. When a config already
+exists without the key, `rh local` stops and names the file to add it to; it never edits your config.
