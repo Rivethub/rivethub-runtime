@@ -128,8 +128,14 @@ async fn seed(pool: &PgPool) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn recorded_memory_text(pool: PgPool) -> TestResult {
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
+)]
+async fn recorded_memory_text() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let wiki = tempfile::tempdir()?;
     std::fs::create_dir(wiki.path().join("topics"))?;
@@ -215,8 +221,10 @@ async fn recorded_memory_text(pool: PgPool) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn tool_calls_see_the_owner_rows_through_row_security(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn tool_calls_see_the_owner_rows_through_row_security() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE {PROBE} NOLOGIN; \
@@ -278,8 +286,10 @@ async fn tool_calls_see_the_owner_rows_through_row_security(pool: PgPool) -> Tes
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn summary_tree_and_source_messages_render_from_adopted_rows(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn summary_tree_and_source_messages_render_from_adopted_rows() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let server = mcp::Server::new(
         Arc::new(memory_postgres::PostgresMemory::new(pool)),
@@ -312,8 +322,10 @@ async fn summary_tree_and_source_messages_render_from_adopted_rows(pool: PgPool)
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn chunk_matches_keep_their_source_range_and_unicode_preview(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn chunk_matches_keep_their_source_range_and_unicode_preview() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let id = "a0000000-0000-4000-8000-000000000003";
     let mut vector = vec![0.0_f32; 1024];
@@ -363,10 +375,10 @@ async fn chunk_matches_keep_their_source_range_and_unicode_preview(pool: PgPool)
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn wiki_files_follow_redirects_and_refuse_sibling_traversal_and_symlinks(
-    pool: PgPool,
-) -> TestResult {
+#[tokio::test]
+async fn wiki_files_follow_redirects_and_refuse_sibling_traversal_and_symlinks() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let root = tempfile::tempdir()?;
     let directory = root.path().join("topics");

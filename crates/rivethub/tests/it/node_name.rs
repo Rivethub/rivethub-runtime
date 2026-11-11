@@ -1,9 +1,9 @@
+use crate::process::guard::SpawnGuarded;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
 use sqlx::ConnectOptions as _;
-use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -15,7 +15,7 @@ const DEAD_POSTGRES: &str = "postgres://127.0.0.1:1/none";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct Started {
-    child: tokio::process::Child,
+    child: crate::process::guard::Guarded,
     logs: tokio::task::JoinHandle<std::io::Result<String>>,
 }
 
@@ -76,7 +76,7 @@ fn assert_checked(output: &std::process::Output, root: &str, ready: &str) -> Tes
 async fn start_logged(home: &Path, args: &[&str], ready: &str) -> TestResult<Started> {
     let mut child = command(home, args);
     child.stderr(Stdio::piped()).kill_on_drop(true);
-    let mut child = child.spawn()?;
+    let mut child = child.spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let needle = ready.to_owned();
@@ -165,8 +165,10 @@ async fn mcp_check_uses_the_configured_node_name() -> TestResult {
     assert_checked(&output, "mcp", "mcp configuration valid")
 }
 
-#[sqlx::test(migrations = false)]
-async fn gateway_healthz_reports_the_configured_node(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn gateway_healthz_reports_the_configured_node() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let url = pool.connect_options().to_url_lossy();
     let home = tempfile::tempdir()?;

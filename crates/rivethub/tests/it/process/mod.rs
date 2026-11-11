@@ -1,15 +1,16 @@
+use guard::SpawnGuarded;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-use tokio::process::{Child, ChildStderr, Command};
+use tokio::process::{ChildStderr, Command};
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug)]
 pub struct Running {
-    child: Child,
+    child: guard::Guarded,
     lines: Lines<BufReader<ChildStderr>>,
     pub address: SocketAddr,
 }
@@ -37,7 +38,7 @@ impl Running {
             .envs(environment.iter().copied())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
-            .spawn()?;
+            .spawn_guarded()?;
         let stderr = child.stderr.take().ok_or("missing stderr")?;
         let mut lines = BufReader::new(stderr).lines();
         let address = tokio::time::timeout(Duration::from_secs(30), async {
@@ -77,4 +78,5 @@ impl Running {
         Ok(output)
     }
 }
+pub mod guard;
 pub mod provider;

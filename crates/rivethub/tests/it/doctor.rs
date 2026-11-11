@@ -93,8 +93,10 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(std::fs::read(&path).expect("after old schema"), before);
 }
 
-#[sqlx::test(migrations = false)]
-async fn postgres_doctor_checks_current_and_behind_without_migrating(pool: sqlx::PgPool) {
+#[tokio::test]
+async fn postgres_doctor_checks_current_and_behind_without_migrating() {
+    let db = crate::pgdb::TestDb::bare().await.expect("test database");
+    let pool = db.pool();
     let url = pool.connect_options().to_url_lossy().to_string();
     let (home, _) = setup(
         "memory:\n  backend: postgres\n  postgres:\n    connection_string: ${RIVETHUB_PG_URL}\n",
@@ -168,8 +170,12 @@ async fn deprecated_alias_notice_is_reported_once_on_success_and_failure() {
     }
 }
 
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn absent_memory_section_uses_the_environment_postgres_url(pool: sqlx::PgPool) {
+#[tokio::test]
+async fn absent_memory_section_uses_the_environment_postgres_url() {
+    let db = crate::pgdb::TestDb::migrated()
+        .await
+        .expect("test database");
+    let pool = db.pool();
     let (home, _) = setup("");
     let url = pool.connect_options().to_url_lossy().to_string();
     let env = Environment::from_vars([

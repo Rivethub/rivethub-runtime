@@ -9,6 +9,7 @@ use tokio::sync::Notify;
 pub(super) struct Logs {
     lines: Arc<Mutex<Vec<String>>>,
     notify: Arc<Notify>,
+    closed: tokio::sync::watch::Receiver<()>,
 }
 
 impl Logs {
@@ -17,7 +18,9 @@ impl Logs {
         let notify = Arc::new(Notify::new());
         let stored = Arc::clone(&lines);
         let wake = Arc::clone(&notify);
+        let (open, closed) = tokio::sync::watch::channel(());
         drop(tokio::spawn(async move {
+            let _open = open;
             let mut incoming = reader.lines();
             while let Some(line) = incoming.next_line().await? {
                 stored.lock().await.push(line);
@@ -25,7 +28,11 @@ impl Logs {
             }
             Ok::<(), std::io::Error>(())
         }));
-        Self { lines, notify }
+        Self {
+            lines,
+            notify,
+            closed,
+        }
     }
 
     pub(super) async fn wait_for(&self, needle: &str) -> Result<(), String> {
@@ -55,6 +62,18 @@ impl Logs {
             .iter()
             .filter(|line| line.contains(needle))
             .count()
+    }
+
+    /// Every line the process wrote, after its stderr has closed. `text` right
+    /// after `wait` can run before the reader task has stored the last lines.
+    pub(super) async fn text_after_exit(&self) -> String {
+        let mut closed = self.closed.clone();
+        let drained = tokio::time::timeout(Duration::from_secs(30), async {
+            while closed.changed().await.is_ok() {}
+        })
+        .await;
+        drop(drained);
+        self.text().await
     }
 
     pub(super) async fn text(&self) -> String {

@@ -1,3 +1,4 @@
+use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -87,7 +88,7 @@ async fn stdio_mcp_reads_the_sqlite_store_of_a_local_node() -> TestResult {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stdout = child.stdout.take().ok_or("missing stdout")?;
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(

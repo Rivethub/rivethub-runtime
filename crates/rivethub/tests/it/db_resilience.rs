@@ -3,6 +3,7 @@ mod logs;
 #[path = "db_resilience/proxy.rs"]
 mod proxy;
 
+use crate::process::guard::SpawnGuarded;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -33,7 +34,7 @@ const JOB_DOWN: &str = "job notifications: database unreachable; reconnecting";
 const JOB_UP: &str = "job notifications: database connection restored";
 
 struct Running {
-    child: Child,
+    child: crate::process::guard::Guarded,
     logs: Logs,
 }
 
@@ -96,7 +97,7 @@ async fn spawn_rh(home: &Path, args: &[&str], ready: &str) -> TestResult<Running
         .current_dir(home)
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let logs = Logs::capture(BufReader::new(stderr));
     if let Err(error) = logs.wait_for(ready).await {
@@ -122,7 +123,7 @@ async fn stop(running: Running, stopped: &str) -> TestResult {
     let pid = child.id().ok_or("process already stopped")?;
     terminate(pid)?;
     let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
-    let text = logs.text().await;
+    let text = logs.text_after_exit().await;
     assert!(status.success(), "exit {status}\n{text}");
     assert!(text.contains("SIGTERM received — shutting down"), "{text}");
     assert!(text.contains(stopped), "{text}");
@@ -224,8 +225,10 @@ async fn once(logs: &Logs, down: &str, up: &str) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn gateway_stays_up_across_a_database_outage(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn gateway_stays_up_across_a_database_outage() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let (proxy, url) = front(&pool).await?;
     let home = tempfile::tempdir()?;
@@ -272,8 +275,10 @@ async fn gateway_stays_up_across_a_database_outage(pool: PgPool) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn gateway_starts_while_the_database_is_down(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn gateway_starts_while_the_database_is_down() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let (proxy, url) = front(&pool).await?;
     proxy.pause().await;
@@ -308,8 +313,10 @@ async fn gateway_starts_while_the_database_is_down(pool: PgPool) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn worker_stays_up_and_claims_after_the_database_returns(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn worker_stays_up_and_claims_after_the_database_returns() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
     let (proxy, url) = front(&pool).await?;
@@ -334,8 +341,10 @@ async fn worker_stays_up_and_claims_after_the_database_returns(pool: PgPool) -> 
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let (proxy, url) = front(&pool).await?;
     let home = tempfile::tempdir()?;
@@ -348,7 +357,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let logs = Logs::capture(BufReader::new(stderr));
     let stdout = child.stdout.take().ok_or("missing stdout")?;
@@ -360,13 +369,13 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -
     .await?
     .map_err(|error| format!("mcp connect failed: {error}"))?;
     let tools = client.tools().await.map_err(|error| format!("{error}"))?;
-    let stats = tool(&tools, "memory_stats")?;
+    let stats_tool = tool(&tools, "memory_stats")?;
     let context = kernel::ToolContext {
         agent_id: None,
         working_dir: None,
         session: None,
     };
-    let healthy = stats
+    let healthy = stats_tool
         .call(Some(rmcp::model::JsonObject::new()), context.clone())
         .await?;
     assert_ne!(healthy.is_error, Some(true), "{healthy:?}");
@@ -374,7 +383,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -
     alive(&mut child)?;
     let failed = tokio::time::timeout(
         Duration::from_secs(20),
-        stats.call(Some(rmcp::model::JsonObject::new()), context.clone()),
+        stats_tool.call(Some(rmcp::model::JsonObject::new()), context.clone()),
     )
     .await?
     .map_err(|error| format!("{error}"))?;
@@ -382,7 +391,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -
     proxy.resume();
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
-            let restored = stats
+            let restored = stats_tool
                 .call(Some(rmcp::model::JsonObject::new()), context.clone())
                 .await
                 .map_err(|error| format!("{error}"))?;
@@ -395,7 +404,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after(pool: PgPool) -
     let pid = child.id().ok_or("mcp already stopped")?;
     terminate(pid)?;
     let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
-    let text = logs.text().await;
+    let text = logs.text_after_exit().await;
     assert!(status.success(), "mcp exit: {status}\n{text}");
     assert!(text.contains("SIGTERM received — shutting down"), "{text}");
     assert!(text.contains("mcp stopped"), "{text}");
@@ -414,8 +423,10 @@ fn tool<'a>(
         .ok_or_else(|| format!("missing tool {name}").into())
 }
 
-#[sqlx::test(migrations = false)]
-async fn local_sqlite_stays_healthy_when_postgres_backends_die(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn local_sqlite_stays_healthy_when_postgres_backends_die() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;

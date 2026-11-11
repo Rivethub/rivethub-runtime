@@ -14,6 +14,7 @@ mod model_calls;
 #[path = "local/summarize.rs"]
 mod summarize;
 
+use crate::process::guard::SpawnGuarded;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
@@ -37,7 +38,7 @@ const DELEGATE_TEXT: &str = "delegate finished the ledger";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct Started {
-    child: tokio::process::Child,
+    child: crate::process::guard::Guarded,
     logs: tokio::task::JoinHandle<std::io::Result<String>>,
 }
 
@@ -64,7 +65,7 @@ async fn start(
         .current_dir(home)
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let logs = tokio::spawn(async move {
