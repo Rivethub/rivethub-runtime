@@ -476,6 +476,66 @@ async fn drafts_are_capped_and_expire_when_idle() -> TestResult {
     Ok(())
 }
 
+async fn counting_model() -> TestResult<(Arc<AtomicUsize>, testkit::Stub)> {
+    let described = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&described);
+    let model = testkit::stub_server(
+        axum::Router::new()
+            .route("/v1/decide", axum::routing::post(decide))
+            .route(
+                "/v1/decide/info",
+                axum::routing::get(move || async move {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    r#"{"model": "stub-model"}"#
+                }),
+            ),
+    )
+    .await?;
+    Ok((described, model))
+}
+
+#[tokio::test]
+async fn concurrent_drafts_hold_no_more_than_the_cap() -> TestResult {
+    let (described, model) = counting_model().await?;
+    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, _, _) = chosen(&phil)?;
+    let desk = desk(&phil, false)?;
+    let wanted = request(&[&alpha], true)?;
+
+    let drafted = futures::future::join_all((0..8).map(|_| desk.draft(wanted.clone()))).await;
+
+    let held = drafted.iter().filter(|draft| draft.is_ok()).count();
+    let full = drafted
+        .iter()
+        .filter(|draft| matches!(draft, Err(DeskError::Full)))
+        .count();
+    assert_eq!((held, full), (4, 4), "{drafted:?}");
+    assert_eq!(
+        described.load(Ordering::SeqCst),
+        4,
+        "a refused draft still ran the decision pass"
+    );
+    assert!(format!("{desk:?}").contains("drafts: 4"), "{desk:?}");
+    model.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_byte_cap_refuses_before_sanitizing() -> TestResult {
+    let (described, model) = counting_model().await?;
+    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, _, _) = chosen(&phil)?;
+    let desk = desk(&phil, false)?.with_byte_cap(1);
+
+    let refused = desk.draft(request(&[&alpha], true)?).await;
+
+    assert!(matches!(refused, Err(DeskError::Full)), "{refused:?}");
+    assert_eq!(described.load(Ordering::SeqCst), 0);
+    assert!(format!("{desk:?}").contains("drafts: 0"), "{desk:?}");
+    model.close().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn find_matches_session_find() -> TestResult {
     let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;

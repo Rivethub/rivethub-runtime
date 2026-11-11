@@ -68,6 +68,7 @@ pub struct NodeDesk {
     env: Environment,
     memory: Arc<dyn MemoryStore>,
     clock: Clock,
+    max_bytes: usize,
     drafts: parking_lot::Mutex<BTreeMap<DraftId, Slot>>,
     logins: parking_lot::Mutex<BTreeMap<LoginId, Pending>>,
 }
@@ -75,7 +76,38 @@ pub struct NodeDesk {
 struct Slot {
     bytes: usize,
     touched: DateTime<Utc>,
-    state: Arc<Mutex<DraftState>>,
+    draft: Held,
+}
+
+enum Held {
+    Reserved,
+    Ready(Arc<Mutex<DraftState>>),
+}
+
+struct Reservation<'desk> {
+    desk: &'desk NodeDesk,
+    id: DraftId,
+    kept: bool,
+}
+
+impl Reservation<'_> {
+    fn commit(mut self, state: DraftState) -> Result<Draft, DeskError> {
+        let expires_at = self.desk.resize(self.id, state.held())?;
+        let draft = view(self.id, &state, expires_at);
+        if let Some(slot) = self.desk.drafts.lock().get_mut(&self.id) {
+            slot.draft = Held::Ready(Arc::new(Mutex::new(state)));
+        }
+        self.kept = true;
+        Ok(draft)
+    }
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if !self.kept {
+            self.desk.drafts.lock().remove(&self.id);
+        }
+    }
 }
 
 struct DraftState {
@@ -95,6 +127,10 @@ enum Phase {
 }
 
 impl DraftState {
+    fn held(&self) -> usize {
+        held_bytes(&self.sealed, self.local.as_ref(), &self.report)
+    }
+
     fn open(&self) -> Result<(), DeskError> {
         match self.phase {
             Phase::Open => Ok(()),
@@ -141,6 +177,7 @@ impl NodeDesk {
             env: env.clone(),
             memory,
             clock: Arc::new(Utc::now),
+            max_bytes: MAX_DRAFT_BYTES,
             drafts: parking_lot::Mutex::default(),
             logins: parking_lot::Mutex::default(),
         })
@@ -149,6 +186,12 @@ impl NodeDesk {
     #[must_use]
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_byte_cap(mut self, bytes: usize) -> Self {
+        self.max_bytes = bytes;
         self
     }
 
@@ -164,49 +207,114 @@ impl NodeDesk {
 
     pub fn sweep(&self) {
         let now = (self.clock)();
-        self.drafts
-            .lock()
-            .retain(|_, slot| slot.touched + DRAFT_IDLE > now);
+        self.drafts.lock().retain(|_, slot| {
+            matches!(slot.draft, Held::Reserved) || slot.touched + DRAFT_IDLE > now
+        });
         self.logins
             .lock()
             .retain(|_, pending| pending.expires_at > now);
     }
 
-    fn slot(&self, id: DraftId) -> Result<Arc<Mutex<DraftState>>, DeskError> {
+    fn slot(&self, id: DraftId) -> Result<(Arc<Mutex<DraftState>>, DateTime<Utc>), DeskError> {
         self.sweep();
         let now = (self.clock)();
-        self.drafts
-            .lock()
-            .get_mut(&id)
-            .map(|slot| {
-                slot.touched = now;
-                Arc::clone(&slot.state)
+        match self.drafts.lock().get_mut(&id) {
+            Some(Slot {
+                touched,
+                draft: Held::Ready(state),
+                ..
+            }) => {
+                *touched = now;
+                Ok((Arc::clone(state), now + DRAFT_IDLE))
+            }
+            Some(Slot {
+                draft: Held::Reserved,
+                ..
             })
-            .ok_or(DeskError::UnknownDraft)
-    }
-
-    fn resized(&self, id: DraftId, bytes: usize) -> DateTime<Utc> {
-        let now = (self.clock)();
-        if let Some(slot) = self.drafts.lock().get_mut(&id) {
-            slot.bytes = bytes;
-            slot.touched = now;
+            | None => Err(DeskError::UnknownDraft),
         }
-        now + DRAFT_IDLE
     }
 
-    fn admit(&self) -> Result<(), DeskError> {
+    fn reserve(&self, estimate: usize) -> Result<Reservation<'_>, DeskError> {
         self.sweep();
-        if self.held(0) {
+        let mut drafts = self.drafts.lock();
+        let bytes: usize = drafts.values().map(|slot| slot.bytes).sum();
+        if drafts.len() >= MAX_DRAFTS || bytes + estimate > self.max_bytes {
             return Err(DeskError::Full);
         }
-        Ok(())
+        let id = DraftId::random();
+        drafts.insert(
+            id,
+            Slot {
+                bytes: estimate,
+                touched: (self.clock)(),
+                draft: Held::Reserved,
+            },
+        );
+        drop(drafts);
+        Ok(Reservation {
+            desk: self,
+            id,
+            kept: false,
+        })
     }
 
-    fn held(&self, adding: usize) -> bool {
-        let drafts = self.drafts.lock();
-        let bytes: usize = drafts.values().map(|slot| slot.bytes).sum();
-        drafts.len() >= MAX_DRAFTS || bytes + adding > MAX_DRAFT_BYTES
+    fn resize(&self, id: DraftId, bytes: usize) -> Result<DateTime<Utc>, DeskError> {
+        let now = (self.clock)();
+        let mut drafts = self.drafts.lock();
+        let others: usize = drafts
+            .iter()
+            .filter(|(other, _)| **other != id)
+            .map(|(_, slot)| slot.bytes)
+            .sum();
+        if others + bytes > self.max_bytes {
+            return Err(DeskError::Full);
+        }
+        let slot = drafts.get_mut(&id).ok_or(DeskError::UnknownDraft)?;
+        slot.bytes = bytes;
+        slot.touched = now;
+        drop(drafts);
+        Ok(now + DRAFT_IDLE)
     }
+}
+
+#[derive(Default)]
+struct Counted(usize);
+
+impl std::io::Write for Counted {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl std::fmt::Write for Counted {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.0 += text.len();
+        Ok(())
+    }
+}
+
+fn json_size(value: &impl serde::Serialize) -> usize {
+    let mut counted = Counted::default();
+    serde_json::to_writer(&mut counted, value).map_or(0, |()| counted.0)
+}
+
+fn debug_size(value: &impl std::fmt::Debug) -> usize {
+    let mut counted = Counted::default();
+    std::fmt::write(&mut counted, format_args!("{value:?}")).map_or(0, |()| counted.0)
+}
+
+fn held_bytes(
+    sealed: &Sealed,
+    local: Option<&LocalReview>,
+    report: &capture::sanitize::Report,
+) -> usize {
+    2 * sealed.text.len() + local.map_or(0, json_size) + debug_size(report)
 }
 
 fn view(id: DraftId, state: &DraftState, expires_at: DateTime<Utc>) -> Draft {
@@ -433,7 +541,6 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn draft(&self, request: DraftRequest) -> Result<Draft, DeskError> {
-        self.admit()?;
         let decider = self
             .share
             .decider(request.decide, request.block)
@@ -451,6 +558,7 @@ impl ShareDesk for NodeDesk {
             .map_err(failed)?;
         let chosen =
             share::chosen(self.share.author.clone(), sessions, Utc::now()).map_err(failed)?;
+        let reservation = self.reserve(2 * json_size(&chosen.bundle))?;
         let outcome = share::sanitize_in_memory(
             share::Job {
                 bundle: &chosen.bundle,
@@ -464,45 +572,27 @@ impl ShareDesk for NodeDesk {
         )
         .await
         .map_err(sanitize_failed)?;
-        let bytes = outcome.sanitized.text.len();
-        let state = DraftState {
+        reservation.commit(DraftState {
             phase: Phase::Open,
             sealed: outcome.sanitized,
             local: outcome.local,
             report: outcome.report,
             resolved: BTreeMap::new(),
             conversations,
-        };
-        let id = DraftId::random();
-        let now = (self.clock)();
-        let draft = view(id, &state, now + DRAFT_IDLE);
-        self.sweep();
-        if self.held(bytes) {
-            return Err(DeskError::Full);
-        }
-        self.drafts.lock().insert(
-            id,
-            Slot {
-                bytes,
-                touched: now,
-                state: Arc::new(Mutex::new(state)),
-            },
-        );
-        Ok(draft)
+        })
     }
 
     async fn report(&self, id: DraftId) -> Result<Draft, DeskError> {
-        let slot = self.slot(id)?;
+        let (slot, expires_at) = self.slot(id)?;
         let state = slot.lock().await;
         state.open()?;
-        let expires_at = self.resized(id, state.sealed.text.len());
         let draft = view(id, &state, expires_at);
         drop(state);
         Ok(draft)
     }
 
     async fn mark(&self, id: DraftId, marks: Vec<Mark>) -> Result<Marked, DeskError> {
-        let slot = self.slot(id)?;
+        let (slot, _) = self.slot(id)?;
         let mut state = slot.lock().await;
         state.open()?;
         let local = state.local.as_ref().ok_or_else(|| {
@@ -522,12 +612,14 @@ impl ShareDesk for NodeDesk {
         let key = LocalKey::load_or_create(&self.share.key).map_err(failed)?;
         let resolved = capture::sanitize::resolve(&state.sealed.bundle, &flags, local, &key)
             .map_err(|error| marks_error(&error))?;
+        let grown = held_bytes(&resolved.sealed, Some(local), &state.report)
+            + debug_size(&resolved.rechecked);
+        let expires_at = self.resize(id, grown)?;
         let rechecked: Vec<String> = resolved.rechecked.iter().map(ToString::to_string).collect();
         state.report.rechecked += resolved.rechecked.len();
         state.report.changes.extend(resolved.rechecked);
         state.resolved.extend(resolved.applied);
         state.sealed = resolved.sealed;
-        let expires_at = self.resized(id, state.sealed.text.len());
         let draft = view(id, &state, expires_at);
         drop(state);
         Ok(Marked {
@@ -538,7 +630,7 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn send(&self, id: DraftId, send: SendRequest) -> Result<Sent, DeskError> {
-        let slot = self.slot(id)?;
+        let (slot, _) = self.slot(id)?;
         let mut state = slot.lock().await;
         state.open()?;
         let flags = state
@@ -583,7 +675,7 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn discard(&self, id: DraftId) -> Result<(), DeskError> {
-        let slot = self.slot(id)?;
+        let (slot, _) = self.slot(id)?;
         let mut state = slot.lock().await;
         if state.phase == Phase::Closed {
             return Err(DeskError::UnknownDraft);
