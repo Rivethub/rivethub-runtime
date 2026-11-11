@@ -321,9 +321,12 @@ pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
         .filter_map(normalize_origin)
         .filter_map(|origin| HeaderValue::from_str(&origin).ok())
         .collect();
+    let credentialed = listed.clone();
     tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::AllowOrigin::list(listed))
-        .allow_credentials(true)
+        .allow_credentials(tower_http::cors::AllowCredentials::predicate(
+            move |origin, _| credentialed.contains(origin),
+        ))
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([
             header::AUTHORIZATION,

@@ -898,6 +898,66 @@ async fn cors_preflight_is_answered_for_a_listed_origin_only() -> TestResult {
     Ok(())
 }
 
+#[tokio::test]
+async fn cors_trusts_exact_normalized_origins_only_and_never_a_wildcard() -> TestResult {
+    let rig = rig()?;
+    let echoed = ["https://hub.example.test", "app://bundle"];
+    let refused = [
+        "null",
+        "*",
+        "",
+        "https://evil.example",
+        "https://hub.example.test/",
+        "https://hub.example.test/path",
+        "https://HUB.example.test",
+        "https://hub.example.test:443",
+        "http://hub.example.test",
+        "https://hub.example.test.evil.example",
+        "https://evil.example, https://hub.example.test",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+    ];
+    for origin in echoed.iter().chain(refused.iter()) {
+        let listed = echoed.contains(origin);
+        let preflight = rig
+            .call("OPTIONS", "/api/memory/stats")
+            .header("origin", origin)
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "authorization, x-rh-csrf")
+            .send()
+            .await?;
+        let simple = rig
+            .call("GET", "/api/memory/stats")
+            .owner()
+            .header("origin", origin)
+            .send()
+            .await?;
+        for (kind, reply) in [("preflight", &preflight), ("request", &simple)] {
+            let allowed = reply.header("access-control-allow-origin");
+            let credentials = reply.header("access-control-allow-credentials");
+            if listed {
+                assert_eq!(allowed, Some(*origin), "{kind} {origin}");
+                assert_eq!(credentials, Some("true"), "{kind} {origin}");
+            } else {
+                assert_eq!(allowed, None, "{kind} {origin:?}");
+                assert_eq!(credentials, None, "{kind} {origin:?}");
+            }
+            for (name, value) in &reply.headers {
+                if name.as_str().starts_with("access-control-") {
+                    assert!(
+                        !value.to_str().unwrap_or_default().contains('*'),
+                        "{kind} {origin:?}: {name} is a wildcard"
+                    );
+                }
+            }
+        }
+    }
+    let bare = rig.call("GET", "/healthz").send().await?;
+    assert!(bare.header("access-control-allow-origin").is_none());
+    assert!(bare.header("access-control-allow-credentials").is_none());
+    Ok(())
+}
+
 async fn reauth_rig(fresh: Duration) -> TestResult<(Rig, Browser)> {
     let rig = rig_with(AuthPolicy { fresh, ..policy() }, false)?;
     let browser = login(&rig).await?;

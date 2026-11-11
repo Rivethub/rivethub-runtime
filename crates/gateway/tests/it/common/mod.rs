@@ -585,3 +585,44 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
         body,
     })
 }
+
+const CORS_LISTED: [&str; 2] = ["https://hub.example.test", "app://bundle"];
+const CORS_METHODS: &str = "GET,POST,PATCH,DELETE";
+const CORS_HEADERS: &str =
+    "authorization,content-type,x-rh-csrf,x-rivet-conversation,x-rivet-title";
+
+/// Rewrites a recorded response to the CORS answer the gateway owes the recorded
+/// request: the origin is echoed with credentials only when it is listed exactly,
+/// and a preflight answers 200 with the allowed methods and headers.
+pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
+    let mut lines = case.request.head.lines();
+    let preflight = lines
+        .next()
+        .is_some_and(|line| line.starts_with("OPTIONS "));
+    let origin = lines
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("origin"))
+        .map(|(_, value)| value.trim().to_owned());
+    case.response.headers.retain(|(name, _)| {
+        let lower = name.to_ascii_lowercase();
+        !lower.starts_with("access-control-") && lower != "vary"
+    });
+    let mut add = |name: &str, value: &str| {
+        case.response
+            .headers
+            .push((name.to_owned(), value.to_owned()));
+    };
+    if let Some(origin) = origin.filter(|origin| CORS_LISTED.contains(&origin.as_str())) {
+        add("Access-Control-Allow-Origin", &origin);
+        add("Access-Control-Allow-Credentials", "true");
+    }
+    if preflight {
+        add("Access-Control-Allow-Methods", CORS_METHODS);
+        add("Access-Control-Allow-Headers", CORS_HEADERS);
+        "HTTP/1.1 200 OK".clone_into(&mut case.response.status_line);
+        case.response
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+        case.response.body = None;
+    }
+}

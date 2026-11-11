@@ -26,6 +26,14 @@ const CLAIMS: &[&str] = &[
     "plain-main/healthz-absolute-form",
     "plain-main/healthz-http10",
     "plain-main/healthz-http10-no-host",
+    "plain-main/options-healthz",
+    "plain-main/options-healthz-same-origin",
+    "plain-main/options-api",
+    "plain-main/options-api-preflight-app-bundle",
+    "plain-main/options-api-disallowed-origin",
+    "plain-main/options-unknown-path",
+    "plain-main/options-asterisk",
+    "plain-main/remote-plain-options",
     "plain-main/origin-healthz-disallowed",
     "plain-main/host-evil-healthz",
     "plain-main/remote-plain-healthz",
@@ -69,14 +77,6 @@ const CLAIMS: &[&str] = &[
 ];
 
 const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
-    ("plain-main", "options-healthz", "cors"),
-    ("plain-main", "options-healthz-same-origin", "cors"),
-    ("plain-main", "options-api", "cors"),
-    ("plain-main", "options-api-preflight-app-bundle", "cors"),
-    ("plain-main", "options-api-disallowed-origin", "cors"),
-    ("plain-main", "options-unknown-path", "cors"),
-    ("plain-main", "options-asterisk", "cors"),
-    ("plain-main", "remote-plain-options", "cors"),
     ("plain-main", "healthz-trailing-slash", "2"),
     ("plain-main", "healthz-percent-encoded", "2"),
     ("plain-main", "healthz-double-slash", "2"),
@@ -324,10 +324,6 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
 
 const SKIP_REASONS: &[(&str, &str)] = &[
     (
-        "cors",
-        "SS-15a: tower_http answers CORS preflights (200, echoed only for a listed origin); the recording pins the den's 204 and its always-on header pair. browser_login covers the new rules",
-    ),
-    (
         "cut",
         "B1: rh v0.8 cut this route (CONTRACT note 132); the recording keeps the den's answer",
     ),
@@ -555,10 +551,7 @@ fn play_masked(
 
 fn translated_refusal(case: &testkit::http::HttpCase) -> Result<testkit::http::HttpCase, Failed> {
     let mut case = case.clone();
-    case.response.headers.retain(|(name, _)| {
-        let lower = name.to_ascii_lowercase();
-        !lower.starts_with("access-control-") && lower != "vary"
-    });
+    common::expect_cors(&mut case);
     if testkit::http::status_of(&case.response.status_line)
         .map_err(|error| Failed::from(error.to_string()))?
         != 403
