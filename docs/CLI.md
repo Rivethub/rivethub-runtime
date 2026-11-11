@@ -13,6 +13,8 @@ the existing service startup codes. Every visible command:
 | `rh config show` | | Show a configuration summary without secrets |
 | `rh config validate` | `[PATH]` | Validate configuration and print findings |
 | `rh doctor` | `[--json]` | Check this node without applying migrations |
+| `rh auth token-path` | `[--json]` | Print where the local owner token file lives |
+| `rh auth rotate` | | Replace the local owner token and end every browser session |
 | `rh status` | | Report gateway health |
 | `rh stop` | | Signal the running instance to stop |
 | `rh gateway` | `[--check] [-c, --config FILE]` | Run the composed gateway service |
@@ -154,3 +156,5 @@ The new tests cover the behavior above using isolated databases, a local HTTP re
 The update/db skip list is empty and checked; the fixture inventory check fails when new recordings arrive. Existing
 README contract tests remain unchanged. Historical update/db wording and exit-code parity cannot be established without
 those recordings; no transcript or TypeScript artifact was invented to fill that gap.
+
+`rh auth token-path` prints the path of `<state>/local-owner.token` (`--json` prints `{"path": "..."}`) so a script can read the token for `Authorization: Bearer $(cat $(rh auth token-path))`. `rh auth rotate` posts to `/api/auth/rotate` with the current token; the gateway writes the new file and ends every browser session. With the gateway down it deletes the token file and the next start makes a new one. Every command that calls the local gateway reads that file through one constructor and sends no `Authorization` header when it is missing, so a new `rh` still works against a running 0.8.0 gateway.
