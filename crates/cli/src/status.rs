@@ -121,7 +121,10 @@ pub(crate) async fn gateway(
     }
     url.set_port(Some(source.port))
         .map_err(|()| Error::Address)?;
-    let builder = reqwest::Client::builder().no_proxy().timeout(timeout);
+    let builder = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout);
     let ca = gateway::private_ca(env, &config::shared_dir(env));
     let client = match (&source.tls_cert, &ca) {
         (Some(cert), Some(ca)) => verified(builder, &mut url, cert, ca, source.port)?,

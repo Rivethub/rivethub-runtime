@@ -9,9 +9,8 @@ use config::{Config, Environment, Paths, Profile};
 use nix::errno::Errno;
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::Pid;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
-use wire::gateway::HealthzResponse;
 
 use super::{apply_bind, bind_host, bind_port};
 use crate::exit::Exit;
@@ -43,8 +42,25 @@ pub(crate) struct Ready {
     origin: String,
     port: u16,
     pid: Option<i32>,
-    health: HealthzResponse,
+    health: NodeIdentity,
     adopted: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NodeIdentity {
+    name: String,
+    node: String,
+    version: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Unrecognized {
+    #[error("only 200 and 503 come from a RivetHub node")]
+    Status,
+    #[error("the body is not a RivetHub health body: {0}")]
+    Body(#[from] serde_json::Error),
+    #[error("the health body names no node")]
+    Anonymous,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,7 +72,7 @@ pub(crate) enum Refusal {
         origin: String,
         port: u16,
         status: reqwest::StatusCode,
-        source: serde_json::Error,
+        source: Unrecognized,
     },
     #[error(
         "RivetHub local node did not answer at {origin} within {seconds}s; its output is in {}",
@@ -72,10 +88,10 @@ pub(crate) enum Refusal {
 
 enum Probe {
     Silent,
-    Node(Box<HealthzResponse>),
+    Node(Box<NodeIdentity>),
     Foreign {
         status: reqwest::StatusCode,
-        source: serde_json::Error,
+        source: Unrecognized,
     },
 }
 
@@ -86,7 +102,7 @@ struct Target {
 }
 
 impl Target {
-    fn foreign(&self, status: reqwest::StatusCode, source: serde_json::Error) -> Refusal {
+    fn foreign(&self, status: reqwest::StatusCode, source: Unrecognized) -> Refusal {
         Refusal::PortInUse {
             origin: self.origin.clone(),
             port: self.port,
@@ -153,7 +169,17 @@ pub(crate) async fn ensure(
             Err(refusal) => return Ok(Err(refusal)),
         },
     };
-    let pid = process::read_pid(env).await?.map(Pid::as_raw);
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B9 (note 146): a node that answers its health check is running even when its pid file is unreadable, so pid is null"
+        )
+    )]
+    let pid = match process::read_pid(env).await {
+        Ok(pid) => pid.map(Pid::as_raw),
+        Err(_) => None,
+    };
     Ok(Ok(Ready {
         outcome,
         origin: target.origin,
@@ -248,7 +274,7 @@ async fn start(
     env: &Environment,
     request: Ensure,
     target: &Target,
-) -> Result<Result<(Outcome, HealthzResponse), Refusal>, Error> {
+) -> Result<Result<(Outcome, NodeIdentity), Refusal>, Error> {
     let paths = Paths::new(env)?;
     let deadline = Instant::now() + Duration::from_secs(request.wait_seconds);
     let run = paths.state_dir().join(LOCK_DIRECTORY);
@@ -322,10 +348,23 @@ async fn probe(target: &Target, timeout: Duration) -> Result<Probe, Error> {
         Err(error) => return Err(error.into()),
     };
     let status = response.status();
+    if status != reqwest::StatusCode::OK && status != reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        return Ok(Probe::Foreign {
+            status,
+            source: Unrecognized::Status,
+        });
+    }
     let body = response.bytes().await?;
-    Ok(match serde_json::from_slice::<HealthzResponse>(&body) {
+    Ok(match serde_json::from_slice::<NodeIdentity>(&body) {
+        Ok(health) if health.name.is_empty() || health.node.is_empty() => Probe::Foreign {
+            status,
+            source: Unrecognized::Anonymous,
+        },
         Ok(health) => Probe::Node(Box::new(health)),
-        Err(source) => Probe::Foreign { status, source },
+        Err(source) => Probe::Foreign {
+            status,
+            source: source.into(),
+        },
     })
 }
 

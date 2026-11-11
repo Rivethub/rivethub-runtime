@@ -213,6 +213,21 @@ async fn ensure_json_reports_started_then_already_running() -> TestResult {
 }
 
 async fn foreign_server() -> TestResult<(u16, tokio::task::JoinHandle<std::io::Result<()>>)> {
+    answering(b"HTTP/1.0 200 OK\r\ncontent-type: text/html\r\ncontent-length: 13\r\nconnection: close\r\n\r\n<html></html>").await
+}
+
+fn reply(status: &str, body: &str) -> &'static [u8] {
+    format!(
+        "HTTP/1.0 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .leak()
+    .as_bytes()
+}
+
+async fn answering(
+    response: &'static [u8],
+) -> TestResult<(u16, tokio::task::JoinHandle<std::io::Result<()>>)> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let port = listener.local_addr()?.port();
     let server = tokio::spawn(async move {
@@ -221,9 +236,7 @@ async fn foreign_server() -> TestResult<(u16, tokio::task::JoinHandle<std::io::R
             let mut request = [0_u8; 1024];
             let read = stream.read(&mut request).await?;
             assert!(read > 0);
-            stream
-                .write_all(b"HTTP/1.0 200 OK\r\ncontent-type: text/html\r\ncontent-length: 13\r\nconnection: close\r\n\r\n<html></html>")
-                .await?;
+            stream.write_all(response).await?;
         }
     });
     Ok((port, server))
@@ -255,6 +268,87 @@ async fn ensure_refuses_a_port_held_by_something_that_is_not_rivethub() -> TestR
     assert!(!node.log_file().exists());
     server.abort();
     Ok(())
+}
+
+async fn json_outcome(response: &'static [u8]) -> TestResult<(Output, Summary, u16)> {
+    let node = Node::new()?;
+    let (port, server) = answering(response).await?;
+    let (output, summary) = node.ensure_json(port, "2").await?;
+    server.abort();
+    assert!(!node.pid_file().exists());
+    Ok((output, summary, port))
+}
+
+#[tokio::test]
+async fn ensure_refuses_a_redirect_even_with_a_health_body() -> TestResult {
+    let body = r#"{"ok":true,"sessions":0,"name":"desk","node":"desk"}"#;
+    let (output, summary, port) = json_outcome(reply(
+        "302 Found\r\nlocation: http://127.0.0.1:9/healthz",
+        body,
+    ))
+    .await?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let Summary::Failed(failure) = summary else {
+        return Err(format!("expected a failure, got {summary:?}").into());
+    };
+    assert_eq!(failure.reason, Reason::PortInUse);
+    assert_eq!(failure.port, Some(port));
+    Ok(())
+}
+
+#[tokio::test]
+async fn ensure_refuses_a_health_body_that_names_no_node() -> TestResult {
+    let body = r#"{"ok":true,"sessions":0,"name":"","node":""}"#;
+    let (output, summary, _) = json_outcome(reply("200 OK", body)).await?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        matches!(
+            summary,
+            Summary::Failed(Failure {
+                reason: Reason::PortInUse,
+                ..
+            })
+        ),
+        "{summary:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn ensure_adopts_a_newer_degraded_node_it_cannot_fully_read() -> TestResult {
+    let body = r#"{"ok":false,"sessions":3,"name":"desk","node":"future","version":"9.9.9","degraded":"embedder down","degradedProviders":[{"recovery":"rebooting","provider":"x"}],"hubPolicy":{"cloud":"brand-new-value"}}"#;
+    let (output, summary, port) = json_outcome(reply("503 Service Unavailable", body)).await?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        summary,
+        Summary::AlreadyRunning(Running {
+            origin: format!("http://127.0.0.1:{port}"),
+            port,
+            pid: None,
+            node: "future".to_owned(),
+            version: Some("9.9.9".to_owned()),
+        })
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn ensure_reports_a_running_node_when_its_pid_file_is_unreadable() -> TestResult {
+    let node = Node::new()?;
+    let claim = testkit::ports::claim()?;
+    let port = claim.number();
+    let (first, _) = node.ensure_json(port, "30").await?;
+    assert!(first.status.success(), "{first:?}");
+    let pid = std::fs::read(node.pid_file())?;
+    std::fs::write(node.pid_file(), b"garbage")?;
+    let (second, summary) = node.ensure_json(port, "30").await?;
+    std::fs::write(node.pid_file(), pid)?;
+    assert!(second.status.success(), "{second:?}");
+    assert!(
+        matches!(summary, Summary::AlreadyRunning(Running { pid: None, .. })),
+        "{summary:?}"
+    );
+    node.stop().await
 }
 
 #[tokio::test]
