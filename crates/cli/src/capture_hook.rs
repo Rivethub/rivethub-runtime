@@ -6,8 +6,10 @@ use capture::hook::ClaudeHook;
 use capture::hook::store::StoreHarness;
 use capture::hook::store::StoreHook;
 use capture::spool::CaptureSpool;
+use capture::writer::CaptureTransport;
 use capture::writer::CaptureWriter;
 use capture::writer::HttpCaptureTransport;
+use capture::writer::PostError;
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -180,7 +182,11 @@ fn failure_lines(totals: &[HarnessTotals]) -> String {
 }
 
 pub async fn hook(env: &Environment, stdin: &str, now: DateTime<Utc>) -> Report {
-    let stderr = match writer(env).await {
+    hook_as(env, stdin, now, nix::unistd::getuid().as_raw()).await
+}
+
+async fn hook_as(env: &Environment, stdin: &str, now: DateTime<Utc>, owner_uid: u32) -> Report {
+    let stderr = match writer_as(env, owner_uid).await {
         Ok((writer, paths)) => {
             ClaudeHook::new(writer, &paths)
                 .run(stdin, now, &capture::hook::ingest_key(now))
@@ -253,9 +259,14 @@ fn report(stderr: String) -> Report {
     }
 }
 
-async fn writer(
+async fn writer(env: &Environment) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
+    writer_as(env, nix::unistd::getuid().as_raw()).await
+}
+
+async fn writer_as(
     env: &Environment,
-) -> Result<(CaptureWriter<HttpCaptureTransport>, config::Paths), Error> {
+    owner_uid: u32,
+) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
     let loaded = db::load(env, None).await?;
     let paths = config::Paths::new(env)?;
     let remote = loaded
@@ -263,18 +274,43 @@ async fn writer(
         .memory
         .as_ref()
         .and_then(|memory| memory.capture.gateway.as_ref());
-    let Endpoint { url, client } = match remote {
-        Some(remote) => remote_gateway(remote).await?,
-        None => status::gateway(env, &loaded.config, POST_TIMEOUT).await?,
+    let endpoint = match remote {
+        Some(remote) => remote_gateway(remote).await,
+        None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,
+    };
+    let transport = match endpoint {
+        Ok(Endpoint { url, client }) => HookTransport::Http(HttpCaptureTransport::new(
+            url.as_str().trim_end_matches('/').to_owned(),
+            client,
+        )),
+        Err(error) => HookTransport::Refused(error.to_string()),
     };
     let redaction = capture::redaction::resolve(Some(loaded.config.capture_redaction()), env);
     let writer = CaptureWriter::new(
-        HttpCaptureTransport::new(url.as_str().trim_end_matches('/').to_owned(), client),
+        transport,
         CaptureSpool::new(paths.state_dir().join(SPOOL_DIR)),
         None,
         redaction,
     );
     Ok((writer, paths))
+}
+
+#[derive(Debug)]
+pub(crate) enum HookTransport {
+    Http(HttpCaptureTransport),
+    Refused(String),
+}
+
+#[async_trait::async_trait]
+impl CaptureTransport for HookTransport {
+    async fn post(&self, body: String) -> Result<wire::capture::CaptureResult, PostError> {
+        match self {
+            Self::Http(transport) => transport.post(body).await,
+            Self::Refused(reason) => Err(PostError::Refused {
+                reason: reason.clone(),
+            }),
+        }
+    }
 }
 
 async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
@@ -297,4 +333,54 @@ async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoi
         url: url::Url::parse(&remote.url)?,
         client,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use chrono::Utc;
+    use config::Environment;
+
+    const CONFIG: &str = "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1/v1\n    model: m\n    api_key: secret\n";
+    const TOOL: &str = r#"{"session_id":"55555555-5555-5555-5555-555555555555","cwd":"/work/demo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"toolu_1"}"#;
+
+    #[tokio::test]
+    async fn a_squatter_receives_nothing_and_the_batch_is_spooled() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&received);
+        let app = axum::Router::new().fallback(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async { axum::http::StatusCode::OK }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let home = tempfile::tempdir().expect("home");
+        let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+        let state = gateway::state_dir(&env).expect("state");
+        std::fs::create_dir_all(&state).expect("state dir");
+        let token = gateway::local_owner::OwnerToken::generate().expect("token");
+        let path = gateway::local_owner::token_path(&state);
+        std::fs::write(&path, token.expose()).expect("token file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        std::fs::write(
+            home.path().join(".rivethub/config.yaml"),
+            format!("{CONFIG}gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+        )
+        .expect("config");
+        let foreign = nix::unistd::getuid().as_raw().wrapping_add(1);
+        let report = super::hook_as(&env, TOOL, Utc::now(), foreign).await;
+        assert!(
+            report.stderr.contains("not owned by this user"),
+            "{}",
+            report.stderr
+        );
+        let spooled = std::fs::read_dir(state.join("capture-spool")).map_or(0, Iterator::count);
+        assert_eq!(spooled, 1, "the batch was lost");
+        assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 0);
+        server.abort();
+    }
 }

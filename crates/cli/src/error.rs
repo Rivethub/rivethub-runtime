@@ -12,6 +12,8 @@ pub enum Error {
         "the listener on port {port} is not owned by this user, so the owner token was not sent; stop whatever holds the port and run `rh local --ensure`"
     )]
     ListenerNotOurs { port: u16 },
+    #[error("the gateway is not running on port {port}; run `rh local --ensure`")]
+    GatewayNotRunning { port: u16 },
     #[error(transparent)]
     LocalOwnerToken(#[from] gateway::local_owner::TokenError),
     #[error("{0}")]

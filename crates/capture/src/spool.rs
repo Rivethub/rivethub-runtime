@@ -138,7 +138,7 @@ impl CaptureSpool {
                         );
                     }
                 }
-                Err(error @ PostError::Unauthorized) => {
+                Err(error @ (PostError::Unauthorized | PostError::Refused { .. })) => {
                     tracing::warn!(
                         "spooled capture batch {} kept: {error}",
                         entry.path.display()

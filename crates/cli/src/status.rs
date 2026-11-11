@@ -145,7 +145,7 @@ pub(crate) async fn gateway(
     gateway_as(env, config, timeout, Some(nix::unistd::getuid().as_raw())).await
 }
 
-async fn gateway_as(
+pub(crate) async fn gateway_as(
     env: &Environment,
     config: &Config,
     timeout: Duration,

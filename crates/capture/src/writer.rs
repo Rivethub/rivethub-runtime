@@ -37,6 +37,8 @@ pub(crate) fn metadata_keep() -> &'static [&'static str] {
 pub enum PostError {
     #[error("capture HTTP 401: the owner token is missing or stale")]
     Unauthorized,
+    #[error("capture not sent: {reason}")]
+    Refused { reason: String },
     #[error("capture HTTP {status}")]
     Client { status: u16 },
     #[error("capture HTTP {status}")]

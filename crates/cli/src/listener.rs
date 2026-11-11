@@ -86,7 +86,8 @@ async fn verdict(port: u16, uid: u32) -> Result<Verdict, Error> {
 pub(crate) async fn require_ours(port: u16, uid: u32) -> Result<(), Error> {
     match verdict(port, uid).await? {
         Verdict::Ours => Ok(()),
-        Verdict::Foreign | Verdict::Absent => Err(Error::ListenerNotOurs { port }),
+        Verdict::Foreign => Err(Error::ListenerNotOurs { port }),
+        Verdict::Absent => Err(Error::GatewayNotRunning { port }),
     }
 }
 

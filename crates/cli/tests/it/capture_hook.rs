@@ -382,6 +382,76 @@ async fn with_no_token_file_the_client_sends_no_authorization_header()
     Ok(())
 }
 
+fn spool_entries(home: &Path) -> usize {
+    std::fs::read_dir(home.join(".rivethub/capture-spool")).map_or(0, Iterator::count)
+}
+
+#[tokio::test]
+async fn a_batch_survives_a_stopped_gateway_when_the_token_exists_and_the_port_never_sees_it()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let port = testkit::ports::claim()?.number();
+    let home = home();
+    let env = environment(&home);
+    let owner = support::local_owner(home.path());
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert_eq!(report.exit, Exit::Ok);
+    assert!(
+        report
+            .stderr
+            .contains(&format!("the gateway is not running on port {port}")),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(spool_entries(home.path()), 1);
+    let store = Arc::new(FakeMemoryStore::default());
+    let gateway = gateway::Gateway::new(Arc::clone(&store) as _, settings(home.path()))
+        .with_local_owner(owner)
+        .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(gateway::server::serve(
+        listener,
+        Arc::new(gateway),
+        None,
+        stop.clone(),
+    ));
+    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert_eq!(report.stderr, "");
+    assert_eq!(spool_entries(home.path()), 0);
+    assert_eq!(appended_owners(store.requests().await), ["owner", "owner"]);
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_token_file_spools_the_batch_too() -> Result<(), Box<dyn std::error::Error>> {
+    let port = testkit::ports::claim()?.number();
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let state = gateway::state_dir(&env)?;
+    std::fs::create_dir_all(&state)?;
+    let elsewhere = home.path().join("elsewhere");
+    std::fs::write(&elsewhere, "x")?;
+    std::os::unix::fs::symlink(&elsewhere, gateway::local_owner::token_path(&state))?;
+    let report = cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert!(
+        report.stderr.contains("local owner token"),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(spool_entries(home.path()), 1);
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 struct LogBuffer(Arc<parking_lot::Mutex<Vec<u8>>>);
 

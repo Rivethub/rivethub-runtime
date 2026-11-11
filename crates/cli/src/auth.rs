@@ -46,7 +46,9 @@ async fn rotate(env: &Environment) -> Result<Report, Error> {
     let (_, loaded) = configuration::load(env).await?;
     let reached = match status::gateway(env, &loaded.config, ROTATE_TIMEOUT).await {
         Ok(Endpoint { url, client }) => client.post(url.join(ROTATE_PATH)?).send().await,
-        Err(Error::ListenerNotOurs { .. }) => return remove_unowned(env).await,
+        Err(Error::ListenerNotOurs { .. } | Error::GatewayNotRunning { .. }) => {
+            return remove_unowned(env).await;
+        }
         Err(error) => return Err(error),
     };
     match reached {

@@ -303,3 +303,37 @@ async fn many_401_replays_keep_the_batch_spooled_until_a_200_delivers_it()
     stub.close().await.expect("stub shuts down");
     Ok(())
 }
+
+#[tokio::test]
+async fn a_long_refusal_never_dead_letters_a_spooled_batch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let spool = capture::spool::CaptureSpool::new(dir.path().to_path_buf());
+    let start = now_at("2026-10-10T12:00:00Z")?;
+    spool
+        .spool(r#"{"session_key":"a","messages":[]}"#, start)
+        .await?;
+    let writer = capture::writer::CaptureWriter::new(RefusingTransport, spool, None, None);
+    for hour in 1..=3 * i64::try_from(capture::spool::MAX_TRANSIENT_ATTEMPTS)? {
+        writer
+            .replay(start + chrono::TimeDelta::hours(hour))
+            .await?;
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1, "hour {hour}");
+        assert!(
+            !dir.path().join("dead").exists(),
+            "dead-lettered at hour {hour}"
+        );
+    }
+    Ok(())
+}
+
+struct RefusingTransport;
+
+#[async_trait]
+impl capture::writer::CaptureTransport for RefusingTransport {
+    async fn post(&self, _body: String) -> Result<CaptureResult, capture::writer::PostError> {
+        Err(capture::writer::PostError::Refused {
+            reason: "the gateway is not running".to_owned(),
+        })
+    }
+}
