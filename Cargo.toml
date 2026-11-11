@@ -36,6 +36,7 @@ futures = "0.3"
 gateway = { path = "crates/gateway", version = "0.8.0" }
 getrandom = "0.4"
 harness-acp = { path = "crates/harness-acp", version = "0.8.0" }
+governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
 headers = "0.4"
 hex = "0.4"
 hmac = "0.12"
@@ -94,7 +95,8 @@ tokio-tungstenite = "0.29"
 tokio-util = { version = "0.7", features = ["rt"] }
 toml = "1"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs", "compression-gzip", "compression-br"] }
+tower-http = { version = "0.6", features = ["fs", "compression-gzip", "compression-br", "cors", "set-header"] }
+tower-sessions = { version = "0.15", default-features = false, features = ["axum-core", "memory-store"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
