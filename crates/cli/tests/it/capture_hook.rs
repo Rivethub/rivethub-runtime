@@ -324,6 +324,29 @@ async fn a_refused_token_spools_the_batch_instead_of_losing_it()
 }
 
 #[tokio::test]
+async fn a_batch_spooled_on_401_replays_once_the_token_is_right()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let home = home();
+    let env = environment(&home);
+    let store = Arc::new(FakeMemoryStore::default());
+    let owner = Arc::new(gateway::local_owner::LocalOwner::unpersisted()?);
+    let (port, stop, server) = local_gateway(&store, home.path(), Arc::clone(&owner)).await?;
+    support::local_owner(home.path());
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    cli::capture_hook::hook(&env, TOOL, now()?).await;
+    assert_eq!(appended_owners(store.requests().await).len(), 0);
+    support::install_owner_token(&env, &owner.current());
+    cli::capture_hook::replay_spool(&env, now()?).await?;
+    assert_eq!(appended_owners(store.requests().await), ["owner"]);
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
+#[tokio::test]
 async fn with_no_token_file_the_client_sends_no_authorization_header()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let seen = Arc::new(parking_lot::Mutex::new(Vec::<Option<String>>::new()));

@@ -108,7 +108,8 @@ impl CaptureTransport for HttpCaptureTransport {
             })?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
-            if (400..500).contains(&status) {
+            // A 401 means the token is missing or stale; the batch is valid and must replay.
+            if (400..500).contains(&status) && status != 401 {
                 return Err(PostError::Client { status });
             }
             return Err(PostError::Server { status });
