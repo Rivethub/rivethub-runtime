@@ -187,7 +187,7 @@ struct Revoke<'a> {
 #[derive(Debug, Clone)]
 pub(crate) struct ShareServers {
     policy: SharePolicy,
-    default: Result<ShareServer, ShareRefused>,
+    configured: Option<ShareServer>,
     store: PathBuf,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
@@ -214,7 +214,7 @@ impl ShareServers {
         let policy = SharePolicy::from_config(&loaded.config).map_err(ServerError::from)?;
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
-            default: policy.default_server(configured),
+            configured,
             policy,
             store: state.join(STORE_FILE),
             lock: state.join(LOCK_FILE),
@@ -225,8 +225,35 @@ impl ShareServers {
     pub(crate) fn pick(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
         match named {
             Some(text) => Ok(text.parse()?),
-            None => Ok(self.default.clone()?),
+            None => Ok(self.policy.default_server(self.configured.clone())?),
         }
+    }
+
+    fn logout_target(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
+        match named {
+            Some(text) => Ok(text.parse()?),
+            None => Ok(self
+                .configured
+                .clone()
+                .unwrap_or_else(ShareServer::rivethub_cloud)),
+        }
+    }
+
+    async fn logout(&self, host: &ShareServer) -> Result<Report, ServerError> {
+        let Err(refused) = self.policy.admit(host) else {
+            return self.connect(host, REQUEST_TIMEOUT).await?.logout().await;
+        };
+        let _lock = lock(&self.lock).await?;
+        let mut logins = read_logins(&self.store)?;
+        if logins.logins.remove(host).is_none() {
+            return Ok(Report::success(format!(
+                "this machine is not signed in to {host}\n"
+            )));
+        }
+        write_logins(&self.store, &logins)?;
+        Ok(Report::success(format!(
+            "signed out of {host}; the login was not revoked there because {refused}\n"
+        )))
     }
 
     pub(crate) async fn connect(
@@ -263,12 +290,14 @@ impl ShareServers {
     fn status(&self) -> Result<Report, ServerError> {
         let logins = read_logins(&self.store)?;
         if logins.logins.is_empty() {
-            return Ok(Report::success(match &self.default {
-                Ok(host) => format!(
-                    "not signed in to any share server; rh share login signs in to {host}\n"
-                ),
-                Err(refused) => format!("not signed in to any share server; {refused}\n"),
-            }));
+            return Ok(Report::success(
+                match self.policy.default_server(self.configured.clone()) {
+                    Ok(host) => format!(
+                        "not signed in to any share server; rh share login signs in to {host}\n"
+                    ),
+                    Err(refused) => format!("not signed in to any share server; {refused}\n"),
+                },
+            ));
         }
         Ok(Report::success(logins.logins.iter().fold(
             String::new(),
@@ -302,6 +331,21 @@ async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certific
         .await
         .map_err(|error| failed(error.to_string()))?;
     reqwest::Certificate::from_pem(&pem).map_err(|error| failed(error.to_string()))
+}
+
+async fn lock(path: &std::path::Path) -> Result<std::fs::File, ServerError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(ServerError::from)
 }
 
 fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
@@ -345,21 +389,6 @@ impl Server {
         &self.client
     }
 
-    async fn lock(&self) -> Result<std::fs::File, ServerError> {
-        if let Some(parent) = self.lock.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&self.lock)?;
-        tokio::task::spawn_blocking(move || file.lock().map(|()| file))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ServerError::from)
-    }
-
     fn mine(&self) -> Result<Tokens, ServerError> {
         read_logins(&self.store)?
             .logins
@@ -378,7 +407,7 @@ impl Server {
         if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
             return Ok(tokens.access_token);
         }
-        let _lock = self.lock().await?;
+        let _lock = lock(&self.lock).await?;
         let tokens = self.mine()?;
         let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
         let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
@@ -470,7 +499,7 @@ impl Server {
             if response.status().is_success() {
                 let tokens = tokens_from(response.json().await?);
                 let scope = tokens.scope.clone();
-                let _lock = self.lock().await?;
+                let _lock = lock(&self.lock).await?;
                 self.keep(tokens)?;
                 return Ok(Report::success(format!(
                     "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
@@ -505,7 +534,7 @@ impl Server {
     }
 
     async fn logout(&self) -> Result<Report, ServerError> {
-        let _lock = self.lock().await?;
+        let _lock = lock(&self.lock).await?;
         let mut logins = read_logins(&self.store)?;
         let Some(tokens) = logins.logins.get(&self.host) else {
             return Ok(Report::success(format!(
@@ -571,12 +600,8 @@ pub async fn run(
                 .await?
         }
         ShareCommand::Logout { server } => {
-            let host = servers.pick(server.as_deref())?;
-            servers
-                .connect(&host, REQUEST_TIMEOUT)
-                .await?
-                .logout()
-                .await?
+            let host = servers.logout_target(server.as_deref())?;
+            servers.logout(&host).await?
         }
         ShareCommand::Status => servers.status()?,
     })

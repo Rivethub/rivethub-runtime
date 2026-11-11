@@ -2439,7 +2439,10 @@ neither `--server` nor `memory.share.server.url` names a server.
 
 Share servers. `capture::share_policy::SharePolicy` holds the rules, and the CLI applies them in
 `cli::share_server::ShareServers`, which every `rh share login`, `rh share logout`, `rh memory share` and
-`rh memory receive` passes before its first request. With `cloud.disabled` and no list, sharing is off and every server
+`rh memory receive` passes before its first request. `rh share logout` is always allowed, because forgetting a token is
+local: it revokes the login at the server only when the policy admits that server, and otherwise deletes the token from
+this machine and says it was not revoked because of the policy. With no `--server` it signs out of
+`memory.share.server.url`, or rivethub.cloud when that is unset, even when the policy refuses that server. With `cloud.disabled` and no list, sharing is off and every server
 is refused. A non-empty list admits only its servers. Otherwise any server is admitted, as before. A refusal says
 `disabled by this hub's policy` and names the key that controls it. A list entry that is not a share server is an error
 naming `memory.share.allowed_servers` and the entry, from every command that loads the policy and from `rh doctor`.
