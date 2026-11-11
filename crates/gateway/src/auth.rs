@@ -391,7 +391,7 @@ fn fresh(gateway: &crate::Gateway, parts: &Parts) -> Result<FreshLogin, ApiError
     if let crate::tenancy::Credential::Session { auth_time } = credential {
         let age = chrono::Utc::now().timestamp().saturating_sub(auth_time);
         let window = gateway.browser().policy().fresh.as_secs();
-        if u64::try_from(age).map_or(true, |age| age >= window) {
+        if !u64::try_from(age).is_ok_and(|age| age < window) {
             return Err(ApiError::ReauthRequired);
         }
     }
