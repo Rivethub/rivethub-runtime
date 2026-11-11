@@ -2427,6 +2427,84 @@ values are pinned by `crates/rivethub/tests/it/local_ensure.rs`; docs/CLI.md has
 this object and never the prose. `pid` is null when the pid file is missing or unreadable; a node that answers is still
 reported as running.
 
+(147) Local credentials and browser login (Phil, 2026-11-11; session-sharing SS-15a; 0.8.1 security fix). Loopback no
+longer means owner. Every route other than `/healthz`, the static shell, `/login` and `POST /api/auth/session` refuses a
+caller with no credential. There is no tokenless mode and no opt-in for one. Three credentials reach `/api/**`, the wiki
+pages and every other owner route.
+
+1. **Local owner token.** `<state_dir>/local-owner.token` holds 32 random bytes in base64url without padding. The gateway
+creates it before it binds (`O_EXCL`, mode 0600) and refuses a symlink, a non-regular file or any group or other bit. A
+caller sends `Authorization: Bearer <token>` (the scheme is case-insensitive) and the gateway compares it in constant
+time. `Debug` and the logs never show it.
+2. **Browser session.** An `HttpOnly` cookie plus a CSRF header. The cookie is always `__Host-rh_session` with `Secure`,
+`HttpOnly`, `SameSite=Strict`, `Path=/` and no `Domain`, on plain HTTP and on TLS. Chrome and Firefox treat `127.0.0.1`
+and `localhost` as secure contexts, so the cookie works there. Safari does not treat `http://127.0.0.1` as secure and
+drops the cookie, so Safari users need TLS (`gateway.tls_cert`) or another browser. Every cookie-authenticated request
+carries `X-RH-CSRF: <csrf>`, reads included, because cookies are not port-scoped and another local server could otherwise
+replay one. The one exception is `GET` and `HEAD` of `/wiki` and `/wiki/**`, which are navigations that cannot add a
+header. The session id is a fresh random 128-bit value at every login (`cycle_id`), so an id set before login never
+authenticates.
+3. **Users-file token.** As before, for team members and mobile, with TLS off-loopback.
+
+The owner token and the session are honored only from a direct loopback peer, with no `Forwarded`, `X-Forwarded-*` or
+`X-Real-IP` header, and a `Host` of `127.0.0.1`, `[::1]` or `localhost` on any port. Anything else gets 401 with
+`WWW-Authenticate: Bearer realm="rivethub"`, so a bare same-host forwarder (`nginx proxy_pass`, `ssh -R`, `socat`) gains
+nothing. Account and harness routes still need that direct connection plus a credential.
+
+**Routes.** All four answer `Cache-Control: no-store`.
+
+| Route | Credential | Result |
+|---|---|---|
+| `POST /api/auth/login-codes` | the owner token only | `LoginCodeResponse {code, expiresInSecs}`. The code is 256 random bits, valid 60 s, single use, held only as its SHA-256, at most 16 live (the 17th is 429 with `Retry-After`). |
+| `POST /api/auth/session` `SessionRequest {code}` | none, but a live code | Compares in constant time, consumes the code, mints a new session id, sets the cookie and answers `SessionResponse {csrf}`. A failed exchange burns no live code. 401 otherwise. |
+| `POST /api/auth/logout` | session plus CSRF, or the owner token | 204. The session is deleted and the cookie expired. |
+| `POST /api/auth/rotate` | step-up (below) and a direct local owner | `RotateResponse {rotated: true}`. The gateway writes a new token (temp file 0600, then `rename`), swaps it in memory, and ends every session and every live code. The old token stops working at once. |
+
+`GET /login` serves a small static page that reads `location.hash` (`#code=...`), removes it with
+`history.replaceState`, posts the code, stores the CSRF token in `localStorage` under `rh-csrf`, and goes to `/`. Its one
+inline script is allowed by a SHA-256 `script-src` in that response's CSP. It is a stand-in. The real login screen lands
+in rivethub-app (SS-15b) and replaces the page, and then `/login` is served from `static_dir` and this route goes.
+
+**Lifetimes.** A code lives 60 s. A session ends after 7 days idle (sliding) or 30 days from login, whichever comes
+first, and at gateway restart (the store is in memory; `rh open` logs in again). `gateway.fresh_login_secs` (default 300)
+sets the step-up window.
+
+**Rate limits.** `POST /api/auth/login-codes` and `POST /api/auth/session` share one budget per peer address (10 a
+minute) and one global budget (20 a minute), counted with the `governor` crate. Failed attempts count. A refusal is 429
+with `Retry-After` in whole seconds. These two routes also refuse any caller that is not a direct local peer before they
+count it, so the table of peers stays at three loopback spellings.
+
+**Step-up.** A session carries `auth_time`, set at the code exchange. A sensitive route needs a session whose `auth_time`
+is within `gateway.fresh_login_secs`. A stale session gets 401 `{"error":"reauth_required"}`, distinct from a plain 401
+(`GatewayError` with that `error` and nothing else), so a client can run `rh open` again and retry. The owner token and a
+users-file token are presented on every request, so they are always fresh. The sensitive routes today are
+`POST /api/auth/rotate`, `PATCH /api/account`, `DELETE /api/account`, `POST /api/account/signin`,
+`POST /api/account/signout` and `GET /api/memory/export`. Harness connect only edits local hook files, so it is not
+included. `/api/share/**` does not exist on this base. `gateway::auth::FreshLogin` is a public extractor, and a handler
+takes it as its first argument after `State`, so SS-9a adopts it on its share routes without new code.
+
+**Origins and CORS.** The `Origin` check on every request stays: absent, same-origin or listed passes, and `null`
+fails. CORS is the `tower_http` `CorsLayer`, with the origins from `gateway.allowed_origins` plus `app://bundle`,
+credentials on, methods `GET, POST, PATCH, DELETE`, and headers `authorization, content-type, x-rh-csrf,
+x-rivet-conversation, x-rivet-title`. A same-origin page needs none of it. An unlisted origin and `null` get no
+`Access-Control-Allow-Origin`. A plain `OPTIONS` without preflight headers is not answered by the layer. The `*.localhost`
+host exemption is gone.
+
+**Headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'`, unless the route sets a
+stricter policy (the wiki and `/login` do). Every `/api/**` response carries `Cache-Control: no-store`. A web build that
+needs inline script or style must hash it or move it to a file, because the shell is served under that policy.
+
+**Logs.** Tokens, login codes, session ids and CSRF tokens never appear in a log line, an error body or a `Debug`
+string. The wire types hold them as `wire::gateway::auth::Secret`, whose `Debug` prints `Secret(..)`.
+
+**Migration, 0.8.0 to 0.8.1.** `rh` is one binary, and the old gateway process keeps running until it restarts. A new
+client sends no `Authorization` header when `local-owner.token` is missing, so it still works against a running 0.8.0
+gateway. The new gateway creates the file at start, before it binds. The capture hook spools a request refused with 401
+and retries it, so an upgrade window loses nothing. Hand-run `curl` against `127.0.0.1:5174` now needs
+`-H "Authorization: Bearer $(cat $(rh auth token-path))"`. For a browser, run `rh open`. **Downgrade to 0.8.0:** delete
+`local-owner.token`, because the 0.8.0 gateway rejects the Bearer that the new clients still send.
+
 (148) Claude Code subagent capture (Phil, 2026-11-11, "data capture should always aim for 100%"): a subagent transcript
 (`<projects>/<slug>/<parent session>/subagents/agent-<agentId>.jsonl`, or under `subagents/workflows/<run>/`) is its own
 conversation keyed `claude-code:<agentId>`, agent `rivet-claude`, channel `claude-code`. Its rows are folded exactly as
