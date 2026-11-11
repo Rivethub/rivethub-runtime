@@ -91,10 +91,12 @@ pub enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(about = "Sign in to RivetHub Cloud, which carries shared bundles")]
-    Cloud {
+    #[command(
+        about = "Sign in to a share server (rivethub.cloud or a team server) that carries shared bundles"
+    )]
+    Share {
         #[command(subcommand)]
-        command: crate::cloud::CloudCommand,
+        command: crate::share_server::ShareCommand,
     },
     #[command(about = "Capture harness sessions into memory")]
     Capture {

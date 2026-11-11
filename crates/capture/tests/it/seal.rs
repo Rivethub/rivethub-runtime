@@ -180,15 +180,70 @@ fn a_flipped_ciphertext_byte_fails() -> TestResult {
 fn decompression_is_capped() -> TestResult {
     let zeros = vec![0u8; capture::seal::MAX_PLAIN_BYTES + 1];
     let mut plaintext = b"RHB1\n{}\n".to_vec();
-    plaintext.extend_from_slice(&zstd::bulk::compress(&zeros, 19)?);
+    plaintext.extend_from_slice(&zstd::bulk::compress(&zeros, 3)?);
     let key = ShareKey::generate();
     let full: ShareCode = code(&key).parse()?;
     let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
     assert!(ciphertext.len() < 1 << 20, "a small download");
+    assert_eq!(capture::seal::MAX_PLAIN_BYTES, 64 << 20);
     assert!(matches!(
         capture::seal::open(ciphertext, &full.key, &TrustStore::default()),
         Err(OpenError::TooLarge)
     ));
+    Ok(())
+}
+
+#[test]
+fn a_frame_that_asks_for_a_huge_window_is_refused() -> TestResult {
+    let mut encoder = zstd::stream::Encoder::new(Vec::new(), 3)?;
+    encoder.window_log(27)?;
+    std::io::Write::write_all(&mut encoder, &sanitized("deploy")?)?;
+    let mut plaintext = b"RHB1\n{}\n".to_vec();
+    plaintext.extend_from_slice(&encoder.finish()?);
+    let key = ShareKey::generate();
+    let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
+    assert!(matches!(
+        capture::seal::open(ciphertext, &key, &TrustStore::default()),
+        Err(OpenError::Envelope)
+    ));
+    Ok(())
+}
+
+#[test]
+fn a_code_names_its_server_unless_it_is_rivethub_cloud() -> TestResult {
+    let key = ShareKey::generate();
+    let plain: ShareCode = code(&key).parse()?;
+    assert!(plain.server.is_default());
+    assert_eq!(plain.reveal(), code(&key));
+    let hosted: ShareCode =
+        format!("rhb1:Team.Example.com:8443/{DROP_ID}#{}", key.reveal()).parse()?;
+    assert_eq!(hosted.server.as_str(), "team.example.com:8443");
+    assert_eq!(hosted.server.base_url(), "https://team.example.com:8443/");
+    assert_eq!(
+        hosted.reveal(),
+        format!("rhb1:team.example.com:8443/{DROP_ID}#{}", key.reveal())
+    );
+    let local: capture::seal::ShareServer = "http://127.0.0.1:61610/".parse()?;
+    assert_eq!(local.base_url(), "http://127.0.0.1:61610/");
+    for bad in [
+        "http://team.example.com",
+        "ftp://x",
+        "team..example.com",
+        "a b",
+        "host:0",
+        "-x.com",
+    ] {
+        assert!(bad.parse::<capture::seal::ShareServer>().is_err(), "{bad}");
+    }
+    assert!(matches!(
+        format!("rhb1:te am/{DROP_ID}#{}", key.reveal()).parse::<ShareCode>(),
+        Err(CodeError::Server(_))
+    ));
+    let line = format!("send {}", hosted.reveal());
+    assert_eq!(
+        capture::redaction::Redaction::share_codes().redact_text(&line),
+        format!("send rhb1:team.example.com:8443/{DROP_ID}#[REDACTED:rivethub_share_code]")
+    );
     Ok(())
 }
 

@@ -71,7 +71,7 @@ Commands:\n\
   sanitize --session <id>... [--redact-term <id>=<term>]... [--drop-tool-outputs <id>]... --out <file> [--mapping <file>] [--decide [--block]] [--sqlite <file>]\n\
   sanitize [<bundle>] --resolve <report> [--mapping <file>] [--learn]\n\
   ingest-bundle <file> [--force] [--dry-run]\n\
-  share <sanitized bundle> [--unsigned] [--flags <n>]\n\
+  share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]\n\
   receive <share code> [--dry-run]\n\
   key show\n\
   trust add <name> <key> | trust list | trust remove <name> [<key>]\n\

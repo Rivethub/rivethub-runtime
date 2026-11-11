@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use capture::sanitize::KeyError;
 use capture::sanitize::key::PrivateFile;
+use capture::seal::CodeError;
+use capture::seal::ShareServer;
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -23,48 +26,61 @@ const REFRESH_GRANT: &str = "refresh_token";
 const DEVICE_PATH: &str = "api/cli/device/code";
 const TOKEN_PATH: &str = "api/cli/token";
 const REVOKE_PATH: &str = "api/cli/revoke";
-const STORE_FILE: &str = "cloud.json";
-const STORE_NAME: &str = "cloud login";
-const STORE_CAP: u64 = 64 * 1024;
+const STORE_FILE: &str = "share-logins.json";
+const LOCK_FILE: &str = "share-logins.json.lock";
+const STORE_NAME: &str = "share server logins";
+const STORE_CAP: u64 = 256 * 1024;
+const CA_CAP: u64 = 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SLOW_DOWN: Duration = Duration::from_secs(5);
 const REFRESH_MARGIN: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 #[derive(Debug, Subcommand)]
-pub enum CloudCommand {
-    #[command(about = "Sign this machine in to RivetHub Cloud in your browser")]
-    Login,
-    #[command(about = "Revoke this machine's RivetHub Cloud login and forget it")]
-    Logout,
-    #[command(about = "Show which RivetHub Cloud this machine is signed in to")]
+pub enum ShareCommand {
+    #[command(
+        about = "Sign this machine in to a share server (default rivethub.cloud) in your browser"
+    )]
+    Login {
+        #[arg(
+            help = "Share server host, such as team.example.com (default: memory.share.server.url, else rivethub.cloud)"
+        )]
+        server: Option<String>,
+    },
+    #[command(about = "Revoke this machine's login on a share server and forget it")]
+    Logout {
+        #[arg(help = "Share server host (default: memory.share.server.url, else rivethub.cloud)")]
+        server: Option<String>,
+    },
+    #[command(about = "Show the share servers this machine is signed in to")]
     Status,
 }
 
 #[derive(Debug, Error)]
-pub enum CloudError {
-    #[error(
-        "memory.share.cloud.url is not set; add the RivetHub Cloud address to the config, for example https://rivetos.cloud"
-    )]
-    Unconfigured,
-    #[error("memory.share.cloud.url {0:?} is not a URL")]
-    Url(String),
-    #[error("memory.share.cloud.url {0} must use https unless it is a loopback address")]
-    Insecure(Url),
-    #[error("this machine is not signed in to RivetHub Cloud; run rh cloud login")]
-    LoggedOut,
-    #[error("this machine is signed in to {stored}, not {configured}; run rh cloud login")]
-    OtherCloud { stored: String, configured: String },
-    #[error("the RivetHub Cloud login expired or was revoked; run rh cloud login again ({0})")]
-    Expired(OauthCode),
-    #[error("the browser approval was {0}; run rh cloud login to try again")]
+pub enum ServerError {
+    #[error(transparent)]
+    Server(#[from] CodeError),
+    #[error("this machine is not signed in to {0}; run rh share login {0}")]
+    LoggedOut(ShareServer),
+    #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
+    Expired {
+        server: ShareServer,
+        code: OauthCode,
+    },
+    #[error("the browser approval was {0}; run rh share login to try again")]
     Denied(&'static str),
-    #[error("RivetHub Cloud answered {status}: {body}")]
+    #[error("the share server answered {status}: {body}")]
     Status { status: u16, body: String },
-    #[error("RivetHub Cloud could not be reached: {0}")]
+    #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("the RivetHub Cloud login file is unreadable: {0}")]
+    #[error("the share login file is unreadable: {0}")]
     Store(String),
+    #[error("the CA file {path} for {host} in memory.share.trusted_cas cannot be used: {reason}")]
+    Ca {
+        host: String,
+        path: PathBuf,
+        reason: String,
+    },
     #[error(transparent)]
     File(#[from] KeyError),
     #[error(transparent)]
@@ -76,7 +92,6 @@ pub enum CloudError {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tokens {
-    url: String,
     access_token: String,
     refresh_token: String,
     expires_at: DateTime<Utc>,
@@ -87,13 +102,19 @@ struct Tokens {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: cloud tokens never reach a log; Debug prints only where they work"
+        reason = "CONTRACT note 140: share server tokens never reach a log; Debug prints only their expiry"
     )
 )]
 impl std::fmt::Debug for Tokens {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Tokens({})", self.url)
+        write!(formatter, "Tokens(until {})", self.expires_at)
     }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Logins {
+    logins: BTreeMap<String, Tokens>,
 }
 
 #[derive(Deserialize)]
@@ -159,133 +180,193 @@ struct Revoke<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Cloud {
-    url: Url,
+pub(crate) struct ShareServers {
+    configured: ShareServer,
+    store: PathBuf,
+    lock: PathBuf,
+    cas: Vec<config::model::TrustedCa>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Server {
+    host: ShareServer,
+    base: Url,
     client: reqwest::Client,
     store: PathBuf,
+    lock: PathBuf,
 }
 
-pub(crate) fn client(url: &Url, timeout: Duration) -> Result<reqwest::Client, CloudError> {
-    Ok(reqwest::Client::builder()
-        .no_proxy()
-        .https_only(!is_loopback(url))
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(timeout)
-        .build()?)
-}
-
-fn is_loopback(url: &Url) -> bool {
-    match url.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(name)) => name == "localhost",
-        None => false,
-    }
-}
-
-impl Cloud {
+impl ShareServers {
     pub(crate) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
         let loaded = crate::db::load(env, None).await?;
-        let section = loaded
-            .config
-            .share_cloud()
-            .ok_or(CloudError::Unconfigured)?;
-        let text = section.url.trim();
-        let mut url = Url::parse(text).map_err(|_| CloudError::Url(text.to_owned()))?;
-        if url.scheme() != "https" && !(url.scheme() == "http" && is_loopback(&url)) {
-            return Err(CloudError::Insecure(url).into());
-        }
-        if !url.path().ends_with('/') {
-            url.set_path(&format!("{}/", url.path()));
-        }
+        let configured = match loaded.config.share_server() {
+            Some(section) => section.url.parse().map_err(ServerError::from)?,
+            None => ShareServer::rivethub_cloud(),
+        };
+        let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
-            client: client(&url, REQUEST_TIMEOUT)?,
-            url,
-            store: capture::share::state_home(env)?
-                .join(capture::sanitize::key::DIR_NAME)
-                .join(STORE_FILE),
+            configured,
+            store: state.join(STORE_FILE),
+            lock: state.join(LOCK_FILE),
+            cas: loaded.config.share_trusted_cas().to_vec(),
         })
     }
 
-    pub(crate) fn endpoint(&self, path: &str) -> Result<Url, CloudError> {
-        self.url
-            .join(path)
-            .map_err(|_| CloudError::Url(self.url.to_string()))
+    pub(crate) fn pick(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
+        match named {
+            Some(text) => Ok(text.parse()?),
+            None => Ok(self.configured.clone()),
+        }
     }
 
-    pub(crate) fn origin(&self) -> &Url {
-        &self.url
-    }
-
-    fn stored(&self) -> Result<Option<Tokens>, CloudError> {
-        let bytes = match PrivateFile::new(&self.store, STORE_NAME, STORE_CAP).read() {
-            Ok(bytes) => bytes,
-            Err(KeyError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(None);
+    pub(crate) async fn connect(
+        &self,
+        host: &ShareServer,
+        timeout: Duration,
+    ) -> Result<Server, ServerError> {
+        let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server(host.to_string()))?;
+        let mut builder = reqwest::Client::builder()
+            .no_proxy()
+            .https_only(!host.is_loopback())
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(timeout);
+        for trusted in &self.cas {
+            let names_this = trusted
+                .host
+                .parse::<ShareServer>()
+                .is_ok_and(|named| named == *host);
+            if names_this {
+                builder = builder.add_root_certificate(read_ca(trusted).await?);
             }
-            Err(error) => return Err(error.into()),
-        };
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| CloudError::Store(error.to_string()))
+        }
+        Ok(Server {
+            host: host.clone(),
+            base,
+            client: builder.build()?,
+            store: self.store.clone(),
+            lock: self.lock.clone(),
+        })
     }
 
-    fn save(&self, tokens: &Tokens) -> Result<(), CloudError> {
-        let parent = self
-            .store
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."));
-        std::fs::create_dir_all(parent)?;
-        let mut partial = tempfile::Builder::new()
-            .prefix(".cloud-")
-            .tempfile_in(parent)?;
-        let text =
-            serde_json::to_vec(tokens).map_err(|error| CloudError::Store(error.to_string()))?;
-        partial.write_all(&text)?;
-        partial.as_file().sync_all()?;
-        partial
-            .persist(&self.store)
-            .map_err(|error| CloudError::Io(error.error))?;
-        Ok(())
+    fn status(&self) -> Result<Report, ServerError> {
+        let logins = read_logins(&self.store)?;
+        if logins.logins.is_empty() {
+            return Ok(Report::success(format!(
+                "not signed in to any share server; rh share login signs in to {}\n",
+                self.configured
+            )));
+        }
+        Ok(Report::success(logins.logins.iter().fold(
+            String::new(),
+            |mut lines, (server, tokens)| {
+                lines.push_str("signed in to ");
+                lines.push_str(server);
+                lines.push_str(" (scope ");
+                lines.push_str(&tokens.scope);
+                lines.push_str("); the access token renews itself, next at ");
+                lines.push_str(&tokens.expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
+                lines.push('\n');
+                lines
+            },
+        )))
+    }
+}
+
+async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certificate, ServerError> {
+    let failed = |reason: String| ServerError::Ca {
+        host: trusted.host.clone(),
+        path: trusted.ca.clone(),
+        reason,
+    };
+    let metadata = tokio::fs::metadata(&trusted.ca)
+        .await
+        .map_err(|error| failed(error.to_string()))?;
+    if metadata.len() > CA_CAP {
+        return Err(failed("it is larger than 1 MiB".to_owned()));
+    }
+    let pem = tokio::fs::read(&trusted.ca)
+        .await
+        .map_err(|error| failed(error.to_string()))?;
+    reqwest::Certificate::from_pem(&pem).map_err(|error| failed(error.to_string()))
+}
+
+fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
+    let bytes = match PrivateFile::new(store, STORE_NAME, STORE_CAP).read() {
+        Ok(bytes) => bytes,
+        Err(KeyError::Io { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Logins::default());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    serde_json::from_slice(&bytes).map_err(|error| ServerError::Store(error.to_string()))
+}
+
+fn write_logins(store: &std::path::Path, logins: &Logins) -> Result<(), ServerError> {
+    let parent = store.parent().unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut partial = tempfile::Builder::new()
+        .prefix(".share-logins-")
+        .tempfile_in(parent)?;
+    let text = serde_json::to_vec(logins).map_err(|error| ServerError::Store(error.to_string()))?;
+    partial.write_all(&text)?;
+    partial.as_file().sync_all()?;
+    partial
+        .persist(store)
+        .map_err(|error| ServerError::Io(error.error))?;
+    Ok(())
+}
+
+impl Server {
+    pub(crate) fn endpoint(&self, path: &str) -> Result<Url, ServerError> {
+        self.base
+            .join(path)
+            .map_err(|_| CodeError::Server(self.host.to_string()).into())
     }
 
-    async fn lock(&self) -> Result<std::fs::File, CloudError> {
-        let mut name = self.store.clone().into_os_string();
-        name.push(".lock");
-        let path = PathBuf::from(name);
-        if let Some(parent) = path.parent() {
+    pub(crate) const fn host(&self) -> &ShareServer {
+        &self.host
+    }
+
+    pub(crate) const fn client(&self) -> &reqwest::Client {
+        &self.client
+    }
+
+    async fn lock(&self) -> Result<std::fs::File, ServerError> {
+        if let Some(parent) = self.lock.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(&path)?;
+            .open(&self.lock)?;
         tokio::task::spawn_blocking(move || file.lock().map(|()| file))
             .await
             .map_err(std::io::Error::other)?
-            .map_err(CloudError::from)
+            .map_err(ServerError::from)
     }
 
-    fn mine(&self, tokens: Tokens) -> Result<Tokens, CloudError> {
-        if tokens.url == self.url.as_str() {
-            Ok(tokens)
-        } else {
-            Err(CloudError::OtherCloud {
-                stored: tokens.url,
-                configured: self.url.to_string(),
-            })
-        }
+    fn mine(&self) -> Result<Tokens, ServerError> {
+        read_logins(&self.store)?
+            .logins
+            .remove(self.host.as_str())
+            .ok_or_else(|| ServerError::LoggedOut(self.host.clone()))
     }
 
-    pub(crate) async fn access_token(&self, rejected: Option<&str>) -> Result<String, CloudError> {
-        let tokens = self.mine(self.stored()?.ok_or(CloudError::LoggedOut)?)?;
+    fn keep(&self, tokens: Tokens) -> Result<(), ServerError> {
+        let mut logins = read_logins(&self.store)?;
+        logins.logins.insert(self.host.to_string(), tokens);
+        write_logins(&self.store, &logins)
+    }
+
+    pub(crate) async fn access_token(&self, rejected: Option<&str>) -> Result<String, ServerError> {
+        let tokens = self.mine()?;
         if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
             return Ok(tokens.access_token);
         }
         let _lock = self.lock().await?;
-        let tokens = self.mine(self.stored()?.ok_or(CloudError::LoggedOut)?)?;
+        let tokens = self.mine()?;
         let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
         let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
         if (fresh && rejected.is_none()) || renewed_elsewhere {
@@ -306,30 +387,19 @@ impl Cloud {
             let status = response.status().as_u16();
             let body = response.text().await?;
             let error: OauthError =
-                serde_json::from_str(&body).map_err(|_| CloudError::Status { status, body })?;
-            return Err(CloudError::Expired(error.error));
+                serde_json::from_str(&body).map_err(|_| ServerError::Status { status, body })?;
+            return Err(ServerError::Expired {
+                server: self.host.clone(),
+                code: error.error,
+            });
         }
-        let issued: Issued = checked(response).await?.json().await?;
-        let renewed = self.tokens(issued);
-        self.save(&renewed)?;
-        Ok(renewed.access_token)
+        let renewed = tokens_from(checked(response).await?.json().await?);
+        let access = renewed.access_token.clone();
+        self.keep(renewed)?;
+        Ok(access)
     }
 
-    fn tokens(&self, issued: Issued) -> Tokens {
-        Tokens {
-            url: self.url.to_string(),
-            access_token: issued.access_token,
-            refresh_token: issued.refresh_token,
-            expires_at: Utc::now() + chrono::TimeDelta::seconds(issued.expires_in),
-            scope: issued.scope,
-        }
-    }
-
-    async fn login(
-        &self,
-        client_name: &str,
-        shutdown: &CancellationToken,
-    ) -> Result<Report, CloudError> {
+    async fn start(&self, client_name: &str) -> Result<Device, ServerError> {
         let device: Device = checked(
             self.client
                 .post(self.endpoint(DEVICE_PATH)?)
@@ -354,15 +424,24 @@ impl Cloud {
             device.user_code,
             device.expires_in.div_ceil(60)
         )?;
+        Ok(device)
+    }
+
+    async fn login(
+        &self,
+        client_name: &str,
+        shutdown: &CancellationToken,
+    ) -> Result<Report, ServerError> {
+        let device = self.start(client_name).await?;
         let mut interval = Duration::from_secs(device.interval.unwrap_or(5).max(1));
         let deadline = tokio::time::Instant::now() + Duration::from_secs(device.expires_in);
         loop {
             tokio::select! {
-                () = shutdown.cancelled() => return Err(CloudError::Cancelled),
+                () = shutdown.cancelled() => return Err(ServerError::Cancelled),
                 () = tokio::time::sleep(interval) => {}
             }
             if tokio::time::Instant::now() > deadline {
-                return Err(CloudError::Denied("not given before the code expired"));
+                return Err(ServerError::Denied("not given before the code expired"));
             }
             let response = self
                 .client
@@ -376,17 +455,19 @@ impl Cloud {
                 .send()
                 .await?;
             if response.status().is_success() {
-                let tokens = self.tokens(response.json().await?);
-                self.save(&tokens)?;
+                let tokens = tokens_from(response.json().await?);
+                let scope = tokens.scope.clone();
+                let _lock = self.lock().await?;
+                self.keep(tokens)?;
                 return Ok(Report::success(format!(
-                    "signed in to {} (scope {}); the login lasts until rh cloud logout or a revoke in the dashboard\n",
-                    self.url, tokens.scope
+                    "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
+                    self.host, self.host
                 )));
             }
             let status = response.status().as_u16();
             let body = response.text().await?;
             let error: OauthError =
-                serde_json::from_str(&body).map_err(|_| CloudError::Status {
+                serde_json::from_str(&body).map_err(|_| ServerError::Status {
                     status,
                     body: body.clone(),
                 })?;
@@ -398,90 +479,93 @@ impl Cloud {
                         .map_or(interval + SLOW_DOWN, Duration::from_secs);
                 }
                 OauthCode::AccessDenied => {
-                    return Err(CloudError::Denied("denied in the browser"));
+                    return Err(ServerError::Denied("denied in the browser"));
                 }
                 OauthCode::ExpiredToken => {
-                    return Err(CloudError::Denied("not given before the code expired"));
+                    return Err(ServerError::Denied("not given before the code expired"));
                 }
                 OauthCode::InvalidGrant | OauthCode::Other => {
-                    return Err(CloudError::Status { status, body });
+                    return Err(ServerError::Status { status, body });
                 }
             }
         }
     }
 
-    async fn logout(&self) -> Result<Report, CloudError> {
-        let Some(tokens) = self.stored()? else {
-            return Ok(Report::success(
-                "this machine is not signed in to RivetHub Cloud\n".to_owned(),
-            ));
-        };
-        let revoked = if tokens.url == self.url.as_str() {
-            checked(
-                self.client
-                    .post(self.endpoint(REVOKE_PATH)?)
-                    .json(&Revoke {
-                        client_id: CLIENT_ID,
-                        token: &tokens.refresh_token,
-                    })
-                    .send()
-                    .await?,
-            )
-            .await
-            .map(|_| ())
-        } else {
-            Ok(())
-        };
-        std::fs::remove_file(&self.store)?;
-        revoked?;
-        Ok(Report::success(format!(
-            "signed out of {} and revoked this machine's login\n",
-            tokens.url
-        )))
-    }
-
-    fn status(&self) -> Result<Report, CloudError> {
-        let Some(tokens) = self.stored()? else {
+    async fn logout(&self) -> Result<Report, ServerError> {
+        let _lock = self.lock().await?;
+        let mut logins = read_logins(&self.store)?;
+        let Some(tokens) = logins.logins.get(self.host.as_str()) else {
             return Ok(Report::success(format!(
-                "not signed in; rh cloud login signs in to {}\n",
-                self.url
+                "this machine is not signed in to {}\n",
+                self.host
             )));
         };
-        let tokens = self.mine(tokens)?;
+        checked(
+            self.client
+                .post(self.endpoint(REVOKE_PATH)?)
+                .json(&Revoke {
+                    client_id: CLIENT_ID,
+                    token: &tokens.refresh_token,
+                })
+                .send()
+                .await?,
+        )
+        .await?;
+        logins.logins.remove(self.host.as_str());
+        write_logins(&self.store, &logins)?;
         Ok(Report::success(format!(
-            "signed in to {} (scope {}); the access token renews itself, next at {}\n",
-            tokens.url,
-            tokens.scope,
-            tokens.expires_at.format("%Y-%m-%d %H:%M UTC")
+            "signed out of {} and revoked this machine's login there\n",
+            self.host
         )))
     }
 }
 
-pub(crate) async fn checked(response: reqwest::Response) -> Result<reqwest::Response, CloudError> {
+fn tokens_from(issued: Issued) -> Tokens {
+    Tokens {
+        access_token: issued.access_token,
+        refresh_token: issued.refresh_token,
+        expires_at: Utc::now() + chrono::TimeDelta::seconds(issued.expires_in),
+        scope: issued.scope,
+    }
+}
+
+pub(crate) async fn checked(response: reqwest::Response) -> Result<reqwest::Response, ServerError> {
     if response.status().is_success() {
         return Ok(response);
     }
     let status = response.status().as_u16();
     let body = response.text().await?;
-    Err(CloudError::Status {
+    Err(ServerError::Status {
         status,
         body: body.chars().take(200).collect(),
     })
 }
 
 pub async fn run(
-    command: CloudCommand,
+    command: ShareCommand,
     env: &Environment,
     shutdown: &CancellationToken,
 ) -> Result<Report, crate::Error> {
-    let cloud = Cloud::from_env(env).await?;
+    let servers = ShareServers::from_env(env).await?;
     Ok(match command {
-        CloudCommand::Login => {
+        ShareCommand::Login { server } => {
+            let host = servers.pick(server.as_deref())?;
             let name = format!("RivetHub CLI on {}", host_name()?);
-            cloud.login(&name, shutdown).await?
+            servers
+                .connect(&host, REQUEST_TIMEOUT)
+                .await?
+                .login(&name, shutdown)
+                .await?
         }
-        CloudCommand::Logout => cloud.logout().await?,
-        CloudCommand::Status => cloud.status()?,
+        ShareCommand::Logout { server } => {
+            let host = servers.pick(server.as_deref())?;
+            servers
+                .connect(&host, REQUEST_TIMEOUT)
+                .await?
+                .logout()
+                .await?
+        }
+        ShareCommand::Status => servers.status()?,
     })
 }
 

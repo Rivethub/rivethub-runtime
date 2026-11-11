@@ -19,10 +19,11 @@ use crate::sign::TrustStore;
 use crate::sign::Verification;
 
 pub const MAX_BUNDLE_BYTES: usize = 64 << 20;
-pub const MAX_PLAIN_BYTES: usize = 256 << 20;
+pub const MAX_PLAIN_BYTES: usize = MAX_BUNDLE_BYTES;
 pub const CODE_PREFIX: &str = "rhb1:";
 const MAGIC: &[u8] = b"RHB1\n";
 const ZSTD_LEVEL: i32 = 3;
+const WINDOW_LOG_MAX: u32 = 24;
 const AGE_KEY_PREFIX: &str = "AGE-SECRET-KEY-1";
 const DROP_ID_CHARS: usize = 22;
 
@@ -88,6 +89,100 @@ pub enum CodeError {
         "the share code's key fails its checksum; a character is mistyped, and nothing was downloaded"
     )]
     Checksum,
+    #[error(
+        "{0:?} is not a share server; give a host name such as rivethub.cloud or team.example.com, with an optional :port"
+    )]
+    Server(String),
+}
+
+pub const DEFAULT_SERVER: &str = "rivethub.cloud";
+const MAX_HOST: usize = 253;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ShareServer(String);
+
+impl ShareServer {
+    #[must_use]
+    pub fn rivethub_cloud() -> Self {
+        Self(DEFAULT_SERVER.to_owned())
+    }
+
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self.0 == DEFAULT_SERVER
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_loopback(&self) -> bool {
+        let host = self
+            .0
+            .rsplit_once(':')
+            .map_or(self.0.as_str(), |(host, _)| host);
+        host == "localhost"
+            || host
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    }
+
+    #[must_use]
+    pub fn base_url(&self) -> String {
+        let scheme = if self.is_loopback() { "http" } else { "https" };
+        format!("{scheme}://{}/", self.0)
+    }
+}
+
+impl fmt::Display for ShareServer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl FromStr for ShareServer {
+    type Err = CodeError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let invalid = || CodeError::Server(text.to_owned());
+        let trimmed = text.trim();
+        let (scheme, rest) = match trimmed.split_once("://") {
+            Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
+            None => (None, trimmed),
+        };
+        let authority = rest.strip_suffix('/').unwrap_or(rest).to_ascii_lowercase();
+        let (host, port) = match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority.as_str(), None),
+        };
+        let host_ok = !host.is_empty()
+            && host.len() <= MAX_HOST
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            });
+        let port_ok = port.is_none_or(|port| port.parse::<u16>().is_ok_and(|port| port > 0));
+        if !host_ok || !port_ok {
+            return Err(invalid());
+        }
+        let server = Self(authority.clone());
+        let scheme_ok = match scheme.as_deref() {
+            None | Some("https") => true,
+            Some("http") => server.is_loopback(),
+            Some(_) => false,
+        };
+        if scheme_ok {
+            Ok(server)
+        } else {
+            Err(invalid())
+        }
+    }
 }
 
 pub struct ShareKey(age::x25519::Identity);
@@ -166,6 +261,7 @@ impl FromStr for DropId {
 
 #[derive(Debug)]
 pub struct ShareCode {
+    pub server: ShareServer,
     pub id: DropId,
     pub key: ShareKey,
 }
@@ -173,7 +269,16 @@ pub struct ShareCode {
 impl ShareCode {
     #[must_use]
     pub fn reveal(&self) -> String {
-        format!("{CODE_PREFIX}{}#{}", self.id, self.key.reveal())
+        if self.server.is_default() {
+            format!("{CODE_PREFIX}{}#{}", self.id, self.key.reveal())
+        } else {
+            format!(
+                "{CODE_PREFIX}{}/{}#{}",
+                self.server,
+                self.id,
+                self.key.reveal()
+            )
+        }
     }
 }
 
@@ -185,8 +290,13 @@ impl FromStr for ShareCode {
             .trim()
             .strip_prefix(CODE_PREFIX)
             .ok_or(CodeError::Prefix)?;
-        let (id, key) = rest.split_once('#').ok_or(CodeError::NoKey)?;
+        let (place, key) = rest.split_once('#').ok_or(CodeError::NoKey)?;
+        let (server, id) = match place.rsplit_once('/') {
+            Some((server, id)) => (server.parse()?, id),
+            None => (ShareServer::rivethub_cloud(), place),
+        };
         Ok(Self {
+            server,
             id: id.parse()?,
             key: key.parse()?,
         })
@@ -301,7 +411,10 @@ pub fn open(ciphertext: Vec<u8>, key: &ShareKey, trust: &TrustStore) -> Result<O
 }
 
 fn decompress(body: &[u8]) -> Result<Vec<u8>, OpenError> {
-    let decoder = zstd::stream::read::Decoder::new(body).map_err(|_| OpenError::Envelope)?;
+    let mut decoder = zstd::stream::read::Decoder::new(body).map_err(|_| OpenError::Envelope)?;
+    decoder
+        .window_log_max(WINDOW_LOG_MAX)
+        .map_err(|_| OpenError::Envelope)?;
     let mut text = Vec::new();
     decoder
         .take(MAX_PLAIN_BYTES as u64 + 1)

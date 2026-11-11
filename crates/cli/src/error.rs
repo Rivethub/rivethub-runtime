@@ -29,7 +29,7 @@ pub enum Error {
     #[error(transparent)]
     Sharing(#[from] crate::memory::ShareError),
     #[error(transparent)]
-    Cloud(#[from] crate::cloud::CloudError),
+    ShareServer(#[from] crate::share_server::ServerError),
     #[error(transparent)]
     Drop(#[from] crate::memory::DropError),
     #[error(transparent)]

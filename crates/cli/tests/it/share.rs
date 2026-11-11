@@ -42,6 +42,8 @@ struct Seen {
     taken: Vec<bool>,
     gets: usize,
     refreshes: Vec<String>,
+    revokes: Vec<String>,
+    revoke_status: Option<StatusCode>,
     upload_status: Option<StatusCode>,
 }
 
@@ -139,6 +141,23 @@ async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Ref
         .into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct Revoked {
+    token: String,
+}
+
+async fn revoke(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Revoked>) -> Response {
+    let status = {
+        let mut seen = drops.0.lock();
+        seen.revokes.push(asked.token);
+        seen.revoke_status
+    };
+    match status {
+        Some(status) => (status, "down").into_response(),
+        None => (StatusCode::OK, "{}").into_response(),
+    }
+}
+
 fn drop_id(index: usize) -> String {
     if index == 0 {
         DROP_ID.to_owned()
@@ -158,6 +177,7 @@ async fn drop_box() -> Served {
     let app = Router::new()
         .route("/api/drops", axum::routing::post(upload))
         .route("/api/cli/token", axum::routing::post(refresh))
+        .route("/api/cli/revoke", axum::routing::post(revoke))
         .route("/api/drops/{id}", axum::routing::get(download))
         .with_state(drops.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -193,7 +213,7 @@ impl Node {
             .unwrap_or_default();
         support::config(
             &home,
-            &format!("{gateway}memory:\n  share:\n    cloud:\n      url: {cloud}\n"),
+            &format!("{gateway}memory:\n  share:\n    server:\n      url: {cloud}\n"),
         );
         let environment = support::environment(&home)
             .with_override("RIVETHUB_USERS_FILE", users.display().to_string())
@@ -214,12 +234,13 @@ impl Node {
     }
 
     fn sign_in_until(&self, cloud: &str, expires_at: &str) {
-        let path = self.home.path().join("state/rivethub/cloud.json");
+        let path = self.home.path().join("state/rivethub/share-logins.json");
+        let host = host_of(cloud);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("state dir");
         std::fs::write(
             &path,
             format!(
-                r#"{{"url":"{cloud}","access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"{expires_at}","scope":"drops:write"}}"#
+                r#"{{"logins":{{"{host}":{{"access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"{expires_at}","scope":"drops:write"}}}}}}"#
             ),
         )
         .expect("cloud login");
@@ -347,9 +368,10 @@ async fn share_writes_no_plaintext() {
         "{}",
         shared.stdout
     );
-    assert!(shared.stdout.contains(
-        "; share code (works once, expires 2026-11-17; send it privately): rhb1:Qm9iQm9iQm9iQm9iQm9iQg#"
-    ));
+    assert!(shared.stdout.contains(&format!(
+        "; share code (works once, expires 2026-11-17; send it privately): rhb1:{}/Qm9iQm9iQm9iQm9iQm9iQg#",
+        host_of(&served.url)
+    )));
     assert!(
         !bundle.exists(),
         "the sanitized bundle is unlinked after a 201"
@@ -414,7 +436,10 @@ async fn the_code_key_never_reaches_a_url() {
 async fn a_typo_is_refused_before_any_request() {
     let served = drop_box().await;
     let receiver = Node::new("alex", &served.url, None);
-    let typo = format!("rhb1:{DROP_ID}#qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq");
+    let typo = format!(
+        "rhb1:{}/{DROP_ID}#qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        host_of(&served.url)
+    );
     let report = receiver.run(&["memory", "receive", &typo]).await;
     assert_eq!(report.exit, Exit::Failure);
     assert!(
@@ -465,7 +490,7 @@ async fn a_signed_out_sender_uploads_nothing() {
         .await;
     assert_eq!(shared.exit, Exit::Failure);
     assert!(
-        shared.stderr.contains("rh cloud login"),
+        shared.stderr.contains("rh share login"),
         "{}",
         shared.stderr
     );
@@ -689,7 +714,8 @@ async fn a_truncated_download_is_a_burned_drop_and_leaves_nothing() {
     });
     let receiver = Node::new("alex", &url, None);
     let code = format!(
-        "rhb1:{DROP_ID}#{}",
+        "rhb1:{}/{DROP_ID}#{}",
+        host_of(&url),
         capture::seal::ShareKey::generate().reveal()
     );
     let report = receiver.run(&["memory", "receive", &code]).await;
@@ -855,7 +881,8 @@ async fn a_server_error_then_a_miss_says_the_drop_failed_midway() {
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let receiver = Node::new("alex", &url, None);
     let code = format!(
-        "rhb1:{DROP_ID}#{}",
+        "rhb1:{}/{DROP_ID}#{}",
+        host_of(&url),
         capture::seal::ShareKey::generate().reveal()
     );
     let report = receiver.run(&["memory", "receive", &code]).await;
@@ -885,4 +912,147 @@ fn a_shared_code_never_prints_its_key_in_debug() {
     let shown = format!("{shared:?}");
     assert!(!shown.contains(&key), "{shown}");
     assert!(shown.contains(&format!("rhb1:{DROP_ID}#..")), "{shown}");
+}
+
+fn host_of(url: &str) -> String {
+    url.trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned()
+}
+
+fn logins(node: &Node) -> String {
+    std::fs::read_to_string(node.home.path().join("state/rivethub/share-logins.json"))
+        .expect("logins")
+}
+
+#[tokio::test]
+async fn logout_keeps_the_login_when_the_revoke_fails_and_touches_only_its_server() {
+    let team = drop_box().await;
+    let other = drop_box().await;
+    let node = Node::new("phil", &team.url, None);
+    let entry = r#"{"access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}"#;
+    let store = node.home.path().join("state/rivethub/share-logins.json");
+    std::fs::create_dir_all(store.parent().expect("parent")).expect("state dir");
+    std::fs::write(
+        &store,
+        format!(
+            r#"{{"logins":{{"{}":{entry},"{}":{entry}}}}}"#,
+            host_of(&team.url),
+            host_of(&other.url)
+        ),
+    )
+    .expect("logins");
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+
+    team.drops.0.lock().revoke_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    let failed = node.run(&["share", "logout", &host_of(&team.url)]).await;
+    assert_eq!(failed.exit, Exit::Failure);
+    assert!(failed.stderr.contains("503"), "{}", failed.stderr);
+    assert!(
+        logins(&node).contains(&host_of(&team.url)),
+        "a failed revoke keeps the login"
+    );
+
+    team.drops.0.lock().revoke_status = None;
+    let done = node.run(&["share", "logout"]).await;
+    assert_eq!(done.exit, Exit::Ok, "{}", done.stderr);
+    let left = logins(&node);
+    assert!(!left.contains(&host_of(&team.url)), "{left}");
+    assert!(
+        left.contains(&host_of(&other.url)),
+        "the other server's login stays"
+    );
+    assert_eq!(
+        team.drops.0.lock().revokes,
+        ["rhcr_throwaway", "rhcr_throwaway"]
+    );
+    assert_eq!(other.drops.0.lock().revokes.len(), 0);
+    let status = node.run(&["share", "status"]).await;
+    assert!(
+        status
+            .stdout
+            .contains(&format!("signed in to {}", host_of(&other.url))),
+        "{}",
+        status.stdout
+    );
+    team.stop.cancel();
+    other.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_receiver_needs_no_share_config_and_share_takes_a_server_flag() {
+    let configured = drop_box().await;
+    let team = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("phil", &configured.url, None);
+    sender.sign_in(&team.url);
+    let bundle = sanitized(&sender, outside.path(), None).await;
+    let shared = sender
+        .run(&[
+            "memory",
+            "share",
+            &bundle.display().to_string(),
+            "--server",
+            &team.url,
+        ])
+        .await;
+    assert_eq!(shared.exit, Exit::Ok, "{}", shared.stderr);
+    let code = code_of(&shared.stdout);
+    assert!(
+        code.starts_with(&format!("rhb1:{}/", host_of(&team.url))),
+        "{code}"
+    );
+    assert_eq!(configured.drops.0.lock().uris.len(), 0);
+
+    let bare = support::home();
+    support::config(&bare, "");
+    let env = support::environment(&bare)
+        .with_override(
+            "XDG_STATE_HOME",
+            bare.path().join("state").display().to_string(),
+        )
+        .with_override(
+            "XDG_CONFIG_HOME",
+            bare.path().join("config").display().to_string(),
+        );
+    let received = support::run(&["memory", "receive", &code, "--dry-run"], &env).await;
+    assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
+    assert!(
+        received
+            .stdout
+            .starts_with("would import 1 session from phil"),
+        "{}",
+        received.stdout
+    );
+    assert_eq!(team.drops.0.lock().gets, 1);
+    configured.stop.cancel();
+    team.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_bad_trusted_ca_names_its_server() {
+    let served = drop_box().await;
+    let node = Node::new("phil", &served.url, None);
+    support::config(
+        &node.home,
+        &format!(
+            "memory:\n  share:\n    server:\n      url: {}\n    trusted_cas:\n      - host: {}\n        ca: {}\n",
+            served.url,
+            host_of(&served.url),
+            node.home.path().join("missing-ca.pem").display()
+        ),
+    );
+    node.sign_in(&served.url);
+    let report = node.run(&["share", "logout"]).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.contains(&format!(
+            "for {} in memory.share.trusted_cas",
+            host_of(&served.url)
+        )),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(served.drops.0.lock().revokes.len(), 0);
+    served.stop.cancel();
 }

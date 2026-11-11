@@ -20,7 +20,7 @@ Reference material that survives from the first attempt (read-only; `/rivet-shar
 | B4 | Postgres schema and data (`rh_*` tables, migrations 0001–0020 including `0020_tag_removals`, then 0021 renames `ros_*` to `rh_*` with `ros_*` views over them, through 0028 `rh_session_startup` (note 24), 0029 `rh_session_startup.delivered_via` (note 25) and 0040 `rh_tasks_archive` and the new `rh_tasks` (note 74), and 0052 the `graphile_worker` queue schema when it is absent (note 105), views, triggers, graphile_worker jobs). Migrations are applied only by `rivethub-migrate postgres`, which then requires every migration file name in `_rivetos_migrations`; the runtime verifies one schema version (`memory_postgres::SCHEMA_VERSION`) at connect — equal ok, newer ok with one warning, no `_sqlx_migrations` table a `NotAdopted` error (one `rivethub-migrate postgres` adopts it, including a database whose history is only `_rivetos_migrations`), behind a `SchemaBehind` error naming the migrate command — and runs no DDL | the live datahub, the TypeScript workers during cutover, operators | data-layer.md §1–§2 | `golden/capture/pg/` (30 scenarios), `golden/memory/` | Rust migrates a 0001-era DB to the same schema; writes rows the TypeScript reads and vice versa; enqueues the same jobs with the same keys |
 | B5 | SQLite memory file (`memory.sqlite`, schema v7 and its upgrade ladder through cutover; schema v8 adds a sqlite-vec index afterwards). Creation and upgrades run only through `rivethub-migrate sqlite`, which copies the original file to `<file>.v<N>.bak` before any read-write connection and returns `BackupExists` when that path is already there; the runtime reads `user_version` on a read-only connection (0 → `NotInitialised`, below 7 → `SchemaBehind` naming the file, above 7 → `UnsupportedSchema`), a refused open leaves the file unchanged, and it never creates the file | standalone nodes, TypeScript nodes during cutover | data-layer.md §3; sqlite plugin | `golden/memory-sqlite/` (20 files incl. fixture DBs, upgrades, search results) | same `sqlite_master`, same rows, same search ranks; files open both ways |
 | B6 | Memory read API: search / browse / stats / get_full / tags (HTTP and MCP); the per-session and per-conversation summary DAG (note 61) and the gzip memory export (HTTP) | RivetHub clients, MCP clients (Claude Code etc.), agents | data-layer.md §3.7–§3.11; gateway-api.md §11 | `golden/memory-sqlite/` search cases; gateway recordings | same results and ranking on the same data |
-| B7 | MCP sidecar: RivetHub's own tools only: seven recall tools on every transport (`memory_search`, `memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`; `delegate_task` and `list_agents` were removed by note 132), plus `session_find`, `session_sanitize`, `session_import` (note 139) and `session_share` (note 140) on stdio only; `echo`, `skill_list`, `skill_manage`, `internet_search` and `web_fetch` are removed (Phil, 2026-10-13). Their schemas, transports (stdio, streamable HTTP, unix socket) | Claude Code, codex, every MCP client | mcp-tools-providers.md §2–§3 | `golden/mcp/` (`tools-list.json`, `calls.json`) | `tools/list` for the seven recall tools equals the recording after the RivetOS→RivetHub name translation, compared as parsed values; recorded calls give the same results |
+| B7 | MCP sidecar: RivetHub's own tools only: seven recall tools on every transport (`memory_search`, `memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`; `delegate_task` and `list_agents` were removed by note 132), plus `session_find`, `session_sanitize` and `session_import` on stdio only (note 139); `echo`, `skill_list`, `skill_manage`, `internet_search` and `web_fetch` are removed (Phil, 2026-10-13). Their schemas, transports (stdio, streamable HTTP, unix socket) | Claude Code, codex, every MCP client | mcp-tools-providers.md §2–§3 | `golden/mcp/` (`tools-list.json`, `calls.json`) | `tools/list` for the seven recall tools equals the recording after the RivetOS→RivetHub name translation, compared as parsed values; recorded calls give the same results |
 | B8 | Provider wire traffic: the OpenAI-compatible chat (streamed) and embeddings API as spoken to vLLM, SGLang and hosted OpenAI-compatible endpoints through one client (no Ollama, no llama-server type) | the model servers | mcp-tools-providers.md §5.4–§5.5 | the vllm scenarios in `golden/providers/` (request+response) | byte-equal request bodies (headers filtered) except the intentional wire deltas of one typed table (testkit `B8_OMITTED_REQUEST_FIELDS`): the runtime sends NO sampling fields where the TypeScript sent hard-coded `temperature: 0.7`/`top_p: 0.95`, never sends `tool_choice` (the server's own `auto` default applies when `tools` are present), and sends `max_tokens` only when the provider config sets it (the TypeScript's 4096 default is gone); same parsed responses and stream chunks |
 | B9 | CLI: command tree, flags, output text, exit codes, prompts (`rh agent` is gone, note 74; `rh mesh`, `rh ca`, `rh cert` and `rh update --mesh` are gone, note 132) | operators, systemd units, scripts | cli.md §0–§19 | `tests` listed in cli.md §21; (recording to add: CLI golden transcripts) | same stdout/stderr/exit for the same argv on the same state |
 | B10 | `config.yaml` keys, defaults, validation messages (`rh config`, `rh status` and `rh doctor` validate the way `rh start` boots, which requires `runtime`, `agents` and `providers`; a config that selects SQLite and passes the way `rh local` validates is accepted too, so the config `rh local` writes is valid); environment variables (`tasks.pricing`, `tasks.eval` and `runtime.heartbeats` are retired, note 74; `memory.models` assigns a model to each memory job, note 126; `memory.sanitize.mapping` names the sanitize mapping file, note 136; `memory.sanitize.decide` configures the decision-model review, note 137; the keys and variables note 132 retires load with one warning each and are ignored) | operators, deploy tooling | config-and-boot.md §1–§2 | `golden/diff/config/` (realistic cases) | same accept/reject and same messages for the same file |
@@ -128,7 +128,7 @@ accepted and ignored with a warning. (13) Workflows kept but outside the runtime
 (15) Capture redaction is a configuration option, off by default: `memory.capture.redaction.{enabled,builtins,patterns}` and
 `RIVETHUB_CAPTURE_REDACTION` are honoured by the hook-side writer; the YAML keys are actually passed to the hook process (the
 TypeScript validated them but did not). Nothing is redacted unless enabled, except the key part of a RivetHub share
-code, which the hook-side writer always redacts (note 140).
+code, which the hook-side writer always redacts, whatever these settings say (note 140).
 (16) Memory search (B6, B7) narrows message hits by `role` and `tool_name` on `GET /api/memory/search`, the
 `memory_search` tool route and the MCP `memory_search` schema; summaries carry neither and stay in the result unless
 `scope` excludes them (Phil, 2026-10-19).
@@ -2075,8 +2075,7 @@ first, sanitize last, no raw file; uses notes 134 to 137): `rh mcp` serves three
 `session_sanitize` and `session_import`, only over stdio, the transport
 whose client runs on this machine as this user. It does not list or answer them when it serves a host or a socket, and
 `rh local` never serves them. Every input rejects an unknown field, and no input names a URL, host, gateway or other
-node: no MCP tool sends a bundle anywhere except `session_share` (note 140), which uploads only ciphertext to the
-configured drop box after the user confirms. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
+node: no MCP tool sends a bundle anywhere. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
 posts to `memory.capture.gateway` when set (note 135). `memory_write` still guards only tag writes; it does not gate
 these tools. `rh mcp` reads `memory.sanitize`, `memory.capture.redaction`, the users registry and the node name at
 startup, so a change to them needs a restart.
@@ -2193,10 +2192,14 @@ the tables.
 
 (129) Review queue (proposed 2026-11-07): everything the agents propose waits for you on one screen. `GET /api/review` answers a JSON array of `wire::gateway::review::ReviewItem` (the RivetHub web contract `ReviewItem`: `id`, `group`, `subject` `{kind: topic | entity | session, id, title}`, `text`, `before?`, `after?`, `options?` `[{label, value, source?}]`, `evidence` `[{session: {id, title}, at, quote, highlight?}]`, `createdAt`), newest `createdAt` first, gathered at read time from the stores that already hold the proposals and read in the caller's visibility scope, as each source's own route reads it. `conflict`: a fact of note 128 with conflict candidates; `text` is the key, `before` the value it holds, `after` the first rival, `options` the held value first (with no source when you set it) and then each candidate with its source, and `evidence` each candidate's quoted claim words (the value when the writer quoted none) with the value as `highlight` when the quote contains it. `fact`: a fact whose value a wiki-writer claim holds, that is not pinned, whose newest claim was recorded in the last 30 days (`kernel::review::FACT_NEW_FOR`) and whose value you have never set; that is what "not seen" means, together with a decision on its item; `text` is `key: value`, `before` the previous value, `after` the value. `filing`: a session with a topic suggestion and no placement that the session catalog (note 127) shows and has not trashed; `text` is `→ ` and the topic path joined with ` › ` (a new topic adds ` (new topic)`), `after` the topic id (a new topic's name), the evidence the session's gist or title, and `createdAt` the session's end, else its start. `tag`: a pending tag suggestion (`/api/memory/tags/pending`) on a conversation whose session key names a session (a bare Claude Code id reads as `claude-code:<id>`); others are left out. `text` is `Add key: value` or `Remove key: value`, and the evidence is the conversation's opening excerpt. `tidy`: a pending Tidy proposal; `text` describes the change and appends the reason, the subject is the topic it changes (a page edit names the page slug), and the evidence is the proposal's sample sessions. No `new-entity` group is produced: the wiki writer creates an entity once a second session names it (note on entity candidates) and records no creator, so rh cannot tell a writer's entity from yours, and the only undo would be deleting it. An item `id` encodes its source and the version it shows: `conflict.<fact id>.<ms>` and `fact.<fact id>.<ms>` (the newest claim's `recorded_at` in epoch milliseconds, so a new claim makes a new item), `filing.<session id>.<topic id>` or `filing.<session id>.new-<slug>`, `tag.<tag id>` and `tidy.<proposal id>` (`kernel::review::ReviewKey`). `POST /api/review/{id}/decision` takes `{kind: accept | reject | later | choose | edit, value?}` (`ReviewDecision`) and answers `204`. It applies the decision through the domain operations the item came from: a conflict's `accept` and `choose` (one of its `options`, else `400`) and a fact's `edit` record your claim through the fact store as `PUT /api/entities/{id}/facts` does, keeping the pin the fact had; a conflict's `edit` records your value; a fact's `accept` changes nothing; a fact's `reject` restores the previous value as your claim (with no previous value it changes nothing, since claims are never deleted); `reject` on a conflict changes nothing. Filing `accept` places the session as `PUT /api/sessions/{session}/placement` does (a new topic is created as a work topic under the suggested parent first, or the work topic with that slug is used), `edit` places it in the topic `value` names (an id or slug, `404` when unknown), and `reject` changes nothing. Tag `accept` and `reject` decide the suggestion as `/api/memory/tags/decide` does, and `edit` adds the tag literal `value` as your tag and rejects the suggestion. Tidy `accept` and `reject` approve or reject the proposal as `/api/tidy/proposals/{id}/approve` and `/reject` do. `choose` on anything but a conflict, and `edit` on a tidy proposal, is `422`. `later` hides the item for 24 hours (`kernel::review::SNOOZE`) and changes nothing else. After any other decision the item is decided for you: it leaves your queue and a repeated decision on the same id answers `204` without acting again. An id that names no item in your queue now (unknown, malformed or already superseded) is `404`. What you decided is kept per person (`rh_review_marks` `{owner_user_id, item_key, state (decided or snoozed), at}`, keyed by person and item; Postgres migration 0059 with row security to its owner, SQLite schema v33) behind `kernel::review::ReviewStore`. The routes are new, with no TypeScript recording, and are mounted on every surface that mounts the entity routes.
 
-(140) Sealing and sharing a bundle (Phil, 2026-11-10; session-sharing phase 2, SS-6b; uses notes 134 to 139): a
-sanitized bundle leaves the machine only as ciphertext, through the RivetHub Cloud drop box, and the share code goes to
-the receiver privately. Seal. `rh memory share <sanitized bundle> [--unsigned] [--flags <n>]` reads the file (at most
-64 MiB), parses it with the note 134 digest check, refuses a raw bundle and one that still withholds `[FLAGGED:<n>]`
+(140) Sealing and sharing a bundle (session-sharing phase 2, SS-6b; uses notes 134 to 139). Phil decided, 2026-11-10:
+the sender mints a key per bundle and uploads only ciphertext; the key goes to the receiver privately; the server deletes
+a drop on its first download; the receiver checks a bundle before importing it; and the CLI signs in with a proper login
+flow. On 2026-11-11 he decided the destination is pluggable (rivethub.cloud or a self-hosted team server) and that
+sharing will move into rivethub-desktop through local gateway routes. Everything else below is the plan's design.
+
+Seal. `rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]` reads the file once (at most 64
+MiB), parses it with the note 134 digest check, refuses a raw bundle and one that still withholds `[FLAGGED:<n>]`
 chunks, and refuses one with unmarked advisory flags unless `--flags` repeats their count. It builds in memory
 `RHB1\n<header json>\n<zstd(bundle bytes)>` and encrypts it with age (format v1, crate `age` 0.11.5: 0.12 pulls
 `crypto-bigint` 0.5 with RUSTSEC-2026-0387) to a fresh X25519 identity per bundle; nothing but the ciphertext is
@@ -2204,58 +2207,59 @@ produced. Signing is on by default: the node key is Ed25519 (aws-lc-rs), PKCS#8 
 `$XDG_STATE_HOME/rivethub/node-signing.key` (else `~/.local/state/...`), mode 0600, created on first use and read with
 the same regular-file and permission checks as the sanitize key (note 136). The signed message is
 `"rivethub-bundle-sig-v1\n" || sha256(bundle bytes) || manifest.exported_by.user`; the header carries `{alg: "ed25519",
-public_key: "ed25519:<base64>", sig}` inside the ciphertext, so the cloud never sees the sender key. `rh memory key
-show` prints the key line and a fingerprint (`ed25519:` and the first 16 hex digits of its SHA-256).
+public_key: "ed25519:<base64>", sig}` inside the ciphertext, so the server never sees the sender key. `rh memory key
+show` prints the key line and a fingerprint (`ed25519:` and the first 16 hex digits of its SHA-256). The seal, open
+and receive steps are plain library functions (`capture::seal`, `cli::memory::{seal_file, upload}`), so a later gateway
+route can call them; no MCP tool seals, uploads, receives or holds a share code.
 
-`rh memory share` and `session_share` read the bundle once: the elicitation preview and the seal use the same bytes.
-
-Share. The upload is `POST <memory.share.cloud.url>/api/drops` with the body `application/octet-stream` and the
-`rh cloud login` access token as a bearer token; on 401 the token is refreshed once and the upload retried. On 201
-`{id, expires_at, bytes}` rh unlinks the sanitized bundle and prints `share code (works once, expires <date>; send it
-privately): rhb1:<id>#<key>` once. On any failure it prints no code and keeps the bundle. The key is the age identity's
-bech32 text, lowercased, without `age-secret-key-1`; its checksum rejects a mistyped code before any request. The key is
-never part of a URL or a log line, and the `rivethub_share_code` rule (rivethub.toml) redacts it in the sanitizer and at
-capture time, keeping `rhb1:<id>#`. The hook-side writer applies that one rule to every batch even when capture
-redaction is off (note 15), because a share code is a live secret rh itself mints; with redaction off no other rule
-runs. Unlinking does not scrub copy-on-write or SSD blocks; the plaintext that existed is
-the sanitized bundle the sender already reviewed. The client uses rustls, no proxy, no redirects, HTTPS unless the
-address is loopback, and timeouts.
-
-Login. `rh cloud login` runs the OAuth 2.0 device grant (RFC 8628) against `memory.share.cloud.url`: `POST
-/api/cli/device/code {client_id: "rivethub-cli", scope: "drops:write", client_name}`, prints the
+Share servers. A share server serves the drop API: rivethub.cloud, or a RivetHub team server that serves the same
+routes. `--server`, else `memory.share.server.url`, else `rivethub.cloud` names it. A server is a host with an optional
+`:port`; rh talks HTTPS to it, or HTTP only to a loopback host. A server with a private CA is trusted through
+`memory.share.trusted_cas: [{host, ca}]`, which adds that PEM file to the roots for that host only. The client uses
+rustls, no proxy, no redirects and timeouts. `rh share login [<server>]` runs the OAuth 2.0 device grant (RFC 8628):
+`POST /api/cli/device/code {client_id: "rivethub-cli", scope: "drops:write", client_name}`, prints the
 `verification_uri_complete` and user code, and polls `POST /api/cli/token` (device grant) at the given interval,
-honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. Tokens are kept at
-`$XDG_STATE_HOME/rivethub/cloud.json` (0600) with the cloud address they belong to; the access token is refreshed
-(`grant_type=refresh_token`, rotated every time) a minute before it expires, under an exclusive lock on
-`cloud.json.lock` that re-reads the file first, so concurrent runs never replay a rotated refresh token (CD-1 revokes the
-login on reuse). `rh cloud logout` posts the refresh token
-to `/api/cli/revoke` and deletes the file; `rh cloud status` shows the login without a request.
+honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. Logins are kept per server in
+`$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers. Every change to
+that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and re-reads the file first, so
+concurrent runs never replay a rotated refresh token (a server revokes the login on reuse). The access token is
+refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share logout [<server>]` posts
+that server's refresh token to `/api/cli/revoke` and forgets the login only after the server answers 2xx; on any error
+the login stays and the error is reported. `rh share status` lists the logins without a request.
+
+Upload. `POST <server>/api/drops` with the body `application/octet-stream` and the access token as a bearer token; on
+401 the token is refreshed once and the upload retried. On 201 `{id, expires_at, bytes}` rh unlinks the sanitized
+bundle and prints `share code (works once, expires <date>; send it privately): <code>` once. On any failure it prints
+no code and keeps the bundle. The code is `rhb1:<id>#<key>` for rivethub.cloud and `rhb1:<server>/<id>#<key>` for any
+other server, because a drop lives on exactly one server and the receiver should need no configuration. The key is the
+age identity's bech32 text, lowercased, without `age-secret-key-1`; its checksum rejects a mistyped code before any
+request. The key is never part of a URL or a log line. The `rivethub_share_code` rule (rivethub.toml) replaces only the
+key and keeps `rhb1:[<server>/]<id>#`: the sanitizer applies it with the other rules, and the hook-side writer runs it
+as a pass of its own before and apart from every other rule, on every batch, whatever `memory.capture.redaction` says
+(enabled, `builtins: false` or off, note 15), because a share code is a live secret rh mints. Unlinking does not scrub
+copy-on-write or SSD blocks; the plaintext that existed is the sanitized bundle the sender already reviewed.
 
 Receive. `rh memory receive <code> [--dry-run]` checks the code first, removes inbox files older than 7 days, and
 answers "already received" without a request when `$XDG_STATE_HOME/rivethub/inbox/<id>.received` exists. Otherwise it
-uses `inbox/<id>.age` when present, else downloads `GET /api/drops/<id>` (no account; a 5xx, which carries no drop bytes, is retried at most twice after 0.5 and 1 s, and a 404 after a 5xx
-reports that the server failed mid-download and the sender must share again)
-into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a broken
-stream, is a hard error that says the drop is burned, and nothing is kept. It then decrypts in memory, decompresses at
-most 256 MiB, parses the bundle (digest), checks the signature, and runs the note 136 ingest checks without a
-`--force`: a raw bundle, a secret match or an open withheld flag refuses it. A signature that does not verify refuses
-it. Verified means a valid signature by a key listed under the bundle's `exported_by.user` in
-`$XDG_CONFIG_HOME/rivethub/trusted-senders.toml` (`[[sender]] name, key`), which only `rh memory trust add <name>
-<key>` writes; an unsigned bundle, an unknown key or a key trusted under another name imports as unverified with that
-reason. It imports through the note 135 path with the signer (the key fingerprint, else `unsigned`) appended to the origin
-array, so content from different signers, or a plain `ingest-bundle`, never shares a conversation, while the same
-signer's re-share reaches the same conversation and adds nothing. It records in each conversation's settings `receipt =
-{bundle_id, received_at, verification: verified|unsigned|unknown_key, key_fingerprint?}`; `import_batch` drops any
-`receipt` a bundle carries, so only the receiver's own rh writes one, and both stores refuse (HTTP 400) a batch whose
-receipt signer, or the lack of one, differs from the stored conversation's instead of merging it. After a successful import the ciphertext is deleted and the
-`.received` marker written; any failure keeps the ciphertext, so a rerun needs no network. A failed post to the
-gateway spools decrypted batches to the capture spool as any capture does (note 84).
-
-MCP. `session_share {bundle}` (stdio only, note 139) needs a client that declared the elicitation capability; without
-it, it refuses and asks the user to run `rh memory share`. It asks the human with a form showing the session count,
-titles (first 20), author, signer fingerprint, size and the 7-day expiry, with a required `share` boolean and, when
-advisory flags are unmarked, their count typed back. Any other answer uploads nothing. It returns the code line and
-says no tool sends it. No tool sends, posts or stores a code, and there is no receive tool.
+uses `inbox/<id>.age` when present, else prints `downloading from <server>` and downloads `GET <server>/api/drops/<id>`
+from the server the code names (no account, no bearer token; a 5xx, which carries no drop bytes, is retried at most
+twice after 0.5 and 1 s, and a 404 after a 5xx reports that the server failed mid-download and the sender must share
+again) into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a
+broken stream, is a hard error that says the drop is burned, and nothing is kept. It then decrypts in memory,
+decompresses at most 64 MiB (zstd window at most 16 MiB), parses the bundle (digest), checks the signature, and runs the
+note 136 ingest checks without a `--force`: a raw bundle, a secret match or an open withheld flag refuses it. A
+signature that does not verify refuses it. Verified means a valid signature by a key listed under the bundle's
+`exported_by.user` in `$XDG_CONFIG_HOME/rivethub/trusted-senders.toml` (`[[sender]] name, key`), which only `rh memory
+trust add <name> <key>` writes; an unsigned bundle, an unknown key or a key trusted under another name imports as
+unverified with that reason. It imports through the note 135 path with the signer (the key fingerprint, else
+`unsigned`) appended to the origin array, so content from different signers, or a plain `ingest-bundle`, never shares a
+conversation, while the same signer's re-share reaches the same conversation and adds nothing. It records in each
+conversation's settings `receipt = {bundle_id, received_at, verification: verified|unsigned|unknown_key,
+key_fingerprint?}`; `import_batch` drops any `receipt` a bundle carries, so only the receiver's own rh writes one, and
+both stores refuse (HTTP 400) a batch whose receipt signer, or the lack of one, differs from the stored conversation's
+instead of merging it. After a successful import the ciphertext is deleted and the `.received` marker written; any
+failure keeps the ciphertext, so a rerun needs no network. A failed post to the gateway spools decrypted batches to the
+capture spool as any capture does (note 84).
 
 (130) Today and the change feed (proposed 2026-11-07): a change is one thing memory recorded, read from the records the stores already keep. `kernel::changes::ChangeFeed::changes(window)` answers the changes whose time is in `[from, to)` (an absent `from` is the beginning), newest first, ties by kind then text, scoped to the caller as the records themselves are (Postgres row security; SQLite keeps one user). Kinds: `fact` and `conflict` from fact claims, derived per entity by note 128's timeline (`<key>: <value>`, `You pinned <key>: <value>`, `Sources disagree on <key>: <a> or <b>`; the actor is the wiki writer for a writer claim, you otherwise; the source is the claim's session); `decision` from `rh_topic_decisions` at `created_at` (the decision text, by you, sourced to its session); `new` from a work topic or an entity at `created_at` (`New topic <name>.` by you, `New entity <name>.` by the wiki writer: the store records no creator, so the actor follows the kind); `filed` from a session placement at `placed_at` (subject the topic, `Filed under <name>.`, actor `placed_by`, source the session); `tag` from an accepted tag on a conversation or one of its summaries at `decided_at` (else `updated_at`), subject and source the session (`Tagged <key>: <value>.`, by you; a bare Claude Code key reads as `claude-code:<id>`, as in the session list; a tag on a conversation that names no harness session is not a change); `merge` from a merge redirect at its `created_at` (subject the surviving topic, `Merged <source name> into <name>.`, by you). A topic merge records the source's name on its redirect (`rh_topic_redirects.merged_from`; a rename clears it), so redirects written before this note read as renames. `GET /api/changes?from=&to=&subject=&limit=` (B1, new, no TypeScript recording) answers a JSON array of `wire::gateway::today::Change` (the web contract's `Change`); `to` defaults to now, `limit` to 200 (1 to 1000), and `subject` is a topic or entity id, which keeps the changes whose subject it is, or a canonical session id, which keeps the changes whose subject or source it is; anything else is `400`. A session's title is the session list's title (note 127), else its native id.
 
@@ -2326,7 +2330,7 @@ paired device. The plug-in permissions `tasks.read`, `tasks.delegate` and `agent
 gone, so a manifest that names one no longer parses. Plug-ins receive `session.placed` and `summary.written`;
 `session.started`, `session.idle` and `session.ended` came from live sessions and are no longer sent.
 
-The MCP sidecar lists seven recall tools on every transport, plus four session tools on stdio only (B7, notes 139 and 140). The `rh_tasks` tables and their migrations stay; nothing writes them, and the
+The MCP sidecar lists seven recall tools on every transport, plus three session tools on stdio only (B7, note 139). The `rh_tasks` tables and their migrations stay; nothing writes them, and the
 flagged-job sweep still skips any `run-task` rows a database holds.
 
 Retired configuration, each loading with one "no longer used" warning: the `mesh` section except `mesh.node_name`, which

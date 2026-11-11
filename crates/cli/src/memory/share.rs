@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -26,6 +27,7 @@ use wire::capture::Sanitization;
 use wire::capture::SessionBundle;
 
 use super::dropbox::DropBox;
+use super::dropbox::DropError;
 use super::dropbox::MAX_DROP_BYTES;
 use super::inbox::Inbox;
 use super::parse::MemoryCommand;
@@ -34,6 +36,7 @@ use crate::Error;
 use crate::Report;
 use crate::argv::Scan;
 use crate::argv::Taken;
+use crate::share_server::ShareServers;
 
 #[derive(Debug, Error)]
 pub enum ShareError {
@@ -71,6 +74,7 @@ pub enum ShareError {
 pub(super) enum ShareCommand {
     Share {
         path: PathBuf,
+        server: Option<String>,
         signed: bool,
         flags: usize,
     },
@@ -90,7 +94,8 @@ pub(super) enum ShareCommand {
     },
 }
 
-const SHARE_USAGE: &str = "usage: rh memory share <sanitized bundle> [--unsigned] [--flags <n>]";
+const SHARE_USAGE: &str =
+    "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]";
 const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run]";
 const KEY_USAGE: &str = "usage: rh memory key show";
 const TRUST_USAGE: &str =
@@ -103,12 +108,21 @@ fn usage(text: &'static str) -> Error {
 pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut path = None;
+    let mut server = None;
     let mut signed = true;
     let mut flags = 0;
     while let Some(token) = scan.current().map(str::to_owned) {
         if scan.flag("--unsigned") {
             signed = false;
             continue;
+        }
+        match scan.option("--server", None) {
+            Taken::Value(value) if !value.trim().is_empty() => {
+                server = Some(value);
+                continue;
+            }
+            Taken::Value(_) | Taken::Missing => return Err(usage(SHARE_USAGE)),
+            Taken::Absent => {}
         }
         match scan.option("--flags", None) {
             Taken::Value(value) => {
@@ -127,6 +141,7 @@ pub(super) fn share_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let path = path.ok_or_else(|| usage(SHARE_USAGE))?;
     Ok(MemoryCommand::Share(ShareCommand::Share {
         path,
+        server,
         signed,
         flags,
     }))
@@ -186,11 +201,12 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
     match command {
         ShareCommand::Share {
             path,
+            server,
             signed,
             flags,
         } => {
             let sealed = seal_file(env, &path, signed, flags).await?;
-            Ok(share_report(&upload(env, sealed).await?))
+            Ok(share_report(&upload(env, sealed, server.as_deref()).await?))
         }
         ShareCommand::Receive { code, dry_run } => receive(env, code, dry_run).await,
         ShareCommand::KeyShow => key_show(env),
@@ -350,8 +366,14 @@ impl std::fmt::Debug for Shared {
     }
 }
 
-pub async fn upload(env: &Environment, sealed: SealedFile) -> Result<Shared, Error> {
-    let drops = DropBox::from_env(env).await?;
+pub async fn upload(
+    env: &Environment,
+    sealed: SealedFile,
+    server: Option<&str>,
+) -> Result<Shared, Error> {
+    let servers = ShareServers::from_env(env).await?;
+    let host = servers.pick(server).map_err(DropError::from)?;
+    let drops = DropBox::on(&servers, &host).await?;
     let SealedFile { path, sealed, .. } = sealed;
     let (id, uploaded) = drops.upload(bytes::Bytes::from(sealed.ciphertext)).await?;
     let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
@@ -366,6 +388,7 @@ pub async fn upload(env: &Environment, sealed: SealedFile) -> Result<Shared, Err
         uploaded: uploaded.bytes,
         expires_at: uploaded.expires_at,
         code: ShareCode {
+            server: drops.host().clone(),
             id,
             key: sealed.key,
         }
@@ -420,7 +443,9 @@ async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Re
     let ciphertext = if let Some(kept) = inbox.read(&id, MAX_DROP_BYTES)? {
         kept
     } else {
-        let drops = DropBox::from_env(env).await?;
+        let servers = ShareServers::from_env(env).await?;
+        let drops = DropBox::on(&servers, &code.server).await?;
+        writeln!(std::io::stderr(), "downloading from {}", code.server)?;
         let partial = inbox.partial()?;
         drops.download(&id, partial.as_file().try_clone()?).await?;
         inbox.keep(&id, partial)?;

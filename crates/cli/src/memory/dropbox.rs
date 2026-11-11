@@ -3,15 +3,17 @@ use std::time::Duration;
 use capture::seal::DropId;
 use chrono::DateTime;
 use chrono::Utc;
-use config::Environment;
 use futures::StreamExt as _;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
 
-use crate::cloud::Cloud;
-use crate::cloud::CloudError;
+use capture::seal::ShareServer;
+
+use crate::share_server::Server;
+use crate::share_server::ServerError;
+use crate::share_server::ShareServers;
 
 const DROPS_PATH: &str = "api/drops";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
@@ -21,8 +23,7 @@ const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(super) struct DropBox {
-    cloud: Cloud,
-    transfer: reqwest::Client,
+    server: Server,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +36,7 @@ pub(super) struct Uploaded {
 #[derive(Debug, thiserror::Error)]
 pub enum DropError {
     #[error(transparent)]
-    Cloud(#[from] CloudError),
+    Server(#[from] ServerError),
     #[error(
         "the drop box has no bundle {0}: it was already received, revoked, or it expired (drops last 7 days)"
     )]
@@ -57,38 +58,43 @@ pub enum DropError {
 }
 
 impl DropBox {
-    pub(super) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
-        let cloud = Cloud::from_env(env).await?;
-        let transfer = crate::cloud::client(cloud.origin(), TRANSFER_TIMEOUT)?;
-        Ok(Self { cloud, transfer })
+    pub(super) async fn on(servers: &ShareServers, host: &ShareServer) -> Result<Self, DropError> {
+        Ok(Self {
+            server: servers.connect(host, TRANSFER_TIMEOUT).await?,
+        })
+    }
+
+    pub(super) const fn host(&self) -> &ShareServer {
+        self.server.host()
     }
 
     pub(super) async fn upload(
         &self,
         ciphertext: bytes::Bytes,
     ) -> Result<(DropId, Uploaded), DropError> {
-        let url = self.cloud.endpoint(DROPS_PATH)?;
+        let url = self.server.endpoint(DROPS_PATH)?;
         let mut rejected: Option<String> = None;
         loop {
-            let token = self.cloud.access_token(rejected.as_deref()).await?;
+            let token = self.server.access_token(rejected.as_deref()).await?;
             let response = self
-                .transfer
+                .server
+                .client()
                 .post(url.clone())
                 .bearer_auth(&token)
                 .header(CONTENT_TYPE, "application/octet-stream")
                 .body(ciphertext.clone())
                 .send()
                 .await
-                .map_err(CloudError::from)?;
+                .map_err(ServerError::from)?;
             if response.status() == StatusCode::UNAUTHORIZED && rejected.is_none() {
                 rejected = Some(token);
                 continue;
             }
-            let uploaded: Uploaded = crate::cloud::checked(response)
+            let uploaded: Uploaded = crate::share_server::checked(response)
                 .await?
                 .json()
                 .await
-                .map_err(CloudError::from)?;
+                .map_err(ServerError::from)?;
             let id = uploaded
                 .id
                 .parse()
@@ -98,15 +104,16 @@ impl DropBox {
     }
 
     pub(super) async fn download(&self, id: &DropId, sink: std::fs::File) -> Result<(), DropError> {
-        let url = self.cloud.endpoint(&format!("{DROPS_PATH}/{id}"))?;
+        let url = self.server.endpoint(&format!("{DROPS_PATH}/{id}"))?;
         let mut attempts: u32 = 0;
         let response = loop {
             let response = self
-                .transfer
+                .server
+                .client()
                 .get(url.clone())
                 .send()
                 .await
-                .map_err(CloudError::from)?;
+                .map_err(ServerError::from)?;
             if response.status().is_server_error() && attempts < SERVER_RETRIES {
                 attempts += 1;
                 tokio::time::sleep(RETRY_DELAY * attempts).await;
@@ -120,7 +127,7 @@ impl DropBox {
         if response.status() == StatusCode::NOT_FOUND {
             return Err(DropError::Gone(id.clone()));
         }
-        let response = crate::cloud::checked(response).await?;
+        let response = crate::share_server::checked(response).await?;
         let declared = response.content_length();
         if declared.is_some_and(|length| length > MAX_DROP_BYTES as u64) {
             return Err(DropError::TooLarge);

@@ -184,13 +184,21 @@ pub struct MemorySection {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct ShareSection {
-    pub cloud: Option<ShareCloud>,
+    pub server: Option<ShareServerSection>,
+    pub trusted_cas: Vec<TrustedCa>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ShareCloud {
+pub struct ShareServerSection {
     pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedCa {
+    pub host: String,
+    pub ca: PathBuf,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -498,8 +506,14 @@ impl Config {
         self.memory.as_ref()?.sanitize.decide.as_ref()
     }
 
-    pub fn share_cloud(&self) -> Option<&ShareCloud> {
-        self.memory.as_ref()?.share.cloud.as_ref()
+    pub fn share_server(&self) -> Option<&ShareServerSection> {
+        self.memory.as_ref()?.share.server.as_ref()
+    }
+
+    pub fn share_trusted_cas(&self) -> &[TrustedCa] {
+        self.memory
+            .as_ref()
+            .map_or(&[], |memory| memory.share.trusted_cas.as_slice())
     }
 
     pub fn provider_kind(&self, name: &str) -> Option<ProviderType> {
