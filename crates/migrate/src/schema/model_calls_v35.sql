@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS rh_model_calls (
-    call_id TEXT PRIMARY KEY CHECK (call_id <> ''),
+    call_id TEXT NOT NULL CHECK (call_id <> ''),
     owner_user_id TEXT NOT NULL,
     session_key TEXT,
     turn_id TEXT,
@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS rh_model_calls (
     output_tokens INTEGER,
     cache_read_tokens INTEGER,
     cache_write_tokens INTEGER,
-    reasoning_tokens INTEGER
+    reasoning_tokens INTEGER,
+    PRIMARY KEY (owner_user_id, call_id)
 );
 CREATE INDEX IF NOT EXISTS rh_model_calls_session ON rh_model_calls (session_key, started_at);

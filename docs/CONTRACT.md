@@ -1866,13 +1866,14 @@ starts with `claude-cli/` and an `x-claude-code-session-id` header name `claude-
 with `codex_` and a `session-id` header name `codex:<id>`. For Codex the `x-codex-turn-metadata` header, JSON with
 `turn_id` and `request_kind`, fills the call's `turn_id` and `request_kind` when it parses and is ignored when it does
 not. A call that no row matches is stored with no session key and counted as `unmatched`; a later rule can claim it. A
-`call_id` already stored is counted as `duplicate` and changes nothing, so a proxy can resend a batch. Rows take the
+`call_id` the same owner already stored is counted as `duplicate` and changes nothing, so a proxy can resend a batch;
+uniqueness is per owner, so one person cannot learn which ids another has stored. Rows take the
 owner the gateway authenticated for the request, as `POST /api/capture` does (note 88). `GET
 /api/sessions/{session}/model-calls` answers `{totals, calls}` for a canonical session key, oldest call first: `totals`
 holds `calls`, `errors` (every call whose outcome is not `completed`), `usage` (the sums) and `models` (a count per
 `model_served`, else `model_requested`, else `unknown`). A session another person owns answers 404 as the session's
-other routes do, and on Postgres row-level security shows a login only the calls it recorded. Postgres migration 0062 adds `rh_model_calls` (unique on
-`call_id`, indexed by `session_key` and `started_at`, owner-scoped like the session ledgers) and SQLite schema v35 adds
+other routes do, and on Postgres row-level security shows a login only the calls it recorded. Postgres migration 0062 adds `rh_model_calls` (keyed on
+`owner_user_id` and `call_id`, indexed by `session_key` and `started_at`, owner-scoped like the session ledgers) and SQLite schema v35 adds
 the same table, so `memory_postgres::SCHEMA_VERSION` is 62 and `memory_sqlite::SCHEMA_VERSION` is 35. What a sink sends:
 one POST per batch with a JSON body as above, the request headers copied from the client's request minus every
 credential, and no body content. The proxy-side sink, cost tables, quota, account management and matching other

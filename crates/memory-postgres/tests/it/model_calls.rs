@@ -133,3 +133,29 @@ async fn a_person_login_reads_and_writes_only_its_own_calls(pool: PgPool) -> Tes
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_same_call_id_from_two_people_is_stored_for_each(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(probe(&pool).await?);
+    let session: SessionId = CLAUDE_SESSION.parse()?;
+    let shared = "00000000-0000-4000-8000-0000000000e4";
+    let alice_call = call(shared, 0, Some(CLAUDE_SESSION))?;
+    let bob_call = call(shared, 1, Some(CLAUDE_SESSION))?;
+
+    let alice_recorded = viewer("alice")?
+        .run(store.record(&owner("alice")?, std::slice::from_ref(&alice_call)))
+        .await?;
+    let bob_recorded = viewer("bob")?
+        .run(store.record(&owner("bob")?, std::slice::from_ref(&bob_call)))
+        .await?;
+
+    assert_eq!((alice_recorded.inserted, alice_recorded.duplicate), (1, 0));
+    assert_eq!(
+        (bob_recorded.inserted, bob_recorded.duplicate),
+        (1, 0),
+        "another person's call id is not reported as a duplicate"
+    );
+    let seen_by_bob = viewer("bob")?.run(store.session_calls(&session)).await?;
+    assert_eq!(seen_by_bob, [bob_call]);
+    Ok(())
+}

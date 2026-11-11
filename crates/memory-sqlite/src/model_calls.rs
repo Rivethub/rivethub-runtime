@@ -42,7 +42,7 @@ fn record(
                     status_code, outcome, retry_after_secs, input_tokens, output_tokens,
                     cache_read_tokens, cache_write_tokens, reasoning_tokens)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-                 ON CONFLICT (call_id) DO NOTHING",
+                 ON CONFLICT (owner_user_id, call_id) DO NOTHING",
                 params![
                     call.call_id,
                     owner,
