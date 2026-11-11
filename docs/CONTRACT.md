@@ -1929,8 +1929,9 @@ or a regex that does not compile is refused with the line of the rule's `[[rule]
 The output is sealed again as note 134 says, with the input's `exported_at` and `exported_by` (both fields scrubbed
 and mapped) and `sanitization` `{"state": "sanitized", "at": <now>, "policy_sha256", "passes": ["secrets",
 "mapping"], "unresolved_flags": 0}`, so it carries a new `bundle_sha256`. `policy_sha256` is the lowercase hex
-HMAC-SHA256, under the local key, of two parts, the raw bundle's `bundle_sha256` and the canonical JSON (note 144) of the
-secret rules' digest (SHA-256 over both rule files) and the mapping rules in order (matcher and action). Neither the
+HMAC-SHA256, under the local key, of three parts encoded as note 144 says: the tag `policy`, the raw bundle's
+`bundle_sha256` and the canonical JSON of the secret rules' digest (SHA-256 over both rule files) and the mapping
+rules in order (matcher and action). Neither the
 key nor the raw digest ships, so the hash tells its owner whether one raw bundle was sanitized twice with the same
 policy, and nobody else can test a guessed mapping rule or a reconstructed raw bundle against it.
 
@@ -1944,9 +1945,9 @@ manifest, one row per event, field and rule: the first 12 hex characters of the 
 `manifest.exported_by.node`, or `settings`, `tool_args` or `metadata` with the JSON path built from the scrubbed and
 suffixed keys, and ` (a key)` naming the scrubbed key when the key itself changed), the rule, the replacement, the
 number of changes and an Original column, then the keys a collision renamed, each under its suffixed path. The
-Original column lists fingerprints, each the first 12 hex characters of the HMAC-SHA256, under the local key, of the
-two parts, the raw bundle's `bundle_sha256` and the replaced span (note 144), so spans with the same text share a fingerprint and
-nobody without the key can test a guess against it.
+Original column lists fingerprints, each the first 12 hex characters of the HMAC-SHA256, under the local key, of three
+parts encoded as note 144 says: the tag `fingerprint`, the raw bundle's `bundle_sha256` and the replaced span, so spans
+with the same text share a fingerprint and nobody without the key can test a guess against it.
 
 `ingest-bundle` does not trust the stamp. Before it posts anything, it runs the secrets pass over every field of a
 sanitized bundle it reads, event ids, task ids, the author and `exported_by` included, with the same placeholder
@@ -2399,17 +2400,21 @@ harnesses (add a row to the table) are not part of this route.
 every HMAC under the local sanitize key (ids, fingerprints, the policy hash, task-id UUIDs, the collision order and both
 review seals) is HMAC-SHA256 from the RustCrypto `hmac` crate. No hand-written primitive is left. Format 2 feeds the MAC
 `frame("rivethub sanitize mac v2")` and then `frame(part)` for each part, where `frame(x)` is the length of `x` as 8
-big-endian bytes followed by `x`. The parts are the ones notes 136 and 137 list. Two different part lists never share an
-input. Format 1 is the 0.8.0 encoding, which joined the parts with one
+big-endian bytes followed by `x`. The parts are the ones notes 136 and 137 list. The policy hash and the fingerprints
+lead with a tag part, `policy` and `fingerprint`, so two inputs of the same shape under different names never share a
+MAC. Two different part lists never share an input. Format 1 is the 0.8.0 encoding, which joined the parts with one
 zero byte. Under it `["a\0", "b"]` and `["a", "\0b"]` got the same MAC, so two raw event ids could map to one id and
-merge at the receiver's dedupe. A seal is checked with the crate's constant-time `verify_slice` and never with `==`.
+merge at the receiver's dedupe. A seal is checked with the crate's constant-time `verify_slice` and never with `==`. A
+seal tag is exactly 64 lowercase hex characters. Upper case, odd lengths and other lengths never verify.
 Every new sanitize run, from the CLI, MCP (note 139) or share (note 140), uses format 2. The local review file records
-`mac_format: "v2"` inside its sealed JSON. A file with no `mac_format` is format 1, so an 0.8.0 `--decide` run still
+`mac_format: "v2"` inside its sealed JSON. The field is either absent, which is format 1, or `"v2"`. A file that spells
+out `"v1"` is refused as malformed. A file with no `mac_format` is format 1, so an 0.8.0 `--decide` run still
 resolves. Resolve checks both seals, re-renders and reseals in the format that the local file names, so later resolves
-of that bundle keep working. Bundles already sanitized keep the ids they hold, and the receiver never recomputes them.
-If you sanitize the same raw input again after this change, it gets new event ids and a new `origin.identity`, as after
-a key rotation (note 136). A re-import of such a bundle then duplicates its sessions once. The policy hash and the report
-fingerprints of a re-run also differ from the 0.8.0 run.
+of that bundle keep working. Format 2 tags never verify under format 1. A 0.8.0 binary that resolves a format 2 local
+file refuses it as sealed under another machine's key. Bundles already sanitized keep the ids they hold, and the
+receiver never recomputes them. If you sanitize the same raw input again after this change, it gets new event ids and a
+new `origin.identity`, as after a key rotation (note 136). A re-import of such a bundle then duplicates its sessions
+once. The policy hash and the report fingerprints of a re-run also differ from the 0.8.0 run.
 
 ## 4. Gaps to close before building the affected slice
 
