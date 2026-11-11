@@ -25,7 +25,7 @@ use crate::plugin_support::{Failure, TestResult, harness_with_desk, write_manife
 
 const DEVICE: &str = "desk";
 const LOOPBACK: &str = "127.0.0.1:41000";
-const LAN: &str = "192.168.1.20:41000";
+const LAN: &str = "203.0.113.20:41000";
 const SESSION: &str = "0b7a7c62-3c43-4a1e-8d57-6d7a4f2a9e01";
 const HIDDEN: &str = "pay\u{202E}me\u{200B}now";
 
