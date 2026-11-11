@@ -1,11 +1,8 @@
-use kernel::memory::share::Choice;
-use kernel::memory::share::ChoiceError;
+use kernel::memory::share;
+use kernel::memory::share::ChoiceRefusal;
 use kernel::memory::share::SessionChoices;
-use kernel::memory::share::SessionRedaction;
-use kernel::memory::share::Term;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -16,18 +13,6 @@ impl Chosen {
     pub(crate) fn into_choices(self) -> SessionChoices {
         self.0
     }
-}
-
-#[derive(Debug, Error)]
-pub(crate) enum ChoiceRefusal {
-    #[error(
-        "session {0} is approved, so it takes no redact rules; set decision to redact to apply them"
-    )]
-    ApprovedWithRules(Uuid),
-    #[error("session {id}: {source}")]
-    Rules { id: Uuid, source: ChoiceError },
-    #[error(transparent)]
-    Choices(#[from] ChoiceError),
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -63,35 +48,20 @@ impl TryFrom<Vec<ChosenSession>> for Chosen {
     type Error = ChoiceRefusal;
 
     fn try_from(sessions: Vec<ChosenSession>) -> Result<Self, Self::Error> {
-        let chosen = sessions
+        let sessions = sessions
             .into_iter()
             .map(|session| {
-                let id = session.id;
-                let choice = match (session.decision, session.redact) {
-                    (Decision::Approve, None) => Choice::Approve,
-                    (Decision::Approve, Some(_)) => {
-                        return Err(ChoiceRefusal::ApprovedWithRules(id));
-                    }
-                    (Decision::Redact, rules) => {
-                        let Rules {
-                            terms,
-                            drop_tool_outputs,
-                        } = rules.unwrap_or_default();
-                        let redaction = terms
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(Term::try_from)
-                            .collect::<Result<Vec<_>, _>>()
-                            .and_then(|terms| {
-                                SessionRedaction::new(terms, drop_tool_outputs == Some(true))
-                            })
-                            .map_err(|source| ChoiceRefusal::Rules { id, source })?;
-                        Choice::Redact(redaction)
-                    }
+                let decision = match session.decision {
+                    Decision::Approve => share::Decision::Approve,
+                    Decision::Redact => share::Decision::Redact,
                 };
-                Ok((id, choice))
+                let rules = session.redact.map(|rules| share::RedactRules {
+                    terms: rules.terms,
+                    drop_tool_outputs: rules.drop_tool_outputs,
+                });
+                (session.id, decision, rules)
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self(SessionChoices::try_from(chosen)?))
+            .collect();
+        Ok(Self(share::choices(sessions)?))
     }
 }

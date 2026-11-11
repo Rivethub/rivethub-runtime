@@ -87,6 +87,7 @@ pub struct Gateway {
     changes: Option<Arc<dyn kernel::changes::ChangeFeed>>,
     digests: Option<Arc<dyn kernel::changes::DigestStore>>,
     account: Option<Arc<account::AccountService>>,
+    share_desk: Option<Arc<dyn kernel::memory::share::desk::ShareDesk>>,
     model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
 }
 
@@ -132,6 +133,7 @@ impl Gateway {
             changes: None,
             digests: None,
             account: None,
+            share_desk: None,
             model_calls: None,
         }
     }
