@@ -7,7 +7,7 @@ exclude = ["lints"]
 edition = "2024"
 license = "Apache-2.0"
 publish = false
-version = "0.7.0"
+version = "0.8.0"
 repository = "https://github.com/philbert440/rivethub-runtime"
 rust-version = "1.99"
 
@@ -22,38 +22,38 @@ axum = { version = "0.8", features = ["ws", "macros"] }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "alloc"] }
 base64 = "0.22"
 bytes = "1"
-capture = { path = "crates/capture", version = "0.7.0" }
+capture = { path = "crates/capture", version = "0.8.0" }
 cargo_metadata = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 clap = { version = "4", features = ["derive"] }
-cli = { path = "crates/cli", version = "0.7.0" }
-config = { path = "crates/config", version = "0.7.0" }
+cli = { path = "crates/cli", version = "0.8.0" }
+config = { path = "crates/config", version = "0.8.0" }
 croner = "4"
 eventsource-stream = "0.2"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 futures = "0.3"
-gateway = { path = "crates/gateway", version = "0.7.0" }
+gateway = { path = "crates/gateway", version = "0.8.0" }
 getrandom = "0.4"
-harness-acp = { path = "crates/harness-acp", version = "0.7.0" }
+harness-acp = { path = "crates/harness-acp", version = "0.8.0" }
 hex = "0.4"
 http-body = { version = "1", default-features = false }
 httparse = "1"
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
-kernel = { path = "crates/kernel", version = "0.7.0" }
+kernel = { path = "crates/kernel", version = "0.8.0" }
 landlock = "0.4.7"
 libtest-mimic = "0.8"
-mcp = { path = "crates/mcp", version = "0.7.0" }
-memory-postgres = { path = "crates/memory-postgres", version = "0.7.0" }
-memory-sqlite = { path = "crates/memory-sqlite", version = "0.7.0" }
-migrate = { path = "crates/migrate", version = "0.7.0" }
+mcp = { path = "crates/mcp", version = "0.8.0" }
+memory-postgres = { path = "crates/memory-postgres", version = "0.8.0" }
+memory-sqlite = { path = "crates/memory-sqlite", version = "0.8.0" }
+migrate = { path = "crates/migrate", version = "0.8.0" }
 nix = { version = "0.30", features = ["process", "signal", "fs", "user"] }
 parking_lot = "0.12"
 percent-encoding = "2"
 pgvector = { version = "0.4", features = ["sqlx"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-providers = { path = "crates/providers", version = "0.7.0" }
+providers = { path = "crates/providers", version = "0.8.0" }
 ra-ap-rustc_lexer = "0.177"
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "aws_lc_rs"] }
 regex = "1"
@@ -84,7 +84,7 @@ syn = { version = "2", features = ["full", "visit"] }
 tar = { version = "0.4", default-features = false }
 
 tempfile = "3"
-testkit = { path = "crates/testkit", version = "0.7.0" }
+testkit = { path = "crates/testkit", version = "0.8.0" }
 thiserror = "2"
 tokio = { version = "1" }
 tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs", "tls12"] }
@@ -97,9 +97,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
-values = { path = "crates/values", version = "0.7.0" }
-wire = { path = "crates/wire", version = "0.7.0" }
-workers = { path = "crates/workers", version = "0.7.0" }
+values = { path = "crates/values", version = "0.8.0" }
+wire = { path = "crates/wire", version = "0.8.0" }
+workers = { path = "crates/workers", version = "0.8.0" }
 x509-parser = { version = "0.18", features = ["verify-aws"] }
 zstd = { version = "0.14.3", default-features = false }
 

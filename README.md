@@ -11,18 +11,30 @@ Related repositories: [rivethub-desktop](https://github.com/philbert440/rivethub
 
 ## Install
 
-Every release `v<version>` publishes one archive per target and a `SHA256SUMS` file. Each archive holds `rh`,
-`rivethub-migrate` and `LICENSE`. There is no install script; unpack both binaries into a directory on your `PATH`:
+On Linux or macOS, the installer picks the archive for your machine, verifies it against the release's `SHA256SUMS`,
+puts `rh` and `rivethub-migrate` in `~/.local/bin` and starts a local node (`--no-start` installs only, `--version`
+pins a release, `--dir` picks another directory):
 
 ```sh
-version=0.7.0                      # a release tag without its v
+curl -fsSL https://get.rivethub.io/local.sh | bash
+```
+
+To do the same by hand: every release `v<version>` publishes one archive per target and a `SHA256SUMS` file, and each
+archive holds `rh`, `rivethub-migrate` and `LICENSE`. Unpack both binaries into a directory on your `PATH`:
+
+```sh
+version=0.8.0                      # a release tag without its v
 target=x86_64-unknown-linux-gnu    # or aarch64-unknown-linux-gnu, universal-apple-darwin
-base=https://github.com/philbert440/rivethub-runtime/releases/download/v$version
+base=https://github.com/Rivethub/rivethub-runtime/releases/download/v$version
 curl -fL -O "$base/rh-$version-$target.tar.gz" -O "$base/SHA256SUMS"
-sha256sum --ignore-missing -c SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS      # on macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
+mkdir -p ~/.local/bin
 tar -xzf "rh-$version-$target.tar.gz" -C ~/.local/bin rh rivethub-migrate
 rh version
 ```
+
+Then start a node and wire your tools: `rh local --ensure`, then `rh harness status` and
+`rh harness connect <harness>` (for example `claude-code`), which adds the capture hook and the recall MCP entry.
 
 Linux builds need glibc 2.35 or newer; on Windows, run the Linux archive under WSL. After that, `rh update` keeps the
 installation current:
