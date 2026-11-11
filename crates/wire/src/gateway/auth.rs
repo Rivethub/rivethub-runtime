@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 pub const REAUTH_REQUIRED: &str = "reauth_required";
 
-/// A one-time code, session token or CSRF token. Debug never prints it, so logging a body cannot leak it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct Secret(String);

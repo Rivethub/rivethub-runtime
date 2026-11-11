@@ -314,6 +314,13 @@ fn html_unauthorized() -> Response {
 }
 
 pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS#fallback: a configured origin that is not a valid header value lists no origin, as normalize_origin does"
+        )
+    )]
     let listed: Vec<HeaderValue> = origins
         .iter()
         .map(String::as_str)
@@ -370,11 +377,6 @@ pub(crate) fn csrf_exempt(parts: &Parts) -> bool {
         && (path == "/wiki" || path.starts_with("/wiki/"))
 }
 
-/// Step-up for sensitive routes: take it as a handler argument before any body extractor.
-///
-/// A browser session must have been authenticated within `gateway.fresh_login_secs`; otherwise the
-/// caller gets 401 `{"error":"reauth_required"}`, distinct from a plain 401, and runs `rh open` again.
-/// The local owner token and users-file tokens are presented on every request, so they are always fresh.
 #[derive(Debug, Clone, Copy)]
 pub struct FreshLogin;
 

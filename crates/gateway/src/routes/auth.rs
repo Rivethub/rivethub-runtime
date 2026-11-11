@@ -124,11 +124,7 @@ async fn exchange(
     if !gateway.browser().codes.redeem(request.code.expose()) {
         return Err(ApiError::Unauthorized);
     }
-    let csrf = gateway
-        .browser()
-        .begin(&session)
-        .await
-        .ok_or(ApiError::Internal)?;
+    let csrf = gateway.browser().begin(&session).await?;
     Ok(Json(SessionResponse {
         csrf: Secret::new(csrf),
     }))

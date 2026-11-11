@@ -29,6 +29,8 @@ use tokio::time::Instant;
 use tower_sessions::Expiry;
 use tower_sessions::MemoryStore;
 use tower_sessions::Session;
+
+use crate::error::ApiError;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::cookie::time;
@@ -104,10 +106,7 @@ impl LoginCodes {
                 soonest.map_or(LOGIN_CODE_TTL, |at| at.saturating_duration_since(now)),
             ));
         }
-        let Some(code) = random_secret() else {
-            drop(live);
-            return Err(MintError::Random);
-        };
+        let code = random_secret().map_err(|_| MintError::Random)?;
         live.push((Sha256::digest(code.as_bytes()).into(), now + LOGIN_CODE_TTL));
         drop(live);
         Ok(code)
@@ -134,10 +133,10 @@ impl LoginCodes {
     }
 }
 
-pub(crate) fn random_secret() -> Option<String> {
+pub(crate) fn random_secret() -> Result<String, getrandom::Error> {
     let mut bytes = [0_u8; SECRET_BYTES];
-    getrandom::fill(&mut bytes).ok()?;
-    Some(URL_SAFE_NO_PAD.encode(bytes))
+    getrandom::fill(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
 type PerPeer = RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>;
@@ -206,10 +205,14 @@ impl Browser {
         &self.policy
     }
 
-    /// Under TLS the cookie is `__Host-` prefixed and `Secure`. On plain-HTTP
-    /// loopback it is neither, because Safari drops a `Secure` cookie from
-    /// `http://127.0.0.1` and loopback traffic never leaves the machine.
     pub(crate) fn layer(&self, tls: bool) -> SessionManagerLayer<MemoryStore> {
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "PATTERNS#fallback: an idle limit beyond time::Duration's range saturates to its maximum"
+            )
+        )]
         let idle = time::Duration::try_from(self.policy.idle).unwrap_or(time::Duration::MAX);
         SessionManagerLayer::new(self.store.clone())
             .with_name(if tls { TLS_COOKIE } else { PLAIN_COOKIE })
@@ -230,8 +233,8 @@ impl Browser {
         self.codes.clear();
     }
 
-    pub(crate) async fn begin(&self, session: &Session) -> Option<String> {
-        let csrf = random_secret()?;
+    pub(crate) async fn begin(&self, session: &Session) -> Result<String, ApiError> {
+        let csrf = random_secret().map_err(|_| ApiError::Internal)?;
         let now = chrono::Utc::now().timestamp();
         let login = Login {
             issued_at: now,
@@ -239,9 +242,12 @@ impl Browser {
             csrf: csrf.clone(),
             epoch: self.epoch.load(Ordering::Acquire),
         };
-        session.cycle_id().await.ok()?;
-        session.insert(LOGIN_KEY, login).await.ok()?;
-        Some(csrf)
+        session.cycle_id().await.map_err(|_| ApiError::Internal)?;
+        session
+            .insert(LOGIN_KEY, login)
+            .await
+            .map_err(|_| ApiError::Internal)?;
+        Ok(csrf)
     }
 
     fn accepts(&self, login: &Login) -> bool {
