@@ -5,7 +5,11 @@ use chrono::DateTime;
 use chrono::Utc;
 use wire::capture::BundledSession;
 
+use super::decide::Decision;
 use super::mapping::Action;
+use super::marks::STAMP_PREFIX;
+use super::marks::flag_section;
+use super::marks::stamp_text;
 
 const SHOWN_FINGERPRINTS: usize = 3;
 const SHOWN_EVENT_HEX: usize = 12;
@@ -78,6 +82,7 @@ impl fmt::Display for Field {
 pub enum Pass {
     Secrets,
     Mapping,
+    Decide,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,6 +91,7 @@ pub enum RuleId {
     SecretKey,
     Mapped { line: usize },
     Redacted { line: usize },
+    FlagLiteral,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +99,7 @@ pub enum ChangeKind {
     Secret,
     Mapped,
     Redacted,
+    Escaped,
 }
 
 impl RuleId {
@@ -102,19 +109,20 @@ impl RuleId {
             Self::Pattern(_) | Self::SecretKey => ChangeKind::Secret,
             Self::Mapped { .. } => ChangeKind::Mapped,
             Self::Redacted { .. } => ChangeKind::Redacted,
+            Self::FlagLiteral => ChangeKind::Escaped,
         }
     }
 
     const fn order(self) -> usize {
         match self {
-            Self::Pattern(_) | Self::SecretKey => 0,
+            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => 0,
             Self::Mapped { line } | Self::Redacted { line } => line,
         }
     }
 
     const fn pass(self) -> Pass {
         match self {
-            Self::Pattern(_) | Self::SecretKey => Pass::Secrets,
+            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => Pass::Secrets,
             Self::Mapped { .. } | Self::Redacted { .. } => Pass::Mapping,
         }
     }
@@ -127,6 +135,9 @@ impl fmt::Display for RuleId {
             Self::SecretKey => formatter.write_str("secret key name"),
             Self::Mapped { line } => write!(formatter, "rule at line {line} (map)"),
             Self::Redacted { line } => write!(formatter, "rule at line {line} (redact)"),
+            Self::FlagLiteral => {
+                formatter.write_str("[FLAGGED:<n>] written in the session (escaped)")
+            }
         }
     }
 }
@@ -181,7 +192,7 @@ impl SessionLine {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Report {
     pub at: DateTime<Utc>,
     pub policy_sha256: String,
@@ -191,6 +202,7 @@ pub struct Report {
     pub changes: Vec<Change>,
     pub collisions: Vec<Collision>,
     pub rechecked: usize,
+    pub decision: Option<Decision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -198,6 +210,21 @@ pub struct Totals {
     pub secrets: usize,
     pub mapped: usize,
     pub redacted: usize,
+    pub escaped: usize,
+}
+
+impl fmt::Display for Totals {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} secrets, {} mapped, {} redacted",
+            self.secrets, self.mapped, self.redacted
+        )?;
+        if self.escaped > 0 {
+            write!(formatter, ", {} escaped", self.escaped)?;
+        }
+        Ok(())
+    }
 }
 
 impl Report {
@@ -209,6 +236,7 @@ impl Report {
                 ChangeKind::Secret => totals.secrets += 1,
                 ChangeKind::Mapped => totals.mapped += 1,
                 ChangeKind::Redacted => totals.redacted += 1,
+                ChangeKind::Escaped => totals.escaped += 1,
             }
         }
         totals
@@ -218,6 +246,9 @@ impl Report {
     pub fn markdown(&self, bundle: &str, mapping: &str) -> String {
         let mut out = String::new();
         self.header(&mut out, bundle, mapping);
+        if let Some(decision) = &self.decision {
+            flag_section(&mut out, decision, bundle);
+        }
         self.rule_table(&mut out);
         let mut by_session: HashMap<Option<usize>, Vec<&Change>> = HashMap::new();
         for change in &self.changes {
@@ -271,14 +302,20 @@ impl Report {
         push_line(
             out,
             format_args!(
-                "Sanitized {sessions} {} at {}: {} secrets, {} mapped, {} redacted.\n",
+                "Sanitized {sessions} {} at {}: {totals}.\n",
                 plural(sessions, "session", "sessions"),
                 self.at.format("%Y-%m-%d %H:%M:%S UTC"),
-                totals.secrets,
-                totals.mapped,
-                totals.redacted,
             ),
         );
+        if let Some(decision) = &self.decision {
+            out.push_str(
+                "Never share this report or send it with the bundle. Its Flags section shows the text of each flagged chunk",
+            );
+            if decision.review.mode == super::decide::Mode::Block {
+                out.push_str(", including the text the bundle withholds");
+            }
+            out.push_str(", so it is for you alone. Never share `<out without .json>.review.local.json` either, which holds the withheld text; share only the bundle.\n\n");
+        }
         if self.rechecked > 0 {
             push_line(
                 out,
@@ -289,9 +326,11 @@ impl Report {
                 ),
             );
         }
-        out.push_str(
-            "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n",
-        );
+        out.push_str(if self.decision.is_some() {
+            "The tables below never show the text the secrets and mapping passes replaced, but the Flags section does show flagged text. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n"
+        } else {
+            "This report never shows the text that was replaced. The Original column is a short HMAC of each replaced span under this machine's local sanitize key and the raw bundle's digest, so two spans with the same text share a fingerprint and nobody without the key can test a guess against it.\n\n"
+        });
         out.push_str(
             "Every text field is scanned for secrets, the author included; the author and task id are not mapped. Dates and roles are not scanned. Event ids are replaced by an HMAC of the raw id under the local key.\n\n",
         );
@@ -311,7 +350,11 @@ impl Report {
         );
         push_line(
             out,
-            format_args!("- Bundle sha256: `{}`\n", self.bundle_sha256),
+            format_args!("- Bundle sha256: `{}`", self.bundle_sha256),
+        );
+        push_line(
+            out,
+            format_args!("{STAMP_PREFIX}`{}`\n", stamp_text(self.at)),
         );
     }
 
@@ -452,21 +495,21 @@ fn short_event(event_id: &str) -> &str {
     event_id.get(..SHOWN_EVENT_HEX).unwrap_or(event_id)
 }
 
-fn cell(text: &str) -> String {
+pub(super) fn cell(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('|', "\\|")
         .replace(['\n', '\r'], " ")
 }
 
-fn code(text: &str) -> String {
+pub(super) fn code(text: &str) -> String {
     format!("`{}`", cell(&text.replace('`', "'")))
 }
 
-const fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
+pub(super) const fn plural(count: usize, one: &'static str, many: &'static str) -> &'static str {
     if count == 1 { one } else { many }
 }
 
-fn push_line(out: &mut String, line: fmt::Arguments<'_>) {
+pub(super) fn push_line(out: &mut String, line: fmt::Arguments<'_>) {
     out.push_str(&line.to_string());
     out.push('\n');
 }

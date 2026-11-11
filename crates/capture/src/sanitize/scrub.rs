@@ -20,7 +20,6 @@ use crate::rules::Budget;
 use crate::rules::Ruleset;
 
 const FINGERPRINT_HEX: usize = 12;
-const PLACEHOLDER_OPEN: &str = "[REDACTED";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Location {
@@ -35,6 +34,7 @@ pub(super) struct Scrubber<'a> {
     digest: &'a str,
     pub(super) budget: Budget<'a>,
     pub(super) whole: bool,
+    pub(super) escape_flags: bool,
     pub(super) at: Location,
     pub(super) changes: Vec<Change>,
     pub(super) collisions: Vec<Collision>,
@@ -55,6 +55,7 @@ impl<'a> Scrubber<'a> {
             digest,
             budget: Budget::after(0),
             whole: false,
+            escape_flags: false,
             at: Location::default(),
             changes: Vec::new(),
             collisions: Vec::new(),
@@ -154,6 +155,9 @@ impl<'a> Scrubber<'a> {
     }
 
     fn secrets_only(&mut self, field: &Field, text: &mut String) {
+        if self.escape_flags {
+            self.escape_flags(field, text);
+        }
         let hits = self.secret_hits(text);
         self.apply(field, text, hits);
     }
@@ -177,6 +181,17 @@ impl<'a> Scrubber<'a> {
             })
             .collect();
         self.apply(field, text, hits);
+    }
+
+    fn escape_flags(&mut self, field: &Field, text: &mut String) {
+        let literals = super::decide::escapes(text);
+        for (range, escaped) in &literals {
+            let original = text.get(range.clone()).unwrap_or_default().to_owned();
+            self.record(field.clone(), RuleId::FlagLiteral, &original, escaped);
+        }
+        for (range, escaped) in literals.into_iter().rev() {
+            text.replace_range(range, &escaped);
+        }
     }
 
     fn task_id(&mut self, text: &mut String) {
@@ -345,27 +360,30 @@ fn unprotected(hit: &Range<usize>, protected: &[Range<usize>]) -> Vec<Range<usiz
     pieces
 }
 
-fn protected(text: &str, rules: &Ruleset) -> Vec<Range<usize>> {
+pub(super) fn scan_flags(text: &str) -> bool {
+    let mapping = Mapping::default();
+    let mut scrubber = Scrubber::new(&mapping, None, "");
+    let mut copy = text.to_owned();
+    scrubber.text(&Field::Content, &mut copy);
+    !scrubber.changes.is_empty()
+}
+
+pub(super) fn protected(text: &str, rules: &Ruleset) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut from = 0;
-    while let Some(found) = text
-        .get(from..)
-        .and_then(|rest| rest.find(PLACEHOLDER_OPEN))
-    {
+    while let Some(found) = text.get(from..).and_then(|rest| rest.find('[')) {
         let start = from + found;
-        from = start + PLACEHOLDER_OPEN.len();
-        if let Some(end) = placeholder_end(text, from, rules) {
-            ranges.push(start..end);
-            from = end;
+        let length = text
+            .get(start..)
+            .map_or(0, |rest| rules.names().placeholder_len(rest));
+        if length > 0 {
+            ranges.push(start..start + length);
+            from = start + length;
+        } else {
+            from = start + 1;
         }
     }
     ranges
-}
-
-fn placeholder_end(text: &str, after_open: usize, rules: &Ruleset) -> Option<usize> {
-    let start = after_open.checked_sub(PLACEHOLDER_OPEN.len())?;
-    let length = rules.names().placeholder_len(text.get(start..)?);
-    (length > 0).then_some(start + length)
 }
 
 #[cfg(test)]

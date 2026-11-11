@@ -92,6 +92,8 @@ pub enum RuleProblem {
     RedactWithPlaceholder,
     #[error("has an empty placeholder")]
     EmptyPlaceholder,
+    #[error("maps to a `[FLAGGED:<n>]` form, which ingest reads as a withheld flag")]
+    FlagPlaceholder,
 }
 
 #[derive(Deserialize)]
@@ -155,6 +157,11 @@ fn rule(line: usize, raw: RawRule) -> Result<Rule, MappingError> {
         (RawAction::Map, Some(placeholder)) if placeholder.is_empty() => {
             return Err(problem(RuleProblem::EmptyPlaceholder));
         }
+        (RawAction::Map, Some(placeholder))
+            if placeholder.contains(crate::rules::names::FLAGGED_OPEN) =>
+        {
+            return Err(problem(RuleProblem::FlagPlaceholder));
+        }
         (RawAction::Map, Some(placeholder)) => Action::Map(placeholder),
         (RawAction::Redact, Some(_)) => return Err(problem(RuleProblem::RedactWithPlaceholder)),
         (RawAction::Redact, None) => Action::Redact,
@@ -166,12 +173,41 @@ fn rule(line: usize, raw: RawRule) -> Result<Rule, MappingError> {
     })
 }
 
+#[must_use]
+pub fn map_rule(term: &str, placeholder: &str) -> String {
+    let quote = |text: &str| toml::Value::String(text.to_owned()).to_string();
+    format!(
+        "[[rule]]\nregex = {}\naction = \"map\"\nas = {}\n",
+        quote(&super::decide::term_regex(term)),
+        quote(placeholder)
+    )
+}
+
+impl Mapping {
+    #[must_use]
+    pub fn learned(&self, term: &str) -> bool {
+        let pattern = super::decide::term_regex(term);
+        self.rules.iter().any(|rule| match &rule.matcher {
+            Matcher::Literal(literal) => literal == term,
+            Matcher::Regex(regex) => regex.as_str() == pattern,
+        })
+    }
+}
+
 fn line_of(text: &str, offset: usize) -> usize {
     text.get(..offset)
         .map_or(1, |before| before.matches('\n').count() + 1)
 }
 
 fn ascii_boundaries(source: &str) -> String {
+    source
+        .split(super::decide::UNICODE_BOUNDARY)
+        .map(ascii_piece)
+        .collect::<Vec<_>>()
+        .join(super::decide::UNICODE_BOUNDARY)
+}
+
+fn ascii_piece(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 16);
     let mut chars = source.chars();
     let mut in_class = false;
@@ -313,5 +349,9 @@ mod tests {
             r"(?-u:\b)\d{3}-\d{4}(?-u:\b)"
         );
         assert_eq!(ascii_boundaries(r"[\b]x\\b\Bq"), r"[\b]x\\b(?-u:\B)q");
+        assert_eq!(
+            ascii_boundaries(r"(?u:\b)Tom(?u:\b)|\bx"),
+            r"(?u:\b)Tom(?u:\b)|(?-u:\b)x"
+        );
     }
 }

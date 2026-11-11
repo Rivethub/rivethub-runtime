@@ -102,6 +102,45 @@ pub struct SanitizeStamp {
     pub policy_sha256: String,
     pub passes: Vec<String>,
     pub unresolved_flags: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewStamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReviewStamp {
+    pub mode: ReviewMode,
+    pub model: String,
+    pub calls: usize,
+    pub flags: Vec<FlagStamp>,
+    pub seal: String,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, strum::Display,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ReviewMode {
+    Advisory,
+    Block,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FlagStamp {
+    pub number: usize,
+    pub mark: FlagMark,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, strum::Display,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum FlagMark {
+    Open,
+    Keep,
+    Redact,
+    Map,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

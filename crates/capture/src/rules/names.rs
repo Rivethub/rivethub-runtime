@@ -20,6 +20,8 @@ const RIVETHUB_FILE: &str = "rivethub.toml";
 const PLACEHOLDER_OPEN: &str = "[REDACTED";
 const PATTERN_KIND: &str = "pattern:";
 const SECRET_KEY_KIND: &str = "secret_key";
+pub(crate) const FLAGGED_KIND: &str = "flagged";
+pub(crate) const FLAGGED_OPEN: &str = "[FLAGGED:";
 const KEY_WORD: &str = "key";
 const MIN_ECHO_LENGTH: usize = 4;
 const MAX_CODE_SEGMENT: usize = 40;
@@ -206,6 +208,7 @@ impl Names {
     pub(super) fn set_kinds(&mut self, kinds: impl IntoIterator<Item = String>) {
         self.kinds = kinds.into_iter().collect();
         self.kinds.insert(SECRET_KEY_KIND.to_owned());
+        self.kinds.insert(FLAGGED_KIND.to_owned());
     }
 
     pub(super) fn allow(&self) -> Allow {
@@ -519,6 +522,14 @@ impl Names {
     }
 
     pub(crate) fn placeholder_len(&self, value: &str) -> usize {
+        if let Some(rest) = value.strip_prefix(FLAGGED_OPEN) {
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            return if digits > 0 && rest.as_bytes().get(digits) == Some(&b']') {
+                FLAGGED_OPEN.len() + digits + 1
+            } else {
+                0
+            };
+        }
         let Some(rest) = value.strip_prefix(PLACEHOLDER_OPEN) else {
             return 0;
         };

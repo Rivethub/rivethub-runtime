@@ -131,6 +131,16 @@ pub(super) async fn ingest(
             first: first.to_string(),
         });
     }
+    let capture::sanitize::OpenFlags {
+        withheld,
+        unreviewed,
+    } = capture::sanitize::open_flags(&bundle)?;
+    if withheld > 0 && !force && !dry_run {
+        return Err(Error::BundleFlags {
+            path: path.display().to_string(),
+            count: withheld,
+        });
+    }
     let unscrubbed;
     let state = match (raw, secrets.len(), force) {
         (false, 0, _) => "",
@@ -145,6 +155,13 @@ pub(super) async fn ingest(
         (true, _, true) => " (raw bundle forced)",
         (true, _, false) => " (raw bundle; ingest needs --force)",
     };
+    let open = match (withheld, force) {
+        (0, _) if unreviewed > 0 => format!(" ({unreviewed} advisory flags unreviewed)"),
+        (0, _) => String::new(),
+        (count, true) => format!(" ({count} withheld flags forced)"),
+        (count, false) => format!(" ({count} withheld flags; ingest needs --force)"),
+    };
+    let state = format!("{state}{open}");
     let sessions = sessions_from(&bundle, &secrets);
     if dry_run {
         let mut lines: Vec<String> = bundle

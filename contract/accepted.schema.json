@@ -2237,6 +2237,32 @@
       ],
       "type": "object"
     },
+    "FlagMark": {
+      "enum": [
+        "open",
+        "keep",
+        "redact",
+        "map"
+      ],
+      "type": "string"
+    },
+    "FlagStamp": {
+      "properties": {
+        "mark": {
+          "$ref": "#/$defs/FlagMark"
+        },
+        "number": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "mark"
+      ],
+      "type": "object"
+    },
     "FlaggedGroup": {
       "properties": {
         "cause": {
@@ -8248,6 +8274,13 @@
       ],
       "type": "object"
     },
+    "ReviewMode": {
+      "enum": [
+        "advisory",
+        "block"
+      ],
+      "type": "string"
+    },
     "ReviewOption": {
       "properties": {
         "label": {
@@ -8270,6 +8303,38 @@
       "required": [
         "label",
         "value"
+      ],
+      "type": "object"
+    },
+    "ReviewStamp": {
+      "properties": {
+        "calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/FlagStamp"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "$ref": "#/$defs/ReviewMode"
+        },
+        "model": {
+          "type": "string"
+        },
+        "seal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "model",
+        "calls",
+        "flags",
+        "seal"
       ],
       "type": "object"
     },
@@ -8345,6 +8410,16 @@
         },
         "policy_sha256": {
           "type": "string"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReviewStamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "unresolved_flags": {
           "format": "uint32",

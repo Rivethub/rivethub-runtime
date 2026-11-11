@@ -24,7 +24,7 @@ const EVERY_POSITION: &str = "*";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Position {
+pub(super) enum Position {
     Content,
     ToolResult,
     ToolArgsValue,
@@ -63,20 +63,20 @@ const ALL: [Position; 15] = [
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Expect {
+pub(super) enum Expect {
     Redact,
     Keep,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Case {
-    shape: String,
-    position: String,
-    raw: String,
+pub(super) struct Case {
+    pub(super) shape: String,
+    pub(super) position: String,
+    pub(super) raw: String,
     #[serde(default)]
-    planted: Vec<String>,
-    expect: Expect,
+    pub(super) planted: Vec<String>,
+    pub(super) expect: Expect,
     #[serde(default)]
     note: Option<String>,
 }
@@ -85,7 +85,7 @@ fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES)
 }
 
-fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
+pub(super) fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
     let path = fixture_dir().join(corpus).join("cases.jsonl");
     let text =
         std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -101,14 +101,14 @@ fn cases(corpus: &str) -> Result<Vec<Case>, Box<dyn std::error::Error>> {
     Ok(out)
 }
 
-fn positions(spec: &str) -> Result<Vec<Position>, serde_json::Error> {
+pub(super) fn positions(spec: &str) -> Result<Vec<Position>, serde_json::Error> {
     if spec == EVERY_POSITION {
         return Ok(ALL.to_vec());
     }
     serde_json::from_str(&serde_json::to_string(spec)?).map(|position| vec![position])
 }
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
+pub(super) fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
     Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")?.with_timezone(&Utc))
 }
 
@@ -148,7 +148,7 @@ fn blank_batch() -> CaptureBatchRequest {
     }
 }
 
-fn bundle_with(
+pub(super) fn bundle_with(
     position: Position,
     text: &str,
 ) -> Result<SessionBundle, Box<dyn std::error::Error>> {
@@ -314,6 +314,12 @@ fn rescan(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::e
         .iter()
         .map(|again| format!("{} | {position:?} | {again}", case.shape))
         .collect();
+    if sanitize::withheld(&sanitized.sealed.bundle) > 0 {
+        found.push(format!(
+            "{} | {position:?} | ingest would count a withheld flag",
+            case.shape
+        ));
+    }
     if sanitized.report.rechecked > 0 {
         found.push(format!(
             "{} | {position:?} | {} span(s) caught only by the re-check",
@@ -349,7 +355,7 @@ fn every_corpus_case_sanitizes_to_a_bundle_ingest_accepts() -> TestResult {
     Ok(())
 }
 
-fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
+pub(super) fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
     let mut dirs: Vec<String> = std::fs::read_dir(fixture_dir())?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())

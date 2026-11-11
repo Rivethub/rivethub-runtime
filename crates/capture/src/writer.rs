@@ -17,7 +17,7 @@ const CONTENT_LIMIT: usize = 16_000;
 pub const DEFAULT_CHUNK_BYTES: usize = 768 * 1024;
 const DEFAULT_REPLAY_MAX: usize = 50;
 
-fn metadata_keep() -> &'static [&'static str] {
+pub(crate) fn metadata_keep() -> &'static [&'static str] {
     &[
         "event_id",
         "session_jsonl_path",

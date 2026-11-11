@@ -210,6 +210,7 @@ fn every_planted_secret_is_gone() -> TestResult {
             policy_sha256: policy()?.hash(&input.manifest.bundle_sha256)?,
             passes: vec!["secrets".into(), "mapping".into()],
             unresolved_flags: 0,
+            review: None,
         }
     );
     let settings = first.batch.settings.as_ref().map(text_of);
@@ -329,6 +330,7 @@ fn a_forged_stamp_on_a_raw_bundle_still_shows_its_secrets() -> TestResult {
         policy_sha256: "0".repeat(64),
         passes: vec!["secrets".into()],
         unresolved_flags: 0,
+        review: None,
     });
     let found = sanitize::secrets(&forged);
     assert_eq!(found.len(), 9);
