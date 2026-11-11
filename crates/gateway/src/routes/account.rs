@@ -77,7 +77,8 @@ impl IntoResponse for Refused {
             | AccountError::NotSignedIn
             | AccountError::SignedIn
             | AccountError::SignedOutElsewhere
-            | AccountError::Policy => StatusCode::CONFLICT,
+            | AccountError::Policy
+            | AccountError::CloudPolicy => StatusCode::CONFLICT,
             AccountError::Expired => StatusCode::GONE,
             AccountError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             AccountError::CloudStatus(_)

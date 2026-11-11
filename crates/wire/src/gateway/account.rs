@@ -61,6 +61,8 @@ pub struct Account {
     pub pending_update: Option<PendingUpdate>,
     pub crash_reports: bool,
     pub usage_counts: bool,
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub cloud_disabled: bool,
 }
 
 #[serde_with::skip_serializing_none]

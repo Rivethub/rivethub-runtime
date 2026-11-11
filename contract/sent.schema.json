@@ -8,6 +8,9 @@
         "channel": {
           "$ref": "#/$defs/ReleaseChannel"
         },
+        "cloudDisabled": {
+          "type": "boolean"
+        },
         "crashReports": {
           "type": "boolean"
         },
