@@ -44,19 +44,41 @@ async fn verdict(port: u16, uid: u32) -> Result<Verdict, Error> {
     Ok(judge(&[&v4, &v6], port, uid))
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
+pub(crate) fn judge_lsof(output: &str, uid: u32) -> Verdict {
+    let mut owner: Option<u32> = None;
+    let mut ours = false;
+    for line in output.lines() {
+        let Some(tag) = line.chars().next() else {
+            continue;
+        };
+        let value = &line[tag.len_utf8()..];
+        match tag {
+            'p' => owner = None,
+            'u' => match value.parse::<u32>() {
+                Ok(parsed) => owner = Some(parsed),
+                Err(_) => return Verdict::Absent,
+            },
+            'n' => match owner {
+                Some(parsed) if parsed == uid => ours = true,
+                Some(_) => return Verdict::Foreign,
+                None => return Verdict::Absent,
+            },
+            _ => return Verdict::Absent,
+        }
+    }
+    if ours { Verdict::Ours } else { Verdict::Absent }
+}
+
 #[cfg(not(target_os = "linux"))]
 async fn verdict(port: u16, uid: u32) -> Result<Verdict, Error> {
     let output = tokio::process::Command::new("lsof")
-        .args(["-nP", "-a", "-t", "-u", &uid.to_string()])
+        .args(["-nP", "-F", "pun"])
         .arg(format!("-iTCP:{port}"))
         .args(["-sTCP:LISTEN"])
         .output()
         .await?;
-    Ok(if output.stdout.iter().any(u8::is_ascii_digit) {
-        Verdict::Ours
-    } else {
-        Verdict::Absent
-    })
+    Ok(judge_lsof(&String::from_utf8_lossy(&output.stdout), uid))
 }
 
 pub(crate) async fn require_ours(port: u16, uid: u32) -> Result<(), Error> {
@@ -68,7 +90,7 @@ pub(crate) async fn require_ours(port: u16, uid: u32) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Verdict, judge};
+    use super::{Verdict, judge, judge_lsof};
 
     const HEADER: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
 
@@ -102,5 +124,40 @@ mod tests {
     fn other_ports_and_established_sockets_do_not_count() {
         let tcp = table(&[("0100007F:F572", "01", 1001), ("0100007F:0050", "0A", 1001)]);
         assert_eq!(judge(&[&tcp], 62834, 1000), Verdict::Absent);
+    }
+
+    const OWN: &str = "p4121\nu501\nn127.0.0.1:62834\n";
+    const FOREIGN: &str = "p88\nu0\nn*:62834\n";
+
+    #[test]
+    fn lsof_own_listener_alone_is_ours() {
+        assert_eq!(judge_lsof(OWN, 501), Verdict::Ours);
+        let both_stacks = "p4121\nu501\nn127.0.0.1:62834\nn[::1]:62834\n";
+        assert_eq!(judge_lsof(both_stacks, 501), Verdict::Ours);
+    }
+
+    #[test]
+    fn lsof_a_foreign_listener_refuses_even_beside_ours() {
+        assert_eq!(judge_lsof(FOREIGN, 501), Verdict::Foreign);
+        assert_eq!(
+            judge_lsof(&format!("{OWN}{FOREIGN}"), 501),
+            Verdict::Foreign
+        );
+        assert_eq!(
+            judge_lsof(&format!("{FOREIGN}{OWN}"), 501),
+            Verdict::Foreign
+        );
+    }
+
+    #[test]
+    fn lsof_empty_and_garbage_output_refuse() {
+        assert_eq!(judge_lsof("", 501), Verdict::Absent);
+        assert_eq!(
+            judge_lsof("lsof: command not found\n", 501),
+            Verdict::Absent
+        );
+        assert_eq!(judge_lsof("p1\nuroot\nn*:1\n", 501), Verdict::Absent);
+        assert_eq!(judge_lsof("n*:62834\n", 501), Verdict::Absent);
+        assert_eq!(judge_lsof(&format!("{OWN}garbage\n"), 501), Verdict::Absent);
     }
 }
