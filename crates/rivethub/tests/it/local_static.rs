@@ -94,7 +94,7 @@ async fn ensure_with_refused_token(shape: Shape, expected: &str) -> TestResult {
             std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o640))?;
         }
         Shape::Fifo => {
-            nix::unistd::mkfifo(&token, nix::sys::stat::Mode::from_bits_truncate(0o600))?
+            nix::unistd::mkfifo(&token, nix::sys::stat::Mode::from_bits_truncate(0o600))?;
         }
     }
     let build = tempfile::tempdir()?;

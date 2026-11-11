@@ -73,17 +73,17 @@ pub(crate) struct AuthLog {
 impl AuthLog {
     pub(crate) fn emit(&self, event: AuthEvent, peer: Option<IpAddr>) {
         let (name, reason) = (event.name(), event.reason());
-        let peer = peer.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string());
+        let text = peer.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string());
         if !event.refusal() {
-            tracing::info!(event = name, reason, peer = %peer, "auth event");
+            tracing::info!(event = name, reason, peer = %text, "auth event");
             return;
         }
         let first = {
             let mut seen = self.seen.lock();
-            seen.len() < REFUSAL_LOG_CAP && seen.insert((event, peer.parse().ok()))
+            seen.len() < REFUSAL_LOG_CAP && seen.insert((event, peer))
         };
         if first {
-            tracing::warn!(event = name, reason, peer = %peer, "auth event");
+            tracing::warn!(event = name, reason, peer = %text, "auth event");
         }
     }
 }

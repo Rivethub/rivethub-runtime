@@ -301,17 +301,18 @@ async fn start(
             origin: target.origin.clone(),
             port: target.port,
             seconds: request.wait_seconds,
-            cause: refused_token(env),
+            cause: refused_token(env)?,
             log: logs.join(LOG_FILE),
         }),
     })
 }
 
-fn refused_token(env: &Environment) -> String {
-    match gateway::state_dir(env).map(|state| gateway::local_owner::read_token(&state)) {
-        Ok(Err(error)) => format!(" ({error})"),
-        Ok(Ok(_)) | Err(_) => String::new(),
-    }
+fn refused_token(env: &Environment) -> Result<String, Error> {
+    let state = gateway::state_dir(env)?;
+    Ok(match gateway::local_owner::read_token(&state) {
+        Err(error) => format!(" ({error})"),
+        Ok(_) => String::new(),
+    })
 }
 
 async fn bound_config(
