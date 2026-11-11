@@ -1704,7 +1704,12 @@ A trashed import is left out of a whole-store bundle and exported only when name
 (136) Sanitizing a bundle (Phil, 2026-11-08; session-sharing plan SS-3): `rh memory sanitize <bundle> --out <file>
 [--mapping <file>]` reads a raw version 1 or 2 bundle and writes a sanitized copy to `--out` and a report beside it,
 `<out without a .json extension>.report.md`. It refuses a bundle whose `sanitization` is already sanitized, and an
-`--out` that is a directory, and writes nothing then. Both files are written as `rh memory bundle` writes its file
+`--out` that is a directory, and writes nothing then. `rh memory sanitize --session <id>... [--redact-term
+<id>=<term>]... [--drop-tool-outputs <id>]... --out <file> [--mapping <file>] [--decide [--block]] [--sqlite <file>]`
+reads those conversations from the store instead (target as `rh memory bundle`, note 134) through the loader and
+per-session rules `session_sanitize` uses (note 139), so no raw bundle is written and an unknown, trashed or foreign id
+is refused by name; each `--redact-term` and `--drop-tool-outputs` must name an id given with `--session`, and
+`--session` with a bundle file is refused. Both files are written as `rh memory bundle` writes its file
 (note 134). Before it writes either file, `sanitize` runs the scan `ingest-bundle` runs (below) over its own output:
 a span that scan still matches is redacted too, up to four times, then a field that still matches is replaced whole
 by the first match's placeholder; the report counts these spans in a line under its totals, because each one is a
@@ -2028,8 +2033,8 @@ placing the review, so `--decide --block` never refuses its own output. Either w
 advisory bundle with open flags. Without `--decide` the stamp has no `review`, no local review file is written, and
 the bundle is byte-for-byte what sanitize wrote before this note.
 
-`[FLAGGED:<digits>]` and `[REDACTED:flagged]` are placeholders the secrets pass knows, in sanitize and in ingest's
-scan: they are protected like note 136's placeholders, and a key that is exactly one is not a secret name. Because
+`[FLAGGED:<digits>]`, `[REDACTED:flagged]` and note 139's `[REDACTED:session_term]` and
+`[REDACTED:drop_tool_outputs]` are placeholders the secrets pass knows, in sanitize and in ingest's scan: they are protected like note 136's placeholders, and a key that is exactly one is not a secret name. Because
 ingest counts withheld flags from the text, every sanitize run, with or without `--decide`, escapes a raw
 `[FLAGGED:` that is followed by colons, digits and `]` by adding one colon after `[FLAGGED:` (`[FLAGGED:012]` becomes
 `[FLAGGED::012]`, `[FLAGGED::7]` becomes `[FLAGGED:::7]`), which keeps the digits and can be undone by removing that
@@ -2063,8 +2068,9 @@ Unreviewed line, so running it again changes neither file. The bundle defaults t
 `--learn` refuses a term under 3 non-space characters, parses the mapping file with the new rules and creates its
 folder before it writes anything, then writes the bundle, the report and the mapping file.
 
-(139) Session tools over MCP (Phil, 2026-11-10; session-sharing plan SS-5; uses notes 134 to 137): `rh mcp` serves four
-more tools, `session_find`, `session_export`, `session_sanitize` and `session_import`, only over stdio, the transport
+(139) Session tools over MCP (Phil, 2026-11-10; session-sharing plan SS-5, reworked the same day: decide per session
+first, sanitize last, no raw file; uses notes 134 to 137): `rh mcp` serves three more tools, `session_find`,
+`session_sanitize` and `session_import`, only over stdio, the transport
 whose client runs on this machine as this user. It does not list or answer them when it serves a host or a socket, and
 `rh local` never serves them. Every input rejects an unknown field, and no input names a URL, host, gateway or other
 node: no MCP tool sends a bundle anywhere. Passing a bundle on stays the human-run `rh memory ingest-bundle`, which
@@ -2089,21 +2095,34 @@ when unset), created with mode 0700. An `out` is a bare file name: a letter or d
 `.`, `_` or `-`, then `.json`, and not ending `.review.local.json`, so a path, `..`, `~` or a URL cannot be written.
 A tool never replaces a file: it refuses an `out` whose bundle, report or local review file exists, and writes each
 file as note 134 does but renames without replacing, so a second run cannot wipe the marks typed into a report. A read
-(`in`, `path`, `mapping`) takes a bare share-directory name or an absolute path; it is resolved through symlinks first
+(`path`, `mapping`) takes a bare share-directory name or an absolute path; it is resolved through symlinks first
 and must be a regular file with one hard link (a second link could name a file in a hidden directory) under the
 home directory with no component starting with `.` below it, the share directory excepted, and must end `.json` (a bundle) or `.toml` (a mapping). A file that does not parse as a bundle is
 reported as `not a session bundle: <path>`, never with the parser's text. Replies give absolute paths.
 
-`session_export {conversation_ids, out}` takes 1 to 50 conversation ids (UUIDs, repeats dropped) and writes the raw
-bundle `rh memory bundle --session` writes for the node owner (note 134), refusing an unknown id by name with nothing
-written. It replies `bundled <n> sessions (raw, not sanitized) to <path>` and `sanitize it with session_sanitize
-before it leaves this machine`.
+No tool writes a raw bundle: there is no export tool, and a session the human denies never leaves the store. The
+agent finds sessions with `session_find`, the human decides each one (approve, redact, or deny by leaving it out),
+and only then does `session_sanitize` run.
 
-`session_sanitize {in, out, mapping?, decide?}` runs the sequence `rh memory sanitize` runs (notes 136 and 137,
+`session_sanitize {sessions, out, mapping?, decide?, block?}` takes `sessions`, 1 to 50 entries `{id, decision,
+redact?}`: `id` is a conversation id (UUID) given at most once, `decision` is `approve` or `redact`, and `redact` is
+`{terms?: [string], drop_tool_outputs?: bool}`, required with `redact` (at least one term that is not blank, or
+`drop_tool_outputs: true`) and refused with `approve`. Each id must be a conversation of the node owner that is not
+trashed (`session_find`'s digest filter); otherwise the call is refused naming the id (`no session this node can share
+has the id <id>; it is unknown, trashed or not the node owner's, and nothing was written`) and writes nothing. It reads
+the chosen sessions from the store in memory, as `rh memory bundle --session` reads them (note 134), builds and digests
+the raw bundle in memory without writing it, and runs the sequence `rh memory sanitize` runs (notes 136 and 137,
 through `capture::share`), with the mapping from `mapping` or `memory.sanitize.mapping` and, when `decide` is true,
-the review configured at `memory.sanitize.decide` (its `block` sets the mode); `decide` with no URL configured is an
-error naming that key. It writes the bundle, the report and, after a review, the local review file under the same
-names as the CLI. It replies with the totals, the three paths, the changes by rule and the best-effort sentence, and
+the review configured at `memory.sanitize.decide` (its `block` sets the mode, and `block: true` forces block mode for
+this run; `block` without `decide` is refused); `decide` with no URL configured is an error naming that key. Each
+session's rules are part of the sanitizer policy: a term is redacted to `[REDACTED:session_term]` in that session only,
+in the fields and JSON keys mapping rules cover, matched literally and case-sensitively after the secrets pass and
+before the mapping rules, an earlier term winning where matches overlap; `drop_tool_outputs` turns every `tool_result`
+of that session into `[REDACTED:drop_tool_outputs]` while its tool names and arguments go through the sanitizer as
+usual. The report counts them under the rules `session_term` and `drop_tool_outputs` (pass `mapping`, counted as
+redacted) with fingerprints only, never the term; the keyed policy hash covers each session's rules, and a run with no
+rules hashes as before. It writes only the sanitized bundle, the report and, after a review, the local review file,
+under the same names as the CLI. It replies with the totals, the three paths, the changes by rule and the best-effort sentence, and
 after a review the model, chunks scored, calls, trivial chunks skipped, mode and open flag count, then for each flag,
 highest score first and at most 50 (`and <n> more in the report`), its number, score, first place (session, message
 and field name) with the count of other places, the report line of its Mark line, and its length in characters. A
