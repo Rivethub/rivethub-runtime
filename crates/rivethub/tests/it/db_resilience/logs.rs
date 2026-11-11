@@ -64,8 +64,6 @@ impl Logs {
             .count()
     }
 
-    /// Every line the process wrote, after its stderr has closed. `text` right
-    /// after `wait` can run before the reader task has stored the last lines.
     pub(super) async fn text_after_exit(&self) -> String {
         let mut closed = self.closed.clone();
         let drained = tokio::time::timeout(Duration::from_secs(30), async {

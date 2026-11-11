@@ -591,9 +591,6 @@ const CORS_METHODS: &str = "GET,POST,PATCH,DELETE";
 const CORS_HEADERS: &str =
     "authorization,content-type,x-rh-csrf,x-rivet-conversation,x-rivet-title";
 
-/// Rewrites a recorded response to the CORS answer the gateway owes the recorded
-/// request: the origin is echoed with credentials only when it is listed exactly,
-/// and a preflight answers 200 with the allowed methods and headers.
 pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
     let mut lines = case.request.head.lines();
     let preflight = lines

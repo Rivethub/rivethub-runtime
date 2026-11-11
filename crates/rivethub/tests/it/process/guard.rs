@@ -10,13 +10,6 @@ use nix::unistd::Pid;
 use tokio::process::Child;
 use tokio::process::Command;
 
-/// A spawned child that takes its whole process tree with it when the test ends.
-///
-/// `kill_on_drop` alone signals only the direct child, so a failed or timed-out
-/// test left the `rh gateway` or `rh local` grandchildren of `rh start` running
-/// with their database connections open. The tree is found through `ps` and each
-/// member gets SIGKILL on drop. The child stays in the test's own process group,
-/// so a group-wide signal from nextest or a terminal still reaches it too.
 #[derive(Debug)]
 pub struct Guarded(Child);
 
@@ -45,9 +38,6 @@ impl DerefMut for Guarded {
 }
 
 impl Guarded {
-    /// Sends `signal` to the child, waits up to `grace` for it to exit, and on
-    /// timeout sends SIGKILL to that exact pid. Returns the exit status and
-    /// whether the escalation was needed. Descendants that outlive it are killed.
     pub async fn stop(
         &mut self,
         signal: Signal,
@@ -69,7 +59,6 @@ impl Guarded {
         Ok((status, escalated))
     }
 
-    /// Like `Child::wait`, then kills any descendant the child left running.
     pub async fn wait(&mut self) -> io::Result<ExitStatus> {
         let tree = self.tree();
         let status = self.0.wait().await?;
@@ -77,7 +66,6 @@ impl Guarded {
         Ok(status)
     }
 
-    /// Like `Child::kill`, then kills any descendant the child left running.
     pub async fn kill(&mut self) -> io::Result<()> {
         let tree = self.tree();
         self.0.kill().await?;
@@ -113,7 +101,6 @@ fn signal_pid(pid: u32, signal: Signal) {
     }
 }
 
-/// Every transitive child of `root`, deepest first.
 fn descendants(root: u32) -> Vec<u32> {
     let Ok(listing) = std::process::Command::new("ps")
         .args(["-A", "-o", "pid=,ppid="])

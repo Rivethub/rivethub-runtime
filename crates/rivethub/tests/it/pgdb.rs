@@ -19,11 +19,6 @@ pub(crate) enum Error {
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
 
-/// A Postgres database created for one test under a name no other test or test
-/// run shares, dropped (with its connections) when the value goes out of scope.
-///
-/// `#[sqlx::test]` names the database after the test path, so two runs against
-/// one server drop each other's database mid-test.
 #[derive(Debug)]
 pub(crate) struct TestDb {
     pool: PgPool,
@@ -40,12 +35,11 @@ impl TestDb {
         Self::create(true).await
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the test harness reads DATABASE_URL the way sqlx::test did"
-    )]
     async fn create(migrate: bool) -> Result<Self, Error> {
-        let url = std::env::var("DATABASE_URL").map_err(|error| Error::Url(error.to_string()))?;
+        let url = config::Environment::from_process()
+            .text("DATABASE_URL")
+            .ok_or_else(|| Error::Url("not set".to_owned()))?
+            .to_owned();
         let admin: PgConnectOptions = url
             .parse()
             .map_err(|error: sqlx::Error| Error::Url(error.to_string()))?;
