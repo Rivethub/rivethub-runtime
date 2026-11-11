@@ -37,24 +37,6 @@ pub(super) fn launch(steps: &[&str], extra: &[&str]) -> LaunchTable {
     )])
 }
 
-pub(super) fn launch_in(steps: &[&str], extra: &[&str], cwd: &Path) -> LaunchTable {
-    let mut args = vec!["--session-id".to_owned(), SESSION.to_owned()];
-    for step in steps {
-        args.push("--steps".to_owned());
-        args.push((*step).to_owned());
-    }
-    args.extend(extra.iter().map(|argument| (*argument).to_owned()));
-    LaunchTable::from_entries([(
-        HarnessId::Opencode,
-        AcpLaunch::Native(AcpCommand {
-            program: fake_agent_program(),
-            args,
-            working_dir: Some(cwd.to_path_buf()),
-            env: Vec::new(),
-        }),
-    )])
-}
-
 pub(super) fn spec(cwd: &Path) -> SessionSpec {
     SessionSpec {
         session: SessionId::new(HarnessId::Opencode, SESSION),
@@ -62,7 +44,6 @@ pub(super) fn spec(cwd: &Path) -> SessionSpec {
         model: None,
         effort: None,
         working_dir: Some(cwd.to_path_buf()),
-        startup_context: None,
     }
 }
 

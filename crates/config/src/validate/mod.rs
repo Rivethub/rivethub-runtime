@@ -9,9 +9,10 @@ mod agents;
 mod channels;
 mod deployment;
 mod gateway;
+mod hubs;
 mod memory;
-mod mesh;
 mod providers;
+pub mod retired;
 mod runtime;
 mod tasks;
 
@@ -291,7 +292,8 @@ pub fn validate(
     profile: Profile,
 ) -> ValidationResult {
     let mut out = ValidationResult::default();
-    ignored_findings(config, ignored, &mut out);
+    let ignored = retired::findings(ignored, &mut out);
+    ignored_findings(config, &ignored, &mut out);
     if presence.plugins {
         out.warning("plugins", PLUGINS_IGNORED);
     }
@@ -340,14 +342,17 @@ fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
     if let Some(section) = &config.deployment {
         deployment::validate(out, *section);
     }
-    if let Some(section) = &config.mesh {
-        mesh::validate(out, section);
-    }
     if let Some(section) = &config.gateway {
         gateway::validate(out, section);
     }
     if let Some(section) = &config.tasks {
         tasks::validate(out, section);
+    }
+    if let Some(entries) = &config.hubs {
+        hubs::validate(out, entries);
+    }
+    if let Some(section) = &config.cloud {
+        hubs::cloud(out, section);
     }
 }
 
@@ -433,6 +438,9 @@ fn memory_message(rest: &[Segment]) -> Option<String> {
                 "postgres" => Some(format!("Unknown memory.postgres key \"{key}\"")),
                 "sqlite" => Some(format!("Unknown memory.sqlite key \"{key}\"")),
                 "capture" => Some(format!("Unknown memory.capture key \"{key}\"")),
+                "models" => Some(format!(
+                    "Unknown memory.models key \"{key}\" — supported: default, summarizer, categorizer, wiki_writer, embedder"
+                )),
                 _ => None,
             }
         }
@@ -440,6 +448,9 @@ fn memory_message(rest: &[Segment]) -> Option<String> {
             if parent == "postgres" && grand == "embedded" =>
         {
             Some(format!("Unknown memory.postgres.embedded key \"{key}\""))
+        }
+        [Segment::Key(parent), Segment::Key(role), Segment::Key(key)] if parent == "models" => {
+            Some(format!("Unknown memory.models.{role} key \"{key}\""))
         }
         [Segment::Key(parent), Segment::Key(grand), Segment::Key(key)]
             if parent == "capture" && grand == "redaction" =>
@@ -460,17 +471,6 @@ fn deployment_message(rest: &[Segment]) -> Option<String> {
 fn gateway_message(rest: &[Segment]) -> Option<String> {
     match rest {
         [Segment::Key(key)] => Some(format!("Unknown gateway key \"{key}\"")),
-        [Segment::Key(parent), Segment::Key(key)] => {
-            let parent: &str = parent.as_str();
-            match parent {
-                "terminal" => Some(format!("Unknown gateway.terminal key \"{key}\"")),
-                "devices" => Some(format!("Unknown gateway.devices key \"{key}\"")),
-                "certificate_authority" => Some(format!(
-                    "Unknown gateway.certificate_authority key \"{key}\""
-                )),
-                _ => None,
-            }
-        }
         _ => None,
     }
 }
@@ -527,6 +527,9 @@ fn cross_references(config: &Config, out: &mut ValidationResult) {
     }
     if let Some(memory) = &config.memory {
         memory::embed_provider_references(out, memory, config.providers.as_ref());
+        if let Some(models) = &memory.models {
+            memory::model_references(out, models, config.providers.as_ref());
+        }
     }
 }
 

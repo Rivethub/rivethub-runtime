@@ -17,7 +17,6 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
-use wire::mesh::{MeshFile, MeshNode, MeshNodeStatus};
 
 pub(crate) const BINARY: &[u8] = b"#!/bin/sh\nprintf 'new binary\\n'\n";
 pub(crate) const MIGRATION: &[u8] = br#"#!/bin/sh
@@ -148,46 +147,6 @@ if [ "$failed" = yes ] && [ "$last" != true ]; then exit 1; fi
         server.close().await?;
         Ok(report)
     }
-
-    pub(crate) fn mesh(&self, hosts: &[&str]) -> Result {
-        let now = chrono::Utc::now();
-        let mut mesh = MeshFile::empty(now);
-        for (index, host) in hosts.iter().enumerate() {
-            let id = if index == 0 {
-                "local".to_owned()
-            } else {
-                format!("node-{index}")
-            };
-            mesh.nodes.insert(
-                id.clone(),
-                MeshNode {
-                    id: id.clone(),
-                    name: id,
-                    host: (*host).to_owned(),
-                    port: 5174,
-                    role: None,
-                    agents: Vec::new(),
-                    providers: Vec::new(),
-                    models: Vec::new(),
-                    capabilities: Vec::new(),
-                    status: MeshNodeStatus::Online,
-                    last_seen: now,
-                    registered_at: now,
-                    version: "1".to_owned(),
-                    metadata: None,
-                    ssh_user: Some("operator".to_owned()),
-                    install_root: None,
-                    platform: None,
-                    extra: wire::Extra::default(),
-                },
-            );
-        }
-        std::fs::write(
-            self.home.path().join("mesh.json"),
-            serde_json::to_vec(&mesh)?,
-        )?;
-        Ok(())
-    }
 }
 
 pub(crate) fn args() -> UpdateArgs {
@@ -195,8 +154,7 @@ pub(crate) fn args() -> UpdateArgs {
         channel: Channel::Stable,
         version: None,
         no_restart: false,
-        mesh: false,
-        ssh_user: None,
+        source: None,
     }
 }
 
@@ -228,7 +186,7 @@ fn archive_name(tag: &str) -> String {
     )
 }
 
-fn archive(published: Published) -> Result<Vec<u8>> {
+pub(crate) fn archive(published: Published) -> Result<Vec<u8>> {
     let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
         Vec::new(),
         flate2::Compression::default(),

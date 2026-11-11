@@ -4,7 +4,6 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use kernel::memory::MemoryStoreError;
 use wire::gateway::GatewayError;
-use wire::mesh::MeshParseCode;
 
 const INVALID_JSON: &str = "invalid JSON";
 const BODY_MUST_BE_OBJECT: &str = "body must be a JSON object";
@@ -18,10 +17,6 @@ pub enum ApiError {
     BodyMustBeObject,
     #[error(transparent)]
     Transcript(#[from] kernel::transcript::TranscriptReaderError),
-    #[error("unknown command: {0}")]
-    UnknownCommand(String),
-    #[error(transparent)]
-    Terminal(#[from] kernel::terminal::TerminalMuxError),
     #[error(transparent)]
     Harness(#[from] kernel::harness::HarnessAdapterError),
     #[error(transparent)]
@@ -62,8 +57,6 @@ pub enum ApiError {
     Serialize(#[source] serde_json::Error),
     #[error("internal error")]
     Internal,
-    #[error("mesh.json parse failed")]
-    MeshParse(MeshParseCode),
     #[error(transparent)]
     Store(#[from] MemoryStoreError),
 }
@@ -87,15 +80,6 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 GatewayError::new(error.to_string()),
             ),
-            Self::UnknownCommand(command) => (
-                StatusCode::NOT_FOUND,
-                GatewayError::new(format!("unknown command: {command}")),
-            ),
-            Self::Terminal(error) => {
-                let reason = with_causes(&error);
-                tracing::warn!(%reason, "the terminal mux refused");
-                (StatusCode::SERVICE_UNAVAILABLE, GatewayError::new(reason))
-            }
             Self::Harness(error) => adapter_failure(&error),
             Self::Io(_) | Self::Task(_) | Self::Serialize(_) | Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -135,10 +119,6 @@ impl ApiError {
             ),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized")),
             Self::ForbiddenOrigin => (StatusCode::FORBIDDEN, GatewayError::new("forbidden origin")),
-            Self::MeshParse(code) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                GatewayError::new("mesh.json parse failed").code(code.to_string()),
-            ),
             Self::Store(MemoryStoreError::InvalidRequest { message }) => {
                 (StatusCode::BAD_REQUEST, GatewayError::new(message))
             }
@@ -217,15 +197,4 @@ fn adapter_status(error: &kernel::harness::HarnessAdapterError) -> StatusCode {
         | HarnessAdapterError::EventStreamTaken(_)
         | HarnessAdapterError::Failed { .. } => StatusCode::SERVICE_UNAVAILABLE,
     }
-}
-
-fn with_causes(error: &dyn std::error::Error) -> String {
-    let mut reason = error.to_string();
-    let mut cause = error.source();
-    while let Some(next) = cause {
-        reason.push_str(": ");
-        reason.push_str(&next.to_string());
-        cause = next.source();
-    }
-    reason
 }

@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use kernel::memory::{MemoryEntry, MemorySearchResult};
 use kernel::memory::{MemoryHitSource, TagWire};
 use kernel::memory::{SearchOutcome, SearchQuery, SummaryDetail};
+use wire::capture::SessionOrigin;
 
 use crate::{Error, render_memory, render_tags};
 
@@ -27,11 +28,16 @@ pub(crate) struct Clock {
     pub(crate) zone: chrono_tz::Tz,
 }
 
+pub(crate) struct HitContext {
+    pub(crate) messages: BTreeMap<String, MemoryEntry>,
+    pub(crate) tags: BTreeMap<String, Vec<TagWire>>,
+    pub(crate) origins: BTreeMap<String, SessionOrigin>,
+}
+
 pub(crate) fn search(
     query: &SearchQuery,
     outcome: &SearchOutcome,
-    messages: &BTreeMap<String, MemoryEntry>,
-    tags: &BTreeMap<String, Vec<TagWire>>,
+    found: &HitContext,
     expand: bool,
     clock: Clock,
 ) -> Result<String, Error> {
@@ -91,10 +97,11 @@ pub(crate) fn search(
         text.push_str("\n\n### Messages\n\n");
         let mut blocks = Vec::new();
         for hit in hits {
-            let entry = messages.get(&hit.id).ok_or_else(|| {
+            let entry = found.messages.get(&hit.id).ok_or_else(|| {
                 Error::Invalid(format!("message {} disappeared during search", hit.id))
             })?;
-            blocks.push(message(hit, entry, tags, now, zone)?);
+            let origin = found.origins.get(&entry.session_id);
+            blocks.push(message(hit, entry, &found.tags, origin, now, zone)?);
         }
         text.push_str(&blocks.join("\n"));
     }
@@ -105,6 +112,7 @@ fn message(
     hit: &MemorySearchResult,
     entry: &MemoryEntry,
     tags: &BTreeMap<String, Vec<TagWire>>,
+    origin: Option<&SessionOrigin>,
     now: DateTime<Utc>,
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
@@ -118,6 +126,14 @@ fn message(
         dated(hit, now, zone),
         hit.relevance_score
     )?;
+    if let Some((origin, author)) =
+        origin.and_then(|origin| origin.known_author().map(|author| (origin, author)))
+    {
+        write!(heading, " from {author}")?;
+        if let Some(created) = origin.created_at {
+            write!(heading, " · {}", render_memory::local_date(created, zone))?;
+        }
+    }
     if let Some(tags) = render_memory::tags(entry, tags) {
         heading.push_str(&tags);
     }

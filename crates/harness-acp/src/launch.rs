@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use agent_client_protocol::schema::v1 as acp;
 use config::Config;
 use config::HarnessSlot;
-use kernel::harness::SystemPromptSupport;
 use serde::Serialize;
 use strum::IntoEnumIterator as _;
 use wire::harness::HarnessId;
@@ -132,66 +131,6 @@ impl LaunchFact {
             },
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MetaAppend {
-    SystemPrompt,
-    Rules,
-    AirInstructions,
-}
-
-fn meta_append(harness: HarnessId) -> Option<MetaAppend> {
-    match harness {
-        HarnessId::ClaudeCode => Some(MetaAppend::SystemPrompt),
-        HarnessId::GrokBuild => Some(MetaAppend::Rules),
-        HarnessId::Codex => Some(MetaAppend::AirInstructions),
-        HarnessId::Opencode
-        | HarnessId::Hermes
-        | HarnessId::KimiCode
-        | HarnessId::Omp
-        | HarnessId::Dsh
-        | HarnessId::Cursor
-        | HarnessId::Cowork => None,
-    }
-}
-
-#[must_use]
-pub fn system_prompt(harness: HarnessId) -> SystemPromptSupport {
-    match meta_append(harness) {
-        Some(_) => SystemPromptSupport::MetaAppend,
-        None => SystemPromptSupport::None,
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-enum StartupMeta<'a> {
-    SystemPrompt { append: &'a str },
-    Rules(&'a str),
-    Jetbrains { air: AirMeta<'a> },
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AirMeta<'a> {
-    custom_instructions: &'a str,
-}
-
-pub(crate) fn startup_meta(harness: HarnessId, text: &str) -> Result<Option<acp::Meta>, AcpError> {
-    let meta = match meta_append(harness) {
-        Some(MetaAppend::SystemPrompt) => StartupMeta::SystemPrompt { append: text },
-        Some(MetaAppend::Rules) => StartupMeta::Rules(text),
-        Some(MetaAppend::AirInstructions) => StartupMeta::Jetbrains {
-            air: AirMeta {
-                custom_instructions: text,
-            },
-        },
-        None => return Ok(None),
-    };
-    let encoded =
-        serde_json::to_string(&meta).map_err(|source| AcpError::StartupMeta { source })?;
-    serde_json::from_str(&encoded).map_err(|source| AcpError::StartupMeta { source })
 }
 
 #[derive(Serialize)]

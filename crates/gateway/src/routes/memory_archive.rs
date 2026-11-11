@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use kernel::deadline::Deadline;
 use kernel::memory::SummaryDag;
 use kernel::memory::SummaryOwner;
 use kernel::memory::TreeWindow;
@@ -178,8 +179,8 @@ pub(crate) async fn export(
         .ok_or_else(|| ApiError::Unavailable("memory export is not configured".to_owned()))?;
     let cancellation = CancellationToken::new();
     let abandoned = cancellation.clone().drop_guard();
-    let dump = exporter
-        .export(params.since.map(SinceParam::get), cancellation)
+    let dump = Deadline::unbounded()
+        .run(exporter.export(params.since.map(SinceParam::get), cancellation))
         .await?;
     drop(abandoned);
     let disposition = format!(

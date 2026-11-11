@@ -1,4 +1,3 @@
-mod approval;
 mod proxy;
 
 use std::sync::Arc;
@@ -7,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
-use axum::{Extension, Json, Router};
+use axum::{Json, Router};
 use serde::Deserialize;
 use wire::gateway::GatewayError;
 use wire::plugin::host::{
@@ -19,7 +18,7 @@ use wire::plugin::{PluginId, RouteName};
 use crate::Gateway;
 use crate::extract::Body;
 use crate::plugins::{HostError, PluginHost};
-use crate::tenancy::{PeerCertificate, UserId};
+use crate::tenancy::UserId;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
     Router::new()
@@ -96,9 +95,6 @@ impl IntoResponse for PluginRouteError {
             Self::Host(HostError::Conflict(_)) => (StatusCode::CONFLICT, "conflict", None),
             Self::Host(HostError::Unconfinable(_)) => {
                 (StatusCode::CONFLICT, "sandbox_unavailable", None)
-            }
-            Self::Host(HostError::DeviceRequired) => {
-                (StatusCode::FORBIDDEN, "device_certificate_required", None)
             }
             Self::Host(HostError::Unavailable(_)) => {
                 (StatusCode::SERVICE_UNAVAILABLE, "plugin_unavailable", None)
@@ -196,15 +192,13 @@ async fn install(
 async fn enable(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
-    peer: Option<Extension<PeerCertificate>>,
     Path(id): Path<String>,
     Body(request): Body<PluginEnableRequest>,
 ) -> Result<Json<PluginRecord>, PluginRouteError> {
     owner(&gateway, &user)?;
-    let device = approval::paired_device(&gateway, peer.as_ref().map(|Extension(peer)| peer));
-    let host = host(&gateway)?;
     Ok(Json(
-        host.enable(&plugin_id(id)?, &request.approve, device)
+        host(&gateway)?
+            .enable(&plugin_id(id)?, &request.approve)
             .await?,
     ))
 }

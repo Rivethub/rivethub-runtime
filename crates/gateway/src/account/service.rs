@@ -1,0 +1,406 @@
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, NaiveDate, Utc};
+use tokio_util::sync::CancellationToken;
+use wire::gateway::account::{
+    Account, AccountUpdate, Hub, PendingUpdate, SignInProgress, SignInStarted, UpdateSource,
+};
+
+use super::cloud::{Cloud, Delivery, Poll};
+use super::hubs::Hubs;
+use super::install::{AccountFiles, InstallState, Membership, UsageDay};
+use super::telemetry::{CrashReport, UsageCounts, UsageReport, queued};
+use super::update::{CloudOs, fetch, latest, plain_version};
+use super::{AccountError, CloudSettings};
+
+const FIRST_TICK: Duration = Duration::from_secs(20);
+const TICK_EVERY: Duration = Duration::from_secs(600);
+const CHECK_EVERY: Duration = Duration::from_hours(6);
+const EMAIL_LIMIT: usize = 254;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageEvent {
+    Search,
+    AppOpen,
+}
+
+#[derive(Debug, Default)]
+struct Counters {
+    searches: AtomicU64,
+    app_opens: AtomicU64,
+}
+
+#[derive(Debug)]
+pub struct AccountService {
+    files: AccountFiles,
+    settings: CloudSettings,
+    cloud: Cloud,
+    state: tokio::sync::Mutex<InstallState>,
+    counters: Counters,
+    hubs: Hubs,
+    checked: parking_lot::Mutex<Option<Instant>>,
+}
+
+impl AccountService {
+    pub async fn open(
+        state_dir: &Path,
+        settings: CloudSettings,
+        hubs: Hubs,
+    ) -> Result<Self, AccountError> {
+        let files = AccountFiles::new(state_dir);
+        let opening = files.clone();
+        let state = tokio::task::spawn_blocking(move || opening.open()).await??;
+        Ok(Self {
+            cloud: Cloud::new(settings.base.clone())?,
+            files,
+            settings,
+            state: tokio::sync::Mutex::new(state),
+            counters: Counters::default(),
+            hubs,
+            checked: parking_lot::Mutex::new(None),
+        })
+    }
+
+    #[must_use]
+    pub fn files(&self) -> &AccountFiles {
+        &self.files
+    }
+
+    pub async fn hubs(&self) -> Vec<Hub> {
+        self.hubs.list().await
+    }
+
+    pub fn count(&self, event: UsageEvent) {
+        let counter = match event {
+            UsageEvent::Search => &self.counters.searches,
+            UsageEvent::AppOpen => &self.counters.app_opens,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub async fn account(&self) -> Account {
+        self.view(&*self.state.lock().await)
+    }
+
+    fn view(&self, state: &InstallState) -> Account {
+        let allowed = !self.settings.telemetry_disabled;
+        Account {
+            email: state.email().map(str::to_owned),
+            update_source: state.update_source(),
+            channel: state.channel,
+            auto_download: state.auto_download,
+            version: crate::VERSION.to_owned(),
+            pending_update: state.pending_update.clone(),
+            crash_reports: allowed && state.crash_reports,
+            usage_counts: allowed && state.usage_counts,
+        }
+    }
+
+    pub async fn update(&self, change: AccountUpdate) -> Result<Account, AccountError> {
+        let enabling = change.crash_reports == Some(true) || change.usage_counts == Some(true);
+        if enabling && self.settings.telemetry_disabled {
+            return Err(AccountError::Policy);
+        }
+        let mut state = self.state.lock().await;
+        let mut next = state.clone();
+        if let Some(source) = change.update_source {
+            next.update_source = Some(source);
+        }
+        if let Some(channel) = change.channel {
+            if channel != next.channel {
+                next.pending_update = None;
+            }
+            next.channel = channel;
+        }
+        if let Some(auto_download) = change.auto_download {
+            next.auto_download = auto_download;
+        }
+        if let Some(crash_reports) = change.crash_reports {
+            next.crash_reports = crash_reports;
+        }
+        if let Some(usage_counts) = change.usage_counts {
+            next.usage_counts = usage_counts;
+            if !usage_counts {
+                next.usage = None;
+            }
+        }
+        self.save(&next).await?;
+        *state = next;
+        let account = self.view(&state);
+        drop(state);
+        if !account.crash_reports {
+            self.forget_crashes().await?;
+        }
+        Ok(account)
+    }
+
+    pub async fn sign_in(&self, email: &str) -> Result<SignInStarted, AccountError> {
+        let email = email.trim();
+        if email.is_empty() || email.len() > EMAIL_LIMIT || !email.contains('@') {
+            return Err(AccountError::Email);
+        }
+        let mut state = self.state.lock().await;
+        if state.token().is_some() {
+            return Err(AccountError::SignedIn);
+        }
+        let started = self.cloud.start(email, state.install_id).await?;
+        let mut next = state.clone();
+        next.membership = Membership::Pending {
+            request_id: started.request_id.clone(),
+        };
+        self.save(&next).await?;
+        *state = next;
+        drop(state);
+        Ok(SignInStarted {
+            request_id: started.request_id,
+        })
+    }
+
+    pub async fn poll(&self) -> Result<SignInProgress, AccountError> {
+        let mut state = self.state.lock().await;
+        let request_id = match &state.membership {
+            Membership::Pending { request_id } => request_id.clone(),
+            Membership::SignedIn { .. } => {
+                return Ok(SignInProgress::SignedIn {
+                    account: self.view(&state),
+                });
+            }
+            Membership::SignedOut => return Err(AccountError::NoSignIn),
+        };
+        let mut next = state.clone();
+        let outcome = self.cloud.poll(&request_id).await?;
+        next.membership = match outcome {
+            Poll::Pending => return Ok(SignInProgress::Pending),
+            Poll::Expired => Membership::SignedOut,
+            Poll::SignedIn { token, email } => Membership::SignedIn { email, token },
+        };
+        self.save(&next).await?;
+        *state = next;
+        match state.membership {
+            Membership::SignedIn { .. } => {
+                *self.checked.lock() = None;
+                Ok(SignInProgress::SignedIn {
+                    account: self.view(&state),
+                })
+            }
+            Membership::SignedOut | Membership::Pending { .. } => Err(AccountError::Expired),
+        }
+    }
+
+    pub async fn sign_out(&self) -> Result<Account, AccountError> {
+        let mut state = self.state.lock().await;
+        if let Some(token) = state.token() {
+            match self.cloud.sign_out(token).await {
+                Ok(()) | Err(AccountError::SignedOutElsewhere) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "rivethub.cloud did not revoke the install token; it is deleted here");
+                }
+            }
+        }
+        let left = self.leave(&mut state).await;
+        drop(state);
+        left
+    }
+
+    pub async fn delete(&self) -> Result<Account, AccountError> {
+        let mut state = self.state.lock().await;
+        let token = state.token().ok_or(AccountError::NotSignedIn)?;
+        match self.cloud.delete(token).await {
+            Ok(()) | Err(AccountError::SignedOutElsewhere) => {}
+            Err(error) => return Err(error),
+        }
+        let left = self.leave(&mut state).await;
+        drop(state);
+        left
+    }
+
+    async fn leave(&self, state: &mut InstallState) -> Result<Account, AccountError> {
+        let mut next = state.clone();
+        next.membership = Membership::SignedOut;
+        next.pending_update = None;
+        self.save(&next).await?;
+        *state = next;
+        Ok(self.view(state))
+    }
+
+    async fn save(&self, state: &InstallState) -> Result<(), AccountError> {
+        let files = self.files.clone();
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || files.save(&state)).await?
+    }
+
+    async fn forget_crashes(&self) -> Result<(), AccountError> {
+        let files = self.files.clone();
+        for path in tokio::task::spawn_blocking(move || queued(&files)).await?? {
+            tokio::fs::remove_file(path).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn run(self: Arc<Self>, shutdown: CancellationToken) {
+        let mut beat =
+            tokio::time::interval_at(tokio::time::Instant::now() + FIRST_TICK, TICK_EVERY);
+        beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                _ = beat.tick() => {}
+            }
+            self.tick(Utc::now(), &shutdown).await;
+        }
+    }
+
+    pub async fn tick(&self, now: DateTime<Utc>, shutdown: &CancellationToken) {
+        if let Err(error) = self.send_crashes().await {
+            tracing::debug!(%error, "queued crash reports were not sent");
+        }
+        if let Err(error) = self.roll_usage(now.date_naive()).await {
+            tracing::debug!(%error, "the usage report was not sent");
+        }
+        let due = self
+            .checked
+            .lock()
+            .is_none_or(|checked| checked.elapsed() >= CHECK_EVERY);
+        if due {
+            *self.checked.lock() = Some(Instant::now());
+            if let Err(error) = self.check_update(shutdown).await {
+                tracing::warn!(%error, "the update check failed");
+            }
+        }
+    }
+
+    async fn send_crashes(&self) -> Result<(), AccountError> {
+        let sending = !self.settings.telemetry_disabled && self.state.lock().await.crash_reports;
+        let files = self.files.clone();
+        for path in tokio::task::spawn_blocking(move || queued(&files)).await?? {
+            if sending {
+                let report: CrashReport = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
+                match self.cloud.crash(&report).await? {
+                    Delivery::Accepted => {}
+                    Delivery::Rejected => {
+                        tracing::warn!(at = %report.at, "rivethub.cloud rejected a crash report");
+                    }
+                }
+            }
+            tokio::fs::remove_file(path).await?;
+        }
+        Ok(())
+    }
+
+    async fn roll_usage(&self, today: NaiveDate) -> Result<(), AccountError> {
+        let searches = self.counters.searches.swap(0, Ordering::Relaxed);
+        let app_opens = self.counters.app_opens.swap(0, Ordering::Relaxed);
+        let mut state = self.state.lock().await;
+        if self.settings.telemetry_disabled || !state.usage_counts {
+            return Ok(());
+        }
+        let mut next = state.clone();
+        let mut day = match next.usage.take() {
+            Some(day) if day.day == today => day,
+            Some(finished) => {
+                self.report_usage(&state, &finished).await;
+                UsageDay::starting(today)
+            }
+            None => UsageDay::starting(today),
+        };
+        day.searches = day.searches.saturating_add(searches);
+        day.app_opens = day.app_opens.saturating_add(app_opens);
+        next.usage = Some(day);
+        self.save(&next).await?;
+        *state = next;
+        drop(state);
+        Ok(())
+    }
+
+    async fn report_usage(&self, state: &InstallState, day: &UsageDay) {
+        let Some(os) = CloudOs::current() else {
+            return;
+        };
+        let report = UsageReport {
+            schema: 1,
+            install_id: state.install_id,
+            rh: crate::VERSION.to_owned(),
+            os,
+            day: day.day,
+            counts: UsageCounts {
+                searches: Some(day.searches),
+                app_opens: Some(day.app_opens),
+            },
+        };
+        match self.cloud.usage(&report).await {
+            Ok(Delivery::Accepted) => {}
+            Ok(Delivery::Rejected) => {
+                tracing::warn!(day = %day.day, "rivethub.cloud rejected the usage report");
+            }
+            Err(error) => tracing::debug!(%error, day = %day.day, "the usage report was not sent"),
+        }
+    }
+
+    pub async fn check_update(&self, shutdown: &CancellationToken) -> Result<(), AccountError> {
+        let snapshot = self.state.lock().await.clone();
+        let pending = match snapshot.token() {
+            Some(token) if snapshot.update_source() == UpdateSource::RivethubCloud => {
+                match self.newer(token, &snapshot, shutdown).await {
+                    Ok(pending) => pending,
+                    Err(AccountError::SignedOutElsewhere) => {
+                        let mut state = self.state.lock().await;
+                        if state.token() == Some(token) {
+                            self.leave(&mut state).await?;
+                        }
+                        drop(state);
+                        return Err(AccountError::SignedOutElsewhere);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Some(_) | None => None,
+        };
+        let mut state = self.state.lock().await;
+        if state.pending_update != pending {
+            let mut next = state.clone();
+            next.pending_update = pending;
+            self.save(&next).await?;
+            *state = next;
+        }
+        drop(state);
+        Ok(())
+    }
+
+    async fn newer(
+        &self,
+        token: &str,
+        state: &InstallState,
+        shutdown: &CancellationToken,
+    ) -> Result<Option<PendingUpdate>, AccountError> {
+        let Some((manifest, digest)) =
+            latest(&self.cloud, &self.settings, token, state.channel).await?
+        else {
+            return Ok(None);
+        };
+        let running = plain_version(crate::VERSION)?;
+        if plain_version(&manifest.version)? <= running {
+            return Ok(None);
+        }
+        let pending = PendingUpdate {
+            version: manifest.version.clone(),
+            notes_url: manifest.notes_url.clone(),
+        };
+        if state.auto_download {
+            fetch(&self.cloud, &self.files, manifest, digest, shutdown).await?;
+        }
+        Ok(Some(pending))
+    }
+}
+
+impl UsageDay {
+    fn starting(day: NaiveDate) -> Self {
+        Self {
+            day,
+            searches: 0,
+            app_opens: 0,
+        }
+    }
+}

@@ -1,19 +1,18 @@
-pub mod agents;
-pub mod catalog;
-pub mod devices;
+pub mod account;
+pub mod entities;
 pub mod files;
 pub mod flagged;
-pub mod hub_state;
 pub mod memory;
-pub mod notifications;
+pub mod memory_models;
+pub mod review;
 pub mod roster;
+pub mod session_catalog;
 pub mod session_delete;
 pub mod sessions;
 pub mod tenancy;
-pub mod term;
 pub mod tidy;
+pub mod today;
 pub mod topics;
-pub mod uploads;
 pub mod users;
 pub mod wiki;
 
@@ -126,19 +125,4 @@ impl GatewayError {
 #[serde(rename_all = "camelCase")]
 pub struct OkReply {
     pub ok: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EventsIngested {
-    pub ok: bool,
-    pub ingested: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PairRedeemRequest {
-    pub token: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub csr: Option<String>,
 }

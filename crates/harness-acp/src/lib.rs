@@ -13,7 +13,6 @@ pub mod permissions;
 pub mod process;
 mod prompt;
 mod sheets;
-mod steering;
 mod supervised;
 
 pub use adapter::AcpHarnessAdapter;

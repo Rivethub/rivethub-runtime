@@ -1,9 +1,8 @@
 use crate::common;
 
-use kernel::queue::{ClaimSelector, JobId, JobName, JobQueue, WorkerRole};
-use memory_postgres::{PostgresQueue, PostgresTasks};
+use kernel::queue::{ClaimSelector, JobName, JobQueue, WorkerRole};
+use memory_postgres::PostgresQueue;
 use sqlx::PgPool;
-use std::str::FromStr;
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -208,41 +207,6 @@ async fn expired_locks_are_reclaimed_and_old_workers_cannot_release_the_new_owne
     old.complete(claimed.id).await?;
     assert_eq!(owner(&pool, "serial").await?, locked);
     new.complete(reclaimed.id).await?;
-    assert_eq!(owner(&pool, "serial").await?, None);
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn task_and_worker_claims_share_named_queue_exclusion(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
-    let first = add(&pool, Some("serial")).await?;
-    let second = add(&pool, Some("serial")).await?;
-    let tasks = PostgresTasks::from_pool(pool.clone());
-    let other = PostgresTasks::from_pool(pool.clone());
-    let queue = PostgresQueue::connect(pool.clone()).await?;
-    let selector = ClaimSelector {
-        names: vec![JobName::from_str("embed-target").expect("embed-target")],
-        only_id: Some(JobId::new(first)),
-    };
-    let job = tasks.claim(&selector).await?.ok_or("task claim")?;
-    assert!(other.complete(job.id).await.is_err());
-    assert!(other.fail(job.id, "foreign").await.is_err());
-    assert!(
-        queue
-            .claim(&kernel::queue::ClaimSelector::matching(
-                queue.task_names(WorkerRole::Embedder)
-            ))
-            .await?
-            .is_none()
-    );
-    tasks.fail(job.id, "retry").await?;
-    assert_eq!(owner(&pool, "serial").await?, None);
-    let selector = ClaimSelector {
-        only_id: Some(JobId::new(second)),
-        ..selector
-    };
-    let job = tasks.claim(&selector).await?.ok_or("second task claim")?;
-    tasks.complete(job.id).await?;
     assert_eq!(owner(&pool, "serial").await?, None);
     Ok(())
 }

@@ -10,13 +10,9 @@ use config::Config;
 use kernel::harness::ApprovalDecision;
 use kernel::harness::HarnessAdapter;
 use kernel::harness::HarnessAdapterError;
-use kernel::harness::HarnessCommands;
 use kernel::harness::SessionEvent;
 use kernel::harness::SessionOption;
 use kernel::harness::SessionSpec;
-use kernel::harness::SessionSwitches;
-use kernel::harness::SteerOutcome;
-use kernel::harness::SystemPromptSupport;
 use kernel::harness::TurnInput;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
@@ -54,7 +50,6 @@ struct SessionEntry {
     exited: Arc<AtomicBool>,
     shutdown: CancellationToken,
     images: bool,
-    steering: bool,
 }
 
 impl Drop for SessionEntry {
@@ -72,7 +67,6 @@ struct SessionSnapshot {
     turn_end: mpsc::UnboundedSender<crate::context::TurnEnd>,
     exited: Arc<AtomicBool>,
     images: bool,
-    steering: bool,
 }
 
 #[derive(Debug)]
@@ -162,7 +156,6 @@ impl AcpHarnessAdapter {
             turn_end: entry.turn_end.clone(),
             exited: entry.exited.clone(),
             images: entry.images,
-            steering: entry.steering,
         });
         drop(sessions);
         snapshot.ok_or_else(|| HarnessAdapterError::UnknownSession(session.clone()))
@@ -184,7 +177,6 @@ impl AcpHarnessAdapter {
                 exited: agent.exited,
                 shutdown: agent.shutdown,
                 images: agent.capabilities.prompt_capabilities.image,
-                steering: agent.steering,
             },
         );
     }
@@ -253,14 +245,6 @@ impl AcpHarnessAdapter {
         Ok(command)
     }
 
-    fn resume_dir(&self, command: &AcpCommand) -> Result<PathBuf, HarnessAdapterError> {
-        command
-            .working_dir
-            .clone()
-            .or_else(|| self.default_working_dir.clone())
-            .ok_or_else(|| port(AcpError::WorkingDir))
-    }
-
     fn discovery_target(
         &self,
         harness: HarnessId,
@@ -319,18 +303,12 @@ impl HarnessAdapter for AcpHarnessAdapter {
         entry.tasks.wait().await;
         outcome
     }
-    fn system_prompt(&self, harness: HarnessId) -> SystemPromptSupport {
-        crate::launch::system_prompt(harness)
-    }
 
     async fn new_session(&self, spec: SessionSpec) -> Result<SessionId, HarnessAdapterError> {
         Self::requested_session(&spec)?;
         let command = self.session_command(spec.harness, &spec.session)?;
         let working_dir = self.working_dir(&spec, &command)?;
-        let mut meta = match spec.startup_context.as_deref() {
-            Some(text) => crate::launch::startup_meta(spec.harness, text).map_err(port)?,
-            None => None,
-        };
+        let mut meta = None;
         if self.unsaved {
             meta = crate::launch::unsaved(spec.harness, meta).map_err(port)?;
         }
@@ -367,7 +345,7 @@ impl HarnessAdapter for AcpHarnessAdapter {
             return Err(error);
         }
         if let Some(effort) = spec.effort
-            && self.switches(&canonical).effort
+            && self.session_options(&canonical).switches().effort
             && let Err(error) = self
                 .set_option(&canonical, SessionOption::Effort(effort))
                 .await
@@ -376,37 +354,6 @@ impl HarnessAdapter for AcpHarnessAdapter {
             return Err(error);
         }
         Ok(canonical)
-    }
-
-    async fn resume(
-        &self,
-        session: &SessionId,
-        cwd: Option<&std::path::Path>,
-    ) -> Result<(), HarnessAdapterError> {
-        let native = identity::from_canonical(session).map_err(port)?;
-        let command = self.session_command(native.harness(), session)?;
-        {
-            let sessions = self.sessions.lock();
-            if sessions.contains_key(session) {
-                return Err(port(AcpError::SessionActive {
-                    session: session.clone(),
-                }));
-            }
-        }
-        let working_dir = cwd.map_or_else(|| self.resume_dir(&command), |cwd| Ok(cwd.into()))?;
-        let protocol_session = acp::SessionId::new(native.native());
-        let agent = crate::connection::start_loaded(&command, &working_dir, &protocol_session)
-            .await
-            .map_err(port)?;
-        if let Some(known) = self.discoveries.advertised(native.harness()) {
-            agent.context.adopt(known.context());
-        }
-        self.discoveries.remember(
-            native.harness(),
-            crate::discovery::Advertisement::from_agent(&agent),
-        );
-        self.insert(session.clone(), agent);
-        Ok(())
     }
 
     async fn prompt(
@@ -452,29 +399,6 @@ impl HarnessAdapter for AcpHarnessAdapter {
             tracing::debug!("turn end had no listener");
         }
         Ok(())
-    }
-
-    async fn steer(
-        &self,
-        session: &SessionId,
-        input: TurnInput,
-    ) -> Result<SteerOutcome, HarnessAdapterError> {
-        let snapshot = self.snapshot(session)?;
-        if !snapshot.steering {
-            return Err(HarnessAdapterError::SteeringUnsupported);
-        }
-        let content = crate::prompt::content(input, snapshot.images)
-            .await
-            .map_err(port)?;
-        request(&snapshot.commands, |reply| SessionCommand::Steer {
-            acp_session: snapshot.acp_session.clone(),
-            content,
-            reply,
-        })
-        .await
-        .map_err(|failure| port(port_failure(failure, crate::steering::METHOD)))?
-        .outcome()
-        .map_err(port)
     }
 
     async fn cancel(&self, session: &SessionId) -> Result<(), HarnessAdapterError> {
@@ -523,25 +447,6 @@ impl HarnessAdapter for AcpHarnessAdapter {
         .map_err(|failure| port(port_failure(failure, "session/set_config_option")))?;
         snapshot.options.replace(response.config_options);
         Ok(())
-    }
-
-    fn switches(&self, session: &SessionId) -> SessionSwitches {
-        self.session_options(session).switches()
-    }
-
-    fn mode(&self, session: &SessionId) -> Option<String> {
-        self.session_options(session).mode()
-    }
-
-    fn admit(
-        &self,
-        session: &SessionId,
-        option: &SessionOption,
-    ) -> Result<(), HarnessAdapterError> {
-        self.session_options(session)
-            .select(option)
-            .map(drop)
-            .map_err(port)
     }
 
     async fn events(
@@ -605,20 +510,5 @@ impl HarnessAdapter for AcpHarnessAdapter {
             }
         }
         Ok(offerings)
-    }
-
-    async fn commands(&self) -> Result<Vec<HarnessCommands>, HarnessAdapterError> {
-        let offered = self.offerings().await?;
-        Ok(offered
-            .iter()
-            .filter_map(|offering| {
-                self.discoveries
-                    .commands(offering.harness_id)
-                    .map(|commands| HarnessCommands {
-                        harness: offering.harness_id,
-                        commands,
-                    })
-            })
-            .collect())
     }
 }

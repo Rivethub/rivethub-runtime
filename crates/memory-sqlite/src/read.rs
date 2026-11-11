@@ -25,7 +25,8 @@ const BROWSE_CONDITIONS: &str = "WHERE (?1 OR m.role <> 'tool')
           WHERE entity_type = 'conversation' AND state = 'accepted'
             AND key = ?6 AND value = ?7))
    AND (?8 IS NULL OR m.created_at >= ?8)
-   AND (?9 IS NULL OR m.created_at < ?9)";
+   AND (?9 IS NULL OR m.created_at < ?9)
+   AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key)";
 
 impl SqliteStore {
     pub async fn browse_at(

@@ -13,7 +13,6 @@ impl StartupError {
             | Self::Url
             | Self::State(_)
             | Self::StateTask(_)
-            | Self::Voice(_)
             | Self::EmbedModel
             | Self::SqliteEmbedModel
             | Self::EmbedProvider(_) => Exit::Failure,

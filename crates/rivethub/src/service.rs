@@ -65,8 +65,6 @@ pub enum StartupError {
     State(#[from] config::StateError),
     #[error("the legacy state move task aborted")]
     StateTask(#[source] tokio::task::JoinError),
-    #[error(transparent)]
-    Voice(#[from] gateway::VoiceConfigError),
 }
 
 pub(crate) fn postgres_url(config: &Config, env: &Environment) -> Result<String, StartupError> {
@@ -218,39 +216,8 @@ pub async fn compose(
     let node = crate::identity::announce_resolved("gateway", config, env)?;
     let settings = Settings::from_config_in(config, env, node.hostname, node.name)?;
     let identity = crate::composition::identities::load(config, env).await?;
-    let gateway = Gateway::new(store, settings)
-        .with_uploads(uploads(env)?)
-        .with_tenancy(identity.tenancy);
-    let gateway = with_voice(gateway, env)?;
+    let gateway = Gateway::new(store, settings).with_tenancy(identity.tenancy);
     Ok(Arc::new(gateway))
-}
-
-pub(crate) fn with_voice(
-    gateway: Gateway,
-    env: &Environment,
-) -> Result<Gateway, crate::composition::ComposeError> {
-    let voice = env.voice_endpoints();
-    Ok(gateway.with_voice(gateway::VoiceSettings::new(
-        voice.stt_url,
-        voice.tts_url,
-        voice.instructions,
-    ))?)
-}
-
-pub(crate) fn uploads(
-    env: &Environment,
-) -> Result<gateway::uploads::UploadService, config::ConfigError> {
-    let uploads = env.upload_settings();
-    for ignored in &uploads.ignored {
-        tracing::warn!("ignored upload limit {ignored}");
-    }
-    Ok(gateway::uploads::UploadService::new(
-        gateway::uploads::UploadOptions {
-            root: config::Paths::new(env)?.state_dir().join("uploads"),
-            max_bytes: uploads.max_bytes,
-            ttl: uploads.ttl,
-        },
-    ))
 }
 
 pub async fn listen(

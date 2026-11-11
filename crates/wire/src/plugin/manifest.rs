@@ -78,15 +78,6 @@ pub enum Permission {
     #[serde(rename = "topics.write")]
     #[strum(serialize = "topics.write")]
     TopicsWrite,
-    #[serde(rename = "tasks.read")]
-    #[strum(serialize = "tasks.read")]
-    TasksRead,
-    #[serde(rename = "tasks.delegate")]
-    #[strum(serialize = "tasks.delegate")]
-    TasksDelegate,
-    #[serde(rename = "agents.read")]
-    #[strum(serialize = "agents.read")]
-    AgentsRead,
     #[serde(rename = "notifications.send")]
     #[strum(serialize = "notifications.send")]
     NotificationsSend,
@@ -186,6 +177,4 @@ pub enum PluginEventKind {
     SessionPlaced,
     #[serde(rename = "summary.written")]
     SummaryWritten,
-    #[serde(rename = "task.done")]
-    TaskDone,
 }

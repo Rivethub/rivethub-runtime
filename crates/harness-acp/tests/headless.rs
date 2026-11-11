@@ -107,7 +107,6 @@ async fn configured_headless_binary_and_directory_reach_the_acp_process() -> Tes
                 model: Some("grok-5".into()),
                 effort: Some(wire::stream::ThinkingLevel::Low),
                 working_dir: None,
-                startup_context: None,
             })
             .await?;
         let mut events = adapter.events(&session).await?;

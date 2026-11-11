@@ -1,12 +1,6 @@
 #![cfg(test)]
 
-use kernel::tasks::AgentDirectory;
-use kernel::tasks::DelegateOutcome;
-use kernel::tasks::DelegateRequest;
-use kernel::tasks::Delegation;
-use kernel::tasks::DelegationError;
 use mcp::Server;
-use mcp::Surface;
 use testkit::translate_recorded_product_names;
 
 use rmcp::{
@@ -62,27 +56,15 @@ const SKIPPED: &[(&str, &str)] = &[
         "skill_manage",
         "Product decision: skills are not sidecar tools",
     ),
+    (
+        "delegate_task",
+        "Delegation left rh for T3 Code (CONTRACT note 132)",
+    ),
+    (
+        "list_agents",
+        "Delegation left rh for T3 Code (CONTRACT note 132)",
+    ),
 ];
-
-struct IdleDelegation;
-
-#[async_trait::async_trait]
-impl Delegation for IdleDelegation {
-    async fn agents(&self) -> Result<AgentDirectory, DelegationError> {
-        Ok(AgentDirectory {
-            presets: Vec::new(),
-            runtime: Vec::new(),
-        })
-    }
-
-    async fn delegate(
-        &self,
-        _request: DelegateRequest,
-        _cancel: CancellationToken,
-    ) -> Result<DelegateOutcome, DelegationError> {
-        Err(DelegationError::Rejected("idle".into()))
-    }
-}
 
 fn recording_server() -> Server {
     Server::builder(
@@ -90,7 +72,6 @@ fn recording_server() -> Server {
         false,
         CancellationToken::new(),
     )
-    .delegation(std::sync::Arc::new(IdleDelegation), Surface::Stdio)
     .build()
     .expect("recording server")
 }

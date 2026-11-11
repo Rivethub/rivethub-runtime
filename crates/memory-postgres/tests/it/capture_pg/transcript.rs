@@ -238,6 +238,7 @@ pub(super) async fn ingest_transcript(
                 metadata: &metadata,
                 owner_user_id: &owner,
                 created_at: line.at,
+                batch_index: 0,
             })
             .await?;
         inserted += 1;
@@ -283,6 +284,7 @@ pub(super) async fn ingest_transcript(
                     metadata: &metadata,
                     owner_user_id: &owner,
                     created_at: line.at,
+                    batch_index: 0,
                 })
                 .await?;
             inserted += 1;
@@ -312,6 +314,7 @@ pub(super) async fn ingest_transcript(
                 metadata: &metadata,
                 owner_user_id: &owner,
                 created_at: line.at,
+                batch_index: 0,
             })
             .await?;
         inserted += 1;

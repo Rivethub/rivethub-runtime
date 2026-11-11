@@ -23,7 +23,6 @@ path = "src/bin/rivetos.rs"
 [dependencies]
 chrono-tz = { workspace = true }
 cli = { workspace = true }
-agent-loop.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 capture.workspace = true
@@ -32,7 +31,6 @@ harness-acp.workspace = true
 providers.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-terminal.workspace = true
 url.workspace = true
 wire.workspace = true
 config = { workspace = true }
@@ -41,16 +39,13 @@ kernel = { workspace = true }
 mcp = { workspace = true }
 memory-postgres = { workspace = true }
 memory-sqlite = { workspace = true }
-pki = { workspace = true }
 workers = { workspace = true }
 nix = { workspace = true, features = ["hostname", "inotify", "signal"] }
-rustls-pki-types.workspace = true
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "signal", "time"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-x509-parser.workspace = true
 reqwest = { workspace = true }
 uuid = { workspace = true }
 
@@ -62,6 +57,7 @@ rcgen.workspace = true
 rustls.workspace = true
 tokio-tungstenite = { workspace = true, features = ["__rustls-tls"] }
 migrate = { workspace = true }
+parking_lot = { workspace = true }
 serde_yaml_ng = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 tempfile = { workspace = true }

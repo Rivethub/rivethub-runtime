@@ -41,6 +41,29 @@ pub enum Error {
     Initialize(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
     Service(#[from] rmcp::service::ServiceError),
+    #[error(transparent)]
+    Path(#[from] crate::sessions::PathRefusal),
+    #[error(transparent)]
+    Share(#[from] kernel::memory::share::ShareFailure),
+    #[error(
+        "refused: {} is a raw bundle that was never sanitized; run session_sanitize on the raw bundle first", .0.display()
+    )]
+    RawBundle(std::path::PathBuf),
+    #[error(
+        "refused: {} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again", path.display()
+    )]
+    BundleSecrets {
+        path: std::path::PathBuf,
+        count: usize,
+        first: String,
+    },
+    #[error(
+        "refused: {} withholds {count} flagged chunk(s) until they are marked; mark them in the report and run rh memory sanitize --resolve <report>", path.display()
+    )]
+    BundleWithheld {
+        path: std::path::PathBuf,
+        count: usize,
+    },
 }
 
 pub fn required<T>(value: Option<T>, field: &str) -> Result<T, Error> {

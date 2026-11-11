@@ -51,15 +51,12 @@ use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue;
 use kernel::queue::WorkerRole;
-use kernel::terminal::TermSize;
-use kernel::terminal::TerminalMux;
 use kernel::tool::Tool;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::Turn;
 use testkit::FakeHarness;
 use testkit::FakeJobQueue;
 use testkit::FakeMemoryStore;
-use testkit::FakeMux;
 use testkit::FakeProvider;
 use testkit::FakeReader;
 use testkit::FakeTool;
@@ -460,7 +457,6 @@ fn harness_delivers_session_events() {
                 model: None,
                 effort: None,
                 working_dir: None,
-                startup_context: None,
             })
             .await
             .unwrap();
@@ -485,42 +481,6 @@ fn harness_delivers_session_events() {
             .set_option(&session, SessionOption::Model("m".to_string()))
             .await
             .unwrap();
-    });
-}
-
-#[test]
-fn mux_spawn_kill_list() {
-    block_on(async {
-        let mux: Arc<dyn TerminalMux> = Arc::new(FakeMux::default());
-        let session =
-            SessionId::from_str("claude-code:11111111-2222-4333-8444-555555555555").unwrap();
-        let id = mux
-            .spawn(
-                &session,
-                vec!["bash".to_string()],
-                std::path::Path::new("/work/acme"),
-                &BTreeMap::new(),
-                TermSize { cols: 80, rows: 24 },
-            )
-            .await
-            .unwrap();
-        let rx = mux.attach(&id).await.unwrap();
-        mux.input(&id, b"ls\n".to_vec()).await.unwrap();
-        mux.resize(
-            &id,
-            TermSize {
-                cols: 120,
-                rows: 40,
-            },
-        )
-        .await
-        .unwrap();
-        let listed = mux.list().await.unwrap();
-        assert!(listed.first().is_some_and(|pty| pty.running));
-        mux.kill(&id).await.unwrap();
-        let listed = mux.list().await.unwrap();
-        assert!(listed.first().is_some_and(|pty| !pty.running));
-        drop(rx);
     });
 }
 

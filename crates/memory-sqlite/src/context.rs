@@ -106,7 +106,8 @@ fn recent_lines(
            JOIN ros_conversations c ON c.id = m.conversation_id \
           WHERE c.agent = ?1 AND c.active = 1 AND c.session_key NOT LIKE 'heartbeat:%' \
             AND m.created_at <= ?2 \
-          ORDER BY m.created_at DESC, m.id DESC LIMIT ?3",
+            AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key) \
+          ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?3",
         agent,
         stamp,
         RECENT_ROWS,
@@ -126,7 +127,8 @@ fn relevant_lines(
     let mut sql = String::from(
         "SELECT m.id, m.role, m.agent, m.content FROM ros_messages m \
            JOIN ros_conversations c ON c.id = m.conversation_id \
-          WHERE c.agent = ? AND m.created_at <= ?",
+          WHERE c.agent = ? AND m.created_at <= ? \
+            AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key)",
     );
     let mut params = vec![Value::Text(agent.to_owned()), Value::Text(stamp.to_owned())];
     if !recent.is_empty() {
@@ -140,7 +142,7 @@ fn relevant_lines(
         }
         sql.push(')');
     }
-    sql.push_str(" ORDER BY m.created_at ASC, m.id ASC LIMIT ?");
+    sql.push_str(" ORDER BY m.created_at ASC, m.rowid ASC LIMIT ?");
     params.push(Value::Integer(
         i64::try_from(RELEVANT_LIMIT).map_err(SqliteError::Count)?,
     ));
@@ -309,7 +311,7 @@ fn latest_user(
         "SELECT m.content FROM ros_messages m \
            JOIN ros_conversations c ON c.id = m.conversation_id \
           WHERE c.session_key = ?1 AND m.role = 'user' AND m.created_at <= ?2 \
-          ORDER BY m.created_at DESC, m.id DESC LIMIT 1",
+          ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1",
         params_from_iter([
             Value::Text(session.to_owned()),
             Value::Text(stamp.to_owned()),

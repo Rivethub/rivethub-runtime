@@ -65,6 +65,7 @@ fn patch() -> TestResult<WikiPatch> {
         related: None,
         history_entry: None,
         entity_type: None,
+        facts: None,
     })
 }
 
@@ -188,34 +189,4 @@ async fn fail_wiki_does_not_clobber_a_done_extraction() -> TestResult {
     )?;
     assert_eq!(status, "done");
     Ok(())
-}
-
-#[tokio::test]
-async fn a_task_runs_once_on_its_node_and_only_a_kill_ends_it_early() -> TestResult {
-    let fixture = fixture()?;
-    testkit::tasks::a_task_runs_once_on_its_node_and_only_a_kill_ends_it_early(&fixture.store).await
-}
-
-#[tokio::test]
-async fn a_running_task_is_reaped_only_when_its_liveness_goes_stale() -> TestResult {
-    let fixture = fixture()?;
-    testkit::tasks::a_running_task_is_reaped_only_when_its_liveness_goes_stale(&fixture.store).await
-}
-
-#[tokio::test]
-async fn a_queued_task_times_out_when_no_node_starts_it_by_its_deadline() -> TestResult {
-    let fixture = fixture()?;
-    testkit::tasks::a_queued_task_times_out_when_no_node_starts_it_by_its_deadline(&fixture.store)
-        .await
-}
-
-#[tokio::test]
-async fn a_delegated_child_is_filed_under_its_parents_topic() -> TestResult {
-    let fixture = fixture()?;
-    testkit::tasks::a_delegated_child_is_filed_under_its_parents_topic(
-        &fixture.store,
-        &fixture.store,
-        &fixture.store,
-    )
-    .await
 }

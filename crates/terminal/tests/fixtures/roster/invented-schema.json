@@ -1,1 +1,0 @@
-{"default":"shell","commands":[{"id":"shell","label":"Shell","argv":["/bin/true"],"cwd":"/tmp","session":false}]}

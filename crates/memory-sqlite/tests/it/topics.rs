@@ -119,13 +119,6 @@ async fn suggestions_hold_until_the_session_is_placed() -> TestResult {
 }
 
 #[tokio::test]
-async fn startup_context_is_kept_per_session() -> TestResult {
-    let (_directory, store) = store()?;
-    topics::startup_context_is_kept_per_session(&store).await?;
-    Ok(())
-}
-
-#[tokio::test]
 async fn listings_count_sessions_and_take_last_activity_from_conversations() -> TestResult {
     let (_directory, store) = store()?;
     let busy = store.create(topics::new_topic("Busy", &[], None)?).await?;
@@ -216,6 +209,20 @@ async fn decisions_are_the_topic_page_decisions_section() -> TestResult {
 }
 
 #[tokio::test]
+async fn facts_keep_claims_pins_and_merges() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::facts::facts_keep_claims_pins_and_merges(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn review_marks_keep_each_owners_decisions() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::review::review_marks_keep_each_owners_decisions(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound() -> TestResult {
     let (_directory, store) = store()?;
     topic_pages::a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(pages(&store))
@@ -283,5 +290,26 @@ async fn upkeep_counts_filings_entities_and_finished_jobs() -> TestResult {
 async fn every_topic_s_filing_reads_at_once() -> TestResult {
     let (_directory, store) = store()?;
     testkit::filing_bulk::every_topic_s_filing_reads_at_once(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn changes_list_what_the_day_recorded() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::changes_list_what_the_day_recorded(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn digests_are_kept_per_day_and_owner() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::digests_are_kept_per_day_and_owner(&store).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tag_on_a_bare_claude_conversation_is_its_sessions_change() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::changes::a_tag_on_a_bare_claude_conversation_is_its_sessions_change(&store).await?;
     Ok(())
 }

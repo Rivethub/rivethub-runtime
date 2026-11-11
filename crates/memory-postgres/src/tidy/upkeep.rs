@@ -113,6 +113,7 @@ impl UpkeepStore for PostgresMemory {
                             task: row.task,
                             last_finished: Some(row.finished_at),
                             failing: 0,
+                            queued: 0,
                         },
                     )
                 })
@@ -140,8 +141,28 @@ impl UpkeepStore for PostgresMemory {
                     task: row.task,
                     last_finished: None,
                     failing: 0,
+                    queued: 0,
                 });
                 activity.failing = count(row.failing)?;
+            }
+            let waiting: Vec<FailingRow> = sqlx::query_as(
+                "SELECT t.identifier AS task, count(*)::bigint AS failing
+                   FROM graphile_worker._private_jobs j
+                   JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+                  WHERE j.locked_at IS NULL AND j.attempts < j.max_attempts
+                  GROUP BY t.identifier",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(failed("queued jobs"))?;
+            for row in waiting {
+                let activity = tasks.entry(row.task.clone()).or_insert(TaskActivity {
+                    task: row.task,
+                    last_finished: None,
+                    failing: 0,
+                    queued: 0,
+                });
+                activity.queued = count(row.failing)?;
             }
         }
         Ok(tasks.into_values().collect())

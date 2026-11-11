@@ -127,6 +127,14 @@ impl MemoryStore for SqliteStore {
         self.stats_for(None).await.map_err(MemoryStoreError::from)
     }
 
+    async fn capture_activity(
+        &self,
+    ) -> Result<Vec<kernel::harness_setup::CaptureActivity>, MemoryStoreError> {
+        self.capture_activity_read()
+            .await
+            .map_err(MemoryStoreError::from)
+    }
+
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError> {
         self.message_entry(id).await.map_err(MemoryStoreError::from)
     }
@@ -185,6 +193,15 @@ impl MemoryStore for SqliteStore {
         lookup: TagLookup,
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError> {
         self.tags_lookup(lookup).await
+    }
+
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+        self.with_conn(move |conn| crate::conversation::origins(conn, &session_keys))
+            .await
+            .map_err(MemoryStoreError::from)
     }
 
     async fn upsert_tag_taxonomy(

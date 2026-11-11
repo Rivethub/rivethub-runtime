@@ -15,7 +15,7 @@
     "TAG_SYSTEM_PROMPT": "ee0ea5d8228a517cb43b079b9c2da4d31512c5ef0bb33316ed3fa89af5dea9ff"
   },
   "constants": {
-    "PIPELINE_VERSION": 5,
+    "PIPELINE_VERSION": 6,
     "WIKI_PIPELINE_VERSION": 4,
     "DEFAULT_COMPACTION_SETTINGS": {
       "leafBatch": 10,
@@ -63,7 +63,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n  messages:  10 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#07 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#08 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#09 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#10 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n  messages:  10 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#07 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#08 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#09 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#10 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -83,7 +83,7 @@
             "earliest_at": "2026-10-10T12:00:00.000Z",
             "latest_at": "2026-10-10T12:09:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:12:00.000Z",
@@ -262,7 +262,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:04Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:04Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -271,7 +271,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:05Z → 2026-10-10T12:09Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:05Z → 2026-10-10T12:09Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -280,7 +280,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:10Z → 2026-10-10T12:14Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:10Z rivet/user]\nmessage number 10 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:11Z rivet/assistant]\nmessage number 11 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:12Z rivet/user]\nmessage number 12 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:13Z rivet/assistant]\nmessage number 13 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:14Z rivet/user]\nmessage number 14 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:10Z → 2026-10-10T12:14Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:10Z rivet/user]\nmessage number 10 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:11Z rivet/assistant]\nmessage number 11 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:12Z rivet/user]\nmessage number 12 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:13Z rivet/assistant]\nmessage number 13 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:14Z rivet/user]\nmessage number 14 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -289,7 +289,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:15Z → 2026-10-10T12:19Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:15Z rivet/assistant]\nmessage number 15 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:16Z rivet/user]\nmessage number 16 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:17Z rivet/assistant]\nmessage number 17 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:18Z rivet/user]\nmessage number 18 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:19Z rivet/assistant]\nmessage number 19 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:15Z → 2026-10-10T12:19Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:15Z rivet/assistant]\nmessage number 15 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:16Z rivet/user]\nmessage number 16 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:17Z rivet/assistant]\nmessage number 17 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:18Z rivet/user]\nmessage number 18 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:19Z rivet/assistant]\nmessage number 19 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -298,7 +298,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "BRANCH_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  leaves:    2 in this branch\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n\n---\n\n[Leaf #01 2026-10-10T12:00Z → 2026-10-10T12:04Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n---\n\n[Leaf #02 2026-10-10T12:05Z → 2026-10-10T12:09Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  leaves:    2 in this branch\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n\n---\n\n[Leaf #01 2026-10-10T12:00Z → 2026-10-10T12:04Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n---\n\n[Leaf #02 2026-10-10T12:05Z → 2026-10-10T12:09Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n[end]\n\nWrite the branch summary of the leaves above now.",
           "max_tokens": 24576,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -307,7 +307,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "BRANCH_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  leaves:    2 in this branch\n  span:      2026-10-10T12:10Z → 2026-10-10T12:19Z\n\n---\n\n[Leaf #01 2026-10-10T12:10Z → 2026-10-10T12:14Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n---\n\n[Leaf #02 2026-10-10T12:15Z → 2026-10-10T12:19Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  leaves:    2 in this branch\n  span:      2026-10-10T12:10Z → 2026-10-10T12:19Z\n\n---\n\n[Leaf #01 2026-10-10T12:10Z → 2026-10-10T12:14Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n---\n\n[Leaf #02 2026-10-10T12:15Z → 2026-10-10T12:19Z | 5 msgs]\nThe team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.\n\n[end]\n\nWrite the branch summary of the leaves above now.",
           "max_tokens": 24576,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -316,7 +316,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "ROOT_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  branches:  2 in this root\n  span:      2026-10-10T12:00Z → 2026-10-10T12:19Z\n\n---\n\n[Branch #01 2026-10-10T12:00Z → 2026-10-10T12:09Z | 10 msgs]\nBranch summary: several deploy sessions for AcmeKit settled on blue-green releases with a health-check gate.\n\n---\n\n[Branch #02 2026-10-10T12:10Z → 2026-10-10T12:19Z | 10 msgs]\nBranch summary: several deploy sessions for AcmeKit settled on blue-green releases with a health-check gate.",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  branches:  2 in this root\n  span:      2026-10-10T12:00Z → 2026-10-10T12:19Z\n\n---\n\n[Branch #01 2026-10-10T12:00Z → 2026-10-10T12:09Z | 10 msgs]\nBranch summary: several deploy sessions for AcmeKit settled on blue-green releases with a health-check gate.\n\n---\n\n[Branch #02 2026-10-10T12:10Z → 2026-10-10T12:19Z | 10 msgs]\nBranch summary: several deploy sessions for AcmeKit settled on blue-green releases with a health-check gate.\n\n[end]\n\nWrite the root summary of the branches above now.",
           "max_tokens": 32768,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -336,7 +336,7 @@
             "earliest_at": "2026-10-10T12:00:00.000Z",
             "latest_at": "2026-10-10T12:04:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -358,7 +358,7 @@
             "earliest_at": "2026-10-10T12:05:00.000Z",
             "latest_at": "2026-10-10T12:09:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -380,7 +380,7 @@
             "earliest_at": "2026-10-10T12:10:00.000Z",
             "latest_at": "2026-10-10T12:14:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -402,7 +402,7 @@
             "earliest_at": "2026-10-10T12:15:00.000Z",
             "latest_at": "2026-10-10T12:19:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -424,7 +424,7 @@
             "earliest_at": "2026-10-10T12:00:00.000Z",
             "latest_at": "2026-10-10T12:09:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -446,7 +446,7 @@
             "earliest_at": "2026-10-10T12:10:00.000Z",
             "latest_at": "2026-10-10T12:19:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -468,7 +468,7 @@
             "earliest_at": "2026-10-10T12:00:00.000Z",
             "latest_at": "2026-10-10T12:19:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:20:00.000Z",
@@ -638,7 +638,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n  messages:  10 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#07 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#08 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#09 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#10 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:09Z\n  messages:  10 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#07 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#08 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#09 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#10 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -648,7 +648,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:04Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:00Z → 2026-10-10T12:04Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:03Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:04Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -658,7 +658,7 @@
         {
           "url": "https://llm.example.com/v1/chat/completions",
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:05Z → 2026-10-10T12:09Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service",
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:s1\n  span:      2026-10-10T12:05Z → 2026-10-10T12:09Z\n  messages:  5 in this batch\n\n---\n\n[#01 2026-10-10T12:05Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-10T12:06Z rivet/user]\nmessage number 6 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-10T12:07Z rivet/assistant]\nmessage number 7 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-10T12:08Z rivet/user]\nmessage number 8 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-10T12:09Z rivet/assistant]\nmessage number 9 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript.",
           "max_tokens": 16384,
           "temperature": 0.3,
           "model": "fake-chat",
@@ -679,7 +679,7 @@
             "earliest_at": "2026-10-10T12:00:00.000Z",
             "latest_at": "2026-10-10T12:04:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:10:00.000Z",
@@ -699,7 +699,7 @@
             "earliest_at": "2026-10-10T12:05:00.000Z",
             "latest_at": "2026-10-10T12:09:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-10T12:10:00.000Z",
@@ -867,7 +867,7 @@
             "earliest_at": "2026-10-04T12:00:00.000Z",
             "latest_at": "2026-10-04T12:09:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-04T13:51:00.000Z",
@@ -977,11 +977,11 @@
       "chat_calls": [
         {
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000037\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:floor\n  span:      2026-10-04T12:03Z → 2026-10-04T12:08Z\n  messages:  6 in this batch\n\n---\n\n[#01 2026-10-04T12:03Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-04T12:04Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-04T12:05Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-04T12:06Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-04T12:07Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-04T12:08Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service"
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000037\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:floor\n  span:      2026-10-04T12:03Z → 2026-10-04T12:08Z\n  messages:  6 in this batch\n\n---\n\n[#01 2026-10-04T12:03Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-04T12:04Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-04T12:05Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n---\n\n[#04 2026-10-04T12:06Z rivet/assistant]\nmessage number 3 about deploying the AcmeKit service\n\n---\n\n[#05 2026-10-04T12:07Z rivet/user]\nmessage number 4 about deploying the AcmeKit service\n\n---\n\n[#06 2026-10-04T12:08Z rivet/assistant]\nmessage number 5 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript."
         },
         {
           "prompt": "LEAF_SYSTEM_PROMPT",
-          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:few\n  span:      2026-10-04T12:00Z → 2026-10-04T12:02Z\n  messages:  3 in this batch\n\n---\n\n[#01 2026-10-04T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-04T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-04T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service"
+          "user": "[conversation]\n  id:        00000000-0000-4000-8000-000000000002\n  agent:     rivet\n  channel:   cli\n  title:     Session cli:few\n  span:      2026-10-04T12:00Z → 2026-10-04T12:02Z\n  messages:  3 in this batch\n\n---\n\n[#01 2026-10-04T12:00Z rivet/user]\nmessage number 0 about deploying the AcmeKit service\n\n---\n\n[#02 2026-10-04T12:01Z rivet/assistant]\nmessage number 1 about deploying the AcmeKit service\n\n---\n\n[#03 2026-10-04T12:02Z rivet/user]\nmessage number 2 about deploying the AcmeKit service\n\n[end]\n\nWrite the leaf summary of the batch above now. Do not continue the transcript."
         }
       ],
       "tables": {
@@ -997,7 +997,7 @@
             "earliest_at": "2026-10-04T12:03:00.000Z",
             "latest_at": "2026-10-04T12:08:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-04T12:25:00.000Z",
@@ -1017,7 +1017,7 @@
             "earliest_at": "2026-10-04T12:00:00.000Z",
             "latest_at": "2026-10-04T12:02:00.000Z",
             "model": "fake-chat",
-            "pipeline_version": 5,
+            "pipeline_version": 6,
             "access_count": 0,
             "last_accessed_at": null,
             "created_at": "2026-10-08T12:25:00.000Z",

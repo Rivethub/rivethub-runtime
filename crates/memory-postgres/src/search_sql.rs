@@ -3,13 +3,13 @@ use crate::search::ArmKind;
 use crate::search::ArmRow;
 use crate::search::SearchOptions;
 use crate::search::TagFilter;
+use crate::search_literal::Patience;
+use crate::search_literal::literal_tokens;
 use chrono::Utc;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
-use kernel::memory_core::HYBRID_MIN_CONTENT_LEN;
 use kernel::memory_core::hybrid_pool;
 use kernel::memory_core::recency_boost;
-use kernel::memory_core::should_trigram_fallback;
 use pgvector::HalfVector;
 use sqlx::QueryBuilder;
 use std::str::FromStr as _;
@@ -17,15 +17,6 @@ use wire::message::Role;
 
 pub(crate) fn semantic_floor(alias: &str) -> String {
     format!("least(length(btrim({alias}.content)) / 1000.0, 1.0)")
-}
-
-const LENGTH_PREFIX: i64 = 1000;
-
-fn long_enough(body: &str) -> String {
-    format!(
-        "(length(btrim(left({body}, {LENGTH_PREFIX}))) >= {HYBRID_MIN_CONTENT_LEN} \
-         OR (octet_length({body}) > {LENGTH_PREFIX} AND length(btrim({body})) >= {HYBRID_MIN_CONTENT_LEN}))"
-    )
 }
 
 pub(crate) fn recency_columns(alias: &str, is_message: bool) -> String {
@@ -107,6 +98,19 @@ pub(crate) fn push_scope_conditions(
     options: &SearchOptions,
     is_message: bool,
 ) {
+    query.push(crate::session_marks::not_trashed(alias_of(is_message)));
+    push_option_conditions(query, options, is_message);
+}
+
+pub(crate) const fn alias_of(is_message: bool) -> &'static str {
+    if is_message { "m" } else { "s" }
+}
+
+pub(crate) fn push_option_conditions(
+    query: &mut QueryBuilder<sqlx::Postgres>,
+    options: &SearchOptions,
+    is_message: bool,
+) {
     if let Some(agent) = &options.agent {
         if is_message {
             query.push(" AND m.agent = ");
@@ -142,20 +146,6 @@ pub(crate) fn push_scope_conditions(
         query.push(" AND m.tool_name = ");
         query.push_bind(tool_name.clone());
     }
-}
-
-fn literal_tokens(text: &str) -> Vec<String> {
-    let mut tokens: Vec<String> = Vec::new();
-    for token in text.split_whitespace() {
-        if should_trigram_fallback(token) && !tokens.iter().any(|seen| seen == token) {
-            tokens.push(token.to_owned());
-        }
-    }
-    let whole = text.trim();
-    if tokens.is_empty() && !whole.is_empty() {
-        tokens.push(whole.to_owned());
-    }
-    tokens
 }
 
 fn like_escaped(token: &str) -> String {
@@ -277,36 +267,6 @@ fn push_pattern_match(query: &mut QueryBuilder<sqlx::Postgres>, pattern: &str, t
     query.push(")");
 }
 
-pub(crate) fn push_fts_where(
-    query: &mut QueryBuilder<sqlx::Postgres>,
-    context: &ArmContext<'_>,
-    is_message: bool,
-    long: bool,
-) {
-    let alias = if is_message { "m" } else { "s" };
-    query.push(" WHERE ");
-    if let Some(filter) = context.tag_filter {
-        filter.push_condition(query, is_message);
-    } else {
-        query.push("true");
-    }
-    query.push(format!(
-        " AND {alias}.content_tsv @@ plainto_tsquery('english', "
-    ));
-    query.push_bind(context.options.text.clone());
-    query.push(")");
-    if long {
-        query.push(" AND ");
-        query.push(long_enough(if is_message {
-            "CASE WHEN m.role = 'tool' THEN coalesce(m.tool_result, '') ELSE m.content END"
-        } else {
-            "s.content"
-        }));
-    }
-    push_time_conditions(query, context.options, alias);
-    push_scope_conditions(query, context.options, is_message);
-}
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(crate) struct ArmSqlRow {
     chunk: Option<sqlx::types::Json<kernel::memory::MemoryChunkMatch>>,
@@ -412,9 +372,8 @@ pub(crate) fn push_embedded_semantic(
 pub(crate) struct ArmContext<'a> {
     pub(crate) options: &'a SearchOptions,
     pub(crate) tag_filter: Option<&'a TagFilter>,
+    pub(crate) patience: Patience,
 }
-
-const ESCAPE_HATCH_TIMEOUT: &str = "30s";
 
 impl crate::PostgresMemory {
     pub(crate) async fn arm_rows(
@@ -424,9 +383,44 @@ impl crate::PostgresMemory {
         tag_filter: Option<&TagFilter>,
         query_vector: Option<&[f32]>,
     ) -> Result<Vec<ArmRow>, Error> {
+        self.arm_rows_with(options, kind, tag_filter, query_vector, Patience::Asked)
+            .await
+    }
+
+    pub(crate) async fn optional_literal_rows(
+        &self,
+        options: &SearchOptions,
+        tag_filter: Option<&TagFilter>,
+        query_vector: Option<&[f32]>,
+    ) -> Result<Option<Vec<ArmRow>>, Error> {
+        match self
+            .arm_rows_with(
+                options,
+                ArmKind::Trigram,
+                tag_filter,
+                query_vector,
+                Patience::Optional,
+            )
+            .await
+        {
+            Ok(rows) => Ok(Some(rows)),
+            Err(error) if error.timed_out() => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn arm_rows_with(
+        &self,
+        options: &SearchOptions,
+        kind: ArmKind,
+        tag_filter: Option<&TagFilter>,
+        query_vector: Option<&[f32]>,
+        patience: Patience,
+    ) -> Result<Vec<ArmRow>, Error> {
         let context = ArmContext {
             options,
             tag_filter,
+            patience,
         };
         let messages = async {
             if matches!(options.scope, MemoryScope::Messages | MemoryScope::Both) {
@@ -469,7 +463,7 @@ impl crate::PostgresMemory {
         let alias = if is_message { "m" } else { "s" };
         let literal = LiteralText::of(options, is_message);
         let tokens = if kind == ArmKind::Trigram {
-            literal_tokens(&options.text)
+            literal_tokens(&options.text, context.patience)
         } else {
             Vec::new()
         };
@@ -525,7 +519,12 @@ impl crate::PostgresMemory {
             "rh_summaries s"
         });
         if text_search {
-            push_fts_where(&mut query, context, is_message, kind == ArmKind::Fts);
+            crate::search_fts::push_fts_where(
+                &mut query,
+                context,
+                is_message,
+                kind == ArmKind::Fts,
+            );
             if let Some(candidates) = &candidates {
                 query.push(format!(" AND {alias}.id = ANY("));
                 query.push_bind(candidates.clone());
@@ -567,7 +566,7 @@ impl crate::PostgresMemory {
                 .await
                 .map_err(|source| Error::operation("search", source))?;
             sqlx::query("select set_config('statement_timeout', $1, true)")
-                .bind(ESCAPE_HATCH_TIMEOUT)
+                .bind(context.patience.statement_timeout())
                 .execute(&mut *tx)
                 .await
                 .map_err(|source| Error::operation("search", source))?;

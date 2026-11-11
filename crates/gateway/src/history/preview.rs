@@ -23,12 +23,6 @@ impl History {
         gateway: &Gateway,
         resolved: &Resolved,
     ) -> Result<Option<Preview>, ApiError> {
-        let live = gateway
-            .terminal()
-            .and_then(|service| service.live_preview(&resolved.native));
-        if live.is_some() {
-            return Ok(live);
-        }
         let Some(lister) = gateway.session_lister() else {
             return Ok(None);
         };

@@ -8,7 +8,7 @@ use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose,
 };
-use support::{config, environment, home, run};
+use support::{config, home, run};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use wire::gateway::HealthzResponse;
@@ -91,8 +91,12 @@ async fn tls_health(dns_name: &str) -> Result<Served> {
 async fn status_verifies_a_tls_gateway_by_the_name_its_certificate_carries() -> Result {
     let served = tls_health("node.mesh.test").await?;
     let home = home();
-    let env = environment(&home);
     let dir = home.path().join("tls");
+    let ca = dir.join("ca.pem");
+    let env = ::config::Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_TLS_CA".as_ref(), ca.as_os_str()),
+    ]);
     std::fs::create_dir_all(&dir)?;
     for (name, body) in [
         ("ca.pem", &served.ca_pem),
@@ -104,11 +108,10 @@ async fn status_verifies_a_tls_gateway_by_the_name_its_certificate_carries() -> 
     config(
         &home,
         &format!(
-            "gateway:\n  host: 0.0.0.0\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n  tls_ca: {}\n",
+            "gateway:\n  host: 0.0.0.0\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n",
             served.port,
             dir.join("node.pem").display(),
             dir.join("node.key").display(),
-            dir.join("ca.pem").display(),
         ),
     );
     let status = run(&["status"], &env).await;

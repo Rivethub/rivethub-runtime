@@ -16,32 +16,29 @@ confidence-threshold = 0.9
 multiple-versions = "warn"
 wildcards = "deny"
 deny = [
-  { crate = "sqlx", wrappers = ["memory-postgres", "memory-sqlite", "pki", "migrate", "testkit", "rivethub", "cli", "pgvector"], reason = "PORTS: database access belongs to store adapters and composition; testkit is dev-only; pgvector supplies SQLx vector codecs exclusively to memory-postgres" },
+  { crate = "sqlx", wrappers = ["memory-postgres", "memory-sqlite", "migrate", "testkit", "rivethub", "cli", "pgvector"], reason = "PORTS: database access belongs to store adapters and composition; testkit is dev-only; pgvector supplies SQLx vector codecs exclusively to memory-postgres" },
   { crate = "pgvector", wrappers = ["memory-postgres"], reason = "PORTS: the SQLx vector codec is internal to the Postgres store adapter" },
-  { crate = "rusqlite", wrappers = ["memory-postgres", "memory-sqlite", "pki", "migrate", "testkit", "rivethub", "cli", "capture"], reason = "PORTS: database access belongs to store adapters and composition; testkit is dev-only; capture has read-only access to external harness stores" },
+  { crate = "rusqlite", wrappers = ["memory-postgres", "memory-sqlite", "migrate", "testkit", "rivethub", "cli", "capture"], reason = "PORTS: database access belongs to store adapters and composition; testkit is dev-only; capture has read-only access to external harness stores" },
   { crate = "openssl", reason = "TLS is rustls everywhere" },
   { crate = "openssl-sys", reason = "TLS is rustls everywhere" },
   { crate = "native-tls", reason = "TLS is rustls everywhere" },
   { crate = "ring", reason = "one rustls crypto provider: aws-lc-rs, named explicitly in every rustls config" },
-  { crate = "anyhow", wrappers = ["agent-client-protocol", "agent-client-protocol-schema", "portable-pty"], reason = "errors are typed with thiserror; the binary maps them to exit codes (the exceptions are third-party crates' own internal error types, not our code)" },
+  { crate = "anyhow", wrappers = ["agent-client-protocol", "agent-client-protocol-schema"], reason = "errors are typed with thiserror; the binary maps them to exit codes (the exceptions are third-party crates' own internal error types, not our code)" },
   { crate = "async-std", reason = "one async runtime: tokio" },
-  { crate = "tmux_interface", reason = "herdr is the only multiplexer" },
+  { crate = "tmux_interface", reason = "DEPS: rh runs no terminal multiplexer" },
 
   { crate = "values", wrappers = ["wire", "kernel"], reason = "values is the vocabulary under kernel and wire; it depends on external crates only, and every other crate reaches it through them" },
-  { crate = "wire", wrappers = ["config", "testkit", "pki", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "terminal", "mcp", "capture", "gateway", "agent-loop", "workers", "tasks", "cli", "rivethub"], reason = "KERNELWIRE: wire depends on values and external crates only, and the kernel never depends on it" },
-  { crate = "config", wrappers = ["kernel", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "terminal", "mcp", "capture", "gateway", "agent-loop", "workers", "tasks", "cli", "rivethub"], reason = "config is foundation; it uses wire, nothing depends upward on it from wire" },
-  { crate = "kernel", wrappers = ["testkit", "pki", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "terminal", "mcp", "capture", "gateway", "agent-loop", "workers", "tasks", "cli", "rivethub"], reason = "kernel is below the adapters" },
-  { crate = "testkit", wrappers = ["pki", "wire", "config", "kernel", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "terminal", "mcp", "capture", "gateway", "agent-loop", "workers", "tasks", "cli", "rivethub"], reason = "testkit is the dev-only replayer layer" },
+  { crate = "wire", wrappers = ["config", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"], reason = "KERNELWIRE: wire depends on values and external crates only, and the kernel never depends on it" },
+  { crate = "config", wrappers = ["kernel", "testkit", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"], reason = "config is foundation; it uses wire, nothing depends upward on it from wire" },
+  { crate = "kernel", wrappers = ["testkit", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"], reason = "kernel is below the adapters" },
+  { crate = "testkit", wrappers = ["wire", "config", "kernel", "migrate", "memory-postgres", "memory-sqlite", "providers", "harness-acp", "mcp", "capture", "gateway", "workers", "cli", "rivethub"], reason = "testkit is the dev-only replayer layer" },
   { crate = "memory-postgres", wrappers = ["migrate", "cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service); migrate reaches them only as a dev-dependency — dependency-kind rules are the xtask MANIFEST check" },
   { crate = "memory-sqlite", wrappers = ["migrate", "cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service); migrate reaches them only as a dev-dependency — dependency-kind rules are the xtask MANIFEST check" },
   { crate = "providers", wrappers = ["cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service)" },
   { crate = "harness-acp", wrappers = ["cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service)" },
-  { crate = "terminal", wrappers = ["cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service)" },
   { crate = "mcp", wrappers = ["cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service)" },
-  { crate = "pki", wrappers = ["cli", "rivethub"], reason = "PKI adapter is wired only by composition; it depends on kernel, wire and external crates" },
   { crate = "capture", wrappers = ["cli", "rivethub"], reason = "adapters are wired only in the composition root (never another adapter or a service)" },
   { crate = "gateway", wrappers = ["cli", "rivethub"], reason = "services are wired only in the composition root (never a service on a service)" },
-  { crate = "agent-loop", wrappers = ["cli", "rivethub"], reason = "services are wired only in the composition root (never a service on a service)" },
   { crate = "workers", wrappers = ["cli", "rivethub"], reason = "services are wired only in the composition root (never a service on a service)" },
   { crate = "cli", wrappers = ["rivethub"], reason = "the CLI is composition; only the binary links it" },
 ]
@@ -49,3 +46,6 @@ deny = [
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# sqlx pinned to launchbadge/sqlx#4502 (libsqlite3-sys <0.40) for RUSTSEC-2026-0459.
+# Remove with the [patch.crates-io] block once a sqlx 0.9.x release contains #4502.
+allow-git = ["https://github.com/launchbadge/sqlx"]

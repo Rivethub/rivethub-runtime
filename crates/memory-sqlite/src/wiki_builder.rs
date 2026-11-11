@@ -280,7 +280,7 @@ pub(crate) fn load_summary(
 ) -> Result<WikiSummary, WikiStoreError> {
     let row = conn
         .query_row(
-            "SELECT s.id, s.conversation_id, s.content, c.session_key, c.owner_user_id
+            "SELECT s.id, s.conversation_id, s.content, c.session_key, c.owner_user_id, s.created_at
                FROM ros_summaries s
                LEFT JOIN ros_conversations c ON c.id = s.conversation_id WHERE s.id = ?1",
             params![job.summary_id.to_string()],
@@ -291,6 +291,7 @@ pub(crate) fn load_summary(
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             },
         )
@@ -315,7 +316,10 @@ pub(crate) fn load_summary(
             .map(Owner::new)
             .transpose()
             .map_err(|error| WikiStoreError::Query(Box::new(error)))?,
-        created_at: None,
+        created_at: Some(
+            crate::time::stored(&row.5, "created_at")
+                .map_err(|error| WikiStoreError::Query(Box::new(error)))?,
+        ),
     })
 }
 

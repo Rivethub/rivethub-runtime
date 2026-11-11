@@ -13,6 +13,8 @@ const TRASH_MIN_AGE: TimeDelta = TimeDelta::hours(1);
 const TRASH_REPLY_MAX_CHARS: usize = 80;
 const TRASH_PROMPT_MAX_CHARS: usize = 280;
 pub const TOMBSTONE_PURGE_BATCH: u32 = 100;
+pub const TRASH_PURGE_BATCH: u32 = 100;
+pub const TRASH_RETENTION_DAYS: u32 = 30;
 pub const EMPTY_SESSIONS_MAX: u32 = 500;
 pub const TRASH_MESSAGES_MAX: u64 = 3;
 
@@ -96,6 +98,28 @@ pub trait SessionDeletion: Send + Sync {
         &self,
         session_keys: &[String],
     ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError>;
+
+    async fn unkeep_session(&self, session_key: &str) -> Result<(), MemoryStoreError>;
+
+    async fn trash_session(
+        &self,
+        session_key: &str,
+        trashed_by: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), MemoryStoreError>;
+
+    async fn restore_session(&self, session_key: &str) -> Result<(), MemoryStoreError>;
+
+    async fn trashed(
+        &self,
+        session_keys: &[String],
+    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError>;
+
+    async fn purge_trashed(
+        &self,
+        older_than: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<DeletedSession, MemoryStoreError>;
 }
 
 #[must_use]

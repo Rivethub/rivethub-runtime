@@ -49,6 +49,7 @@ pub(crate) fn patch() -> WikiPatch {
             body: "Decided to deploy blue-green.".to_owned(),
         }),
         entity_type: None,
+        facts: None,
     }
 }
 
@@ -56,6 +57,7 @@ pub(crate) fn ports(store: &PostgresMemory) -> TopicPorts<'_> {
     TopicPorts {
         topics: store,
         pages: store,
+        facts: store,
         filing: store,
         lineage: &testkit::wiki_routes::NoParents,
     }

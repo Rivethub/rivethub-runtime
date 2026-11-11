@@ -11,14 +11,6 @@ pub(crate) fn root(state_dir: &Path) -> PathBuf {
     state_dir.join("plugins")
 }
 
-pub(super) fn node_ports(config: &config::Config, gateway: u16) -> Vec<u16> {
-    let channel = config
-        .mesh
-        .as_ref()
-        .and_then(|mesh| mesh.agent_channel_port);
-    std::iter::once(gateway).chain(channel).collect()
-}
-
 pub(super) async fn started(
     gateway: gateway::Gateway,
     env: &Environment,

@@ -1,4 +1,6 @@
 use crate::common;
+use crate::common::PROBE;
+use crate::common::probe;
 
 use chrono::DateTime;
 use chrono::Duration;
@@ -42,7 +44,6 @@ const SECOND: &str = "claude-code:00000000-0000-4000-8000-0000000000b2";
 const LATER: &str = "claude-code:00000000-0000-4000-8000-0000000000b3";
 const UNCAPTURED: &str = "claude-code:00000000-0000-4000-8000-0000000000b4";
 const THIRD: &str = "claude-code:00000000-0000-4000-8000-0000000000b5";
-const PROBE: &str = "rh_rls_probe";
 const PERSON: &str = "rh_rls_person";
 const OWNER: &str = "rh_rls_owner";
 const GROUP: &str = "rh_rls_group";
@@ -80,34 +81,6 @@ fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
         Owner::new(name.to_owned())?,
         vec![household()?],
     ))
-}
-
-async fn probe(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "DO $$ BEGIN CREATE ROLE {PROBE} NOLOGIN; \
-         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
-    )))
-    .execute(pool)
-    .await?;
-    for grant in [
-        format!("GRANT USAGE ON SCHEMA public TO {PROBE}"),
-        format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {PROBE}"),
-        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {PROBE}"),
-    ] {
-        sqlx::query(sqlx::AssertSqlSafe(grant))
-            .execute(pool)
-            .await?;
-    }
-    let options = pool
-        .connect_options()
-        .as_ref()
-        .clone()
-        .options([("role", PROBE)]);
-    Ok(
-        memory_postgres::scoped(PgPoolOptions::new().max_connections(2))
-            .connect_with(options)
-            .await?,
-    )
 }
 
 async fn seed(
@@ -1376,5 +1349,214 @@ async fn a_pinned_login_writes_wiki_pages_only_in_its_own_scopes(pool: PgPool) -
             .await?;
     }
     assert_eq!(visible(&pinned, Scope::Closed, "rh_wiki_topics").await?, 2);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -> TestResult {
+    use kernel::facts::FactKey;
+    use kernel::facts::FactStore as _;
+    use kernel::facts::FactValue;
+    use kernel::facts::NewClaim;
+    use kernel::facts::Said;
+
+    let (store, _) = seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let alice = viewer("alice")?;
+    let owners = Scope::Viewer(alice.clone());
+    let members = Scope::Viewer(viewer("bob")?);
+    let now = Utc::now();
+    let hosts = store
+        .list()
+        .await?
+        .into_iter()
+        .find(|listing| {
+            listing.topic.kind == TopicKind::Type && listing.topic.name.as_str() == "Hosts"
+        })
+        .ok_or("no Hosts type")?
+        .topic
+        .id;
+    let host = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Entity,
+                name: TopicName::new("web01")?,
+                aliases: Vec::new(),
+                parent: Some(hosts),
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    let claim = |value: &str, said: Said| -> Result<NewClaim, Box<dyn std::error::Error>> {
+        Ok(NewClaim {
+            entity: host.id,
+            key: FactKey::new("address")?,
+            value: FactValue::new(value)?,
+            said,
+            owner: Some(alice.principal().clone()),
+            at: now,
+        })
+    };
+    let writer = |session: &str| -> Result<Said, Box<dyn std::error::Error>> {
+        Ok(Said::Writer {
+            session: SessionId::try_from(session.to_owned())?,
+            summary: Uuid::new_v4(),
+            evidence: None,
+        })
+    };
+    store
+        .assert_facts(&[
+            claim("192.0.2.1", writer(FIRST)?)?,
+            claim("192.0.2.2", writer(SECOND)?)?,
+            claim(
+                "192.0.2.3",
+                Said::You {
+                    by: alice.principal().clone(),
+                    pinned: true,
+                },
+            )?,
+        ])
+        .await?;
+    let claims = "rh_entity_fact_claims";
+    assert_eq!(visible(&probe, owners.clone(), claims).await?, 3);
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        0,
+        "a private entity hides its facts"
+    );
+
+    let tenancy = PostgresTenancy::new(probe.clone());
+    let shared = Visibility::Space(household()?);
+    owners
+        .clone()
+        .run(tenancy.mark_topic(&alice, host.id, Some(&shared)))
+        .await?;
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        1,
+        "only your claim shows while both sessions are private"
+    );
+    let second = SessionId::try_from(SECOND.to_owned())?;
+    owners
+        .clone()
+        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .await?;
+    assert_eq!(
+        visible(&probe, members.clone(), claims).await?,
+        2,
+        "a shared session's claim shows; the private session's stays hidden"
+    );
+    let bob_store = PostgresMemory::new(probe.clone());
+    let read = members.run(bob_store.claims(host.id)).await?;
+    let values: Vec<&str> = read.iter().map(|claim| claim.value.as_str()).collect();
+    assert_eq!(values.len(), 2);
+    assert!(!values.contains(&"192.0.2.1"), "{values:?}");
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_review_mark_is_read_and_written_only_by_its_owner(pool: PgPool) -> TestResult {
+    use kernel::memory::TagId;
+    use kernel::review::Mark;
+    use kernel::review::ReviewKey;
+    use kernel::review::ReviewMark;
+    use kernel::review::ReviewStore as _;
+
+    use chrono::SubsecRound as _;
+
+    let probe = probe(&pool).await?;
+    let store = PostgresMemory::new(probe.clone());
+    let alice = viewer("alice")?;
+    let owners = Scope::Viewer(alice.clone());
+    let members = Scope::Viewer(viewer("bob")?);
+    let mark = ReviewMark {
+        key: ReviewKey::Tag(TagId::from_uuid(Uuid::new_v4())),
+        mark: Mark::Decided {
+            at: Utc::now().trunc_subsecs(3),
+        },
+    };
+    owners
+        .clone()
+        .run(store.mark(alice.principal(), &mark))
+        .await?;
+    assert_eq!(
+        owners.clone().run(store.marks(alice.principal())).await?,
+        std::slice::from_ref(&mark)
+    );
+    assert!(
+        members
+            .clone()
+            .run(store.marks(alice.principal()))
+            .await?
+            .is_empty(),
+        "another person cannot read your review"
+    );
+    assert!(
+        members
+            .clone()
+            .run(store.mark(alice.principal(), &mark))
+            .await
+            .is_err(),
+        "another person cannot write your review"
+    );
+    assert_eq!(visible(&probe, members, "rh_review_marks").await?, 0);
+    assert_eq!(visible(&probe, owners, "rh_review_marks").await?, 1);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn the_change_feed_shows_a_viewer_only_what_they_may_read(pool: PgPool) -> TestResult {
+    use kernel::changes::ChangeFeed as _;
+    use kernel::changes::ChangeKind;
+    use kernel::changes::ChangeWindow;
+    let (store, _) = seed(&pool).await?;
+    let probe = probe(&pool).await?;
+    let alice = viewer("alice")?;
+    let now = Utc::now();
+    let topic = store
+        .create(Topic::create(
+            TopicId::random(),
+            NewTopic {
+                kind: TopicKind::Work,
+                name: TopicName::new("Private plans")?,
+                aliases: Vec::new(),
+                parent: None,
+                directory: None,
+                owner: Some(alice.principal().clone()),
+            },
+            now,
+        )?)
+        .await?;
+    store
+        .place(Placement {
+            session: SessionId::try_from(FIRST.to_owned())?,
+            topic: topic.id,
+            by: PlacementSource::You,
+            at: now,
+            owner: Some(alice.principal().clone()),
+        })
+        .await?;
+    let scoped = PostgresMemory::new(probe);
+    let window = ChangeWindow::between(now - Duration::hours(1), now + Duration::hours(1));
+    let kinds = |changes: Vec<kernel::changes::Change>| {
+        changes
+            .into_iter()
+            .map(|change| change.kind)
+            .collect::<Vec<_>>()
+    };
+    let owners = kinds(Scope::Viewer(alice).run(scoped.changes(&window)).await?);
+    assert_eq!(owners, [ChangeKind::New, ChangeKind::Filed]);
+    let members = kinds(
+        Scope::Viewer(viewer("bob")?)
+            .run(scoped.changes(&window))
+            .await?,
+    );
+    assert!(
+        members.is_empty(),
+        "bob sees none of alice's private topic: {members:?}"
+    );
     Ok(())
 }

@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use kernel::deadline::Deadline;
 use kernel::tenancy::Scope;
 use sqlx::PgConnection;
 use sqlx::postgres::PgPoolOptions;
@@ -44,15 +47,23 @@ fn context(scope: Option<Scope>) -> Context {
     }
 }
 
+fn statement_timeout(left: Duration) -> String {
+    let millis = left.as_millis().max(1);
+    format!("{millis}ms")
+}
+
 pub(crate) async fn apply(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
     let context = context(Scope::current());
     sqlx::query(
         "SELECT set_config('rh.principal', $1, false), set_config('rh.spaces', $2, false), \
-                set_config('rh.maintenance', $3, false), set_config('jit', 'off', false)",
+                set_config('rh.maintenance', $3, false), set_config('jit', 'off', false), \
+                set_config('statement_timeout', coalesce($4, \
+                    (SELECT s.reset_val FROM pg_settings s WHERE s.name = 'statement_timeout')), false)",
     )
     .bind(context.principal)
     .bind(context.spaces)
     .bind(context.maintenance)
+    .bind(Deadline::remaining().map(statement_timeout))
     .execute(conn)
     .await
     .map(drop)

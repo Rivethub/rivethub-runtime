@@ -315,10 +315,14 @@ fn session_rows<T>(
     read: impl Fn(&Row<'_>) -> rusqlite::Result<T>,
 ) -> rusqlite::Result<Vec<T>> {
     match query {
-        SessionQuery::Recent(limit) => connection
-            .prepare(&format!("{select}{recent}"))?
-            .query_map(rusqlite::params![limit], read)?
-            .collect(),
+        SessionQuery::Recent(limit) => {
+            let limit = i64::try_from(limit)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            connection
+                .prepare(&format!("{select}{recent}"))?
+                .query_map(rusqlite::params![limit], read)?
+                .collect()
+        }
         SessionQuery::One(id) => connection
             .prepare(&format!("{select}{one}"))?
             .query_map(rusqlite::params![id], read)?

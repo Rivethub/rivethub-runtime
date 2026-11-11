@@ -5,46 +5,40 @@ use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use wire::gateway::agents::AgentListResponse;
-use wire::gateway::agents::AgentStoreBackend;
-use wire::gateway::catalog::CatalogAgentsResponse;
-use wire::gateway::devices::PhonePairingAvailability;
-use wire::task::TasksListResponse;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use super::{TestResult, interrupt, provider_config, run_rh, stderr, terminate, write_state};
-
-const GATEWAY_URL: &str = "http://127.0.0.1:9";
+use super::{TestResult, interrupt, provider_config, terminate, write_state};
 
 #[sqlx::test(migrations = false)]
-async fn gateway_with_a_missing_certificate_authority_root_refuses_to_start(
+async fn a_retired_certificate_authority_section_only_warns_and_the_gateway_serves(
     pool: PgPool,
 ) -> TestResult {
     migrate::postgres_pool(&pool).await?;
     let url = pool.connect_options().to_url_lossy();
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
-    let root = home.path().join("missing-root.pem");
-    let password = home.path().join("provisioner.password");
-    std::fs::write(&password, "secret\n")?;
     write_state(
         home.path(),
         &provider_config(
             home.path(),
             &url,
             &format!(
-                "gateway:\n  host: 127.0.0.1\n  port: {port}\n  certificate_authority:\n    url: https://ca.example.test\n    root: {}\n    provisioner_password_file: {}\n",
-                root.display(),
-                password.display()
+                "gateway:\n  host: 127.0.0.1\n  port: {port}\n  certificate_authority:\n    url: https://ca.example.test\n    root: /missing/root.pem\n"
             ),
         ),
     )?;
-    let output = run_rh(home.path(), &["gateway"]).await?;
-    let text = stderr(&output);
-    assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("certificate authority"), "{text}");
+    let Started { mut child, logs } = start_gateway(home.path()).await?;
+    let pid = child.id().ok_or("gateway already stopped")?;
+    terminate(pid)?;
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
+    let text = tokio::time::timeout(Duration::from_secs(30), logs).await???;
+    assert!(status.success(), "gateway exit: {status}\n{text}");
+    assert!(
+        text.contains("\"gateway.certificate_authority\" is no longer used"),
+        "{text}"
+    );
     Ok(())
 }
 
@@ -90,80 +84,6 @@ async fn start_gateway(home: &std::path::Path) -> TestResult<Started> {
         let text = tokio::time::timeout(Duration::from_secs(30), logs).await???;
         Err(format!("gateway did not listen: {text}").into())
     }
-}
-
-#[sqlx::test(migrations = false)]
-async fn phone_pairing_without_an_authority_stays_unavailable_and_agents_come_from_the_memory_database(
-    pool: PgPool,
-) -> TestResult {
-    migrate::postgres_pool(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
-    let home = tempfile::tempdir()?;
-    let port = testkit::ports::claim()?;
-    write_state(
-        home.path(),
-        &provider_config(
-            home.path(),
-            &url,
-            &format!(
-                "gateway:\n  host: 127.0.0.1\n  port: {port}\n  devices:\n    gateway_url: {GATEWAY_URL}\n"
-            ),
-        ),
-    )?;
-    let Started { mut child, logs } = start_gateway(home.path()).await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
-    let base = format!("http://127.0.0.1:{port}");
-    let pairing = client
-        .get(format!("{base}/api/phone-pairing"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<PhonePairingAvailability>()
-        .await?;
-    assert!(!pairing.available, "{pairing:?}");
-    assert_eq!(
-        pairing.reason.as_deref(),
-        Some("device certificate authority is not usable")
-    );
-    assert_eq!(pairing.gateway, None);
-    let agents = client
-        .get(format!("{base}/api/agents"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<AgentListResponse>()
-        .await?;
-    assert_eq!(agents.backend, Some(AgentStoreBackend::Postgres));
-    let agents = client
-        .get(format!("{base}/api/catalog/agents"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<CatalogAgentsResponse>()
-        .await?;
-    assert!(
-        agents.agents.iter().any(|agent| matches!(
-            agent,
-            wire::gateway::catalog::CatalogAgent::Node(node) if node.id == "main" && node.local
-        )),
-        "{agents:?}"
-    );
-    let tasks = client
-        .get(format!("{base}/api/tasks"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<TasksListResponse>()
-        .await?;
-    assert!(tasks.tasks.is_empty(), "{tasks:?}");
-    let pid = child.id().ok_or("gateway already stopped")?;
-    terminate(pid)?;
-    let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
-    let text = tokio::time::timeout(Duration::from_secs(30), logs).await???;
-    assert!(status.success(), "gateway exit: {status}\n{text}");
-    assert!(text.contains("SIGTERM received — shutting down"), "{text}");
-    assert!(text.contains("gateway stopped"), "{text}");
-    Ok(())
 }
 
 #[sqlx::test(migrations = false)]

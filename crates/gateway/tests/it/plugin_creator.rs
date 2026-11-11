@@ -12,7 +12,7 @@ use crate::plugin_support::{
     Failure, Harness, TestResult, enable, harness, write_manifest, write_manifest_with,
 };
 
-const BASE: [Permission; 2] = [Permission::SessionsRead, Permission::TasksRead];
+const BASE: [Permission; 2] = [Permission::SessionsRead, Permission::TopicsRead];
 
 #[derive(Clone, Copy, Serialize)]
 struct Scaffold<'a> {

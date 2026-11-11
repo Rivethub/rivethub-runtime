@@ -60,19 +60,12 @@ fn routes_need_the_permission_their_family_names() {
         access(false, "/api/sessions/abc/messages"),
         PluginAccess::Needs(Permission::SessionsControl)
     );
-    assert_eq!(
-        access(false, "/api/tasks"),
-        PluginAccess::Needs(Permission::TasksDelegate)
-    );
-    assert_eq!(
-        access(true, "/api/tasks/abc"),
-        PluginAccess::Needs(Permission::TasksRead)
-    );
     for refused in [
         (true, "/api/plugins"),
         (false, "/api/plugins/files/enable"),
         (false, "/api/memory/tags"),
-        (false, "/api/tasks/abc/kill"),
+        (false, "/api/tasks"),
+        (true, "/api/tasks/abc"),
         (true, "/api/files/list"),
         (false, "/api/sessions/abc/anything"),
         (true, "/api/sessions/abc/messages"),
@@ -87,24 +80,21 @@ fn routes_need_the_permission_their_family_names() {
 }
 
 #[test]
-fn the_agent_catalog_needs_agents_read_and_its_old_root_is_gone() {
-    assert_eq!(
-        access(true, "/api/catalog/agents"),
-        PluginAccess::Needs(Permission::AgentsRead)
-    );
+fn the_agent_catalog_is_gone() {
+    assert_eq!(access(true, "/api/catalog/agents"), PluginAccess::Refused);
     assert_eq!(access(true, "/api/catalog"), PluginAccess::Refused);
 }
 
 #[test]
 fn approval_names_exactly_the_pending_permissions() {
-    let requested = [Permission::SessionsRead, Permission::TasksRead];
+    let requested = [Permission::SessionsRead, Permission::TopicsRead];
     assert_eq!(
         pending(&requested, &[Permission::SessionsRead]),
-        [Permission::TasksRead]
+        [Permission::TopicsRead]
     );
     assert_eq!(
         approve(&requested, &[], &[Permission::SessionsRead]),
-        Err(ApprovalError::Unapproved(vec![Permission::TasksRead]))
+        Err(ApprovalError::Unapproved(vec![Permission::TopicsRead]))
     );
     assert_eq!(
         approve(
@@ -112,7 +102,7 @@ fn approval_names_exactly_the_pending_permissions() {
             &[],
             &[
                 Permission::SessionsRead,
-                Permission::TasksRead,
+                Permission::TopicsRead,
                 Permission::HostExec
             ]
         ),
@@ -122,13 +112,13 @@ fn approval_names_exactly_the_pending_permissions() {
         approve(
             &requested,
             &[Permission::SessionsRead],
-            &[Permission::TasksRead]
+            &[Permission::TopicsRead]
         ),
         Ok(requested.to_vec())
     );
     assert_eq!(
-        narrowed(&[Permission::TasksRead], &requested),
-        [Permission::TasksRead]
+        narrowed(&[Permission::TopicsRead], &requested),
+        [Permission::TopicsRead]
     );
 }
 

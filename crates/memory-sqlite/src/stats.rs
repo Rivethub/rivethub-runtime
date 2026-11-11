@@ -37,7 +37,37 @@ const RECENT_SESSIONS: &str = "SELECT c.session_key, c.title, c.agent, c.updated
  WHERE ?1 IS NULL OR c.agent = ?1
  ORDER BY c.updated_at DESC, c.rowid ASC LIMIT ?2";
 
+const CAPTURE_ACTIVITY: &str =
+    "SELECT substr(session_key, 1, instr(session_key, ':') - 1), max(updated_at)
+  FROM ros_conversations WHERE instr(session_key, ':') > 1
+ GROUP BY 1";
+
 impl SqliteStore {
+    pub async fn capture_activity_read(
+        &self,
+    ) -> Result<Vec<kernel::harness_setup::CaptureActivity>, SqliteError> {
+        self.with_conn(|conn| {
+            conn.prepare(CAPTURE_ACTIVITY)
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([], |row| {
+                            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                        })?
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map_err(SqliteError::query("capture activity"))?
+                .into_iter()
+                .map(|(key_prefix, updated_at)| {
+                    Ok(kernel::harness_setup::CaptureActivity {
+                        key_prefix,
+                        last_at: time::stored(&updated_at, "updated_at")?,
+                    })
+                })
+                .collect()
+        })
+        .await
+    }
+
     pub async fn stats_for(
         &self,
         agent: Option<String>,

@@ -34,14 +34,6 @@ pub enum UpdateError {
     Branch(&'static str),
     #[error("source checkout does not match the requested version")]
     Revision,
-    #[error("mesh registry was not found")]
-    MeshMissing,
-    #[error("invalid SSH host or user for node {0}")]
-    SshDestination(String),
-    #[error("remote argument contains a NUL byte")]
-    ShellArgument,
-    #[error("mesh registry: {0}")]
-    Registry(#[from] gateway::mesh::RegistryError),
     #[error("update I/O failed: {0}")]
     Io(#[from] std::io::Error),
     #[error("update task failed: {0}")]
@@ -50,4 +42,10 @@ pub enum UpdateError {
     Command(#[from] crate::service::ServiceError),
     #[error("update cancelled")]
     Cancelled,
+    #[error(transparent)]
+    Account(#[from] gateway::account::AccountError),
+    #[error("rivethub.cloud installs its latest release; pass --source github to install a tag")]
+    CloudVersion,
+    #[error("rivethub.cloud has no {0} release for this platform")]
+    NoCloudRelease(wire::gateway::account::ReleaseChannel),
 }

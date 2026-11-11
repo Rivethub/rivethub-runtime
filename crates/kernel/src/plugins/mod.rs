@@ -28,12 +28,6 @@ pub enum Permission {
     TopicsRead,
     #[strum(serialize = "topics.write")]
     TopicsWrite,
-    #[strum(serialize = "tasks.read")]
-    TasksRead,
-    #[strum(serialize = "tasks.delegate")]
-    TasksDelegate,
-    #[strum(serialize = "agents.read")]
-    AgentsRead,
     #[strum(serialize = "notifications.send")]
     NotificationsSend,
     #[strum(serialize = "host.files.read")]
@@ -53,7 +47,6 @@ pub enum EventKind {
     SessionEnded,
     SessionPlaced,
     SummaryWritten,
-    TaskDone,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +86,6 @@ pub trait PluginTools: Send + Sync {
         plugin: &PluginId,
         tool: &ToolName,
         call: PluginToolCall,
-        tool_use: Option<&str>,
     ) -> Result<PluginToolResult, PluginToolError>;
 
     async fn changed(&self, seen: u64) -> Result<u64, PluginToolError>;
@@ -156,11 +148,6 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
         (false, ["api", "topics", ..] | ["api", "sessions", _, "placement" | "history"]) => {
             needs(Permission::TopicsWrite)
         }
-        (true, ["api", "tasks", ..]) => needs(Permission::TasksRead),
-        (false, ["api", "tasks"]) => needs(Permission::TasksDelegate),
-        (true, ["api", "agents", ..] | ["api", "catalog", "agents"]) => {
-            needs(Permission::AgentsRead)
-        }
         _ => PluginAccess::Refused,
     }
 }
@@ -173,7 +160,6 @@ pub const fn event_permission(kind: EventKind) -> Permission {
         | EventKind::SessionEnded
         | EventKind::SessionPlaced => Permission::SessionsRead,
         EventKind::SummaryWritten => Permission::MemoryRead,
-        EventKind::TaskDone => Permission::TasksRead,
     }
 }
 

@@ -19,7 +19,6 @@ use url::Url;
 
 use crate::GuardState;
 use crate::error::ApiError;
-use crate::tenancy::PeerCertificate;
 
 const CORS_METHODS: &str = "GET, POST, PATCH, DELETE, OPTIONS";
 const CORS_HEADERS: &str = "content-type, authorization, x-rivet-conversation, x-rivet-title";
@@ -240,27 +239,21 @@ pub(crate) async fn guard(
         append_cors(&mut response, echo.as_deref());
         return response;
     }
-    let anonymous_tls = state.secure && !state.gateway.client_certificate_required();
     let plugin = request
         .extensions()
         .get::<crate::plugins::PluginCaller>()
         .is_some();
-    let authenticated = plugin
+    let open = path == "/healthz";
+    let admitted = plugin
+        || open
         || caller_loopback
-        || anonymous_tls
-        || (state.secure && request.extensions().get::<PeerCertificate>().is_some());
-    let open = admits_without_client_auth(
-        request.method(),
-        &path,
-        state.gateway.devices().enrollment_on(),
-    );
-    let identified = plugin || open || anonymous_tls || !state.gateway.identity_required || {
-        let (parts, body) = request.into_parts();
-        let resolved = state.gateway.tenancy.resolve(&parts).is_ok();
-        request = Request::from_parts(parts, body);
-        resolved
-    };
-    if !(open || authenticated && identified) {
+        || state.secure && {
+            let (parts, body) = request.into_parts();
+            let resolved = state.gateway.tenancy.resolve(&parts).is_ok();
+            request = Request::from_parts(parts, body);
+            resolved
+        };
+    if !admitted {
         let mut unauthorized = unauthorized(&request, &path);
         if header_text(unauthorized.headers(), &header::CONTENT_TYPE) == Some("application/json") {
             append_cors(&mut unauthorized, echo.as_deref());
@@ -270,13 +263,6 @@ pub(crate) async fn guard(
     let mut response = next.run(request).await;
     append_cors(&mut response, echo.as_deref());
     response
-}
-
-fn admits_without_client_auth(method: &Method, path: &str, enrollment_on: bool) -> bool {
-    matches!(
-        path,
-        "/healthz" | "/ca/v1/chain" | "/ca/v1/crl" | "/ca/v1/sign"
-    ) || crate::routes::devices::admits_remote_without_client_auth(method, path, enrollment_on)
 }
 
 fn unauthorized(request: &Request, path: &str) -> Response {
@@ -295,11 +281,11 @@ fn html_unauthorized() -> Response {
     let body = concat!(
         "<!doctype html>\n",
         "<html>\n",
-        "<head><title>RivetHub — device certificate required</title></head>\n",
+        "<head><title>RivetHub — sign-in required</title></head>\n",
         "<body>\n",
-        "<h1>Device certificate required</h1>\n",
-        "<p>RivetHub desktop needs a device certificate for this node. Enroll it with ",
-        "<code>rh cert renew</code> and a device token from the node's operator.</p>\n",
+        "<h1>Sign-in required</h1>\n",
+        "<p>This RivetHub node answers other machines only with a bearer token from ",
+        "its users file. Ask the node's operator for one.</p>\n",
         "<p>Liveness is at <code>/healthz</code>.</p>\n",
         "</body>\n",
         "</html>\n",

@@ -9,6 +9,7 @@ use super::builder::WikiBuilderStore;
 use super::builder::WikiSummary;
 use super::page::WikiPatch;
 use crate::cleanup::EntityType;
+use crate::facts::NewClaim;
 use crate::topics::Alias;
 use crate::topics::NewTopic;
 use crate::topics::Redirect;
@@ -23,8 +24,10 @@ use crate::topics::TopicPageError;
 use crate::topics::TopicStore;
 use crate::topics::TopicTree;
 
+mod facts;
 mod name;
 
+use facts::fact_claims;
 use name::entity_name;
 
 const SESSIONS_TO_CREATE: usize = 2;
@@ -36,14 +39,42 @@ pub struct Filed {
     pub patches: Vec<WikiPatch>,
     pub earlier: Vec<Uuid>,
     pub held: Vec<HeldEntity>,
+    pub claims: Vec<NewClaim>,
 }
 
 impl Filed {
-    fn of(entity: Topic, summary: &WikiSummary, patch: WikiPatch, held: Vec<HeldEntity>) -> Self {
+    fn of(
+        entity: Topic,
+        summary: &WikiSummary,
+        patch: WikiPatch,
+        held: Vec<HeldEntity>,
+        now: DateTime<Utc>,
+    ) -> Self {
         let own = source(summary);
         let others: Vec<&HeldEntity> = held
             .iter()
             .filter(|mention| mention.source != own)
+            .collect();
+        let claims = others
+            .iter()
+            .flat_map(|mention| {
+                fact_claims(
+                    entity.id,
+                    &mention.patch,
+                    &mention.source,
+                    mention.summary_id,
+                    mention.at,
+                    None,
+                )
+            })
+            .chain(fact_claims(
+                entity.id,
+                &patch,
+                &own,
+                summary.id,
+                summary.created_at.unwrap_or(now),
+                summary.owner.as_ref(),
+            ))
             .collect();
         let mut patches: Vec<WikiPatch> =
             others.iter().map(|mention| mention.patch.clone()).collect();
@@ -57,6 +88,7 @@ impl Filed {
                 .filter(|id| *id != summary.id)
                 .collect(),
             held,
+            claims,
         }
     }
 }
@@ -125,7 +157,7 @@ impl Catalog {
             let entity = self.learn(topics, entity, &patch, now).await?;
             let keys: BTreeSet<Slug> = names.into_iter().chain(self.keys(&entity)).collect();
             let held = held_under(wiki, &keys).await?;
-            return Ok(Some(Filed::of(entity, summary, patch, held)));
+            return Ok(Some(Filed::of(entity, summary, patch, held, now)));
         }
         for name in &names {
             if topics.tombstoned(TopicKind::Entity, name).await? {
@@ -181,7 +213,7 @@ impl Catalog {
             )?)
             .await?;
         self.entities.push(created.clone());
-        Ok(Some(Filed::of(created, summary, patch, held)))
+        Ok(Some(Filed::of(created, summary, patch, held, now)))
     }
 
     fn known(&self, names: &BTreeSet<Slug>, kind: Option<TopicId>) -> Option<&Topic> {

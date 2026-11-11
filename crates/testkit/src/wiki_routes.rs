@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use async_trait::async_trait;
+use kernel::facts::FactStore;
 use kernel::filing::FilingStore;
 use kernel::topics::NewTopic;
 use kernel::topics::Placement;
@@ -52,6 +53,7 @@ type Found<T> = Result<T, Box<dyn std::error::Error>>;
 #[derive(Clone, Copy)]
 pub struct RouteStores<'a> {
     pub pages: PageStores<'a>,
+    pub facts: &'a dyn FactStore,
     pub wiki: &'a dyn WikiBuilderStore,
     pub filing: &'a dyn FilingStore,
     pub lineage: &'a dyn SessionLister,
@@ -144,6 +146,7 @@ impl RouteStores<'_> {
             topics: TopicPorts {
                 topics: self.pages.topics,
                 pages: self.pages.pages,
+                facts: self.facts,
                 filing: self.filing,
                 lineage: self.lineage,
             },
@@ -225,6 +228,7 @@ pub(crate) fn patch(slug: &str, title: &str, summary: &str) -> Found<WikiPatch> 
         related: None,
         history_entry: None,
         entity_type: None,
+        facts: None,
     })
 }
 

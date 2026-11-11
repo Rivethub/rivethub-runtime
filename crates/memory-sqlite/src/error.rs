@@ -61,6 +61,8 @@ pub enum SqliteError {
     Clock,
     #[error("stored job state \"{value}\" is not queued, running, or dead")]
     StoredState { value: String },
+    #[error("stored {column} \"{value}\" is not a valid value")]
+    StoredValue { column: &'static str, value: String },
     #[error("embed job for {id} was already queued")]
     EmbedAlreadyQueued { id: String },
     #[error("job payload is not a JSON object")]
@@ -76,6 +78,10 @@ pub enum SqliteError {
     },
     #[error("since must precede before")]
     InvertedRange,
+    #[error("stored session key \"{value}\" is not a session id")]
+    StoredSession { value: String },
+    #[error("stored topic id \"{value}\" is not a topic id")]
+    StoredTopic { value: String },
     #[error("stored tag entity type \"{value}\" is not conversation or summary")]
     StoredTagType { value: String },
     #[error("invalid search regular expression: {0}")]
@@ -130,12 +136,15 @@ impl From<SqliteError> for MemoryStoreError {
             | SqliteError::MissingJob { .. }
             | SqliteError::Clock
             | SqliteError::StoredState { .. }
+            | SqliteError::StoredValue { .. }
             | SqliteError::EmbedAlreadyQueued { .. }
             | SqliteError::PayloadNotObject
             | SqliteError::ClaimRejected { .. }
             | SqliteError::InsertRejected
             | SqliteError::StoredPayload { .. }
             | SqliteError::StoredTagType { .. }
+            | SqliteError::StoredSession { .. }
+            | SqliteError::StoredTopic { .. }
             | SqliteError::MissingHit { .. }
             | SqliteError::MissingTable { .. } => Self::Query {
                 message: error.to_string(),

@@ -28,7 +28,7 @@ pub use article::{
     demote_h2_headings, join_article_sections, split_article_sections,
 };
 pub use citations::{parse_citations, parse_see_also};
-pub use extraction::{WikiAction, WikiPatch};
+pub use extraction::{PatchFact, WikiAction, WikiPatch};
 pub use fold::{FoldMark, FoldedTopic, fold_page, fold_text};
 pub use identity::{TopicIdentity, find_stem_match, is_slug_variant, topic_identity};
 pub use parse::parse_wiki_page;

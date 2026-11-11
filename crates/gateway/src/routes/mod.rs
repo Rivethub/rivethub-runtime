@@ -1,28 +1,25 @@
-pub mod agents;
-pub mod ca;
+mod account;
 pub mod capture;
 pub mod capture_schema;
-pub mod chat;
-pub mod devices;
-pub mod files;
+pub(crate) mod capture_status;
+mod entities;
 mod flagged;
 pub mod harnesses;
 mod history;
-pub(crate) mod hub_state;
 pub mod memory;
 mod memory_archive;
+mod memory_models;
 mod memory_snippet;
+pub(crate) mod model_calls;
+pub(crate) mod notices;
 mod notifications;
 mod plugins;
+mod review;
 mod session_delete;
-pub mod sessions;
 pub mod tags;
-pub mod tasks;
-pub mod terminal;
 mod tidy;
+mod today;
 pub(crate) mod topics;
-mod updates;
-pub(crate) mod voice;
 pub mod wiki;
 
 mod surface;
@@ -43,14 +40,6 @@ use crate::error::ApiError;
 
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 
-pub(crate) use surface::MeshCache;
-pub(crate) use surface::plain_get;
-pub(crate) use surface::rewrite_request;
-
-pub(crate) fn organizer() -> axum::Router<Arc<Gateway>> {
-    wiki::router().merge(topics::router()).merge(tidy::router())
-}
-
 pub(crate) async fn contract_header(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -67,19 +56,19 @@ pub(crate) async fn contract_header(
 }
 
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
-    harnesses::mount(files::mount(wiki::router()))
-        .merge(voice::router())
-        .merge(updates::router())
-        .nest("/api/agents", agents::router())
-        .merge(devices::router())
-        .merge(ca::router())
+    harnesses::mount(wiki::router())
+        .merge(notices::router())
+        .merge(account::router())
         .merge(history::router())
         .merge(notifications::router())
         .merge(topics::router())
+        .merge(entities::router())
+        .merge(review::router())
         .merge(tidy::router())
-        .merge(hub_state::router())
+        .merge(today::router())
         .merge(plugins::router())
         .merge(session_delete::router())
+        .merge(model_calls::router())
 }
 
 pub(crate) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
@@ -97,7 +86,6 @@ pub(crate) fn join_task<T>(joined: Result<T, tokio::task::JoinError>) -> Result<
 }
 
 pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::response::Response {
-    let sessions = gateway.sessions().count() as u64;
     let name = gateway.settings().hostname.clone();
     let node = gateway.settings().node.clone();
     let degraded_providers = degraded_providers(gateway.provider_health());
@@ -106,7 +94,7 @@ pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::respon
             StatusCode::OK,
             Json(HealthzResponse {
                 ok: true,
-                sessions,
+                sessions: 0,
                 name,
                 node,
                 degraded: None,
@@ -120,7 +108,7 @@ pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::respon
             StatusCode::SERVICE_UNAVAILABLE,
             Json(HealthzResponse {
                 ok: false,
-                sessions,
+                sessions: 0,
                 name,
                 node,
                 degraded: Some(degraded_reason(&error)),

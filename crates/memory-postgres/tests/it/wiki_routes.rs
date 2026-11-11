@@ -44,6 +44,7 @@ impl Seeded {
                 wiki: &self.memory,
                 queue: &self.queue,
             },
+            facts: &self.memory,
             wiki: &self.memory,
             filing: &self.memory,
             lineage,
@@ -262,6 +263,26 @@ async fn updates_keep_the_lead_and_replace_only_the_currently_sentence(pool: PgP
     testkit::wiki_bounded::updates_keep_the_lead_and_replace_only_the_currently_sentence(
         seeded.stores(),
         [&seeded.job, &second, &third],
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin(pool: PgPool) -> TestResult {
+    let seeded = Seeded::new(pool).await?;
+    testkit::wiki_facts::an_entity_patch_records_its_facts_and_never_overwrites_a_pin(
+        seeded.stores(),
+        &seeded.job,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_held_candidate_keeps_its_own_session_for_its_facts(pool: PgPool) -> TestResult {
+    let seeded = Seeded::new(pool).await?;
+    testkit::wiki_facts::a_held_candidate_keeps_its_own_session_for_its_facts(
+        seeded.stores(),
+        &seeded.job,
     )
     .await
 }

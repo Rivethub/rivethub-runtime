@@ -6,16 +6,12 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
-use chrono::Utc;
 use tokio::sync::broadcast;
 use tokio::time::{Instant, MissedTickBehavior};
-use uuid::Uuid;
-use wire::gateway::notifications::TaskDoneNotification;
 use wire::plugin::process::PluginNotification;
 
-use super::sessions::{SocketError, send};
+use super::notices::{SocketError, send};
 use crate::Gateway;
-use crate::tasks::Tasks;
 use crate::tenancy::UserId;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -30,8 +26,6 @@ async fn upgrade(
     _user: UserId,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let tasks = gateway.tasks().cloned();
-    let finished = tasks.as_ref().map(|tasks| tasks.watch.changed());
     let plugins = gateway.plugins().map(|host| host.notifications());
     upgrade
         .max_write_buffer_size(SEND_BUFFER)
@@ -39,9 +33,8 @@ async fn upgrade(
             let listener = Listener {
                 socket,
                 gateway: &gateway,
-                tasks,
             };
-            if let Err(error) = listener.stream(finished, plugins).await {
+            if let Err(error) = listener.stream(plugins).await {
                 tracing::debug!(%error, "notifications socket ended");
             }
         })
@@ -56,25 +49,14 @@ async fn next_notice(
     }
 }
 
-async fn next_finished(
-    finished: &mut Option<broadcast::Receiver<Uuid>>,
-) -> Result<Uuid, broadcast::error::RecvError> {
-    match finished {
-        Some(finished) => finished.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
 struct Listener<'a> {
     socket: WebSocket,
     gateway: &'a Gateway,
-    tasks: Option<Arc<Tasks>>,
 }
 
 impl Listener<'_> {
     async fn stream(
         mut self,
-        mut finished: Option<broadcast::Receiver<Uuid>>,
         mut plugins: Option<broadcast::Receiver<PluginNotification>>,
     ) -> Result<(), SocketError> {
         let mut heartbeat = tokio::time::interval_at(Instant::now() + HEARTBEAT, HEARTBEAT);
@@ -105,41 +87,7 @@ impl Listener<'_> {
                     Err(broadcast::error::RecvError::Closed) => plugins = None,
                     Err(broadcast::error::RecvError::Lagged(_)) => return Err(SocketError::Lagged),
                 },
-                id = next_finished(&mut finished) => match id {
-                    Ok(id) => self.task_done(id).await?,
-                    Err(broadcast::error::RecvError::Closed) => finished = None,
-                    Err(broadcast::error::RecvError::Lagged(_)) => return Err(SocketError::Lagged),
-                },
             }
         }
-    }
-
-    async fn task_done(&mut self, id: Uuid) -> Result<(), SocketError> {
-        let Some(tasks) = &self.tasks else {
-            return Ok(());
-        };
-        let task = match tasks.store.load(id).await {
-            Ok(task) => task,
-            Err(error) => {
-                tracing::warn!(%error, %id, "finished task could not be read");
-                return Ok(());
-            }
-        };
-        if !task.status.terminal() {
-            return Ok(());
-        }
-        send(
-            &mut self.socket,
-            &TaskDoneNotification {
-                task_id: id.to_string(),
-                status: super::tasks::status_out(task.status),
-                parent_session_id: task.parent.session,
-                child_session_id: task.child,
-                agent: Some(task.target.agent),
-                error: task.error,
-                ts: Utc::now(),
-            },
-        )
-        .await
     }
 }

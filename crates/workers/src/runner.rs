@@ -32,6 +32,16 @@ use crate::settle::settle;
 use crate::summarize::SummarySettings;
 use crate::wiki_builder::WikiBuilderDeps;
 
+#[derive(Clone)]
+#[expect(
+    missing_debug_implementations,
+    reason = "the model provider is a trait object"
+)]
+pub struct RoleModel {
+    pub provider: Arc<dyn ModelProvider>,
+    pub model: String,
+}
+
 pub const EMBED_CONCURRENCY: u32 = 4;
 pub const POLL_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -71,7 +81,9 @@ impl RunnerConfig {
 pub struct WorkerDeps {
     pub targets: Arc<dyn EmbeddingStore>,
     pub summaries: Arc<dyn SummaryStore>,
-    pub provider: Arc<dyn ModelProvider>,
+    pub summarizer: Arc<dyn ModelProvider>,
+    pub categorizer: RoleModel,
+    pub embedder: Arc<dyn ModelProvider>,
     pub embed: EmbedSettings,
     pub summary: SummarySettings,
     pub scopes: Option<crate::OwnerScopes>,
@@ -93,11 +105,14 @@ pub struct Runner<Q> {
     topic_pages: Option<crate::topic_page::TopicPages>,
     tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    digests: Option<crate::digest::DailyDigests>,
     scopes: Option<crate::OwnerScopes>,
     queue: Arc<Q>,
     targets: Arc<dyn EmbeddingStore>,
     summaries: Arc<dyn SummaryStore>,
-    provider: Arc<dyn ModelProvider>,
+    summarizer: Arc<dyn ModelProvider>,
+    categorizer: RoleModel,
+    embedder: Arc<dyn ModelProvider>,
     config: RunnerConfig,
     embed: EmbedSettings,
     summary: SummarySettings,
@@ -128,11 +143,14 @@ where
             topic_pages: None,
             tidy: None,
             deletions: None,
+            digests: None,
             scopes: deps.scopes,
             queue,
             targets: deps.targets,
             summaries: deps.summaries,
-            provider: deps.provider,
+            summarizer: deps.summarizer,
+            categorizer: deps.categorizer,
+            embedder: deps.embedder,
             config,
             embed: deps.embed,
             summary: deps.summary,
@@ -228,16 +246,28 @@ where
     }
 
     #[must_use]
+    pub fn with_daily_digests(
+        mut self,
+        changes: Arc<dyn kernel::changes::ChangeFeed>,
+        digests: Arc<dyn kernel::changes::DigestStore>,
+    ) -> Self {
+        self.digests = Some(crate::digest::DailyDigests { changes, digests });
+        self
+    }
+
+    #[must_use]
     pub fn with_topic_pages(
         mut self,
         topics: Arc<dyn TopicStore>,
         pages: Arc<dyn TopicPageStore>,
         decisions: Arc<dyn DecisionStore>,
+        facts: Arc<dyn kernel::facts::FactStore>,
     ) -> Self {
         self.topic_pages = Some(crate::topic_page::TopicPages {
             topics,
             pages,
             decisions,
+            facts,
         });
         self
     }
@@ -411,13 +441,16 @@ where
             wiki: self.wiki.clone(),
             targets: Arc::clone(&self.targets),
             summaries: Arc::clone(&self.summaries),
-            provider: Arc::clone(&self.provider),
+            summarizer: Arc::clone(&self.summarizer),
+            categorizer: self.categorizer.clone(),
+            embedder: Arc::clone(&self.embedder),
             embed: self.embed,
             summary: self.summary.clone(),
             topics: self.topics.clone(),
             topic_pages: self.topic_pages.clone(),
             tidy: self.tidy.clone(),
             deletions: self.deletions.clone(),
+            digests: self.digests.clone(),
             scopes: self.scopes.clone(),
         };
         let wake = Arc::clone(&self.wake);

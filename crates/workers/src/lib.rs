@@ -1,5 +1,6 @@
 pub mod cleanup;
 mod deleted_sessions;
+pub mod digest;
 mod dispatch;
 mod embed;
 pub mod embedding_sweep;
@@ -58,6 +59,7 @@ pub use role::accepts;
 pub use role::jobs_for;
 pub use runner::EMBED_CONCURRENCY;
 pub use runner::POLL_INTERVAL;
+pub use runner::RoleModel;
 pub use runner::Runner;
 pub use runner::RunnerConfig;
 pub use runner::WorkerDeps;

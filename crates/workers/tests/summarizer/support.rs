@@ -547,9 +547,7 @@ fn default_attempts(name: &JobName) -> u32 {
         JobName::Fixed(FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall) => 3,
         JobName::Fixed(FixedJob::FileConversation | FixedJob::ExtractWiki) => 2,
         JobName::Fixed(FixedJob::EmbedTarget) => 5,
-        JobName::Fixed(FixedJob::RunTask)
-        | JobName::Heartbeat { .. }
-        | JobName::RunTaskOn { .. } => 1,
+        JobName::Heartbeat { .. } => 1,
         JobName::Fixed(_) => 25,
     }
 }

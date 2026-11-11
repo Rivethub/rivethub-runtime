@@ -17,10 +17,9 @@ use wire::session_id::SessionId;
 
 use futures::StreamExt as _;
 
-use super::{NOT_FOUND, deletions, hidden, known, live, resolved, segment_session, visible};
+use super::{deletions, ensure_reachable, hidden, resolved, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
-use crate::routes::terminal::require;
 use crate::tenancy::UserId;
 
 const TRANSCRIPT_READS: usize = 32;
@@ -88,7 +87,7 @@ pub(super) async fn trash(
     user: UserId,
 ) -> Result<Json<SessionTrashList>, ApiError> {
     let deletions = deletions(&gateway)?;
-    let roster = require(&gateway)?.roster();
+    let roster = crate::history::registered();
     let now = Utc::now();
     let (mut rows, empty) = tokio::join!(
         listed(&gateway, &roster),
@@ -102,21 +101,22 @@ pub(super) async fn trash(
     let rows: Vec<Considered> = crate::routes::history::visible_rows(&gateway, &user, rows)
         .into_iter()
         .filter_map(|row| considered(row, now))
-        .filter(|row| !live(&gateway, &row.session))
         .collect();
     let keys: Vec<String> = rows
         .iter()
         .map(|row| row.session.as_str().to_owned())
         .collect();
-    let (deleted, kept, activity) = tokio::join!(
+    let (deleted, kept, activity, trashed) = tokio::join!(
         deletions.tombstones(&keys),
         deletions.kept(&keys),
-        deletions.session_activity(&keys)
+        deletions.session_activity(&keys),
+        deletions.trashed(&keys)
     );
-    let (deleted, kept, activity) = (deleted?, kept?, activity?);
+    let (deleted, kept, activity, trashed) = (deleted?, kept?, activity?, trashed?);
     let open: Vec<(Considered, SessionActivity)> = rows
         .into_iter()
         .filter(|row| !deleted.contains_key(row.session.as_str()))
+        .filter(|row| !trashed.contains_key(row.session.as_str()))
         .filter(|row| !hidden(&kept, row.session.as_str(), Some(row.updated_at)))
         .filter_map(|row| {
             let memory = activity.get(row.session.as_str())?;
@@ -139,15 +139,12 @@ pub(super) async fn keep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = segment_session(&segment)?;
-    let deletions = deletions(&gateway)?;
-    if !visible(&gateway, &user, &session).await? || !known(&gateway, deletions, &session).await? {
-        return Err(ApiError::NotFound(NOT_FOUND));
-    }
-    deletions
-        .keep_session(session.as_str(), Some(user.as_str()), Utc::now())
+    let key = segment_key(&segment)?;
+    ensure_reachable(&gateway, &user, &key).await?;
+    deletions(&gateway)?
+        .keep_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;
-    tracing::info!(session = %session, "session kept out of the trash review");
+    tracing::info!(session = %key, "session kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)
 }
 

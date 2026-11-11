@@ -103,9 +103,8 @@ impl Listener {
             match incoming {
                 Ok(Some(notification)) => return Ok(Some(notification.payload().to_owned())),
                 Ok(None) => {
+                    self.inner = None;
                     self.mark_closed();
-                    self.mark_up();
-                    return Ok(None);
                 }
                 Err(error) => {
                     self.inner = None;
@@ -160,6 +159,7 @@ fn next_delay(current: Duration) -> Duration {
 
 async fn open(pool: &PgPool, channels: &[&str]) -> Result<PgListener, sqlx::Error> {
     let mut listener = PgListener::connect_with(pool).await?;
+    listener.eager_reconnect(false);
     for channel in channels {
         listener.listen(channel).await?;
     }

@@ -8,10 +8,7 @@ use wire::plugin::host::{PluginLogStream, PluginRecord, PluginState};
 use wire::plugin::manifest::Permission;
 use wire::plugin::process::PluginEvent;
 
-use super::{
-    Entry, HostError, Live, PairedDevice, PluginHost, Supervisor, events, jobs, registry,
-    supervisor,
-};
+use super::{Entry, HostError, Live, PluginHost, Supervisor, events, jobs, registry, supervisor};
 use crate::Gateway;
 
 pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
@@ -22,11 +19,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
         return Err(HostError::Conflict(
             "the plug-in host is already started".into(),
         ));
-    }
-    if let Some(terminal) = gateway.terminal.as_ref()
-        && host.terminal.set(Arc::downgrade(terminal)).is_err()
-    {
-        tracing::debug!("plug-in host already knows the terminal service");
     }
     if let Some(owner) = gateway.tenancy.local_user()
         && host.owner.set(owner.clone()).is_err()
@@ -54,10 +46,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
         tools,
         host.shutdown.child_token(),
     ));
-    if let Some(tasks) = gateway.tasks() {
-        host.tasks
-            .spawn(forward_task_events(Arc::clone(host), Arc::clone(tasks)));
-    }
     if let Some(summaries) = gateway.summaries.as_ref() {
         host.tasks
             .spawn(forward_summaries(Arc::clone(host), summaries.written()));
@@ -67,34 +55,6 @@ pub async fn start(gateway: &Arc<Gateway>) -> Result<(), HostError> {
         host.refresh(&id).await;
     }
     Ok(())
-}
-
-async fn forward_task_events(host: Arc<PluginHost>, tasks: Arc<crate::tasks::Tasks>) {
-    let mut finished = tasks.watch.changed();
-    loop {
-        let id = tokio::select! {
-            () = host.shutdown.cancelled() => return,
-            id = finished.recv() => id,
-        };
-        match id {
-            Ok(id) => match tasks.store.load(id).await {
-                Ok(task) if task.status.terminal() => {
-                    host.publish(&PluginEvent::TaskDone {
-                        task_id: id.to_string(),
-                        status: crate::routes::tasks::status_out(task.status),
-                    });
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(%error, %id, "finished task could not be read for plug-ins");
-                }
-            },
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
-                tracing::warn!(missed, "plug-in task events lagged");
-            }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-        }
-    }
 }
 
 async fn forward_summaries(
@@ -209,27 +169,17 @@ impl PluginHost {
         self: &Arc<Self>,
         plugin: &PluginId,
         approved: &[Permission],
-        device: Result<PairedDevice, HostError>,
     ) -> Result<PluginRecord, HostError> {
         let _operation = self.operations.lock().await;
         let requested = self.read(plugin, |entry| entry.stored.manifest.permissions.clone())?;
         self.refuse_unconfinable(&requested)?;
-        let (granted, widened) = self.read(plugin, |entry| {
+        let granted = self.read(plugin, |entry| {
             super::rules::approve(
                 &entry.stored.manifest.permissions,
                 &entry.stored.granted,
                 approved,
             )
-            .map(|granted| {
-                let widened = granted
-                    .iter()
-                    .any(|permission| !entry.stored.granted.contains(permission));
-                (granted, widened)
-            })
         })??;
-        if widened {
-            device?;
-        }
         let running = self.update(plugin, |entry| {
             entry.stored.granted = granted;
             entry.stored.enabled = true;

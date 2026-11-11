@@ -2,7 +2,6 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -11,13 +10,9 @@ use strum::IntoEnumIterator;
 use wire::events::ContextSource;
 use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTranscriptResponse, HarnessTranscriptTool,
-    HarnessTranscriptTurn, HarnessTurnAccepted, MessageUsage, SessionMessageRole, SessionWsFrame,
-    TranscriptBlock, TranscriptResponse, TranscriptToolStatus, TranscriptWsFrame,
+    HarnessTranscriptTurn, MessageUsage, SessionMessageRole, TranscriptBlock, TranscriptToolStatus,
 };
-use wire::harness::{
-    HarnessCode, HarnessEvent, HarnessId, HarnessSessionStatus, HarnessSessionSummary,
-    HarnessStoreSession, HarnessStoreSessionList, RosterCommand,
-};
+use wire::harness::{HarnessCode, HarnessId, HarnessSessionStatus, RosterCommand};
 use wire::session_id::{
     DecodedSegment, SegmentError, SessionId, SessionRef, decode_segment, encode_segment,
 };
@@ -409,34 +404,6 @@ fn transcript_response_carries_the_context_stamp() {
     roundtrip::<HarnessSessionTranscriptResponse>(&without_redirect);
 }
 
-#[test]
-fn legacy_transcript_response_compact_at_is_a_token_count() {
-    let wire = json!({
-        "id": "claude-code:x",
-        "command": "claude",
-        "turns": [],
-        "contextWindow": 200_000,
-        "compactAt": 165_000,
-        "contextSource": "spawn"
-    });
-    let response: TranscriptResponse = roundtrip(&wire);
-    assert_eq!(response.compact_at, Some(165_000));
-}
-
-#[test]
-fn turn_accepted_omits_absent_fields() {
-    let minimal: HarnessTurnAccepted =
-        roundtrip(&json!({"ok": true, "sessionId": "claude-code:x"}));
-    assert!(!minimal.dismissed_dialog);
-    let full: HarnessTurnAccepted = roundtrip(&json!({
-        "ok": true,
-        "sessionId": format!("claude-code:{UUID}"),
-        "redirectedTo": format!("claude-code:{UUID}"),
-        "dismissedDialog": true
-    }));
-    assert!(full.dismissed_dialog);
-}
-
 fn summary_wire() -> Value {
     json!({
         "sessionId": format!("claude-code:{UUID}"),
@@ -468,212 +435,4 @@ fn session_response_flattens_the_summary_beside_redirected_to() {
         Some(session(&format!("claude-code:{UUID}")))
     );
     roundtrip::<HarnessSessionResponse>(&summary_wire());
-}
-
-#[test]
-fn session_created_carries_a_summary_object() {
-    let wire = json!({
-        "type": "session-created",
-        "sessionId": format!("claude-code:{UUID}"),
-        "summary": summary_wire()
-    });
-    let event: HarnessEvent = roundtrip(&wire);
-    let HarnessEvent::SessionCreated { summary, .. } = event else {
-        panic!("expected session-created, got {event:?}");
-    };
-    let expected: HarnessSessionSummary = serde_json::from_value(summary_wire()).unwrap();
-    assert_eq!(*summary, expected);
-}
-
-#[test]
-fn session_updated_requires_status() {
-    let wire = json!({
-        "type": "session-updated",
-        "sessionId": "claude-code:b",
-        "status": "idle",
-        "previousSessionId": "claude-code:a",
-        "supersedes": "claude-code:a",
-        "blocked": true
-    });
-    let event: HarnessEvent = roundtrip(&wire);
-    assert!(matches!(
-        event,
-        HarnessEvent::SessionUpdated {
-            status: HarnessSessionStatus::Idle,
-            blocked: Some(true),
-            ..
-        }
-    ));
-    roundtrip::<HarnessEvent>(
-        &json!({"type": "session-updated", "sessionId": "claude-code:b", "status": "ended"}),
-    );
-    assert!(
-        serde_json::from_value::<HarnessEvent>(
-            json!({"type": "session-updated", "sessionId": "claude-code:b"})
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn transcript_event_carries_turns() {
-    let wire = json!({
-        "type": "transcript",
-        "sessionId": "claude-code:x",
-        "rev": 3,
-        "from": 0,
-        "total": 1,
-        "turns": [{"role": "user", "text": "hi"}],
-        "command": "claude",
-        "truncatedBefore": true,
-        "earlier": 1_048_576,
-        "contextUsed": 52_640,
-        "contextWindow": 200_000,
-        "compactAt": 165_000,
-        "contextSource": "default"
-    });
-    let event: HarnessEvent = roundtrip(&wire);
-    let HarnessEvent::Transcript { turns, command, .. } = event else {
-        panic!("expected transcript, got {event:?}");
-    };
-    assert_eq!(turns.len(), 1);
-    assert_eq!(command, RosterCommand::Claude);
-    roundtrip::<HarnessEvent>(&json!({
-        "type": "transcript",
-        "sessionId": "hermes:x",
-        "rev": 1,
-        "from": 0,
-        "total": 0,
-        "turns": [],
-        "command": "hermes"
-    }));
-}
-
-#[test]
-fn status_event_is_the_status_frame() {
-    let wire = json!({
-        "type": "status",
-        "sessionId": "claude-code:x",
-        "status": "working",
-        "since": 1_760_700_000_000_i64,
-        "source": "protocol",
-        "phase": "tool",
-        "tool": {"name": "Bash", "toolCallId": "t1"}
-    });
-    let event: HarnessEvent = roundtrip(&wire);
-    assert!(matches!(event, HarnessEvent::Status(_)));
-    let text = serde_json::to_string(&event).unwrap();
-    assert_eq!(text.matches("\"type\"").count(), 1);
-}
-
-#[test]
-fn prompt_event_carries_questions() {
-    let wire = json!({
-        "type": "prompt",
-        "sessionId": "claude-code:x",
-        "promptId": "p1",
-        "kind": "ask-user",
-        "toolName": "AskUserQuestion",
-        "questions": [
-            {
-                "question": "Which?",
-                "header": "Pick",
-                "multiSelect": false,
-                "freeText": true,
-                "options": [{"label": "A", "description": "first"}, {"label": "B"}]
-            },
-            {"multiSelect": true, "options": []}
-        ],
-        "resolved": {"at": 1_760_700_000_000_i64, "answerText": "A"},
-        "screen": {"current": 1, "total": 2}
-    });
-    let event: HarnessEvent = roundtrip(&wire);
-    let HarnessEvent::Prompt {
-        questions,
-        resolved,
-        ..
-    } = event
-    else {
-        panic!("expected prompt, got {event:?}");
-    };
-    assert_eq!(questions.first().unwrap().options.len(), 2);
-    assert_eq!(
-        resolved.unwrap().at,
-        DateTime::<Utc>::from_timestamp_millis(1_760_700_000_000).unwrap()
-    );
-    roundtrip::<HarnessEvent>(&json!({
-        "type": "prompt",
-        "sessionId": "claude-code:x",
-        "promptId": "p2",
-        "kind": "ask-user",
-        "toolName": "AskUserQuestion",
-        "questions": []
-    }));
-}
-
-#[test]
-fn transcript_ws_frame_turns_are_turn_objects() {
-    let wire = json!({
-        "kind": "transcript",
-        "session": "abc",
-        "rev": 2,
-        "from": 1,
-        "turns": [{"role": "assistant", "text": "ok", "complete": true}],
-        "total": 2,
-        "command": "claude"
-    });
-    let frame: SessionWsFrame = roundtrip(&wire);
-    let SessionWsFrame::Transcript(TranscriptWsFrame { turns, .. }) = &frame else {
-        panic!("expected transcript, got {frame:?}");
-    };
-    assert!(turns.first().unwrap().complete);
-    let text = serde_json::to_string(&frame).unwrap();
-    assert_eq!(text.matches("\"kind\"").count(), 1);
-}
-
-#[test]
-fn b2_5_legacy_rows_use_id_and_integer_updated_at() {
-    let wire = json!({
-        "sessions": [
-            {
-                "id": UUID,
-                "command": "claude",
-                "title": "fix the build",
-                "updatedAt": 1_760_700_000_000_i64,
-                "parentSessionId": "p",
-                "agentName": "explore",
-                "model": "claude-opus-4",
-                "taskId": "t"
-            },
-            {"id": "h", "command": "hermes", "title": "h", "updatedAt": 0}
-        ]
-    });
-    let list: HarnessStoreSessionList = roundtrip(&wire);
-    assert_eq!(
-        list.sessions.first().unwrap().command,
-        RosterCommand::Claude
-    );
-    assert_eq!(
-        list.sessions.get(1).unwrap().updated_at,
-        DateTime::<Utc>::UNIX_EPOCH
-    );
-}
-
-#[test]
-fn legacy_rows_never_emit_created_at() {
-    let row = HarnessStoreSession {
-        id: "x".to_owned(),
-        command: RosterCommand::Omp,
-        title: "x".to_owned(),
-        updated_at: DateTime::<Utc>::from_timestamp_millis(1_760_700_000_123).unwrap(),
-        created_at: Some(DateTime::<Utc>::UNIX_EPOCH),
-        parent_session_id: None,
-        agent_name: None,
-        model: None,
-        task_id: None,
-    };
-    assert_eq!(
-        serde_json::to_value(&row).unwrap(),
-        json!({"id": "x", "command": "omp", "title": "x", "updatedAt": 1_760_700_000_123_i64})
-    );
 }

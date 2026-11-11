@@ -6,38 +6,12 @@ pub enum Error {
     Update(#[from] crate::update::UpdateError),
     #[error("no memory backend configured")]
     MemoryBackend,
+    #[error("memory.capture.gateway.token is not a valid header value")]
+    CaptureToken,
+    #[error("{0}")]
+    GatewayCertificate(&'static str),
     #[error(transparent)]
     Service(#[from] crate::service::ServiceError),
-    #[error(transparent)]
-    Ca(#[from] kernel::ca::CaError),
-    #[error("PKI: {0}")]
-    PkiInput(&'static str),
-    #[error("rh ca requires --ca-url")]
-    CaUrlRequired,
-    #[error("rh ca requires --root")]
-    RootRequired,
-    #[error("rh ca token and rh ca revoke require --provisioner-password-file")]
-    PasswordRequired,
-    #[error("rh ca token node and rh ca token agent require --roster")]
-    RosterRequired,
-    #[error("certificate authority file is not a regular file")]
-    CaFile,
-    #[error("certificate authority path escapes its directory")]
-    CaEscape,
-    #[error("certificate authority path contains traversal")]
-    CaTraversal,
-    #[error("certificate authority file is not UTF-8")]
-    CaEncoding,
-    #[error("the operator roster cannot be mesh.json, because that registry is self-registered")]
-    MeshRegistry,
-    #[error(transparent)]
-    Pki(#[from] pki::Error),
-    #[error("certificate authority root is not an X.509 certificate")]
-    CaCertificate,
-    #[error("holder cryptography failed: {0}")]
-    Crypto(#[from] rcgen::Error),
-    #[error(transparent)]
-    StepCa(#[from] stepca::Error),
     #[error(
         "No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG"
     )]
@@ -53,7 +27,15 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
+    Sharing(#[from] crate::memory::ShareError),
+    #[error(transparent)]
+    ShareServer(#[from] crate::share_server::ServerError),
+    #[error(transparent)]
+    Drop(#[from] crate::memory::DropError),
+    #[error(transparent)]
     Capture(#[from] capture::writer::WriteError),
+    #[error(transparent)]
+    Harness(#[from] kernel::harness_setup::SetupError),
     #[error("blocking command task failed: {0}")]
     Task(#[from] tokio::task::JoinError),
     #[error("invalid PID file: expected a single PID greater than 1")]
@@ -109,66 +91,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("command cancelled")]
     Cancelled,
-    #[error("--name <node> is required")]
-    NameRequired,
-    #[error(
-        "invalid node name \"{name}\" — must match [a-z0-9]([a-z0-9-]*[a-z0-9])? and be at most 63 characters"
-    )]
-    NodeName { name: String },
-    #[error("expected user@host, got \"{spec}\"")]
-    Target { spec: String },
-    #[error("refusing unsafe user@host")]
-    UnsafeTarget,
-    #[error("refusing unsafe --hub-cmd")]
-    UnsafeHub,
-    #[error("refusing unsafe --advertise")]
-    UnsafeAdvertise,
-    #[error("refusing unsafe host")]
-    UnsafeHost,
-    #[error("--advertise <host|ip> is required")]
-    AdvertiseRequired,
-    #[error("no mesh file")]
-    NoMesh,
-    #[error("no mesh nodes")]
-    NoNodes,
-    #[error("mesh node \"{id}\" is not in the registry")]
-    UnknownMeshNode { id: String },
-    #[error("refusing to forget local node \"{name}\" without --force")]
-    ForgetLocal { name: String },
-    #[error("port must be between 1 and 65535")]
-    MeshPort,
-    #[error("ping timeout must be a positive number of milliseconds")]
-    MeshTimeout,
-    #[error(
-        "step-ca enrollment needs --ca-url, --root, and --provisioner-password-file. Mint with rh ca token node <name> against roster {roster}; the holder key stays in the state directory and POST /1.0/sign issues the certificate. rivet-ca.sh is retired"
-    )]
-    StepCaEnroll { roster: String },
-    #[error(
-        "step-ca renewal needs --ca-url and --root. rh cert renew uses mTLS against step-ca. rivet-ca.sh is retired"
-    )]
-    StepCaRenew,
-    #[error("join response was not a mesh registry")]
-    JoinBody,
-    #[error("seed node did not return a mesh registry")]
-    SeedBody,
-    #[error("hub mesh.json was not a mesh registry")]
-    HubBody,
-    #[error("cannot reach hub mesh: {0}")]
-    HubReach(String),
-    #[error("hub mesh responded with HTTP {code}")]
-    HubStatus { code: u16 },
-    #[error("refusing to write holder keys under /rivet-shared")]
-    SharedKey,
-    #[error("mesh file must be an absolute path inside a directory")]
-    MeshPath,
     #[error("the operating-system hostname is not Unicode")]
     HostName,
-    #[error("mesh HTTP body was not UTF-8")]
-    MeshBody,
-    #[error("holder state must be an absolute path")]
-    StatePath,
-    #[error(transparent)]
-    Registry(#[from] gateway::mesh::RegistryError),
     #[error("RIVETHUB_PG_URL is required.")]
     PostgresUrlRequired,
     #[error("Unknown option: {0}")]
@@ -297,10 +221,85 @@ pub enum Error {
     Worker(#[from] workers::WorkerError),
     #[error(transparent)]
     ProviderBuild(#[from] providers::BuildError),
-    #[error(
-        "session bundles are read from a SQLite memory file; pass --sqlite <file> or set memory.sqlite.path"
-    )]
-    BundleSqlite,
+    #[error("--session requires a conversation id")]
+    SessionRequired,
+    #[error("no session this node can export has the id {0}")]
+    BundleUnknown(String),
+    #[error("--out {0} is a directory; name the bundle file")]
+    BundleOutDirectory(String),
+    #[error("the users file {path} is not a users registry: {source}")]
+    BundleUsers {
+        path: String,
+        source: serde_json::Error,
+    },
+    #[error("{path} is a raw bundle that was never sanitized; pass --force to ingest it as it is")]
+    BundleRaw { path: String },
     #[error(transparent)]
     Bundle(#[from] capture::bundle::BundleError),
+    #[error(
+        "{path} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again, or pass --force to ingest it as it is"
+    )]
+    BundleSecrets {
+        path: String,
+        count: usize,
+        first: String,
+    },
+    #[error(transparent)]
+    Sanitize(#[from] capture::sanitize::SanitizeError),
+    #[error(transparent)]
+    SanitizeKey(#[from] capture::sanitize::KeyError),
+    #[error(transparent)]
+    Share(#[from] capture::share::ShareError),
+    #[error("--mapping requires a file")]
+    MappingRequired,
+    #[error("--resolve requires the report file sanitize wrote")]
+    ResolveRequired,
+    #[error(
+        "--resolve takes the report, an optional bundle, --mapping and --learn; it does not take --out, --decide, --block or the --session options"
+    )]
+    ResolveAlone,
+    #[error("--learn adds map marks to the mapping file and needs --resolve <report>")]
+    LearnWithoutResolve,
+    #[error(
+        "{0} does not end in .report.md, so name the bundle to resolve: rh memory sanitize <bundle> --resolve <report>"
+    )]
+    ResolveBundle(String),
+    #[error("the report {path} cannot be resolved: {source}")]
+    Report {
+        path: String,
+        source: capture::sanitize::marks::ReportError,
+    },
+    #[error("--block makes the decision-model review block ingest and needs --decide")]
+    BlockWithoutDecide,
+    #[error("{0} requires a value")]
+    OptionValue(&'static str),
+    #[error("{0} is not a conversation id; give the UUID of a stored session")]
+    ConversationId(String),
+    #[error("--redact-term takes <conversation id>=<term>, not {0}")]
+    RedactTermForm(String),
+    #[error("{flag} {id} names a session no --session gives; choose it with --session {id} first")]
+    ChoiceWithoutSession { flag: &'static str, id: String },
+    #[error("--sqlite names the store --session reads from, so it needs --session")]
+    SqliteWithoutSession,
+    #[error(
+        "--session reads the chosen sessions from the store, so it does not take a bundle file; give one or the other"
+    )]
+    SessionWithBundle,
+    #[error(transparent)]
+    Choice(#[from] kernel::memory::share::ChoiceError),
+    #[error(transparent)]
+    SessionShare(#[from] kernel::memory::share::ShareFailure),
+    #[error(transparent)]
+    Owner(#[from] kernel::owner::InvalidOwner),
+    #[error(
+        "{path} withholds {count} flagged chunk(s) until you mark them; mark them in the report and run rh memory sanitize --resolve <report>, or pass --force to ingest it with the chunks withheld"
+    )]
+    BundleFlags { path: String, count: usize },
+    #[error(
+        "cannot read the local review file {path} ({source}); sanitize writes it beside the report, so resolve on the machine and in the folder where sanitize ran"
+    )]
+    ReviewLocal {
+        path: String,
+        source: std::io::Error,
+    },
 }

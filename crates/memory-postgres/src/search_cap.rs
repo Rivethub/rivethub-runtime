@@ -6,8 +6,9 @@ use sqlx::types::Json;
 use uuid::Uuid;
 
 use crate::error::Error;
+use crate::search_fts::push_fts_match;
+use crate::search_fts::push_fts_where;
 use crate::search_sql::ArmContext;
-use crate::search_sql::push_fts_where;
 
 const RANK_CAP: usize = 5_000;
 const PROBE_FROM: f64 = 100.0;
@@ -50,7 +51,7 @@ impl crate::PostgresMemory {
     ) -> Result<Option<Vec<Uuid>>, Error> {
         let (alias, from) = source(is_message);
         let mut explain = QueryBuilder::new(format!("EXPLAIN (FORMAT JSON) SELECT 1 FROM {from}"));
-        push_fts_where(&mut explain, context, is_message, false);
+        push_fts_match(&mut explain, context, is_message, false);
         let plan: Json<Vec<Explained>> =
             explain
                 .build_query_scalar()

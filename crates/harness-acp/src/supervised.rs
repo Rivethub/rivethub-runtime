@@ -5,11 +5,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use config::Config;
 use config::provider::CliProvider;
-use kernel::harness::SessionSwitches;
-use kernel::harness::{ApprovalDecision, HarnessOffering, SteerOutcome};
+use kernel::harness::{ApprovalDecision, HarnessOffering};
 use kernel::harness::{
-    HarnessAdapter, HarnessAdapterError, HarnessCommands, SessionEvent, SessionOption, SessionSpec,
-    SystemPromptSupport, TurnInput,
+    HarnessAdapter, HarnessAdapterError, SessionEvent, SessionOption, SessionSpec, TurnInput,
 };
 use kernel::model::ProviderRecovery;
 use kernel::model::{Degradation, ProviderHealth, ProviderStatus};
@@ -234,20 +232,8 @@ impl HarnessAdapter for HeadlessHarness {
         self.ready()?.release(session).await
     }
 
-    fn system_prompt(&self, harness: HarnessId) -> SystemPromptSupport {
-        crate::launch::system_prompt(harness)
-    }
-
     async fn new_session(&self, spec: SessionSpec) -> Result<SessionId, HarnessAdapterError> {
         self.ready()?.new_session(spec).await
-    }
-
-    async fn resume(
-        &self,
-        session: &SessionId,
-        cwd: Option<&std::path::Path>,
-    ) -> Result<(), HarnessAdapterError> {
-        self.ready()?.resume(session, cwd).await
     }
 
     async fn prompt(
@@ -256,14 +242,6 @@ impl HarnessAdapter for HeadlessHarness {
         input: TurnInput,
     ) -> Result<(), HarnessAdapterError> {
         self.ready()?.prompt(session, input).await
-    }
-
-    async fn steer(
-        &self,
-        session: &SessionId,
-        input: TurnInput,
-    ) -> Result<SteerOutcome, HarnessAdapterError> {
-        self.ready()?.steer(session, input).await
     }
 
     async fn cancel(&self, session: &SessionId) -> Result<(), HarnessAdapterError> {
@@ -289,28 +267,6 @@ impl HarnessAdapter for HeadlessHarness {
         self.ready()?.set_option(session, option).await
     }
 
-    fn switches(&self, session: &SessionId) -> SessionSwitches {
-        match &*self.discovery.borrow() {
-            Discovery::Ready(adapter) => adapter.switches(session),
-            Discovery::Degraded(_) => SessionSwitches::default(),
-        }
-    }
-
-    fn mode(&self, session: &SessionId) -> Option<String> {
-        match &*self.discovery.borrow() {
-            Discovery::Ready(adapter) => adapter.mode(session),
-            Discovery::Degraded(_) => None,
-        }
-    }
-
-    fn admit(
-        &self,
-        session: &SessionId,
-        option: &SessionOption,
-    ) -> Result<(), HarnessAdapterError> {
-        self.ready()?.admit(session, option)
-    }
-
     async fn events(
         &self,
         session: &SessionId,
@@ -320,9 +276,5 @@ impl HarnessAdapter for HeadlessHarness {
 
     async fn offerings(&self) -> Result<Vec<HarnessOffering>, HarnessAdapterError> {
         self.ready()?.offerings().await
-    }
-
-    async fn commands(&self) -> Result<Vec<HarnessCommands>, HarnessAdapterError> {
-        self.ready()?.commands().await
     }
 }

@@ -30,8 +30,7 @@ A new database needs two superuser steps, once per database, and then its migrat
 
    A migration that runs as a superuser marks the operators itself; one that does not refuses at 0044 or 0051,
    naming the statements.
-3. **The schema:** `rivethub-migrate postgres` (next section). It also creates the job queue the workers and tasks
-   use: graphile-worker's `graphile_worker` schema at the version every existing install carries (0.17.3), created by
+3. **The schema:** `rivethub-migrate postgres` (next section). It also creates the job queue the workers use: graphile-worker's `graphile_worker` schema at the version every existing install carries (0.17.3), created by
    migration 0052 when the database has none and left alone when it has one.
 
 ## Migrations
@@ -43,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(52 at 0.7.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -91,8 +90,7 @@ under `users/<user>/` and per space under `spaces/<space>/`, which the root repo
 example with `git -C <repo> bundle create <file>.bundle --all`.
 
 **Node state.** `~/.rivethub/` on each node: `config.yaml`, the users file, `plugins/registry.json` (installed
-plug-ins, their grants and settings) and `plugins/<id>/data/`, and `tls/` (the holder's key and certificate; the key
-never leaves the holder, so a lost one means enrolling again).
+plug-ins, their grants and settings) and and `plugins/<id>/data/`.
 
 ## Workers
 
@@ -200,8 +198,8 @@ WantedBy=timers.target
 
 ## Several people on one store
 
-- List the people and their devices in the users file (`gateway.users_file`; README, Tenancy). Rows captured over a
-  device certificate or a bearer token take that person as owner; loopback, plug-ins and `rh mcp` act as the node owner.
+- List the people and the SHA-256 digests of their bearer tokens in the users file (`gateway.users_file`; README,
+  Tenancy). Rows captured with a bearer token take that person as owner; loopback, plug-ins and `rh mcp` act as the node owner.
 - A capture kit that writes to Postgres directly names its person in the connection:
   `?options=-c%20rh.principal%3D<user>`.
 - `rh memory merge-store --from <url> --owner <user> [--moves <file>] [--dry-run]` copies another memory database into
@@ -246,9 +244,7 @@ create no policies on the queue tables; migration 0055 takes both away from ever
 `rh_role_principals`. The node notices that the queue is out of reach and captures without queueing, and the store's
 workers find the rows on their own: the embedding sweep every 10 minutes (messages over 20 characters; the chunk sweep
 every 15 minutes), summaries every 5 minutes (which also file and title the conversation), wiki extraction every
-minute, and topic pages every hour. Set `tasks.enabled = false` on a person node; task delegation goes through the
-queue, so a submit on such a node answers that the queue is absent, and the runner would otherwise log a failed claim on
-every poll. `rh memory recompile`, `rh memory run` and the other queue commands answer the same way on a person login:
+minute, and topic pages every hour. `rh memory recompile`, `rh memory run` and the other queue commands answer on a person login that the queue is absent:
 run them from the store's operator node.
 
 Migration 0054 (CONTRACT note 122) puts the tables 0044 left open under row-level security, so the grants above stay

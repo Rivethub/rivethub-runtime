@@ -84,27 +84,3 @@ pub fn event_stream(
         serde_json::to_string(&chunk)?
     ))
 }
-
-pub async fn channel_turn(client: &reqwest::Client, channel_port: u16) -> TestResult {
-    let request = wire::mesh_channel::AgentMessage {
-        agent_id: "main".into(),
-        content: "hello".into(),
-        session_key: None,
-    };
-    let response: wire::mesh_channel::AgentReply = client
-        .post(format!("https://127.0.0.1:{channel_port}/message"))
-        .json(&request)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    assert_eq!(
-        response,
-        wire::mesh_channel::AgentReply {
-            content: "hello back".into(),
-            session_key: None
-        }
-    );
-    Ok(())
-}

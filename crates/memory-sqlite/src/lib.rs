@@ -1,12 +1,15 @@
 mod append;
 mod bundle;
 pub mod capture;
+mod changes;
 mod context;
 mod conversation;
 mod deletion;
+mod digest;
 mod embed_store;
 pub mod error;
 pub mod export;
+mod facts;
 mod flagged;
 mod health;
 pub mod import;
@@ -15,11 +18,15 @@ mod job_rank;
 mod memory_port;
 mod message;
 mod meta;
+mod model_calls;
 mod port;
 mod queue;
 mod read;
 mod reembed;
+mod review;
 mod search;
+mod session_catalog;
+mod session_marks;
 pub use search::embed::QueryEmbed;
 mod stats;
 mod summary_dag;
@@ -27,9 +34,6 @@ mod summary_port;
 mod tags;
 mod tags_suggest;
 mod tags_write;
-mod task_rows;
-mod task_store;
-mod task_watch;
 mod taxonomy;
 mod tenancy;
 mod tidy;
@@ -97,7 +101,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 30;
+pub const SCHEMA_VERSION: i64 = 35;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -118,12 +122,9 @@ pub struct SqliteStore {
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
     notifications: tokio::sync::watch::Sender<()>,
-    task_events: tokio::sync::watch::Sender<u64>,
-    task_finished: tokio::sync::broadcast::Sender<uuid::Uuid>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
 
-const TASK_FINISHED_BUFFER: usize = 256;
 const SUMMARY_WRITTEN_BUFFER: usize = 256;
 
 impl SqliteStore {
@@ -143,15 +144,8 @@ impl SqliteStore {
         conn.execute_batch(FILE_PRAGMAS)
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
-        let task_events = tokio::sync::watch::channel(0).0;
-        let task_finished = tokio::sync::broadcast::channel(TASK_FINISHED_BUFFER).0;
-        task_watch::register(&conn, task_events.clone(), task_finished.clone())?;
-        Ok(from_conn(
-            conn,
-            SharedClock::new(Utc::now),
-            task_events,
-            task_finished,
-        ))
+        session_catalog::register(&conn)?;
+        Ok(from_conn(conn, SharedClock::new(Utc::now)))
     }
 
     #[must_use]
@@ -254,12 +248,7 @@ impl ClaimIds {
     }
 }
 
-fn from_conn(
-    conn: Connection,
-    clock: SharedClock,
-    task_events: tokio::sync::watch::Sender<u64>,
-    task_finished: tokio::sync::broadcast::Sender<uuid::Uuid>,
-) -> SqliteStore {
+fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
     SqliteStore {
         conn: Arc::new(Mutex::new(conn)),
         pending: tokio_util::task::TaskTracker::new(),
@@ -270,8 +259,6 @@ fn from_conn(
         query_embed: None,
         embed_model: None,
         notifications: tokio::sync::watch::channel(()).0,
-        task_events,
-        task_finished,
         summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
     }
 }
@@ -347,7 +334,7 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 70));
+        assert_eq!(state, (crate::SCHEMA_VERSION, 76));
     }
 
     #[tokio::test]

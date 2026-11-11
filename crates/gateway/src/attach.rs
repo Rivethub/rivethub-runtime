@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
 use crate::Gateway;
-use crate::StartupMemory;
 
 impl Gateway {
     #[must_use]
     pub fn with_plugins(mut self, host: Arc<crate::plugins::PluginHost>) -> Self {
-        if let Some(terminal) = &self.terminal {
-            terminal.attach_plugins(Arc::clone(&host));
-        }
         self.plugins = Some(host);
         self
     }
@@ -85,6 +81,16 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_model_assignments(mut self, assignments: Vec<crate::ModelAssignment>) -> Self {
+        self.model_assignments = assignments;
+        self
+    }
+
+    pub(crate) fn model_assignments(&self) -> &[crate::ModelAssignment] {
+        &self.model_assignments
+    }
+
+    #[must_use]
     pub fn with_flagged(mut self, flagged: Arc<dyn kernel::flagged::FlaggedJobs>) -> Self {
         self.flagged = Some(flagged);
         self
@@ -119,33 +125,49 @@ impl Gateway {
     }
 
     #[must_use]
-    pub fn with_startup_memory(
-        mut self,
-        pages: Arc<dyn kernel::topics::TopicPageStore>,
-        kept: Arc<dyn kernel::topics::StartupStore>,
-    ) -> Self {
-        self.startup = Some(StartupMemory { pages, kept });
+    pub fn with_facts(mut self, store: Arc<dyn kernel::facts::FactStore>) -> Self {
+        self.facts = Some(store);
         self
+    }
+
+    pub(crate) fn facts(
+        &self,
+    ) -> Result<&Arc<dyn kernel::facts::FactStore>, crate::error::ApiError> {
+        self.facts
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("fact store unavailable".into()))
+    }
+
+    #[must_use]
+    pub fn with_review(mut self, store: Arc<dyn kernel::review::ReviewStore>) -> Self {
+        self.review = Some(store);
+        self
+    }
+
+    pub(crate) fn review(
+        &self,
+    ) -> Result<&Arc<dyn kernel::review::ReviewStore>, crate::error::ApiError> {
+        self.review
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("review store unavailable".into()))
+    }
+
+    #[must_use]
+    pub fn with_topic_pages(mut self, pages: Arc<dyn kernel::topics::TopicPageStore>) -> Self {
+        self.pages = Some(pages);
+        self
+    }
+
+    pub(crate) fn topic_pages(&self) -> Option<&dyn kernel::topics::TopicPageStore> {
+        self.pages.as_deref()
     }
 
     pub(crate) fn pages(
         &self,
     ) -> Result<&dyn kernel::topics::TopicPageStore, crate::error::ApiError> {
-        self.startup
-            .as_ref()
-            .map(|startup| startup.pages.as_ref())
+        self.pages
+            .as_deref()
             .ok_or_else(|| crate::error::ApiError::Unavailable("wiki pages unavailable".into()))
-    }
-
-    pub(crate) fn startup_memory(
-        &self,
-    ) -> Option<(
-        &dyn kernel::topics::TopicPageStore,
-        &dyn kernel::topics::StartupStore,
-    )> {
-        self.startup
-            .as_ref()
-            .map(|startup| (startup.pages.as_ref(), startup.kept.as_ref()))
     }
 
     #[must_use]
@@ -157,11 +179,88 @@ impl Gateway {
         self
     }
 
+    #[must_use]
+    pub fn with_session_catalog(
+        mut self,
+        catalog: Arc<dyn kernel::memory::SessionCatalog>,
+    ) -> Self {
+        self.session_catalog = Some(catalog);
+        self
+    }
+
+    #[must_use]
+    pub fn with_changes(
+        mut self,
+        changes: Arc<dyn kernel::changes::ChangeFeed>,
+        digests: Arc<dyn kernel::changes::DigestStore>,
+    ) -> Self {
+        self.changes = Some(changes);
+        self.digests = Some(digests);
+        self
+    }
+
+    pub(crate) fn changes(
+        &self,
+    ) -> Result<&Arc<dyn kernel::changes::ChangeFeed>, crate::error::ApiError> {
+        self.changes
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("change feed unavailable".into()))
+    }
+
+    pub(crate) fn digests(
+        &self,
+    ) -> Result<&Arc<dyn kernel::changes::DigestStore>, crate::error::ApiError> {
+        self.digests
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("daily digests unavailable".into()))
+    }
+
+    pub(crate) fn session_catalog(&self) -> Option<&dyn kernel::memory::SessionCatalog> {
+        self.session_catalog.as_deref()
+    }
+
     pub(crate) fn session_deletion(&self) -> Option<&dyn kernel::memory::SessionDeletion> {
         self.deletions.as_deref()
     }
 
+    #[must_use]
+    pub fn with_model_calls(
+        mut self,
+        model_calls: Arc<dyn kernel::model_calls::ModelCallStore>,
+    ) -> Self {
+        self.model_calls = Some(model_calls);
+        self
+    }
+
+    pub(crate) fn model_calls(
+        &self,
+    ) -> Result<&dyn kernel::model_calls::ModelCallStore, crate::error::ApiError> {
+        self.model_calls.as_deref().ok_or_else(|| {
+            crate::error::ApiError::Unavailable("model call store unavailable".into())
+        })
+    }
+
     pub(crate) fn memory_export(&self) -> Option<&Arc<dyn kernel::memory::MemoryExport>> {
         self.memory_export.as_ref()
+    }
+
+    #[must_use]
+    pub fn with_account(mut self, account: Arc<crate::account::AccountService>) -> Self {
+        self.account = Some(account);
+        self
+    }
+
+    pub(crate) fn account(
+        &self,
+    ) -> Result<&Arc<crate::account::AccountService>, crate::error::ApiError> {
+        self.account
+            .as_ref()
+            .ok_or_else(|| crate::error::ApiError::Unavailable("account unavailable".into()))
+    }
+
+    pub(crate) fn count(&self, event: crate::account::UsageEvent) {
+        if let Some(account) = &self.account {
+            account.count(event);
+        }
     }
 }

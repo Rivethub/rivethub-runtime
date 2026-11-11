@@ -8,6 +8,22 @@ The tasks refactor retires `tasks.pricing`, `tasks.eval` and `runtime.heartbeats
 (CONTRACT note 74). The replay drops recorded findings at or under those paths and
 expects the one warning that names each retired key.
 
+The memory-service cut retires whole sections (CONTRACT note 132), listed in
+`config::validate::retired::RETIRED`: `mesh` (only `mesh.node_name` is still
+read), and the client-certificate keys `gateway.certificate_authority`,
+`gateway.devices`, `gateway.tls_ca`, `gateway.tls_crl`,
+`gateway.tls_require_client`, `memory.capture.gateway.cert` and
+`memory.capture.gateway.key`, the live-session keys `gateway.terminal`,
+`gateway.commands_file`, `gateway.files_root`, `gateway.files_open`,
+`gateway.allowed_harnesses` and `gateway.advertise_mdns`, `runtime.profile`, and
+the delegation keys `tasks.enabled` and `tasks.sqlite_path` (`tasks.harnesses`
+still names each harness binary). A retired `gateway.terminal` also drops the
+recorded exposed-terminal error at `gateway.tls_cert`. The replay drops recorded findings at or under a retired path and expects
+the one warning that names it whenever the input sets a key there other than a
+kept one (a null section with kept keys sets nothing). Five `mesh` type-confused cases (`validate_config_mesh_channels_misc.jsonl`
+:373, :434, :598, :625 and :674) now deserialize, because the retired keys have no
+type, and their `rejected` rows left the table.
+
 The `den` section is now named `gateway` (`den` is read as a deprecated alias).
 The replay renames recorded `den` paths and messages to `gateway` on the
 expected side only; fixture bytes remain unchanged.
@@ -39,11 +55,11 @@ not reproduced verbatim. They are pinned as data in
 findings that replace the recorded ones); `deviations_are_documented` asserts
 the per-file counts against this document. Every well-typed case replays
 against the recorded findings adjusted only by the CONTRACT decisions (Decision
-11 above) and the config prune (below); 5,698 of the 6,008 validate cases
+11 above) and the config prune (below); 5,823 of the 6,008 validate cases
 carry `RemovedByDecision` table rows. The remaining divergences
 fall into the four classes below.
 
-## Accepted-but-rejected (114 cases)
+## Accepted-but-rejected (109 cases)
 
 TS validated provider/plugin-side config keys only for presence and shape of
 the section; it never type-checked individual values (plugin `ctx.pluginConfig`
@@ -55,8 +71,8 @@ document is type-confused. CONTRACT §2 puts these inputs outside the boundary
 - `validate_config.jsonl` — 2 accepted-but-rejected; ids: validate_config.jsonl:125, validate_config.jsonl:384
 - `validate_config_agents_providers.jsonl` — 17 accepted-but-rejected; ids: validate_config_agents_providers.jsonl:61, validate_config_agents_providers.jsonl:86, validate_config_agents_providers.jsonl:166, validate_config_agents_providers.jsonl:235, validate_config_agents_providers.jsonl:249
 - `validate_config_den.jsonl` — 2 accepted-but-rejected; ids: validate_config_den.jsonl:164, validate_config_den.jsonl:753
-- `validate_config_memory.jsonl` — 26 accepted-but-rejected; ids: validate_config_memory.jsonl:58, validate_config_memory.jsonl:94, validate_config_memory.jsonl:201, validate_config_memory.jsonl:245, validate_config_memory.jsonl:291
-- `validate_config_mesh_channels_misc.jsonl` — 24 accepted-but-rejected; ids: validate_config_mesh_channels_misc.jsonl:9, validate_config_mesh_channels_misc.jsonl:18, validate_config_mesh_channels_misc.jsonl:57, validate_config_mesh_channels_misc.jsonl:60, validate_config_mesh_channels_misc.jsonl:135
+- `validate_config_memory.jsonl` — 27 accepted-but-rejected; ids: validate_config_memory.jsonl:58, validate_config_memory.jsonl:94, validate_config_memory.jsonl:201, validate_config_memory.jsonl:245, validate_config_memory.jsonl:291
+- `validate_config_mesh_channels_misc.jsonl` — 19 accepted-but-rejected; ids: validate_config_mesh_channels_misc.jsonl:9, validate_config_mesh_channels_misc.jsonl:18, validate_config_mesh_channels_misc.jsonl:57, validate_config_mesh_channels_misc.jsonl:60, validate_config_mesh_channels_misc.jsonl:135
 - `validate_config_runtime.jsonl` — 35 accepted-but-rejected; ids: validate_config_runtime.jsonl:2, validate_config_runtime.jsonl:24, validate_config_runtime.jsonl:44, validate_config_runtime.jsonl:51, validate_config_runtime.jsonl:85
 - `validate_config_tasks_workflows.jsonl` — 6 accepted-but-rejected; ids: validate_config_tasks_workflows.jsonl:37, validate_config_tasks_workflows.jsonl:179, validate_config_tasks_workflows.jsonl:335, validate_config_tasks_workflows.jsonl:395, validate_config_tasks_workflows.jsonl:412
 

@@ -1,4 +1,4 @@
-use crate::{delegate, memory, tags, wiki};
+use crate::{memory, sessions, tags, wiki};
 use rmcp::model::{Tool, ToolAnnotations};
 use schemars::{JsonSchema, Schema, generate::SchemaSettings};
 
@@ -6,12 +6,6 @@ pub(crate) trait ToolInput: JsonSchema {
     const NAME: &'static str;
     const DESCRIPTION: &'static str;
     fn annotations() -> Option<ToolAnnotations>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Surface {
-    Stdio,
-    Remote,
 }
 
 fn definition<T: ToolInput>() -> Result<Tool, serde_json::Error> {
@@ -29,15 +23,6 @@ fn definition<T: ToolInput>() -> Result<Tool, serde_json::Error> {
     Ok(tool)
 }
 
-pub(crate) fn delegation(surface: Surface) -> Result<Vec<Tool>, serde_json::Error> {
-    let mut tools = Vec::new();
-    if surface == Surface::Stdio {
-        tools.push(definition::<delegate::DelegateTask>()?);
-    }
-    tools.push(definition::<delegate::ListAgents>()?);
-    Ok(tools)
-}
-
 pub fn definitions() -> Result<Vec<Tool>, serde_json::Error> {
     Ok(vec![
         definition::<memory::Browse>()?,
@@ -47,6 +32,14 @@ pub fn definitions() -> Result<Vec<Tool>, serde_json::Error> {
         definition::<tags::Args>()?,
         definition::<wiki::Read>()?,
         definition::<wiki::Search>()?,
+    ])
+}
+
+pub fn session_definitions() -> Result<Vec<Tool>, serde_json::Error> {
+    Ok(vec![
+        definition::<sessions::Find>()?,
+        definition::<sessions::Sanitize>()?,
+        definition::<sessions::Import>()?,
     ])
 }
 

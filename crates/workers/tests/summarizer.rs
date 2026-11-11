@@ -319,7 +319,7 @@ fn small_parts() -> SummaryParts {
         stale_minutes: 5_760,
         stale_min_batch: 2,
         max_leaf_rounds: 10,
-        pipeline_version: 5,
+        pipeline_version: 6,
     }
 }
 

@@ -62,3 +62,13 @@ fn recorded_search_mode_order_preserves_variants_and_moves_vector_last() {
     expected.insert("enum".into(), serde_json::to_value(variants).expect("enum"));
     assert_eq!(schema, expected);
 }
+
+#[test]
+fn session_tool_schemas_match_snapshot() {
+    let tools = mcp::catalog::session_definitions().expect("session tools");
+    let actual = serde_json::to_string_pretty(&tools).expect("tools json");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/session-tools.json");
+    let expected = std::fs::read_to_string(&path).expect("session tool snapshot");
+    assert_eq!(actual.trim_end(), expected.trim_end());
+}

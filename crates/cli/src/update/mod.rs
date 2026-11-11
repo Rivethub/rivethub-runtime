@@ -1,6 +1,6 @@
+mod cloud;
 mod error;
 mod files;
-mod mesh;
 mod release;
 mod source;
 
@@ -11,6 +11,7 @@ use clap::{Args, ValueEnum};
 use config::Environment;
 use tokio_util::sync::CancellationToken;
 use url::Url;
+use wire::gateway::account::UpdateSource;
 
 use crate::service::command::{capture, require_success};
 use crate::service::{Scope, ServiceCommand};
@@ -33,10 +34,8 @@ pub struct UpdateArgs {
     pub version: Option<String>,
     #[arg(long)]
     pub no_restart: bool,
-    #[arg(long)]
-    pub mesh: bool,
-    #[arg(long, requires = "mesh")]
-    pub ssh_user: Option<String>,
+    #[arg(long, value_name = "rivethub-cloud|github")]
+    pub source: Option<wire::gateway::account::UpdateSource>,
 }
 
 #[derive(Debug)]
@@ -109,6 +108,19 @@ impl Updater {
         })
     }
 
+    async fn source(
+        &self,
+        args: &UpdateArgs,
+        env: &Environment,
+    ) -> Result<UpdateSource, UpdateError> {
+        if let Some(source) = args.source {
+            return Ok(source);
+        }
+        let files = gateway::account::AccountFiles::new(&gateway::state_dir(env)?);
+        let state = tokio::task::spawn_blocking(move || files.read()).await??;
+        Ok(state.map_or(UpdateSource::Github, |state| state.update_source()))
+    }
+
     async fn restart(
         &self,
         env: &Environment,
@@ -139,17 +151,17 @@ impl Updater {
             target,
         } = self.prepare(args, env, shutdown, report).await?;
         let result = async {
-            let peers = if args.mesh {
-                report.stdout.push_str("Checking mesh nodes...\n");
-                mesh::preflight(args, &config, env, shutdown, report).await?
-            } else {
-                Vec::new()
-            };
             report
                 .stdout
                 .extend(["Updating this node (", &args.channel.to_string(), ")...\n"]);
-            let version = match args.channel {
-                Channel::Stable | Channel::Beta => {
+            let version = match (args.channel, self.source(args, env).await?) {
+                (Channel::Stable | Channel::Beta, UpdateSource::RivethubCloud) => {
+                    report
+                        .stdout
+                        .push_str("Fetching the signed release from rivethub.cloud...\n");
+                    cloud::stage(&config, env, args, installation.staging.path(), shutdown).await?
+                }
+                (Channel::Stable | Channel::Beta, UpdateSource::Github) => {
                     release::stage(
                         &self.releases,
                         args.version.as_deref(),
@@ -159,7 +171,7 @@ impl Updater {
                     )
                     .await?
                 }
-                Channel::Nightly => {
+                (Channel::Nightly, _) => {
                     source::stage(args, env, installation.staging.path(), shutdown).await?
                 }
             };
@@ -189,7 +201,6 @@ impl Updater {
             } else {
                 self.restart(env, shutdown, report).await?;
             }
-            mesh::update(peers, args, &version, env, shutdown, report).await?;
             Ok::<_, Error>(())
         }
         .await;

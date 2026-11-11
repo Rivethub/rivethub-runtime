@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use gateway::tenancy::UserId;
 use wire::events::SessionBroadcast;
 use wire::gateway::topics::DecisionStatus;
 use wire::gateway::topics::DecisionSuperseded;
@@ -15,9 +14,7 @@ use super::TestResult;
 #[tokio::test]
 async fn decisions_are_added_edited_and_superseded() -> TestResult {
     let api = Api::new(true)?;
-    let (_, mut live) = api
-        .sessions
-        .subscribe(&UserId::new("owner".to_owned())?, None)?;
+    let mut live = api.sessions.notices();
     let mesh: TopicRecord = api
         .json(
             "POST",

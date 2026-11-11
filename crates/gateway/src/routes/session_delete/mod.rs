@@ -1,10 +1,11 @@
+pub(crate) mod catalog;
 mod trash;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use kernel::memory::{DeletedSession, SessionActivity, SessionDeletion};
@@ -12,7 +13,7 @@ use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteRefused, SessionDeleteRequest, SessionDeleteResult,
     SessionDeleteResults, SessionDeleted,
 };
-use wire::session_id::{SessionId, SessionRef, decode_segment};
+use wire::session_id::{SessionId, SessionKey, SessionKeyError, SessionRef, decode_segment};
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -21,11 +22,14 @@ use crate::history::{Resolved, authorize};
 use crate::tenancy::UserId;
 
 const MAX_BATCH: usize = 200;
-const LIVE: &str = "session is live";
 const NOT_FOUND: &str = "not found";
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
     Router::new()
+        .route(
+            "/api/sessions",
+            get(catalog::list).fallback(super::method_not_allowed),
+        )
         .route(
             "/api/sessions/delete",
             post(delete_many).fallback(super::method_not_allowed),
@@ -36,11 +40,23 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
         .route(
             "/api/sessions/{session}",
-            delete(delete_one).fallback(super::method_not_allowed),
+            get(catalog::detail)
+                .delete(delete_one)
+                .fallback(super::method_not_allowed),
         )
         .route(
             "/api/sessions/{session}/keep",
-            put(trash::keep).fallback(super::method_not_allowed),
+            put(trash::keep)
+                .delete(catalog::unkeep)
+                .fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/trash",
+            post(catalog::trash).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/restore",
+            post(catalog::restore).fallback(super::method_not_allowed),
         )
 }
 
@@ -66,6 +82,25 @@ pub(super) async fn tombstoned(
     found
 }
 
+pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<String> {
+    let Some(deletions) = gateway.session_deletion() else {
+        return BTreeSet::new();
+    };
+    let read = deletions.trashed(keys).await;
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note 127)"
+        )
+    )]
+    let found = read.unwrap_or_else(|error| {
+        tracing::warn!(%error, "session trash is unreadable; listing every session");
+        BTreeMap::new()
+    });
+    found.into_keys().collect()
+}
+
 pub(super) fn hidden(
     deleted: &BTreeMap<String, DateTime<Utc>>,
     key: &str,
@@ -78,7 +113,6 @@ pub(super) fn hidden(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refusal {
-    Live,
     NotFound,
 }
 
@@ -88,10 +122,15 @@ fn deletions(gateway: &Gateway) -> Result<&dyn SessionDeletion, ApiError> {
         .ok_or_else(|| ApiError::Unavailable("session deletion unavailable".to_owned()))
 }
 
-fn segment_session(segment: &str) -> Result<SessionId, ApiError> {
-    if let Ok(session) = segment.parse::<SessionId>() {
-        return Ok(session);
+pub(in crate::routes) fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
+    match segment.parse::<SessionKey>() {
+        Ok(key) => Ok(key),
+        Err(error @ SessionKeyError::Import(_)) => Err(ApiError::BadRequest(error.to_string())),
+        Err(SessionKeyError::Harness(_)) => encoded_session(segment).map(SessionKey::Harness),
     }
+}
+
+fn encoded_session(segment: &str) -> Result<SessionId, ApiError> {
     let decoded =
         decode_segment(segment).map_err(|error| ApiError::BadRequest(error.to_string()))?;
     match decoded.session {
@@ -111,27 +150,11 @@ fn resolved(session: &SessionId) -> Resolved {
     }
 }
 
-fn live(gateway: &Gateway, session: &SessionId) -> bool {
-    gateway
-        .terminal()
-        .is_some_and(|terminal| terminal.is_live(session.native()))
-}
-
-async fn ended_at_rest(
+pub(in crate::routes) async fn visible(
     gateway: &Gateway,
     user: &UserId,
     session: &SessionId,
 ) -> Result<bool, ApiError> {
-    match gateway.terminal() {
-        Some(terminal) if terminal.chat_at_rest(session.native()) => {
-            terminal.remove_session(user, session.as_str()).await?;
-            Ok(!live(gateway, session))
-        }
-        _ => Ok(false),
-    }
-}
-
-async fn visible(gateway: &Gateway, user: &UserId, session: &SessionId) -> Result<bool, ApiError> {
     match authorize(gateway, user, &resolved(session)).await {
         Ok(()) => Ok(true),
         Err(ApiError::SessionForbidden) => Ok(false),
@@ -152,26 +175,48 @@ async fn known(
     {
         return Ok(true);
     }
-    let key = session.as_str().to_owned();
-    let activity = deletions
-        .session_activity(std::slice::from_ref(&key))
-        .await?;
-    Ok(activity.get(&key).is_some_and(SessionActivity::recorded))
+    recorded(deletions, session.as_str()).await
+}
+
+async fn recorded(deletions: &dyn SessionDeletion, key: &str) -> Result<bool, ApiError> {
+    let keys = [key.to_owned()];
+    let activity = deletions.session_activity(&keys).await?;
+    Ok(activity.get(key).is_some_and(SessionActivity::recorded))
+}
+
+async fn reachable(
+    gateway: &Gateway,
+    user: &UserId,
+    deletions: &dyn SessionDeletion,
+    key: &SessionKey,
+) -> Result<bool, ApiError> {
+    match key {
+        SessionKey::Harness(session) => Ok(
+            visible(gateway, user, session).await? && known(gateway, deletions, session).await?
+        ),
+        SessionKey::Import(_) => recorded(deletions, key.as_str()).await,
+    }
+}
+
+async fn ensure_reachable(
+    gateway: &Gateway,
+    user: &UserId,
+    key: &SessionKey,
+) -> Result<(), ApiError> {
+    if reachable(gateway, user, deletions(gateway)?, key).await? {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound(NOT_FOUND))
+    }
 }
 
 async fn erase(
     gateway: &Gateway,
     user: &UserId,
-    session: &SessionId,
+    session: &SessionKey,
 ) -> Result<Result<DeletedSession, Refusal>, ApiError> {
     let deletions = deletions(gateway)?;
-    if !visible(gateway, user, session).await? {
-        return Ok(Err(Refusal::NotFound));
-    }
-    if live(gateway, session) && !ended_at_rest(gateway, user, session).await? {
-        return Ok(Err(Refusal::Live));
-    }
-    if !known(gateway, deletions, session).await? {
+    if !reachable(gateway, user, deletions, session).await? {
         return Ok(Err(Refusal::NotFound));
     }
     let deleted = deletions
@@ -187,7 +232,7 @@ async fn erase(
     Ok(Ok(deleted))
 }
 
-fn deleted_reply(session: SessionId, deleted: DeletedSession) -> SessionDeleted {
+fn deleted_reply(session: SessionKey, deleted: DeletedSession) -> SessionDeleted {
     SessionDeleted {
         ok: true,
         session,
@@ -202,15 +247,14 @@ async fn delete_one(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDeleted>, ApiError> {
-    let session = segment_session(&segment)?;
+    let session = segment_key(&segment)?;
     match erase(&gateway, &user, &session).await? {
         Ok(deleted) => Ok(Json(deleted_reply(session, deleted))),
-        Err(Refusal::Live) => Err(ApiError::Conflict(LIVE.to_owned())),
         Err(Refusal::NotFound) => Err(ApiError::NotFound(NOT_FOUND)),
     }
 }
 
-fn refused(session: SessionId, error: SessionDeleteError) -> SessionDeleteResult {
+fn refused(session: SessionKey, error: SessionDeleteError) -> SessionDeleteResult {
     SessionDeleteResult::Refused(SessionDeleteRefused {
         session,
         ok: false,
@@ -225,7 +269,7 @@ async fn delete_many(
 ) -> Result<Json<SessionDeleteResults>, ApiError> {
     deletions(&gateway)?;
     let mut seen = BTreeSet::new();
-    let sessions: Vec<SessionId> = request
+    let sessions: Vec<SessionKey> = request
         .sessions
         .into_iter()
         .filter(|session| seen.insert(session.clone()))
@@ -240,7 +284,6 @@ async fn delete_many(
         let outcome = erase(&gateway, &user, &session).await;
         let result = match outcome {
             Ok(Ok(deleted)) => SessionDeleteResult::Deleted(deleted_reply(session, deleted)),
-            Ok(Err(Refusal::Live)) => refused(session, SessionDeleteError::Live),
             Ok(Err(Refusal::NotFound)) | Err(ApiError::BadRequest(_)) => {
                 refused(session, SessionDeleteError::NotFound)
             }

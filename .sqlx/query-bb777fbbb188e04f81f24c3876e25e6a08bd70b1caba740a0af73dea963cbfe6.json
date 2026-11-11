@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO rh_topic_redirects (slug, topic_id, created_at, merged_from) VALUES ($1, $2, $3, $4)\n         ON CONFLICT (slug) DO UPDATE SET topic_id = EXCLUDED.topic_id,\n                                          created_at = EXCLUDED.created_at,\n                                          merged_from = EXCLUDED.merged_from",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bb777fbbb188e04f81f24c3876e25e6a08bd70b1caba740a0af73dea963cbfe6"
+}

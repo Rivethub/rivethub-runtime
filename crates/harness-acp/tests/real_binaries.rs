@@ -189,7 +189,6 @@ async fn run_harness(harness: HarnessId) -> Result<Completion, Failed> {
         model: None,
         effort: None,
         working_dir: Some(cwd.path().to_path_buf()),
-        startup_context: None,
     };
     let created = adapter
         .new_session(spec)
@@ -213,12 +212,6 @@ async fn run_harness(harness: HarnessId) -> Result<Completion, Failed> {
     wait_for_turn_end(&mut events)
         .await
         .map_err(|error| Failed::from(format!("{harness} turn end: {error}")))?;
-    drop(adapter);
-    let resumed = AcpHarnessAdapter::with_launch_table(table);
-    resumed
-        .resume(&created, None)
-        .await
-        .map_err(|error| Failed::from(format!("{harness} resume: {error}")))?;
     Ok(Completion::Completed)
 }
 

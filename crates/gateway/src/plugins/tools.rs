@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -24,9 +24,6 @@ use crate::extract::Body;
 
 const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 const LIST_WAIT: Duration = Duration::from_secs(60);
-const TOOL_USE_HEADER: &str = "x-rivethub-tool-use";
-const CALLER_WAIT: Duration = Duration::from_secs(1);
-const CALLER_POLL: Duration = Duration::from_millis(50);
 
 #[async_trait]
 impl PluginTools for PluginHost {
@@ -39,9 +36,8 @@ impl PluginTools for PluginHost {
         plugin: &PluginId,
         tool: &ToolName,
         call: plugins::PluginToolCall,
-        tool_use: Option<&str>,
     ) -> Result<plugins::PluginToolResult, PluginToolError> {
-        self.called(plugin, tool, plugin_tool_call(call), tool_use)
+        self.called(plugin, tool, plugin_tool_call(call))
             .await
             .map(plugin_tool_result)
     }
@@ -79,11 +75,10 @@ impl PluginHost {
         &self,
         plugin: &PluginId,
         tool: &ToolName,
-        mut call: PluginToolCall,
-        tool_use: Option<&str>,
+        call: PluginToolCall,
     ) -> Result<PluginToolResult, PluginToolError> {
         if plugin.as_ref() == super::creator::NAMESPACE {
-            return Ok(self.create(tool, &call.arguments, tool_use).await);
+            return Ok(self.create(tool, &call.arguments).await);
         }
         let declared = self
             .peek(plugin, |entry| {
@@ -104,11 +99,6 @@ impl PluginHost {
         let client = self
             .running_client(plugin)
             .ok_or_else(|| PluginToolError::NotRunning(plugin.as_ref().to_owned()))?;
-        if call.session_id.is_none()
-            && let Some(tool_use) = tool_use
-        {
-            call.session_id = self.calling_session(tool_use).await;
-        }
         let failed = |detail: String| PluginToolError::Failed {
             plugin: plugin.as_ref().to_owned(),
             tool: tool.as_ref().to_owned(),
@@ -162,24 +152,7 @@ impl PluginHost {
     }
 }
 
-impl PluginHost {
-    pub(super) async fn calling_session(
-        &self,
-        tool_use: &str,
-    ) -> Option<wire::session_id::SessionId> {
-        let terminal = self.terminal.get().and_then(std::sync::Weak::upgrade)?;
-        let deadline = tokio::time::Instant::now() + CALLER_WAIT;
-        loop {
-            if let Some(session) = terminal.running_tool(tool_use) {
-                return Some(session);
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return None;
-            }
-            tokio::time::sleep(CALLER_POLL).await;
-        }
-    }
-}
+impl PluginHost {}
 
 #[derive(Debug, Deserialize)]
 struct ListQuery {
@@ -254,21 +227,10 @@ async fn list(State(host): State<Arc<PluginHost>>, Query(query): Query<ListQuery
 async fn call(
     State(host): State<Arc<PluginHost>>,
     Path(name): Path<String>,
-    headers: HeaderMap,
     Body(request): Body<PluginToolCall>,
 ) -> Response {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a non-UTF-8 header is no header, so the call names no tool use"
-        )
-    )]
-    let tool_use = headers
-        .get(TOOL_USE_HEADER)
-        .and_then(|value| value.to_str().ok());
     let answered = match kernel::plugins::split_tool_name(&name) {
-        Ok((plugin, tool)) => host.called(&plugin, &tool, request, tool_use).await,
+        Ok((plugin, tool)) => host.called(&plugin, &tool, request).await,
         Err(error) => Err(error),
     };
     match answered {

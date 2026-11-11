@@ -132,11 +132,6 @@ async fn suggestions_hold_until_the_session_is_placed(pool: PgPool) -> TestResul
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn startup_context_is_kept_per_session(pool: PgPool) -> TestResult {
-    topics::startup_context_is_kept_per_session(&PostgresMemory::new(pool)).await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn listings_count_sessions_and_take_last_activity_from_conversations(
     pool: PgPool,
 ) -> TestResult {
@@ -222,6 +217,20 @@ async fn decisions_are_the_topic_page_decisions_section(pool: PgPool) -> TestRes
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn facts_keep_claims_pins_and_merges(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::facts::facts_keep_claims_pins_and_merges(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn review_marks_keep_each_owners_decisions(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::review::review_marks_keep_each_owners_decisions(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(
     pool: PgPool,
 ) -> TestResult {
@@ -296,4 +305,25 @@ async fn upkeep_counts_filings_entities_and_finished_jobs(pool: PgPool) -> TestR
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn every_topic_s_filing_reads_at_once(pool: PgPool) -> TestResult {
     testkit::filing_bulk::every_topic_s_filing_reads_at_once(&PostgresMemory::new(pool)).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn changes_list_what_the_day_recorded(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::changes_list_what_the_day_recorded(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn digests_are_kept_per_day_and_owner(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::digests_are_kept_per_day_and_owner(&memory).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tag_on_a_bare_claude_conversation_is_its_sessions_change(pool: PgPool) -> TestResult {
+    let (_directory, memory, _queue) = page_stores(pool).await?;
+    testkit::changes::a_tag_on_a_bare_claude_conversation_is_its_sessions_change(&memory).await?;
+    Ok(())
 }

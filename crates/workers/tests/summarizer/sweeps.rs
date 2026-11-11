@@ -168,7 +168,7 @@ fn summary_settings_reject_an_empty_batch() {
         stale_minutes: 5_760,
         stale_min_batch: 2,
         max_leaf_rounds: 10,
-        pipeline_version: 5,
+        pipeline_version: 6,
     })
     .expect_err("empty batch");
     assert!(error.to_string().contains("leaf batch"));
@@ -288,7 +288,7 @@ fn stale_after_an_hour() -> SummarySettings {
         stale_minutes: 60,
         stale_min_batch: 2,
         max_leaf_rounds: 10,
-        pipeline_version: 5,
+        pipeline_version: 6,
     })
     .expect("stale settings")
 }

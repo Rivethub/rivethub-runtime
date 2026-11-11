@@ -93,20 +93,19 @@ fn the_sqlite_query_instruction_is_a_known_key() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
-fn trusting_claude_launch_dirs_is_a_known_terminal_key() -> Result<(), Box<dyn std::error::Error>> {
+fn a_terminal_section_is_retired_with_one_warning() -> Result<(), Box<dyn std::error::Error>> {
     let lines = findings(&parsed(
         "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: m\nproviders:\n  p:\n    model: m\ngateway:\n  terminal:\n    trust_claude_launch_dirs: true\n    bogus: 1\n",
     )?);
+    let terminal: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.contains("gateway.terminal"))
+        .collect();
+    assert_eq!(terminal.len(), 1, "{lines:?}");
     assert!(
-        lines
+        terminal
             .iter()
-            .any(|line| line.contains("Unknown gateway.terminal key \"bogus\"")),
-        "{lines:?}"
-    );
-    assert!(
-        !lines
-            .iter()
-            .any(|line| line.contains("trust_claude_launch_dirs")),
+            .all(|line| line.contains("is no longer used")),
         "{lines:?}"
     );
     Ok(())

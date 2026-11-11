@@ -1,6 +1,7 @@
 pub mod enums;
 mod environment;
 mod load;
+pub mod memory_models;
 pub mod model;
 mod node_name;
 pub mod paths;
@@ -15,16 +16,20 @@ pub use enums::{
     ThinkingLevel,
 };
 pub use environment::{
-    CONFIG_PATH_VARIABLE, DEFAULT_UPLOAD_MAX_BYTES, DEFAULT_UPLOAD_TTL_MS, Environment,
-    LOG_LEVEL_VARIABLE, LogLevelSetting, MODEL_RUN_VARIABLE, NODE_ID_VARIABLE, NODE_NAME_VARIABLE,
-    POSTGRES_URL_VARIABLE, TermMuxChoice, TermMuxSetting, TermSettings, UPLOAD_MAX_BYTES_VARIABLE,
-    UPLOAD_TTL_MS_VARIABLE, UploadSettings, VoiceEndpoints, deprecated_alias_names,
+    CONFIG_PATH_VARIABLE, Environment, LOG_LEVEL_VARIABLE, LogLevelSetting, MODEL_RUN_VARIABLE,
+    NODE_ID_VARIABLE, NODE_NAME_VARIABLE, POSTGRES_URL_VARIABLE, deprecated_alias_names,
 };
 pub use load::{
     ConfigError, Loaded, Typed, resolve_config_path, standalone_config_yaml, type_document,
     validate_document,
 };
-pub use model::{Config, HarnessSlot, RedactionSettings};
+pub use memory_models::{
+    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
+};
+pub use model::{
+    CloudSection, Config, DecideSection, HarnessSlot, HubEntry, MappingFile, RedactionSettings,
+    TelemetrySection,
+};
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{
     ConfigLocation, NodeClaim, Paths, StateError, adopt_legacy_state, claim_node, normalize,

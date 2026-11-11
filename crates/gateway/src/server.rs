@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Gateway;
 use crate::tls::TlsError;
 use crate::tls::TlsPaths;
-use crate::tls::listener_tls_config;
+use crate::tls::tls_config;
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
@@ -47,23 +47,15 @@ pub struct BindSource {
     pub port: u16,
     pub tls_cert: Option<PathBuf>,
     pub tls_key: Option<PathBuf>,
-    pub tls_ca: Option<PathBuf>,
-    pub tls_crl: Option<PathBuf>,
-    pub require_client: bool,
     pub notices: Vec<String>,
 }
 
 #[derive(Debug, Error)]
 pub enum BindError {
     #[error(
-        "[rivethub-gateway] refusing to bind {host}: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's holder certificate, ~/.rivethub/tls/holder.cert.pem and holder.key.pem from rh mesh enroll; devices enroll with rh cert renew). Or bind the gateway host to 127.0.0.1."
+        "[rivethub-gateway] refusing to bind {host}: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's TLS certificate and key). Or bind the gateway host to 127.0.0.1."
     )]
     TlsRequired { host: String },
-    #[error(
-        "[rivethub-gateway] TLS CA chain missing at {} — cannot verify device client certs",
-        path.display()
-    )]
-    CaMissing { path: PathBuf },
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -157,7 +149,7 @@ pub async fn serve_router_with(
 ) -> Result<(), ServeError> {
     let acceptor = match tls {
         Some(paths) => {
-            let config = tokio::task::spawn_blocking(move || listener_tls_config(&paths)).await??;
+            let config = tokio::task::spawn_blocking(move || tls_config(&paths)).await??;
             Some(TlsAcceptor::from(Arc::new(config)))
         }
         None => None,
@@ -243,14 +235,12 @@ impl Serving {
             }
             None => Either::Left(tcp),
         };
-        let peer = peer_certificate(&stream);
         let keep_alive = KeepAliveGate::new(self.options.keep_alive_idle_timeout);
         let clock = RequestClock::default();
         let socket_gone = CancellationToken::new();
         let service = TowerToHyperService::new(GatewayService {
             router: self.router,
             remote,
-            peer,
             keep_alive: keep_alive.clone(),
             clock: clock.clone(),
             request_timeout: self.options.request_timeout,
@@ -300,24 +290,9 @@ impl Serving {
 struct GatewayService {
     router: Router,
     remote: SocketAddr,
-    peer: Option<crate::tenancy::PeerCertificate>,
     keep_alive: KeepAliveGate,
     clock: RequestClock,
     request_timeout: Duration,
-}
-
-fn peer_certificate(
-    stream: &Either<TcpStream, tokio_rustls::server::TlsStream<TcpStream>>,
-) -> Option<crate::tenancy::PeerCertificate> {
-    match stream {
-        Either::Right(tls) => tls
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|certs| certs.first())
-            .map(|cert| crate::tenancy::PeerCertificate::from_verified_leaf(cert.as_ref())),
-        Either::Left(_) => None,
-    }
 }
 
 impl tower::Service<Request<Incoming>> for GatewayService {
@@ -332,9 +307,6 @@ impl tower::Service<Request<Incoming>> for GatewayService {
     fn call(&mut self, mut request: Request<Incoming>) -> Self::Future {
         self.keep_alive.disarm();
         request.extensions_mut().insert(ConnectInfo(self.remote));
-        if let Some(peer) = &self.peer {
-            request.extensions_mut().insert(peer.clone());
-        }
         let start = self.clock.start();
         let request = request.map(|body| DeadlineBody::new(body, start, self.request_timeout));
         let routed = self.router.call(request);

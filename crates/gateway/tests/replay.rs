@@ -41,25 +41,6 @@ const CLAIMS: &[&str] = &[
     "plain-main/not-found-file",
     "plain-main/not-found-post",
     "plain-main/not-found-api",
-    "plain-main/static-files-nested",
-    "plain-main/alias-api-files-prefix",
-    "plain-main/files-disabled",
-    "plain-main/files-bare-path",
-    "plain-nostatic/files-root-missing",
-    "plain-nostatic/files-alias-root-missing",
-    "plain-main/remote-plain-pair-redeem",
-    "plain-main/remote-plain-enroll",
-    "plain-main/devices-disabled",
-    "plain-main/devices-enroll-disabled",
-    "plain-main/devices-delete-disabled",
-    "plain-main/phone-pairing-get",
-    "plain-main/phone-pairing-post",
-    "plain-main/phone-pairing-status",
-    "plain-main/phone-pairing-bad-escape",
-    "plain-main/phone-pairing-bad-name",
-    "plain-main/pair-redeem-bogus",
-    "plain-main/pair-redeem-get",
-    "plain-tenancy/tenancy-phone-pairing-owner",
     "plain-main/static-root",
     "plain-main/static-index",
     "plain-main/static-index-head",
@@ -83,13 +64,6 @@ const CLAIMS: &[&str] = &[
     "plain-main/alias-uppercase",
     "plain-main/alias-api-events-trailing-slash",
     "plain-main/alias-api-events-unknown-child",
-    "plain-main/mesh-valid-before-ingest",
-    "plain-main/mesh-no-file",
-    "plain-main/mesh-invalid-json",
-    "plain-main/mesh-root-array",
-    "plain-main/mesh-flat-array",
-    "plain-main/mesh-nodes-number",
-    "plain-main/mesh-post",
     "plain-redirect/redirect-get-root",
     "plain-redirect/redirect-get-root-query",
     "plain-redirect/redirect-head-root",
@@ -97,7 +71,6 @@ const CLAIMS: &[&str] = &[
     "plain-redirect/redirect-same-origin",
     "plain-redirect/redirect-index",
     "plain-redirect/redirect-remote-unauthorized",
-    "plain-redirect/mesh-default-path-missing",
     "plain-nostatic/nostatic-root",
     "plain-nostatic/nostatic-root-html",
     "plain-nostatic/nostatic-spa",
@@ -168,11 +141,7 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
         "alias-api-events-ws-http",
         "the session route owns the rewritten /ws path",
     ),
-    (
-        "plain-main",
-        "mesh-empty-object",
-        "an empty object is not a mesh file; the recording treats absent fields as defaults",
-    ),
+    ("plain-main", "mesh-empty-object", "cut"),
     (
         "plain-nostatic",
         "nostatic-ws-get",
@@ -227,11 +196,7 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
         "alias-api-events-state",
         "events lane owns the destination",
     ),
-    (
-        "plain-main",
-        "alias-api-mesh",
-        "session registry owns sessions and latest",
-    ),
+    ("plain-main", "alias-api-mesh", "cut"),
     (
         "plain-main",
         "alias-api-terminal",
@@ -287,11 +252,7 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
     ("plain-main", "body-exactly-256k", "2"),
     ("plain-main", "body-too-large-event", "2"),
     ("plain-main", "body-too-large-events", "2"),
-    (
-        "plain-main",
-        "mesh-valid",
-        "session registry owns sessions and latest",
-    ),
+    ("plain-main", "mesh-valid", "cut"),
     ("plain-main", "layout-bad-key-slash", "removed"),
     ("plain-main", "layout-bad-key-empty", "removed"),
     ("plain-main", "layout-bad-key-65", "removed"),
@@ -332,20 +293,43 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
         "users-shared-invalid-sessions",
         "2",
     ),
+    ("plain-main", "mesh-valid-before-ingest", "cut"),
+    ("plain-main", "mesh-no-file", "cut"),
+    ("plain-main", "mesh-invalid-json", "cut"),
+    ("plain-main", "mesh-root-array", "cut"),
+    ("plain-main", "mesh-flat-array", "cut"),
+    ("plain-main", "mesh-nodes-number", "cut"),
+    ("plain-main", "mesh-post", "cut"),
+    ("plain-redirect", "mesh-default-path-missing", "cut"),
+    ("plain-main", "remote-plain-pair-redeem", "cut"),
+    ("plain-main", "remote-plain-enroll", "cut"),
+    ("plain-main", "devices-disabled", "cut"),
+    ("plain-main", "devices-enroll-disabled", "cut"),
+    ("plain-main", "devices-delete-disabled", "cut"),
+    ("plain-main", "phone-pairing-get", "cut"),
+    ("plain-main", "phone-pairing-post", "cut"),
+    ("plain-main", "phone-pairing-status", "cut"),
+    ("plain-main", "phone-pairing-bad-escape", "cut"),
+    ("plain-main", "phone-pairing-bad-name", "cut"),
+    ("plain-main", "pair-redeem-bogus", "cut"),
+    ("plain-main", "pair-redeem-get", "cut"),
+    ("plain-tenancy", "tenancy-phone-pairing-owner", "cut"),
+    ("plain-main", "static-files-nested", "cut"),
+    ("plain-main", "alias-api-files-prefix", "cut"),
+    ("plain-main", "files-disabled", "cut"),
+    ("plain-main", "files-bare-path", "cut"),
+    ("plain-nostatic", "files-root-missing", "cut"),
+    ("plain-nostatic", "files-alias-root-missing", "cut"),
 ];
 
 const SKIP_REASONS: &[(&str, &str)] = &[
     (
+        "cut",
+        "B1: rh v0.8 cut this route (CONTRACT note 132); the recording keeps the den's answer",
+    ),
+    (
         "2",
         "B1/B2/B12: session, tenancy and static-serving scenarios are outside this health, origin and file-root replay slice",
-    ),
-    (
-        "3",
-        "B1/B3/B6: optional integration and memory routes are outside this HTTP replay slice",
-    ),
-    (
-        "4",
-        "B1/B14: mesh and device-management scenarios require their separate service fixtures",
     ),
     (
         "transport",
@@ -380,16 +364,8 @@ const SKIP_REASONS: &[(&str, &str)] = &[
         "the session route owns the rewritten /ws path",
     ),
     (
-        "an empty object is not a mesh file; the recording treats absent fields as defaults",
-        "an empty object is not a mesh file; the recording treats absent fields as defaults",
-    ),
-    (
         "events lane owns the destination",
         "events lane owns the destination",
-    ),
-    (
-        "session registry owns sessions and latest",
-        "session registry owns sessions and latest",
     ),
     (
         "terminal lane owns the destination",
@@ -519,15 +495,7 @@ fn push_case(
     if !CLAIMS.contains(&case.id.as_str()) {
         return;
     }
-    if matches!(
-        case.id.as_str(),
-        "plain-nostatic/files-root-missing" | "plain-nostatic/files-alias-root-missing"
-    ) {
-        trials.push(files_missing_trial(case, handle.clone()));
-        return;
-    }
     match fixture::kind(&case.id) {
-        fixture::Kind::Mesh => trials.push(mesh_trial(case, handle.clone())),
         fixture::Kind::Static => {
             trials.push(shared_trial(case, apps.statik.clone(), handle.clone()));
         }
@@ -548,53 +516,6 @@ fn shared_trial(
 ) -> Trial {
     let id = case.id.clone();
     Trial::test(format!("gateway {id}"), move || play(&case, &app, &handle))
-}
-
-fn files_missing_trial(case: testkit::http::HttpCase, handle: tokio::runtime::Handle) -> Trial {
-    let id = case.id.clone();
-    Trial::test(format!("gateway {id}"), move || {
-        let keep = tempfile::tempdir()
-            .map_err(|error| Failed::from(format!("private files root: {error}")))?;
-        let tmp = match keep.path().to_str() {
-            Some(text) => text.to_owned(),
-            None => return Err(Failed::from("private files root is not utf-8")),
-        };
-        let missing = PathBuf::from(&tmp).join("runs/plain-nostatic/missing-files-root");
-        let mut mask = masks();
-        mask.tmp = Some(tmp);
-        play_masked(
-            &case,
-            &app_for(files_root_settings(missing)),
-            &handle,
-            &mask,
-        )
-    })
-}
-
-fn files_root_settings(root: PathBuf) -> gateway::Settings {
-    let mut settings = common::settings();
-    settings.files_root = Some(root);
-    settings
-}
-
-fn mesh_trial(case: testkit::http::HttpCase, handle: tokio::runtime::Handle) -> Trial {
-    let id = case.id.clone();
-    Trial::test(format!("gateway {id}"), move || {
-        let scratch =
-            tempfile::tempdir().map_err(|error| Failed::from(format!("mesh dir: {error}")))?;
-        let local_port = if case.id == "plain-main/mesh-valid-before-ingest" {
-            Some(common::spawn_healthz()?)
-        } else {
-            None
-        };
-        let settings =
-            fixture::mesh_settings(&case.id, scratch.path(), local_port).map_err(Failed::from)?;
-        let mut mask = masks();
-        if let Some(port) = local_port {
-            mask.port = port.to_string();
-        }
-        play_masked(&case, &app_for(settings), &handle, &mask)
-    })
 }
 
 fn play(

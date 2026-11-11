@@ -1,25 +1,21 @@
 pub mod process;
 
-mod agent_presets;
 mod cli;
 mod cli_provider;
 mod composed;
-mod composed_client_auth;
-mod composed_tls_replay;
+mod composed_bearer_auth;
 mod db_resilience;
 mod doctor;
 mod e2e;
-mod harness_offerings;
 mod local;
 mod local_ensure;
 mod mcp_memory;
 mod mcp_sqlite;
 mod node_name;
 mod roots;
+mod sessions;
 mod startup;
 mod store_roots;
-mod term_isolation;
-mod term_transcripts;
 mod tls_fallback;
 mod topics;
 mod users_registry;
