@@ -167,7 +167,14 @@ pub fn harness_status(code: wire::harness::HarnessCode) -> StatusCode {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, body) = self.status_and_body();
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                axum::http::header::WWW_AUTHENTICATE,
+                axum::http::HeaderValue::from_static(crate::auth::CHALLENGE),
+            );
+        }
+        response
     }
 }
 

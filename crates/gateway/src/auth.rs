@@ -11,6 +11,7 @@ use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::StatusCode;
 use axum::http::header;
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -22,6 +23,8 @@ use crate::error::ApiError;
 
 const CORS_METHODS: &str = "GET, POST, PATCH, DELETE, OPTIONS";
 const CORS_HEADERS: &str = "content-type, authorization, x-rivet-conversation, x-rivet-title";
+pub(crate) const CHALLENGE: &str = "Bearer realm=\"rivethub\"";
+const FORWARDER_HEADERS: [&str; 3] = ["forwarded", "x-real-ip", "via"];
 const BUILTIN_ORIGIN: &str = "app://bundle";
 const DENIAL_LOG_CAP: usize = 100;
 
@@ -54,6 +57,26 @@ pub fn is_loopback_remote(addr: SocketAddr) -> bool {
 
 fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost" | "::ffff:127.0.0.1")
+}
+
+pub(crate) fn direct_local(parts: &Parts) -> bool {
+    let loopback = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
+    let forwarded = parts.headers.keys().any(|name| {
+        let name = name.as_str();
+        FORWARDER_HEADERS.contains(&name) || name.starts_with("x-forwarded-")
+    });
+    let host = header_text(&parts.headers, &header::HOST)
+        .map(str::to_owned)
+        .or_else(|| {
+            parts
+                .uri
+                .authority()
+                .map(|authority| authority.as_str().to_owned())
+        });
+    loopback && !forwarded && host.is_some_and(|host| is_loopback_host(&host_token(&host)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,10 +269,10 @@ pub(crate) async fn guard(
     let open = path == "/healthz";
     let admitted = plugin
         || open
-        || caller_loopback
-        || state.secure && {
+        || (caller_loopback || state.secure) && {
+            let public = crate::routes::serves_public_asset(request.method(), &path);
             let (parts, body) = request.into_parts();
-            let resolved = state.gateway.tenancy.resolve(&parts).is_ok();
+            let resolved = public || crate::tenancy::caller(&state.gateway, &parts).is_ok();
             request = Request::from_parts(parts, body);
             resolved
         };
@@ -284,15 +307,18 @@ fn html_unauthorized() -> Response {
         "<head><title>RivetHub — sign-in required</title></head>\n",
         "<body>\n",
         "<h1>Sign-in required</h1>\n",
-        "<p>This RivetHub node answers other machines only with a bearer token from ",
-        "its users file. Ask the node's operator for one.</p>\n",
+        "<p>This RivetHub node answers only a caller that presents a bearer token. ",
+        "Ask the node's operator for one.</p>\n",
         "<p>Liveness is at <code>/healthz</code>.</p>\n",
         "</body>\n",
         "</html>\n",
     );
     (
         StatusCode::UNAUTHORIZED,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8".to_string())],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+            (header::WWW_AUTHENTICATE, CHALLENGE.to_owned()),
+        ],
         body,
     )
         .into_response()

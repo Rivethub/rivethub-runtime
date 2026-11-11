@@ -1,9 +1,7 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -18,7 +16,6 @@ use wire::gateway::account::{
 
 use crate::Gateway;
 use crate::account::AccountError;
-use crate::auth::is_loopback_remote;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::tenancy::UserId;
@@ -119,11 +116,7 @@ impl FromRequestParts<Arc<Gateway>> for LocalOwner {
 
 fn local_owner(gateway: &Gateway, parts: &Parts) -> Result<LocalOwner, ApiError> {
     let user = crate::tenancy::caller(gateway, parts)?;
-    let loopback = parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
-    if !loopback {
+    if !crate::auth::direct_local(parts) {
         return Err(ApiError::Forbidden(LOCAL_ONLY.to_owned()));
     }
     gateway.tenancy.owner(&user)?;
