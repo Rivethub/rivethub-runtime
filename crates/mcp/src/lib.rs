@@ -97,8 +97,6 @@ enum Operation {
     WikiRead,
     #[strum(serialize = "session_find")]
     SessionFind,
-    #[strum(serialize = "session_export")]
-    SessionExport,
     #[strum(serialize = "session_sanitize")]
     SessionSanitize,
     #[strum(serialize = "session_import")]
@@ -174,7 +172,6 @@ impl Server {
             | Operation::WikiSearch
             | Operation::WikiRead
             | Operation::SessionFind
-            | Operation::SessionExport
             | Operation::SessionSanitize
             | Operation::SessionImport => {
                 tokio::select! {
@@ -219,9 +216,6 @@ impl Server {
                     self.zone,
                 ))
                 .await
-            }
-            Operation::SessionExport => {
-                sessions::export(self.sessions()?, decode(arguments)?).await
             }
             Operation::SessionSanitize => {
                 sessions::sanitize(self.sessions()?, decode(arguments)?).await

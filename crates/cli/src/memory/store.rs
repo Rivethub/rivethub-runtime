@@ -4,10 +4,10 @@ use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionDigest;
 use kernel::memory::share::Choice;
 use kernel::memory::share::SessionChoices;
+use kernel::memory::share::ShareFailure;
 use kernel::owner::Owner;
 use memory_postgres::PostgresMemory;
 use memory_sqlite::SqliteStore;
-use thiserror::Error;
 use uuid::Uuid;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -16,16 +16,6 @@ use wire::capture::BundledSession;
 pub enum SessionStore {
     Postgres(Arc<PostgresMemory>),
     Sqlite(SqliteStore),
-}
-
-#[derive(Debug, Error)]
-pub enum ChosenError {
-    #[error(
-        "no session this node can share has the id {0}; it is unknown, trashed or not the node owner's, and nothing was written"
-    )]
-    Unknown(String),
-    #[error(transparent)]
-    Store(#[from] MemoryStoreError),
 }
 
 impl SessionStore {
@@ -51,7 +41,7 @@ impl SessionStore {
         author: &BundleAuthor,
         owner: &Owner,
         choices: &SessionChoices,
-    ) -> Result<Vec<(BundledSession, Choice)>, ChosenError> {
+    ) -> Result<Vec<(BundledSession, Choice)>, ShareFailure> {
         let ids: Vec<Uuid> = choices.ids().collect();
         let sessions = match self {
             Self::Postgres(store) => store
@@ -92,7 +82,7 @@ impl SessionStore {
             .map(ToString::to_string)
             .collect();
         if !missing.is_empty() {
-            return Err(ChosenError::Unknown(missing.join(", ")));
+            return Err(ShareFailure::UnknownSessions(missing.join(", ")));
         }
         Ok(kept
             .into_iter()

@@ -38,7 +38,6 @@ pub fn definitions() -> Result<Vec<Tool>, serde_json::Error> {
 pub fn session_definitions() -> Result<Vec<Tool>, serde_json::Error> {
     Ok(vec![
         definition::<sessions::Find>()?,
-        definition::<sessions::Export>()?,
         definition::<sessions::Sanitize>()?,
         definition::<sessions::Import>()?,
     ])

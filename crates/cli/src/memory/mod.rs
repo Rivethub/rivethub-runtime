@@ -18,7 +18,6 @@ use tokio_util::sync::CancellationToken;
 use crate::Report;
 
 pub use export::MemoryExporter;
-pub use store::ChosenError;
 pub use store::SessionStore;
 
 pub async fn execute(

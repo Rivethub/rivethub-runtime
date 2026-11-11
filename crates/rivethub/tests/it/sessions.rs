@@ -9,19 +9,21 @@ use kernel::memory::MemoryStore;
 use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
 use tokio_util::sync::CancellationToken;
-use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureMessage;
+use wire::capture::SessionBundle;
 use wire::message::Role;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const RISKY: &str = "Acme Corp";
+const OUTPUT: &str = "payroll.csv: 41 rows, totals 88120";
 
-const DATES: [&str; 3] = [
+const DATES: [&str; 4] = [
     "2026-10-12T09:00:00Z",
     "2026-10-13T10:00:00Z",
     "2026-10-15T09:00:00Z",
+    "2026-10-15T09:05:00Z",
 ];
 
 fn said(event_id: &str, content: &str, created_at: &str) -> CaptureMessage {
@@ -34,6 +36,16 @@ fn said(event_id: &str, content: &str, created_at: &str) -> CaptureMessage {
         tool_result: None,
         metadata: None,
         created_at: created_at.parse().ok(),
+    }
+}
+
+fn ran(event_id: &str, created_at: &str) -> CaptureMessage {
+    CaptureMessage {
+        role: Role::Assistant,
+        tool_name: Some("Bash".to_owned()),
+        tool_args: serde_json::from_str(r#"{"command": "cat payroll.csv"}"#).ok(),
+        tool_result: Some(OUTPUT.to_owned()),
+        ..said(event_id, "reading it", created_at)
     }
 }
 
@@ -90,11 +102,20 @@ fn sessions() -> Vec<CaptureBatchRequest> {
             "claude-code:gamma",
             "Rollout pairing",
             "claude-code",
-            vec![said(
-                "evt-c1",
-                &format!("we paired with {RISKY} on the rollout"),
-                "2026-10-15T09:00:00Z",
-            )],
+            vec![
+                said(
+                    "evt-c1",
+                    &format!("we paired with {RISKY} on the rollout"),
+                    "2026-10-15T09:00:00Z",
+                ),
+                ran("evt-c2", "2026-10-15T09:05:00Z"),
+            ],
+        ),
+        batch(
+            "claude-code:delta",
+            "Trashed",
+            "claude-code",
+            vec![said("evt-d1", "thrown away", "2026-10-16T09:00:00Z")],
         ),
     ]
 }
@@ -176,7 +197,7 @@ impl Node {
             &loaded.config,
             &env,
             self.owner.clone(),
-            rivethub::sessions::Backend::Sqlite(store.clone()),
+            cli::memory::SessionStore::Sqlite(store.clone()),
         )?;
         Ok(
             mcp::Server::builder(Arc::new(store), false, CancellationToken::new())
@@ -211,113 +232,82 @@ fn path_text(path: &Path) -> String {
     path.display().to_string()
 }
 
-async fn exported(phil: &Node, blocking: &mcp::Server) -> TestResult {
-    let (refused, unknown) = call(
-        blocking,
-        "session_export",
-        r#"{"conversation_ids":["00000000-0000-4000-8000-000000000009"],"out":"none.json"}"#,
-    )
-    .await?;
-    assert!(refused, "{unknown}");
-    assert_eq!(
-        unknown,
-        "no session this node can export has the id 00000000-0000-4000-8000-000000000009"
-    );
-    assert!(!phil.share().join("none.json").exists());
+fn listing(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
 
-    let ids = phil.column(
-        "SELECT id FROM ros_conversations WHERE session_key IN ('claude-code:alpha', 'claude-code:gamma') ORDER BY session_key",
-    )?;
-    let raw = phil.share().join("work.json");
+fn chosen(phil: &Node) -> TestResult<(String, String, String)> {
+    let id = |key: &str| -> TestResult<String> {
+        phil.column(&format!(
+            "SELECT id FROM ros_conversations WHERE session_key = '{key}'"
+        ))?
+        .pop()
+        .ok_or_else(|| format!("no {key}").into())
+    };
+    Ok((
+        id("claude-code:alpha")?,
+        id("claude-code:gamma")?,
+        id("claude-code:delta")?,
+    ))
+}
+
+fn choices(alpha: &str, gamma: &str) -> String {
+    format!(
+        r#"[{{"id":"{alpha}","decision":"approve"}},{{"id":"{gamma}","decision":"redact","redact":{{"terms":["{RISKY}"],"drop_tool_outputs":true}}}}]"#
+    )
+}
+
+async fn refused(phil: &Node, server: &mcp::Server, foreign: &str, trashed: &str) -> TestResult {
+    let before = listing(&phil.share());
+    for id in [foreign, trashed] {
+        let (refused, reply) = call(
+            server,
+            "session_sanitize",
+            &format!(r#"{{"sessions":[{{"id":"{id}","decision":"approve"}}],"out":"no.json"}}"#),
+        )
+        .await?;
+        assert!(refused, "{reply}");
+        assert_eq!(
+            reply,
+            format!(
+                "no session this node can share has the id {id}; it is unknown, trashed or not the node owner's, and nothing was written"
+            )
+        );
+    }
+    assert_eq!(listing(&phil.share()), before);
+    Ok(())
+}
+
+async fn blocked(phil: &Node, server: &mcp::Server, gamma: &str) -> TestResult {
     let (refused, reply) = call(
-        blocking,
-        "session_export",
+        server,
+        "session_sanitize",
         &format!(
-            r#"{{"conversation_ids":["{}"],"out":"work.json"}}"#,
-            ids.join(r#"",""#)
+            r#"{{"sessions":[{{"id":"{gamma}","decision":"approve"}}],"out":"pairing.json","decide":true,"block":true}}"#
         ),
     )
     .await?;
     assert!(!refused, "{reply}");
-    assert_eq!(
-        reply,
-        format!(
-            "bundled 2 sessions (raw, not sanitized) to {}\nsanitize it with session_sanitize before it leaves this machine\n",
-            path_text(&raw)
-        )
-    );
-    let bundle: wire::capture::SessionBundle =
-        serde_json::from_str(&std::fs::read_to_string(&raw)?)?;
-    assert_eq!(
-        bundle.manifest.sanitization,
-        wire::capture::Sanitization::Raw
-    );
-    assert!(
-        bundle
-            .sessions
-            .iter()
-            .all(|session: &BundledSession| session.origin.author == "phil")
-    );
-    for dry_run in [false, true] {
-        let (refused, reply) = call(
-            blocking,
-            "session_import",
-            &format!(r#"{{"path":"work.json","dry_run":{dry_run}}}"#),
-        )
-        .await?;
-        assert!(refused, "{reply}");
-        assert!(
-            reply.contains("is a raw bundle that was never sanitized"),
-            "{reply}"
-        );
-    }
-    Ok(())
-}
-
-async fn blocked(phil: &Node, blocking: &mcp::Server) -> TestResult {
-    let (refused, reply) = call(
-        blocking,
-        "session_sanitize",
-        r#"{"in":"work.json","out":"work.clean.json","decide":true}"#,
-    )
-    .await?;
-    assert!(!refused, "{reply}");
     assert!(reply.contains("1 flag open (block"), "{reply}");
-    assert!(
-        reply.contains("flag 1  score 0.88  session 2 message 1 content  report line "),
-        "{reply}"
-    );
     assert!(!reply.contains(RISKY), "{reply}");
-    for name in [
-        "work.clean.json",
-        "work.clean.report.md",
-        "work.clean.review.local.json",
-    ] {
-        let path = phil.share().join(name);
-        assert!(path.is_file(), "{}", path.display());
-        assert!(reply.contains(&path_text(&path)), "{reply}");
-    }
-    let (refused, reply) =
-        call(blocking, "session_import", r#"{"path":"work.clean.json"}"#).await?;
+    let (refused, reply) = call(server, "session_import", r#"{"path":"pairing.json"}"#).await?;
     assert!(refused, "{reply}");
     assert!(reply.contains("withholds 1 flagged chunk(s)"), "{reply}");
-    let (refused, reply) = call(
-        blocking,
-        "session_import",
-        r#"{"path":"work.clean.json","dry_run":true}"#,
-    )
-    .await?;
-    assert!(refused, "{reply}");
-    assert!(
-        reply.ends_with("refused: 1 withheld flag open; nothing written\n"),
-        "{reply}"
-    );
 
     std::fs::write(phil.share().join("again.review.local.json"), "kept")?;
     let (refused, reply) = call(
-        blocking,
+        server,
         "session_sanitize",
-        r#"{"in":"work.json","out":"again.json"}"#,
+        &format!(r#"{{"sessions":[{{"id":"{gamma}","decision":"approve"}}],"out":"again.json"}}"#),
     )
     .await?;
     assert!(refused, "{reply}");
@@ -330,35 +320,75 @@ async fn blocked(phil: &Node, blocking: &mcp::Server) -> TestResult {
     Ok(())
 }
 
+async fn cli_matches(phil: &Node, server: &mcp::Server, alpha: &str, gamma: &str) -> TestResult {
+    let (refused, reply) = call(
+        server,
+        "session_sanitize",
+        &format!(
+            r#"{{"sessions":{},"out":"plain.json"}}"#,
+            choices(alpha, gamma)
+        ),
+    )
+    .await?;
+    assert!(!refused, "{reply}");
+    let users = phil.home.path().join("users.json");
+    std::fs::write(
+        &users,
+        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+    )?;
+    let env = config::Environment::from_vars([
+        (OsStr::new("HOME"), phil.home.path().as_os_str()),
+        (OsStr::new("RIVETHUB_NODE_NAME"), OsStr::new("desk")),
+        (OsStr::new("RIVETHUB_USERS_FILE"), users.as_os_str()),
+    ]);
+    let out = phil.home.path().join("cli.json");
+    let (redact, database) = (format!("{gamma}={RISKY}"), path_text(&phil.database));
+    let args = [
+        "rh",
+        "memory",
+        "sanitize",
+        "--session",
+        alpha,
+        "--session",
+        gamma,
+        "--redact-term",
+        &redact,
+        "--drop-tool-outputs",
+        gamma,
+        "--out",
+        &path_text(&out),
+        "--sqlite",
+        &database,
+    ];
+    let parsed =
+        cli::Cli::parse_args(args.iter().map(Into::into)).map_err(|report| report.stderr)?;
+    let cli::Dispatch::Complete(report) =
+        cli::dispatch(parsed, &env, &CancellationToken::new()).await
+    else {
+        return Err("unexpected service start".into());
+    };
+    assert_eq!(report.exit, cli::Exit::Ok, "{}", report.stderr);
+    let read = |path: &Path| -> TestResult<SessionBundle> {
+        Ok(capture::bundle::parse(&std::fs::read_to_string(path)?)?)
+    };
+    assert_eq!(
+        read(&out)?.sessions,
+        read(&phil.share().join("plain.json"))?.sessions
+    );
+    Ok(())
+}
+
 async fn imported(ana: &Node, bundle: &Path) -> TestResult {
-    let downloaded = ana.home.path().join("Downloads/advisory.json");
+    let downloaded = ana.home.path().join("Downloads/work.clean.json");
     std::fs::create_dir_all(ana.home.path().join("Downloads"))?;
     std::fs::copy(bundle, &downloaded)?;
     let importer = ana.server(true)?;
-    let arguments = |dry_run: bool| {
-        format!(
-            r#"{{"path":"{}","dry_run":{dry_run}}}"#,
-            path_text(&downloaded)
-        )
-    };
-    let (refused, listed) = call(&importer, "session_import", &arguments(true)).await?;
-    assert!(!refused, "{listed}");
-    assert!(
-        listed.ends_with(
-            "would import 2 sessions from phil (1 advisory flag unreviewed); nothing written\n"
-        ),
-        "{listed}"
-    );
-    assert_eq!(
-        ana.column("SELECT id FROM ros_conversations")?,
-        Vec::<String>::new()
-    );
-
-    let (refused, reply) = call(&importer, "session_import", &arguments(false)).await?;
+    let arguments = format!(r#"{{"path":"{}"}}"#, path_text(&downloaded));
+    let (refused, reply) = call(&importer, "session_import", &arguments).await?;
     assert!(!refused, "{reply}");
     assert_eq!(
         reply,
-        "ingested 2 sessions from phil (1 advisory flag unreviewed): 3 inserted, 0 skipped\n"
+        "ingested 2 sessions from phil: 4 inserted, 0 skipped\n"
     );
     let credited = ana.column(
         "SELECT owner_user_id || ' ' || json_extract(settings, '$.origin.author') || '@' || json_extract(settings, '$.origin.node') FROM ros_conversations WHERE session_key LIKE 'import:%'",
@@ -375,18 +405,11 @@ async fn imported(ana: &Node, bundle: &Path) -> TestResult {
         .map(|text| text.parse())
         .collect::<Result<Vec<DateTime<Utc>>, _>>()?;
     assert_eq!(dates, original);
-
-    let (refused, again) = call(&importer, "session_import", &arguments(false)).await?;
-    assert!(!refused, "{again}");
-    assert_eq!(
-        again,
-        "ingested 2 sessions from phil (1 advisory flag unreviewed): 0 inserted, 3 skipped\n"
-    );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_bundle_goes_from_one_node_to_another_through_rh_mcp() -> TestResult {
+async fn chosen_sessions_go_from_one_node_to_another_without_a_raw_file() -> TestResult {
     let model = testkit::stub_server(
         axum::Router::new()
             .route("/v1/decide", axum::routing::post(decide))
@@ -398,21 +421,73 @@ async fn a_bundle_goes_from_one_node_to_another_through_rh_mcp() -> TestResult {
     .await?;
     let url = format!("http://{}", model.addr);
     let phil = Node::new("phil", &url, &sessions()).await?;
-    let blocking = phil.server(true)?;
-    exported(&phil, &blocking).await?;
-    blocked(&phil, &blocking).await?;
+    let store = memory_sqlite::SqliteStore::open(&phil.database)?;
+    let ana_owner = kernel::owner::Owner::new("ana".to_owned())?;
+    let foreign = batch(
+        "claude-code:anas",
+        "Not phil's",
+        "claude-code",
+        vec![said("evt-e1", "ana's notes", "2026-10-17T09:00:00Z")],
+    );
+    MemoryStore::capture(
+        &store,
+        serde_json::from_value(serde_json::to_value(foreign)?)?,
+        &ana_owner,
+        Some("desk"),
+    )
+    .await?;
+    rusqlite::Connection::open(&phil.database)?.execute(
+        "INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('claude-code:delta', '2026-10-18T09:00:00.000Z')",
+        [],
+    )?;
+    let (alpha, gamma, trashed) = chosen(&phil)?;
+    let foreign = phil
+        .column("SELECT id FROM ros_conversations WHERE owner_user_id = 'ana'")?
+        .pop()
+        .ok_or("ana's session")?;
+    let server = phil.server(false)?;
+    refused(&phil, &server, &foreign, &trashed).await?;
+    assert_eq!(listing(&phil.share()), Vec::<String>::new());
 
     let (refused, reply) = call(
-        &phil.server(false)?,
+        &server,
         "session_sanitize",
-        r#"{"in":"work.json","out":"advisory.json","decide":true}"#,
+        &format!(
+            r#"{{"sessions":{},"out":"work.clean.json","decide":true}}"#,
+            choices(&alpha, &gamma)
+        ),
     )
     .await?;
     assert!(!refused, "{reply}");
-    assert!(reply.contains("1 flag open (advisory"), "{reply}");
+    assert!(reply.contains("0 flags open (advisory"), "{reply}");
+    assert!(
+        reply.contains("changes by rule: drop_tool_outputs 1, session_term 1"),
+        "{reply}"
+    );
+    assert!(!reply.contains(RISKY), "{reply}");
+    assert_eq!(
+        listing(&phil.share()),
+        [
+            "work.clean.json",
+            "work.clean.report.md",
+            "work.clean.review.local.json"
+        ]
+    );
+    let bundle = std::fs::read_to_string(phil.share().join("work.clean.json"))?;
+    for absent in [RISKY, OUTPUT, "codex:beta", "Deploy notes"] {
+        assert!(!bundle.contains(absent), "{absent} in the bundle");
+    }
+    assert!(bundle.contains("[REDACTED:drop_tool_outputs]"));
+    assert!(bundle.contains("cat payroll.csv"));
+    let report = std::fs::read_to_string(phil.share().join("work.clean.report.md"))?;
+    assert!(report.contains("| session_term |"), "{report}");
+    assert!(report.contains("| drop_tool_outputs |"), "{report}");
+    assert!(!report.contains(RISKY), "{report}");
 
+    blocked(&phil, &server, &gamma).await?;
+    cli_matches(&phil, &server, &alpha, &gamma).await?;
     let ana = Node::new("ana", &url, &[]).await?;
-    imported(&ana, &phil.share().join("advisory.json")).await?;
+    imported(&ana, &phil.share().join("work.clean.json")).await?;
     model.close().await?;
     Ok(())
 }

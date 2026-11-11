@@ -1,7 +1,7 @@
 [
   {
     "name": "session_find",
-    "description": "Find this node's captured sessions related to a prompt, best match first. Each entry gives the conversation id that session_export takes, the title, agent, first and last date, message count, best score and up to three matching excerpts. Read-only.",
+    "description": "Find this node's captured sessions related to a prompt, best match first. Each entry gives the conversation id that session_sanitize takes, the title, agent, first and last date, message count, best score and up to three matching excerpts. Read-only.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -45,49 +45,57 @@
     }
   },
   {
-    "name": "session_export",
-    "description": "Write the named sessions of this node's owner to a raw session bundle in the share directory and return its absolute path. The bundle is not sanitized: run session_sanitize on it before it leaves this machine. An unknown id is refused by name and nothing is written.",
+    "name": "session_sanitize",
+    "description": "Sanitize the sessions you chose into a bundle in the share directory, reading them straight from this node's store, so no raw bundle is ever written. Give each session to share a decision: approve, or redact with terms to redact in that session only and/or drop_tool_outputs to replace its tool outputs; sessions you leave out are denied. A report and, after a decision-model review, a local review file are written beside the bundle. Returns totals, the absolute paths, changes by rule and, with decide, each flag's number, score, place, report line and length. It never returns flagged text. Share only the bundle; the report and the local review file stay on this machine.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "conversation_ids": {
-          "description": "Conversation ids from session_find (1-50 UUIDs)",
+        "sessions": {
+          "description": "The sessions to share, each from session_find with your decision; leave out the sessions you deny, which never leave the store (1-50, each id once)",
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "A conversation id from session_find",
+                "type": "string"
+              },
+              "decision": {
+                "description": "approve shares the session as the sanitizer leaves it; redact also applies the rules in redact",
+                "type": "string",
+                "enum": [
+                  "approve",
+                  "redact"
+                ]
+              },
+              "redact": {
+                "description": "Required with decision redact, refused with approve: at least one term or drop_tool_outputs true",
+                "type": "object",
+                "properties": {
+                  "terms": {
+                    "description": "Texts to redact in this session only, each matched exactly as written (case-sensitive); the report counts them without showing them",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "drop_tool_outputs": {
+                    "description": "Replace every tool output of this session with a placeholder; tool names and arguments stay and are sanitized as usual",
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "decision"
+            ]
           },
           "minItems": 1,
           "maxItems": 50
-        },
-        "out": {
-          "description": "Bundle file name in the share directory, such as work.json (letters, digits, '.', '_' and '-', ending in .json); an existing file is never replaced",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "conversation_ids",
-        "out"
-      ]
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": false,
-      "idempotentHint": false,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "session_sanitize",
-    "description": "Sanitize a raw session bundle into a new bundle in the share directory, with a report and, after a decision-model review, a local review file beside it. Returns totals, the absolute paths, changes by rule and, with decide, each flag's number, score, place, report line and length. It never returns flagged text. Share only the bundle; the report and the local review file stay on this machine.",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "in": {
-          "description": "The raw bundle: a file name in the share directory, or an absolute path under your home directory",
-          "type": "string"
         },
         "out": {
           "description": "Sanitized bundle file name in the share directory, such as work.clean.json; the report and the local review file are written beside it and no existing file is replaced",
@@ -100,11 +108,15 @@
         "decide": {
           "description": "Also run the decision-model review configured at memory.sanitize.decide (default false)",
           "type": "boolean"
+        },
+        "block": {
+          "description": "With decide, withhold every flagged chunk until it is marked, whatever memory.sanitize.decide.block says (default: the config)",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
       "required": [
-        "in",
+        "sessions",
         "out"
       ]
     },

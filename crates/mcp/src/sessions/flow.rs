@@ -2,12 +2,10 @@ use std::fmt::Write as _;
 
 use rmcp::model::CallToolResult;
 
-use super::Export;
 use super::Sanitize;
 use super::Sessions;
 use super::files::Kind;
 use super::noun;
-use super::refuse_existing;
 use crate::Error;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::FlagSummary;
@@ -16,22 +14,15 @@ use kernel::memory::share::SanitizeSummary;
 
 const FLAGS_SHOWN: usize = 50;
 
-pub(crate) async fn export(kit: &Sessions, args: Export) -> Result<CallToolResult, Error> {
-    let path = kit.files.target(&args.out).await?;
-    refuse_existing(&[&path]).await?;
-    let count = kit
-        .share
-        .export(args.conversation_ids.as_slice(), path.clone())
-        .await?;
-    Ok(crate::text(format!(
-        "bundled {} (raw, not sanitized) to {}\nsanitize it with session_sanitize before it leaves this machine\n",
-        noun(count, "session", "sessions"),
-        path.display()
-    )))
-}
-
 pub(crate) async fn sanitize(kit: &Sessions, args: Sanitize) -> Result<CallToolResult, Error> {
-    let input = kit.files.readable(&args.input, Kind::Bundle).await?;
+    let decide = args.decide == Some(true);
+    let block = args.block == Some(true);
+    if block && !decide {
+        return Err(Error::Invalid(
+            "block makes the decision-model review withhold flagged chunks and needs decide: true"
+                .to_owned(),
+        ));
+    }
     let mapping = match &args.mapping {
         Some(source) => Some(kit.files.readable(source, Kind::Mapping).await?),
         None => None,
@@ -40,10 +31,11 @@ pub(crate) async fn sanitize(kit: &Sessions, args: Sanitize) -> Result<CallToolR
     let summary = kit
         .share
         .sanitize(SanitizeJob {
-            input,
+            sessions: args.sessions.into_choices(),
             out,
             mapping,
-            decide: args.decide == Some(true),
+            decide,
+            block,
         })
         .await?;
     Ok(crate::text(sanitized(&summary)?))

@@ -42,12 +42,7 @@ fn expected_tool_names() -> TestResult<BTreeSet<String>> {
         .collect())
 }
 
-const STDIO_ONLY: [&str; 4] = [
-    "session_find",
-    "session_export",
-    "session_sanitize",
-    "session_import",
-];
+const STDIO_ONLY: [&str; 3] = ["session_find", "session_sanitize", "session_import"];
 
 fn served_names(tools: &[Arc<dyn kernel::tool::Tool>]) -> BTreeSet<String> {
     tools

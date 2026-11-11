@@ -282,7 +282,7 @@ pub enum Error {
     #[error(transparent)]
     Choice(#[from] kernel::memory::share::ChoiceError),
     #[error(transparent)]
-    Chosen(#[from] crate::memory::ChosenError),
+    SessionShare(#[from] kernel::memory::share::ShareFailure),
     #[error(transparent)]
     Owner(#[from] kernel::owner::InvalidOwner),
     #[error(

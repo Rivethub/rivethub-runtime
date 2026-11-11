@@ -11,7 +11,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::Exit;
 use crate::service::{StartupError, announce, load, postgres, report};
-use crate::sessions::Backend;
+use cli::memory::SessionStore;
 use memory_postgres::Pooling;
 
 #[derive(Debug, Error)]
@@ -164,13 +164,13 @@ async fn run(
         select(&config)?
     };
     crate::identity::announce_resolved("mcp", &config, env).map_err(StartupError::from)?;
-    let (memory, backend): (Arc<dyn MemoryStore>, Backend) = if config.sqlite_selected() {
+    let (memory, backend): (Arc<dyn MemoryStore>, SessionStore) = if config.sqlite_selected() {
         let store = sqlite(&config, env, &shutdown, activities).await?;
-        (Arc::new(store.clone()), Backend::Sqlite(store))
+        (Arc::new(store.clone()), SessionStore::Sqlite(store))
     } else {
         let store =
             Arc::new(postgres(&config, env, &shutdown, activities, Pooling::OnDemand).await?);
-        (store.clone(), Backend::Postgres(store))
+        (store.clone(), SessionStore::Postgres(store))
     };
     let identity = crate::composition::identities::load(&config, env).await?;
     let sessions = match selected {

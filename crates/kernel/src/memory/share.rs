@@ -14,8 +14,6 @@ use super::SessionDigest;
 pub trait SessionShare: Send + Sync + std::fmt::Debug {
     async fn digests(&self, keys: &[String]) -> Result<Vec<SessionDigest>, ShareFailure>;
 
-    async fn export(&self, ids: &[Uuid], out: PathBuf) -> Result<usize, ShareFailure>;
-
     async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure>;
 
     async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure>;
@@ -25,10 +23,11 @@ pub trait SessionShare: Send + Sync + std::fmt::Debug {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SanitizeJob {
-    pub input: PathBuf,
+    pub sessions: SessionChoices,
     pub out: PathBuf,
     pub mapping: Option<PathBuf>,
     pub decide: bool,
+    pub block: bool,
 }
 
 pub const MAX_CHOSEN: usize = 50;
@@ -213,7 +212,9 @@ pub enum ShareFailure {
         "refused: {} already exists; session tools never replace a file, so choose another out name", .0.display()
     )]
     Exists(PathBuf),
-    #[error("no session this node can export has the id {0}")]
+    #[error(
+        "no session this node can share has the id {0}; it is unknown, trashed or not the node owner's, and nothing was written"
+    )]
     UnknownSessions(String),
     #[error("not a session bundle: {}", .0.display())]
     NotBundle(PathBuf),

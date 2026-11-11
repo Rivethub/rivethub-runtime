@@ -18,7 +18,13 @@ use fixture::node;
 use fixture::path_text;
 use fixture::sessions;
 use fixture::text;
+use kernel::memory::share::Choice;
 use kernel::memory::share::DecideMode;
+use kernel::memory::share::SanitizeJob;
+use kernel::memory::share::SessionChoices;
+use kernel::memory::share::SessionRedaction;
+use kernel::memory::share::Term;
+use uuid::Uuid;
 
 fn hit(key: &str, score: f64, content: &str, created_at: &str) -> MemorySearchResult {
     MemorySearchResult {
@@ -82,40 +88,56 @@ async fn find_groups_hits_by_session() {
     assert_eq!(
         text(&result),
         format!(
-            "1. {}  \"SQLite bundle v1 to v2\"  claude-code  2026-10-12 to 2026-10-13  2 messages  best 0.91 (2 hits)\n   > migrate the sqlite bundle reader\n   > the bundle reader now reads v1\n2. {}  \"Deploy notes\"  codex  2026-10-14 to 2026-10-14  1 message  best 0.70 (2 hits)\n   > bundle deploy checklist\n   > bundle deploy notes\nleft out 1 hit from sessions this node cannot export (trashed or not yours)\npass the conversation ids to session_export to write them to a bundle\n",
+            "1. {}  \"SQLite bundle v1 to v2\"  claude-code  2026-10-12 to 2026-10-13  2 messages  best 0.91 (2 hits)\n   > migrate the sqlite bundle reader\n   > the bundle reader now reads v1\n2. {}  \"Deploy notes\"  codex  2026-10-14 to 2026-10-14  1 message  best 0.70 (2 hits)\n   > bundle deploy checklist\n   > bundle deploy notes\nleft out 1 hit from sessions this node cannot export (trashed or not yours)\npass the conversation ids to share to session_sanitize, each with decision approve or redact; leave out the ones to deny\n",
             id(1),
             id(2)
         )
     );
 }
 
-async fn exported_and_sanitized(phil: &fixture::Node) -> std::path::PathBuf {
-    let exported = support::call(
-        &phil.server,
-        "session_export",
-        &format!(
-            r#"{{"conversation_ids":["{}","{}","{}"],"out":"work.json"}}"#,
-            id(1),
-            id(3),
-            id(1)
-        ),
-    )
-    .await;
-    assert_eq!(
-        text(&exported),
-        format!(
-            "bundled 2 sessions (raw, not sanitized) to {}\nsanitize it with session_sanitize before it leaves this machine\n",
-            path_text(&phil.share.join("work.json"))
+fn choices(chosen: Vec<(Uuid, Choice)>) -> SessionChoices {
+    SessionChoices::try_from(chosen).expect("choices")
+}
+
+fn redaction(terms: &[&str], drop_tool_outputs: bool) -> Choice {
+    Choice::Redact(
+        SessionRedaction::new(
+            terms
+                .iter()
+                .map(|term| Term::try_from((*term).to_owned()).expect("term"))
+                .collect(),
+            drop_tool_outputs,
         )
-    );
+        .expect("redaction"),
+    )
+}
+
+async fn sanitized(phil: &fixture::Node) -> std::path::PathBuf {
     let sanitized = support::call(
         &phil.server,
         "session_sanitize",
-        r#"{"in":"work.json","out":"work.clean.json"}"#,
+        &format!(
+            r#"{{"sessions":[{{"id":"{}","decision":"approve"}},{{"id":"{}","decision":"redact","redact":{{"terms":["{RISKY}","rollout"],"drop_tool_outputs":true}}}}],"out":"work.clean.json"}}"#,
+            id(1),
+            id(3)
+        ),
     )
     .await;
     let reply = text(&sanitized);
     assert_ne!(sanitized.is_error, Some(true), "{reply}");
+    assert_eq!(
+        phil.jobs().await,
+        [SanitizeJob {
+            sessions: choices(vec![
+                (id(1), Choice::Approve),
+                (id(3), redaction(&[RISKY, "rollout"], true)),
+            ]),
+            out: phil.share.join("work.clean.json"),
+            mapping: None,
+            decide: false,
+            block: false,
+        }]
+    );
     let clean = phil.share.join("work.clean.json");
     let report = path_text(&phil.share.join("work.clean.report.md"));
     assert_eq!(
@@ -125,13 +147,14 @@ async fn exported_and_sanitized(phil: &fixture::Node) -> std::path::PathBuf {
             path_text(&clean)
         )
     );
+    assert!(!reply.contains(RISKY), "{reply}");
     clean
 }
 
 #[tokio::test]
-async fn export_then_sanitize_then_import_round_trips() {
+async fn sanitize_then_import_round_trips() {
     let phil = node("phil", sessions(), None).await;
-    let clean = exported_and_sanitized(&phil).await;
+    let clean = sanitized(&phil).await;
 
     let ana = node("ana", Vec::new(), None).await;
     let downloads = ana.home.join("Downloads");
@@ -198,12 +221,7 @@ async fn export_then_sanitize_then_import_round_trips() {
 #[tokio::test]
 async fn import_refuses_raw_over_mcp() {
     let phil = node("phil", sessions(), None).await;
-    support::call(
-        &phil.server,
-        "session_export",
-        &format!(r#"{{"conversation_ids":["{}"],"out":"raw.json"}}"#, id(1)),
-    )
-    .await;
+    phil.plant_raw("raw.json");
 
     for dry_run in [false, true] {
         let result = support::call(
@@ -222,19 +240,13 @@ async fn import_refuses_raw_over_mcp() {
 #[tokio::test]
 async fn import_refuses_open_withheld_flags() {
     let phil = node("phil", sessions(), Some(DecideMode::Block)).await;
-    support::call(
-        &phil.server,
-        "session_export",
-        &format!(
-            r#"{{"conversation_ids":["{}"],"out":"pairing.json"}}"#,
-            id(3)
-        ),
-    )
-    .await;
     let sanitized = support::call(
         &phil.server,
         "session_sanitize",
-        r#"{"in":"pairing.json","out":"pairing.clean.json","decide":true}"#,
+        &format!(
+            r#"{{"sessions":[{{"id":"{}","decision":"approve"}}],"out":"pairing.clean.json","decide":true,"block":true}}"#,
+            id(3)
+        ),
     )
     .await;
     let reply = text(&sanitized);
@@ -247,6 +259,14 @@ async fn import_refuses_open_withheld_flags() {
     assert!(reply.contains(&path_text(
         &phil.share.join("pairing.clean.review.local.json")
     )));
+    assert_eq!(
+        phil.jobs()
+            .await
+            .iter()
+            .map(|job| (job.decide, job.block))
+            .collect::<Vec<_>>(),
+        [(true, true)]
+    );
 
     let refused = support::call(
         &phil.server,
@@ -286,36 +306,6 @@ async fn no_tool_accepts_a_remote_target() {
             r#"{"query":"bundle","gateway":"https://hub.example.com"}"#.to_owned(),
         ),
         (
-            "session_export",
-            format!(
-                r#"{{"conversation_ids":["{}"],"out":"x.json","url":"https://hub.example.com"}}"#,
-                id(1)
-            ),
-        ),
-        (
-            "session_export",
-            format!(
-                r#"{{"conversation_ids":["{}"],"out":"https://hub.example.com/x.json"}}"#,
-                id(1)
-            ),
-        ),
-        (
-            "session_export",
-            format!(r#"{{"conversation_ids":["{}"],"out":"../x.json"}}"#, id(1)),
-        ),
-        (
-            "session_export",
-            format!(
-                r#"{{"conversation_ids":["{}"],"out":"{}"}}"#,
-                id(1),
-                path_text(&outside)
-            ),
-        ),
-        (
-            "session_sanitize",
-            r#"{"in":"x.json","out":"y.json","remote":"ssh:hub"}"#.to_owned(),
-        ),
-        (
             "session_import",
             r#"{"path":"https://hub.example.com/x.json"}"#.to_owned(),
         ),
@@ -330,7 +320,16 @@ async fn no_tool_accepts_a_remote_target() {
             r#"{"path":"x.json","target":"hub"}"#.to_owned(),
         ),
     ];
-    for (tool, arguments) in &refused {
+    let approved = format!(r#""sessions":[{{"id":"{}","decision":"approve"}}]"#, id(1));
+    let sanitizes = [
+        r#""out":"x.json","url":"https://hub.example.com""#.to_owned(),
+        r#""out":"https://hub.example.com/x.json""#.to_owned(),
+        r#""out":"../x.json""#.to_owned(),
+        format!(r#""out":"{}""#, path_text(&outside)),
+        r#""out":"y.json","remote":"ssh:hub""#.to_owned(),
+    ]
+    .map(|rest| ("session_sanitize", format!("{{{approved},{rest}}}")));
+    for (tool, arguments) in refused.iter().chain(&sanitizes) {
         let result = support::call(&phil.server, tool, arguments).await;
         assert_eq!(result.is_error, Some(true), "{tool} {arguments}");
     }
@@ -355,53 +354,9 @@ async fn no_tool_accepts_a_remote_target() {
 }
 
 #[tokio::test]
-async fn export_never_replaces_an_existing_file() {
-    let phil = node("phil", sessions(), None).await;
-    let arguments = format!(r#"{{"conversation_ids":["{}"],"out":"work.json"}}"#, id(1));
-    support::call(&phil.server, "session_export", &arguments).await;
-    let first = std::fs::read(phil.share.join("work.json")).expect("bundle");
-
-    let again = support::call(&phil.server, "session_export", &arguments).await;
-
-    assert_eq!(again.is_error, Some(true));
-    assert!(text(&again).contains("already exists"));
-    assert_eq!(
-        std::fs::read(phil.share.join("work.json")).expect("bundle"),
-        first
-    );
-}
-
-#[tokio::test]
-async fn export_refuses_an_unknown_id_by_name() {
-    let phil = node("phil", sessions(), None).await;
-    let result = support::call(
-        &phil.server,
-        "session_export",
-        &format!(
-            r#"{{"conversation_ids":["{}","{}"],"out":"work.json"}}"#,
-            id(1),
-            id(9)
-        ),
-    )
-    .await;
-    assert_eq!(result.is_error, Some(true));
-    assert_eq!(
-        text(&result),
-        format!("no session this node can export has the id {}", id(9))
-    );
-    assert!(!phil.share.join("work.json").exists());
-}
-
-#[tokio::test]
 async fn reads_refuse_hidden_directories_and_symlink_escapes() {
     let phil = node("phil", sessions(), None).await;
-    support::call(
-        &phil.server,
-        "session_export",
-        &format!(r#"{{"conversation_ids":["{}"],"out":"work.json"}}"#, id(1)),
-    )
-    .await;
-    let bundle = phil.share.join("work.json");
+    let bundle = sanitized(&phil).await;
     let hidden = phil.home.join(".ssh");
     std::fs::create_dir_all(&hidden).expect("hidden dir");
     std::fs::copy(&bundle, hidden.join("work.json")).expect("hidden copy");
@@ -421,14 +376,14 @@ async fn reads_refuse_hidden_directories_and_symlink_escapes() {
     for (path, refusal) in cases {
         let result = support::call(
             &phil.server,
-            "session_sanitize",
-            &format!(r#"{{"in":"{}","out":"clean.json"}}"#, path_text(&path)),
+            "session_import",
+            &format!(r#"{{"path":"{}"}}"#, path_text(&path)),
         )
         .await;
         assert_eq!(result.is_error, Some(true));
         assert!(text(&result).contains(refusal), "{}", text(&result));
     }
-    assert!(!phil.share.join("clean.json").exists());
+    assert_eq!(appended(&phil.store).await, Vec::new());
 }
 
 #[tokio::test]
@@ -443,4 +398,112 @@ async fn session_tools_are_absent_without_a_session_kit() {
     let mut request = rmcp::model::CallToolRequestParams::new("session_find".to_owned());
     request.arguments = Some(serde_json::from_str(r#"{"query":"bundle"}"#).expect("arguments"));
     assert!(server.call(request).await.is_err());
+}
+
+#[tokio::test]
+async fn sanitize_refuses_malformed_choices_before_the_port_sees_them() {
+    let phil = node("phil", sessions(), Some(DecideMode::Advisory)).await;
+    let one = id(1);
+    let many: Vec<String> = (1..=51)
+        .map(|n| format!(r#"{{"id":"{}","decision":"approve"}}"#, id(n)))
+        .collect();
+    let cases = [
+        (
+            format!(r#"[{{"id":"{one}","decision":"approve","redact":{{"terms":["x"]}}}}]"#),
+            "is approved, so it takes no redact rules",
+        ),
+        (
+            format!(r#"[{{"id":"{one}","decision":"redact"}}]"#),
+            "redact names no rule",
+        ),
+        (
+            format!(
+                r#"[{{"id":"{one}","decision":"redact","redact":{{"terms":[],"drop_tool_outputs":false}}}}]"#
+            ),
+            "redact names no rule",
+        ),
+        (
+            format!(r#"[{{"id":"{one}","decision":"redact","redact":{{"terms":["  "]}}}}]"#),
+            "a redact term is blank",
+        ),
+        (
+            format!(
+                r#"[{{"id":"{one}","decision":"approve"}},{{"id":"{one}","decision":"approve"}}]"#
+            ),
+            "is chosen twice",
+        ),
+        (
+            format!(r#"[{{"id":"{one}","decision":"deny"}}]"#),
+            "unknown variant",
+        ),
+        (
+            format!(r#"[{{"id":"{one}","decision":"approve","note":"x"}}]"#),
+            "unknown field",
+        ),
+        (
+            format!(
+                r#"[{{"id":"{one}","decision":"redact","redact":{{"terms":["x"],"messages":[1]}}}}]"#
+            ),
+            "unknown field",
+        ),
+        ("[]".to_owned(), "0 sessions are chosen"),
+        (format!("[{}]", many.join(",")), "51 sessions are chosen"),
+    ];
+    for (sessions, refusal) in &cases {
+        let result = support::call(
+            &phil.server,
+            "session_sanitize",
+            &format!(r#"{{"sessions":{sessions},"out":"work.json"}}"#),
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true), "{sessions}");
+        assert!(text(&result).contains(refusal), "{}", text(&result));
+    }
+    let others = [
+        (
+            format!(
+                r#"{{"sessions":[{{"id":"{one}","decision":"approve"}}],"out":"work.json","in":"raw.json"}}"#
+            ),
+            "unknown field",
+        ),
+        (
+            format!(
+                r#"{{"sessions":[{{"id":"{one}","decision":"approve"}}],"out":"work.json","block":true}}"#
+            ),
+            "needs decide: true",
+        ),
+    ];
+    for (arguments, refusal) in &others {
+        let result = support::call(&phil.server, "session_sanitize", arguments).await;
+        assert_eq!(result.is_error, Some(true), "{arguments}");
+        assert!(text(&result).contains(refusal), "{}", text(&result));
+    }
+    assert_eq!(phil.jobs().await, Vec::new());
+    assert!(!phil.share.join("work.json").exists());
+}
+
+#[tokio::test]
+async fn no_tool_writes_a_raw_bundle() {
+    let phil = node("phil", sessions(), None).await;
+    let names: Vec<String> = phil
+        .server
+        .tools()
+        .iter()
+        .filter(|tool| tool.name.starts_with("session_"))
+        .map(|tool| tool.name.to_string())
+        .collect();
+    assert_eq!(
+        names,
+        ["session_find", "session_sanitize", "session_import"]
+    );
+    let mut request = rmcp::model::CallToolRequestParams::new("session_export".to_owned());
+    request.arguments = Some(
+        serde_json::from_str(&format!(
+            r#"{{"conversation_ids":["{}"],"out":"work.json"}}"#,
+            id(1)
+        ))
+        .expect("arguments"),
+    );
+    assert!(phil.server.call(request).await.is_err());
+    assert!(!phil.share.join("work.json").exists());
 }

@@ -1,3 +1,4 @@
+mod chosen;
 mod files;
 mod find;
 mod flow;
@@ -12,8 +13,10 @@ use kernel::owner::Owner;
 use rmcp::model::ToolAnnotations;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use uuid::Uuid;
 
+pub use chosen::ChoiceRefusal;
+pub use chosen::Chosen;
+use chosen::ChosenSession;
 pub use files::BundleName;
 pub use files::NameError;
 pub use files::PathRefusal;
@@ -21,11 +24,8 @@ pub use files::ReadPath;
 pub use files::ShareFiles;
 pub use files::refuse_existing;
 pub(crate) use find::find;
-pub(crate) use flow::export;
 pub(crate) use flow::sanitize;
 pub(crate) use import::import;
-
-const MAX_IDS: usize = 50;
 
 #[derive(Debug)]
 pub struct Sessions {
@@ -33,36 +33,6 @@ pub struct Sessions {
     pub files: ShareFiles,
     pub owner: Owner,
     pub node: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "Vec<Uuid>")]
-pub struct ConversationIds(Vec<Uuid>);
-
-impl ConversationIds {
-    pub fn as_slice(&self) -> &[Uuid] {
-        &self.0
-    }
-}
-
-impl TryFrom<Vec<Uuid>> for ConversationIds {
-    type Error = NameError;
-
-    fn try_from(ids: Vec<Uuid>) -> Result<Self, Self::Error> {
-        let mut unique: Vec<Uuid> = Vec::new();
-        for id in ids {
-            if !unique.contains(&id) {
-                unique.push(id);
-            }
-        }
-        if unique.is_empty() || unique.len() > MAX_IDS {
-            return Err(NameError(format!(
-                "conversation_ids names {} distinct ids; name from 1 to {MAX_IDS}",
-                unique.len()
-            )));
-        }
-        Ok(Self(unique))
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -84,7 +54,7 @@ pub struct Find {
 
 impl crate::catalog::ToolInput for Find {
     const NAME: &'static str = "session_find";
-    const DESCRIPTION: &'static str = "Find this node's captured sessions related to a prompt, best match first. Each entry gives the conversation id that session_export takes, the title, agent, first and last date, message count, best score and up to three matching excerpts. Read-only.";
+    const DESCRIPTION: &'static str = "Find this node's captured sessions related to a prompt, best match first. Each entry gives the conversation id that session_sanitize takes, the title, agent, first and last date, message count, best score and up to three matching excerpts. Read-only.";
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(ToolAnnotations::from_raw(
@@ -92,37 +62,6 @@ impl crate::catalog::ToolInput for Find {
             Some(true),
             None,
             Some(true),
-            Some(false),
-        ))
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Export {
-    #[schemars(
-        description = "Conversation ids from session_find (1-50 UUIDs)",
-        with = "Vec<String>",
-        length(min = 1, max = 50)
-    )]
-    pub(crate) conversation_ids: ConversationIds,
-    #[schemars(
-        description = "Bundle file name in the share directory, such as work.json (letters, digits, '.', '_' and '-', ending in .json); an existing file is never replaced",
-        with = "String"
-    )]
-    pub(crate) out: BundleName,
-}
-
-impl crate::catalog::ToolInput for Export {
-    const NAME: &'static str = "session_export";
-    const DESCRIPTION: &'static str = "Write the named sessions of this node's owner to a raw session bundle in the share directory and return its absolute path. The bundle is not sanitized: run session_sanitize on it before it leaves this machine. An unknown id is refused by name and nothing is written.";
-
-    fn annotations() -> Option<ToolAnnotations> {
-        Some(ToolAnnotations::from_raw(
-            None,
-            Some(false),
-            Some(false),
-            Some(false),
             Some(false),
         ))
     }
@@ -131,13 +70,12 @@ impl crate::catalog::ToolInput for Export {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Sanitize {
-    #[serde(rename = "in")]
     #[schemars(
-        rename = "in",
-        description = "The raw bundle: a file name in the share directory, or an absolute path under your home directory",
-        with = "String"
+        description = "The sessions to share, each from session_find with your decision; leave out the sessions you deny, which never leave the store (1-50, each id once)",
+        with = "Vec<ChosenSession>",
+        length(min = 1, max = 50)
     )]
-    pub(crate) input: ReadPath,
+    pub(crate) sessions: Chosen,
     #[schemars(
         description = "Sanitized bundle file name in the share directory, such as work.clean.json; the report and the local review file are written beside it and no existing file is replaced",
         with = "String"
@@ -147,11 +85,13 @@ pub struct Sanitize {
     pub(crate) mapping: Option<ReadPath>,
     #[schemars(description = "Also run the decision-model review configured at memory.sanitize.decide (default false)", transform = crate::catalog::optional_non_null)]
     pub(crate) decide: Option<bool>,
+    #[schemars(description = "With decide, withhold every flagged chunk until it is marked, whatever memory.sanitize.decide.block says (default: the config)", transform = crate::catalog::optional_non_null)]
+    pub(crate) block: Option<bool>,
 }
 
 impl crate::catalog::ToolInput for Sanitize {
     const NAME: &'static str = "session_sanitize";
-    const DESCRIPTION: &'static str = "Sanitize a raw session bundle into a new bundle in the share directory, with a report and, after a decision-model review, a local review file beside it. Returns totals, the absolute paths, changes by rule and, with decide, each flag's number, score, place, report line and length. It never returns flagged text. Share only the bundle; the report and the local review file stay on this machine.";
+    const DESCRIPTION: &'static str = "Sanitize the sessions you chose into a bundle in the share directory, reading them straight from this node's store, so no raw bundle is ever written. Give each session to share a decision: approve, or redact with terms to redact in that session only and/or drop_tool_outputs to replace its tool outputs; sessions you leave out are denied. A report and, after a decision-model review, a local review file are written beside the bundle. Returns totals, the absolute paths, changes by rule and, with decide, each flag's number, score, place, report line and length. It never returns flagged text. Share only the bundle; the report and the local review file stay on this machine.";
 
     fn annotations() -> Option<ToolAnnotations> {
         Some(ToolAnnotations::from_raw(

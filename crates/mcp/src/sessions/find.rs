@@ -188,7 +188,7 @@ fn render(
     if !found.is_empty() {
         writeln!(
             out,
-            "pass the conversation ids to session_export to write them to a bundle"
+            "pass the conversation ids to share to session_sanitize, each with decision approve or redact; leave out the ones to deny"
         )?;
     }
     Ok(out)

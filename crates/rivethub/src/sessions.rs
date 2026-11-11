@@ -9,6 +9,7 @@ use capture::sanitize::Field;
 use capture::sanitize::OpenFlags;
 use capture::sanitize::decide::Flag;
 use capture::sanitize::decide::Mode;
+use capture::sanitize::decide::Review;
 use capture::share;
 use capture::share::BundlePaths;
 use capture::share::Clobber;
@@ -16,10 +17,10 @@ use capture::share::Decider;
 use capture::share::Outcome;
 use capture::share::SetupError;
 use chrono::Utc;
+use cli::memory::SessionStore;
 use config::Config;
 use config::Environment;
 use config::MappingFile;
-use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionDigest;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::DecisionSummary;
@@ -36,9 +37,6 @@ use kernel::memory::share::ShareFailure;
 use kernel::owner::Owner;
 use mcp::sessions::Sessions;
 use mcp::sessions::ShareFiles;
-use memory_postgres::PostgresMemory;
-use memory_sqlite::SqliteStore;
-use uuid::Uuid;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::Sanitization;
@@ -48,15 +46,9 @@ use crate::service::StartupError;
 
 const SHARE_DIR: &str = "rivethub/share";
 
-#[derive(Debug, Clone)]
-pub enum Backend {
-    Postgres(Arc<PostgresMemory>),
-    Sqlite(SqliteStore),
-}
-
 #[derive(Debug)]
 struct NodeShare {
-    backend: Backend,
+    store: SessionStore,
     owner: Owner,
     author: BundleAuthor,
     mapping: MappingFile,
@@ -70,7 +62,7 @@ pub fn kit(
     config: &Config,
     env: &Environment,
     owner: Owner,
-    backend: Backend,
+    store: SessionStore,
 ) -> Result<Sessions, StartupError> {
     let node = crate::identity::resolve(config, env)?.name;
     let home = config::Paths::new(env)?.home().to_path_buf();
@@ -79,7 +71,7 @@ pub fn kit(
         None => home.join(".local").join("share"),
     };
     let share = NodeShare {
-        backend,
+        store,
         owner: owner.clone(),
         author: BundleAuthor {
             user: owner.as_str().to_owned(),
@@ -102,62 +94,23 @@ pub fn kit(
 #[async_trait]
 impl SessionShare for NodeShare {
     async fn digests(&self, keys: &[String]) -> Result<Vec<SessionDigest>, ShareFailure> {
-        Ok(match &self.backend {
-            Backend::Postgres(store) => store
-                .session_digests(&self.owner, keys)
-                .await
-                .map_err(MemoryStoreError::from)?,
-            Backend::Sqlite(store) => store
-                .session_digests(&self.owner, keys.to_vec())
-                .await
-                .map_err(MemoryStoreError::from)?,
-        })
-    }
-
-    async fn export(&self, ids: &[Uuid], out: PathBuf) -> Result<usize, ShareFailure> {
-        let sessions = match &self.backend {
-            Backend::Postgres(store) => store
-                .bundled_sessions(&self.author, Some(ids))
-                .await
-                .map_err(MemoryStoreError::from)?,
-            Backend::Sqlite(store) => store
-                .bundled_sessions(
-                    self.author.clone(),
-                    Some(ids.iter().map(ToString::to_string).collect()),
-                )
-                .await
-                .map_err(MemoryStoreError::from)?,
-        };
-        let missing: Vec<String> = ids
-            .iter()
-            .map(ToString::to_string)
-            .filter(|id| {
-                !sessions
-                    .iter()
-                    .any(|session| session.origin.conversation_id.eq_ignore_ascii_case(id))
-            })
-            .collect();
-        if !missing.is_empty() {
-            return Err(ShareFailure::UnknownSessions(missing.join(", ")));
-        }
-        let sessions: Vec<BundledSession> = sessions
-            .into_iter()
-            .map(BundledSession::forwarding_stored_origin)
-            .collect();
-        let count = sessions.len();
-        let mut text =
-            capture::bundle::seal(self.author.clone(), Utc::now(), Sanitization::Raw, sessions)
-                .map_err(failed)?
-                .text;
-        text.push(b'\n');
-        share::write_file(out, text, Clobber::Refuse).await?;
-        Ok(count)
+        Ok(self.store.digests(&self.owner, keys).await?)
     }
 
     async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
         let decider = match (job.decide, &self.decider) {
             (false, _) => None,
-            (true, Ok(decider)) => Some(decider),
+            (true, Ok(decider)) => Some(Decider {
+                review: Review {
+                    mode: if job.block {
+                        Mode::Block
+                    } else {
+                        decider.review.mode
+                    },
+                    ..decider.review
+                },
+                ..decider.clone()
+            }),
             (true, Err(SetupError::Unconfigured)) => return Err(ShareFailure::DecideUnconfigured),
             (true, Err(error)) => return Err(failed(error)),
         };
@@ -166,13 +119,17 @@ impl SessionShare for NodeShare {
             .map_or_else(|| self.mapping.clone(), MappingFile::Configured);
         let paths = BundlePaths::beside(&job.out);
         mcp::sessions::refuse_existing(&[&paths.bundle, &paths.report, &paths.local]).await?;
-        let bundle = read_bundle(&job.input).await?;
+        let sessions = self
+            .store
+            .chosen(&self.author, &self.owner, &job.sessions)
+            .await?;
+        let chosen = share::chosen(self.author.clone(), sessions, Utc::now()).map_err(failed)?;
         let outcome = share::sanitize(share::Job {
-            bundle: &bundle,
-            sessions: &std::collections::BTreeMap::new(),
+            bundle: &chosen.bundle,
+            sessions: &chosen.sessions,
             mapping: &mapping,
             key: &self.key,
-            decider,
+            decider: decider.as_ref(),
             paths: &paths,
             clobber: Clobber::Refuse,
             at: Utc::now(),

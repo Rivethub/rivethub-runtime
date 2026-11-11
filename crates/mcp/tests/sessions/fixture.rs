@@ -28,6 +28,7 @@ use serde::Serialize;
 use tempfile::TempDir;
 use testkit::FakeMemoryStore;
 use testkit::MemoryRequest;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use wire::capture::BundledSession;
@@ -154,6 +155,7 @@ struct Stub {
 pub(crate) struct ScriptedShare {
     sessions: Vec<BundledSession>,
     decide: Option<DecideMode>,
+    jobs: Mutex<Vec<SanitizeJob>>,
 }
 
 fn write(path: &Path, stub: &Stub) {
@@ -223,9 +225,15 @@ impl SessionShare for ScriptedShare {
             .collect())
     }
 
-    async fn export(&self, ids: &[Uuid], out: PathBuf) -> Result<usize, ShareFailure> {
+    async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
+        let mode = match (job.decide, self.decide) {
+            (false, _) => None,
+            (true, None) => return Err(ShareFailure::DecideUnconfigured),
+            (true, Some(mode)) => Some(mode),
+        };
+        self.jobs.lock().await.push(job.clone());
         let mut chosen = Vec::new();
-        for id in ids {
+        for id in job.sessions.ids() {
             match self
                 .sessions
                 .iter()
@@ -236,25 +244,6 @@ impl SessionShare for ScriptedShare {
             }
         }
         let count = chosen.len();
-        write(
-            &out,
-            &Stub {
-                raw: true,
-                withheld: 0,
-                sessions: chosen,
-            },
-        );
-        Ok(count)
-    }
-
-    async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
-        let mode = match (job.decide, self.decide) {
-            (false, _) => None,
-            (true, None) => return Err(ShareFailure::DecideUnconfigured),
-            (true, Some(mode)) => Some(mode),
-        };
-        let raw = read(&job.input)?;
-        let count = raw.sessions.len();
         let report = beside(&job.out, REPORT_SUFFIX);
         let local = mode.map(|_| beside(&job.out, LOCAL_SUFFIX));
         write(
@@ -262,7 +251,7 @@ impl SessionShare for ScriptedShare {
             &Stub {
                 raw: false,
                 withheld: usize::from(mode == Some(DecideMode::Block)),
-                sessions: raw.sessions,
+                sessions: chosen,
             },
         );
         std::fs::write(&report, "report").expect("report");
@@ -319,6 +308,7 @@ impl SessionShare for ScriptedShare {
 #[derive(Debug)]
 pub(crate) struct Node {
     pub(crate) server: Server,
+    pub(crate) share_port: Arc<ScriptedShare>,
     pub(crate) store: Arc<FakeMemoryStore>,
     pub(crate) home: PathBuf,
     pub(crate) share: PathBuf,
@@ -348,8 +338,13 @@ pub(crate) async fn node(
             .await
             .expect("seed");
     }
+    let share_port = Arc::new(ScriptedShare {
+        sessions,
+        decide,
+        jobs: Mutex::new(Vec::new()),
+    });
     let kit = Sessions {
-        share: Arc::new(ScriptedShare { sessions, decide }),
+        share: share_port.clone(),
         files: ShareFiles::new(share.clone(), home.clone()),
         owner,
         node: "desk".to_owned(),
@@ -360,11 +355,32 @@ pub(crate) async fn node(
         .expect("server");
     Node {
         server,
+        share_port,
         store,
         home,
         share,
         outside,
         _directory: directory,
+    }
+}
+
+impl Node {
+    pub(crate) async fn jobs(&self) -> Vec<SanitizeJob> {
+        self.share_port.jobs.lock().await.clone()
+    }
+
+    pub(crate) fn plant_raw(&self, name: &str) -> PathBuf {
+        std::fs::create_dir_all(&self.share).expect("share dir");
+        let path = self.share.join(name);
+        write(
+            &path,
+            &Stub {
+                raw: true,
+                withheld: 0,
+                sessions: sessions(),
+            },
+        );
+        path
     }
 }
 
