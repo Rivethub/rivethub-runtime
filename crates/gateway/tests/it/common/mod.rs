@@ -53,7 +53,31 @@ pub(crate) fn gateway() -> (Arc<Gateway>, Arc<FakeMemoryStore>) {
     (Arc::new(owned(Gateway::new(handle, settings()))), store)
 }
 
-fn owned(served: Gateway) -> Gateway {
+static OWNER_HOLDER: std::sync::LazyLock<Arc<gateway::local_owner::LocalOwner>> =
+    std::sync::LazyLock::new(|| match gateway::local_owner::LocalOwner::unpersisted() {
+        Ok(holder) => Arc::new(holder),
+        Err(error) => unreachable!("random bytes for the test owner token: {error}"),
+    });
+
+pub(crate) fn local_owner() -> Arc<gateway::local_owner::LocalOwner> {
+    Arc::clone(&OWNER_HOLDER)
+}
+
+pub(crate) fn owner_token() -> String {
+    OWNER_HOLDER.current().expose().to_owned()
+}
+
+pub(crate) fn authorize<B>(request: &mut Request<B>) {
+    let headers = request.headers_mut();
+    if !headers.contains_key(axum::http::header::AUTHORIZATION)
+        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", owner_token()))
+    {
+        headers.insert(axum::http::header::AUTHORIZATION, value);
+    }
+}
+
+pub(crate) fn owned(served: Gateway) -> Gateway {
+    let served = served.with_local_owner(local_owner());
     match gateway::tenancy::UserId::new(testkit::OWNER.to_owned()) {
         Ok(owner) => served.with_tenancy(gateway::tenancy::Tenancy::local(owner)),
         Err(_) => served,
@@ -63,7 +87,7 @@ fn owned(served: Gateway) -> Gateway {
 pub(crate) fn gateway_with(settings: Settings) -> Arc<Gateway> {
     let store = Arc::new(FakeMemoryStore::default());
     let handle: Arc<dyn MemoryStore> = Arc::clone(&store) as Arc<dyn MemoryStore>;
-    Arc::new(Gateway::new(handle, settings))
+    Arc::new(owned(Gateway::new(handle, settings)))
 }
 
 pub(crate) fn failing_gateway() -> Arc<Gateway> {
@@ -533,6 +557,9 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
     request
         .extensions_mut()
         .insert(axum::extract::ConnectInfo(addr));
+    if gateway::auth::is_loopback_remote(addr) {
+        authorize(&mut request);
+    }
     let response = app
         .oneshot(request)
         .await

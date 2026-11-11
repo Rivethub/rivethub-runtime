@@ -54,8 +54,11 @@ async fn owners(store: &FakeMemoryStore) -> Vec<String> {
 async fn capture_and_append_record_the_authenticated_caller_as_owner() -> TestResult {
     let store = Arc::new(FakeMemoryStore::default());
     let tenancy = Tenancy::local(user("phil")).with_token(COCO, user("coco"))?;
-    let gateway =
-        Arc::new(Gateway::new(Arc::clone(&store) as _, common::settings()).with_tenancy(tenancy));
+    let gateway = Arc::new(
+        Gateway::new(Arc::clone(&store) as _, common::settings())
+            .with_local_owner(crate::common::local_owner())
+            .with_tenancy(tenancy),
+    );
     let app = gateway.router(false);
     for (target, body, token) in [
         ("/api/capture", BATCH, None),

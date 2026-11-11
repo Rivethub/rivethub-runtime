@@ -134,6 +134,7 @@ fn app(digests: Arc<Digests>) -> axum::Router {
     let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());
     let owner = gateway::tenancy::UserId::new("owner".to_owned()).unwrap();
     let gateway = Gateway::new(store, common::settings())
+        .with_local_owner(crate::common::local_owner())
         .with_tenancy(gateway::tenancy::Tenancy::local(owner.clone()))
         .with_sessions(Arc::new(
             gateway::sessions::SessionRegistry::default().with_node_owner(owner),

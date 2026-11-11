@@ -7,6 +7,7 @@ mod auth;
 mod capture;
 mod capture_owner;
 mod harness_setup;
+mod local_owner;
 mod memory_api;
 mod model_calls;
 mod parity;

@@ -80,6 +80,7 @@ impl Harness {
         request
             .extensions_mut()
             .insert(ConnectInfo("127.0.0.1:41000".parse::<SocketAddr>()?));
+        common::authorize(&mut request);
         let response =
             tokio::time::timeout(Duration::from_secs(20), self.app.clone().oneshot(request))
                 .await??;
@@ -284,6 +285,7 @@ pub(crate) async fn harness_with(
             Arc::clone(&store) as Arc<dyn kernel::memory::MemoryStore>,
             settings,
         )
+        .with_local_owner(crate::common::local_owner())
         .with_tenancy(tenancy)
         .with_plugins(host),
     );

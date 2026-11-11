@@ -59,6 +59,7 @@ fn served() -> Result<(Arc<Gateway>, Arc<FakeModelCallStore>), Box<dyn std::erro
         Arc::new(FakeMemoryStore::default()) as _,
         common::settings(),
     )
+    .with_local_owner(crate::common::local_owner())
     .with_tenancy(tenancy)
     .with_sessions(Arc::new(
         SessionRegistry::default().with_node_owner(user("phil")),
@@ -238,6 +239,7 @@ async fn a_session_owned_by_someone_else_is_not_found_and_the_route_needs_a_stor
             Arc::new(FakeMemoryStore::default()) as _,
             common::settings(),
         )
+        .with_local_owner(crate::common::local_owner())
         .with_tenancy(Tenancy::local(user("phil"))),
     );
     let absent = common::answer(
