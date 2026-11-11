@@ -10,6 +10,7 @@ use kernel::tenancy::Visibility;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::auth_event::AuthEvent;
 use crate::error::ApiError;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -173,14 +174,24 @@ pub(crate) fn authenticate(
         return Ok((local()?, Credential::Session { auth_time }));
     };
     let token = presented.token();
-    if crate::auth::direct_local(parts)
-        && gateway
-            .local_owner()
-            .is_some_and(|owner| owner.verify(token))
+    let peer = crate::login::peer_ip(parts);
+    if gateway
+        .local_owner()
+        .is_some_and(|owner| owner.verify(token))
     {
-        return Ok((local()?, Credential::Bearer));
+        if crate::auth::direct_local(parts) {
+            return Ok((local()?, Credential::Bearer));
+        }
+        gateway
+            .auth_log()
+            .emit(AuthEvent::ForwardedTokenRefused, peer);
+        return Err(ApiError::Unauthorized);
     }
-    Ok((gateway.tenancy.resolve_bearer(token)?, Credential::Bearer))
+    gateway
+        .tenancy
+        .resolve_bearer(token)
+        .map(|user| (user, Credential::Bearer))
+        .inspect_err(|_| gateway.auth_log().emit(AuthEvent::BearerRejected, peer))
 }
 
 pub(crate) fn owner_token_presented(gateway: &crate::Gateway, parts: &Parts) -> bool {

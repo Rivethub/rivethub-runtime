@@ -1,6 +1,7 @@
 pub mod account;
 mod attach;
 pub mod auth;
+mod auth_event;
 pub mod error;
 pub mod extract;
 mod history;
@@ -57,6 +58,7 @@ pub struct Gateway {
     embed_provider: bool,
     policy: auth::OriginPolicy,
     denials: DenialLog,
+    auth_log: auth_event::AuthLog,
     tenancy: tenancy::Tenancy,
     local_owner: Option<Arc<local_owner::LocalOwner>>,
     browser: login::Browser,
@@ -101,6 +103,7 @@ impl Gateway {
             embed_provider: false,
             policy,
             denials: DenialLog::default(),
+            auth_log: auth_event::AuthLog::default(),
             tenancy: tenancy::Tenancy::default(),
             local_owner: None,
             browser: login::Browser::new(AuthPolicy::default()),
@@ -263,6 +266,10 @@ impl Gateway {
 
     pub(crate) fn denials(&self) -> &DenialLog {
         &self.denials
+    }
+
+    pub(crate) fn auth_log(&self) -> &auth_event::AuthLog {
+        &self.auth_log
     }
 
     pub fn router(self: &Arc<Self>, secure: bool) -> Router {

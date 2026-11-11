@@ -1164,6 +1164,119 @@ async fn no_secret_reaches_the_logs_or_a_debug_string() -> TestResult {
     Ok(())
 }
 
+const AUTH_EVENTS: [&str; 10] = [
+    "login_code_minted",
+    "login_code_refused",
+    "login_code_rate_limited",
+    "exchange_succeeded",
+    "exchange_refused",
+    "exchange_rate_limited",
+    "logout",
+    "rotated",
+    "bearer_rejected",
+    "forwarded_token_refused",
+];
+
+struct Driven {
+    old_token: String,
+    code: String,
+    browser: Browser,
+}
+
+async fn drive_every_auth_event(rig: &Rig) -> TestResult<Driven> {
+    let old_token = rig.token();
+    let code = mint(rig).await?;
+    exchange(rig, "wrong-code-value").await?;
+    let browser = browser_of(&exchange(rig, &code).await?)?;
+    let by_session = rig
+        .call("POST", "/api/auth/login-codes")
+        .browser(&browser)
+        .send()
+        .await?;
+    assert_eq!(by_session.status, StatusCode::UNAUTHORIZED);
+    exchange(rig, "wrong-code-value").await?;
+    let limited = exchange(rig, "wrong-code-value").await?;
+    assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+    let mint_limited = rig
+        .call("POST", "/api/auth/login-codes")
+        .browser(&browser)
+        .send()
+        .await?;
+    assert_eq!(mint_limited.status, StatusCode::TOO_MANY_REQUESTS);
+    let forwarded = rig
+        .call("GET", "/api/memory/stats")
+        .owner()
+        .header("x-forwarded-for", "203.0.113.9")
+        .send()
+        .await?;
+    assert_eq!(forwarded.status, StatusCode::UNAUTHORIZED);
+    rig.call("POST", "/api/auth/logout")
+        .browser(&browser)
+        .send()
+        .await?;
+    let rotated = rig.call("POST", "/api/auth/rotate").owner().send().await?;
+    assert_eq!(rotated.status, StatusCode::OK);
+    for _ in 0..21 {
+        rig.call("GET", "/api/memory/stats")
+            .header("authorization", "Bearer a-wrong-bearer-value")
+            .send()
+            .await?;
+    }
+    Ok(Driven {
+        old_token,
+        code,
+        browser,
+    })
+}
+
+#[tokio::test]
+async fn every_auth_event_is_logged_with_a_reason_and_the_peer_and_no_secret() -> TestResult {
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(captured.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let rig = rig_with(
+        AuthPolicy {
+            attempts_per_minute: NonZeroU32::new(3).ok_or("three")?,
+            ..AuthPolicy::default()
+        },
+        false,
+    )?;
+    let driven = drive_every_auth_event(&rig).await?;
+    let logs = String::from_utf8_lossy(&captured.0.lock()).into_owned();
+    assert_eq!(
+        logs.matches("event=\"bearer_rejected\"").count(),
+        1,
+        "a repeated 401 logs once per peer"
+    );
+    for name in AUTH_EVENTS {
+        let line = logs
+            .lines()
+            .find(|line| line.contains(&format!("event=\"{name}\"")))
+            .ok_or_else(|| format!("no {name} event in:\n{logs}"))?;
+        assert!(line.contains("reason="), "{name}: {line}");
+        assert!(line.contains("peer=127.0.0.1"), "{name}: {line}");
+    }
+    for secret in [
+        driven.old_token.as_str(),
+        rig.token().as_str(),
+        driven.code.as_str(),
+        driven.browser.csrf.as_str(),
+        driven.browser.session.as_str(),
+        "wrong-code-value",
+        "a-wrong-bearer-value",
+    ] {
+        assert!(
+            !logs.contains(secret),
+            "a secret reached the logs: {secret}"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_auth_routes_refuse_other_methods() -> TestResult {
     let rig = rig()?;

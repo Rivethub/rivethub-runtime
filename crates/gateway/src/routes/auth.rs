@@ -27,6 +27,7 @@ use wire::gateway::auth::SessionResponse;
 use super::account::LocalOwner;
 use crate::Gateway;
 use crate::auth::FreshLogin;
+use crate::auth_event::AuthEvent;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::login::LOGIN_CODE_TTL;
@@ -92,10 +93,16 @@ fn local_peer(parts: &Parts) -> Result<IpAddr, ApiError> {
     crate::login::peer_ip(parts).ok_or(ApiError::Unauthorized)
 }
 
-fn refused(gateway: &Gateway, peer: IpAddr) -> ApiError {
+fn refused(gateway: &Gateway, peer: IpAddr, refusal: AuthEvent, limited: AuthEvent) -> ApiError {
     match gateway.browser().fail(peer) {
-        Ok(()) => ApiError::Unauthorized,
-        Err(wait) => ApiError::RateLimited(wait),
+        Ok(()) => {
+            gateway.auth_log().emit(refusal, Some(peer));
+            ApiError::Unauthorized
+        }
+        Err(wait) => {
+            gateway.auth_log().emit(limited, Some(peer));
+            ApiError::RateLimited(wait)
+        }
     }
 }
 
@@ -105,16 +112,29 @@ async fn mint(
 ) -> Result<Json<LoginCodeResponse>, ApiError> {
     let peer = local_peer(&parts)?;
     if !crate::tenancy::owner_token_presented(&gateway, &parts) {
-        return Err(refused(&gateway, peer));
+        return Err(refused(
+            &gateway,
+            peer,
+            AuthEvent::LoginCodeRefused,
+            AuthEvent::LoginCodeRateLimited,
+        ));
     }
     let code = gateway
         .browser()
         .codes
         .mint()
         .map_err(|error| match error {
-            MintError::Full(wait) => ApiError::RateLimited(wait),
+            MintError::Full(wait) => {
+                gateway
+                    .auth_log()
+                    .emit(AuthEvent::LoginCodeRateLimited, Some(peer));
+                ApiError::RateLimited(wait)
+            }
             MintError::Random => ApiError::Internal,
         })?;
+    gateway
+        .auth_log()
+        .emit(AuthEvent::LoginCodeMinted, Some(peer));
     Ok(Json(LoginCodeResponse {
         code: Secret::new(code),
         expires_in_secs: LOGIN_CODE_TTL.as_secs(),
@@ -129,21 +149,38 @@ async fn exchange(
 ) -> Result<Json<SessionResponse>, ApiError> {
     let peer = local_peer(&parts)?;
     if !gateway.browser().codes.redeem(request.code.expose()) {
-        return Err(refused(&gateway, peer));
+        return Err(refused(
+            &gateway,
+            peer,
+            AuthEvent::ExchangeRefused,
+            AuthEvent::ExchangeRateLimited,
+        ));
     }
     let csrf = gateway.browser().begin(&session).await?;
+    gateway
+        .auth_log()
+        .emit(AuthEvent::ExchangeSucceeded, Some(peer));
     Ok(Json(SessionResponse {
         csrf: Secret::new(csrf),
     }))
 }
 
-async fn logout(session: Session, _user: UserId) -> Result<StatusCode, ApiError> {
+async fn logout(
+    State(gateway): State<Arc<Gateway>>,
+    session: Session,
+    parts: Parts,
+    _user: UserId,
+) -> Result<StatusCode, ApiError> {
     session.flush().await.map_err(|_| ApiError::Internal)?;
+    gateway
+        .auth_log()
+        .emit(AuthEvent::Logout, crate::login::peer_ip(&parts));
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn rotate(
     State(gateway): State<Arc<Gateway>>,
+    parts: Parts,
     _fresh: FreshLogin,
     _owner: LocalOwner,
 ) -> Result<Json<RotateResponse>, ApiError> {
@@ -155,5 +192,8 @@ async fn rotate(
         ApiError::Internal
     })?;
     gateway.browser().invalidate();
+    gateway
+        .auth_log()
+        .emit(AuthEvent::Rotated, crate::login::peer_ip(&parts));
     Ok(Json(RotateResponse { rotated: true }))
 }
