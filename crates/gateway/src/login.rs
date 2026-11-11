@@ -33,7 +33,8 @@ use tower_sessions::SessionManagerLayer;
 use tower_sessions::cookie::SameSite;
 use tower_sessions::cookie::time;
 
-pub(crate) const SESSION_COOKIE: &str = "__Host-rh_session";
+const PLAIN_COOKIE: &str = "rh_session";
+const TLS_COOKIE: &str = "__Host-rh_session";
 pub(crate) const CSRF_HEADER: &str = "x-rh-csrf";
 pub(crate) const LOGIN_CODE_TTL: Duration = Duration::from_secs(60);
 const LOGIN_KEY: &str = "login";
@@ -205,11 +206,14 @@ impl Browser {
         &self.policy
     }
 
-    pub(crate) fn layer(&self) -> SessionManagerLayer<MemoryStore> {
+    /// Under TLS the cookie is `__Host-` prefixed and `Secure`. On plain-HTTP
+    /// loopback it is neither, because Safari drops a `Secure` cookie from
+    /// `http://127.0.0.1` and loopback traffic never leaves the machine.
+    pub(crate) fn layer(&self, tls: bool) -> SessionManagerLayer<MemoryStore> {
         let idle = time::Duration::try_from(self.policy.idle).unwrap_or(time::Duration::MAX);
         SessionManagerLayer::new(self.store.clone())
-            .with_name(SESSION_COOKIE)
-            .with_secure(true)
+            .with_name(if tls { TLS_COOKIE } else { PLAIN_COOKIE })
+            .with_secure(tls)
             .with_http_only(true)
             .with_same_site(SameSite::Strict)
             .with_path("/")

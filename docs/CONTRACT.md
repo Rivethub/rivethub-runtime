@@ -2436,10 +2436,15 @@ pages and every other owner route.
 creates it before it binds (`O_EXCL`, mode 0600) and refuses a symlink, a non-regular file or any group or other bit. A
 caller sends `Authorization: Bearer <token>` (the scheme is case-insensitive) and the gateway compares it in constant
 time. `Debug` and the logs never show it.
-2. **Browser session.** An `HttpOnly` cookie plus a CSRF header. The cookie is always `__Host-rh_session` with `Secure`,
-`HttpOnly`, `SameSite=Strict`, `Path=/` and no `Domain`, on plain HTTP and on TLS. Chrome and Firefox treat `127.0.0.1`
-and `localhost` as secure contexts, so the cookie works there. Safari does not treat `http://127.0.0.1` as secure and
-drops the cookie, so Safari users need TLS (`gateway.tls_cert`) or another browser. Every cookie-authenticated request
+2. **Browser session.** An `HttpOnly` cookie plus a CSRF header. On plain-HTTP loopback the cookie is `rh_session`
+with `HttpOnly`, `SameSite=Strict`, `Path=/`, no `Domain` and no `Secure`, and it has no `__Host-` prefix. Under TLS
+(`gateway.tls_cert`) it is `__Host-rh_session` with `Secure` and the same other attributes. `Secure` is not used on plain
+HTTP because Safari does not treat `http://127.0.0.1` as a secure context for cookies and would drop a `Secure` cookie,
+which breaks login there, while Chrome and Firefox would keep it. The `__Host-` prefix requires `Secure`, so it goes
+with it. Dropping both costs nothing on loopback. Loopback traffic never crosses the network, so nothing can read or
+alter the cookie in transit, and the gateway honors a session only from a direct loopback peer with a loopback `Host`.
+The CSRF header (below), the `SameSite=Strict` flag and the Origin check carry the cross-site protection that `Secure`
+would not have added. Every cookie-authenticated request
 carries `X-RH-CSRF: <csrf>`, reads included, because cookies are not port-scoped and another local server could otherwise
 replay one. The one exception is `GET` and `HEAD` of `/wiki` and `/wiki/**`, which are navigations that cannot add a
 header. The session id is a fresh random 128-bit value at every login (`cycle_id`), so an id set before login never

@@ -309,7 +309,7 @@ impl Gateway {
                 Arc::clone(self),
                 login::resolve,
             ))
-            .layer(self.browser.layer())
+            .layer(self.browser.layer(secure))
             .layer(auth::cors_layer(&self.settings.allowed_origins));
         auth::harden(layered).layer(
             CompressionLayer::new()

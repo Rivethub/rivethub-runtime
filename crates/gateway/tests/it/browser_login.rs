@@ -28,7 +28,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const LOCAL: &str = "127.0.0.1:41000";
 const HOST: &str = "127.0.0.1:5174";
-const COOKIE: &str = "__Host-rh_session";
+const COOKIE: &str = "rh_session";
+const TLS_COOKIE: &str = "__Host-rh_session";
 
 struct Rig {
     app: Router,
@@ -504,30 +505,75 @@ async fn a_session_past_its_absolute_limit_is_refused_however_active() -> TestRe
     Ok(())
 }
 
+fn cookie_attributes(cookie: &str) -> Vec<String> {
+    cookie
+        .split(';')
+        .skip(1)
+        .map(|part| part.trim().to_ascii_lowercase())
+        .collect()
+}
+
 #[tokio::test]
-async fn the_session_cookie_is_host_prefixed_secure_and_strict_on_http_and_tls() -> TestResult {
-    for secure in [false, true] {
-        let rig = rig_with(policy(), secure)?;
-        let code = mint(&rig).await?;
-        let reply = exchange(&rig, &code).await?;
-        let cookie = reply.set_cookie().ok_or("no cookie")?;
-        let attributes: Vec<String> = cookie
-            .split(';')
-            .skip(1)
-            .map(|part| part.trim().to_ascii_lowercase())
-            .collect();
-        for wanted in ["secure", "httponly", "samesite=strict", "path=/"] {
-            assert!(
-                attributes.iter().any(|a| a == wanted),
-                "{wanted} missing in {cookie} (tls {secure})"
-            );
-        }
+async fn plain_http_loopback_sets_an_unprefixed_cookie_without_secure() -> TestResult {
+    let rig = rig_with(policy(), false)?;
+    let code = mint(&rig).await?;
+    let reply = exchange(&rig, &code).await?;
+    let cookie = reply.set_cookie().ok_or("no cookie")?;
+    assert!(cookie.starts_with("rh_session="), "{cookie}");
+    assert!(!cookie.contains("__Host-"), "{cookie}");
+    let attributes = cookie_attributes(&cookie);
+    for wanted in ["httponly", "samesite=strict", "path=/"] {
         assert!(
-            !attributes.iter().any(|a| a.starts_with("domain")),
-            "{cookie}"
+            attributes.iter().any(|a| a == wanted),
+            "{wanted} in {cookie}"
         );
-        assert_eq!(reply.header("cache-control"), Some("no-store"));
     }
+    assert!(!attributes.iter().any(|a| a == "secure"), "{cookie}");
+    assert!(
+        !attributes.iter().any(|a| a.starts_with("domain")),
+        "{cookie}"
+    );
+    assert_eq!(reply.header("cache-control"), Some("no-store"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn under_tls_the_cookie_is_host_prefixed_and_secure() -> TestResult {
+    let rig = rig_with(policy(), true)?;
+    let code = mint(&rig).await?;
+    let reply = exchange(&rig, &code).await?;
+    let cookie = reply
+        .headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find(|value| value.starts_with(TLS_COOKIE))
+        .ok_or("no __Host- cookie")?
+        .to_owned();
+    let attributes = cookie_attributes(&cookie);
+    for wanted in ["secure", "httponly", "samesite=strict", "path=/"] {
+        assert!(
+            attributes.iter().any(|a| a == wanted),
+            "{wanted} in {cookie}"
+        );
+    }
+    assert!(
+        !attributes.iter().any(|a| a.starts_with("domain")),
+        "{cookie}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_plain_cookie_is_not_honored_without_the_csrf_header() -> TestResult {
+    let rig = rig_with(policy(), false)?;
+    let browser = login(&rig).await?;
+    let reply = rig
+        .call("GET", "/api/memory/stats")
+        .header("cookie", &format!("{COOKIE}={}", browser.session))
+        .send()
+        .await?;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
     Ok(())
 }
 
