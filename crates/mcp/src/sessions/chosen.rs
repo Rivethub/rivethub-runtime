@@ -10,16 +10,16 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "Vec<ChosenSession>")]
-pub struct Chosen(SessionChoices);
+pub(crate) struct Chosen(SessionChoices);
 
 impl Chosen {
-    pub fn into_choices(self) -> SessionChoices {
+    pub(crate) fn into_choices(self) -> SessionChoices {
         self.0
     }
 }
 
 #[derive(Debug, Error)]
-pub enum ChoiceRefusal {
+pub(crate) enum ChoiceRefusal {
     #[error(
         "session {0} is approved, so it takes no redact rules; set decision to redact to apply them"
     )]

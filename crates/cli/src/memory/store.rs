@@ -68,10 +68,13 @@ impl SessionStore {
             .collect();
         let mut kept = Vec::with_capacity(ids.len());
         for session in sessions {
-            let chosen = Uuid::parse_str(&session.origin.conversation_id)
-                .ok()
-                .filter(|id| shareable.contains(id))
-                .and_then(|id| choices.as_slice().iter().find(|(chosen, _)| *chosen == id));
+            let chosen = choices.as_slice().iter().find(|(id, _)| {
+                shareable.contains(id)
+                    && session
+                        .origin
+                        .conversation_id
+                        .eq_ignore_ascii_case(&id.to_string())
+            });
             if let Some((id, choice)) = chosen {
                 kept.push((*id, session.forwarding_stored_origin(), choice.clone()));
             }

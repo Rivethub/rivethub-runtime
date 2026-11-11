@@ -14,8 +14,7 @@ use rmcp::model::ToolAnnotations;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-pub use chosen::ChoiceRefusal;
-pub use chosen::Chosen;
+use chosen::Chosen;
 use chosen::ChosenSession;
 pub use files::BundleName;
 pub use files::NameError;
