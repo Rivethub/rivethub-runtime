@@ -11,7 +11,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::plugins::{HostSettings, PluginHost};
-use gateway::tenancy::{PeerCertificate, Tenancy, UserId};
+use gateway::tenancy::{Tenancy, UserId};
 use serde::Serialize;
 use tower::ServiceExt as _;
 use wire::JsonObject;
@@ -33,7 +33,7 @@ const MANIFEST: &str = r#"{
   "version": "0.1.0",
   "description": "A plug-in for the host tests.",
   "run": { "command": ["COMMAND"], "readyTimeoutMs": 5000 },
-  "permissions": ["sessions.read", "tasks.read"],
+  "permissions": ["sessions.read", "topics.read"],
   "tools": [
     { "name": "echo", "description": "Echo the arguments.", "inputSchema": { "type": "object" } },
     { "name": "events", "description": "List received events.", "inputSchema": { "type": "object" } },
@@ -48,11 +48,11 @@ const MANIFEST: &str = r#"{
   ],
   "contributes": { "pages": [{ "id": "fixture", "title": "Fixture", "view": "status" }] },
   "jobs": [{ "id": "tick", "title": "Tick" }],
-  "events": ["session.idle", "task.done"]
+  "events": ["session.idle"]
 }"#;
 
 pub(crate) fn invalid_manifest() -> String {
-    MANIFEST.replace(r#""tasks.read"]"#, r#""tasks.read"], "colour": "red""#)
+    MANIFEST.replace(r#""topics.read"]"#, r#""topics.read"], "colour": "red""#)
 }
 
 #[derive(Serialize)]
@@ -107,10 +107,10 @@ impl Harness {
             .header("content-type", "application/json")
             .body(body.map_or_else(Body::empty, Body::from))?;
         if device {
-            request.extensions_mut().insert(PeerCertificate::Device {
-                user: Some("owner".to_owned()),
-                device: OWNER_DEVICE.to_owned(),
-            });
+            request.headers_mut().insert(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_str(&format!("Bearer {}", OWNER_DEVICE.to_owned()))?,
+            );
         }
         let answer = self.send(request).await?;
         Ok((answer.status, answer.body))
@@ -255,7 +255,7 @@ pub(crate) fn owner() -> Result<UserId, Failure> {
 
 pub(crate) fn tenancy() -> Result<Tenancy, Failure> {
     let owner = owner()?;
-    Ok(Tenancy::local(owner.clone()).with_device(OWNER_DEVICE, owner)?)
+    Ok(Tenancy::local(owner.clone()).with_token(OWNER_DEVICE, owner)?)
 }
 
 pub(crate) async fn harness(root: &Path) -> Result<Harness, Failure> {

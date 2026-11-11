@@ -1,23 +1,20 @@
 pub mod catalog;
 pub mod client;
-mod delegate;
 pub mod error;
 pub mod memory;
 mod nonblock;
 pub mod plugins;
-mod render_delegate;
 mod render_memory;
 mod render_search;
 mod render_tags;
+pub mod sessions;
 pub mod tags;
 pub mod transport;
 pub mod wiki;
 
-pub use catalog::Surface;
 pub use error::Error;
 use kernel::memory::MemoryStore;
 use kernel::plugins::PluginTools;
-use kernel::tasks::Delegation;
 use kernel::tenancy::Scope;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
@@ -32,12 +29,12 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct Server {
     memory: Arc<dyn MemoryStore>,
-    delegation: Option<Arc<dyn Delegation>>,
     tools: Arc<Vec<Tool>>,
     memory_write: bool,
     shutdown: CancellationToken,
     zone: chrono_tz::Tz,
     plugins: Option<Arc<dyn PluginTools>>,
+    sessions: Option<Arc<sessions::Sessions>>,
     scope: Option<Scope>,
 }
 
@@ -45,24 +42,24 @@ pub struct Builder {
     memory: Arc<dyn MemoryStore>,
     memory_write: bool,
     shutdown: CancellationToken,
-    delegation: Option<(Arc<dyn Delegation>, Surface)>,
     zone: Option<chrono_tz::Tz>,
     plugins: Option<Arc<dyn PluginTools>>,
+    sessions: Option<sessions::Sessions>,
 }
 
 #[cfg_attr(
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "MemoryStore and Delegation are kernel trait objects without Debug; the formatter reports whether a delegation port is set and omits the trait objects and the tool catalog"
+        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects and the tool catalog"
     )
 )]
 impl std::fmt::Debug for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Server")
             .field("memory_write", &self.memory_write)
-            .field("delegation", &self.delegation.is_some())
             .field("plugins", &self.plugins.is_some())
+            .field("sessions", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -71,14 +68,13 @@ impl std::fmt::Debug for Server {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "MemoryStore and Delegation are kernel trait objects without Debug; the formatter reports whether a delegation port is set and omits the trait objects"
+        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects"
     )
 )]
 impl std::fmt::Debug for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Builder")
             .field("memory_write", &self.memory_write)
-            .field("delegation", &self.delegation.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -99,10 +95,12 @@ enum Operation {
     WikiSearch,
     #[strum(serialize = "wiki_read")]
     WikiRead,
-    #[strum(serialize = "delegate_task")]
-    Delegate,
-    #[strum(serialize = "list_agents")]
-    Agents,
+    #[strum(serialize = "session_find")]
+    SessionFind,
+    #[strum(serialize = "session_sanitize")]
+    SessionSanitize,
+    #[strum(serialize = "session_import")]
+    SessionImport,
 }
 
 impl Server {
@@ -123,9 +121,9 @@ impl Server {
             memory,
             memory_write,
             shutdown,
-            delegation: None,
             zone: None,
             plugins: None,
+            sessions: None,
         }
     }
 
@@ -138,13 +136,12 @@ impl Server {
     }
 
     pub async fn call(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
-        self.dispatch(request, None, self.shutdown.clone()).await
+        self.dispatch(request, self.shutdown.clone()).await
     }
 
     async fn dispatch(
         &self,
         request: CallToolRequestParams,
-        tool_use: Option<String>,
         cancel: CancellationToken,
     ) -> Result<CallToolResult, ErrorData> {
         if !self.tools.iter().any(|tool| tool.name == request.name) {
@@ -152,13 +149,7 @@ impl Server {
                 && kernel::plugins::split_tool_name(&request.name).is_ok()
             {
                 let arguments = request.arguments.unwrap_or_default();
-                return Ok(plugins::call(
-                    port.as_ref(),
-                    &request.name,
-                    arguments,
-                    tool_use.as_deref(),
-                )
-                .await);
+                return Ok(plugins::call(port.as_ref(), &request.name, arguments).await);
             }
             return Err(ErrorData::invalid_params(
                 format!("Tool {} not found", request.name),
@@ -173,7 +164,6 @@ impl Server {
             None => rmcp::model::JsonObject::new(),
         };
         let result = match operation {
-            Operation::Delegate => self.execute(operation, arguments, cancel).await,
             Operation::Search
             | Operation::Browse
             | Operation::Stats
@@ -181,11 +171,13 @@ impl Server {
             | Operation::Tags
             | Operation::WikiSearch
             | Operation::WikiRead
-            | Operation::Agents => {
+            | Operation::SessionFind
+            | Operation::SessionSanitize
+            | Operation::SessionImport => {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => Err(Error::Cancelled),
-                    result = self.execute(operation, arguments, cancel.clone()) => result,
+                    result = self.execute(operation, arguments) => result,
                 }
             }
         };
@@ -201,7 +193,6 @@ impl Server {
         &self,
         operation: Operation,
         arguments: rmcp::model::JsonObject,
-        cancel: CancellationToken,
     ) -> Result<CallToolResult, Error> {
         match operation {
             Operation::Search => {
@@ -217,17 +208,28 @@ impl Server {
             }
             Operation::WikiSearch => wiki::search(self.memory.as_ref(), decode(arguments)?).await,
             Operation::WikiRead => wiki::read(self.memory.as_ref(), decode(arguments)?).await,
-            Operation::Delegate => {
-                delegate::task(self.port()?.as_ref(), decode(arguments)?, cancel).await
+            Operation::SessionFind => {
+                Box::pin(sessions::find(
+                    self.memory.as_ref(),
+                    self.sessions()?,
+                    decode(arguments)?,
+                    self.zone,
+                ))
+                .await
             }
-            Operation::Agents => delegate::agents(self.port()?.as_ref(), decode(arguments)?).await,
+            Operation::SessionSanitize => {
+                sessions::sanitize(self.sessions()?, decode(arguments)?).await
+            }
+            Operation::SessionImport => {
+                sessions::import(self.memory.as_ref(), self.sessions()?, decode(arguments)?).await
+            }
         }
     }
 
-    fn port(&self) -> Result<&Arc<dyn Delegation>, Error> {
-        self.delegation
-            .as_ref()
-            .ok_or_else(|| Error::Invalid("delegation port is not configured".into()))
+    fn sessions(&self) -> Result<&sessions::Sessions, Error> {
+        self.sessions.as_deref().ok_or(Error::Refused(
+            "session tools are served only by rh mcp over stdio",
+        ))
     }
 }
 
@@ -245,13 +247,16 @@ impl Builder {
     }
 
     #[must_use]
-    pub fn delegation(mut self, port: Arc<dyn Delegation>, surface: Surface) -> Self {
-        self.delegation = Some((port, surface));
+    pub fn sessions(mut self, kit: sessions::Sessions) -> Self {
+        self.sessions = Some(kit);
         self
     }
 
     pub fn build(self) -> Result<Server, Error> {
         let mut tools = catalog::definitions()?;
+        if self.sessions.is_some() {
+            tools.extend(catalog::session_definitions()?);
+        }
         if self.memory_write {
             let tags = tools
                 .iter_mut()
@@ -266,19 +271,14 @@ impl Builder {
                 Some(false),
             ));
         }
-        if let Some((_, surface)) = &self.delegation {
-            let mut prefixed = catalog::delegation(*surface)?;
-            prefixed.append(&mut tools);
-            tools = prefixed;
-        }
         Ok(Server {
             memory: self.memory,
-            delegation: self.delegation.map(|(port, _surface)| port),
             tools: Arc::new(tools),
             memory_write: self.memory_write,
             shutdown: self.shutdown,
             zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
             plugins: self.plugins,
+            sessions: self.sessions.map(Arc::new),
             scope: Scope::current(),
         })
     }
@@ -355,8 +355,7 @@ impl ServerHandler for Server {
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         let cancel = self.shutdown.child_token();
-        let tool_use = plugins::tool_use(&context.meta);
-        let pending = self.dispatch(request, tool_use, cancel.clone());
+        let pending = self.dispatch(request, cancel.clone());
         let scope = self.scope.clone();
         let pending = async move {
             match scope {
@@ -387,6 +386,10 @@ pub(crate) fn text(value: String) -> CallToolResult {
     let mut result = CallToolResult::success(vec![ContentBlock::text(value)]);
     result.is_error = None;
     stamp(result)
+}
+
+pub(crate) fn refused(value: String) -> CallToolResult {
+    stamp(CallToolResult::error(vec![ContentBlock::text(value)]))
 }
 
 fn stamp(mut result: CallToolResult) -> CallToolResult {

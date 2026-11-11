@@ -226,7 +226,8 @@ pub(super) fn listings(conn: &Connection) -> Result<Vec<TopicListing>, TopicErro
     let rows = conn
         .prepare(&format!(
             "SELECT {TOPIC_COLUMNS},
-                    (SELECT count(*) FROM rh_session_placements p WHERE p.topic_id = t.id),
+                    (SELECT count(*) FROM rh_session_placements p WHERE p.topic_id = t.id
+                       AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id)),
                     (SELECT max(c.updated_at)
                        FROM rh_session_placements p
                        JOIN ros_conversations c ON c.session_key = p.session_id
@@ -355,6 +356,7 @@ pub(super) fn placed_in(conn: &Connection, id: TopicId) -> Result<Vec<PlacedSess
                       WHERE c.session_key = p.session_id) AS last_active
                FROM rh_session_placements p
               WHERE p.topic_id = ?1
+                AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = p.session_id)
               ORDER BY last_active DESC NULLS LAST, p.session_id"
         ))
         .and_then(|mut statement| {

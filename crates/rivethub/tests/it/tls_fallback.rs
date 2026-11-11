@@ -36,7 +36,6 @@ async fn composed_gateway_serves_https_from_the_shared_issued_pair() -> TestResu
     let paths = tls.as_ref().ok_or("shared fallback did not enable tls")?;
     assert!(paths.cert.ends_with("fallback-node.crt"));
     assert!(paths.key.ends_with("fallback-node.key"));
-    assert!(paths.require_client);
     let port = listener.local_addr()?.port();
     let gateway = Arc::clone(composition.gateway());
     let server_shutdown = shutdown.clone();

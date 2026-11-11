@@ -65,7 +65,7 @@ pub(super) fn cloud_url(url: &str) -> Result<bool, Error> {
     Ok(postgres_host(url)? == "rivetos.cloud")
 }
 
-fn load(env: &Environment) -> Result<Option<Config>, Error> {
+pub(super) fn load(env: &Environment) -> Result<Option<Config>, Error> {
     let Some(location) = config::resolve_config_path(env)? else {
         return Ok(None);
     };

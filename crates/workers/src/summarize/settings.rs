@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::error::WorkerError;
 
-pub(super) const PIPELINE_VERSION: i32 = 5;
+pub(super) const PIPELINE_VERSION: i32 = 6;
 pub(super) const MAX_LEAF_ROUNDS: u32 = 10;
 pub(super) const LEAF_BATCH: u32 = 10;
 pub(super) const BRANCH_BATCH: u32 = 8;

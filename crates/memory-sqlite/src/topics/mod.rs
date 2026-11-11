@@ -5,7 +5,6 @@ mod history;
 mod inherited;
 mod mentions;
 mod rows;
-mod startup;
 mod write;
 
 use async_trait::async_trait;

@@ -3,7 +3,6 @@ mod done;
 mod filing;
 mod map;
 mod page;
-mod startup;
 mod visibility;
 
 use std::sync::Arc;
@@ -47,9 +46,8 @@ use crate::extract::Query;
 use crate::tenancy::UserId;
 
 pub(super) use map::error as topic_error;
-pub(super) use startup::Started;
-pub(super) use startup::begin;
-pub(crate) use startup::prepare;
+pub(crate) use map::page_error;
+pub(crate) use visibility::error as visibility_error;
 
 const SEARCH_LIMIT_DEFAULT: usize = 10;
 const SEARCH_LIMIT_MAX: usize = 50;
@@ -102,14 +100,6 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/topics/{topic}/sessions",
             routing::get(filing::sessions).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/api/topics/{topic}/startup",
-            routing::get(startup::preview).fallback(super::method_not_allowed),
-        )
-        .route(
-            "/api/harness-sessions/{session}/startup-context",
-            routing::get(startup::kept).fallback(super::method_not_allowed),
         )
         .route(
             "/api/sessions/{session}/placement",
@@ -344,8 +334,21 @@ async fn place(
     Body(request): Body<PlacementRequest>,
 ) -> Result<Json<PlacementReply>, ApiError> {
     let session = canonical(&segment)?;
+    let topic = resolve_id(gateway.topics()?.as_ref(), &request.topic_id).await?;
+    let placement = place_session(&gateway, &user, session, topic).await?;
+    Ok(Json(PlacementReply {
+        placement: Some(placement),
+        suggestion: None,
+    }))
+}
+
+pub(crate) async fn place_session(
+    gateway: &Gateway,
+    user: &UserId,
+    session: SessionId,
+    topic: TopicId,
+) -> Result<wire::gateway::topics::TopicPlacement, ApiError> {
     let store = gateway.topics()?;
-    let topic = resolve_id(store.as_ref(), &request.topic_id).await?;
     let before = store.placement(&session).await.map_err(map::error)?;
     let now = Utc::now();
     let outcome = store
@@ -359,7 +362,7 @@ async fn place(
         .await
         .map_err(map::error)?;
     let filed = before.map(|placement| (placement.by, placement.topic));
-    filing::correct(&gateway, Target::Session(session), filed, Some(topic), now).await?;
+    filing::correct(gateway, Target::Session(session), filed, Some(topic), now).await?;
     let placement = map::placement(outcome.into_placement());
     if let Some(host) = gateway.plugins() {
         host.publish(&wire::plugin::process::PluginEvent::SessionPlaced {
@@ -368,10 +371,7 @@ async fn place(
             by: placement.by,
         });
     }
-    Ok(Json(PlacementReply {
-        placement: Some(placement),
-        suggestion: None,
-    }))
+    Ok(placement)
 }
 
 async fn unplace(

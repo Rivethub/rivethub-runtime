@@ -28,7 +28,7 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
     wiki_support::filed(&store, &source).await?;
     queue
         .enqueue(Job {
-            name: JobName::Fixed(FixedJob::RunTask),
+            name: JobName::Fixed(FixedJob::ReapDeadJobs),
             payload: JsonObject::default(),
             key: None,
             key_mode: JobKeyMode::Replace,
@@ -54,7 +54,12 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
         WorkerDeps {
             targets: store.clone(),
             summaries: store.clone(),
-            provider: model.clone(),
+            summarizer: model.clone(),
+            categorizer: workers::RoleModel {
+                provider: model.clone(),
+                model: "fake-chat".to_owned(),
+            },
+            embedder: model.clone(),
             embed: EmbedSettings::standard(),
             summary: SummarySettings::standard("fake-chat")?,
             scopes: None,
@@ -64,10 +69,11 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
         store: store.clone(),
         consolidate: None,
         recompile: None,
+        provider: model.clone(),
         model: "fake-chat".to_owned(),
         load: None,
     })
-    .with_topic_pages(store.clone(), store.clone(), store.clone())
+    .with_topic_pages(store.clone(), store.clone(), store.clone(), store.clone())
     .with_session_topics(workers::SessionTopics {
         store: store.clone(),
         filing: store,
@@ -95,7 +101,7 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
             .await?
             .is_none()
     );
-    let untouched: (i64,) = sqlx::query_as("SELECT count(*) FROM graphile_worker._private_jobs j JOIN graphile_worker._private_tasks t ON t.id = j.task_id WHERE t.identifier = 'run-task' AND j.attempts = 0")
+    let untouched: (i64,) = sqlx::query_as("SELECT count(*) FROM graphile_worker._private_jobs j JOIN graphile_worker._private_tasks t ON t.id = j.task_id WHERE t.identifier = 'reap-dead-jobs' AND j.attempts = 0")
         .fetch_one(&pool).await?;
     assert_eq!(untouched.0, 1);
     assert!(

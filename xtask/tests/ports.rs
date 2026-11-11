@@ -29,17 +29,13 @@ fn findings(root: &Path) -> Result<Vec<String>> {
 fn public_traits_fail_in_every_service_and_adapter() -> Result {
     for name in [
         "gateway",
-        "agent-loop",
         "workers",
-        "tasks",
         "mcp",
         "capture",
         "providers",
         "harness-acp",
-        "terminal",
         "memory-postgres",
         "memory-sqlite",
-        "pki",
     ] {
         let file = format!("crates/{name}/src/lib.rs");
         let repo = repository(&[(&file, "pub trait Store: Send + Sync {}")])?;

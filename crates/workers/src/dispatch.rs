@@ -25,13 +25,16 @@ pub(crate) struct JobEnv {
     pub(crate) wiki: Option<WikiBuilderDeps>,
     pub(crate) targets: Arc<dyn EmbeddingStore>,
     pub(crate) summaries: Arc<dyn SummaryStore>,
-    pub(crate) provider: Arc<dyn ModelProvider>,
+    pub(crate) summarizer: Arc<dyn ModelProvider>,
+    pub(crate) categorizer: crate::RoleModel,
+    pub(crate) embedder: Arc<dyn ModelProvider>,
     pub(crate) embed: EmbedSettings,
     pub(crate) summary: SummarySettings,
     pub(crate) topics: Option<SessionTopics>,
     pub(crate) topic_pages: Option<crate::topic_page::TopicPages>,
     pub(crate) tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
     pub(crate) deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
+    pub(crate) digests: Option<crate::digest::DailyDigests>,
     pub(crate) scopes: Option<crate::OwnerScopes>,
 }
 
@@ -43,7 +46,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
 ) -> Result<(), WorkerError> {
     let summarize = SummarizeEnv {
         store: env.summaries.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: env.summarizer.as_ref(),
         queue,
         settings: &env.summary,
         now: Utc::now(),
@@ -56,7 +59,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::EmbedTarget) => {
             handle_embed(
                 env.targets.as_ref(),
-                env.provider.as_ref(),
+                env.embedder.as_ref(),
                 env.embed,
                 &job.payload,
                 cancel,
@@ -79,7 +82,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
                 .ok_or(WorkerError::MissingMemoryJobs)?;
             crate::tool_synthesis::handle_synthesize_tool_call(
                 store.as_ref(),
-                env.provider.as_ref(),
+                env.summarizer.as_ref(),
                 &env.summary.model,
                 &job.payload,
                 cancel,
@@ -104,9 +107,8 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         }
         JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
-        JobName::Fixed(FixedJob::RunTask)
-        | JobName::Heartbeat { .. }
-        | JobName::RunTaskOn { .. } => Err(WorkerError::Unhandled {
+        JobName::Fixed(FixedJob::DigestDay) => dispatch_digest(env, job, cancel).await,
+        JobName::Heartbeat { .. } => Err(WorkerError::Unhandled {
             name: job.name.to_string(),
         }),
     }
@@ -126,8 +128,8 @@ async fn dispatch_file(
         })?;
     let filing = FilingEnv {
         topics,
-        provider: env.provider.as_ref(),
-        model: &env.summary.model,
+        provider: env.categorizer.provider.as_ref(),
+        model: &env.categorizer.model,
         now: Utc::now(),
         cancel,
     };
@@ -137,6 +139,29 @@ async fn dispatch_file(
         .map(|_| ())
 }
 
+async fn dispatch_digest(
+    env: &JobEnv,
+    job: &ClaimedJob,
+    cancel: &CancellationToken,
+) -> Result<(), WorkerError> {
+    let deps = env
+        .digests
+        .as_ref()
+        .ok_or(WorkerError::MissingDependencies {
+            role: ProcessRole::Summarizer,
+        })?;
+    let request = crate::digest::digest_request(&job.payload)?;
+    let owner = request.owner()?;
+    let digest = crate::digest::DigestEnv {
+        deps,
+        provider: env.summarizer.as_ref(),
+        model: &env.summary.model,
+        cancel,
+    };
+    let scope = crate::scopes::owner_scope(env.scopes.as_ref(), &owner).await?;
+    crate::scopes::within(scope, crate::digest::handle_digest_day(&digest, &request)).await
+}
+
 async fn dispatch_purge(env: &JobEnv, cancel: &CancellationToken) -> Result<(), WorkerError> {
     let deletions = env
         .deletions
@@ -144,9 +169,14 @@ async fn dispatch_purge(env: &JobEnv, cancel: &CancellationToken) -> Result<(), 
         .ok_or(WorkerError::MissingDependencies {
             role: ProcessRole::Summarizer,
         })?;
-    crate::deleted_sessions::handle_purge(deletions.as_ref(), cancel)
-        .await
-        .map(|_| ())
+    crate::deleted_sessions::handle_purge(
+        deletions.as_ref(),
+        env.settings.trash_days,
+        Utc::now(),
+        cancel,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), WorkerError> {
@@ -158,8 +188,8 @@ async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), W
     let run = crate::tidy::TidyEnv {
         topics,
         tidy: tidy.as_ref(),
-        provider: env.provider.as_ref(),
-        model: &env.summary.model,
+        provider: env.categorizer.provider.as_ref(),
+        model: &env.categorizer.model,
         now: Utc::now(),
         cancel,
     };
@@ -204,6 +234,7 @@ async fn dispatch_wiki<Q: JobQueue>(
         (Some(sessions), Some(pages)) => Some(kernel::wiki::route::TopicPorts {
             topics: sessions.store.as_ref(),
             pages: pages.pages.as_ref(),
+            facts: pages.facts.as_ref(),
             filing: sessions.filing.as_ref(),
             lineage: sessions.lineage.as_ref(),
         }),
@@ -211,7 +242,7 @@ async fn dispatch_wiki<Q: JobQueue>(
     };
     let wiki_env = WikiBuilderEnv {
         store: wiki.store.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
         now: Utc::now(),
@@ -257,7 +288,7 @@ async fn dispatch_recompile<Q: JobQueue>(
         })?;
     let recompile = crate::wiki_builder::RecompileEnv {
         store: store.as_ref(),
-        provider: env.provider.as_ref(),
+        provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
         now: Utc::now(),

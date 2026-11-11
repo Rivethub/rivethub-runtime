@@ -23,10 +23,6 @@ use wire::gateway::memory::TagEntityType;
 use wire::gateway::memory::TagState;
 use wire::message::Role;
 
-mod batch;
-
-pub(crate) use batch::decode_event_batch;
-
 use crate::error::ApiError;
 use crate::error::body_must_be_object;
 use crate::error::invalid_json;

@@ -1,9 +1,11 @@
 use crate::capture::CaptureWriter;
+use crate::capture::ConversationDates;
 use crate::capture::ConversationEnsure;
 use crate::capture::ConversationRecord;
 use crate::capture::ConversationUpsert;
 use crate::capture::UpsertedConversation;
 use crate::error::Error;
+use wire::JsonObject;
 
 impl CaptureWriter<'_> {
     pub async fn ensure_conversation(
@@ -63,11 +65,23 @@ impl CaptureWriter<'_> {
         upsert: &ConversationUpsert<'_>,
     ) -> Result<UpsertedConversation, Error> {
         let settings = upsert.settings.map(sqlx::types::Json);
+        let (imported, created_at, updated_at) = match upsert.dates {
+            ConversationDates::CaptureTime => (false, None, None),
+            ConversationDates::Imported {
+                created_at,
+                updated_at,
+            } => (true, created_at, updated_at),
+        };
         let record = sqlx::query!(
             "insert into rh_conversations (session_key, agent, channel, title, settings,
-                                           task_id, owner_user_id, node)
-             values ($1, $2, $3, $4, coalesce($5, '{}'::jsonb), $6::text::uuid, $7, $11)
-             on conflict (session_key, agent) do update set updated_at = now(),
+                                           task_id, owner_user_id, node, created_at, updated_at)
+             values ($1, $2, $3, $4, coalesce($5, '{}'::jsonb), $6::text::uuid, $7, $11,
+                     coalesce($12, now()), coalesce($13, now()))
+             on conflict (session_key, agent) do update
+               set updated_at = case when $14
+                                     then greatest(rh_conversations.updated_at,
+                                                   coalesce($13, rh_conversations.updated_at))
+                                     else now() end,
                title = case when $8 then excluded.title
                             else rh_conversations.title end,
                settings = case when $9 then excluded.settings
@@ -87,6 +101,9 @@ impl CaptureWriter<'_> {
             upsert.settings.is_some(),
             upsert.task_id.is_some(),
             upsert.node,
+            created_at,
+            updated_at,
+            imported,
         )
         .fetch_one(&mut *self.tx)
         .await
@@ -95,5 +112,30 @@ impl CaptureWriter<'_> {
             id: record.id,
             owner_user_id: record.owner_user_id,
         })
+    }
+}
+
+impl crate::PostgresMemory {
+    pub(crate) async fn conversation_origins(
+        &self,
+        session_keys: &[String],
+    ) -> Result<std::collections::BTreeMap<String, JsonObject>, Error> {
+        if session_keys.is_empty() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        let rows = sqlx::query!(
+            "select session_key, settings -> 'origin' as \"origin!: sqlx::types::Json<JsonObject>\"
+               from rh_conversations
+              where session_key = any($1)
+                and jsonb_typeof(settings -> 'origin') = 'object'",
+            session_keys
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|source| Error::operation("origin lookup", source))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.session_key, row.origin.0))
+            .collect())
     }
 }

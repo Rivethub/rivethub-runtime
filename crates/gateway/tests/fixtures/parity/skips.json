@@ -91,7 +91,6 @@
     "id": "plain-main/remote-plain-html",
     "reason": "The HTML response headers do not match the recording's CORS or content-type pins."
   },
-
   {
     "id": "plain-main/static-dotdot",
     "reason": "Parent segments are refused by component-wise path containment; the recording serves the SPA after a JavaScript path collapse of dot-dot."
@@ -1323,5 +1322,553 @@
   {
     "id": "ws-main/upgrade-alias-audio-mic",
     "reason": "B1: note 90 removed this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-flat-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-invalid-json",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-no-file",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-nodes-number",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-post",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-root-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/mesh-valid-before-ingest",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-redirect/mesh-default-path-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/remote-plain-pair-redeem",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/remote-plain-enroll",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-enroll-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/devices-delete-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-get",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-post",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-status",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-bad-escape",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/phone-pairing-bad-name",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/pair-redeem-bogus",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/pair-redeem-get",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-phone-pairing-owner",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-main/tls-pair-redeem-no-cert",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/config",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/config-alias",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/config-remote",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-shell-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-spawn-or-get",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-spawn-or-get-other-command",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-string",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-null",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-number",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/delete-unknown",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-room-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-clamp-high",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-claude-session-uuid",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-claude-session-not-uuid",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-alias",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-invalid-json",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-unknown-command",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-model-space",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-model-dotdot",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/post-effort-empty",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-main/delete-no-id-early",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-tenancy/tenancy-post-session-alice",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-tenancy/tenancy-post-resume-alice",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-tenancy/tenancy-inject-alice",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-tenancy/tenancy-delete-alice",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-tenancy/tenancy-delete-session-alice",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/connect-a-empty-snapshot",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/post-start-alpha",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/connect-b-filtered-alpha",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/post-start-beta",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/post-batch-alpha",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/delete-alpha",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/post-start-uuid",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/delete-canonical",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "ws-main/end-beta-then-evict",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/spawn-main",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/attach-a",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/attach-b-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/type-a",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/resize-a-claims",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/resize-b-recorded",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "term-ws/claim-b",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-events",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-events-event",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-events-sessions",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-events-state",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal-config",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal-harness-sessions",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal-inject",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal-list",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-terminal-prefix",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/delete-session-again",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/delete-session-canonical",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/delete-session-known",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/delete-session-missing-param",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-canonical-uuid-room",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-empty-body",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-invalid-json",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-100",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-101",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-bad-element-2",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-empty-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-not-array",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/events-valid-batch",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-valid-chunked",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-valid-expect-continue",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/event-valid-session-start",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/healthz-after-ingest",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/host-allowed-env",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/host-dot-localhost",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/host-ipv6-loopback",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/host-localhost-upper",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-allowed-env",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-allowed-env-default-port",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-app-bundle",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-app-bundle-upper",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-default-port",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-none",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-same",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-same-other-scheme",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-same-uppercase",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/origin-same-with-path",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/sessions-after-delete",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/sessions-list",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-after-rejected-batch",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-canonical-id",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-duplicate-param",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-empty-param",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-known",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-missing-param",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-reserialized",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/state-unknown",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/static-term-nested",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/term-config",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/term-post-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-healthz",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-ingest-alice-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-ingest-owner-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-sessions-owner",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-state-own",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-tenancy/tenancy-state-unknown",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-main/tls-healthz-no-cert",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-main/tls-loopback-ingest",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-main/tls-loopback-sessions",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-tenancy/tt-alice-healthz",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-tenancy/tt-ingest-alice-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-tenancy/tt-ingest-owner-session",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "tls-tenancy/tt-owner-loopback-sessions",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/alias-api-files-prefix",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/files-disabled",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/static-files-nested",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/files-alias-root-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/files-root-missing",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-main/files-bare-path",
+    "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
   }
 ]

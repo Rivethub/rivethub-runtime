@@ -28,8 +28,6 @@ use crate::options::stored_options;
 use crate::permissions::PermissionRegistry;
 use crate::process;
 use crate::process::ChildPipes;
-use crate::steering::SteeringRequest;
-use crate::steering::SteeringResponse;
 
 const EVENT_CAPACITY: usize = 128;
 const COMMAND_CAPACITY: usize = 32;
@@ -41,20 +39,10 @@ pub(crate) enum SessionCommand {
         meta: Option<acp::Meta>,
         reply: oneshot::Sender<Result<crate::context::OpenedSession, acp::Error>>,
     },
-    LoadSession {
-        native: acp::SessionId,
-        cwd: PathBuf,
-        reply: oneshot::Sender<Result<acp::LoadSessionResponse, acp::Error>>,
-    },
     Prompt {
         acp_session: acp::SessionId,
         content: Vec<acp::ContentBlock>,
         reply: oneshot::Sender<Result<acp::PromptResponse, acp::Error>>,
-    },
-    Steer {
-        acp_session: acp::SessionId,
-        content: Vec<acp::ContentBlock>,
-        reply: oneshot::Sender<Result<SteeringResponse, acp::Error>>,
     },
     Cancel {
         acp_session: acp::SessionId,
@@ -87,7 +75,6 @@ pub(crate) fn port_failure(failure: RequestFailure, method: &'static str) -> Acp
 
 pub(crate) struct AgentConnection {
     pub(crate) capabilities: acp::AgentCapabilities,
-    pub(crate) steering: bool,
     pub(crate) tasks: TaskTracker,
     pub(crate) reaped: tokio::sync::oneshot::Receiver<Result<(), std::io::Error>>,
     pub(crate) commands: mpsc::Sender<SessionCommand>,
@@ -98,12 +85,10 @@ pub(crate) struct AgentConnection {
     pub(crate) events_rx: mpsc::Receiver<SessionEvent>,
     pub(crate) exited: Arc<AtomicBool>,
     pub(crate) shutdown: CancellationToken,
-    pub(crate) context: Arc<ContextWindows>,
 }
 
 struct Connecting {
     capabilities: acp::AgentCapabilities,
-    steering: bool,
     tasks: TaskTracker,
     reaped: tokio::sync::oneshot::Receiver<Result<(), std::io::Error>>,
     commands: mpsc::Sender<SessionCommand>,
@@ -128,7 +113,6 @@ impl Connecting {
         self.context.learn(models);
         let Self {
             capabilities,
-            steering,
             tasks,
             reaped,
             commands,
@@ -139,12 +123,11 @@ impl Connecting {
             exited,
             shutdown,
             guard,
-            context,
+            context: _,
         } = self;
         drop(guard.disarm());
         AgentConnection {
             capabilities,
-            steering,
             tasks,
             reaped,
             commands,
@@ -155,7 +138,6 @@ impl Connecting {
             events_rx,
             exited,
             shutdown,
-            context,
         }
     }
 }
@@ -189,41 +171,6 @@ pub(crate) async fn start_new(
     let session_id = response.session.session_id.clone();
     let options = stored_options(response.session.config_options);
     Ok(connected.finish(session_id, options, response.models))
-}
-
-pub(crate) async fn start_loaded(
-    command: &AcpCommand,
-    working_dir: &Path,
-    native: &acp::SessionId,
-) -> Result<AgentConnection, AcpError> {
-    let mut connected = connect(command, working_dir).await?;
-    let load = request(&connected.commands, |reply| SessionCommand::LoadSession {
-        native: native.clone(),
-        cwd: working_dir.to_path_buf(),
-        reply,
-    });
-    let response = discard_replay(&mut connected.events_rx, load)
-        .await
-        .map_err(|failure| port_failure(failure, "session/load"))?;
-    let options = stored_options(response.config_options);
-    Ok(connected.finish(native.clone(), options, None))
-}
-
-async fn discard_replay<T>(
-    events: &mut mpsc::Receiver<SessionEvent>,
-    load: impl Future<Output = T>,
-) -> T {
-    tokio::pin!(load);
-    loop {
-        tokio::select! {
-            biased;
-            Some(_) = events.recv() => {}
-            response = &mut load => {
-                while events.try_recv().is_ok() {}
-                return response;
-            }
-        }
-    }
 }
 
 pub async fn initialize_handshake(
@@ -314,11 +261,9 @@ async fn connect(command: &AcpCommand, working_dir: &Path) -> Result<Connecting,
         method: "initialize",
         source,
     })?;
-    let steering = crate::steering::advertised(initialized.meta.as_ref())?;
     tasks.close();
     Ok(Connecting {
         capabilities: initialized.agent_capabilities,
-        steering,
         tasks,
         reaped,
         commands,
@@ -436,19 +381,11 @@ async fn command_loop(
                     SessionCommand::NewSession { cwd, meta, reply } => {
                         deliver(reply, new_session(&connection, cwd, meta).await);
                     }
-                    SessionCommand::LoadSession { native, cwd, reply } => {
-                        deliver(reply, load_session(&connection, native, cwd).await);
-                    }
                     SessionCommand::Prompt {
                         acp_session,
                         content,
                         reply,
                     } => spawn_request(&connection, acp::PromptRequest::new(acp_session, content), reply),
-                    SessionCommand::Steer {
-                        acp_session,
-                        content,
-                        reply,
-                    } => spawn_request(&connection, SteeringRequest::new(acp_session, content), reply),
                     SessionCommand::SetConfig {
                         acp_session,
                         config_id,
@@ -493,17 +430,6 @@ async fn new_session(
         .send_request(crate::context::OpenSession {
             request: acp::NewSessionRequest::new(cwd).meta(meta),
         })
-        .block_task()
-        .await
-}
-
-async fn load_session(
-    connection: &ConnectionTo<Agent>,
-    native: acp::SessionId,
-    cwd: PathBuf,
-) -> Result<acp::LoadSessionResponse, acp::Error> {
-    connection
-        .send_request(acp::LoadSessionRequest::new(native, cwd))
         .block_task()
         .await
 }

@@ -13,6 +13,7 @@ pub struct MemoryJobSettings {
     pub flag_after: u32,
     pub backfill_max: u32,
     pub model_slots: u32,
+    pub trash_days: u32,
     pub claim_ceiling: Option<i16>,
     pub backfill_enabled: bool,
 }
@@ -28,6 +29,7 @@ impl MemoryJobSettings {
             flag_after: kernel::flagged::FLAG_AFTER_FAILURES,
             backfill_max: 6,
             model_slots: 8,
+            trash_days: kernel::memory::TRASH_RETENTION_DAYS,
             claim_ceiling: None,
             backfill_enabled: true,
         }
@@ -48,6 +50,7 @@ impl MemoryJobSettings {
             ("RIVETHUB_FLAG_AFTER_FAILURES", &mut settings.flag_after),
             ("RIVETHUB_WIKI_BACKFILL_MAX", &mut settings.backfill_max),
             ("RIVETHUB_MODEL_SLOTS", &mut settings.model_slots),
+            ("RIVETHUB_TRASH_DAYS", &mut settings.trash_days),
         ] {
             if let Some(parsed) = number(env, name)? {
                 if parsed == 0 || parsed > i64::from(i32::MAX) {

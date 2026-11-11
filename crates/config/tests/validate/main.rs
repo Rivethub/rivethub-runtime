@@ -139,8 +139,10 @@ fn removed_provider_ids(input: &serde_yaml_ng::Value) -> Vec<(String, RemovedPro
 
 const DECISION_15_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
 
-const REMOVED_BY_DECISION_ROWS: usize = 24_395;
-const REMOVED_BY_DECISION_CASES: usize = 5_698;
+const EXPOSED_TERMINAL: &str = "an exposed terminal without TLS";
+
+const REMOVED_BY_DECISION_ROWS: usize = 34_398;
+const REMOVED_BY_DECISION_CASES: usize = 5_823;
 
 fn decision_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
     let mut replacements = Vec::new();
@@ -223,6 +225,7 @@ enum RemovedByDecision {
     EmbedKey(RemovedEmbedKey),
     GoneAutoMigrate,
     RetiredTaskKey,
+    RetiredSection,
 }
 
 fn key_warning(path: String, key: &str) -> Finding {
@@ -363,12 +366,50 @@ fn retired_task_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas)
     }
 }
 
+fn dotted<'a>(input: &'a serde_yaml_ng::Value, path: &str) -> Option<&'a serde_yaml_ng::Value> {
+    let mut parts = path.split('.');
+    let head = parts.next()?;
+    let mut value = match section_value(input, head) {
+        Some(value) => value,
+        None if head == "gateway" => section_value(input, "den")?,
+        None => return None,
+    };
+    for part in parts {
+        value = value.as_mapping()?.get(part)?;
+    }
+    Some(value)
+}
+
+fn retired_section_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas) {
+    for retired in config::validate::retired::RETIRED {
+        let Some(value) = dotted(input, retired.path)
+            .filter(|value| retired.keeps.is_empty() || !value.is_null())
+        else {
+            continue;
+        };
+        let used = retired.keeps.is_empty()
+            || value.as_mapping().is_none_or(|mapping| {
+                mapping
+                    .keys()
+                    .any(|key| key.as_str().is_none_or(|key| !retired.keeps.contains(&key)))
+            });
+        if used {
+            deltas.push(
+                retired.path,
+                RemovedByDecision::RetiredSection,
+                Finding::warning(retired.path, retired.message()),
+            );
+        }
+    }
+}
+
 fn removed_by_decision(input: &serde_yaml_ng::Value) -> RemovedDeltas {
     let mut deltas = RemovedDeltas::default();
     provider_key_deltas(input, &mut deltas);
     embed_key_deltas(input, &mut deltas);
     auto_migrate_deltas(input, &mut deltas);
     retired_task_deltas(input, &mut deltas);
+    retired_section_deltas(input, &mut deltas);
     deltas
 }
 
@@ -530,12 +571,19 @@ fn replay_case(case: &Replay) -> Result<(), String> {
             .collect(),
         None => case.contract.clone(),
     };
+    let terminal_retired = case
+        .removed
+        .paths
+        .iter()
+        .any(|removed| removed == "gateway.terminal");
     expected_findings.retain(|finding| {
-        !case
+        let retired = case
             .removed
             .paths
             .iter()
-            .any(|removed| under(&finding.path, removed))
+            .any(|removed| under(&finding.path, removed));
+        let exposed = terminal_retired && finding.message.contains(EXPOSED_TERMINAL);
+        !(retired || exposed)
     });
     expected_findings.extend(
         case.removed

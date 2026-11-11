@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
 
 use crate::enums::LogLevel;
 
@@ -15,50 +14,64 @@ pub struct LogLevelSetting {
     pub ignored: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TermMuxSetting {
-    Auto,
-    Herdr,
-    Direct,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TermMuxChoice {
-    pub setting: TermMuxSetting,
-    pub ignored: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VoiceEndpoints {
-    pub stt_url: Option<String>,
-    pub tts_url: Option<String>,
-    pub instructions: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TermSettings {
-    pub max_ptys: usize,
-    pub scrollback_bytes: usize,
-    pub detached_ttl_ms: u64,
-    pub idle_ttl_ms: u64,
-    pub exit_linger_ms: u64,
-    pub session_gc_ms: u64,
-    pub ignored: Vec<String>,
-}
-
-impl TermSettings {
-    #[must_use]
-    pub fn defaults() -> Self {
-        Self {
-            max_ptys: 4,
-            scrollback_bytes: 262_144,
-            detached_ttl_ms: 1_800_000,
-            idle_ttl_ms: 1_800_000,
-            exit_linger_ms: 60_000,
-            session_gc_ms: 0,
-            ignored: Vec::new(),
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumIter)]
+enum RetiredVariable {
+    #[strum(serialize = "RIVETHUB_HOST")]
+    RivethubHost,
+    #[strum(serialize = "RIVETOS_HOST")]
+    RivetosHost,
+    #[strum(serialize = "RIVETHUB_TERM_MUX")]
+    RivethubTermMux,
+    #[strum(serialize = "RIVETOS_TERM_MUX")]
+    RivetosTermMux,
+    #[strum(serialize = "RIVETHUB_TERM_MAX")]
+    RivethubTermMax,
+    #[strum(serialize = "RIVETOS_DEN_TERM_MAX")]
+    RivetosDenTermMax,
+    #[strum(serialize = "RIVETHUB_TERM_SCROLLBACK")]
+    RivethubTermScrollback,
+    #[strum(serialize = "RIVETOS_DEN_TERM_SCROLLBACK")]
+    RivetosDenTermScrollback,
+    #[strum(serialize = "RIVETHUB_TERM_DETACHED_TTL_MS")]
+    RivethubTermDetachedTtlMs,
+    #[strum(serialize = "RIVETOS_DEN_TERM_DETACHED_TTL_MS")]
+    RivetosDenTermDetachedTtlMs,
+    #[strum(serialize = "RIVETHUB_TERM_IDLE_TTL_MS")]
+    RivethubTermIdleTtlMs,
+    #[strum(serialize = "RIVETOS_DEN_TERM_IDLE_TTL_MS")]
+    RivetosDenTermIdleTtlMs,
+    #[strum(serialize = "RIVETHUB_TERM_EXIT_LINGER_MS")]
+    RivethubTermExitLingerMs,
+    #[strum(serialize = "RIVETOS_DEN_TERM_EXIT_LINGER_MS")]
+    RivetosDenTermExitLingerMs,
+    #[strum(serialize = "RIVETHUB_TERM_SESSION_GC_MS")]
+    RivethubTermSessionGcMs,
+    #[strum(serialize = "RIVETOS_DEN_TERM_SESSION_GC_MS")]
+    RivetosDenTermSessionGcMs,
+    #[strum(serialize = "RIVETHUB_TERM_CONFIG")]
+    RivethubTermConfig,
+    #[strum(serialize = "RIVETOS_DEN_TERM_CONFIG")]
+    RivetosDenTermConfig,
+    #[strum(serialize = "RIVETHUB_UPLOAD_MAX_BYTES")]
+    RivethubUploadMaxBytes,
+    #[strum(serialize = "RIVETOS_DEN_UPLOAD_MAX_BYTES")]
+    RivetosDenUploadMaxBytes,
+    #[strum(serialize = "RIVETHUB_UPLOAD_TTL_MS")]
+    RivethubUploadTtlMs,
+    #[strum(serialize = "RIVETOS_DEN_UPLOAD_TTL")]
+    RivetosDenUploadTtl,
+    #[strum(serialize = "RIVETHUB_VOICE_STT_URL")]
+    RivethubVoiceSttUrl,
+    #[strum(serialize = "RIVETOS_DEN_VOICE_STT_URL")]
+    RivetosDenVoiceSttUrl,
+    #[strum(serialize = "RIVETHUB_VOICE_TTS_URL")]
+    RivethubVoiceTtsUrl,
+    #[strum(serialize = "RIVETOS_DEN_VOICE_TTS_URL")]
+    RivetosDenVoiceTtsUrl,
+    #[strum(serialize = "RIVETHUB_VOICE_TTS_INSTRUCTIONS")]
+    RivethubVoiceTtsInstructions,
+    #[strum(serialize = "RIVETOS_DEN_VOICE_TTS_INSTRUCTIONS")]
+    RivetosDenVoiceTtsInstructions,
 }
 
 pub const CONFIG_PATH_VARIABLE: &str = "RIVETHUB_CONFIG";
@@ -67,28 +80,6 @@ pub const NODE_NAME_VARIABLE: &str = "RIVETHUB_NODE_NAME";
 pub const NODE_ID_VARIABLE: &str = "RIVETHUB_NODE_ID";
 pub const MODEL_RUN_VARIABLE: &str = "RIVETHUB_MODEL_RUN";
 pub const POSTGRES_URL_VARIABLE: &str = "RIVETHUB_PG_URL";
-pub const UPLOAD_MAX_BYTES_VARIABLE: &str = "RIVETHUB_UPLOAD_MAX_BYTES";
-pub const UPLOAD_TTL_MS_VARIABLE: &str = "RIVETHUB_UPLOAD_TTL_MS";
-pub const DEFAULT_UPLOAD_MAX_BYTES: u64 = 25 * 1024 * 1024;
-pub const DEFAULT_UPLOAD_TTL_MS: u64 = 86_400_000;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UploadSettings {
-    pub max_bytes: u64,
-    pub ttl: std::time::Duration,
-    pub ignored: Vec<String>,
-}
-
-impl UploadSettings {
-    #[must_use]
-    pub fn defaults() -> Self {
-        Self {
-            max_bytes: DEFAULT_UPLOAD_MAX_BYTES,
-            ttl: std::time::Duration::from_millis(DEFAULT_UPLOAD_TTL_MS),
-            ignored: Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Alias {
@@ -98,50 +89,22 @@ enum Alias {
     PostgresUrl,
     EmbedUrl,
     EmbedModel,
-    Host,
     UsersFile,
     SharedDir,
     InstallRoot,
-    TermMux,
-    TermMax,
-    TermScrollback,
-    TermDetachedTtl,
-    TermIdleTtl,
-    TermExitLinger,
-    TermSessionGc,
-    TermConfig,
-    UploadMax,
-    UploadTtl,
-    VoiceStt,
-    VoiceTts,
-    VoiceInstructions,
 }
 
 impl Alias {
-    const ALL: [Self; 23] = [
+    const ALL: [Self; 9] = [
         Self::LogLevel,
         Self::NodeName,
         Self::NodeId,
         Self::PostgresUrl,
         Self::EmbedUrl,
         Self::EmbedModel,
-        Self::Host,
         Self::UsersFile,
         Self::SharedDir,
         Self::InstallRoot,
-        Self::TermMux,
-        Self::TermMax,
-        Self::TermScrollback,
-        Self::TermDetachedTtl,
-        Self::TermIdleTtl,
-        Self::TermExitLinger,
-        Self::TermSessionGc,
-        Self::TermConfig,
-        Self::UploadMax,
-        Self::UploadTtl,
-        Self::VoiceStt,
-        Self::VoiceTts,
-        Self::VoiceInstructions,
     ];
 
     const fn names(self) -> (&'static str, &'static str) {
@@ -152,35 +115,9 @@ impl Alias {
             Self::PostgresUrl => (POSTGRES_URL_VARIABLE, "RIVETOS_PG_URL"),
             Self::EmbedUrl => ("RIVETHUB_EMBED_URL", "RIVETOS_EMBED_URL"),
             Self::EmbedModel => ("RIVETHUB_EMBED_MODEL", "RIVETOS_EMBED_MODEL"),
-            Self::Host => ("RIVETHUB_HOST", "RIVETOS_HOST"),
             Self::UsersFile => ("RIVETHUB_USERS_FILE", "RIVETOS_USERS_FILE"),
             Self::SharedDir => ("RIVETHUB_SHARED_DIR", "RIVETOS_SHARED_DIR"),
             Self::InstallRoot => ("RIVETHUB_INSTALL_ROOT", "RIVETOS_INSTALL_ROOT"),
-            Self::TermMux => ("RIVETHUB_TERM_MUX", "RIVETOS_TERM_MUX"),
-            Self::TermMax => ("RIVETHUB_TERM_MAX", "RIVETOS_DEN_TERM_MAX"),
-            Self::TermScrollback => ("RIVETHUB_TERM_SCROLLBACK", "RIVETOS_DEN_TERM_SCROLLBACK"),
-            Self::TermDetachedTtl => (
-                "RIVETHUB_TERM_DETACHED_TTL_MS",
-                "RIVETOS_DEN_TERM_DETACHED_TTL_MS",
-            ),
-            Self::TermIdleTtl => ("RIVETHUB_TERM_IDLE_TTL_MS", "RIVETOS_DEN_TERM_IDLE_TTL_MS"),
-            Self::TermExitLinger => (
-                "RIVETHUB_TERM_EXIT_LINGER_MS",
-                "RIVETOS_DEN_TERM_EXIT_LINGER_MS",
-            ),
-            Self::TermSessionGc => (
-                "RIVETHUB_TERM_SESSION_GC_MS",
-                "RIVETOS_DEN_TERM_SESSION_GC_MS",
-            ),
-            Self::TermConfig => ("RIVETHUB_TERM_CONFIG", "RIVETOS_DEN_TERM_CONFIG"),
-            Self::UploadMax => (UPLOAD_MAX_BYTES_VARIABLE, "RIVETOS_DEN_UPLOAD_MAX_BYTES"),
-            Self::UploadTtl => (UPLOAD_TTL_MS_VARIABLE, "RIVETOS_DEN_UPLOAD_TTL"),
-            Self::VoiceStt => ("RIVETHUB_VOICE_STT_URL", "RIVETOS_DEN_VOICE_STT_URL"),
-            Self::VoiceTts => ("RIVETHUB_VOICE_TTS_URL", "RIVETOS_DEN_VOICE_TTS_URL"),
-            Self::VoiceInstructions => (
-                "RIVETHUB_VOICE_TTS_INSTRUCTIONS",
-                "RIVETOS_DEN_VOICE_TTS_INSTRUCTIONS",
-            ),
         }
     }
 }
@@ -238,11 +175,6 @@ impl Environment {
         self.get(current).or_else(|| self.get(legacy))
     }
 
-    #[must_use]
-    pub fn term_roster_path(&self) -> Option<PathBuf> {
-        self.setting(Alias::TermConfig).map(PathBuf::from)
-    }
-
     pub fn home(&self) -> Option<&str> {
         self.text("HOME")
     }
@@ -295,12 +227,6 @@ impl Environment {
         self.setting(Alias::EmbedModel).map(str::to_owned)
     }
 
-    pub(crate) fn advertised_host(&self) -> Option<String> {
-        self.setting(Alias::Host)
-            .map(str::to_owned)
-            .or_else(|| self.trimmed("HOSTNAME").map(str::to_owned))
-    }
-
     pub(crate) fn configured_shared_dir(&self) -> Option<&str> {
         self.setting(Alias::SharedDir)
     }
@@ -317,121 +243,10 @@ impl Environment {
         self.trimmed(legacy).map(|value| (legacy, value))
     }
 
-    #[must_use]
-    pub fn voice_endpoints(&self) -> VoiceEndpoints {
-        VoiceEndpoints {
-            stt_url: self.setting(Alias::VoiceStt).map(str::to_owned),
-            tts_url: self.setting(Alias::VoiceTts).map(str::to_owned),
-            instructions: self.setting(Alias::VoiceInstructions).map(str::to_owned),
-        }
-    }
-
     fn trimmed(&self, name: &str) -> Option<&str> {
         self.text(name)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-    }
-
-    pub fn term_mux(&self) -> Option<&str> {
-        match self.setting(Alias::TermMux) {
-            Some("tmux") | None => None,
-            Some(value) => Some(value),
-        }
-    }
-
-    pub fn term_mux_choice(&self) -> TermMuxChoice {
-        match self.setting(Alias::TermMux) {
-            None | Some("tmux") => TermMuxChoice {
-                setting: TermMuxSetting::Auto,
-                ignored: None,
-            },
-            Some("herdr") => TermMuxChoice {
-                setting: TermMuxSetting::Herdr,
-                ignored: None,
-            },
-            Some("none") => TermMuxChoice {
-                setting: TermMuxSetting::Direct,
-                ignored: None,
-            },
-            Some(value) => TermMuxChoice {
-                setting: TermMuxSetting::Direct,
-                ignored: Some(value.to_owned()),
-            },
-        }
-    }
-
-    pub fn term_settings(&self) -> TermSettings {
-        let mut settings = TermSettings::defaults();
-        let mut ignored = Vec::new();
-        self.apply_term(Alias::TermMax, &mut settings.max_ptys, &mut ignored);
-        self.apply_term(
-            Alias::TermScrollback,
-            &mut settings.scrollback_bytes,
-            &mut ignored,
-        );
-        self.apply_term(
-            Alias::TermDetachedTtl,
-            &mut settings.detached_ttl_ms,
-            &mut ignored,
-        );
-        self.apply_term(Alias::TermIdleTtl, &mut settings.idle_ttl_ms, &mut ignored);
-        self.apply_term(
-            Alias::TermExitLinger,
-            &mut settings.exit_linger_ms,
-            &mut ignored,
-        );
-        self.apply_term(
-            Alias::TermSessionGc,
-            &mut settings.session_gc_ms,
-            &mut ignored,
-        );
-        settings.ignored = ignored;
-        settings
-    }
-
-    #[must_use]
-    pub fn upload_settings(&self) -> UploadSettings {
-        let mut settings = UploadSettings::defaults();
-        let mut ignored = Vec::new();
-        self.apply_positive(Alias::UploadMax, &mut settings.max_bytes, &mut ignored);
-        let mut ttl_ms = DEFAULT_UPLOAD_TTL_MS;
-        self.apply_positive(Alias::UploadTtl, &mut ttl_ms, &mut ignored);
-        settings.ttl = std::time::Duration::from_millis(ttl_ms);
-        settings.ignored = ignored;
-        settings
-    }
-
-    fn apply_positive(&self, alias: Alias, slot: &mut u64, ignored: &mut Vec<String>) {
-        let (current, _) = alias.names();
-        let Some(text) = self.setting(alias) else {
-            return;
-        };
-        match text.parse::<u64>() {
-            Ok(value) if value > 0 => *slot = value,
-            Ok(_) => ignored.push(format!("{current}={text}")),
-            Err(_error) => ignored.push(format!("{current}={text}")),
-        }
-    }
-
-    fn apply_term<T>(&self, alias: Alias, slot: &mut T, ignored: &mut Vec<String>)
-    where
-        T: std::str::FromStr + Copy,
-    {
-        match self.term_value::<T>(alias) {
-            Ok(Some(value)) => *slot = value,
-            Ok(None) => {}
-            Err(entry) => ignored.push(entry),
-        }
-    }
-
-    fn term_value<T: std::str::FromStr>(&self, alias: Alias) -> Result<Option<T>, String> {
-        let (current, _) = alias.names();
-        let Some(text) = self.setting(alias) else {
-            return Ok(None);
-        };
-        text.parse::<T>()
-            .map(Some)
-            .map_err(|_| format!("{current}={text}"))
     }
 
     pub fn legacy_notice(&self, new_name: &str, legacy_name: &str) -> Option<String> {
@@ -482,10 +297,11 @@ impl Environment {
                 }
             }
         }
-        for name in ["RIVETHUB_TERM_MUX", "RIVETOS_TERM_MUX"] {
-            if self.text(name) == Some("tmux") {
+        for retired in <RetiredVariable as strum::IntoEnumIterator>::iter() {
+            let name = retired.to_string();
+            if self.text(&name).is_some() {
                 warnings.push(format!(
-                    "{name}=tmux is ignored — herdr is the only terminal multiplexer and the value is treated as unset."
+                    "{name} is no longer used — rh runs no mesh, terminals, uploads or voice, and the variable is ignored."
                 ));
             }
         }

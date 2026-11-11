@@ -3,7 +3,6 @@ use crate::session_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{TimeDelta, Utc};
@@ -16,7 +15,6 @@ use kernel::transcript::{
     ListLimit, SessionLister, SessionRenameError, StoreSession, StoreTranscript, ToolOutputRead,
     TranscriptRead, TranscriptReaderError, TranscriptWindow,
 };
-use session_support::harness::Harness;
 use session_support::{Fixture, http, user};
 use testkit::FakeSessionDeletion;
 use wire::gateway::GatewayError;
@@ -24,19 +22,17 @@ use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteResult, SessionDeleteResults, SessionDeleted,
     SessionTrashList, SessionTrashReason,
 };
-use wire::harness::{
-    HarnessId, HarnessSessionList, HarnessSessionSummary, HarnessStoreSessionList,
-};
+use wire::harness::{HarnessId, HarnessSessionList};
 use wire::session_id::{SessionId, encode_segment};
 
 const ALICE: Option<&str> = Some("alice-test-token");
 
 #[derive(Default)]
-struct Stores {
-    rows: Vec<StoreSession>,
-    hidden: Vec<StoreSession>,
-    transcripts: BTreeMap<String, Vec<HarnessTranscriptTurn>>,
-    unreadable: BTreeSet<String>,
+pub(crate) struct Stores {
+    pub(crate) rows: Vec<StoreSession>,
+    pub(crate) hidden: Vec<StoreSession>,
+    pub(crate) transcripts: BTreeMap<String, Vec<HarnessTranscriptTurn>>,
+    pub(crate) unreadable: BTreeSet<String>,
 }
 
 #[async_trait]
@@ -114,32 +110,22 @@ impl SessionLister for Stores {
 
 struct Setup {
     fixture: Fixture,
-    harness: Arc<Harness>,
     deletion: Arc<FakeSessionDeletion>,
     _state: tempfile::TempDir,
 }
 
-async fn setup(owners: &str, stores: Stores, deletion: FakeSessionDeletion) -> Setup {
+fn setup(owners: &str, stores: Stores, deletion: FakeSessionDeletion) -> Setup {
     let state = tempfile::tempdir().expect("state");
     let path = owners_file(state.path());
     std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
     std::fs::write(&path, owners).expect("owners");
-    let registry = SessionRegistry::new(Duration::from_secs(1))
+    let registry = SessionRegistry::default()
         .with_owners_file(path)
         .with_node_owner(user("owner"));
-    let harness = Arc::new(Harness::offering(&[HarnessId::ClaudeCode]));
     let deletion = Arc::new(deletion);
-    let fixture = Fixture::with_deletion(
-        Some(harness.clone()),
-        registry,
-        Some(Arc::new(stores)),
-        &[],
-        deletion.clone(),
-    )
-    .await;
+    let fixture = Fixture::with_deletion(registry, Some(Arc::new(stores)), deletion.clone());
     Setup {
         fixture,
-        harness,
         deletion,
         _state: state,
     }
@@ -160,13 +146,6 @@ async fn call(
         token,
     )
     .await
-}
-
-async fn mid_turn(setup: &Setup, session: &SessionId) {
-    let path = format!("/api/harness-sessions/{session}/turn");
-    let (status, body) = call(setup, "POST", &path, r#"{"text":"hi"}"#, None).await;
-    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    setup.harness.traced("prompt:hi").await;
 }
 
 fn parsed<T: serde::de::DeserializeOwned>(body: &[u8]) -> T {
@@ -238,10 +217,10 @@ fn segment(native: &str) -> String {
 }
 
 fn listed_ids(body: &[u8]) -> Vec<String> {
-    parsed::<HarnessStoreSessionList>(body)
+    parsed::<HarnessSessionList>(body)
         .sessions
         .into_iter()
-        .map(|row| row.id)
+        .map(|row| row.session_id.native().to_owned())
         .collect()
 }
 
@@ -252,8 +231,8 @@ async fn deleting_a_session_tombstones_it_and_hides_it_from_both_lists() {
         ..Stores::default()
     };
     let deletion =
-        FakeSessionDeletion::default().with_activity(&claude("s-gone"), remembered(2, Some("ok")));
-    let setup = setup("{}", stores, deletion).await;
+        FakeSessionDeletion::default().with_activity(claude("s-gone"), remembered(2, Some("ok")));
+    let setup = setup("{}", stores, deletion);
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -268,10 +247,17 @@ async fn deleting_a_session_tombstones_it_and_hides_it_from_both_lists() {
         r#"{"ok":true,"session":"claude-code:s-gone","conversations":1,"messages":3,"summaries":0}"#
     );
     assert_eq!(
-        setup.deletion.deleted_by(&claude("s-gone")),
+        setup.deletion.deleted_by(claude("s-gone")),
         Some(Some("owner".to_owned()))
     );
-    let (_, body) = call(&setup, "GET", "/api/terminal/harness-sessions", "", None).await;
+    let (_, body) = call(
+        &setup,
+        "GET",
+        "/api/harnesses/claude-code/sessions",
+        "",
+        None,
+    )
+    .await;
     assert_eq!(listed_ids(&body), ["s-keep"]);
     let (_, body) = call(
         &setup,
@@ -295,7 +281,7 @@ async fn a_percent_encoded_canonical_id_is_accepted() {
         rows: vec![row("s-plain", hours_ago(2))],
         ..Stores::default()
     };
-    let setup = setup("{}", stores, FakeSessionDeletion::default()).await;
+    let setup = setup("{}", stores, FakeSessionDeletion::default());
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -305,43 +291,10 @@ async fn a_percent_encoded_canonical_id_is_accepted() {
     )
     .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(parsed::<SessionDeleted>(&body).session, claude("s-plain"));
-}
-
-#[tokio::test]
-async fn a_session_mid_turn_is_refused_and_nothing_is_removed() {
-    let setup = setup("{}", Stores::default(), FakeSessionDeletion::default()).await;
-    let (status, body) = call(
-        &setup,
-        "POST",
-        "/api/harness-sessions",
-        r#"{"harness":"claude-code"}"#,
-        None,
-    )
-    .await;
-    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
-    let live = parsed::<HarnessSessionSummary>(&body).session_id;
-    mid_turn(&setup, &live).await;
-    let (status, body) = call(
-        &setup,
-        "DELETE",
-        &format!("/api/sessions/{}", encode_segment(&live)),
-        "",
-        None,
-    )
-    .await;
-    assert_eq!(status, 409);
-    assert_eq!(parsed::<GatewayError>(&body).error, "session is live");
-    assert_eq!(setup.deletion.deleted_by(&live), None);
-    let (_, body) = call(
-        &setup,
-        "GET",
-        "/api/harnesses/claude-code/sessions",
-        "",
-        None,
-    )
-    .await;
-    assert_eq!(parsed::<HarnessSessionList>(&body).sessions.len(), 1);
+    assert_eq!(
+        parsed::<SessionDeleted>(&body).session,
+        claude("s-plain").into()
+    );
 }
 
 #[tokio::test]
@@ -354,8 +307,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
         r#"{"s-owned":"owner"}"#,
         stores,
         FakeSessionDeletion::default(),
-    )
-    .await;
+    );
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -366,7 +318,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
     .await;
     assert_eq!(status, 404);
     assert_eq!(parsed::<GatewayError>(&body).error, "not found");
-    assert_eq!(setup.deletion.deleted_by(&claude("s-owned")), None);
+    assert_eq!(setup.deletion.deleted_by(claude("s-owned")), None);
     let (status, _) = call(
         &setup,
         "DELETE",
@@ -376,7 +328,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
     )
     .await;
     assert_eq!(status, 404);
-    assert_eq!(setup.deletion.deleted_by(&claude("s-nowhere")), None);
+    assert_eq!(setup.deletion.deleted_by(claude("s-nowhere")), None);
 }
 
 #[tokio::test]
@@ -389,8 +341,7 @@ async fn the_bulk_endpoint_answers_per_session() {
         r#"{"s-mine":"alice","s-theirs":"owner"}"#,
         stores,
         FakeSessionDeletion::default(),
-    )
-    .await;
+    );
     let (status, body) = call(
         &setup,
         "POST",
@@ -421,67 +372,6 @@ async fn the_bulk_endpoint_answers_per_session() {
     )
     .await;
     assert_eq!(status, 400);
-}
-
-#[tokio::test]
-async fn the_bulk_endpoint_refuses_a_live_session_without_failing_the_batch() {
-    let stores = Stores {
-        rows: vec![row("s-idle", hours_ago(2))],
-        ..Stores::default()
-    };
-    let setup = setup("{}", stores, FakeSessionDeletion::default()).await;
-    let (_, body) = call(
-        &setup,
-        "POST",
-        "/api/harness-sessions",
-        r#"{"harness":"claude-code"}"#,
-        None,
-    )
-    .await;
-    let live = parsed::<HarnessSessionSummary>(&body).session_id;
-    mid_turn(&setup, &live).await;
-    let request = format!(r#"{{"sessions":["{live}","claude-code:s-idle"]}}"#);
-    let (status, body) = call(&setup, "POST", "/api/sessions/delete", &request, None).await;
-    assert_eq!(status, 200);
-    let results = parsed::<SessionDeleteResults>(&body).results;
-    assert!(matches!(
-        results.first(),
-        Some(SessionDeleteResult::Refused(refused)) if refused.error == SessionDeleteError::Live
-    ));
-    assert!(matches!(
-        results.get(1),
-        Some(SessionDeleteResult::Deleted(_))
-    ));
-    assert_eq!(setup.deletion.deleted_by(&live), None);
-}
-
-#[tokio::test]
-async fn a_chat_at_rest_is_ended_and_deleted() {
-    let stores = Stores {
-        rows: vec![row("s-chat", hours_ago(2))],
-        ..Stores::default()
-    };
-    let setup = setup("{}", stores, FakeSessionDeletion::default()).await;
-    let chat = claude("s-chat");
-    mid_turn(&setup, &chat).await;
-    setup.harness.finish.add_permits(1);
-    let request = format!(r#"{{"sessions":["{chat}"]}}"#);
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let (_, body) = call(&setup, "POST", "/api/sessions/delete", &request, None).await;
-            match parsed::<SessionDeleteResults>(&body).results.first() {
-                Some(SessionDeleteResult::Deleted(_)) => return,
-                Some(SessionDeleteResult::Refused(refused))
-                    if refused.error == SessionDeleteError::Live => {}
-                other => panic!("{other:?}"),
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the chat comes to rest and is deleted");
-    setup.harness.traced("release").await;
-    assert!(setup.deletion.deleted_by(&chat).is_some());
 }
 
 fn tool_turn() -> HarnessTranscriptTurn {
@@ -530,16 +420,16 @@ fn junk_stores() -> Stores {
 
 fn junk_memory() -> FakeSessionDeletion {
     FakeSessionDeletion::default()
-        .with_activity(&claude("t-hi"), remembered(1, Some("Hello!")))
+        .with_activity(claude("t-hi"), remembered(1, Some("Hello!")))
         .with_activity(
-            &claude("t-placed"),
+            claude("t-placed"),
             SessionActivity {
                 placed: true,
                 ..remembered(1, Some("Hello!"))
             },
         )
         .with_activity(
-            &claude("t-cited"),
+            claude("t-cited"),
             SessionActivity {
                 cited: true,
                 ..remembered(1, Some("Hello!"))
@@ -549,7 +439,7 @@ fn junk_memory() -> FakeSessionDeletion {
 
 #[tokio::test]
 async fn trash_lists_only_obvious_junk() {
-    let setup = setup("{}", junk_stores(), junk_memory()).await;
+    let setup = setup("{}", junk_stores(), junk_memory());
     let (status, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let candidates = parsed::<SessionTrashList>(&body).candidates;
@@ -604,13 +494,13 @@ async fn trash_lists_a_remembered_session_the_list_hides_until_it_is_deleted() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default().with_activity(
-        &claude("t-discovery"),
+        claude("t-discovery"),
         SessionActivity {
             conversations: 1,
             ..SessionActivity::default()
         },
     );
-    let setup = setup("{}", stores, deletion).await;
+    let setup = setup("{}", stores, deletion);
     let (status, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let found: Vec<(String, SessionTrashReason)> = parsed::<SessionTrashList>(&body)
@@ -637,7 +527,7 @@ async fn trash_skips_tombstoned_live_and_unseen_sessions() {
     };
     let deletion = FakeSessionDeletion::default();
     deletion.tombstone(&claude("t-gone"), Utc::now());
-    let setup = setup(r#"{"t-alice":"alice"}"#, stores, deletion).await;
+    let setup = setup(r#"{"t-alice":"alice"}"#, stores, deletion);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", ALICE).await;
@@ -656,13 +546,13 @@ async fn memory_tool_rows_keep_a_session_out_of_the_trash() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default().with_activity(
-        &claude("t-mem-tool"),
+        claude("t-mem-tool"),
         SessionActivity {
             tool_rows: 1,
             ..remembered(1, None)
         },
     );
-    let setup = setup("{}", stores, deletion).await;
+    let setup = setup("{}", stores, deletion);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
 }
@@ -680,8 +570,15 @@ async fn a_deleted_session_resumed_in_its_harness_is_listed_again() {
     let deleted_at = Utc::now() - TimeDelta::hours(1);
     deletion.tombstone(&claude("s-resumed"), deleted_at);
     deletion.tombstone(&claude("s-gone"), deleted_at);
-    let setup = setup("{}", stores, deletion).await;
-    let (_, body) = call(&setup, "GET", "/api/terminal/harness-sessions", "", None).await;
+    let setup = setup("{}", stores, deletion);
+    let (_, body) = call(
+        &setup,
+        "GET",
+        "/api/harnesses/claude-code/sessions",
+        "",
+        None,
+    )
+    .await;
     assert_eq!(listed_ids(&body), ["s-resumed"]);
     let (_, body) = call(
         &setup,
@@ -712,7 +609,7 @@ async fn a_kept_session_leaves_the_trash_until_it_is_used_again() {
     };
     let deletion = FakeSessionDeletion::default();
     deletion.keep(&claude("t-used-since"), Utc::now() - TimeDelta::hours(3));
-    let setup = setup("{}", stores, deletion).await;
+    let setup = setup("{}", stores, deletion);
     let trash = |body: &[u8]| -> Vec<String> {
         parsed::<SessionTrashList>(body)
             .candidates

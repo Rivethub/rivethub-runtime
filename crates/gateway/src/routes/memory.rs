@@ -88,6 +88,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             routing::get(super::tidy::upkeep).fallback(super::method_not_allowed),
         )
         .route(
+            "/models",
+            routing::get(super::memory_models::list).fallback(super::method_not_allowed),
+        )
+        .route(
             "/flagged",
             routing::get(super::flagged::list).fallback(super::method_not_allowed),
         )
@@ -194,6 +198,7 @@ async fn search(
         .q
         .filter(|q| !q.is_empty())
         .ok_or_else(|| ApiError::BadRequest("q required".to_owned()))?;
+    gateway.count(crate::account::UsageEvent::Search);
     let scope = params.scope.map_or(MemoryScope::Both, ScopeParam::get);
     let query = SearchQuery {
         since: params.since.map(SinceParam::get),

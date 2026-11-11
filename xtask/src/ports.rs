@@ -47,17 +47,13 @@ fn scoped(rel: &str) -> bool {
         name.to_str(),
         Some(
             "gateway"
-                | "agent-loop"
                 | "workers"
-                | "tasks"
                 | "mcp"
                 | "capture"
                 | "providers"
                 | "harness-acp"
-                | "terminal"
                 | "memory-postgres"
                 | "memory-sqlite"
-                | "pki"
         )
     )
 }

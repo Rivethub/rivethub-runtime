@@ -275,7 +275,7 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
                FROM ros_messages m \
               WHERE m.conversation_id = ?1 \
                 AND NOT EXISTS (SELECT 1 FROM ros_summary_sources s WHERE s.message_id = m.id) \
-              ORDER BY m.created_at, m.id",
+              ORDER BY m.created_at, m.rowid",
         )
         .map_err(SqliteError::query("load messages"))?;
     let rows = statement

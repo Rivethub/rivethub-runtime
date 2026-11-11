@@ -58,7 +58,7 @@ Tests drive `rh start` with fake roots: a test binary that sleeps, crashes or ig
 
 ## `rh local`
 
-`Config::load` with `Profile::Node`, and `rh config validate`, still require `runtime`, `agents`, and `providers`. `rh local` does not invent those values. When no config exists it writes `memory.backend`, `memory.sqlite.path`, and the gateway bind, then loads that file through `Config::load` with `Profile::Standalone`, which does not require those sections.
+`Config::load` with `Profile::Node` still requires `runtime`, `agents`, and `providers`; `rh config validate`, `rh status` and `rh doctor` also accept a SQLite config that passes with `Profile::Standalone`. `rh local` does not invent those values. When no config exists it writes `memory.backend`, `memory.sqlite.path`, and the gateway bind, then loads that file through `Config::load` with `Profile::Standalone`, which does not require those sections.
 
 `rh local [--port <n>] [--no-lan]` runs one process: the gateway, the SQLite worker roles, and MCP when `transports.mcp` has a host or socket. It claims the state directory, runs `migrate::sqlite` once, and opens one SQLite store. SIGTERM and SIGINT drain that process and exit 0. A config or migrate error exits 1. `--port` defaults to 5174. `--no-lan` binds `127.0.0.1`; otherwise the written bind is `0.0.0.0`. Flags on an existing file apply in memory and do not rewrite it.
 

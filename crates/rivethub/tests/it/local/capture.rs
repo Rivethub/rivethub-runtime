@@ -165,7 +165,7 @@ async fn the_capture_hook_command_posts_a_held_prompt_to_the_local_gateway() -> 
         [format!("claude-code:{HOOK_SESSION}")],
         |row| row.get(0),
     )?;
-    assert_eq!(content, "deploy with [REDACTED:bearer]");
+    assert_eq!(content, "deploy with Bearer [REDACTED:bearer]");
     let log = std::fs::read_to_string(home.path().join(".rivethub").join("claude-capture.log"))?;
     assert!(log.contains("Stop"), "{log}");
     Ok(())

@@ -197,6 +197,23 @@ pub async fn search(
     let outcome = store
         .search(query.clone().resolve_window(Utc::now(), &chrono::Local))
         .await?;
+    let hits = hit_context(store, &outcome).await?;
+    Ok(crate::text(crate::render_search::search(
+        &query,
+        &outcome,
+        &hits,
+        expand,
+        crate::render_search::Clock {
+            now: Utc::now(),
+            zone,
+        },
+    )?))
+}
+
+async fn hit_context(
+    store: &dyn MemoryStore,
+    outcome: &kernel::memory::SearchOutcome,
+) -> Result<crate::render_search::HitContext, Error> {
     let mut messages = std::collections::BTreeMap::new();
     for hit in outcome
         .results
@@ -208,32 +225,49 @@ pub async fn search(
         })?;
         messages.insert(hit.id.clone(), entry);
     }
-    let tags = if messages.is_empty() {
+    let sessions: std::collections::BTreeSet<String> = messages
+        .values()
+        .map(|entry| entry.session_id.clone())
+        .collect();
+    let tags = if sessions.is_empty() {
         std::collections::BTreeMap::new()
     } else {
         store
             .lookup_tags(kernel::memory::TagLookup {
-                session_keys: messages
-                    .values()
-                    .map(|entry| entry.session_id.clone())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
+                session_keys: sessions.iter().cloned().collect(),
                 states: vec![kernel::memory::TagState::Accepted],
             })
             .await?
     };
-    Ok(crate::text(crate::render_search::search(
-        &query,
-        &outcome,
-        &messages,
-        &tags,
-        expand,
-        crate::render_search::Clock {
-            now: Utc::now(),
-            zone,
-        },
-    )?))
+    let imported: Vec<String> = sessions
+        .into_iter()
+        .filter(|session_key| wire::capture::is_imported_session(session_key))
+        .collect();
+    let origins = if imported.is_empty() {
+        std::collections::BTreeMap::new()
+    } else {
+        store
+            .lookup_origins(imported)
+            .await?
+            .into_iter()
+            .filter_map(|(session_key, origin)| {
+                #[cfg_attr(
+                    dylint_lib = "rr_lints",
+                    expect(
+                        fallback,
+                        reason = "CONTRACT B6 (note 135): a hit whose origin does not parse has no tag and the search still succeeds"
+                    )
+                )]
+                let origin = origin.deserialize::<wire::capture::SessionOrigin>().ok();
+                origin.map(|origin| (session_key, origin))
+            })
+            .collect()
+    };
+    Ok(crate::render_search::HitContext {
+        messages,
+        tags,
+        origins,
+    })
 }
 
 pub async fn browse(

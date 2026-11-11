@@ -11,6 +11,42 @@ use crate::search::hit_uuids;
 
 const MESSAGE_CONTENTS: &str = "SELECT id, content FROM rh_messages WHERE id = ANY($1)";
 const SUMMARY_CONTENTS: &str = "SELECT id, content FROM rh_summaries WHERE id = ANY($1)";
+const TOOL_OUTPUTS: &str = "SELECT id, left(tool_result, 200000) AS content FROM rh_messages \
+     WHERE id = ANY($1) AND tool_result IS NOT NULL AND length(tool_result) > 0";
+
+const EXCERPT_CHARS: usize = 1500;
+
+pub(crate) fn excerpt(output: &str, query: &str) -> String {
+    let lowered = output.to_lowercase();
+    let mut terms: Vec<String> = query
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|term| term.chars().count() >= 3)
+        .collect();
+    terms.sort_by_key(|term| std::cmp::Reverse(term.len()));
+    let found = terms
+        .iter()
+        .find_map(|term| lowered.find(term.as_str()))
+        .filter(|_| lowered.len() == output.len());
+    let total = output.chars().count();
+    let start = found.map_or(0, |byte| {
+        let at = output.get(..byte).map_or(0, |head| head.chars().count());
+        at.saturating_sub(EXCERPT_CHARS / 3)
+    });
+    let end = (start + EXCERPT_CHARS).min(total);
+    let mut text = String::new();
+    if start > 0 {
+        text.push('…');
+    }
+    text.extend(output.chars().skip(start).take(end - start));
+    if end < total {
+        text.push('…');
+    }
+    text
+}
 const CHUNK_CONTENTS: &str = "SELECT c.message_id AS id, c.idx, c.content FROM rh_message_chunks c \
      JOIN unnest($1::uuid[], $2::int4[]) AS hit(message_id, idx) \
        ON hit.message_id = c.message_id AND hit.idx = c.idx";
@@ -59,12 +95,25 @@ struct ChunkRow {
 }
 
 impl crate::PostgresMemory {
-    pub(crate) async fn fill_contents(&self, hits: &mut Vec<MemorySearchHit>) -> Result<(), Error> {
-        let (mut messages, mut summaries, mut chunks, titles) = tokio::try_join!(
+    pub(crate) async fn fill_contents(
+        &self,
+        hits: &mut Vec<MemorySearchHit>,
+        query: &str,
+    ) -> Result<(), Error> {
+        let unchunked: Vec<MemorySearchHit> = hits
+            .iter()
+            .filter(|hit| hit.chunk.is_none())
+            .cloned()
+            .collect();
+        let (mut messages, mut summaries, mut chunks, titles, outputs) = tokio::try_join!(
             self.contents(MESSAGE_CONTENTS, hit_uuids(hits, MemoryHitSource::Message)?),
             self.contents(SUMMARY_CONTENTS, hit_uuids(hits, MemoryHitSource::Summary)?),
             self.chunk_contents(hits),
             self.hit_titles(hits),
+            self.contents(
+                TOOL_OUTPUTS,
+                hit_uuids(&unchunked, MemoryHitSource::Message)?
+            ),
         )?;
         hits.retain_mut(|hit| {
             hit.title = hit
@@ -81,7 +130,17 @@ impl crate::PostgresMemory {
                 MemoryHitSource::Message => messages.remove(&hit.id),
                 MemoryHitSource::Summary => summaries.remove(&hit.id),
             };
-            found.map(|content| hit.content = content).is_some()
+            let output = (hit.chunk.is_none() && hit.source == MemoryHitSource::Message)
+                .then(|| outputs.get(&hit.id))
+                .flatten();
+            found
+                .map(|content| {
+                    hit.content = match output {
+                        Some(output) => format!("{content}\n{}", excerpt(output, query)),
+                        None => content,
+                    };
+                })
+                .is_some()
         });
         Ok(())
     }
@@ -159,5 +218,37 @@ impl crate::PostgresMemory {
             .into_iter()
             .map(|row| (row.id.to_string(), row.content))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EXCERPT_CHARS;
+    use super::excerpt;
+
+    #[test]
+    fn an_excerpt_centres_on_the_most_specific_term_it_finds() {
+        let output = format!(
+            "{}RETRY_WIDGET_STAGES=1 retried{}",
+            "x ".repeat(2000),
+            " y".repeat(2000)
+        );
+        let text = excerpt(&output, "what env var: RETRY_WIDGET_STAGES?");
+        assert!(text.contains("RETRY_WIDGET_STAGES=1 retried"), "{text}");
+        assert!(text.starts_with('…') && text.ends_with('…'));
+        assert!(text.chars().count() <= EXCERPT_CHARS + 2);
+    }
+
+    #[test]
+    fn an_excerpt_falls_back_to_the_head_and_keeps_short_output_whole() {
+        let output = format!("head line\n{}", "z".repeat(3000));
+        assert!(excerpt(&output, "nothing here matches").starts_with("head line"));
+        assert_eq!(excerpt("ok", "anything"), "ok");
+    }
+
+    #[test]
+    fn an_excerpt_never_splits_a_character() {
+        let output = format!("{}needle{}", "é".repeat(1200), "ü".repeat(1200));
+        assert!(excerpt(&output, "needle").contains("needle"));
     }
 }

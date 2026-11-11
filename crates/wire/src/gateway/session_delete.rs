@@ -2,13 +2,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::harness::HarnessId;
-use crate::session_id::SessionId;
+use crate::session_id::{SessionId, SessionKey};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDeleted {
     pub ok: bool,
-    pub session: SessionId,
+    pub session: SessionKey,
     pub conversations: u64,
     pub messages: u64,
     pub summaries: u64,
@@ -17,13 +17,11 @@ pub struct SessionDeleted {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDeleteRequest {
-    pub sessions: Vec<SessionId>,
+    pub sessions: Vec<SessionKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SessionDeleteError {
-    #[serde(rename = "session is live")]
-    Live,
     #[serde(rename = "not found")]
     NotFound,
     #[serde(rename = "delete failed")]
@@ -33,7 +31,7 @@ pub enum SessionDeleteError {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDeleteRefused {
-    pub session: SessionId,
+    pub session: SessionKey,
     pub ok: bool,
     pub error: SessionDeleteError,
 }

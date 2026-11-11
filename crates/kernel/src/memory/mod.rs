@@ -18,12 +18,15 @@ use crate::owner::Owner;
 pub mod budget;
 mod capture;
 mod deletion;
+mod digest;
 mod embed;
 mod export;
 mod model_title;
 mod origin;
 mod records;
 mod search;
+mod sessions;
+pub mod share;
 mod suggest;
 mod summary;
 mod tags;
@@ -39,11 +42,14 @@ pub use deletion::Speaker;
 pub use deletion::SpokenTurn;
 pub use deletion::TOMBSTONE_PURGE_BATCH;
 pub use deletion::TRASH_MESSAGES_MAX;
+pub use deletion::TRASH_PURGE_BATCH;
+pub use deletion::TRASH_RETENTION_DAYS;
 pub use deletion::TrashReason;
 pub use deletion::TrashSignals;
 pub use deletion::TrashVerdict;
 pub use deletion::trash_verdict;
 pub use deletion::used_since;
+pub use digest::SessionDigest;
 pub use embed::EmbedModelMismatch;
 pub use embed::EmbedTable;
 pub use embed::EmbedTarget;
@@ -69,6 +75,20 @@ pub use records::{
 };
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
+pub use sessions::ImportOrigin;
+pub use sessions::MemoryState;
+pub use sessions::SESSION_PAGE_DEFAULT;
+pub use sessions::SESSION_PAGE_MAX;
+pub use sessions::SessionCatalog;
+pub use sessions::SessionCursor;
+pub use sessions::SessionPage;
+pub use sessions::SessionQuery;
+pub use sessions::SessionRecord;
+pub use sessions::SessionTopic;
+pub use sessions::SessionView;
+pub use sessions::memory_state;
+pub use sessions::session_title;
+pub use sessions::snippet;
 pub use suggest::TagJobContext;
 pub use suggest::TagOnEntity;
 pub use suggest::TagSuggestKind;
@@ -462,6 +482,12 @@ pub trait MemoryStore: Send + Sync {
 
     async fn stats(&self) -> Result<MemoryStatsResponse, MemoryStoreError>;
 
+    async fn capture_activity(
+        &self,
+    ) -> Result<Vec<crate::harness_setup::CaptureActivity>, MemoryStoreError> {
+        Ok(Vec::new())
+    }
+
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError>;
 
     async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError>;
@@ -533,6 +559,11 @@ pub trait MemoryStore: Send + Sync {
         &self,
         lookup: TagLookup,
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError>;
+
+    async fn lookup_origins(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, values::JsonObject>, MemoryStoreError>;
 
     async fn upsert_tag_taxonomy(
         &self,

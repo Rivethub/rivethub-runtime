@@ -81,6 +81,7 @@ pub struct SearchOutcome {
     pub hits: Vec<MemorySearchHit>,
     pub degraded: Option<String>,
     pub fallback: Option<MemoryFallback>,
+    pub literal_skipped: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -284,7 +285,7 @@ impl crate::PostgresMemory {
                     .await
             }
         }?;
-        self.fill_contents(&mut outcome.hits).await?;
+        self.fill_contents(&mut outcome.hits, &options.text).await?;
         Ok(outcome)
     }
 
@@ -308,6 +309,7 @@ impl crate::PostgresMemory {
                     hits,
                     degraded: None,
                     fallback: None,
+                    literal_skipped: false,
                 })
             }
             EmbedAttempt::Failed {
@@ -342,6 +344,7 @@ impl crate::PostgresMemory {
                 hits,
                 degraded: None,
                 fallback: None,
+                literal_skipped: false,
             });
         }
         let mut degraded = None;
@@ -371,11 +374,13 @@ impl crate::PostgresMemory {
         let rows = self
             .arm_rows(options, ArmKind::FtsExplicit, tag_filter, query.as_deref())
             .await?;
+        let mut literal_skipped = false;
         let hits = if rows.is_empty() && should_trigram_fallback(&options.text) {
-            let recovered = said_first(
-                self.arm_rows(options, ArmKind::Trigram, tag_filter, query.as_deref())
-                    .await?,
-            );
+            let recovered = self
+                .optional_literal_rows(options, tag_filter, query.as_deref())
+                .await?;
+            literal_skipped = recovered.is_none();
+            let recovered = said_first(recovered.unwrap_or_default());
             let recovered_nonempty = !recovered.is_empty();
             let mut converted = finish_rows(recovered, options.limit)?;
             if recovered_nonempty {
@@ -392,6 +397,7 @@ impl crate::PostgresMemory {
             hits,
             degraded,
             fallback: None,
+            literal_skipped,
         })
     }
 
@@ -405,7 +411,7 @@ impl crate::PostgresMemory {
         let literal = literal_scan(&options.text);
         let trigram = async {
             if literal {
-                self.arm_rows(options, ArmKind::Trigram, tag_filter, query)
+                self.optional_literal_rows(options, tag_filter, query)
                     .await
                     .map(Some)
             } else {
@@ -428,17 +434,22 @@ impl crate::PostgresMemory {
         )?;
 
         let mut fallback = None;
+        let mut literal_skipped = false;
         let trigram_rows = match trigram_rows {
-            Some(rows) => Some(rows),
+            Some(scanned) => {
+                literal_skipped = scanned.is_none();
+                scanned
+            }
             None => {
                 if fts_rows.is_empty() && should_trigram_fallback(&options.text) {
                     let recovered = self
-                        .arm_rows(options, ArmKind::Trigram, tag_filter, query)
+                        .optional_literal_rows(options, tag_filter, query)
                         .await?;
-                    if !recovered.is_empty() {
+                    literal_skipped = recovered.is_none();
+                    if recovered.as_ref().is_some_and(|rows| !rows.is_empty()) {
                         fallback = Some(MemoryFallback::Trigram);
                     }
-                    Some(recovered)
+                    recovered
                 } else {
                     None
                 }
@@ -472,6 +483,7 @@ impl crate::PostgresMemory {
             hits,
             degraded,
             fallback,
+            literal_skipped,
         })
     }
 

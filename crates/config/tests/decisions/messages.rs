@@ -2,7 +2,7 @@ use super::{Config, HEX_KEY, config_yaml, env_from, expect_validation_error};
 
 #[test]
 fn inventory_messages_that_the_recordings_do_not_reach() -> Result<(), Box<dyn std::error::Error>> {
-    let cases: [(&str, &str, &str); 9] = [
+    let cases: [(&str, &str, &str); 8] = [
         (
             "runtime:\n  workspace: w\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\ngateway:\n  host: \"   \"\n",
             "\"gateway.host\" must be a non-empty string (bind address, e.g. 127.0.0.1 or 0.0.0.0)",
@@ -22,11 +22,6 @@ fn inventory_messages_that_the_recordings_do_not_reach() -> Result<(), Box<dyn s
             "runtime:\n  workspace: w\n  default_agent: main\n  turn_timeout: 0\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\n",
             "\"runtime.turn_timeout\" must be a positive number (seconds)",
             "turn_timeout 0",
-        ),
-        (
-            "runtime:\n  workspace: w\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\nmesh:\n  advertise_host: \"a b\"\n",
-            concat!("mesh.advertise_host contains shell-un", "safe characters"),
-            "advertise_host characters",
         ),
         (
             "memory:\n  sqlite:\n    path: \"\"\n",

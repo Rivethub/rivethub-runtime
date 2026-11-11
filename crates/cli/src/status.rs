@@ -122,7 +122,8 @@ pub(crate) async fn gateway(
     url.set_port(Some(source.port))
         .map_err(|()| Error::Address)?;
     let builder = reqwest::Client::builder().no_proxy().timeout(timeout);
-    let client = match (&source.tls_cert, &source.tls_ca) {
+    let ca = gateway::private_ca(env, &config::shared_dir(env));
+    let client = match (&source.tls_cert, &ca) {
         (Some(cert), Some(ca)) => verified(builder, &mut url, cert, ca, source.port)?,
         _ => builder,
     }
@@ -153,12 +154,12 @@ fn verified(
 
 fn served_name(cert: &Path) -> Result<Option<String>, Error> {
     let der = CertificateDer::from_pem_file(cert)
-        .map_err(|_| Error::PkiInput("gateway certificate is not a PEM certificate"))?;
+        .map_err(|_| Error::GatewayCertificate("gateway certificate is not a PEM certificate"))?;
     let (_, parsed) = x509_parser::parse_x509_certificate(&der)
-        .map_err(|_| Error::PkiInput("gateway certificate does not parse"))?;
+        .map_err(|_| Error::GatewayCertificate("gateway certificate does not parse"))?;
     let names = parsed
         .subject_alternative_name()
-        .map_err(|_| Error::PkiInput("invalid gateway certificate SAN"))?;
+        .map_err(|_| Error::GatewayCertificate("invalid gateway certificate SAN"))?;
     Ok(names.and_then(|san| {
         san.value
             .general_names

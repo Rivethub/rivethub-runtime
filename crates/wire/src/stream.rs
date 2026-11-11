@@ -38,39 +38,6 @@ pub struct TokenUsage {
     pub timestamp: i64,
 }
 
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DelegationRequest {
-    pub from_agent: String,
-    pub to_agent: String,
-    pub task: String,
-    pub context: Option<Vec<String>>,
-    pub timeout_ms: Option<u64>,
-    pub no_delegation: Option<bool>,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum DelegationStatus {
-    Completed,
-    Failed,
-    Timeout,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DelegationResult {
-    pub status: DelegationStatus,
-    pub response: String,
-    pub iterations: Option<u32>,
-    pub usage: Option<TokenUsage>,
-    pub tools_used: Option<Vec<String>>,
-    pub duration_ms: Option<u64>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmChunkKind {

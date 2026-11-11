@@ -40,11 +40,10 @@ async fn check_refuses_explicit_missing_invalid_and_ambiguous_registries() -> Te
         home.path().display(), users_path.display()
     )).await?;
     let mut duplicate: UsersRegistry = serde_json::from_str(REGISTRY)?;
-    duplicate
-        .users
-        .get_mut("owner")
-        .ok_or("missing fixture owner")?
-        .devices = Some(vec!["test".into()]);
+    let digest = "49e2e40e591e61357758299c8cee170fb9fa7da160ec8acf110a4a409d905aaf".to_owned();
+    for user in duplicate.users.values_mut() {
+        user.tokens = Some(vec![digest.clone()]);
+    }
     let ambiguous = serde_json::to_string(&duplicate)?;
     for content in [
         None,

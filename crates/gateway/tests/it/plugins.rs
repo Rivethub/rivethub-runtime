@@ -24,11 +24,10 @@ struct FileProbe<'a> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_installed_plugin_is_approved_from_a_device_and_served_through_the_proxy() -> TestResult
-{
+async fn an_installed_plugin_is_approved_by_the_owner_and_served_through_the_proxy() -> TestResult {
     let root = tempfile::tempdir()?;
     let source = root.path().join("source");
-    write_manifest(&source, &[Permission::SessionsRead, Permission::TasksRead])?;
+    write_manifest(&source, &[Permission::SessionsRead, Permission::TopicsRead])?;
     let host = harness(root.path()).await?;
     install_and_approve(&host, &source).await?;
     proxied_routes_are_checked(&host).await?;
@@ -55,26 +54,13 @@ async fn install_and_approve(host: &Harness, source: &Path) -> TestResult {
     assert_eq!(record.state, PluginState::Disabled);
     assert_eq!(
         record.pending,
-        [Permission::SessionsRead, Permission::TasksRead]
+        [Permission::SessionsRead, Permission::TopicsRead]
     );
     let (status, _) = host
         .call(Method::POST, "/api/plugins", Some(install), false)
         .await?;
     assert_eq!(status, StatusCode::CONFLICT);
-    let everything = [Permission::SessionsRead, Permission::TasksRead];
-    let (status, bytes) = host
-        .call(
-            Method::POST,
-            "/api/plugins/fixture/enable",
-            enable(&everything)?,
-            false,
-        )
-        .await?;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(
-        refused(&bytes)?.code.as_deref(),
-        Some("device_certificate_required")
-    );
+    let everything = [Permission::SessionsRead, Permission::TopicsRead];
     let (status, bytes) = host
         .call(
             Method::POST,
@@ -315,8 +301,8 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
         source,
         &[
             Permission::SessionsRead,
-            Permission::TasksRead,
-            Permission::AgentsRead,
+            Permission::TopicsRead,
+            Permission::MemoryRead,
         ],
     )?;
     let (status, bytes) = host
@@ -325,12 +311,12 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
     assert_eq!(status, StatusCode::OK);
     let reloaded: PluginRecord = serde_json::from_slice(&bytes)?;
     assert_eq!(reloaded.state, PluginState::AwaitingApproval);
-    assert_eq!(reloaded.pending, [Permission::AgentsRead]);
+    assert_eq!(reloaded.pending, [Permission::MemoryRead]);
     let (status, _) = host
         .call(
             Method::POST,
             "/api/plugins/fixture/enable",
-            enable(&[Permission::AgentsRead])?,
+            enable(&[Permission::MemoryRead])?,
             true,
         )
         .await?;
@@ -339,8 +325,8 @@ async fn a_wider_manifest_waits_for_approval(host: &Harness, source: &Path) -> T
         record.state == PluginState::Running
     })
     .await?;
-    let agents = host.probe_body("GET", "/api/agents").await?;
-    assert!(agents.starts_with("200 "), "{agents}");
+    let probed = host.probe_body("GET", "/api/memory/stats").await?;
+    assert!(probed.starts_with("200 "), "{probed}");
     Ok(())
 }
 

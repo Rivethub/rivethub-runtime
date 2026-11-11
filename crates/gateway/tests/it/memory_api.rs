@@ -198,16 +198,19 @@ fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
         name.eq_ignore_ascii_case("x-rivethub-contract")
             && value == &wire::contract::MEMORY_CONTRACT.to_string()
     }));
-    let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());
-    let narrowed = Arc::new(Gateway::new(store, common::settings()).with_memory_profile());
-    let app = narrowed.router(false);
-    let hidden = block_on(answer(
-        app.clone(),
-        recorded("GET", "/api/terminal/list", Vec::new()),
-    ))?;
-    assert_eq!(hidden.status, 404);
-    let sessions = block_on(answer(app, recorded("GET", "/sessions", Vec::new())))?;
-    assert_eq!(sessions.status, 404);
+    let app = gateway.router(false);
+    for removed in [
+        "/api/terminal/list",
+        "/sessions",
+        "/api/tasks",
+        "/api/agents",
+        "/api/devices",
+        "/mesh.json",
+        "/ca/v1/chain",
+    ] {
+        let answered = block_on(answer(app.clone(), recorded("GET", removed, Vec::new())))?;
+        assert_eq!(answered.status, 404, "{removed}");
+    }
     Ok(())
 }
 

@@ -307,6 +307,7 @@ mod tests {
             related: None,
             history_entry: None,
             entity_type: None,
+            facts: None,
         })
     }
 

@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -40,6 +41,30 @@ pub struct Config {
     pub mesh: Option<MeshSection>,
     pub gateway: Option<GatewaySection>,
     pub tasks: Option<TasksSection>,
+    pub hubs: Option<Vec<HubEntry>>,
+    pub telemetry: Option<TelemetrySection>,
+    pub cloud: Option<CloudSection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HubEntry {
+    pub name: String,
+    pub url: url::Url,
+    #[serde(default)]
+    pub kind: wire::gateway::account::HubKind,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct TelemetrySection {
+    pub disabled: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct CloudSection {
+    pub url: Option<url::Url>,
+    pub update_key: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -61,7 +86,6 @@ pub struct RuntimeSection {
     pub safety: Option<SafetySection>,
     pub auto_actions: Option<AutoActionsSection>,
     pub experimental: Option<bool>,
-    pub profile: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -152,6 +176,68 @@ pub struct MemorySection {
     pub postgres: Option<PostgresSection>,
     pub sqlite: Option<SqliteSection>,
     pub capture: CaptureSection,
+    pub models: Option<crate::memory_models::MemoryModels>,
+    pub sanitize: SanitizeSection,
+    pub share: ShareSection,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ShareSection {
+    pub server: Option<ShareServerSection>,
+    pub trusted_cas: Vec<TrustedCa>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShareServerSection {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedCa {
+    pub host: String,
+    pub ca: PathBuf,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SanitizeSection {
+    pub mapping: Option<PathBuf>,
+    pub decide: Option<DecideSection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecideSection {
+    pub url: String,
+    #[serde(default = "default_decide_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_decide_concurrency")]
+    pub concurrency: usize,
+    #[serde(default = "default_decide_top")]
+    pub top: usize,
+    #[serde(default)]
+    pub block: bool,
+}
+
+const fn default_decide_threshold() -> f64 {
+    0.3
+}
+
+const fn default_decide_concurrency() -> usize {
+    8
+}
+
+const fn default_decide_top() -> usize {
+    20
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MappingFile {
+    Configured(PathBuf),
+    Default(PathBuf),
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -218,8 +304,7 @@ pub struct CaptureSection {
 pub struct CaptureGateway {
     pub url: String,
     pub ca: PathBuf,
-    pub cert: PathBuf,
-    pub key: PathBuf,
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -232,59 +317,7 @@ pub struct RedactionSection {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MeshSection {
-    pub enabled: Option<bool>,
     pub node_name: Option<String>,
-    #[serde(default = "mesh_tls_disabled")]
-    pub tls: MeshTls,
-    pub advertise_host: Option<String>,
-    pub agent_channel_port: Option<u16>,
-    pub secret: Option<String>,
-}
-
-fn mesh_tls_disabled() -> MeshTls {
-    MeshTls::Enabled(false)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
-pub enum MeshTls {
-    Enabled(bool),
-    Paths(MeshTlsPaths),
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
-#[serde(default)]
-pub struct MeshTlsPaths {
-    pub ca_path: Option<PathBuf>,
-    pub cert_path: Option<PathBuf>,
-    pub key_path: Option<PathBuf>,
-    pub crl_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedMeshTls {
-    pub ca: PathBuf,
-    pub cert: PathBuf,
-    pub key: PathBuf,
-    pub crl: Option<PathBuf>,
-}
-
-impl MeshTlsPaths {
-    #[must_use]
-    pub fn resolve(&self, node: &str, shared: &std::path::Path) -> ResolvedMeshTls {
-        let paths = self.clone();
-        let authority = shared.join("rivet-ca");
-        let present = |path: Option<PathBuf>| path.filter(|path| !path.as_os_str().is_empty());
-        ResolvedMeshTls {
-            ca: present(paths.ca_path)
-                .unwrap_or_else(|| authority.join("intermediate").join("ca-chain.pem")),
-            cert: present(paths.cert_path)
-                .unwrap_or_else(|| authority.join("issued").join(format!("{node}.crt"))),
-            key: present(paths.key_path)
-                .unwrap_or_else(|| authority.join("issued").join(format!("{node}.key"))),
-            crl: present(paths.crl_path),
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -297,22 +330,12 @@ pub struct GatewaySection {
     pub token: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
-    pub tls_ca: Option<PathBuf>,
-    pub tls_crl: Option<PathBuf>,
-    pub tls_require_client: Option<bool>,
     pub users_file: Option<PathBuf>,
-    pub commands_file: Option<PathBuf>,
-    pub terminal: Option<TerminalSection>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
-    pub files_root: Option<PathBuf>,
-    pub files_open: bool,
-    pub devices: DevicesSection,
-    pub certificate_authority: Option<CertificateAuthoritySection>,
-    pub advertise_mdns: Option<bool>,
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
-    pub allowed_harnesses: Option<Vec<HarnessSlot>>,
+    pub request_deadline_secs: Option<NonZeroU64>,
 }
 
 fn default_gateway_port() -> u16 {
@@ -321,51 +344,8 @@ fn default_gateway_port() -> u16 {
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
-pub struct CertificateAuthoritySection {
-    pub url: Option<String>,
-    pub root: Option<PathBuf>,
-    pub provisioner_password_file: Option<PathBuf>,
-    pub roster: Option<PathBuf>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
-pub struct TerminalSection {
-    pub enabled: Option<bool>,
-    pub open: Option<bool>,
-    pub idle_ttl_ms: Option<u64>,
-    pub trust_claude_launch_dirs: Option<bool>,
-    pub roots: Option<Vec<PathBuf>>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
-pub struct DevicesSection {
-    pub enabled: Option<bool>,
-    pub relay_ssh: Option<String>,
-    pub relay_sudo: Option<bool>,
-    pub wg_interface: Option<String>,
-    pub pool: Option<String>,
-    pub wg_endpoint: Option<String>,
-    pub wg_public_key: Option<String>,
-    pub allowed_ips: Option<String>,
-    pub home_subnet: Option<String>,
-    pub relay_forward_src: Option<String>,
-    pub relay_forward_dest: Option<String>,
-    pub shared_host: Option<String>,
-    pub shared_export: Option<String>,
-    pub roster_path: Option<PathBuf>,
-    pub gateway_url: Option<String>,
-    pub pg_admin_url: Option<String>,
-    pub pg_device_group: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
 pub struct TasksSection {
-    pub enabled: Option<bool>,
     pub harnesses: Option<BTreeMap<HarnessSlot, HarnessEntry>>,
-    pub sqlite_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -406,22 +386,6 @@ pub struct DeploymentSection {
 
 impl Config {
     #[must_use]
-    pub fn memory_only(&self) -> bool {
-        self.runtime
-            .as_ref()
-            .and_then(|runtime| runtime.profile.as_deref())
-            == Some("memory")
-    }
-
-    #[must_use]
-    pub fn terminal_enabled(&self) -> bool {
-        self.gateway
-            .as_ref()
-            .and_then(|gateway| gateway.terminal.as_ref())
-            .is_some_and(|terminal| terminal.enabled == Some(true))
-    }
-
-    #[must_use]
     pub fn memory_postgres_url(&self, env: &Environment) -> Option<String> {
         self.memory
             .as_ref()
@@ -431,18 +395,6 @@ impl Config {
             .filter(|url| !url.is_empty())
             .map(str::to_owned)
             .or_else(|| env.postgres_url())
-    }
-
-    #[must_use]
-    pub fn mesh_advertise_host(&self, env: &Environment) -> String {
-        self.mesh
-            .as_ref()
-            .and_then(|mesh| mesh.advertise_host.as_deref())
-            .map(str::trim)
-            .filter(|host| !host.is_empty())
-            .map(str::to_owned)
-            .or_else(|| env.advertised_host())
-            .unwrap_or_else(|| "127.0.0.1".to_owned())
     }
 
     #[must_use]
@@ -528,6 +480,40 @@ impl Config {
             builtins: redaction.builtins != Some(false),
             patterns: redaction.patterns,
         }
+    }
+
+    pub fn sanitize_mapping(&self, env: &Environment) -> Result<MappingFile, crate::ConfigError> {
+        let configured = self
+            .memory
+            .as_ref()
+            .and_then(|memory| memory.sanitize.mapping.as_ref());
+        match configured {
+            Some(path) => Ok(MappingFile::Configured(
+                crate::paths::expand_home(env, path)?.unwrap_or_else(|| path.clone()),
+            )),
+            None => Ok(MappingFile::Default(
+                crate::Paths::new(env)?
+                    .home()
+                    .join(".config")
+                    .join("rivethub")
+                    .join("redactions.toml"),
+            )),
+        }
+    }
+
+    #[must_use]
+    pub fn sanitize_decide(&self) -> Option<&DecideSection> {
+        self.memory.as_ref()?.sanitize.decide.as_ref()
+    }
+
+    pub fn share_server(&self) -> Option<&ShareServerSection> {
+        self.memory.as_ref()?.share.server.as_ref()
+    }
+
+    pub fn share_trusted_cas(&self) -> &[TrustedCa] {
+        self.memory
+            .as_ref()
+            .map_or(&[], |memory| memory.share.trusted_cas.as_slice())
     }
 
     pub fn provider_kind(&self, name: &str) -> Option<ProviderType> {

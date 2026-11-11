@@ -78,11 +78,6 @@ impl ContextWindows {
         self.reported.store(true, Ordering::Release);
     }
 
-    pub(crate) fn adopt(&self, known: &Self) {
-        let known = known.windows.lock().clone();
-        self.windows.lock().extend(known);
-    }
-
     pub(crate) fn learn(&self, models: Option<ModelState>) {
         let Some(models) = models else {
             return;

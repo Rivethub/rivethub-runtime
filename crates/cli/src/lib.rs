@@ -1,19 +1,18 @@
 mod argv;
-pub mod ca;
 pub mod capture_hook;
-pub mod cert;
 mod configuration;
 pub mod db;
 pub mod doctor;
 mod error;
 mod exit;
+mod harness;
 mod local;
 pub mod logs;
 pub mod memory;
-pub mod mesh;
 mod process;
 mod roots;
 pub mod service;
+pub mod share_server;
 mod status;
 pub mod supervise;
 pub mod tree;
@@ -92,9 +91,6 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
         command,
         Command::Update(_)
             | Command::Db(_)
-            | Command::Ca(_)
-            | Command::Cert { .. }
-            | Command::Mesh(_)
             | Command::Service { .. }
             | Command::Start { .. }
             | Command::Local { .. }
@@ -165,12 +161,11 @@ async fn command_dispatch(
             .run(command, env, shutdown)
             .await
             .map_err(Error::from),
-        Command::Ca(args) => ca::run(args, env, shutdown).await,
-        Command::Cert { command } => cert::run(command, env, shutdown).await,
-        Command::Mesh(args) => mesh::run(args, env, shutdown).await,
         Command::Update(args) => update::run(args, env, shutdown).await,
         Command::Db(args) => db::run(args, env, shutdown).await,
         Command::Capture { command } => capture_hook::run(command, env).await,
+        Command::Share { command } => share_server::run(command, env, shutdown).await,
+        Command::Harness { command } => harness::run(command, env).await,
         Command::Memory { args } => Ok(memory::execute(
             &args,
             env,

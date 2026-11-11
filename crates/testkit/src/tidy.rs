@@ -532,12 +532,21 @@ where
             queue.fail(claimed.id, "embedding endpoint refused").await?;
         }
     }
+    let waiting = RoleActivity::of(WorkerRole::Embedder, &store.tasks().await?).queued;
+    queue.enqueue(job("upkeep-waiting")).await?;
     let embedder = RoleActivity::of(WorkerRole::Embedder, &store.tasks().await?);
     same(
-        "the embedder finished one job and has one failing",
-        (embedder.last_finished.is_some(), embedder.failing),
-        (true, 1),
+        "the embedder finished one job, has one failing and one more waiting",
+        (
+            embedder.last_finished.is_some(),
+            embedder.failing,
+            embedder.queued,
+        ),
+        (true, 1, waiting + 1),
     )?;
+    if waiting == 0 {
+        return Err("the failing job waits out its retry among the queued jobs".into());
+    }
     Ok(())
 }
 

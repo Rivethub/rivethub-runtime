@@ -114,6 +114,7 @@ pub(super) async fn ingest_hook_event(
                 metadata: &metadata,
                 owner_user_id: &owner,
                 created_at: None,
+                batch_index: 0,
             }
         } else {
             tool_name = str_at(payload, "tool_name").unwrap_or_else(|| "unknown".into());
@@ -132,6 +133,7 @@ pub(super) async fn ingest_hook_event(
                 metadata: &metadata,
                 owner_user_id: &owner,
                 created_at: None,
+                batch_index: 0,
             }
         };
         writer.insert_message(&row).await?;

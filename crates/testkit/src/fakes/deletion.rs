@@ -8,7 +8,7 @@ use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
 use kernel::memory::SessionDeletion;
 use parking_lot::Mutex;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 type Tombstone = (DateTime<Utc>, Option<String>);
 
@@ -17,14 +17,15 @@ pub struct FakeSessionDeletion {
     activity: Mutex<BTreeMap<String, SessionActivity>>,
     tombstones: Mutex<BTreeMap<String, Tombstone>>,
     keeps: Mutex<BTreeMap<String, DateTime<Utc>>>,
+    trash: Mutex<BTreeMap<String, DateTime<Utc>>>,
 }
 
 impl FakeSessionDeletion {
     #[must_use]
-    pub fn with_activity(self, session: &SessionId, activity: SessionActivity) -> Self {
+    pub fn with_activity(self, session: impl Into<SessionKey>, activity: SessionActivity) -> Self {
         self.activity
             .lock()
-            .insert(session.as_str().to_owned(), activity);
+            .insert(session.into().as_str().to_owned(), activity);
         self
     }
 
@@ -41,15 +42,25 @@ impl FakeSessionDeletion {
     }
 
     #[must_use]
+    pub fn is_kept(&self, session: impl Into<SessionKey>) -> bool {
+        self.keeps.lock().contains_key(session.into().as_str())
+    }
+
+    #[must_use]
+    pub fn is_trashed(&self, session: impl Into<SessionKey>) -> bool {
+        self.trash.lock().contains_key(session.into().as_str())
+    }
+
+    #[must_use]
     pub fn activity_of(&self, session: &SessionId) -> Option<SessionActivity> {
         self.activity.lock().get(session.as_str()).cloned()
     }
 
     #[must_use]
-    pub fn deleted_by(&self, session: &SessionId) -> Option<Option<String>> {
+    pub fn deleted_by(&self, session: impl Into<SessionKey>) -> Option<Option<String>> {
         self.tombstones
             .lock()
-            .get(session.as_str())
+            .get(session.into().as_str())
             .map(|(_, deleted_by)| deleted_by.clone())
     }
 }
@@ -143,5 +154,60 @@ impl SessionDeletion for FakeSessionDeletion {
             .iter()
             .filter_map(|key| keeps.get(key).map(|kept_at| (key.clone(), *kept_at)))
             .collect())
+    }
+
+    async fn unkeep_session(&self, session_key: &str) -> Result<(), MemoryStoreError> {
+        self.keeps.lock().remove(session_key);
+        Ok(())
+    }
+
+    async fn trash_session(
+        &self,
+        session_key: &str,
+        _trashed_by: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), MemoryStoreError> {
+        self.trash
+            .lock()
+            .entry(session_key.to_owned())
+            .or_insert(now);
+        Ok(())
+    }
+
+    async fn restore_session(&self, session_key: &str) -> Result<(), MemoryStoreError> {
+        self.trash.lock().remove(session_key);
+        Ok(())
+    }
+
+    async fn trashed(
+        &self,
+        session_keys: &[String],
+    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+        let trash = self.trash.lock();
+        Ok(session_keys
+            .iter()
+            .filter_map(|key| trash.get(key).map(|at| (key.clone(), *at)))
+            .collect())
+    }
+
+    async fn purge_trashed(
+        &self,
+        older_than: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<DeletedSession, MemoryStoreError> {
+        let due: Vec<String> = self
+            .trash
+            .lock()
+            .iter()
+            .filter(|(_, at)| **at <= older_than)
+            .zip(0..limit)
+            .map(|((key, _), _)| key.clone())
+            .collect();
+        let mut total = DeletedSession::default();
+        for key in due {
+            self.trash.lock().remove(&key);
+            total += self.delete_session(&key, None, older_than).await?;
+        }
+        Ok(total)
     }
 }

@@ -18,7 +18,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    #[command(about = "Update this node or the mesh")]
+    #[command(about = "Update this node")]
     Update(crate::update::UpdateArgs),
     #[command(about = "Apply or inspect database migrations")]
     Db(crate::db::DbArgs),
@@ -50,15 +50,6 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::service::ServiceCommand,
     },
-    #[command(about = "Manage the certificate authority")]
-    Ca(crate::ca::CaArgs),
-    #[command(about = "Manage holder certificates")]
-    Cert {
-        #[command(subcommand)]
-        command: crate::cert::CertCommand,
-    },
-    #[command(about = "Register and inspect mesh nodes")]
-    Mesh(crate::mesh::MeshArgs),
     #[command(about = "Print the RivetHub version")]
     Version,
     #[command(about = "Inspect and validate configuration")]
@@ -100,10 +91,22 @@ pub enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[command(
+        about = "Sign in to a share server (rivethub.cloud or a team server) that carries shared bundles"
+    )]
+    Share {
+        #[command(subcommand)]
+        command: crate::share_server::ShareCommand,
+    },
     #[command(about = "Capture harness sessions into memory")]
     Capture {
         #[command(subcommand)]
         command: crate::capture_hook::CaptureCommand,
+    },
+    #[command(about = "Show and wire the coding harnesses on this machine")]
+    Harness {
+        #[command(subcommand)]
+        command: crate::harness::HarnessCommand,
     },
     #[command(about = "Read the service journal", disable_help_flag = true)]
     Logs {
@@ -131,15 +134,11 @@ impl Cli {
     pub fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Self, Report> {
         let args: Vec<_> = args.into_iter().collect();
         let service = args.get(1).is_some_and(|arg| arg == "service");
-        let mesh = args.get(1).is_some_and(|arg| arg == "mesh");
         match Self::try_parse_from(args) {
             Ok(cli) => Ok(cli),
             Err(error) if error.use_stderr() => {
                 let text = if error.kind() == clap::error::ErrorKind::InvalidSubcommand {
                     match error.get(clap::error::ContextKind::InvalidSubcommand) {
-                        Some(_) if mesh => {
-                            return Err(Report::success(crate::mesh::help()));
-                        }
                         Some(name) if service => {
                             let mut tree = Self::command();
                             let help = tree

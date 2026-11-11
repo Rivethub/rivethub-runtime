@@ -5,12 +5,9 @@ use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue;
-use kernel::tasks::TaskWatch;
 use sqlx::PgPool;
-use tokio_util::sync::CancellationToken;
 
 use crate::PostgresMemory;
-use crate::PostgresTasks;
 
 async fn terminate_other_backends(pool: &PgPool) {
     sqlx::query(
@@ -21,60 +18,6 @@ async fn terminate_other_backends(pool: &PgPool) {
     .execute(pool)
     .await
     .expect("terminate backends");
-}
-
-#[sqlx::test(migrations = false)]
-async fn task_watch_resumes_after_its_backend_is_terminated(pool: PgPool) {
-    let tasks = PostgresTasks::from_pool(pool.clone());
-    let cancel = CancellationToken::new();
-    let handle = tasks.spawn_watch(cancel.clone()).await.expect("listen");
-    let mut watch = TaskWatch::subscribe(&tasks);
-    terminate_other_backends(&pool).await;
-    tokio::time::timeout(Duration::from_secs(20), watch.changed())
-        .await
-        .expect("reconnect kicks the watch")
-        .expect("watch open");
-    sqlx::query("SELECT pg_notify('rh_task_changed', '1')")
-        .execute(&pool)
-        .await
-        .expect("notify");
-    tokio::time::timeout(Duration::from_secs(20), watch.changed())
-        .await
-        .expect("notification after reconnect")
-        .expect("watch open");
-    cancel.cancel();
-    let joined = tokio::time::timeout(Duration::from_secs(20), handle)
-        .await
-        .expect("watch joins")
-        .expect("watch task");
-    assert!(joined.is_ok());
-}
-
-#[sqlx::test(migrations = false)]
-async fn task_watch_names_each_changed_task(pool: PgPool) {
-    let tasks = PostgresTasks::from_pool(pool.clone());
-    let cancel = CancellationToken::new();
-    let handle = tasks.spawn_watch(cancel.clone()).await.expect("listen");
-    let mut finished = TaskWatch::changed(&tasks);
-    let id = uuid::Uuid::from_u128(42);
-    for payload in ["1".to_owned(), id.to_string()] {
-        sqlx::query("SELECT pg_notify('rh_task_changed', $1)")
-            .bind(payload)
-            .execute(&pool)
-            .await
-            .expect("notify");
-    }
-    let named = tokio::time::timeout(Duration::from_secs(20), finished.recv())
-        .await
-        .expect("finished task named")
-        .expect("finished open");
-    assert_eq!(named, id);
-    cancel.cancel();
-    let joined = tokio::time::timeout(Duration::from_secs(20), handle)
-        .await
-        .expect("watch joins")
-        .expect("watch task");
-    assert!(joined.is_ok());
 }
 
 #[sqlx::test(migrations = false)]

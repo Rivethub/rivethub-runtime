@@ -46,12 +46,6 @@ impl BindSource {
                 key = Some(issued_key);
             }
         }
-        let tls_ca = if cert.is_some() || key.is_some() {
-            Some(resolve_ca(section, env, shared_dir, &mut notices))
-        } else {
-            None
-        };
-        let require_client = require_client(section, env, &mut notices);
         for notice in &notices {
             tracing::warn!("{notice}");
         }
@@ -60,9 +54,6 @@ impl BindSource {
             port: port_of(section),
             tls_cert: cert,
             tls_key: key,
-            tls_ca,
-            tls_crl: section.and_then(|section| configured_path(section.tls_crl.as_ref())),
-            require_client,
             notices,
         }
     }
@@ -82,70 +73,26 @@ fn port_of(section: Option<&config::model::GatewaySection>) -> u16 {
     }
 }
 
-fn require_client(
-    section: Option<&config::model::GatewaySection>,
-    env: &config::Environment,
-    notices: &mut Vec<String>,
-) -> bool {
-    let configured_off = section.is_some_and(|section| section.tls_require_client == Some(false));
-    let variable = env_value(
+#[must_use]
+pub fn private_ca(env: &config::Environment, shared_dir: &Path) -> Option<PathBuf> {
+    let path = env_path(
         env,
-        "RIVETHUB_TLS_REQUIRE_CLIENT",
-        "RIVETOS_DEN_TLS_REQUIRE_CLIENT",
-        notices,
-    );
-    let environment_off = variable.as_deref().is_some_and(requirement_disabled);
-    !configured_off && !environment_off
-}
-
-fn requirement_disabled(value: &str) -> bool {
-    matches!(
-        value.to_ascii_lowercase().as_str(),
-        "0" | "off" | "false" | "no"
+        "RIVETHUB_TLS_CA",
+        "RIVETOS_DEN_TLS_CA",
+        &mut Vec::new(),
     )
-}
-
-pub(crate) fn mesh_ca(
-    section: Option<&config::model::GatewaySection>,
-    env: &config::Environment,
-    shared_dir: &Path,
-) -> Option<PathBuf> {
-    let path = resolve_ca(section, env, shared_dir, &mut Vec::new());
+    .or_else(|| trimmed(env.text("RIVET_CA_CHAIN")).map(PathBuf::from))
+    .unwrap_or_else(|| {
+        shared_dir
+            .join("rivet-ca")
+            .join("intermediate")
+            .join("chain.pem")
+    });
     path.is_file().then_some(path)
-}
-
-fn resolve_ca(
-    section: Option<&config::model::GatewaySection>,
-    env: &config::Environment,
-    shared_dir: &Path,
-    notices: &mut Vec<String>,
-) -> PathBuf {
-    if let Some(path) = section.and_then(|section| configured_path(section.tls_ca.as_ref())) {
-        return path;
-    }
-    if let Some(path) = env_path(env, "RIVETHUB_TLS_CA", "RIVETOS_DEN_TLS_CA", notices) {
-        return path;
-    }
-    if let Some(path) = trimmed(env.text("RIVET_CA_CHAIN")) {
-        return PathBuf::from(path);
-    }
-    shared_dir
-        .join("rivet-ca")
-        .join("intermediate")
-        .join("chain.pem")
 }
 
 fn configured_text(value: Option<&str>) -> Option<PathBuf> {
     trimmed(value).map(PathBuf::from)
-}
-
-fn configured_path(value: Option<&PathBuf>) -> Option<PathBuf> {
-    let path = value?;
-    match path.to_str() {
-        Some(text) => trimmed(Some(text)).map(PathBuf::from),
-        None if path.as_os_str().is_empty() => None,
-        None => Some(path.clone()),
-    }
 }
 
 fn env_path(

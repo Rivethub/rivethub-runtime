@@ -113,9 +113,6 @@ async fn tls_server_with(
         port: addr.port(),
         tls_cert: Some(material.cert.clone()),
         tls_key: Some(material.key.clone()),
-        tls_ca: None,
-        tls_crl: None,
-        require_client: true,
         notices: Vec::new(),
     })
     .expect("tls resolves")

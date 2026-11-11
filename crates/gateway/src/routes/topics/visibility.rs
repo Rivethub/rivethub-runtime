@@ -53,7 +53,7 @@ pub(super) fn router() -> Router<Arc<Gateway>> {
         )
 }
 
-fn error(error: TenancyStoreError) -> ApiError {
+pub(crate) fn error(error: TenancyStoreError) -> ApiError {
     match error {
         TenancyStoreError::Invalid(TenancyError::NotMember { .. }) => {
             ApiError::Forbidden(error.to_string())

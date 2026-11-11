@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use regress::Regex;
 
+use crate::memory_models::{EmbedderChoice, MemoryModels, ModelChoice};
 use crate::model::{
     EmbeddedSection, MemorySection, PostgresSection, RedactionSection, SqliteSection,
 };
@@ -98,6 +99,169 @@ pub(super) fn embed_provider_references(
             api_key: sqlite.embed_api_key.is_some(),
         };
         embed_provider(out, &section, id, providers);
+    }
+}
+
+pub(super) fn model_references(
+    out: &mut ValidationResult,
+    models: &MemoryModels,
+    providers: Option<&BTreeMap<String, ProviderSlot>>,
+) {
+    chat_choice(out, "memory.models.default", &models.default, providers);
+    let optional = [
+        ("memory.models.summarizer", &models.summarizer),
+        ("memory.models.categorizer", &models.categorizer),
+        ("memory.models.wiki_writer", &models.wiki_writer),
+    ];
+    for (path, choice) in optional {
+        if let Some(choice) = choice {
+            chat_choice(out, path, choice, providers);
+        }
+    }
+    if let Some(embedder) = &models.embedder {
+        embedder_choice(out, embedder, providers);
+    }
+}
+
+fn provider_slot<'a>(
+    out: &mut ValidationResult,
+    path: &str,
+    id: &str,
+    providers: Option<&'a BTreeMap<String, ProviderSlot>>,
+) -> Option<&'a ProviderSlot> {
+    if id.trim().is_empty() {
+        out.error(
+            path,
+            format!("\"{path}.provider\" must be a non-empty string"),
+        );
+        return None;
+    }
+    let slot = providers.and_then(|providers| providers.get(id));
+    if slot.is_none() {
+        let names: Vec<&str> = providers
+            .into_iter()
+            .flatten()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        out.error(
+            path,
+            format!(
+                "Provider \"{id}\" referenced by {path} is not defined in [providers]. Available: {}",
+                super::available_list(&names)
+            ),
+        );
+    }
+    slot
+}
+
+fn chat_choice(
+    out: &mut ValidationResult,
+    path: &str,
+    choice: &ModelChoice,
+    providers: Option<&BTreeMap<String, ProviderSlot>>,
+) {
+    let Some(slot) = provider_slot(out, path, &choice.provider, providers) else {
+        return;
+    };
+    let named = choice
+        .model
+        .as_deref()
+        .is_some_and(|model| !model.trim().is_empty());
+    match &slot.body {
+        ProviderBody::Cli(body) => {
+            let configured = body.model.as_deref().is_some_and(|model| !model.is_empty());
+            if !named && !configured {
+                out.error(
+                    format!("{path}.model"),
+                    format!(
+                        "\"{path}.model\" is required: provider \"{}\" has no model of its own",
+                        choice.provider
+                    ),
+                );
+            }
+        }
+        ProviderBody::Openai(body) => {
+            if !named && body.model.is_none() {
+                out.error(
+                    format!("{path}.model"),
+                    format!(
+                        "\"{path}.model\" is required: provider \"{}\" has no model of its own",
+                        choice.provider
+                    ),
+                );
+            }
+            if choice.effort.is_some() {
+                out.warning(
+                    format!("{path}.effort"),
+                    format!(
+                        "\"{path}.effort\" is ignored: provider \"{}\" is not a CLI provider",
+                        choice.provider
+                    ),
+                );
+            }
+        }
+        ProviderBody::Unknown(_) | ProviderBody::Removed(_) => out.error(
+            path,
+            format!(
+                "Provider \"{}\" referenced by {path} has no supported type",
+                choice.provider
+            ),
+        ),
+    }
+}
+
+fn embedder_choice(
+    out: &mut ValidationResult,
+    choice: &EmbedderChoice,
+    providers: Option<&BTreeMap<String, ProviderSlot>>,
+) {
+    let path = "memory.models.embedder";
+    let endpoint = choice
+        .endpoint
+        .as_deref()
+        .filter(|endpoint| !endpoint.trim().is_empty());
+    match (&choice.provider, endpoint) {
+        (Some(_), Some(_)) => out.error(
+            path,
+            "\"provider\" and \"endpoint\" cannot both be set — the provider's base_url is the embeddings endpoint",
+        ),
+        (None, None) => out.error(path, "set \"provider\" or \"endpoint\" for the embedder"),
+        (Some(id), None) => {
+            if let Some(slot) = provider_slot(out, path, id, providers) {
+                match &slot.body {
+                    ProviderBody::Openai(body) => {
+                        if choice.model.is_none() && body.model.is_none() {
+                            out.error(
+                                format!("{path}.model"),
+                                format!("\"{path}.model\" is required: provider \"{id}\" has no model of its own"),
+                            );
+                        }
+                    }
+                    ProviderBody::Cli(_) | ProviderBody::Unknown(_) | ProviderBody::Removed(_) => {
+                        out.error(
+                            path,
+                            format!(
+                                "Provider \"{id}\" referenced by {path} cannot serve embeddings — use an openai-compatible or vllm provider"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        (None, Some(endpoint)) => {
+            if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+                out.error(
+                    format!("{path}.endpoint"),
+                    format!("\"{path}.endpoint\" must be an http:// or https:// URL"),
+                );
+            }
+            if choice.model.as_deref().is_none_or(|model| model.trim().is_empty()) {
+                out.error(
+                    format!("{path}.model"),
+                    format!("\"{path}.model\" is required with an endpoint"),
+                );
+            }
+        }
     }
 }
 

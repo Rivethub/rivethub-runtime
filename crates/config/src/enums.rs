@@ -1,7 +1,7 @@
 pub use wire::harness::HarnessId;
+pub use wire::levels::Effort;
+pub use wire::levels::LogLevel;
 pub use wire::stream::ThinkingLevel;
-pub use wire::task::Effort;
-pub use wire::task::LogLevel;
 
 #[derive(
     Debug,

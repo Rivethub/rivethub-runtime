@@ -228,20 +228,29 @@ fn a_role_reports_its_newest_finish_and_its_failing_jobs() {
             task: "embed-target".to_owned(),
             last_finished: at(10),
             failing: 2,
+            queued: 3,
         },
         TaskActivity {
             task: "enqueue-unembedded".to_owned(),
             last_finished: at(20),
             failing: 0,
+            queued: 4,
         },
         TaskActivity {
             task: "file-conversation".to_owned(),
             last_finished: at(30),
             failing: 1,
+            queued: 5,
         },
     ];
     let embedder = RoleActivity::of(WorkerRole::Embedder, &tasks);
-    assert_eq!((embedder.last_finished, embedder.failing), (at(20), 2));
+    assert_eq!(
+        (embedder.last_finished, embedder.failing, embedder.queued),
+        (at(20), 2, 7)
+    );
     let wiki = RoleActivity::of(WorkerRole::WikiBuilder, &tasks);
-    assert_eq!((wiki.last_finished, wiki.failing), (None, 0));
+    assert_eq!(
+        (wiki.last_finished, wiki.failing, wiki.queued),
+        (None, 0, 0)
+    );
 }

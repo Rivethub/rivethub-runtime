@@ -16,9 +16,9 @@ use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use wire::harness::HarnessId;
+use wire::levels::Effort;
 use wire::session_id::SessionId;
 use wire::stream::ThinkingLevel;
-use wire::task::Effort;
 
 pub use error::CliError;
 
@@ -120,7 +120,6 @@ impl ModelProvider for CliBacked {
                     .map(thinking)
             }),
             working_dir: self.config.cwd.clone(),
-            startup_context: None,
         };
         let (output, receiver) = tokio::sync::mpsc::channel(crate::sse::STREAM_CAPACITY);
         let tasks = self.tasks.lock();

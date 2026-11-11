@@ -1,25 +1,22 @@
 pub(crate) mod body;
 mod context;
-mod offering;
 mod preview;
 mod rows;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use chrono::Utc;
-use kernel::harness::HarnessCapabilities;
 use kernel::transcript::HarnessToolOutput;
 use kernel::transcript::{
     StoreSession, StoreTranscript, ToolOutputRead, TranscriptRead, TranscriptWindow,
 };
 use parking_lot::RwLock;
-use wire::harness::{HarnessCode, HarnessId, HarnessOffering, HarnessSessionSummary};
+use strum::IntoEnumIterator as _;
+use wire::harness::{HarnessCode, HarnessId, HarnessSessionSummary};
 use wire::session_id::{SessionId, SessionRef, decode_segment};
 
 pub(crate) use context::ContextStamp;
 use context::Stamps;
-pub(crate) use rows::legacy_row;
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -57,69 +54,8 @@ pub(crate) fn no_source(harness: HarnessId) -> ApiError {
     )
 }
 
-pub(crate) async fn offerings(gateway: &Gateway) -> Result<Vec<HarnessOffering>, ApiError> {
-    crate::routes::terminal::service(gateway)?
-        .adapter()
-        .ok_or_else(|| ApiError::Unavailable("chat harness unavailable".to_owned()))?;
-    offered(gateway).await
-}
-
-pub(crate) async fn offered(gateway: &Gateway) -> Result<Vec<HarnessOffering>, ApiError> {
-    let Some(adapter) = gateway.terminal().and_then(|terminal| terminal.adapter()) else {
-        return Ok(Vec::new());
-    };
-    let mut harnesses: Vec<HarnessOffering> = adapter
-        .offerings()
-        .await?
-        .into_iter()
-        .map(offering::harness_offering_body)
-        .collect();
-    let images = gateway.uploads().is_some();
-    let listed = gateway.session_lister().is_some();
-    for offering in &mut harnesses {
-        offering.capabilities.image_attachments = Some(images);
-        if listed {
-            offering.capabilities.observation.list_sessions = true;
-        }
-    }
-    Ok(harnesses)
-}
-
-pub(crate) async fn capabilities(
-    gateway: &Gateway,
-    harness: HarnessId,
-) -> Option<HarnessCapabilities> {
-    let adapter = gateway.terminal()?.adapter()?;
-    match adapter.offerings().await {
-        Ok(offerings) => offerings
-            .into_iter()
-            .find(|offering| offering.harness_id == harness)
-            .map(|offering| offering.capabilities),
-        Err(error) => {
-            tracing::debug!(%error, "harness offerings are unreadable; recorded models stand");
-            None
-        }
-    }
-}
-
-pub(crate) fn name_model(
-    capabilities: Option<&HarnessCapabilities>,
-    summary: &mut HarnessSessionSummary,
-) {
-    if let (Some(capabilities), Some(model)) = (capabilities, summary.model.as_mut()) {
-        let named = capabilities.offered_model(model);
-        if named != model.as_str() {
-            *model = named.to_owned();
-        }
-    }
-}
-
-async fn registered(gateway: &Gateway) -> Result<Vec<HarnessId>, ApiError> {
-    Ok(offered(gateway)
-        .await?
-        .into_iter()
-        .map(|offering| offering.harness_id)
-        .collect())
+pub(crate) fn registered() -> Vec<HarnessId> {
+    HarnessId::iter().collect()
 }
 
 impl History {
@@ -129,7 +65,7 @@ impl History {
         segment: &str,
     ) -> Result<Resolved, ApiError> {
         let decoded = decode_segment(segment).map_err(|error| invalid(error.to_string()))?;
-        let registry = registered(gateway).await?;
+        let registry = registered();
         let session = match &decoded.session {
             SessionRef::Canonical(session) => {
                 let harness = session.harness();
@@ -195,28 +131,16 @@ impl History {
         let lister = gateway
             .session_lister()
             .ok_or_else(|| no_source(resolved.harness))?;
-        let mut read = match lister
+        let read = match lister
             .transcript(resolved.harness, &resolved.native, window)
             .await?
         {
             TranscriptRead::Read(read) => read,
             TranscriptRead::NoSource => return Err(no_source(resolved.harness)),
         };
-        if gateway.uploads().is_some() {
-            let journal = crate::routes::harnesses::open_store(gateway)
-                .await?
-                .attached_turns(&resolved.session)
-                .await
-                .map_err(crate::routes::harnesses::upload_error)?;
-            crate::uploads::attach(&mut read.turns, &journal);
-        }
-        let spawn_model = live_summary(gateway, &resolved.native).and_then(|live| live.model);
-        let stamp = self.stamps.stamp(
-            &resolved.session,
-            resolved.harness,
-            &read.turns,
-            spawn_model.as_deref(),
-        );
+        let stamp = self
+            .stamps
+            .stamp(&resolved.session, resolved.harness, &read.turns, None);
         Ok(Transcript { read, stamp })
     }
 
@@ -297,99 +221,12 @@ pub(crate) async fn authorize(
     Ok(())
 }
 
-pub(crate) fn live_summary(gateway: &Gateway, key: &str) -> Option<HarnessSessionSummary> {
-    gateway.terminal()?.live_summary(key)
-}
-
-pub(crate) async fn store_summary(
-    gateway: &Gateway,
-    row: &StoreSession,
-    live: Option<&HarnessSessionSummary>,
-) -> HarnessSessionSummary {
-    let cwd = match live
-        .and_then(|live| live.cwd.clone())
-        .or_else(|| row.cwd.clone())
-    {
+pub(crate) async fn store_summary(gateway: &Gateway, row: &StoreSession) -> HarnessSessionSummary {
+    let cwd = match row.cwd.clone() {
         Some(cwd) => Some(cwd),
         None => recorded_cwd(gateway, row).await,
     };
-    let mut summary = rows::summary(row, cwd, Utc::now());
-    if let Some(live) = live {
-        summary.status = live.status;
-        summary.blocked = live.blocked;
-        summary.transport = live.transport;
-        summary.effort.clone_from(&live.effort);
-        if live.model.is_some() {
-            summary.model.clone_from(&live.model);
-        }
-    }
-    summary
-}
-
-pub(crate) async fn running_elsewhere(
-    gateway: &Gateway,
-    session: &SessionId,
-) -> Result<Option<u32>, ApiError> {
-    if gateway
-        .terminal()
-        .is_some_and(|terminal| terminal.holds(session.as_str()))
-    {
-        return Ok(None);
-    }
-    match gateway.session_lister() {
-        Some(lister) => Ok(lister
-            .running_elsewhere(session.harness(), session.native())
-            .await?),
-        None => Ok(None),
-    }
-}
-
-pub(crate) async fn refuse_elsewhere(
-    gateway: &Gateway,
-    session: &SessionId,
-) -> Result<(), ApiError> {
-    match running_elsewhere(gateway, session).await? {
-        Some(pid) => Err(ApiError::Code(
-            HarnessCode::SessionRunningElsewhere,
-            format!(
-                "This session is running in another terminal (process {pid}), so it can't be resumed here until that one ends"
-            ),
-        )),
-        None => Ok(()),
-    }
-}
-
-pub(crate) async fn working_dir(gateway: &Gateway, session: &SessionId) -> Option<PathBuf> {
-    let live = live_summary(gateway, session.native()).and_then(|live| live.cwd);
-    let recorded = if let Some(cwd) = live {
-        cwd
-    } else {
-        stored_cwd(gateway, session).await?
-    };
-    let directory = PathBuf::from(recorded);
-    tokio::fs::metadata(&directory)
-        .await
-        .is_ok_and(|found| found.is_dir())
-        .then_some(directory)
-}
-
-async fn stored_cwd(gateway: &Gateway, session: &SessionId) -> Option<String> {
-    let read = gateway
-        .session_lister()?
-        .store_cwd(session.harness(), session.native())
-        .await;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B1 (note 112): an unreadable store record leaves the terminal in the roster command's folder"
-        )
-    )]
-    let recorded = read.unwrap_or_else(|error| {
-        tracing::debug!(%error, session = %session, "the session's folder is unreadable");
-        None
-    });
-    recorded
+    rows::summary(row, cwd, Utc::now())
 }
 
 async fn recorded_cwd(gateway: &Gateway, row: &StoreSession) -> Option<String> {
@@ -400,12 +237,9 @@ async fn recorded_cwd(gateway: &Gateway, row: &StoreSession) -> Option<String> {
             Ok(Some(cwd)) => return Some(cwd),
             Ok(None) => {}
             Err(error) => {
-                tracing::debug!(%error, session = row.id, "recorded cwd is unreadable; the roster cwd applies");
+                tracing::debug!(%error, session = row.id, "recorded cwd is unreadable");
             }
         }
     }
-    gateway
-        .terminal()
-        .and_then(|terminal| terminal.roster_cwd(row.harness))
-        .map(|cwd| cwd.to_string_lossy().into_owned())
+    None
 }

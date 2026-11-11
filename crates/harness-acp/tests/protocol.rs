@@ -10,7 +10,6 @@ use kernel::harness::PlanStatus;
 use kernel::harness::SessionEvent;
 use kernel::harness::SessionOption;
 use kernel::harness::SessionSpec;
-use kernel::harness::SteerOutcome;
 use kernel::harness::ToolCallInfo;
 use kernel::harness::ToolCallStatus;
 use kernel::harness::ToolCallUpdate;
@@ -27,9 +26,7 @@ use wire::stream::ThinkingLevel;
 
 #[cfg(test)]
 mod protocol_support;
-use protocol_support::{
-    SESSION, collect_until_turn_end, fake_agent_program, launch, launch_in, run, spec,
-};
+use protocol_support::{SESSION, collect_until_turn_end, launch, run, spec};
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 struct CommandInput {
@@ -367,126 +364,6 @@ fn cancel_ends_a_hanging_turn() {
 }
 
 #[test]
-fn a_steer_joins_the_running_turn_and_an_idle_one_asks_for_a_prompt() {
-    let adapter = Arc::new(AcpHarnessAdapter::with_launch_table(launch(
-        &["text:partial"],
-        &["--hang-until-cancel", "--steering"],
-    )));
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let session = adapter
-            .new_session(spec(cwd.path()))
-            .await
-            .expect("new session");
-        let mut events = adapter.events(&session).await.expect("events");
-        let prompt_task = tokio::spawn({
-            let adapter = adapter.clone();
-            let session = session.clone();
-            async move {
-                adapter
-                    .prompt(&session, TurnInput::Text("go".to_owned()))
-                    .await
-            }
-        });
-        assert_eq!(
-            events.recv().await,
-            Some(SessionEvent::AgentMessageChunk {
-                text: "partial".to_owned()
-            })
-        );
-        let steered = adapter
-            .steer(&session, TurnInput::Text("also this".to_owned()))
-            .await
-            .expect("steer");
-        assert_eq!(steered, SteerOutcome::Steered);
-        assert_eq!(
-            events.recv().await,
-            Some(SessionEvent::AgentMessageChunk {
-                text: "steered:text:also this".to_owned()
-            })
-        );
-        adapter.cancel(&session).await.expect("cancel");
-        prompt_task.await.expect("prompt task").expect("prompt ok");
-        collect_until_turn_end(&mut events)
-            .await
-            .expect("events before turn end");
-        let idle = adapter
-            .steer(&session, TurnInput::Text("later".to_owned()))
-            .await
-            .expect("idle steer");
-        assert_eq!(idle, SteerOutcome::PromptRequired);
-        let plain = AcpHarnessAdapter::with_launch_table(launch(&[], &[]));
-        let other = plain
-            .new_session(spec(cwd.path()))
-            .await
-            .expect("new session");
-        let refused = plain
-            .steer(&other, TurnInput::Text("hi".to_owned()))
-            .await
-            .expect_err("no steering advertised");
-        assert!(matches!(
-            refused,
-            kernel::harness::HarnessAdapterError::SteeringUnsupported
-        ));
-    });
-}
-
-#[test]
-fn resume_discards_the_load_replay_on_a_fresh_agent() {
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let session = {
-            let adapter =
-                AcpHarnessAdapter::with_launch_table(launch(&[], &["--on-load", "replay"]));
-            adapter
-                .new_session(spec(cwd.path()))
-                .await
-                .expect("new session")
-        };
-        let adapter = AcpHarnessAdapter::with_launch_table(launch_in(
-            &["text:after"],
-            &["--on-load", "replay"],
-            cwd.path(),
-        ));
-        adapter.resume(&session, None).await.expect("resume");
-        let mut events = adapter.events(&session).await.expect("events");
-        adapter
-            .prompt(&session, TurnInput::Text("continue".to_owned()))
-            .await
-            .expect("prompt");
-        let collected = collect_until_turn_end(&mut events)
-            .await
-            .expect("events before turn end");
-        let expected = vec![
-            SessionEvent::AgentMessageChunk {
-                text: "after".to_owned(),
-            },
-            SessionEvent::TurnEnded,
-        ];
-        assert_eq!(collected, expected);
-    });
-}
-
-#[test]
-fn resume_of_an_unknown_session_is_a_typed_protocol_error() {
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let adapter = AcpHarnessAdapter::with_launch_table(launch_in(
-            &[],
-            &["--on-load", "reject"],
-            cwd.path(),
-        ));
-        let unknown = SessionId::new(HarnessId::Opencode, "ses_other000000000000000019");
-        let error = adapter
-            .resume(&unknown, None)
-            .await
-            .expect_err("load rejected");
-        assert!(error.to_string().contains("session/load failed"));
-        assert!(error.to_string().contains("session not found"));
-    });
-}
-
-#[test]
 fn a_crashed_agent_ends_the_stream() {
     let adapter = AcpHarnessAdapter::with_launch_table(launch(&[], &["--crash-on", "prompt"]));
     run(async {
@@ -510,55 +387,6 @@ fn a_crashed_agent_ends_the_stream() {
                 .iter()
                 .any(|event| matches!(event, SessionEvent::Exited { .. })),
             "the exit is reported: {drained:?}"
-        );
-    });
-}
-
-#[test]
-fn an_agent_that_dies_at_spawn_is_a_typed_error() {
-    let adapter = AcpHarnessAdapter::with_launch_table(launch(&[], &["--crash-on", "new"]));
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let error = adapter
-            .new_session(spec(cwd.path()))
-            .await
-            .expect_err("agent crashed at session/new");
-        assert!(error.to_string().contains("session/new failed"));
-    });
-}
-
-#[test]
-fn set_option_round_trips_model_and_effort() {
-    let adapter = AcpHarnessAdapter::with_launch_table(launch(&[], &[]));
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let session = adapter
-            .new_session(spec(cwd.path()))
-            .await
-            .expect("new session");
-        let mut events = adapter.events(&session).await.expect("events");
-        adapter
-            .set_option(&session, SessionOption::Model("grok-5".to_owned()))
-            .await
-            .expect("model option");
-        adapter
-            .set_option(&session, SessionOption::Effort(ThinkingLevel::High))
-            .await
-            .expect("effort option");
-        let mut collected = Vec::new();
-        for _ in 0..2 {
-            collected.push(events.recv().await.expect("config event"));
-        }
-        assert_eq!(
-            collected,
-            vec![
-                SessionEvent::AgentMessageChunk {
-                    text: "model=grok-5".to_owned(),
-                },
-                SessionEvent::AgentMessageChunk {
-                    text: "thought_level=high".to_owned(),
-                },
-            ]
         );
     });
 }
@@ -593,7 +421,6 @@ fn the_spec_model_and_effort_are_applied_at_new_session() {
             model: Some("grok-5".to_owned()),
             effort: Some(ThinkingLevel::Low),
             working_dir: Some(cwd.path().to_path_buf()),
-            startup_context: None,
         };
         let session = adapter.new_session(full).await.expect("new session");
         let mut events = adapter.events(&session).await.expect("events");
@@ -627,7 +454,6 @@ fn an_effort_is_left_to_a_harness_that_offers_no_effort_switch() {
                 model: Some("grok-5".to_owned()),
                 effort: Some(ThinkingLevel::High),
                 working_dir: Some(cwd.path().to_path_buf()),
-                startup_context: None,
             })
             .await
             .expect("new session without an effort switch");
@@ -680,7 +506,6 @@ fn port_refusals_are_typed() {
             model: None,
             effort: None,
             working_dir: Some(cwd.path().to_path_buf()),
-            startup_context: None,
         };
         let error = adapter
             .new_session(mismatched)
@@ -711,23 +536,6 @@ fn raw_array_tool_input_has_no_event_form() {
             .await
             .expect("events before turn end");
         assert_eq!(collected, vec![SessionEvent::TurnEnded]);
-    });
-}
-
-#[test]
-fn resume_refuses_an_active_session() {
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let adapter = AcpHarnessAdapter::with_launch_table(launch(&[], &["--on-load", "replay"]));
-        let session = adapter
-            .new_session(spec(cwd.path()))
-            .await
-            .expect("new session");
-        let error = adapter
-            .resume(&session, None)
-            .await
-            .expect_err("still active");
-        assert!(error.to_string().contains("already active"));
     });
 }
 
@@ -788,76 +596,4 @@ fn attachments_reach_the_agent_as_image_and_link_blocks() {
             assert_eq!(collected, expected);
         }
     });
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RecordedMeta {
-    system_prompt: Appended,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct Appended {
-    append: String,
-}
-
-#[test]
-fn the_startup_context_is_appended_on_session_new_where_the_adapter_reads_it() {
-    const CLAUDE: &str = "0b9e5f8a-3c1d-4e2f-9a7b-6c5d4e3f2a1b";
-    let dir = tempdir().expect("dir");
-    let fake = |harness: HarnessId, native: &str| {
-        let record = dir.path().join(harness.to_string());
-        let args = ["--session-id", native, "--record-meta"]
-            .map(str::to_owned)
-            .into_iter()
-            .chain([record.display().to_string()])
-            .collect();
-        (
-            harness,
-            harness_acp::AcpLaunch::Native(harness_acp::AcpCommand {
-                program: fake_agent_program(),
-                args,
-                working_dir: Some(dir.path().to_path_buf()),
-                env: Vec::new(),
-            }),
-        )
-    };
-    let adapter = AcpHarnessAdapter::with_launch_table(harness_acp::LaunchTable::from_entries([
-        fake(HarnessId::ClaudeCode, CLAUDE),
-        fake(HarnessId::Opencode, SESSION),
-    ]));
-    let memory =
-        "## Memory for this session (topic: Mesh)\n\n### Topic page\n\nThe mesh runs step-ca.";
-    run(async {
-        for (harness, native) in [
-            (HarnessId::ClaudeCode, CLAUDE),
-            (HarnessId::Opencode, SESSION),
-        ] {
-            adapter
-                .new_session(SessionSpec {
-                    session: SessionId::new(harness, native),
-                    harness,
-                    model: None,
-                    effort: None,
-                    working_dir: Some(dir.path().to_path_buf()),
-                    startup_context: Some(memory.to_owned()),
-                })
-                .await
-                .expect("new session");
-        }
-    });
-    let recorded = |harness: HarnessId| -> Option<RecordedMeta> {
-        let text = std::fs::read_to_string(dir.path().join(harness.to_string())).expect("recorded");
-        serde_json::from_str(&text).expect("recorded meta")
-    };
-    assert_eq!(
-        recorded(HarnessId::ClaudeCode),
-        Some(RecordedMeta {
-            system_prompt: Appended {
-                append: memory.to_owned()
-            }
-        })
-    );
-    assert_eq!(recorded(HarnessId::Opencode), None);
 }

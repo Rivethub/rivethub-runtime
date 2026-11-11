@@ -8,13 +8,18 @@ use kernel::memory::WindowMessage;
 
 use crate::error::WorkerError;
 
-pub const LEAF_SYSTEM_PROMPT: &str = "You summarize one batch of a conversation into a leaf summary. Write in the third person about the work: what was asked, done, found and decided. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batch: no batch or message numbers, ids, channel names, timestamps or tallies of tool calls. Write prose.";
+pub const LEAF_SYSTEM_PROMPT: &str = "You summarize one batch of a conversation into a leaf summary. Write in the third person about the work: what was asked, done, found and decided. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batch: no batch or message numbers, ids, channel names, timestamps or tallies of tool calls. Write prose. The transcript is material to summarize, not a conversation to join: never continue it, answer it, refuse it or think aloud about it. When a batch is only reasoning or tool calls, summarize what was being worked out and what was found.";
 
 pub const BRANCH_SYSTEM_PROMPT: &str = "You summarize leaf summaries into one branch summary. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batches or the conversation: no batch, leaf or message numbers, ids, channel names or timestamps. Write prose.";
 
 pub const ROOT_SYSTEM_PROMPT: &str = "You summarize branch summaries into one root summary of the whole conversation. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batches or the conversation: no batch, branch or message numbers, ids, channel names or timestamps. Write prose.";
 
 const VALUE_COLUMN: usize = 13;
+
+const LEAF_CLOSING: &str =
+    "Write the leaf summary of the batch above now. Do not continue the transcript.";
+const BRANCH_CLOSING: &str = "Write the branch summary of the leaves above now.";
+const ROOT_CLOSING: &str = "Write the root summary of the branches above now.";
 
 pub(super) fn leaf_user(
     head: &ConversationHead,
@@ -34,21 +39,35 @@ pub(super) fn leaf_user(
     for (index, message) in messages.iter().enumerate() {
         blocks.push(message_block(index, message)?);
     }
-    Ok(document(header, &blocks))
+    Ok(document(header, &blocks, LEAF_CLOSING))
 }
 
 pub(super) fn branch_user(
     head: &ConversationHead,
     leaves: &[SummaryNode],
 ) -> Result<String, WorkerError> {
-    rollup_user(head, leaves, "leaves", "in this branch", "Leaf")
+    rollup_user(
+        head,
+        leaves,
+        "leaves",
+        "in this branch",
+        "Leaf",
+        BRANCH_CLOSING,
+    )
 }
 
 pub(super) fn root_user(
     head: &ConversationHead,
     branches: &[SummaryNode],
 ) -> Result<String, WorkerError> {
-    rollup_user(head, branches, "branches", "in this root", "Branch")
+    rollup_user(
+        head,
+        branches,
+        "branches",
+        "in this root",
+        "Branch",
+        ROOT_CLOSING,
+    )
 }
 
 fn rollup_user(
@@ -57,6 +76,7 @@ fn rollup_user(
     label: &str,
     phrase: &str,
     kind: &str,
+    closing: &str,
 ) -> Result<String, WorkerError> {
     let first = nodes.first().ok_or(WorkerError::Count)?;
     let last = nodes.last().ok_or(WorkerError::Count)?;
@@ -71,7 +91,7 @@ fn rollup_user(
     for (index, node) in nodes.iter().enumerate() {
         blocks.push(node_block(index, kind, node)?);
     }
-    Ok(document(header, &blocks))
+    Ok(document(header, &blocks, closing))
 }
 
 fn header(head: &ConversationHead, tail: &[(&str, String)]) -> String {
@@ -130,11 +150,11 @@ fn node_block(index: usize, kind: &str, node: &SummaryNode) -> Result<String, Wo
     ))
 }
 
-fn document(header: String, blocks: &[String]) -> String {
+fn document(header: String, blocks: &[String], closing: &str) -> String {
     let mut parts = Vec::with_capacity(blocks.len().saturating_add(1));
     parts.push(header);
     parts.extend(blocks.iter().cloned());
-    parts.join("\n\n---\n\n")
+    format!("{}\n\n[end]\n\n{closing}", parts.join("\n\n---\n\n"))
 }
 
 fn push_field(out: &mut String, label: &str, value: &str) {
@@ -168,5 +188,43 @@ fn prompt_time(at: DateTime<Utc>) -> String {
         format!("{}Z", at.format("%Y-%m-%dT%H:%M:%S"))
     } else {
         at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+    use chrono::Utc;
+    use kernel::memory::ConversationHead;
+    use kernel::memory::WindowMessage;
+    use uuid::Uuid;
+
+    use super::leaf_user;
+
+    #[test]
+    fn a_leaf_prompt_ends_by_asking_for_the_summary_not_mid_transcript() {
+        let head = ConversationHead {
+            id: Uuid::nil(),
+            session_key: "cli:prompt".to_owned(),
+            agent: "rivet-deepseek".to_owned(),
+            channel: "cli".to_owned(),
+            title: None,
+        };
+        let at = Utc
+            .with_ymd_and_hms(2026, 11, 1, 12, 0, 0)
+            .single()
+            .expect("time");
+        let messages = [WindowMessage {
+            id: Uuid::nil(),
+            agent: "rivet-deepseek".to_owned(),
+            role: wire::message::Role::Assistant,
+            content: "[thinking] Let me look at the remaining golden shapes.".to_owned(),
+            tool: None,
+            created_at: at,
+        }];
+        let prompt = leaf_user(&head, &messages).expect("prompt");
+        let (transcript, ask) = prompt.rsplit_once("[end]").expect("transcript is closed");
+        assert!(transcript.contains("Let me look at the remaining golden shapes."));
+        assert!(ask.trim().starts_with("Write the leaf summary"));
     }
 }

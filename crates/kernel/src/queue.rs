@@ -64,8 +64,6 @@ pub enum JobNameError {
     Unknown(String),
     #[error("heartbeat job name needs a numeric index after the last dash: {0}")]
     HeartbeatIndex(String),
-    #[error("run-task job name has an empty node")]
-    EmptyNode,
 }
 
 #[derive(
@@ -100,9 +98,9 @@ pub enum FixedJob {
     #[strum(serialize = "enqueue-stale-compaction")]
     EnqueueStaleSummaries,
     ReapDeadJobs,
-    RunTask,
     SyncTopicPage,
     PurgeDeletedSessions,
+    DigestDay,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -110,7 +108,6 @@ pub enum FixedJob {
 pub enum JobName {
     Fixed(FixedJob),
     Heartbeat { agent: String, index: u32 },
-    RunTaskOn { node: String },
 }
 
 impl fmt::Display for JobName {
@@ -118,7 +115,6 @@ impl fmt::Display for JobName {
         match self {
             Self::Fixed(fixed) => write!(f, "{fixed}"),
             Self::Heartbeat { agent, index } => write!(f, "heartbeat-{agent}-{index}"),
-            Self::RunTaskOn { node } => write!(f, "run-task:{node}"),
         }
     }
 }
@@ -137,14 +133,6 @@ impl FromStr for JobName {
             return Ok(Self::Heartbeat {
                 agent: agent.to_string(),
                 index,
-            });
-        }
-        if let Some(node) = value.strip_prefix("run-task:") {
-            if node.is_empty() {
-                return Err(JobNameError::EmptyNode);
-            }
-            return Ok(Self::RunTaskOn {
-                node: node.to_string(),
             });
         }
         FixedJob::from_str(value)
@@ -289,6 +277,7 @@ impl WorkerRole {
                 JobName::Fixed(FixedJob::ReapDeadJobs),
                 JobName::Fixed(FixedJob::SyncTopicPage),
                 JobName::Fixed(FixedJob::PurgeDeletedSessions),
+                JobName::Fixed(FixedJob::DigestDay),
             ],
             Self::Categorizer => &[
                 JobName::Fixed(FixedJob::FileConversation),

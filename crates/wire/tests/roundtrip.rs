@@ -87,95 +87,14 @@ fn get<'a>(value: &'a Value, key: &str) -> &'a Value {
 }
 
 fn error_payload(label: &str, body: &str, parsed: &Value, errors: &mut Vec<String>) {
-    if parsed.get("available").is_some() {
-        errors.push_result(roundtrip_as::<
-            wire::gateway::devices::PhonePairingAvailability,
-        >(label, body));
-    } else if parsed.get("error").is_some() {
+    if parsed.get("error").is_some() {
         errors.push_result(roundtrip_as::<wire::gateway::GatewayError>(label, body));
     }
 }
 
-fn success_payload(
-    path: &str,
-    status: u16,
-    body: &str,
-    parsed: &Value,
-    label: &str,
-    errors: &mut Vec<String>,
-) {
-    let ok_body = parsed.get("ok").is_some();
-    match path {
-        "/healthz" => {
-            errors.push_result(roundtrip_as::<wire::gateway::HealthzResponse>(label, body));
-        }
-        "/event" | "/api/events/event" => {
-            errors.push_result(roundtrip_as::<wire::gateway::OkReply>(label, body));
-        }
-        "/events" | "/api/events" => {
-            errors.push_result(roundtrip_as::<wire::gateway::EventsIngested>(label, body));
-        }
-        "/sessions" => errors.push_result(roundtrip_as::<wire::events::SessionList>(label, body)),
-        "/state" => errors.push_result(roundtrip_as::<wire::events::StateResponse>(label, body)),
-        "/mesh.json" | "/api/mesh" => {
-            errors.push_result(roundtrip_as::<wire::gateway::devices::MeshOverview>(
-                label, body,
-            ));
-        }
-        "/term/config" | "/api/terminal/config" => {
-            errors.push_result(roundtrip_as::<wire::gateway::term::TermConfig>(label, body));
-        }
-        "/term" | "/api/terminal" => {
-            if status == 201 {
-                errors.push_result(roundtrip_as::<wire::gateway::term::TermSpawnResponse>(
-                    label, body,
-                ));
-            } else if status == 200 && ok_body {
-                errors.push_result(roundtrip_as::<wire::gateway::OkReply>(label, body));
-            }
-        }
-        "/term/list" | "/api/terminal/list" => {
-            errors.push_result(roundtrip_as::<wire::gateway::term::PtyList>(label, body));
-        }
-        "/term/inject" | "/api/terminal/inject" => {
-            errors.push_result(roundtrip_as::<wire::gateway::term::TermInjectResponse>(
-                label, body,
-            ));
-        }
-        "/term/harness-sessions" | "/api/terminal/harness-sessions" => {
-            errors.push_result(roundtrip_as::<wire::harness::HarnessStoreSessionList>(
-                label, body,
-            ));
-        }
-        "/api/phone-pairing" => {
-            errors.push_result(roundtrip_as::<
-                wire::gateway::devices::PhonePairingAvailability,
-            >(label, body));
-        }
-        "/api/devices/pair" => {
-            if parsed.get("error").is_some() {
-                errors.push_result(roundtrip_as::<wire::gateway::GatewayError>(label, body));
-            }
-        }
-        "/session" => {
-            if status == 200 && ok_body {
-                errors.push_result(roundtrip_as::<wire::gateway::OkReply>(label, body));
-            }
-        }
-        _ => {
-            let transcript = path.ends_with("/transcript")
-                && (path.starts_with("/term/harness-sessions/")
-                    || path.starts_with("/api/terminal/harness-sessions/"));
-            if transcript && status == 200 {
-                errors.push_result(roundtrip_as::<wire::gateway::sessions::TranscriptResponse>(
-                    label, body,
-                ));
-            } else if path.starts_with("/api/phone-pairing/") {
-                errors.push_result(roundtrip_as::<wire::gateway::devices::PhonePairingStatus>(
-                    label, body,
-                ));
-            }
-        }
+fn success_payload(path: &str, body: &str, label: &str, errors: &mut Vec<String>) {
+    if path == "/healthz" {
+        errors.push_result(roundtrip_as::<wire::gateway::HealthzResponse>(label, body));
     }
 }
 
@@ -187,31 +106,7 @@ fn response_payload(path: &str, status: u16, body: &str, errors: &mut Vec<String
     if status >= 400 {
         error_payload(&label, body, &parsed, errors);
     } else {
-        success_payload(path, status, body, &parsed, &label, errors);
-    }
-}
-
-fn roundtrip_request(label: &str, method: &str, path: &str, body: &str) -> Result<(), String> {
-    match (method, path) {
-        ("POST", "/event" | "/api/events/event") => {
-            roundtrip_as::<wire::events::AgentEvent>(label, body)
-        }
-        ("POST", "/events" | "/api/events") => {
-            roundtrip_as::<Vec<wire::events::AgentEvent>>(label, body)
-        }
-        ("POST", "/term" | "/api/terminal") => {
-            roundtrip_as::<wire::gateway::term::TermSpawnRequest>(label, body)
-        }
-        ("POST", "/term/inject" | "/api/terminal/inject") => {
-            roundtrip_as::<wire::gateway::term::TermInjectRequest>(label, body)
-        }
-        ("POST", "/api/devices/pair") => {
-            roundtrip_as::<wire::gateway::PairRedeemRequest>(label, body)
-        }
-        ("POST", "/api/phone-pairing") => {
-            roundtrip_as::<wire::gateway::devices::PhonePairingRequest>(label, body)
-        }
-        _ => Ok(()),
+        success_payload(path, body, &label, errors);
     }
 }
 
@@ -223,7 +118,7 @@ fn roundtrip_case(case: &Value, errors: &mut Vec<String>) {
     let Some(head) = get(case, "request").get("head").and_then(Value::as_str) else {
         return;
     };
-    let Some((method, target)) = request_head(head) else {
+    let Some((_, target)) = request_head(head) else {
         errors.push("the recorded request head has no method and target".to_owned());
         return;
     };
@@ -238,21 +133,6 @@ fn roundtrip_case(case: &Value, errors: &mut Vec<String>) {
         errors.push("the recorded status line carries no status code".to_owned());
         return;
     };
-    if let Some(body) = get(case, "request").get("body").and_then(Value::as_str) {
-        let object = serde_json::from_str::<Value>(body)
-            .ok()
-            .filter(Value::is_object);
-        if status < 400
-            && let Some(object) = object
-        {
-            let label = format!("{method} {path}");
-            let before = errors.len();
-            errors.push_result(roundtrip_request(&label, method, path, &object.to_string()));
-            for failure in errors.iter_mut().skip(before) {
-                *failure = format!("{method} {path}: {failure}");
-            }
-        }
-    }
     if let Some(body) = response.get("body").and_then(Value::as_str) {
         response_payload(path, status, body, errors);
     }
@@ -289,27 +169,8 @@ fn ws_payload(text: &str, errors: &mut Vec<String>) {
         .unwrap_or_default();
     let label = format!("ws frame {kind}");
     match kind {
-        "snapshot" | "session.removed" => {
+        "hub.state" | "plugin.changed" | "plugin.views" | "topic.changed" => {
             errors.push_result(roundtrip_as::<wire::events::SessionBroadcast>(&label, text));
-        }
-        "session.start" | "session.end" | "message.user" | "message.agent" | "thinking.delta"
-        | "tool.start" | "task.plan" | "task.check" | "activity" | "turn.end" => {
-            errors.push_result(roundtrip_as::<wire::events::AgentEvent>(&label, text));
-        }
-        "hello" | "exit" | "owner" => {
-            errors.push_result(roundtrip_as::<wire::gateway::term::TermServerFrame>(
-                &label, text,
-            ));
-        }
-        "resize" | "claim" | "kill" => {
-            let sized = kind != "resize"
-                || (parsed.get("cols").is_some_and(Value::is_u64)
-                    && parsed.get("rows").is_some_and(Value::is_u64));
-            if sized {
-                errors.push_result(roundtrip_as::<wire::gateway::term::TermClientFrame>(
-                    &label, text,
-                ));
-            }
         }
         _ => {}
     }

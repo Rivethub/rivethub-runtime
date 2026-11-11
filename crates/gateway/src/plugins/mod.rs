@@ -64,9 +64,6 @@ pub struct HostSettings {
     pub node_ports: Vec<u16>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PairedDevice;
-
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
     #[error("{0}")]
@@ -79,8 +76,6 @@ pub enum HostError {
     Unavailable(String),
     #[error("{0}")]
     Unconfinable(String),
-    #[error("approving permissions needs a paired device certificate")]
-    DeviceRequired,
     #[error(transparent)]
     Approval(#[from] kernel::plugins::ApprovalError),
     #[error(transparent)]
@@ -152,7 +147,6 @@ pub struct PluginHost {
     tools: watch::Sender<u64>,
     confinement: sandbox::Support,
     sessions: OnceLock<Arc<SessionRegistry>>,
-    terminal: OnceLock<std::sync::Weak<crate::term::TerminalService>>,
     tools_key: OnceLock<[u8; 32]>,
     shutdown: CancellationToken,
     tasks: TaskTracker,
@@ -188,7 +182,6 @@ impl PluginHost {
             tools: watch::channel(0).0,
             confinement: sandbox::support(),
             sessions: OnceLock::new(),
-            terminal: OnceLock::new(),
             tools_key: OnceLock::new(),
             shutdown,
             tasks,

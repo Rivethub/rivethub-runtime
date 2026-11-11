@@ -67,7 +67,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(memory(&report).status, CheckStatus::Fail);
     assert_eq!(
         memory(&report).message,
-        "Schema 0 is not current; required 30, pending 30. Run rivethub-migrate explicitly."
+        "Schema 0 is not current; required 35, pending 35. Run rivethub-migrate explicitly."
     );
     assert!(!path.exists(), "doctor must not create missing stores");
     migrate::sqlite(&path).expect("test schema");
@@ -75,7 +75,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     let (exit, report) = doctor(&env).await;
     assert_eq!(exit, Exit::Ok, "{report:?}");
     assert_eq!(memory(&report).status, CheckStatus::Pass);
-    assert_eq!(memory(&report).message, "Schema 30 is current.");
+    assert_eq!(memory(&report).message, "Schema 35 is current.");
     assert_eq!(std::fs::read(&path).expect("after"), before);
     let connection = rusqlite::Connection::open(&path).expect("fixture database");
     connection
@@ -88,7 +88,7 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(memory(&report).status, CheckStatus::Fail);
     assert_eq!(
         memory(&report).message,
-        "Schema 6 is not current; required 30, pending 24. Run rivethub-migrate explicitly."
+        "Schema 6 is not current; required 35, pending 29. Run rivethub-migrate explicitly."
     );
     assert_eq!(std::fs::read(&path).expect("after old schema"), before);
 }
@@ -124,49 +124,6 @@ async fn postgres_doctor_checks_current_and_behind_without_migrating(pool: sqlx:
     assert_eq!(
         migrate::postgres_status_pool(&pool).await.expect("after"),
         before
-    );
-}
-
-#[tokio::test]
-async fn terminal_check_accepts_executable_paths_with_spaces_and_refuses_non_executables() {
-    use std::os::unix::fs::PermissionsExt;
-    let (home, _) = setup("gateway:\n  terminal:\n    enabled: true\n");
-    let bin = home.path().join("bin with spaces");
-    std::fs::create_dir(&bin).expect("bin");
-    let env = Environment::from_vars([
-        ("HOME".as_ref(), home.path().as_os_str()),
-        ("PATH".as_ref(), bin.as_os_str()),
-    ]);
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr").status,
-        CheckStatus::Fail
-    );
-    let executable = bin.join("herdr");
-    std::fs::write(&executable, "test executable marker").expect("herdr marker");
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600))
-        .expect("non-executable");
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr").status,
-        CheckStatus::Fail
-    );
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
-        .expect("executable");
-    let (_, report) = doctor(&env).await;
-    let check = report.checks.last().expect("herdr");
-    assert_eq!(check.name, CheckName::Herdr);
-    assert_eq!(check.status, CheckStatus::Pass);
-    let loop_path = home.path().join("loop");
-    std::os::unix::fs::symlink(&loop_path, &loop_path).expect("unreadable PATH entry");
-    let env = Environment::from_vars([
-        ("HOME".as_ref(), home.path().as_os_str()),
-        ("PATH".as_ref(), loop_path.as_os_str()),
-    ]);
-    let (_, report) = doctor(&env).await;
-    assert_eq!(
-        report.checks.last().expect("herdr error").status,
-        CheckStatus::Fail
     );
 }
 

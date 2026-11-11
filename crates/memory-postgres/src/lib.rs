@@ -1,45 +1,51 @@
 mod access;
 pub mod admin;
-mod agent_presets;
 mod backfills;
+mod bundle;
 pub mod capture;
+mod changes;
 mod cleanup;
 mod conversation;
 mod deletion;
+mod digest;
 pub mod dump;
 pub mod embed;
 mod embedding_store;
 pub mod error;
+mod facts;
 mod flagged;
 mod graphile;
 mod graphile_sql;
-mod hub_state;
 mod listen;
 mod loss;
 mod memory_jobs;
 pub mod merge;
+mod model_calls;
 pub mod queue;
 pub mod read;
+mod review;
 pub mod search;
 mod search_cap;
 mod search_complete;
 mod search_content;
 mod search_details;
+mod search_fts;
+mod search_literal;
 mod search_recent;
 mod search_sql;
 mod search_vector;
+mod session_activity;
+mod session_catalog;
+mod session_marks;
 mod stats;
 pub use search_complete::SearchSynthesis;
+mod jobs;
 mod stats_cache;
 mod store_impl;
 mod summary_dag;
 mod summary_store;
 mod summary_watch;
 mod tags;
-mod task_db;
-mod task_jobs;
-mod task_rows;
-mod task_watch;
 mod tenancy;
 mod tidy;
 mod title;
@@ -55,10 +61,7 @@ mod resilience;
 mod scope;
 pub use scope::scoped;
 
-pub use agent_presets::PostgresPresets;
 pub use cleanup::DatabaseIdentity;
-pub use hub_state::PostgresHubState;
-pub use task_db::PostgresTasks;
 pub use tenancy::PostgresTenancy;
 pub use title::Untitled;
 
@@ -67,6 +70,7 @@ use std::time::Duration;
 
 pub use capture::CaptureOptions;
 pub use capture::CaptureWriter;
+pub use capture::ConversationDates;
 pub use capture::ConversationEnsure;
 pub use capture::ConversationRecord;
 pub use capture::ConversationUpdate;
@@ -81,7 +85,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 56;
+pub const SCHEMA_VERSION: i64 = 62;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
@@ -94,7 +98,6 @@ pub struct PostgresMemory {
     access: std::sync::Arc<access::AccessLog>,
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
-    unverified: bool,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
 
@@ -112,7 +115,6 @@ impl PostgresMemory {
             access: std::sync::Arc::default(),
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
-            unverified: false,
             summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
         }
     }
@@ -164,10 +166,7 @@ impl PostgresMemory {
                 let pool = lazy_pool(url, POOL_CONNECTIONS, Some(pooling.idle()))
                     .map_err(Error::Connection)?;
                 tokio::spawn(check_when_reachable(pool.clone()));
-                Ok(Self {
-                    unverified: true,
-                    ..Self::new(pool)
-                })
+                Ok(Self::new(pool))
             }
             Err(error) => Err(Error::Connection(error)),
         }

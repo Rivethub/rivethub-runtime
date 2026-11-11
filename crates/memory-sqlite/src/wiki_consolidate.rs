@@ -62,9 +62,9 @@ fn topics(conn: &Connection) -> Result<Vec<WikiTopicStats>, WikiStoreError> {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, u64>(2)?,
+                row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, u64>(4)?,
+                row.get::<_, i64>(4)?,
                 row.get::<_, bool>(5)?,
             ))
         })
@@ -75,8 +75,10 @@ fn topics(conn: &Connection) -> Result<Vec<WikiTopicStats>, WikiStoreError> {
         topics.push(WikiTopicStats {
             slug,
             title,
-            citations,
-            history,
+            citations: u64::try_from(citations)
+                .map_err(|source| WikiStoreError::Query(Box::new(source)))?,
+            history: u64::try_from(history)
+                .map_err(|source| WikiStoreError::Query(Box::new(source)))?,
             created_at: crate::time::stored(&created_at, "ros_wiki_topics.created_at")
                 .map_err(|source| WikiStoreError::Query(Box::new(source)))?,
             bound,

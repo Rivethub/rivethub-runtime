@@ -27,6 +27,15 @@ pub struct WikiPatch {
     pub history_entry: Option<WikiHistoryEntry>,
     #[serde(rename = "type")]
     pub entity_type: Option<String>,
+    pub facts: Option<Vec<PatchFact>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatchFact {
+    pub key: String,
+    pub value: String,
+    pub evidence: String,
 }
 
 impl WikiPatch {

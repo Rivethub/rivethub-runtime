@@ -4,23 +4,7 @@ use kernel::transcript::StoreSession;
 use kernel::transcript::linked_parent;
 use wire::harness::HarnessSessionStatus;
 use wire::harness::HarnessSessionSummary;
-use wire::harness::HarnessStoreSession;
-use wire::harness::RosterCommand;
 use wire::session_id::SessionId;
-
-pub(crate) fn legacy_row(row: &StoreSession) -> HarnessStoreSession {
-    HarnessStoreSession {
-        id: row.id.clone(),
-        command: RosterCommand::from(row.harness),
-        title: row.title.clone(),
-        updated_at: epoch_ms(row.updated_at),
-        created_at: row.created_at.map(epoch_ms),
-        parent_session_id: row.parent_session_id.clone(),
-        agent_name: row.agent_name.clone(),
-        model: row.model.clone(),
-        task_id: row.task_id.clone(),
-    }
-}
 
 pub(crate) fn summary(
     row: &StoreSession,
@@ -51,7 +35,6 @@ pub(crate) fn summary(
         task_id: row.task_id.clone(),
         effort: None,
         transport: None,
-        startup_context: None,
         extra: wire::Extra::default(),
     }
 }

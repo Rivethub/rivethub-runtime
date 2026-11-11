@@ -83,6 +83,7 @@ pub(crate) fn handler_ready(name: &JobName) -> bool {
                 | FixedJob::EnqueueStaleWiki
                 | FixedJob::SyncTopicPage
                 | FixedJob::PurgeDeletedSessions
+                | FixedJob::DigestDay
         )
     )
 }

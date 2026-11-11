@@ -337,45 +337,6 @@ fn fresh_lock_directory(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn the_advertised_host_falls_back_like_the_den() -> Result<(), Box<dyn std::error::Error>> {
-    let config: config::Config = serde_yaml_ng::from_str("mesh:\n  enabled: true\n")?;
-    let none = Environment::from_vars(Vec::<(String, String)>::new());
-    assert_eq!(config.mesh_advertise_host(&none), "127.0.0.1");
-    let host = Environment::from_vars([("RIVETOS_HOST".to_owned(), "192.0.2.17".to_owned())]);
-    assert_eq!(config.mesh_advertise_host(&host), "192.0.2.17");
-    let name = Environment::from_vars([("HOSTNAME".to_owned(), "example-node".to_owned())]);
-    assert_eq!(config.mesh_advertise_host(&name), "example-node");
-    let set: config::Config =
-        serde_yaml_ng::from_str("mesh:\n  enabled: true\n  advertise_host: node.mesh\n")?;
-    assert_eq!(set.mesh_advertise_host(&host), "node.mesh");
-    Ok(())
-}
-
-#[test]
-fn partial_mesh_tls_takes_the_den_defaults() -> Result<(), Box<dyn std::error::Error>> {
-    let paths: config::model::MeshTlsPaths = serde_yaml_ng::from_str(
-        "cert_path: /state/mesh/node.crt\nca_path: /state/mesh/ca-chain.pem\n",
-    )?;
-    let resolved = paths.resolve("node-a", Path::new("/shared"));
-    assert_eq!(resolved.cert, PathBuf::from("/state/mesh/node.crt"));
-    assert_eq!(resolved.ca, PathBuf::from("/state/mesh/ca-chain.pem"));
-    assert_eq!(
-        resolved.key,
-        PathBuf::from("/shared/rivet-ca/issued/node-a.key")
-    );
-    let empty = config::model::MeshTlsPaths::default().resolve("node-a", Path::new("/shared"));
-    assert_eq!(
-        empty.ca,
-        PathBuf::from("/shared/rivet-ca/intermediate/ca-chain.pem")
-    );
-    assert_eq!(
-        empty.cert,
-        PathBuf::from("/shared/rivet-ca/issued/node-a.crt")
-    );
-    Ok(())
-}
-
-#[test]
 fn rivethub_home_is_the_state_directory_and_locks_stay_with_it()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = temp_home("hub-home")?;

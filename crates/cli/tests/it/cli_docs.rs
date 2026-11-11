@@ -23,7 +23,7 @@ fn every_visible_command_is_in_the_operator_cli_doc() -> std::io::Result<()> {
     let doc = documented()?;
     let mut leaves = Vec::new();
     visible_leaves(&cli::Cli::command(), "rh", &mut leaves);
-    assert!(leaves.contains(&"rh ca token device".to_owned()));
+    assert!(leaves.contains(&"rh harness connect".to_owned()));
     let missing: Vec<&String> = leaves
         .iter()
         .filter(|path| !doc.contains(&format!("`{path}`")))

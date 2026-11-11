@@ -39,10 +39,10 @@ fn requested(query: Option<&str>) -> Result<BTreeSet<SessionId>, ApiError> {
         .filter(|pair| !pair.is_empty())
     {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if super::super::sessions::form_text(key)? != "session" {
+        if super::super::notices::form_text(key)? != "session" {
             continue;
         }
-        let session = super::super::sessions::form_text(value)?
+        let session = super::super::notices::form_text(value)?
             .parse::<SessionId>()
             .map_err(|_| ApiError::BadRequest("canonical session required".into()))?;
         sessions.insert(session);

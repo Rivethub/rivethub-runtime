@@ -6,9 +6,11 @@ pub mod logging;
 pub mod model_load;
 pub mod models;
 pub mod service;
+pub mod sessions;
 mod shutdown;
 pub mod sidecar;
 mod signals;
+mod telemetry;
 pub mod worker;
 
 pub use cli::Exit;

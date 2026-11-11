@@ -11,6 +11,7 @@ use super::builder::ExtractWiki;
 use super::builder::HeldEntity;
 use super::builder::WikiBuilderStore;
 use super::builder::WikiRouting;
+use super::builder::WikiStoreError;
 use super::builder::WikiSummary;
 use super::entity::Catalog;
 use super::entity::Filed;
@@ -21,6 +22,7 @@ use super::page::WikiPatch;
 use super::page::WikiSlug;
 use super::page::bound::MergeBase;
 use super::page::demote_h2_headings;
+use crate::facts::FactStore;
 use crate::filing::Filable;
 use crate::filing::FilingStore;
 use crate::filing::Target;
@@ -101,6 +103,7 @@ impl TopicTarget {
 pub struct TopicPorts<'a> {
     pub topics: &'a dyn TopicStore,
     pub pages: &'a dyn TopicPageStore,
+    pub facts: &'a dyn FactStore,
     pub filing: &'a dyn FilingStore,
     pub lineage: &'a dyn SessionLister,
 }
@@ -304,14 +307,24 @@ impl WikiRouter<'_> {
         let filing = known
             .file(self.topics.topics, self.wiki, summary, patch, self.now)
             .await?;
-        if let Some(Filed {
+        let Some(Filed {
             entity,
             patches,
             earlier,
             held,
+            claims,
         }) = filing
-            && let Some(page) = self.topics.target(&entity, self.now).await?
-        {
+        else {
+            return Ok(known);
+        };
+        if !claims.is_empty() {
+            self.topics
+                .facts
+                .assert_facts(&claims)
+                .await
+                .map_err(|error| WikiStoreError::Query(Box::new(error)))?;
+        }
+        if let Some(page) = self.topics.target(&entity, self.now).await? {
             routed.held.extend(held);
             routed
                 .earlier

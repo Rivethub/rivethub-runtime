@@ -220,9 +220,9 @@ Anti-pattern: `std::process::exit` outside `main`. Pattern: return an error; the
 Check: clippy `exit`, `disallowed-methods`.
 
 ## DEPS
-Anti-pattern: a crate outside the policy (OpenSSL, `anyhow`, a second async runtime, tmux), `once_cell`/`lazy_static`
+Anti-pattern: a crate outside the policy (OpenSSL, `anyhow`, a second async runtime, a tmux binding), `once_cell`/`lazy_static`
 as direct dependencies, or a dependency declared in a manifest the crate never uses. Pattern: rustls; `thiserror`;
-`std::sync::LazyLock`/`OnceLock`; tokio; herdr; a dependency lands in the manifest with the commit that uses it and is
+`std::sync::LazyLock`/`OnceLock`; tokio; a dependency lands in the manifest with the commit that uses it and is
 removed when its last use goes (never excused with a `cargo-machete` ignore list). Check: the DEPS
 policy in `deny.toml` bans for the first group; `once_cell`/`lazy_static` must not be direct dependencies and is checked
 in review (other crates pull them transitively, so they are not banned in `deny.toml`); `cargo machete` in
@@ -302,7 +302,7 @@ Anti-pattern: a repository file reading or naming the lab plans tree (`/rivet-sh
 recordings from the share pass only on the lab machine and fail on a CI runner with NotFound; the plans tree is the
 lab's, never the repository's. Pattern: a recording shared by crates is vendored once under
 `crates/testkit/tests/fixtures/` (see DUPFIXTURE) and read through testkit's path helper (`testkit::recording`);
-`/rivet-shared` on its own stays legal — it is a product default (config's shared dir, the mesh CA path). Recorded
+`/rivet-shared` on its own stays legal — it is a product default (config's shared dir). Recorded
 data under `crates/*/tests/golden/` and `crates/*/tests/fixtures/` is exempt: a recording keeps its recorded bytes,
 including note fields that quote the lab as recorded. Check: xtask `LABPATH` (a tracked file under `crates/` or
 `xtask/` containing `/rivet-shared/plans/`).
@@ -386,13 +386,13 @@ Check: xtask `JSONBYTES`; existing hits live in `xtask/baseline.toml` (see BASEL
 Anti-pattern: a service or adapter declares a public trait for a store or external boundary. Pattern: ports live in
 kernel, adapters implement them, and the composition root injects them. Internal seams use restricted visibility;
 a sealed extension trait needs a trait-local `#[expect(..., reason = "PORTS: ...")]` explaining why it is not a port.
-Check: xtask `PORTS` parses Rust with syn and flags `pub trait` declarations in gateway, agent-loop, workers, tasks,
-mcp, capture, providers, harness-acp, terminal, memory-postgres, memory-sqlite and pki, including nested modules.
+Check: xtask `PORTS` parses Rust with syn and flags `pub trait` declarations in gateway, workers, mcp, capture,
+providers, harness-acp, memory-postgres and memory-sqlite, including nested modules.
 Restricted traits and traits with a direct outer expectation whose reason cites the exact `PORTS` id are exempt;
 module-level and conditional expectations do not waive declarations. Existing ports are counted in
 `xtask/baseline.toml` by `cargo xtask baseline --write`; new occurrences fail and stale entries must be removed.
 Services never touch databases directly: cargo-deny restricts `sqlx` and `rusqlite` to memory-postgres, memory-sqlite,
-pki (CA state), migrate, dev-only testkit, and composition crates rivethub and cli through `deny.toml` wrappers.
+migrate, dev-only testkit, and composition crates rivethub and cli through `deny.toml` wrappers.
 `capture` is also a `rusqlite` wrapper for read-only access to external harness stores.
 The third-party SQLx vector codec pgvector is an additional sqlx wrapper, restricted in turn to memory-postgres;
 services cannot bypass the database ban through it.

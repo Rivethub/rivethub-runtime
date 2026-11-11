@@ -48,7 +48,12 @@ async fn every_role_claim_is_dispatched_by_the_real_runner(pool: PgPool) -> supp
         WorkerDeps {
             targets: memory.clone(),
             summaries: memory.clone(),
-            provider,
+            summarizer: provider.clone(),
+            categorizer: workers::RoleModel {
+                provider: provider.clone(),
+                model: "model".to_owned(),
+            },
+            embedder: provider.clone(),
             embed: EmbedSettings::standard(),
             summary: SummarySettings::standard("model")?,
             scopes: None,
@@ -56,7 +61,12 @@ async fn every_role_claim_is_dispatched_by_the_real_runner(pool: PgPool) -> supp
     )
     .with_memory_jobs(memory.clone())
     .with_unembedded(memory.clone())
-    .with_topic_pages(memory.clone(), memory.clone(), memory.clone())
+    .with_topic_pages(
+        memory.clone(),
+        memory.clone(),
+        memory.clone(),
+        memory.clone(),
+    )
     .with_session_deletion(memory.clone())
     .with_session_topics(workers::SessionTopics {
         store: memory.clone(),
@@ -68,6 +78,7 @@ async fn every_role_claim_is_dispatched_by_the_real_runner(pool: PgPool) -> supp
         store: memory.clone(),
         consolidate: Some(memory),
         recompile: None,
+        provider,
         model: "model".to_owned(),
         load: None,
     });

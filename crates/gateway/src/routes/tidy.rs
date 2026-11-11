@@ -69,7 +69,7 @@ pub(super) fn router() -> Router<Arc<Gateway>> {
         )
 }
 
-fn error(error: TidyError) -> ApiError {
+pub(super) fn error(error: TidyError) -> ApiError {
     match error {
         TidyError::UnknownProposal { .. } | TidyError::UnknownBatch { .. } => {
             ApiError::Missing(error.to_string())
@@ -225,12 +225,12 @@ fn batch_id(segment: &str) -> Result<BatchId, ApiError> {
         .map_err(|_| ApiError::BadRequest(format!("{segment} is not a batch id")))
 }
 
-fn ports<'a>(gateway: &'a Gateway, user: &'a UserId) -> Result<TidyPorts<'a>, ApiError> {
+pub(super) fn ports<'a>(gateway: &'a Gateway, user: &'a UserId) -> Result<TidyPorts<'a>, ApiError> {
     Ok(TidyPorts {
         tidy: gateway.tidy()?.as_ref(),
         topics: gateway.topics()?.as_ref(),
         filing: gateway.filing()?.as_ref(),
-        pages: gateway.startup_memory().map(|(pages, _)| pages),
+        pages: gateway.topic_pages(),
         owner: user.owner(),
     })
 }

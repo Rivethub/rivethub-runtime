@@ -1,0 +1,232 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT call_id, session_key, turn_id, request_kind, started_at, finished_at, provider,\n                    model_requested, model_served, account, status_code, outcome, retry_after_secs,\n                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,\n                    reasoning_tokens\n               FROM rh_model_calls WHERE session_key = $1\n              ORDER BY started_at, call_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "call_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "call_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "session_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "session_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "turn_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "turn_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "request_kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "request_kind"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "provider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "model_requested",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "model_requested"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "model_served",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "model_served"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "account",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "account"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "status_code",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "status_code"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "outcome",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "retry_after_secs",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "retry_after_secs"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "input_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "input_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "output_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "output_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "cache_read_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "cache_read_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "cache_write_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "cache_write_tokens"
+          }
+        }
+      },
+      {
+        "ordinal": 17,
+        "name": "reasoning_tokens",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "rh_model_calls",
+            "name": "reasoning_tokens"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "fa548dc0153719cc3aa62e87bab1d7bd40d4d9701fe034bdd5e58e6b4022f3e1"
+}

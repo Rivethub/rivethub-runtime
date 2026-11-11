@@ -56,6 +56,10 @@ pub enum Error {
     DumpMessage(String),
     #[error("merge: {0}")]
     Merge(String),
+    #[error(transparent)]
+    ImportKey(#[from] wire::capture::ImportKeyError),
+    #[error(transparent)]
+    ImportMerge(#[from] wire::capture::MergeError),
     #[error("{operation} failed: {message}")]
     Operation {
         operation: &'static str,
@@ -85,6 +89,13 @@ impl Error {
             message: source.to_string(),
             source,
         }
+    }
+
+    pub(crate) fn timed_out(&self) -> bool {
+        matches!(self, Self::Operation { source, .. }
+            if source
+                .as_database_error()
+                .is_some_and(|error| error.code().as_deref() == Some("57014")))
     }
 
     pub(crate) fn protocol(message: impl Into<String>) -> Self {
@@ -118,7 +129,9 @@ impl From<Error> for MemoryStoreError {
             | Error::DumpDuplicate { .. }
             | Error::DumpCancelled
             | Error::DumpMessage(_)
-            | Error::Merge(_) => Self::InvalidRequest {
+            | Error::Merge(_)
+            | Error::ImportMerge(_)
+            | Error::ImportKey(_) => Self::InvalidRequest {
                 message: value.to_string(),
             },
             Error::Integer(_)
@@ -134,6 +147,9 @@ impl From<Error> for MemoryStoreError {
             Error::Operation {
                 message, source, ..
             } if unstorable_text(&source) => Self::InvalidRequest { message },
+            error @ Error::Operation { .. } if cancelled(&error) => {
+                Self::Unavailable(Box::new(error))
+            }
             Error::Operation {
                 message, source, ..
             } => Self::Query {
@@ -142,6 +158,13 @@ impl From<Error> for MemoryStoreError {
             },
         }
     }
+}
+
+fn cancelled(error: &Error) -> bool {
+    matches!(error, Error::Operation { source, .. } if source
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .is_some_and(|code| code == "57014"))
 }
 
 fn unstorable_text(source: &sqlx::Error) -> bool {
@@ -177,7 +200,9 @@ impl From<Error> for JobQueueError {
             | Error::DumpDuplicate { .. }
             | Error::DumpCancelled
             | Error::DumpMessage(_)
-            | Error::Merge(_) => Self::Unavailable(Box::new(value)),
+            | Error::Merge(_)
+            | Error::ImportMerge(_)
+            | Error::ImportKey(_) => Self::Unavailable(Box::new(value)),
             error @ Error::StoredValue { .. } => Self::Claim {
                 message: error.to_string(),
                 source: Box::new(error),

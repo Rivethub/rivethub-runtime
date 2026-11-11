@@ -105,20 +105,3 @@ pub(crate) const RELEASE: &str = "WITH owned AS MATERIALIZED (
     FROM released r WHERE q.id = r.job_queue_id AND q.locked_by = r.locked_by
 )
 SELECT count(*)::bigint AS released FROM released";
-
-pub(crate) const FAIL: &str = "WITH owned AS MATERIALIZED (
-    SELECT id, job_queue_id, locked_by FROM graphile_worker._private_jobs
-    WHERE id = $1 AND starts_with(locked_by, $3)
-    FOR UPDATE
-), failed AS (
-    UPDATE graphile_worker._private_jobs j
-    SET last_error = $2, locked_at = NULL, locked_by = NULL, updated_at = now(),
-        run_at = greatest(now(), j.run_at) + interval '1 second' * exp(least(j.attempts, 10))
-    FROM owned WHERE j.id = owned.id
-    RETURNING owned.job_queue_id, owned.locked_by
-), unlocked AS (
-    UPDATE graphile_worker._private_job_queues q
-    SET locked_at = NULL, locked_by = NULL
-    FROM failed f WHERE q.id = f.job_queue_id AND q.locked_by = f.locked_by
-)
-SELECT count(*)::bigint AS failed FROM failed";
