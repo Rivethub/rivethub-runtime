@@ -18,39 +18,7 @@ pub trait SessionShare: Send + Sync + std::fmt::Debug {
 
     async fn open(&self, path: PathBuf) -> Result<OpenedBundle, ShareFailure>;
 
-    async fn share(
-        &self,
-        path: PathBuf,
-        consent: &dyn ShareConsent,
-    ) -> Result<ShareOutcome, ShareFailure>;
-
     fn redact(&self, text: &str) -> String;
-}
-
-#[async_trait]
-pub trait ShareConsent: Send + Sync {
-    async fn consent(&self, preview: &SharePreview) -> Result<Consent, ShareFailure>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SharePreview {
-    pub titles: Vec<String>,
-    pub author: String,
-    pub signed_by: String,
-    pub bytes: u64,
-    pub unreviewed: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Consent {
-    Share { unreviewed: usize },
-    Decline,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShareOutcome {
-    Shared { sessions: usize, line: String },
-    Declined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,10 +218,6 @@ pub enum ShareFailure {
     UnknownSessions(String),
     #[error("not a session bundle: {}", .0.display())]
     NotBundle(PathBuf),
-    #[error(
-        "{} is a raw bundle; run session_sanitize first, because only a sanitized bundle can be shared", .0.display()
-    )]
-    RawShare(PathBuf),
     #[error(
         "decide needs memory.sanitize.decide.url in the config (the decision model); rh mcp reads it at startup, so restart it after you set the key"
     )]

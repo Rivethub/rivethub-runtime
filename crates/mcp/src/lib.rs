@@ -16,7 +16,6 @@ pub use error::Error;
 use kernel::memory::MemoryStore;
 use kernel::plugins::PluginTools;
 use kernel::tenancy::Scope;
-use rmcp::Peer;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
@@ -102,8 +101,6 @@ enum Operation {
     SessionSanitize,
     #[strum(serialize = "session_import")]
     SessionImport,
-    #[strum(serialize = "session_share")]
-    SessionShare,
 }
 
 impl Server {
@@ -139,14 +136,13 @@ impl Server {
     }
 
     pub async fn call(&self, request: CallToolRequestParams) -> Result<CallToolResult, ErrorData> {
-        self.dispatch(request, self.shutdown.clone(), None).await
+        self.dispatch(request, self.shutdown.clone()).await
     }
 
     async fn dispatch(
         &self,
         request: CallToolRequestParams,
         cancel: CancellationToken,
-        peer: Option<Peer<RoleServer>>,
     ) -> Result<CallToolResult, ErrorData> {
         if !self.tools.iter().any(|tool| tool.name == request.name) {
             if let Some(port) = &self.plugins
@@ -177,12 +173,11 @@ impl Server {
             | Operation::WikiRead
             | Operation::SessionFind
             | Operation::SessionSanitize
-            | Operation::SessionImport
-            | Operation::SessionShare => {
+            | Operation::SessionImport => {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => Err(Error::Cancelled),
-                    result = self.execute(operation, arguments, peer.as_ref()) => result,
+                    result = self.execute(operation, arguments) => result,
                 }
             }
         };
@@ -198,7 +193,6 @@ impl Server {
         &self,
         operation: Operation,
         arguments: rmcp::model::JsonObject,
-        peer: Option<&Peer<RoleServer>>,
     ) -> Result<CallToolResult, Error> {
         match operation {
             Operation::Search => {
@@ -228,9 +222,6 @@ impl Server {
             }
             Operation::SessionImport => {
                 sessions::import(self.memory.as_ref(), self.sessions()?, decode(arguments)?).await
-            }
-            Operation::SessionShare => {
-                sessions::share(self.sessions()?, decode(arguments)?, peer).await
             }
         }
     }
@@ -364,7 +355,7 @@ impl ServerHandler for Server {
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         let cancel = self.shutdown.child_token();
-        let pending = self.dispatch(request, cancel.clone(), Some(context.peer.clone()));
+        let pending = self.dispatch(request, cancel.clone());
         let scope = self.scope.clone();
         let pending = async move {
             match scope {

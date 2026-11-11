@@ -7,7 +7,6 @@ use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::MemoryStore as _;
 use kernel::memory::SessionDigest;
-use kernel::memory::share::Consent;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::DecisionSummary;
 use kernel::memory::share::FlagPlace;
@@ -18,10 +17,7 @@ use kernel::memory::share::SanitizeJob;
 use kernel::memory::share::SanitizeSummary;
 use kernel::memory::share::SanitizedBundle;
 use kernel::memory::share::SessionShare;
-use kernel::memory::share::ShareConsent;
 use kernel::memory::share::ShareFailure;
-use kernel::memory::share::ShareOutcome;
-use kernel::memory::share::SharePreview;
 use kernel::owner::Owner;
 use mcp::Server;
 use mcp::sessions::Sessions;
@@ -160,7 +156,6 @@ pub(crate) struct ScriptedShare {
     sessions: Vec<BundledSession>,
     decide: Option<DecideMode>,
     jobs: Mutex<Vec<SanitizeJob>>,
-    uploads: Mutex<Vec<PathBuf>>,
 }
 
 fn write(path: &Path, stub: &Stub) {
@@ -201,45 +196,8 @@ pub(crate) fn flagged() -> FlagSummary {
     }
 }
 
-impl ScriptedShare {
-    pub(crate) async fn uploads(&self) -> Vec<PathBuf> {
-        self.uploads.lock().await.clone()
-    }
-}
-
-pub(crate) const SHARE_LINE: &str = "share code (works once, expires 2026-11-17; send it privately): rhb1:AAAAAAAAAAAAAAAAAAAAAA#qqqq";
-
 #[async_trait]
 impl SessionShare for ScriptedShare {
-    async fn share(
-        &self,
-        path: PathBuf,
-        consent: &dyn ShareConsent,
-    ) -> Result<ShareOutcome, ShareFailure> {
-        let stub = read(&path)?;
-        let preview = SharePreview {
-            titles: stub
-                .sessions
-                .iter()
-                .map(|session| session.batch.title.clone().unwrap_or_default())
-                .collect(),
-            author: "phil".to_owned(),
-            signed_by: "ed25519:0011223344556677".to_owned(),
-            bytes: 2048,
-            unreviewed: 0,
-        };
-        match consent.consent(&preview).await? {
-            Consent::Decline => Ok(ShareOutcome::Declined),
-            Consent::Share { .. } => {
-                self.uploads.lock().await.push(path);
-                Ok(ShareOutcome::Shared {
-                    sessions: stub.sessions.len(),
-                    line: SHARE_LINE.to_owned(),
-                })
-            }
-        }
-    }
-
     async fn digests(&self, keys: &[String]) -> Result<Vec<SessionDigest>, ShareFailure> {
         Ok(self
             .sessions
@@ -384,7 +342,6 @@ pub(crate) async fn node(
         sessions,
         decide,
         jobs: Mutex::new(Vec::new()),
-        uploads: Mutex::new(Vec::new()),
     });
     let kit = Sessions {
         share: share_port.clone(),

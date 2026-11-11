@@ -9,8 +9,6 @@ pub mod support;
 
 #[path = "sessions/fixture.rs"]
 mod fixture;
-#[path = "sessions/share.rs"]
-mod share;
 
 use fixture::RISKY;
 use fixture::appended;
@@ -496,12 +494,7 @@ async fn no_tool_writes_a_raw_bundle() {
         .collect();
     assert_eq!(
         names,
-        [
-            "session_find",
-            "session_sanitize",
-            "session_import",
-            "session_share"
-        ]
+        ["session_find", "session_sanitize", "session_import"]
     );
     let mut request = rmcp::model::CallToolRequestParams::new("session_export".to_owned());
     request.arguments = Some(
@@ -513,4 +506,18 @@ async fn no_tool_writes_a_raw_bundle() {
     );
     assert!(phil.server.call(request).await.is_err());
     assert!(!phil.share.join("work.json").exists());
+}
+
+#[tokio::test]
+async fn no_tool_shares_receives_or_takes_a_code() {
+    let phil = node("phil", sessions(), None).await;
+    for tool in phil.server.tools() {
+        let schema = serde_json::to_string(&tool.input_schema).expect("schema");
+        assert!(!schema.contains("\"code\""), "{} takes a code", tool.name);
+        assert!(
+            !tool.name.contains("share") && !tool.name.contains("receive"),
+            "{} pushes or pulls a bundle",
+            tool.name
+        );
+    }
 }
