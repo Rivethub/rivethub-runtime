@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::LazyLock;
 
@@ -284,18 +285,18 @@ impl Mapping {
             );
         }
         found.sort_by_key(|(rule, range)| (*rule, range.start));
-        let mut taken: Vec<(Range<usize>, usize)> = Vec::new();
+        let mut taken: BTreeMap<usize, (Range<usize>, usize)> = BTreeMap::new();
         for (rule, range) in found {
             let overlaps = taken
-                .iter()
-                .any(|(kept, _)| range.start < kept.end && kept.start < range.end);
+                .range(..range.end)
+                .next_back()
+                .is_some_and(|(_, (kept, _))| range.start < kept.end);
             if !overlaps {
-                taken.push((range, rule));
+                taken.insert(range.start, (range, rule));
             }
         }
-        taken.sort_by_key(|(range, _)| range.start);
         taken
-            .into_iter()
+            .into_values()
             .filter_map(|(range, index)| self.rules.get(index).map(|rule| (range, rule)))
             .collect()
     }

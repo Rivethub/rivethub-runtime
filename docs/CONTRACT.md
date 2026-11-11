@@ -1784,10 +1784,15 @@ recorded in `rivethub.toml`). The loader applies the deviations `rivethub.toml` 
 `generic-api-key` and `private-key` are not loaded (215 of 222 are), `microsoft-teams-webhook` redacts its whole
 match, and an allowlist regex written `^a|b|c$` is compiled as `^(?:a|b|c)$`. Each rule names keywords; one
 Aho-Corasick automaton over every keyword prefilters the text, and a rule whose keyword appears runs its regex on that
-line, or on a 64 KiB window when its regex spans lines; a rule with the keyword `*` runs over the whole text. The
+line, or, when its regex spans lines, on a 64 KiB window that starts at the line's start, or 16 KiB before the
+keyword on a longer line; a rule with the keyword `*` runs over the whole text. The
 names rule reads on to the next 16 lines when its line ends with `=`, `:`, `{` or `[`, and to the end of a 64 KiB
 window when the line opens a YAML block scalar (`password: |`), so a block scalar longer than 16 lines is redacted
-whole. The
+whole. A value is read at most 64 KiB past its name, and a JSON object or array that does not close on the name's line
+at most 16 lines down. A value judged not secret is still searched for names inside it; once the values one text kept
+add up to eight times its length plus 64 KiB, every later value under a secret name in that text is redacted, so no
+text costs the scan more than linear time (80 KB of repeated `{"name":"DB_PASSWORD","value":` took over 60 s at
+8a1ccf13 and takes 0.13 s now). The
 secret is the rule's `secretGroup`, else its first non-empty capture group, else the whole match, so a name and its
 separator stay (`api_key: [REDACTED:secret_assignment]`). `base64_secret` takes any run of 40 or more base64
 characters, on one line or wrapped over lines of one width with a shorter last line, decodes it (standard or URL-safe

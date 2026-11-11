@@ -1,6 +1,11 @@
 use std::ops::Range;
 
+use super::scan::LOOKAHEAD_LINES;
+use super::scan::WINDOW;
+
 const BARE_END: &[char] = &[',', ';', '&', ')', ']', '}', '"', '\''];
+const TOKEN_PUNCTUATION: &[char] = &['.', '_', '~', '+', '/', '=', '-'];
+const KEPT_OVERLAP: usize = 8;
 const OPENERS: &[(&str, &str)] = &[
     ("${{", "}}"),
     ("${", "}"),
@@ -26,8 +31,13 @@ pub(super) struct Value {
     pub(super) shape: Shape,
 }
 
-pub(super) fn parse(rest: &str, placeholder_len: &dyn Fn(&str) -> usize) -> Option<Value> {
-    let line_end = rest.find(['\n', '\r']).unwrap_or(rest.len());
+pub(super) fn parse(
+    rest: &str,
+    line_end: usize,
+    placeholder_len: &dyn Fn(&str) -> usize,
+) -> Option<Value> {
+    let rest = head(rest, WINDOW);
+    let line_end = line_end.min(rest.len());
     let line = rest.get(..line_end)?;
     for opener in ["\\\"", "\\'", "\"", "'"] {
         if let Some(inner) = line.strip_prefix(opener) {
@@ -57,7 +67,7 @@ pub(super) fn parse(rest: &str, placeholder_len: &dyn Fn(&str) -> usize) -> Opti
     if let Some((open, close)) = OPENERS.iter().find(|(open, _)| line.starts_with(open)) {
         let end = match balanced_end(line, open, close) {
             Some(end) => Some(end).filter(|&end| !word_follows(line, end)),
-            None if opens_json(rest, open) => balanced_end(rest, open, close),
+            None if opens_json(rest, open) => balanced_end(lines_ahead(rest), open, close),
             None => None,
         };
         if let Some(end) = end {
@@ -72,6 +82,22 @@ pub(super) fn parse(rest: &str, placeholder_len: &dyn Fn(&str) -> usize) -> Opti
         range: 0..end,
         shape: Shape::Bare,
     })
+}
+
+pub(super) fn head(text: &str, limit: usize) -> &str {
+    let mut end = limit.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end).unwrap_or(text)
+}
+
+fn lines_ahead(rest: &str) -> &str {
+    let end = rest
+        .match_indices('\n')
+        .nth(LOOKAHEAD_LINES)
+        .map_or(rest.len(), |(at, _)| at);
+    rest.get(..end).unwrap_or(rest)
 }
 
 fn word_follows(line: &str, end: usize) -> bool {
@@ -109,7 +135,7 @@ fn next_line_value(
         let start = at + indent;
         let body = rest.get(start..next_end)?;
         if body.starts_with(['"', '\'', '{', '[']) {
-            let inner = parse(rest.get(start..)?, placeholder_len)?;
+            let inner = parse(rest.get(start..)?, next_end - start, placeholder_len)?;
             return Some(Value {
                 range: start + inner.range.start..start + inner.range.end,
                 shape: inner.shape,
@@ -126,14 +152,11 @@ fn next_line_value(
 
 pub(super) fn in_comment(
     text: &str,
+    line_start: usize,
     key_start: usize,
     line_prefix: &regex::Regex,
     openers: &[String],
 ) -> bool {
-    let line_start = text
-        .get(..key_start)
-        .and_then(|head| head.rfind('\n'))
-        .map_or(0, |found| found + 1);
     let prefix = text
         .get(line_start..key_start)
         .map(str::trim_start)
@@ -153,11 +176,11 @@ pub(super) fn expansion_or_url_user(text: &str, key_start: usize) -> bool {
 
 pub(super) fn prose_follows(rest: &str, value_end: usize) -> bool {
     let tail = rest.get(value_end..).unwrap_or_default();
-    let line = tail.split(['\n', '\r']).next().unwrap_or_default();
-    line.starts_with([' ', '\t'])
-        && line
-            .trim_start()
-            .contains(|c: char| c.is_ascii_alphabetic())
+    tail.starts_with([' ', '\t'])
+        && tail
+            .chars()
+            .take_while(|&c| c != '\n' && c != '\r')
+            .any(|c| c.is_ascii_alphabetic())
 }
 
 fn is_block_scalar(indicator: &str) -> bool {
@@ -258,6 +281,19 @@ pub(super) fn bare_end(text: &str) -> usize {
         }
     }
     text.len()
+}
+
+pub(super) fn token_end(rest: &str) -> Option<usize> {
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric() && !TOKEN_PUNCTUATION.contains(&c))
+        .unwrap_or(rest.len());
+    let tail = rest.get(end..)?;
+    let stops = tail.is_empty()
+        || tail.starts_with(|c: char| c.is_whitespace() || BARE_END.contains(&c))
+        || tail
+            .strip_prefix('\\')
+            .is_some_and(|escape| escape.starts_with(['n', 'r', 't']));
+    (end > 0 && stops).then_some(end)
 }
 
 fn reference_follows(text: &str) -> bool {
@@ -371,6 +407,75 @@ pub(super) fn shannon_entropy(text: &str) -> f64 {
             -p * p.log2()
         })
         .sum()
+}
+
+#[derive(Debug)]
+pub(super) struct KeptBudget(usize);
+
+impl KeptBudget {
+    pub(super) fn for_text(text: &str) -> Self {
+        Self(
+            text.len()
+                .saturating_mul(KEPT_OVERLAP)
+                .saturating_add(WINDOW),
+        )
+    }
+
+    pub(super) fn exhausted(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub(super) fn spend(&mut self, bytes: usize) {
+        self.0 = self.0.saturating_sub(bytes);
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct Lines {
+    searched_back: usize,
+    start: usize,
+    clear_from: usize,
+    end: Option<usize>,
+}
+
+impl Lines {
+    pub(super) fn start(&mut self, text: &str, at: usize) -> usize {
+        if at < self.searched_back {
+            self.searched_back = 0;
+            self.start = 0;
+        }
+        if let Some(found) = text
+            .get(self.searched_back..at)
+            .and_then(|span| span.rfind('\n'))
+        {
+            self.start = self.searched_back + found + 1;
+        }
+        self.searched_back = at;
+        self.start
+    }
+
+    pub(super) fn end(&mut self, text: &str, at: usize) -> usize {
+        if let Some(end) = self.end.filter(|&end| at <= end) {
+            if at >= self.clear_from {
+                return end;
+            }
+            if let Some(found) = text
+                .get(at..self.clear_from)
+                .and_then(|gap| gap.find(['\n', '\r']))
+            {
+                return at + found;
+            }
+            self.clear_from = at;
+            return end;
+        }
+        let end = text
+            .get(at..)
+            .and_then(|tail| tail.find(['\n', '\r']))
+            .map_or(text.len(), |found| at + found);
+        self.clear_from = at;
+        self.end = Some(end);
+        end
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use super::Allow;
@@ -13,8 +14,9 @@ use super::decode::Decoded;
 use super::decode::decoded;
 use super::value::shannon_entropy;
 
-const WINDOW: usize = 64 * 1024;
-const LOOKAHEAD_LINES: usize = 16;
+pub(super) const WINDOW: usize = 64 * 1024;
+pub(super) const LOOKAHEAD_LINES: usize = 16;
+const LOOKBEHIND: usize = WINDOW / 4;
 const DECODE_DEPTH: usize = 2;
 
 #[derive(Debug, Clone)]
@@ -57,7 +59,11 @@ impl Ruleset {
                 if hit.start() < *done {
                     continue;
                 }
-                let start = line_start(text, hit.start());
+                let start = if rule.multiline {
+                    window_start(text, hit.start())
+                } else {
+                    line_start(text, hit.start())
+                };
                 let line = line_end(text, hit.end());
                 let end = if rule.multiline {
                     window_end(text, start)
@@ -89,20 +95,17 @@ impl Ruleset {
             }
         }
         found.sort_by_key(|span| (span.rule.source, span.range.start, span.order));
-        let mut kept: Vec<Span<'_>> = Vec::new();
+        let mut kept: BTreeMap<usize, Span<'_>> = BTreeMap::new();
         for span in found {
-            if span.range.is_empty() {
-                continue;
-            }
-            let overlaps = kept.iter().any(|taken| {
-                span.range.start < taken.range.end && taken.range.start < span.range.end
-            });
-            if !overlaps {
-                kept.push(span);
+            let overlaps = kept
+                .range(..span.range.end)
+                .next_back()
+                .is_some_and(|(_, taken)| span.range.start < taken.range.end);
+            if !span.range.is_empty() && !overlaps {
+                kept.insert(span.range.start, span);
             }
         }
-        kept.sort_by_key(|span| span.range.start);
-        kept
+        kept.into_values().collect()
     }
 
     fn matches<'a>(
@@ -135,10 +138,8 @@ impl Ruleset {
             Matcher::Budget => return,
             Matcher::Regex(regex) => regex,
         };
-        let global = match rule.source {
-            Source::Rivethub => &self.allow_ours,
-            Source::Gitleaks => &self.allow_theirs,
-        };
+        let global = self.global_allowlist(rule.source);
+        let mut line = CurrentLine::default();
         for captures in regex.captures_iter(slice) {
             let Some(whole) = captures.get(0) else {
                 continue;
@@ -161,8 +162,8 @@ impl Ruleset {
             {
                 continue;
             }
-            let line = line_of(slice, whole.start());
-            let allowed = |allow: &Allow| allow.permits(secret.as_str(), whole.as_str(), line);
+            let line_text = line.of(slice, whole.start());
+            let allowed = |allow: &Allow| allow.permits(secret.as_str(), whole.as_str(), line_text);
             if global.iter().any(allowed) || rule.allow.iter().any(allowed) {
                 continue;
             }
@@ -197,6 +198,13 @@ impl Ruleset {
 }
 
 impl Ruleset {
+    fn global_allowlist(&self, source: Source) -> &[Allow] {
+        match source {
+            Source::Rivethub => &self.allow_ours,
+            Source::Gitleaks => &self.allow_theirs,
+        }
+    }
+
     fn budget_rule<'a>(&'a self, fallback: &'a Rule) -> &'a Rule {
         self.rules.get(self.budget).unwrap_or(fallback)
     }
@@ -254,10 +262,35 @@ impl Allow {
     }
 }
 
+#[derive(Default)]
+struct CurrentLine(Option<Range<usize>>);
+
+impl CurrentLine {
+    fn of<'s>(&mut self, slice: &'s str, at: usize) -> &'s str {
+        let range = match self.0.take() {
+            Some(range) if range.start <= at && at <= range.end => range,
+            _ => line_start(slice, at)..line_end(slice, at),
+        };
+        let line = slice.get(range.clone()).unwrap_or(slice);
+        self.0 = Some(range);
+        line
+    }
+}
+
 fn line_start(text: &str, at: usize) -> usize {
     text.get(..at)
         .and_then(|head| head.rfind('\n'))
         .map_or(0, |found| found + 1)
+}
+
+fn window_start(text: &str, at: usize) -> usize {
+    let mut floor = at.saturating_sub(LOOKBEHIND);
+    while !text.is_char_boundary(floor) {
+        floor += 1;
+    }
+    text.get(floor..at)
+        .and_then(|head| head.rfind('\n'))
+        .map_or(floor, |found| floor + found + 1)
 }
 
 fn line_end(text: &str, at: usize) -> usize {
@@ -298,12 +331,6 @@ fn window_end(text: &str, start: usize) -> usize {
         end -= 1;
     }
     end
-}
-
-fn line_of(slice: &str, at: usize) -> &str {
-    let start = line_start(slice, at);
-    let end = line_end(slice, at);
-    slice.get(start..end).unwrap_or(slice)
 }
 
 #[cfg(test)]

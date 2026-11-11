@@ -1,4 +1,5 @@
 mod pairs;
+mod spaced;
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -100,7 +101,6 @@ struct Forms {
     version: Regex,
     identifier: Regex,
     word: Regex,
-    spaced_value: Regex,
     line_prefix: Regex,
     embedded_template: Regex,
 }
@@ -151,7 +151,6 @@ impl Forms {
             version: fixed(r"^[\^~=<>v]*\d+(?:\.\d+)+(?:[-_+][\w.]+)?(?:\([^()]*\))*$")?,
             identifier: fixed(r"^[A-Za-z_]\w*$")?,
             word: fixed(r"^[A-Za-z]+$")?,
-            spaced_value: fixed(r"^[A-Za-z0-9._~+/=-]+$")?,
             line_prefix: fixed(r"^(?:[+\->|]\s*)?\d*[\s\t]*")?,
             embedded_template: fixed(
                 r"\$\{\{[^}]*\}\}|\$\{[A-Za-z_][\w.:-]*\}|\{\{[^}]*\}\}|%[A-Z_][A-Z0-9_]*%",
@@ -412,6 +411,8 @@ impl Names {
     pub(super) fn hits(&self, text: &str) -> Vec<Range<usize>> {
         let mut found = Vec::new();
         let mut at = 0;
+        let mut lines = value::Lines::default();
+        let mut kept = value::KeptBudget::for_text(text);
         while let Some(captures) = self.forms.candidate.captures_at(text, at) {
             let Some(whole) = captures.get(0) else {
                 break;
@@ -429,15 +430,20 @@ impl Names {
             let Some(rest) = text.get(whole.end()..) else {
                 break;
             };
-            let Some(value) = value::parse(rest, &|text| self.placeholder_len(text)) else {
+            let line_end = lines.end(text, whole.end()) - whole.end();
+            let Some(value) = value::parse(rest, line_end, &|text| self.placeholder_len(text))
+            else {
                 continue;
             };
-            let value = self.past_type_annotation(rest, value);
+            let value = self.past_type_annotation(rest, value, |at| {
+                lines.end(text, whole.end() + at) - whole.end() - at
+            });
             let ctx = Context {
                 key: key.as_str(),
                 key_quoted: captures.get(2).is_some(),
                 in_comment: value::in_comment(
                     text,
+                    lines.start(text, key.start()),
                     key.start(),
                     &self.forms.line_prefix,
                     &self.comment_openers,
@@ -448,8 +454,13 @@ impl Names {
             let Some(slice) = rest.get(value.range.clone()) else {
                 continue;
             };
-            match self.judge(family, slice, value.shape, ctx) {
-                Verdict::Keep => {}
+            let verdict = if kept.exhausted() {
+                Verdict::Redact
+            } else {
+                self.judge(family, slice, value.shape, ctx)
+            };
+            match verdict {
+                Verdict::Keep => kept.spend(value.range.end),
                 Verdict::Redact => {
                     found.push(base + value.range.start..base + value.range.end);
                     at = base + value.range.end;
@@ -465,56 +476,19 @@ impl Names {
                 }
             }
         }
-        self.spaced_hits(text, &mut found);
+        let spaced = self.spaced_hits(text, &found);
+        found.extend(spaced);
         found.sort_by_key(|range| range.start);
         found.dedup_by(|next, kept| next.start < kept.end);
         found
     }
 
-    fn spaced_hits(&self, text: &str, found: &mut Vec<Range<usize>>) {
-        for captures in self.forms.spaced.captures_iter(text) {
-            let (Some(whole), Some(word)) = (captures.get(0), captures.get(1)) else {
-                continue;
-            };
-            if found
-                .iter()
-                .any(|range| range.start <= word.start() && word.start() < range.end)
-            {
-                continue;
-            }
-            let Some(rest) = text.get(whole.end()..) else {
-                continue;
-            };
-            if rest.starts_with(|c: char| c.is_whitespace() || c == '=' || c == ':') {
-                continue;
-            }
-            let end = value::bare_end(rest);
-            let Some(value) = rest.get(..end) else {
-                continue;
-            };
-            if !self.forms.spaced_value.is_match(value) || self.forms.word.is_match(value) {
-                continue;
-            }
-            let followed_by_separator = rest
-                .get(end..)
-                .is_some_and(|tail| tail.trim_start().starts_with(['=', ':']));
-            if followed_by_separator {
-                continue;
-            }
-            let ctx = Context {
-                key: word.as_str(),
-                ..Context::default()
-            };
-            if matches!(
-                self.judge(Family::Token, value, Shape::Bare, ctx),
-                Verdict::Redact
-            ) {
-                found.push(whole.end()..whole.end() + end);
-            }
-        }
-    }
-
-    fn past_type_annotation(&self, rest: &str, value: Value) -> Value {
+    fn past_type_annotation(
+        &self,
+        rest: &str,
+        value: Value,
+        mut line_end: impl FnMut(usize) -> usize,
+    ) -> Value {
         if value.shape != Shape::Bare {
             return value;
         }
@@ -533,10 +507,9 @@ impl Names {
             body.len() - body.trim_start_matches([' ', '\t']).len()
         });
         let start = after + spaces;
-        match rest
-            .get(start..)
-            .and_then(|tail| value::parse(tail, &|text| self.placeholder_len(text)))
-        {
+        match rest.get(start..).and_then(|tail| {
+            value::parse(tail, line_end(start), &|text| self.placeholder_len(text))
+        }) {
             Some(inner) => Value {
                 range: start + inner.range.start..start + inner.range.end,
                 shape: inner.shape,

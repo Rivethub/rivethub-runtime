@@ -290,3 +290,29 @@ as = "<luis>"
     }
     Ok(())
 }
+
+#[test]
+fn crafted_long_lines_sanitize_in_bounded_time() -> TestResult {
+    let pair = r#"{"name":"DB_PASSWORD","value":"#;
+    let cases = [
+        pair.repeat(160_000 / pair.len()),
+        "password:>".repeat(75_000),
+        "password=abc1 ".repeat(25_000),
+    ];
+    let mut outputs = Vec::new();
+    for content in cases {
+        let input = raw(vec![session("long", vec![message("e1", &content)])])?;
+        let started = std::time::Instant::now();
+        let text = sanitized_text(&input, "")?;
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(20),
+            "{} bytes took {elapsed:?}",
+            content.len()
+        );
+        outputs.push(first_content(&text)?);
+    }
+    let pairs = outputs.first().ok_or("no output")?;
+    assert!(pairs.len() < 1_000, "{pairs}");
+    Ok(())
+}
