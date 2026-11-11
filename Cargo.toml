@@ -36,6 +36,7 @@ futures = "0.3"
 gateway = { path = "crates/gateway", version = "0.8.0" }
 getrandom = "0.4"
 harness-acp = { path = "crates/harness-acp", version = "0.8.0" }
+headers = "0.4"
 hex = "0.4"
 hmac = "0.12"
 http-body = { version = "1", default-features = false }

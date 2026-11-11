@@ -4,6 +4,7 @@ pub mod auth;
 pub mod error;
 pub mod extract;
 mod history;
+pub mod local_owner;
 mod memory_body;
 mod models;
 pub mod plugins;
@@ -55,6 +56,7 @@ pub struct Gateway {
     policy: auth::OriginPolicy,
     denials: DenialLog,
     tenancy: tenancy::Tenancy,
+    local_owner: Option<Arc<local_owner::LocalOwner>>,
     sessions: Arc<sessions::SessionRegistry>,
     transcript: Option<Arc<dyn kernel::transcript::TranscriptReader>>,
     session_lister: Option<Arc<dyn kernel::transcript::SessionLister>>,
@@ -97,6 +99,7 @@ impl Gateway {
             policy,
             denials: DenialLog::default(),
             tenancy: tenancy::Tenancy::default(),
+            local_owner: None,
             sessions: Arc::new(sessions::SessionRegistry::default()),
             transcript: None,
             session_lister: None,
@@ -148,6 +151,17 @@ impl Gateway {
     pub fn with_tenancy(mut self, tenancy: tenancy::Tenancy) -> Self {
         self.tenancy = tenancy;
         self
+    }
+
+    #[must_use]
+    pub fn with_local_owner(mut self, owner: Arc<local_owner::LocalOwner>) -> Self {
+        self.local_owner = Some(owner);
+        self
+    }
+
+    #[must_use]
+    pub fn local_owner(&self) -> Option<&Arc<local_owner::LocalOwner>> {
+        self.local_owner.as_ref()
     }
 
     #[must_use]

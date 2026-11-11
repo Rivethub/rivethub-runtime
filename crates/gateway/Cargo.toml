@@ -20,6 +20,7 @@ config = { workspace = true }
 croner = { workspace = true }
 getrandom = { workspace = true }
 hex = { workspace = true }
+headers = { workspace = true }
 http-body = { workspace = true }
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true }
