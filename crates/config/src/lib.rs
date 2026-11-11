@@ -16,7 +16,7 @@ pub use enums::{
     ThinkingLevel,
 };
 pub use environment::{
-    CONFIG_PATH_VARIABLE, Environment, LOG_LEVEL_VARIABLE, LogLevelSetting, MODEL_RUN_VARIABLE,
+    CLOUD_VARIABLE, CONFIG_PATH_VARIABLE, Environment, LOG_LEVEL_VARIABLE, LogLevelSetting, MODEL_RUN_VARIABLE,
     NODE_ID_VARIABLE, NODE_NAME_VARIABLE, POSTGRES_URL_VARIABLE, deprecated_alias_names,
 };
 pub use load::{

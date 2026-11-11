@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::enums::MemoryBackend;
-use crate::environment::Environment;
+use crate::environment::{CLOUD_VARIABLE, Environment};
 use crate::model::Config;
 use crate::paths::{ConfigLocation, Paths, expand_home};
 use crate::provider::{
@@ -62,6 +62,8 @@ pub enum ConfigError {
     Substitution(#[from] regress::Error),
     #[error("environment variable {name} must contain valid UTF-8 text")]
     EnvironmentText { name: String },
+    #[error("{CLOUD_VARIABLE} must be on or off, not {0:?}")]
+    CloudSwitch(String),
 }
 
 #[derive(Debug)]
@@ -345,6 +347,7 @@ pub fn standalone_config_yaml(
     database: &std::path::Path,
     host: &str,
     port: u16,
+    cloud_disabled: bool,
 ) -> Result<String, ConfigError> {
     let document = StandaloneDocument {
         memory: StandaloneMemory {
@@ -352,6 +355,7 @@ pub fn standalone_config_yaml(
             sqlite: StandaloneSqlite { path: database },
         },
         gateway: StandaloneGateway { host, port },
+        cloud: cloud_disabled.then_some(StandaloneCloud { disabled: true }),
     };
     Ok(serde_yaml_ng::to_string(&document)?)
 }
@@ -360,6 +364,13 @@ pub fn standalone_config_yaml(
 struct StandaloneDocument<'a> {
     memory: StandaloneMemory<'a>,
     gateway: StandaloneGateway<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud: Option<StandaloneCloud>,
+}
+
+#[derive(Serialize)]
+struct StandaloneCloud {
+    disabled: bool,
 }
 
 #[derive(Serialize)]

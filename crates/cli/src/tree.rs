@@ -101,6 +101,11 @@ pub enum Command {
             help = "Print the --ensure result as one JSON object"
         )]
         json: bool,
+        #[arg(
+            long,
+            help = "Keep this hub off rivethub.cloud: a new config gets cloud.disabled, and a config without it is refused (same as RIVETHUB_CLOUD=off)"
+        )]
+        no_cloud: bool,
     },
     #[command(about = "Administer memory", disable_help_flag = true)]
     Memory {
