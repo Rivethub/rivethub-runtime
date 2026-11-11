@@ -19,7 +19,10 @@ async fn local_stores_model_calls_per_session_and_refuses_credential_headers() -
         &["gateway listening on "],
     )
     .await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home.path())?)
+        .build()?;
     let base = format!("http://127.0.0.1:{port}");
     let outcome = exercise(&client, &base).await;
     stop(started).await?;

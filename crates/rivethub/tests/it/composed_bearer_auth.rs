@@ -163,7 +163,7 @@ async fn a_caller_without_a_token_gets_the_guards_refusal() -> TestResult {
     }
     let browser = Call {
         method: Method::GET,
-        path: "/",
+        path: "/wiki",
         token: None,
         headers: &[(header::ACCEPT, "text/html")],
     }

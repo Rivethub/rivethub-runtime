@@ -142,7 +142,10 @@ async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestRe
         &["gateway listening on "],
     )
     .await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home.path())?)
+        .build()?;
     let base = format!("http://127.0.0.1:{port}");
     let health = client
         .get(format!("{base}/healthz"))

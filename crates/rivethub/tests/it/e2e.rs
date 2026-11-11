@@ -144,7 +144,9 @@ async fn post_recorded_batches(
     base: &str,
     env: &Environment,
 ) -> Result<Vec<ExpectedRow>, Box<dyn Error>> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .default_headers(crate::owner::headers(&gateway::state_dir(env)?)?)
+        .build()?;
     let now: DateTime<Utc> = NOW.parse()?;
     let mut expected = Vec::new();
     for (name, chunk_bytes) in WRITER_CASES {
@@ -206,7 +208,9 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api(pool: PgPool
         shutdown.clone(),
     ));
     let base = format!("http://127.0.0.1:{port}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .default_headers(crate::owner::headers(&gateway::state_dir(&env)?)?)
+        .build()?;
 
     let expected = post_recorded_batches(&base, &env).await?;
     assert_eq!(expected.len(), 11, "recorded posts carry 11 rows");

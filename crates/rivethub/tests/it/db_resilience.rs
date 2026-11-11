@@ -153,8 +153,11 @@ async fn wait_http(client: &reqwest::Client, url: &str, want: u16) -> TestResult
     }
 }
 
-fn client() -> TestResult<reqwest::Client> {
-    Ok(reqwest::Client::builder().no_proxy().build()?)
+fn client(home: &Path) -> TestResult<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home)?)
+        .build()?)
 }
 
 async fn tally(pool: &PgPool, name: &str) -> Result<Tally, sqlx::Error> {
@@ -236,7 +239,7 @@ async fn gateway_stays_up_across_a_database_outage(pool: PgPool) -> TestResult {
         ),
     )?;
     let mut running = spawn_rh(home.path(), &["gateway"], "gateway listening on ").await?;
-    let client = client()?;
+    let client = client(home.path())?;
     let base = format!("http://127.0.0.1:{port}");
     let health = wait_http(&client, &format!("{base}/healthz"), 200).await?;
     let parsed: HealthzResponse = serde_json::from_str(&health)?;
@@ -285,7 +288,7 @@ async fn gateway_starts_while_the_database_is_down(pool: PgPool) -> TestResult {
         ),
     )?;
     let mut running = spawn_rh(home.path(), &["gateway"], "gateway listening on ").await?;
-    let client = client()?;
+    let client = client(home.path())?;
     let base = format!("http://127.0.0.1:{port}");
     let degraded = wait_http(&client, &format!("{base}/healthz"), 503).await?;
     let parsed: HealthzResponse = serde_json::from_str(&degraded)?;
@@ -423,7 +426,7 @@ async fn local_sqlite_stays_healthy_when_postgres_backends_die(pool: PgPool) -> 
         "gateway listening on ",
     )
     .await?;
-    let client = client()?;
+    let client = client(home.path())?;
     let base = format!("http://127.0.0.1:{port}");
     wait_http(&client, &format!("{base}/healthz"), 200).await?;
     sqlx::query(

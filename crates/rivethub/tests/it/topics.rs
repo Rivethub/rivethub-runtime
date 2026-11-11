@@ -72,10 +72,11 @@ impl Api {
         let store = Arc::new(SqliteStore::open(&path)?);
         let memory: Arc<dyn MemoryStore> = store.clone();
         let lookups = Arc::new(lookups::Lookups::new(store.clone()));
-        let mut gateway = Gateway::new(memory, settings(root.path()));
+        let mut gateway = Gateway::new(memory, settings(root.path()))
+            .with_local_owner(crate::owner::holder())
+            .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?));
         if topics {
             gateway = gateway
-                .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?))
                 .with_topics(store.clone(), store.clone())
                 .with_decisions(store.clone())
                 .with_facts(store.clone())
@@ -115,6 +116,7 @@ impl Api {
         request
             .extensions_mut()
             .insert(ConnectInfo("127.0.0.1:40000".parse::<SocketAddr>()?));
+        crate::owner::authorize(&mut request);
         let response = self.router.clone().oneshot(request).await?;
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), BODY_LIMIT).await?;

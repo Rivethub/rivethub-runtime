@@ -62,20 +62,26 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
     seed(&pool).await?;
     let home = tempfile::tempdir()?;
     let memory = Arc::new(PostgresMemory::new(pool));
-    let gateway = Arc::new(Gateway::new(
-        memory,
-        gateway::Settings {
-            hostname: "wiki-test".to_owned(),
-            node: "wiki-test".to_owned(),
-            allowed_origins: Vec::new(),
-            allowed_hosts: Vec::new(),
-            static_dir: None,
-            root_redirect: None,
-            state_dir: home.path().join("state"),
-            private_ca: None,
-            request_deadline: gateway::REQUEST_DEADLINE,
-        },
-    ));
+    let gateway = Arc::new(
+        Gateway::new(
+            memory,
+            gateway::Settings {
+                hostname: "wiki-test".to_owned(),
+                node: "wiki-test".to_owned(),
+                allowed_origins: Vec::new(),
+                allowed_hosts: Vec::new(),
+                static_dir: None,
+                root_redirect: None,
+                state_dir: home.path().join("state"),
+                private_ca: None,
+                request_deadline: gateway::REQUEST_DEADLINE,
+            },
+        )
+        .with_local_owner(crate::owner::holder())
+        .with_tenancy(gateway::tenancy::Tenancy::local(
+            gateway::tenancy::UserId::new("owner".to_owned())?,
+        )),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://{}", listener.local_addr()?);
     let shutdown = CancellationToken::new();
@@ -91,6 +97,7 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
         .no_proxy()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
+        .default_headers(crate::owner::holder_headers()?)
         .build()?;
     let response = get(&client, &base, "/api/wiki/release").await?;
     assert_eq!(response.status().as_u16(), 200);

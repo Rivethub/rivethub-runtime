@@ -12,6 +12,7 @@ mod local_ensure;
 mod mcp_memory;
 mod mcp_sqlite;
 mod node_name;
+mod owner;
 mod roots;
 mod sessions;
 mod startup;
