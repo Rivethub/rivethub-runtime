@@ -657,7 +657,8 @@ async fn an_exchange_cycles_the_session_id() -> TestResult {
 }
 
 #[tokio::test]
-async fn login_attempts_are_rate_limited_per_peer_failures_included() -> TestResult {
+async fn failed_exchanges_are_rate_limited_but_a_valid_code_and_a_valid_mint_still_pass()
+-> TestResult {
     let rig = rig_with(
         AuthPolicy {
             attempts_per_minute: NonZeroU32::new(3).ok_or("three")?,
@@ -666,25 +667,43 @@ async fn login_attempts_are_rate_limited_per_peer_failures_included() -> TestRes
         false,
     )?;
     let code = mint(&rig).await?;
-    for _ in 0..2 {
+    for _ in 0..3 {
         assert_eq!(
             exchange(&rig, "wrong").await?.status,
             StatusCode::UNAUTHORIZED
         );
     }
-    let limited = exchange(&rig, &code).await?;
+    let limited = exchange(&rig, "wrong").await?;
     assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
     let wait: u64 = limited
         .header("retry-after")
         .ok_or("no Retry-After")?
         .parse()?;
     assert!((1..=60).contains(&wait), "{wait}");
-    let mint_again = rig
+    let anonymous_mint = rig
+        .call("POST", "/api/auth/login-codes")
+        .header("authorization", "Bearer wrong")
+        .send()
+        .await?;
+    assert_eq!(anonymous_mint.status, StatusCode::UNAUTHORIZED);
+    let owner_mint = rig
         .call("POST", "/api/auth/login-codes")
         .owner()
         .send()
         .await?;
-    assert_eq!(mint_again.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(owner_mint.status, StatusCode::OK);
+    assert_eq!(exchange(&rig, &code).await?.status, StatusCode::OK);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_anonymous_flood_cannot_lock_the_owner_out() -> TestResult {
+    let rig = rig_with(AuthPolicy::default(), false)?;
+    for _ in 0..30 {
+        exchange(&rig, "wrong").await?;
+    }
+    let code = mint(&rig).await?;
+    assert_eq!(exchange(&rig, &code).await?.status, StatusCode::OK);
     Ok(())
 }
 

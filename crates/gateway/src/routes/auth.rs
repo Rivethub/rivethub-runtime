@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
@@ -84,21 +85,27 @@ async fn page() -> Response {
     response
 }
 
-fn admit(gateway: &Gateway, parts: &Parts) -> Result<(), ApiError> {
+fn local_peer(parts: &Parts) -> Result<IpAddr, ApiError> {
     if !crate::auth::direct_local(parts) {
         return Err(ApiError::Unauthorized);
     }
-    let peer = crate::login::peer_ip(parts).ok_or(ApiError::Unauthorized)?;
-    gateway.browser().admit(peer).map_err(ApiError::RateLimited)
+    crate::login::peer_ip(parts).ok_or(ApiError::Unauthorized)
+}
+
+fn refused(gateway: &Gateway, peer: IpAddr) -> ApiError {
+    match gateway.browser().fail(peer) {
+        Ok(()) => ApiError::Unauthorized,
+        Err(wait) => ApiError::RateLimited(wait),
+    }
 }
 
 async fn mint(
     State(gateway): State<Arc<Gateway>>,
     parts: Parts,
 ) -> Result<Json<LoginCodeResponse>, ApiError> {
-    admit(&gateway, &parts)?;
+    let peer = local_peer(&parts)?;
     if !crate::tenancy::owner_token_presented(&gateway, &parts) {
-        return Err(ApiError::Unauthorized);
+        return Err(refused(&gateway, peer));
     }
     let code = gateway
         .browser()
@@ -120,9 +127,9 @@ async fn exchange(
     parts: Parts,
     Body(request): Body<SessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    admit(&gateway, &parts)?;
+    let peer = local_peer(&parts)?;
     if !gateway.browser().codes.redeem(request.code.expose()) {
-        return Err(ApiError::Unauthorized);
+        return Err(refused(&gateway, peer));
     }
     let csrf = gateway.browser().begin(&session).await?;
     Ok(Json(SessionResponse {

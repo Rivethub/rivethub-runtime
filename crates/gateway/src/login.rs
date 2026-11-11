@@ -157,7 +157,7 @@ impl Attempts {
         }
     }
 
-    fn admit(&self, peer: IpAddr) -> Result<(), Duration> {
+    fn fail(&self, peer: IpAddr) -> Result<(), Duration> {
         let clock = DefaultClock::default();
         self.per_peer
             .check_key(&peer)
@@ -224,8 +224,8 @@ impl Browser {
             .with_expiry(Expiry::OnInactivity(idle))
     }
 
-    pub(crate) fn admit(&self, peer: IpAddr) -> Result<(), Duration> {
-        self.attempts.admit(peer)
+    pub(crate) fn fail(&self, peer: IpAddr) -> Result<(), Duration> {
+        self.attempts.fail(peer)
     }
 
     pub(crate) fn invalidate(&self) {
