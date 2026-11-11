@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -165,32 +166,61 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         batch: &CaptureBatchRequest,
         now: DateTime<Utc>,
     ) -> Result<Totals, WriteError> {
-        self.replay(now).await?;
         let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;
+        let mut saved = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let body = body_text(chunk)?;
+            let path = self.spool.spool(&body, now).await?;
+            saved.push((chunk, body, path));
+        }
+        match self.spool.crossed_threshold().await {
+            Ok(Some(usage)) => tracing::warn!(
+                "capture spool holds {} entries and {} bytes; the gateway is not taking them. Nothing is dropped, so run `rh status` and start the gateway",
+                usage.entries,
+                usage.bytes
+            ),
+            Ok(None) => {}
+            Err(error) => tracing::warn!("capture spool size is unknown: {error}"),
+        }
+        let kept: Vec<PathBuf> = saved.iter().map(|(_, _, path)| path.clone()).collect();
+        if let Err(error) = self
+            .spool
+            .replay_except(DEFAULT_REPLAY_MAX, now, &kept, |body| {
+                self.transport.post(body)
+            })
+            .await
+        {
+            tracing::warn!("capture spool replay failed; the new batch is already saved: {error}");
+        }
         let mut totals = Totals::default();
         let mut rejected = None;
-        let mut pending = chunks.iter();
-        while let Some(chunk) = pending.next() {
-            let body = body_text(chunk)?;
-            match self.transport.post(body.clone()).await {
-                Ok(result) => totals.add(&result),
+        for (chunk, body, path) in saved {
+            match self.transport.post(body).await {
+                Ok(result) => {
+                    totals.add(&result);
+                    if let Err(error) = self.spool.discard(&path).await {
+                        tracing::warn!(
+                            "delivered batch {} was not removed: {error}",
+                            path.display()
+                        );
+                    }
+                }
                 Err(error @ PostError::Client { .. }) => {
-                    let moved = self.spool.dead_letter_body(&body, now).await?;
-                    tracing::warn!(
-                        "capture server rejected a batch for {} ({error}); moved it to {}",
-                        chunk.session_key,
-                        moved.display()
-                    );
+                    match self.spool.dead_letter(&path).await {
+                        Ok(moved) => tracing::warn!(
+                            "capture server rejected a batch for {} ({error}); moved it to {}",
+                            chunk.session_key,
+                            moved.map_or_else(String::new, |moved| moved.display().to_string())
+                        ),
+                        Err(move_error) => tracing::warn!(
+                            "capture server rejected a batch for {} ({error}); it stays in the spool: {move_error}",
+                            chunk.session_key
+                        ),
+                    }
                     rejected.get_or_insert(error);
                 }
-                Err(error) => {
-                    self.spool.spool(&body, now).await?;
-                    for rest in pending {
-                        self.spool.spool(&body_text(rest)?, now).await?;
-                    }
-                    return Err(error.into());
-                }
+                Err(error) => return Err(error.into()),
             }
         }
         match rejected {

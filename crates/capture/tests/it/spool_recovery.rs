@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use capture::spool::CaptureSpool;
-use capture::spool::SpoolLimits;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
 use chrono::DateTime;
@@ -189,28 +188,35 @@ async fn a_batch_that_keeps_failing_is_dead_lettered() -> Result<(), Box<dyn std
 }
 
 #[tokio::test]
-async fn the_spool_keeps_only_the_newest_batches_within_its_bounds()
+async fn the_spool_warns_once_per_threshold_crossing_and_never_drops_a_batch()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let limits = SpoolLimits {
-        max_files: 3,
-        max_bytes: 1024,
-    };
-    let spool = CaptureSpool::with_limits(dir.path().to_path_buf(), limits);
+    let spool = CaptureSpool::new(dir.path().to_path_buf());
     let now = now_at("2026-10-10T12:00:00Z")?;
-    for index in 0..5_u64 {
-        spool
-            .spool(
-                &format!("batch-{index}"),
-                now + Duration::from_millis(index),
-            )
-            .await?;
+    let mut paths = Vec::new();
+    for index in 0..1000_u64 {
+        paths.push(spool.spool("b", now + Duration::from_millis(index)).await?);
     }
-    assert_eq!(bodies(dir.path())?, vec!["batch-2", "batch-3", "batch-4"]);
-    let large = "x".repeat(600);
-    spool.spool(&large, now + Duration::from_millis(9)).await?;
-    spool.spool(&large, now + Duration::from_millis(10)).await?;
-    assert_eq!(bodies(dir.path())?, vec![large]);
+    assert_eq!(spool.crossed_threshold().await?, None);
+    paths.push(spool.spool("b", now + Duration::from_millis(1000)).await?);
+    let crossed = spool.crossed_threshold().await?;
+    assert_eq!(crossed.map(|usage| usage.entries), Some(1001));
+    paths.push(spool.spool("b", now + Duration::from_millis(1001)).await?);
+    assert_eq!(spool.crossed_threshold().await?, None);
+    assert!(
+        paths.iter().all(|path| path.is_file()),
+        "a batch was dropped"
+    );
+    for path in paths.drain(..2) {
+        std::fs::remove_file(path)?;
+    }
+    assert_eq!(spool.crossed_threshold().await?, None);
+    spool.spool("b", now + Duration::from_millis(1002)).await?;
+    spool.spool("b", now + Duration::from_millis(1003)).await?;
+    assert_eq!(
+        spool.crossed_threshold().await?.map(|usage| usage.entries),
+        Some(1002)
+    );
     Ok(())
 }
 

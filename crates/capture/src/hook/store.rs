@@ -293,7 +293,7 @@ impl<T: CaptureTransport> StoreHook<T> {
                 }
                 HookRun::done()
             }
-            Err(error) => HookRun::failed(error.to_string()),
+            Err(error) => HookRun::write_failed(&error),
         }
     }
 }

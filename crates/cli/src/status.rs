@@ -20,6 +20,19 @@ struct Health {
 }
 
 pub(crate) async fn run(env: &Environment) -> Report {
+    let mut report = health_report(env).await;
+    let line = match crate::capture_hook::spool_warning(env).await {
+        Ok(Some(warning)) => warning,
+        Ok(None) => String::new(),
+        Err(error) => format!("The capture spool could not be read: {error}"),
+    };
+    if !line.is_empty() {
+        report.stderr = format!("{}{line}\n", report.stderr);
+    }
+    report
+}
+
+async fn health_report(env: &Environment) -> Report {
     match health(env).await {
         Ok(report) => report,
         Err(error) => {
