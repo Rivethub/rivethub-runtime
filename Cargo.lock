@@ -3841,6 +3841,7 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5605,6 +5606,7 @@ dependencies = [
  "testkit",
  "thiserror 2.0.21",
  "url",
+ "uuid",
  "values",
 ]
 

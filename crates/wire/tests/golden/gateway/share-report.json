@@ -1,0 +1,33 @@
+{
+  "draft": "6f1c2b1e-7f0a-4c55-9a3e-2d9f1b7c0a11",
+  "expires_at": "2026-11-11T12:30:00Z",
+  "totals": { "secrets": 2, "mapped": 1, "redacted": 3, "escaped": 1, "rechecked": 4 },
+  "rules": [{ "rule": "aws-access-key", "count": 2 }],
+  "sessions": [
+    { "id": "0b7a7c62-3c43-4a1e-8d57-6d7a4f2a9e01", "agent": "claude", "messages": 42 }
+  ],
+  "not_scanned": "binary attachments",
+  "best_effort": "names and project paths",
+  "decision": { "model": "hy-memory", "scored": 9, "calls": 2, "trivial": 5, "mode": "advisory" },
+  "flags": [
+    {
+      "number": 1,
+      "score": 0.91,
+      "session": "0b7a7c62-3c43-4a1e-8d57-6d7a4f2a9e01",
+      "place": { "session": 1, "message": 7, "field": "content", "more": 0 },
+      "length": 24,
+      "text": "pay to <U+202E>acct 4421",
+      "state": { "kind": "open" }
+    },
+    { "number": 2, "score": 0.5, "length": 5, "text": "Alice", "state": { "kind": "keep" } },
+    { "number": 3, "score": 0.4, "length": 6, "text": "hunter", "state": { "kind": "redact" } },
+    {
+      "number": 4,
+      "score": 0.3,
+      "place": { "session": 1, "field": "tool_output", "more": 2 },
+      "length": 8,
+      "text": "Acme Inc",
+      "state": { "kind": "map", "term": "Acme Inc", "placeholder": "[COMPANY]" }
+    }
+  ]
+}

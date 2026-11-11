@@ -68,7 +68,7 @@ rmcp = { version = "3.9", default-features = false }
 rusqlite = { version = "0.41", features = ["bundled"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-pki-types = "1"
-schemars = { version = "1", features = ["chrono04", "url2"] }
+schemars = { version = "1", features = ["chrono04", "url2", "uuid1"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_ignored = "0.1"
