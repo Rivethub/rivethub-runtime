@@ -766,7 +766,7 @@ async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResu
     Ok(())
 }
 
-async fn healthz_policy(yaml: &str) -> Result<Option<serde_json::Value>, Failure> {
+async fn healthz(yaml: &str) -> Result<String, Failure> {
     let home = tempfile::tempdir()?;
     let env = config::Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
     let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml)?;
@@ -780,30 +780,29 @@ async fn healthz_policy(yaml: &str) -> Result<Option<serde_json::Value>, Failure
     .router(true);
     let (status, body) = local(&app, Method::GET, "/healthz", "").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let body: serde_json::Value = serde_json::from_str(&body)?;
-    Ok(body.get("policy").cloned())
+    Ok(body)
 }
 
 #[tokio::test]
 async fn healthz_states_a_hub_policy_only_when_one_is_set() -> TestResult {
-    assert_eq!(
-        healthz_policy("memory:\n  backend: sqlite\ntelemetry:\n  disabled: true\n").await?,
-        None
-    );
-    assert_eq!(
-        healthz_policy(
-            "memory:\n  backend: sqlite\n  share:\n    allowed_servers: [team.example.com]\ncloud:\n  disabled: true\n"
-        )
-        .await?,
-        Some(serde_json::json!({"cloud": "disabled", "shareServers": ["team.example.com"]}))
-    );
-    assert_eq!(
-        healthz_policy("cloud:\n  disabled: true\n").await?,
-        Some(serde_json::json!({"cloud": "disabled"}))
-    );
-    assert_eq!(
-        healthz_policy("memory:\n  share:\n    allowed_servers: [team.example.com]\n").await?,
-        Some(serde_json::json!({"cloud": "enabled", "shareServers": ["team.example.com"]}))
-    );
+    let open = healthz("memory:\n  backend: sqlite\ntelemetry:\n  disabled: true\n").await?;
+    assert!(!open.contains("policy"), "{open}");
+    for (yaml, policy) in [
+        (
+            "memory:\n  backend: sqlite\n  share:\n    allowed_servers: [team.example.com]\ncloud:\n  disabled: true\n",
+            r#""policy":{"cloud":"disabled","shareServers":["team.example.com"]}"#,
+        ),
+        (
+            "cloud:\n  disabled: true\n",
+            r#""policy":{"cloud":"disabled"}"#,
+        ),
+        (
+            "memory:\n  share:\n    allowed_servers: [team.example.com]\n",
+            r#""policy":{"cloud":"enabled","shareServers":["team.example.com"]}"#,
+        ),
+    ] {
+        let body = healthz(yaml).await?;
+        assert!(body.contains(policy), "{yaml}: {body}");
+    }
     Ok(())
 }
