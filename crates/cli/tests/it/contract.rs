@@ -184,7 +184,7 @@ async fn config_path_show_and_validate_use_config_ownership() {
     let config::ConfigError::Validation { result } = config::Config::load(
         &env,
         &config::ConfigLocation::Current(path.clone()),
-        config::Profile::Node,
+        config::Profile::Standalone,
     )
     .expect_err("invalid") else {
         panic!("wrong error")
