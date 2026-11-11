@@ -1900,8 +1900,8 @@ or of low entropy (`token: box7`, `api_key = hunter2`); a code value (`password 
 followed by runs of X) is redacted like the token.
 
 The mapping pass applies the rules of the mapping file: every literal and every regex is matched over the whole text
-(literals through one automaton that reports every occurrence, a `\b` in a regex as an ASCII word boundary so the
-scan stays on the regex engine's fast path), and where matches overlap the earlier rule in the file wins, then the
+(literals through one automaton that reports every occurrence, a `\b` in a regex as a Unicode word boundary, which
+the scan swaps for the equal ASCII boundary on text with no non-ASCII word character to stay on the regex engine's fast path), and where matches overlap the earlier rule in the file wins, then the
 earlier start: with the rules `abc` then `zab`, `zabc` becomes `z<abc's placeholder>`. `map` writes the rule's
 placeholder and `redact` writes `[REDACTED]`. A `settings.origin` the scrubber changed does not change credit: ingest
 replaces `settings.origin` with the session's `origin` (note 135).

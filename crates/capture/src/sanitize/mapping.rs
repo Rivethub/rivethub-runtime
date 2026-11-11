@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::LazyLock;
 
 use aho_corasick::AhoCorasick;
 use aho_corasick::MatchKind;
@@ -32,6 +33,13 @@ pub enum Action {
 pub const REDACTED: &str = "[REDACTED]";
 const COMBINED_SIZE_LIMIT: usize = 32 << 20;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a constant class; every mapping test compiles it"
+)]
+static NON_ASCII_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\w&&[^\x00-\x7F]]").expect("the class compiles"));
+
 impl Action {
     #[must_use]
     pub fn replacement(&self) -> &str {
@@ -47,7 +55,14 @@ pub struct Mapping {
     rules: Vec<Rule>,
     literals: Option<AhoCorasick>,
     literal_rules: Vec<usize>,
-    regexes: Vec<(usize, Regex)>,
+    regexes: Vec<RuleRegex>,
+}
+
+#[derive(Debug)]
+struct RuleRegex {
+    rule: usize,
+    on_ascii: Regex,
+    on_unicode: Regex,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -201,13 +216,17 @@ impl Mapping {
                     literal_rules.push(index);
                 }
                 Matcher::Regex(regex) => {
-                    let fast = RegexBuilder::new(&ascii_boundaries(regex.as_str()))
+                    let on_ascii = RegexBuilder::new(&ascii_boundaries(regex.as_str()))
                         .size_limit(COMBINED_SIZE_LIMIT)
                         .build()
                         .map_err(|error| MappingError::Combined {
                             message: error.to_string(),
                         })?;
-                    regexes.push((index, fast));
+                    regexes.push(RuleRegex {
+                        rule: index,
+                        on_ascii,
+                        on_unicode: regex.clone(),
+                    });
                 }
             }
         }
@@ -250,12 +269,18 @@ impl Mapping {
                 }
             }
         }
-        for (rule, regex) in &self.regexes {
+        let ascii_words = text.is_ascii() || !NON_ASCII_WORD.is_match(text);
+        for compiled in &self.regexes {
+            let regex = if ascii_words {
+                &compiled.on_ascii
+            } else {
+                &compiled.on_unicode
+            };
             found.extend(
                 regex
                     .find_iter(text)
                     .filter(|hit| !hit.is_empty())
-                    .map(|hit| (*rule, hit.range())),
+                    .map(|hit| (compiled.rule, hit.range())),
             );
         }
         found.sort_by_key(|(rule, range)| (*rule, range.start));

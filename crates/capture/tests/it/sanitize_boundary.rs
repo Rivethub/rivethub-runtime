@@ -265,3 +265,28 @@ fn code_and_templates_are_not_secrets() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn a_word_boundary_in_a_mapping_regex_is_a_unicode_boundary() -> TestResult {
+    let mapping = r#"
+[[rule]]
+regex = '\bJosé\b'
+action = "map"
+as = "<person>"
+
+[[rule]]
+regex = '\bLuis\b'
+action = "map"
+as = "<luis>"
+"#;
+    let cases = [
+        ("ask José, not Joséphine", "ask <person>, not Joséphine"),
+        ("Luis and Luis_x", "<luis> and Luis_x"),
+        ("Luis, éLuis and Luisé", "<luis>, éLuis and Luisé"),
+    ];
+    for (text, expected) in cases {
+        let input = raw(vec![session("uni", vec![message("e1", text)])])?;
+        assert_eq!(first_content(&sanitized_text(&input, mapping)?)?, expected);
+    }
+    Ok(())
+}
