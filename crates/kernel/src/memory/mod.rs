@@ -76,6 +76,7 @@ pub use provenance::is_imported;
 pub use provenance::label;
 pub use provenance::origins_of;
 pub use provenance::quote;
+pub use provenance::resolve_origins;
 pub use records::{
     BrowseWindow, BrowseWindowError, MemoryBrowseOrder, MemoryChunkMatch, MemoryDegraded,
     MemoryEntry, MemoryFallback, MemoryHitSource, MemoryMessageTally, MemoryScope,

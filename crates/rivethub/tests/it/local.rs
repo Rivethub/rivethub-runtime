@@ -164,6 +164,7 @@ async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestRe
         store
             .append_entries(
                 vec![MemoryEntry {
+                    provenance: None,
                     id: None,
                     session_id: "local-e2e".to_owned(),
                     agent: "main".to_owned(),

@@ -8,6 +8,7 @@ use serde::Serialize;
 use values::IMPORTED_SESSION_PREFIX;
 use values::JsonObject;
 
+use super::MemoryEntry;
 use super::MemoryStore;
 use super::MemoryStoreError;
 
@@ -30,6 +31,26 @@ pub async fn origins_of<'a>(
     store
         .lookup_origins(keys.into_iter().map(str::to_owned).collect())
         .await
+}
+
+pub async fn resolve_origins<'a>(
+    store: &dyn MemoryStore,
+    entries: impl IntoIterator<Item = &'a MemoryEntry>,
+    more_keys: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeMap<String, Provenance>, MemoryStoreError> {
+    let mut known: BTreeMap<String, Provenance> = BTreeMap::new();
+    let mut wanted: Vec<&str> = more_keys.into_iter().collect();
+    for entry in entries {
+        match &entry.provenance {
+            Some(provenance) => {
+                known.insert(entry.session_id.clone(), provenance.clone());
+            }
+            None => wanted.push(entry.session_id.as_str()),
+        }
+    }
+    wanted.retain(|key| !known.contains_key(*key));
+    known.extend(origins_of(store, wanted).await?);
+    Ok(known)
 }
 
 #[must_use]

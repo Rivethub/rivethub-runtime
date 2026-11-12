@@ -158,7 +158,7 @@ fn imported_rows_carry_provenance_and_are_quoted_over_http() {
                 .starts_with("Imported from alex (unverified: unsigned) on 2026-10-15.")
         );
     });
-    assert_eq!(lookups, 1, "browse batches its origin lookup");
+    assert_eq!(lookups, 0, "browse rows carry their provenance");
 
     let lookups = lookups_during(&store, || {
         let response = post(
@@ -176,7 +176,7 @@ fn imported_rows_carry_provenance_and_are_quoted_over_http() {
         );
         assert!(text.contains("```\n(row was not truncated"), "{text}");
     });
-    assert_eq!(lookups, 1, "get_full looks up one origin");
+    assert_eq!(lookups, 0, "get_full rows carry their provenance");
 }
 
 #[test]

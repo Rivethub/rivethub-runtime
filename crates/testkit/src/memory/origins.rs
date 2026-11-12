@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use kernel::memory::CaptureBatchRequest;
+use kernel::memory::MemoryEntry;
 use kernel::memory::Provenance;
 use tokio::sync::Mutex;
 use wire::JsonObject;
@@ -17,6 +18,16 @@ impl Origins {
             batch.session_key.clone(),
             batch.settings.clone().unwrap_or_default(),
         );
+    }
+
+    pub(super) async fn attach(&self, mut entries: Vec<MemoryEntry>) -> Vec<MemoryEntry> {
+        let stored = self.0.lock().await;
+        for entry in &mut entries {
+            if let Some(settings) = stored.get(&entry.session_id) {
+                entry.provenance = Some(Provenance::from_settings(settings));
+            }
+        }
+        entries
     }
 
     pub(super) async fn lookup(&self, session_keys: Vec<String>) -> BTreeMap<String, Provenance> {

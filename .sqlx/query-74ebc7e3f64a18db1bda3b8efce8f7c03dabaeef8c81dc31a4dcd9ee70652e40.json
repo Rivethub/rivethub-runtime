@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select m.id::text as id, c.session_key as \"session_key!\", m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at from rh_messages m join rh_conversations c on c.id = m.conversation_id where m.id = $1",
+  "query": "select m.id::text as id, c.session_key as \"session_key!\", m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at, case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings from rh_messages m join rh_conversations c on c.id = m.conversation_id where m.id = $1",
   "describe": {
     "columns": [
       {
@@ -108,6 +108,12 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "ordinal": 11,
+        "name": "import_settings",
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -126,8 +132,9 @@
       null,
       true,
       null,
-      false
+      false,
+      null
     ]
   },
-  "hash": "2e4ac4f848fb65c03eeb3c8a25660ef810f9e0afa2485cc2d7304a36d535567f"
+  "hash": "74ebc7e3f64a18db1bda3b8efce8f7c03dabaeef8c81dc31a4dcd9ee70652e40"
 }

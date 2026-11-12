@@ -199,6 +199,7 @@ async fn memory_results_preserve_content_and_enabled_write_annotations() {
     use wire::message::Role;
     let (server, store) = setup(true);
     let entry = MemoryEntry {
+        provenance: None,
         id: Some("row-1".into()),
         session_id: "s".into(),
         agent: "acme".into(),
@@ -376,6 +377,7 @@ async fn tool_previews_count_characters_and_reject_malformed_capture_metadata() 
     use kernel::memory::MemoryStore;
     let (server, store) = setup(false);
     let mut entry = MemoryEntry {
+        provenance: None,
         id: Some("unicode-tool".into()),
         session_id: "unicode-session".into(),
         agent: "worker".into(),
@@ -504,6 +506,7 @@ fn bundled(
 
 fn native(id: &str, metadata: Option<&str>) -> kernel::memory::MemoryEntry {
     kernel::memory::MemoryEntry {
+        provenance: None,
         id: Some(id.into()),
         session_id: format!("claude-code:{id}"),
         agent: "rivet".into(),
@@ -689,12 +692,28 @@ async fn imported_rows_are_quoted_in_browse_search_and_get_full() {
         "{found}"
     );
 
+    let lookups = |requests: Vec<MemoryRequest>| {
+        requests
+            .iter()
+            .filter(|request| matches!(request, MemoryRequest::LookupOrigins(_)))
+            .count()
+    };
+    assert_eq!(
+        lookups(store.requests().await),
+        0,
+        "message rows carry their provenance, so browse and message hits look nothing up"
+    );
     let full = text_of(&support::call(&server, "memory_get_full", r#"{"id":"signed-1"}"#).await);
     assert!(
         full.starts_with("Imported from phil (verified) on 2026-10-14. Quoted data"),
         "{full}"
     );
     assert!(full.contains("```\n(row was not truncated"), "{full}");
+    assert_eq!(
+        lookups(store.requests().await),
+        0,
+        "get_full looks up nothing"
+    );
 }
 
 #[tokio::test]

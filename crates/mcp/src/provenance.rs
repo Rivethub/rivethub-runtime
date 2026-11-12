@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use chrono::DateTime;
 use chrono::Utc;
+use kernel::memory::MemoryEntry;
 use kernel::memory::MemoryStore;
 use kernel::memory::Provenance;
 
@@ -12,11 +13,12 @@ const LABEL_CHARS: usize = 64;
 
 pub(crate) type Origins = BTreeMap<String, Provenance>;
 
-pub(crate) async fn lookup<'a>(
+pub(crate) async fn resolve<'a>(
     store: &dyn MemoryStore,
-    session_keys: impl IntoIterator<Item = &'a str>,
+    entries: impl IntoIterator<Item = &'a MemoryEntry>,
+    more_keys: impl IntoIterator<Item = &'a str>,
 ) -> Result<Origins, Error> {
-    Ok(kernel::memory::origins_of(store, session_keys).await?)
+    Ok(kernel::memory::resolve_origins(store, entries, more_keys).await?)
 }
 
 pub(crate) fn tag(provenance: &Provenance, zone: chrono_tz::Tz, dated: bool) -> String {

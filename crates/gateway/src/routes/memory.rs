@@ -504,12 +504,7 @@ async fn get_full_tool(gateway: &Gateway, args: MemoryGetFullToolArgs) -> String
         Ok(entry) => entry,
         Err(error) => return format!("memory_get_full failed: {error}"),
     };
-    let origins = match memory_body::origins_of(
-        gateway.store().as_ref(),
-        entry.iter().map(|entry| entry.session_id.as_str()),
-    )
-    .await
-    {
+    let origins = match memory_body::resolve(gateway.store().as_ref(), &entry, []).await {
         Ok(origins) => origins,
         Err(error) => return format!("memory_get_full failed: {error}"),
     };
@@ -550,6 +545,7 @@ async fn append_tool(
     args: MemoryAppendToolArgs,
 ) -> Result<String, ApiError> {
     let entry = MemoryEntry {
+        provenance: None,
         id: args.event_id,
         session_id: args.session_id,
         agent: args.agent.unwrap_or_default(),
@@ -575,6 +571,7 @@ async fn ingest_session_tool(
         .messages
         .into_iter()
         .map(|message| MemoryEntry {
+            provenance: None,
             id: None,
             session_id: args.session_id.clone(),
             agent: args.agent.clone().unwrap_or_default(),

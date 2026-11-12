@@ -159,6 +159,31 @@ async fn imported_conversation_keeps_origin_dates_and_receiver_owner(pool: PgPoo
         kernel::memory::Verification::Unreceived
     );
     assert_eq!(origins.len(), 1);
+    let rows = store
+        .browse(kernel::memory::BrowseFilter {
+            conversation_id: None,
+            agent: None,
+            role: None,
+            tool_name: None,
+            tag: None,
+            window: None,
+            since: None,
+            before: None,
+            include_tools: false,
+            order: kernel::memory::MemoryBrowseOrder::Desc,
+            limit: kernel::memory::Limit::clamped(None, 50, 1..=200),
+        })
+        .await?;
+    let browsed = rows
+        .iter()
+        .filter_map(|row| row.provenance.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(browsed.len(), rows.len());
+    assert!(
+        browsed
+            .iter()
+            .all(|row| row.author.as_deref() == Some("phil"))
+    );
     Ok(())
 }
 

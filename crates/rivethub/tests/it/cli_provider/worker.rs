@@ -29,6 +29,7 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
     let store = Arc::new(memory_postgres::PostgresMemory::new(pool.clone()));
     let messages = (0..10)
         .map(|index| kernel::memory::MemoryEntry {
+            provenance: None,
             id: None,
             session_id: "cli:summary".into(),
             agent: "main".into(),

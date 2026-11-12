@@ -107,6 +107,10 @@ pub async fn seed(
     Ok((deleted, sibling))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario whose delete, resend and append steps read in order"
+)]
 pub async fn capture_for_a_deleted_session_writes_nothing(
     memory: &dyn MemoryStore,
     deletions: &dyn SessionDeletion,
@@ -147,6 +151,7 @@ pub async fn capture_for_a_deleted_session_writes_nothing(
         .append(
             &crate::owner()?,
             vec![MemoryEntry {
+                provenance: None,
                 id: Some("append-1".to_owned()),
                 session_id: deleted.as_str().to_owned(),
                 agent: "opus".to_owned(),
@@ -311,6 +316,7 @@ pub async fn a_deleted_session_used_again_comes_back(
             &crate::owner()?,
             vec![
                 MemoryEntry {
+                    provenance: None,
                     id: Some("append-old".to_owned()),
                     session_id: deleted.as_str().to_owned(),
                     agent: "opus".to_owned(),
@@ -324,6 +330,7 @@ pub async fn a_deleted_session_used_again_comes_back(
                     created_at: Some(at(9)),
                 },
                 MemoryEntry {
+                    provenance: None,
                     id: Some("append-new".to_owned()),
                     session_id: deleted.as_str().to_owned(),
                     agent: "opus".to_owned(),

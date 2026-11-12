@@ -14,6 +14,7 @@ const ANSWER: &str = "Marguerite logged the copper lantern inventory.";
 
 fn entry(role: Role, content: &str) -> MemoryEntry {
     MemoryEntry {
+        provenance: None,
         id: None,
         session_id: "claude-code:44444444-4444-4444-8444-444444444444".to_owned(),
         agent: "rivet-claude".to_owned(),

@@ -321,6 +321,32 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
         Some(session.origin.author.as_str())
     );
     assert_eq!(provenance.origin_date, session.origin.created_at);
+    let rows = destination
+        .store
+        .browse(kernel::memory::BrowseFilter {
+            conversation_id: None,
+            agent: None,
+            role: None,
+            tool_name: None,
+            tag: None,
+            window: None,
+            since: None,
+            before: None,
+            include_tools: false,
+            order: kernel::memory::MemoryBrowseOrder::Desc,
+            limit: kernel::memory::Limit::clamped(None, 50, 1..=200),
+        })
+        .await?;
+    let browsed = rows
+        .iter()
+        .filter_map(|row| row.provenance.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(browsed.len(), rows.len());
+    assert!(
+        browsed
+            .iter()
+            .all(|row| row.author.as_deref() == Some("phil"))
+    );
     Ok(())
 }
 

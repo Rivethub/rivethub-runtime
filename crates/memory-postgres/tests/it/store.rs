@@ -171,6 +171,7 @@ fn browse_filter() -> BrowseFilter {
 async fn append_is_idempotent_per_event_id(pool: PgPool) -> TestResult {
     let memory = store(&pool);
     let entry = |content: &str, event: &str| MemoryEntry {
+        provenance: None,
         id: None,
         session_id: "claude-code:port".to_string(),
         agent: "rivet".to_string(),

@@ -14,6 +14,14 @@ pub(crate) async fn origins_of<'a>(
     Ok(kernel::memory::origins_of(store, session_keys).await?)
 }
 
+pub(crate) async fn resolve<'a>(
+    store: &dyn MemoryStore,
+    entries: impl IntoIterator<Item = &'a kernel::memory::MemoryEntry>,
+    more_keys: impl IntoIterator<Item = &'a str>,
+) -> Result<Origins, ApiError> {
+    Ok(kernel::memory::resolve_origins(store, entries, more_keys).await?)
+}
+
 pub(crate) fn quoted(origin: Option<&Provenance>, text: String) -> String {
     match origin {
         Some(provenance) => kernel::memory::quote(provenance, &text),

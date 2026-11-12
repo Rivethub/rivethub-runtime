@@ -78,6 +78,7 @@ fn entry(id: &str, content: &str, created_at: &str) -> MemoryEntry {
             .with_timezone(&chrono::Utc)
     }
     MemoryEntry {
+        provenance: None,
         id: Some(id.to_owned()),
         session_id: SESSION.to_owned(),
         agent: "rivet-claude".to_owned(),

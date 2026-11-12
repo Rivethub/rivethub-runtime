@@ -373,8 +373,10 @@ impl MemoryStore for FakeMemoryStore {
 
     async fn browse(&self, filter: BrowseFilter) -> Result<Vec<MemoryEntry>, MemoryStoreError> {
         self.record(MemoryRequest::Browse(filter.clone())).await;
-        let entries = self.entries.lock().await;
-        Ok(entries
+        let found = self
+            .entries
+            .lock()
+            .await
             .iter()
             .filter(|e| filter.agent.as_deref().is_none_or(|a| e.agent == a))
             .filter(|e| filter.role.is_none_or(|r| e.role == r))
@@ -386,7 +388,8 @@ impl MemoryStore for FakeMemoryStore {
             })
             .take(filter.limit.get() as usize)
             .cloned()
-            .collect())
+            .collect();
+        Ok(self.origins.attach(found).await)
     }
 
     async fn stats(&self) -> Result<MemoryStatsResponse, MemoryStoreError> {
@@ -407,13 +410,14 @@ impl MemoryStore for FakeMemoryStore {
 
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError> {
         self.record(MemoryRequest::GetFull(id.to_owned())).await;
-        Ok(self
+        let found = self
             .entries
             .lock()
             .await
             .iter()
             .find(|e| e.id.as_deref() == Some(id))
-            .cloned())
+            .cloned();
+        Ok(self.origins.attach(found.into_iter().collect()).await.pop())
     }
 
     async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {

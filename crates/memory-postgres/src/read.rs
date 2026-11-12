@@ -40,6 +40,8 @@ pub(crate) struct MessageEntryRow {
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: Option<String>,
     pub(crate) created_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub(crate) import_settings: Option<String>,
 }
 
 impl TryFrom<MessageEntryRow> for MemoryEntry {
@@ -52,6 +54,9 @@ impl TryFrom<MessageEntryRow> for MemoryEntry {
             .ok_or_else(|| Error::protocol("message row is missing its role"))?;
         let role =
             Role::from_str(role_text).map_err(|source| Error::stored("message role", source))?;
+        let provenance = stored_json(row.import_settings, "settings")?
+            .as_ref()
+            .map(kernel::memory::Provenance::from_settings);
         Ok(Self {
             id: row.id,
             session_id: row.session_key,
@@ -64,6 +69,7 @@ impl TryFrom<MessageEntryRow> for MemoryEntry {
             tool_result: row.tool_result,
             metadata: stored_json(row.metadata, "metadata")?,
             created_at: row.created_at,
+            provenance,
         })
     }
 }
@@ -140,7 +146,8 @@ impl crate::PostgresMemory {
         let mut query = sqlx::QueryBuilder::new(
             "select m.id::text as id, c.session_key, m.agent, m.channel, m.role as role_text, \
              m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, \
-             m.metadata::text as metadata, m.created_at \
+             m.metadata::text as metadata, m.created_at, \
+             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id where true",
         );
         query.push(crate::session_marks::not_trashed("m"));
@@ -202,7 +209,8 @@ impl crate::PostgresMemory {
             "select m.id::text as id, c.session_key as \"session_key!\", \
              m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, \
              m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, \
-             m.tool_result, m.metadata::text as metadata, m.created_at \
+             m.tool_result, m.metadata::text as metadata, m.created_at, \
+             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id \
              where m.id = $1",
             uuid

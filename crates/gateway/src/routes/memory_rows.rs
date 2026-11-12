@@ -11,18 +11,13 @@ pub(super) async fn search_origins(
     gateway: &Gateway,
     outcome: &kernel::memory::SearchOutcome,
 ) -> Result<memory_body::Origins, ApiError> {
-    memory_body::origins_of(
+    memory_body::resolve(
         gateway.store().as_ref(),
+        &outcome.expanded,
         outcome
             .results
             .iter()
-            .filter_map(|hit| hit.session_id.as_deref())
-            .chain(
-                outcome
-                    .expanded
-                    .iter()
-                    .map(|entry| entry.session_id.as_str()),
-            ),
+            .filter_map(|hit| hit.session_id.as_deref()),
     )
     .await
 }
@@ -61,11 +56,7 @@ pub(super) async fn browse_response(
     gateway: &Gateway,
     entries: Vec<MemoryEntry>,
 ) -> Result<MemoryBrowseResponse, ApiError> {
-    let origins = memory_body::origins_of(
-        gateway.store().as_ref(),
-        entries.iter().map(|entry| entry.session_id.as_str()),
-    )
-    .await?;
+    let origins = memory_body::resolve(gateway.store().as_ref(), &entries, []).await?;
     Ok(MemoryBrowseResponse {
         messages: entries
             .into_iter()

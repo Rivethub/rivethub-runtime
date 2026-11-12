@@ -239,14 +239,21 @@ async fn hit_context(
             })
             .await?
     };
-    let mut keys: Vec<&str> = sessions.iter().map(String::as_str).collect();
-    for hit in &outcome.results {
-        keys.extend(hit.session_id.as_deref());
-    }
-    for detail in outcome.summaries.values() {
-        keys.extend(detail.sources.iter().map(|entry| entry.session_id.as_str()));
-    }
-    let origins = crate::provenance::lookup(store, keys).await?;
+    let hit_keys = outcome
+        .results
+        .iter()
+        .filter_map(|hit| hit.session_id.as_deref());
+    let origins = crate::provenance::resolve(
+        store,
+        messages.values().chain(
+            outcome
+                .summaries
+                .values()
+                .flat_map(|detail| &detail.sources),
+        ),
+        hit_keys,
+    )
+    .await?;
     Ok(crate::render_search::HitContext {
         messages,
         tags,
@@ -302,9 +309,7 @@ pub async fn browse(
             })
             .await?
     };
-    let origins =
-        crate::provenance::lookup(store, entries.iter().map(|entry| entry.session_id.as_str()))
-            .await?;
+    let origins = crate::provenance::resolve(store, &entries, []).await?;
     let mut display_filter = filter;
     display_filter.window = args.window.map(window);
     Ok(crate::text(crate::render_memory::browse(
@@ -333,9 +338,7 @@ pub async fn get_full(store: &dyn MemoryStore, args: GetFull) -> Result<CallTool
         )));
     }
     let entry = store.get_full(&args.id).await?;
-    let origins =
-        crate::provenance::lookup(store, entry.iter().map(|entry| entry.session_id.as_str()))
-            .await?;
+    let origins = crate::provenance::resolve(store, &entry, []).await?;
     Ok(crate::text(crate::render_memory::get_full(
         &args.id,
         entry.as_ref(),
