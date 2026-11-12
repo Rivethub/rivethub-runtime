@@ -174,6 +174,7 @@ fn receipt(fingerprint: Option<&str>) -> wire::capture::Receipt {
             wire::capture::ReceiptVerification::Unsigned
         },
         key_fingerprint: fingerprint.map(str::to_owned),
+        checks: None,
     }
 }
 

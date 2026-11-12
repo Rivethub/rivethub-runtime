@@ -1526,6 +1526,14 @@
       ],
       "type": "string"
     },
+    "ChecksDecision": {
+      "enum": [
+        "clean",
+        "import",
+        "hold_spans"
+      ],
+      "type": "string"
+    },
     "CloudPolicy": {
       "enum": [
         "enabled",
@@ -8135,6 +8143,16 @@
         "bundle_id": {
           "type": "string"
         },
+        "checks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReceiptChecks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "key_fingerprint": {
           "type": [
             "string",
@@ -8153,6 +8171,30 @@
         "bundle_id",
         "received_at",
         "verification"
+      ],
+      "type": "object"
+    },
+    "ReceiptChecks": {
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ChecksDecision"
+        },
+        "findings_by_family": {
+          "additionalProperties": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "rules_sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rules_sha256",
+        "findings_by_family",
+        "decision"
       ],
       "type": "object"
     },

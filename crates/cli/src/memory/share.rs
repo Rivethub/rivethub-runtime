@@ -490,6 +490,7 @@ fn receipt(id: &capture::seal::DropId, at: DateTime<Utc>, verification: &Verific
         received_at: at,
         verification: verification.kind(),
         key_fingerprint: verification.key().map(PublicKey::fingerprint),
+        checks: None,
     }
 }
 
