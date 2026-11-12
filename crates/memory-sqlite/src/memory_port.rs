@@ -198,7 +198,7 @@ impl MemoryStore for SqliteStore {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError> {
         self.with_conn(move |conn| crate::conversation::origins(conn, &session_keys))
             .await
             .map_err(MemoryStoreError::from)

@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use crate::provenance::Origins;
+use crate::{Error, render_memory, render_tags};
 use chrono::{DateTime, Utc};
 use kernel::memory::{MemoryEntry, MemorySearchResult};
-use kernel::memory::{MemoryHitSource, TagWire};
+use kernel::memory::{MemoryHitSource, Provenance, TagWire};
 use kernel::memory::{SearchOutcome, SearchQuery, SummaryDetail};
-use wire::capture::SessionOrigin;
-
-use crate::{Error, render_memory, render_tags};
 
 pub(crate) fn age(date: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let delta = now.signed_duration_since(date);
@@ -31,7 +30,7 @@ pub(crate) struct Clock {
 pub(crate) struct HitContext {
     pub(crate) messages: BTreeMap<String, MemoryEntry>,
     pub(crate) tags: BTreeMap<String, Vec<TagWire>>,
-    pub(crate) origins: BTreeMap<String, SessionOrigin>,
+    pub(crate) origins: Origins,
 }
 
 pub(crate) fn search(
@@ -80,16 +79,22 @@ pub(crate) fn search(
         });
         let mut blocks = Vec::new();
         for hit in summaries {
-            blocks.push(match outcome.summaries.get(&hit.id) {
-                Some(detail) => summary(hit, detail, expand, now, zone)?,
-                None => format!(
-                    "- [summary/{}] ({}, score: {:.3}) {}",
+            let origin = hit
+                .session_id
+                .as_deref()
+                .and_then(|key| found.origins.get(key));
+            let block = if let Some(detail) = outcome.summaries.get(&hit.id) {
+                summary(hit, detail, expand, origin, now, zone)?
+            } else {
+                let lead = format!(
+                    "- [summary/{}] ({}, score: {:.3})",
                     hit.id,
                     dated(hit, now, zone),
                     hit.relevance_score,
-                    hit.content
-                ),
-            });
+                );
+                attributed(&lead, &hit.content, origin, zone)
+            };
+            blocks.push(block);
         }
         text.push_str(&blocks.join(if expand { "\n\n" } else { "\n" }));
     }
@@ -100,8 +105,7 @@ pub(crate) fn search(
             let entry = found.messages.get(&hit.id).ok_or_else(|| {
                 Error::Invalid(format!("message {} disappeared during search", hit.id))
             })?;
-            let origin = found.origins.get(&entry.session_id);
-            blocks.push(message(hit, entry, &found.tags, origin, now, zone)?);
+            blocks.push(message(hit, entry, found, now, zone)?);
         }
         text.push_str(&blocks.join("\n"));
     }
@@ -111,11 +115,11 @@ pub(crate) fn search(
 fn message(
     hit: &MemorySearchResult,
     entry: &MemoryEntry,
-    tags: &BTreeMap<String, Vec<TagWire>>,
-    origin: Option<&SessionOrigin>,
+    found: &HitContext,
     now: DateTime<Utc>,
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
+    let origin = found.origins.get(&entry.session_id);
     let mut heading = format!("- [{}/{}]", entry.agent, entry.role);
     if let Some(name) = &entry.tool_name {
         write!(heading, " [tool: {name}]")?;
@@ -126,15 +130,14 @@ fn message(
         dated(hit, now, zone),
         hit.relevance_score
     )?;
-    if let Some((origin, author)) =
-        origin.and_then(|origin| origin.known_author().map(|author| (origin, author)))
-    {
-        write!(heading, " from {author}")?;
-        if let Some(created) = origin.created_at {
-            write!(heading, " · {}", render_memory::local_date(created, zone))?;
-        }
+    if let Some(provenance) = origin {
+        write!(
+            heading,
+            " {}",
+            crate::provenance::tag(provenance, zone, true)
+        )?;
     }
-    if let Some(tags) = render_memory::tags(entry, tags) {
+    if let Some(tags) = render_memory::tags(entry, &found.tags) {
         heading.push_str(&tags);
     }
     let payload = match &hit.chunk {
@@ -149,7 +152,27 @@ fn message(
         ),
         None => render_memory::payload(entry, 500)?,
     };
+    let payload = match origin {
+        Some(provenance) => kernel::memory::quote(provenance, &payload),
+        None => payload,
+    };
     Ok(format!("{heading}\n{payload}"))
+}
+
+fn attributed(
+    lead: &str,
+    content: &str,
+    origin: Option<&Provenance>,
+    zone: chrono_tz::Tz,
+) -> String {
+    match origin {
+        Some(provenance) => format!(
+            "{lead} {}\n{}",
+            crate::provenance::tag(provenance, zone, true),
+            kernel::memory::quote(provenance, content)
+        ),
+        None => format!("{lead} {content}"),
+    }
 }
 
 fn empty(query: &SearchQuery) -> String {
@@ -198,6 +221,7 @@ fn summary(
     hit: &MemorySearchResult,
     detail: &SummaryDetail,
     expand: bool,
+    origin: Option<&Provenance>,
     now: DateTime<Utc>,
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
@@ -207,14 +231,14 @@ fn summary(
         format!(" tags: {}", render_tags::labels(&detail.tags))
     };
     if !expand {
-        return Ok(format!(
-            "- [{}/{}] ({}, score: {:.3}){tags} {}",
+        let lead = format!(
+            "- [{}/{}] ({}, score: {:.3}){tags}",
             detail.kind,
             hit.id,
             dated(hit, now, zone),
             hit.relevance_score,
-            hit.content
-        ));
+        );
+        return Ok(attributed(&lead, &hit.content, origin, zone));
     }
     let mut text = format!(
         "**[{}]** ({}, score: {:.3}",
@@ -230,12 +254,17 @@ fn summary(
             render_memory::local_date(latest, zone)
         )?;
     }
-    write!(text, "){tags}\n{}", hit.content)?;
+    text.push(')');
+    if let Some(provenance) = origin {
+        write!(text, " {}", crate::provenance::tag(provenance, zone, true))?;
+    }
+    text.push_str(&tags);
+    let mut body = hit.content.clone();
     if !detail.children.is_empty() {
-        write!(text, "\n\n  **Children ({}):**", detail.children.len())?;
+        write!(body, "\n\n  **Children ({}):**", detail.children.len())?;
         for child in &detail.children {
             write!(
-                text,
+                body,
                 "\n  - [{}] {}",
                 child.kind,
                 render_memory::preview(&child.content, 500)
@@ -244,13 +273,13 @@ fn summary(
     }
     if !detail.sources.is_empty() {
         write!(
-            text,
+            body,
             "\n\n  **Source messages ({}):**",
             detail.sources.len()
         )?;
         for source in detail.sources.iter().take(4) {
             write!(
-                text,
+                body,
                 "\n  > [{}] {}",
                 source.role,
                 render_memory::preview(&source.content, 500)
@@ -258,11 +287,16 @@ fn summary(
         }
         if detail.sources.len() > 4 {
             write!(
-                text,
+                body,
                 "\n  > ... and {} more messages",
                 detail.sources.len() - 4
             )?;
         }
     }
+    text.push('\n');
+    text.push_str(&match origin {
+        Some(provenance) => kernel::memory::quote(provenance, &body),
+        None => body,
+    });
     Ok(text)
 }

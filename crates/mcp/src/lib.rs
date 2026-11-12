@@ -4,6 +4,7 @@ pub mod error;
 pub mod memory;
 mod nonblock;
 pub mod plugins;
+mod provenance;
 mod render_memory;
 mod render_search;
 mod render_tags;

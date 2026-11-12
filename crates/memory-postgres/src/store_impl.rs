@@ -510,7 +510,7 @@ impl MemoryStore for crate::PostgresMemory {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError> {
         Ok(self.conversation_origins(&session_keys).await?)
     }
 

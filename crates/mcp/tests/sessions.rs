@@ -203,13 +203,7 @@ async fn sanitize_then_import_round_trips() {
     let origins = ana.store.lookup_origins(keys).await.expect("origins");
     assert_eq!(origins.len(), 2);
     for origin in origins.values() {
-        assert_eq!(
-            origin
-                .deserialize::<wire::capture::SessionOrigin>()
-                .expect("origin")
-                .author,
-            "phil"
-        );
+        assert_eq!(origin.author.as_deref(), Some("phil"));
     }
 
     let again = support::call(&ana.server, "session_import", &arguments(false)).await;

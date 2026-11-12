@@ -23,6 +23,7 @@ mod embed;
 mod export;
 mod model_title;
 mod origin;
+mod provenance;
 mod records;
 mod search;
 mod sessions;
@@ -67,6 +68,13 @@ pub use model_title::title_schema;
 pub use model_title::wants_model_title;
 pub use origin::DumpOrigin;
 pub use origin::DumpSource;
+pub use provenance::Provenance;
+pub use provenance::ReceiptChecks;
+pub use provenance::Verification;
+pub use provenance::escape_hidden;
+pub use provenance::is_imported;
+pub use provenance::origins_of;
+pub use provenance::quote;
 pub use records::{
     BrowseWindow, BrowseWindowError, MemoryBrowseOrder, MemoryChunkMatch, MemoryDegraded,
     MemoryEntry, MemoryFallback, MemoryHitSource, MemoryMessageTally, MemoryScope,
@@ -563,7 +571,7 @@ pub trait MemoryStore: Send + Sync {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, values::JsonObject>, MemoryStoreError>;
+    ) -> Result<BTreeMap<String, Provenance>, MemoryStoreError>;
 
     async fn upsert_tag_taxonomy(
         &self,

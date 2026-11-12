@@ -239,30 +239,14 @@ async fn hit_context(
             })
             .await?
     };
-    let imported: Vec<String> = sessions
-        .into_iter()
-        .filter(|session_key| wire::capture::is_imported_session(session_key))
-        .collect();
-    let origins = if imported.is_empty() {
-        std::collections::BTreeMap::new()
-    } else {
-        store
-            .lookup_origins(imported)
-            .await?
-            .into_iter()
-            .filter_map(|(session_key, origin)| {
-                #[cfg_attr(
-                    dylint_lib = "rr_lints",
-                    expect(
-                        fallback,
-                        reason = "CONTRACT B6 (note 135): a hit whose origin does not parse has no tag and the search still succeeds"
-                    )
-                )]
-                let origin = origin.deserialize::<wire::capture::SessionOrigin>().ok();
-                origin.map(|origin| (session_key, origin))
-            })
-            .collect()
-    };
+    let mut keys: Vec<&str> = sessions.iter().map(String::as_str).collect();
+    for hit in &outcome.results {
+        keys.extend(hit.session_id.as_deref());
+    }
+    for detail in outcome.summaries.values() {
+        keys.extend(detail.sources.iter().map(|entry| entry.session_id.as_str()));
+    }
+    let origins = crate::provenance::lookup(store, keys).await?;
     Ok(crate::render_search::HitContext {
         messages,
         tags,
@@ -318,12 +302,16 @@ pub async fn browse(
             })
             .await?
     };
+    let origins =
+        crate::provenance::lookup(store, entries.iter().map(|entry| entry.session_id.as_str()))
+            .await?;
     let mut display_filter = filter;
     display_filter.window = args.window.map(window);
     Ok(crate::text(crate::render_memory::browse(
         &entries,
         &display_filter,
         &sessions,
+        &origins,
         zone,
     )?))
 }
@@ -344,9 +332,14 @@ pub async fn get_full(store: &dyn MemoryStore, args: GetFull) -> Result<CallTool
             GetFull::NAME
         )));
     }
+    let entry = store.get_full(&args.id).await?;
+    let origins =
+        crate::provenance::lookup(store, entry.iter().map(|entry| entry.session_id.as_str()))
+            .await?;
     Ok(crate::text(crate::render_memory::get_full(
         &args.id,
-        store.get_full(&args.id).await?.as_ref(),
+        entry.as_ref(),
+        &origins,
     )?))
 }
 

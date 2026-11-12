@@ -315,9 +315,12 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
         .store
         .lookup_origins(vec![receiver_key.clone()])
         .await?;
-    let origin: wire::capture::SessionOrigin =
-        origins.get(&receiver_key).ok_or("origin")?.deserialize()?;
-    assert_eq!(origin, session.origin);
+    let provenance = origins.get(&receiver_key).ok_or("origin")?;
+    assert_eq!(
+        provenance.author.as_deref(),
+        Some(session.origin.author.as_str())
+    );
+    assert_eq!(provenance.origin_date, session.origin.created_at);
     Ok(())
 }
 

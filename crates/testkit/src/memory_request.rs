@@ -45,6 +45,7 @@ pub enum MemoryRequest {
     },
     AddTag(TagAdd),
     LookupTags(TagLookup),
+    LookupOrigins(Vec<String>),
     UpsertTagTaxonomy(TagTaxonomyUpsert),
     DecideTagTaxonomy(TagTaxonomyDecision),
     MergeTagTaxonomy(TagTaxonomyMerge),

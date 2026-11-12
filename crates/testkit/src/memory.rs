@@ -540,7 +540,9 @@ impl MemoryStore for FakeMemoryStore {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError> {
+        self.record(MemoryRequest::LookupOrigins(session_keys.clone()))
+            .await;
         Ok(self.origins.lookup(session_keys).await)
     }
 

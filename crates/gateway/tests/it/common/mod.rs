@@ -264,7 +264,8 @@ impl MemoryStore for FailingStore {
     async fn lookup_origins(
         &self,
         _session_keys: Vec<String>,
-    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<std::collections::BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError>
+    {
         unavailable()
     }
 
@@ -483,7 +484,8 @@ impl MemoryStore for GatedStore {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<std::collections::BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError>
+    {
         self.inner.lookup_origins(session_keys).await
     }
 
