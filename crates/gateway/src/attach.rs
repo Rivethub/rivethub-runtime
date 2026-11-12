@@ -262,6 +262,23 @@ impl Gateway {
     }
 
     #[must_use]
+    pub fn with_receive_desk(
+        mut self,
+        desk: Arc<dyn kernel::memory::share::receive::ReceiveDesk>,
+    ) -> Self {
+        self.receive_desk = Some(desk);
+        self
+    }
+
+    pub(crate) fn receive_desk(
+        &self,
+    ) -> Result<&Arc<dyn kernel::memory::share::receive::ReceiveDesk>, crate::error::ApiError> {
+        self.receive_desk.as_ref().ok_or_else(|| {
+            crate::error::ApiError::Unavailable("receiving is unavailable on this node".into())
+        })
+    }
+
+    #[must_use]
     pub fn with_account(mut self, account: Arc<crate::account::AccountService>) -> Self {
         self.account = Some(account);
         self

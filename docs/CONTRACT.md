@@ -2922,6 +2922,64 @@ once in `SentReply.code`; rh keeps no copy, and its `Debug` shows only the drop 
 and is never returned. Server sign-in, sign-out and upload go through the hub share policy of note 145, so a refused server is a 400 `bad_server` and a refused sign-out still forgets the login on this machine. `ServersReply.token_store` is `keyring` or `file`, the store this rh process keeps share tokens in
 (note 140). Drafts live in rh's memory only, at most 4, 30 minutes idle.
 
+(152) Local receive routes (Phil, 2026-11-11, SS-9b; uses notes 140, 147 and 149; the desktop plan's "their friend downloads
+it, decrypts it, and then it removes it from the cloud server"). A person receives a shared bundle in the desktop app
+through four routes under `/api/share`, which `kernel::plugins::access` refuses to every plug-in. Each needs the local
+owner (note 147: a direct local peer, a loopback `Host`, the owner Bearer or a browser session with its CSRF header, and
+the node's own local user, not a node admin): without a credential it is `401`, and from a plug-in, a remote peer or a user who is
+not the node's local user it is `403 not_local`. A body that names a field the route does not take is
+a `400 invalid` that echoes no value. A refusal is `{error, reason, sessions?}` with `reason` one of `not_local`,
+`invalid`, `bad_code`, `already_received`, `gone`, `burned`, `too_large`, `unreachable`, `refused`, `undecryptable`,
+`unreadable`, `bad_signature`, `raw`, `withheld`, `no_such_session`, `undecided`, `secret_import`, `author_findings`,
+`bad_key`, `bad_name`, `duplicate` and `failed`; `undecided` and `secret_import` carry the session numbers (from 1).
+`failed` is a `500` that names no cause; the rh log does.
+
+`POST /api/share/receive {code}` parses the share code and checks its key's checksum, so a typo is `400 bad_code` before any
+request leaves the machine. It then downloads the drop into the inbox (the cloud deletes the drop at the first complete
+download), or reuses the inbox copy, opens it in memory and runs note 149's checks. Nothing is imported. The `200` body is
+`{bundle, server, downloaded, author, node, verification, reason, signer?, sessions, authorFindings, authorRows, summary,
+held}`: `verification` is `verified`, `unsigned` or `unknown_key` and `reason` is the CLI's sentence; `signer` is the
+sender's `ed25519:` key and fingerprint, so the person can check it and trust it; each session is
+`{n, author?, title, agent, messages, createdAt?, updatedAt?, findings, rows, secret, allowed}`, where `author` is the session's own `origin.author`, where `rows` are note 149's
+report rows (`event?`, `field`, `rule`, `family`, `kind`, `count`, `excerpt` with the CLI's escapes, at most 20) and
+`allowed` is the decisions the row takes (`import` and `skip`, plus `hold_spans` when it has findings, and only `skip` and
+`hold_spans` when a finding is a secret). `held` is true when any session or the author fields carry findings. A bundle
+signed with a key that does not verify is `422 bad_signature`; a raw bundle, a bundle that still withholds flagged chunks,
+a download that does not open with the key and an unreadable envelope are `422`. A drop that is gone is `404 gone`; one that
+stopped mid-download is `410 burned`; a bundle already imported on this machine is `409 already_received`.
+
+`POST /api/share/receive/import {code, sessions: [{n, decision}], force?}` reopens the inbox copy, plans with note 149's
+rules (`decision` is `import`, `skip` or `hold_spans`; `n` counts from 1 and names a session once) and writes nothing
+unless the plan is complete: a flagged session with no decision is `409 undecided`, a secret session decided `import`
+is `409 secret_import` unless `force` is set, and a finding in the author fields is `409 author_findings` unless `force`
+is set. Accepting flagged content, which means an `import` decision on a flagged session or `force`, also needs a fresh
+login (note 147's step-up): a browser session older than `gateway.fresh_login_secs` gets `401` with `reauth_required`
+and nothing is written, and the owner token always counts as fresh. The reply is `{bundle, receivedAt, author,
+verification, signer?, imported: [{n, key, verification, verdict, inserted, skipped}], skipped: [n]}` where `key` is the stored
+session's key (`import:` and a digest), the id its Memory page uses. Each imported session records its receipt as in
+notes 140 and 149 and is attributed to its own author (`origin.author`). A signature covers the exporter's user name, not each
+session's author, so a session whose known author is not the exporter (a session the sender received and forwarded) is
+recorded `unknown_key` when the bundle verified, and the reply's per-session `verification` says so; `verified` on a label
+means the signed exporter is the author. The write goes to the node's store, one batch per
+session, through the same redaction and caps as capture, after the checks that `/api/capture` makes (a blank agent or an empty
+event id refuses the import with `422 unreadable`), and the drop is marked received only after every session is
+written, so a failure part way leaves the inbox copy and a retry skips what is already stored. The download runs in a task the
+request does not own, so a client that gives up mid-download still leaves the inbox copy (a drop burns at the first byte).
+One receive or trust change runs at a time in the gateway; `rh memory receive` takes no such lock.
+
+`GET /api/share/trust` lists the trusted senders as `{senders: [{name, key, fingerprint}]}`. `POST /api/share/trust
+{name, key}` adds one (`201`; a fresh login, because it changes what later imports are called verified), and
+`DELETE /api/share/trust {name, key?}` removes a name, or one key of it, and answers `{removed}`. `400 bad_key` and
+`400 bad_name` refuse a key that does not parse and a blank name, and a duplicate is `409 duplicate`. The node's own key is
+`GET /api/share/key` (note 151).
+
+The share code is a live secret. The routes accept it only in a POST body, never in a path or query; no response, error,
+log line or `Debug` output carries it (`ReceiveCode` and the body's `CodeText` print `..`), and a malformed body is
+answered with a line and column, never with the value that failed. rh never stores the key: the inbox holds ciphertext
+only, and the desktop keeps the code in memory between the report and the import. The session list and detail labels
+(`SessionOriginLabel`) gain `verification` (`verified`, `unsigned` or `unknown_key`) and `bundleId`, read from the stored
+receipt, so a session and its list row say "from <author> \u{b7} verified|unverified" without opening the receipt.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
