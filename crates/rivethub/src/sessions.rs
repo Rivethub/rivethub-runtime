@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use capture::redaction::Redaction;
-use capture::sanitize::Change;
-use capture::sanitize::Field;
 use capture::sanitize::OpenFlags;
 use capture::sanitize::decide::Flag;
 use capture::sanitize::decide::Mode;
@@ -24,6 +22,7 @@ use config::MappingFile;
 use kernel::memory::SessionDigest;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::DecisionSummary;
+use kernel::memory::share::Findings;
 use kernel::memory::share::FlagPlace;
 use kernel::memory::share::FlagSummary;
 use kernel::memory::share::ListedSession;
@@ -31,7 +30,6 @@ use kernel::memory::share::OpenedBundle;
 use kernel::memory::share::SanitizeJob;
 use kernel::memory::share::SanitizeSummary;
 use kernel::memory::share::SanitizedBundle;
-use kernel::memory::share::Secrets;
 use kernel::memory::share::SessionShare;
 use kernel::memory::share::ShareFailure;
 use kernel::owner::Owner;
@@ -148,33 +146,32 @@ impl SessionShare for NodeShare {
         if bundle.manifest.sanitization == Sanitization::Raw {
             return Ok(OpenedBundle::Raw);
         }
-        let secrets = capture::sanitize::secrets(&bundle);
+        let checked = capture::receive::check(&bundle);
         let OpenFlags {
             withheld,
             unreviewed,
         } = capture::sanitize::open_flags(&bundle).map_err(failed)?;
+        let shown: Vec<&BundledSession> = (0..bundle.sessions.len())
+            .filter_map(|index| checked.shown(&bundle, index))
+            .collect();
         let mut authors: Vec<String> = Vec::new();
-        for (index, session) in bundle.sessions.iter().enumerate() {
-            let author = shown(index, &Field::OriginAuthor, author_of(session), &secrets);
+        for session in &shown {
+            let author = capture::receive::visible(author_of(session));
             if !authors.contains(&author) {
                 authors.push(author);
             }
         }
         Ok(OpenedBundle::Sanitized(SanitizedBundle {
-            sessions: bundle
-                .sessions
-                .iter()
-                .enumerate()
-                .map(|(index, session)| listed(index, session, &secrets))
-                .collect(),
+            sessions: shown.iter().map(|session| listed(session)).collect(),
             batches: bundle
                 .sessions
                 .iter()
                 .map(|session| self.batch(session))
                 .collect(),
-            secrets: secrets.first().map(|first| Secrets {
-                count: secrets.len(),
-                first: first.to_string(),
+            findings: (!checked.is_clean()).then(|| Findings {
+                count: checked.findings().len(),
+                sessions: checked.flagged().len(),
+                summary: checked.summary(),
             }),
             withheld,
             unreviewed,
@@ -252,29 +249,14 @@ fn flag_summary(flag: &Flag, outcome: &Outcome) -> FlagSummary {
     }
 }
 
-fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> ListedSession {
+fn listed(session: &BundledSession) -> ListedSession {
     let origin = &session.origin;
     ListedSession {
-        key: shown(
-            index,
-            &Field::OriginSessionKey,
-            &origin.session_key,
-            secrets,
-        ),
-        agent: shown(index, &Field::OriginAgent, &origin.agent, secrets),
+        key: capture::receive::visible(&origin.session_key),
+        agent: capture::receive::visible(&origin.agent),
         messages: session.batch.messages.len(),
-        author: shown(index, &Field::OriginAuthor, author_of(session), secrets),
+        author: capture::receive::visible(author_of(session)),
         dates: origin.created_at.zip(origin.updated_at),
-    }
-}
-
-fn shown(index: usize, field: &Field, text: &str, secrets: &[Change]) -> String {
-    match secrets
-        .iter()
-        .find(|change| change.session == Some(index) && change.field == *field)
-    {
-        Some(change) => change.replacement.clone(),
-        None => text.to_owned(),
     }
 }
 

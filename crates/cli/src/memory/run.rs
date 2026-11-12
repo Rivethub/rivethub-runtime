@@ -66,7 +66,8 @@ pub(super) async fn run(
             path,
             force,
             dry_run,
-        } => super::bundle::ingest(&path, force, dry_run, env).await,
+            decisions,
+        } => super::bundle::ingest(&path, force, dry_run, &decisions, env).await,
         MemoryCommand::Sanitize(job) => super::sanitize::run(job, env).await,
         MemoryCommand::Share(command) => super::share::run(command, env).await,
         MemoryCommand::Resolve {

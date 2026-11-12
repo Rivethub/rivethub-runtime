@@ -183,7 +183,7 @@ pub enum OpenedBundle {
 
 #[derive(Debug)]
 pub struct SanitizedBundle {
-    pub secrets: Option<Secrets>,
+    pub findings: Option<Findings>,
     pub withheld: usize,
     pub unreviewed: usize,
     pub sessions: Vec<ListedSession>,
@@ -192,9 +192,10 @@ pub struct SanitizedBundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Secrets {
+pub struct Findings {
     pub count: usize,
-    pub first: String,
+    pub sessions: usize,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

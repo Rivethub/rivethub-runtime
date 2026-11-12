@@ -1,0 +1,2 @@
+start then \u{FEFF} inside
+a\u{FEFF}b

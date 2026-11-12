@@ -1,0 +1,167 @@
+title = "RivetHub prompt-injection rules"
+
+# A received bundle is checked against these rules, plus the secret rules, before anything is written.
+# Every rule names its family and says why it is suspicious. A rule that fires does not call the bundle
+# hostile; it asks the person receiving it to decide.
+
+[allowlist]
+description = "image hosts that carry a query in a badge URL"
+regexTarget = "match"
+regexes = [
+    '''(?i)^!?\[[^\]]*\]\((?:https?:)?//(?:img\.shields\.io|badgen\.net|badge\.fury\.io|codecov\.io|[a-z0-9.-]+\.githubusercontent\.com|api\.travis-ci\.(?:com|org)|app\.codacy\.com|sonarcloud\.io)/''',
+    '''(?i)^!?\[[^\]]*\]\((?:https?:)?//github\.com/[^/\s]+/[^/\s]+/(?:actions|workflows)/[^)\s]*badge\.svg''',
+]
+
+[[rules]]
+id = "override_ignore_previous"
+family = "override"
+why = "tells the model to drop the instructions it already has"
+keywords = ["ignore", "disregard", "forget", "override"]
+regex = '''(?i)\b(?:ignore|disregard|forget|override)\b[^\n.!?]{0,40}\b(?:previous|prior|above|earlier|preceding|former|original|system)\b[^\n.!?]{0,30}\b(?:instructions?|prompts?|rules|directions|guidelines|directives)\b'''
+
+[[rules]]
+id = "override_ignore_everything"
+family = "override"
+why = "tells the model to drop everything it was told before this text"
+keywords = ["ignore", "disregard", "forget"]
+regex = '''(?i)\b(?:ignore|disregard|forget)\b[^\n.!?]{0,20}\b(?:everything|anything|all)\b[^\n.!?]{0,15}\b(?:above|before(?: this)?|earlier|you (?:were|have been) (?:told|given|instructed))\b'''
+
+[[rules]]
+id = "override_you_are_now"
+family = "override"
+why = "reassigns the model's role in the middle of a conversation"
+keywords = ["you are now"]
+regex = '''(?i)\byou are now\b[^\n.!?]{0,30}\b(?:assistant|agent|chatbot|persona|expert|hacker|administrator|admin|root|dan|unrestricted|unfiltered|jailbroken|developer mode|god mode|no longer)\b'''
+
+[[rules]]
+id = "override_new_system_prompt"
+family = "override"
+why = "announces a replacement for the system prompt"
+keywords = ["new system"]
+regex = '''(?i)\bnew system (?:prompt|message|instructions?)\b'''
+
+[[rules]]
+id = "role_chat_template"
+family = "role_markup"
+why = "chat-template control tokens that make a model read the text as a turn of its own"
+keywords = ["<|"]
+regex = '''<\|(?:im_start|im_end|system|user|assistant|endoftext|begin_of_text|end_of_text|start_header_id|end_header_id|eot_id)\|>'''
+
+[[rules]]
+id = "role_llama_markers"
+family = "role_markup"
+why = "Llama instruction markers that open or close a system turn"
+keywords = ["[inst]", "[/inst]", "<<sys>>", "<</sys>>"]
+regex = '''\[/?INST\]|<</?SYS>>'''
+
+[[rules]]
+id = "role_turn_header"
+family = "role_markup"
+why = "a Human or Assistant turn header after a blank line, as a forged transcript turn"
+keywords = ["\n\nhuman:", "\n\nassistant:"]
+regex = '''\n\n(?:Human|Assistant):'''
+
+[[rules]]
+id = "role_fake_tag"
+family = "role_markup"
+why = "a system, tool result or function-call tag written into the text so it reads as the harness speaking"
+keywords = ["<system", "</system", "<tool_result", "</tool_result", "<function_calls", "</function_calls", "<function_results", "</function_results", "<invoke", "</invoke"]
+regex = '''(?i)</?(?:system|tool_result|function_calls|function_results|invoke)(?:[ \t][^>\n]{0,200})?>'''
+
+[[rules]]
+id = "unicode_tags"
+kind = "chars"
+family = "hidden_unicode"
+why = "tag characters (U+E0000 to U+E007F) spell text a person cannot see"
+regex = '''[\x{E0000}-\x{E007F}]'''
+
+[[rules]]
+id = "unicode_zero_width"
+kind = "chars"
+family = "hidden_unicode"
+why = "zero-width characters (U+200B to U+200D, U+2060) hide or split words"
+regex = '''[\x{200B}-\x{200D}\x{2060}]'''
+
+[[rules]]
+id = "unicode_bom_inside"
+kind = "chars"
+family = "hidden_unicode"
+why = "a byte-order mark anywhere but the start of the text is an invisible character"
+regex = '''(?s).(\x{FEFF}+)'''
+secretGroup = 1
+
+[[rules]]
+id = "unicode_bidi_control"
+kind = "chars"
+family = "hidden_unicode"
+why = "bidirectional controls (U+202A to U+202E, U+2066 to U+2069) reorder text on screen"
+regex = '''[\x{202A}-\x{202E}\x{2066}-\x{2069}]'''
+
+[[rules]]
+id = "exfil_markdown_image"
+family = "exfil"
+why = "a markdown image whose URL carries a query sends data to that host when the image loads"
+keywords = ["!["]
+regex = '''(?i)!\[[^\]\n]{0,200}\]\((?:https?:)?//[^)\s]{1,300}\?[^)\s]{1,500}\)'''
+
+[[rules]]
+id = "exfil_html_image"
+family = "exfil"
+why = "an img tag whose source URL carries a query sends data to that host when the image loads"
+keywords = ["<img"]
+regex = '''(?i)<img\b[^>\n]{0,300}?\bsrc\s*=\s*["']?(?:https?:)?//[^"'\s>]{1,300}\?[^"'\s>]{1,500}'''
+
+[[rules]]
+id = "exfil_request_catcher"
+family = "exfil"
+why = "a host that exists to capture requests, used to collect what an agent is tricked into sending"
+keywords = ["webhook.site", "requestbin", "requestcatcher", "pipedream.net", "burpcollaborator", "oastify", "oast.", "interact.sh", "canarytokens", "beeceptor", "hookbin", "mockbin", "ptsv2", "dnslog", "ceye.io"]
+regex = '''(?i)\b(?:[a-z0-9-]+\.)*(?:webhook\.site|requestbin\.(?:com|net)|requestcatcher\.com|pipedream\.net|burpcollaborator\.net|oastify\.com|oast\.(?:fun|live|me|online|pro|site)|interact\.sh|canarytokens\.(?:com|org)|beeceptor\.com|hookbin\.com|mockbin\.org|ptsv2\.com|dnslog\.cn|ceye\.io)\b'''
+
+[[rules]]
+id = "pipe_download_to_shell"
+family = "pipe_shell"
+why = "curl or wget piped into a shell runs whatever the server sends"
+keywords = ["curl", "wget"]
+regex = '''(?i)\b(?:curl|wget)\b[^\n|;&]{0,300}\|[ \t]*(?:sudo[ \t]+(?:-\S+[ \t]+)*)?(?:ba|z|da|k)?sh\b'''
+
+[[rules]]
+id = "pipe_process_substitution"
+family = "pipe_shell"
+why = "a shell reading a curl or wget download through process substitution runs whatever the server sends"
+keywords = ["curl", "wget"]
+regex = '''(?i)\b(?:ba|z|da|k)?sh[ \t]+(?:-\S+[ \t]+)*<\([ \t]*(?:curl|wget)\b'''
+
+[[rules]]
+id = "pipe_powershell_iex"
+family = "pipe_shell"
+why = "PowerShell that evaluates a download runs whatever the server sends"
+keywords = ["iex", "invoke-expression"]
+regex = '''(?i)\b(?:iex|invoke-expression)[ \t]*\(?[ \t]*\(?[ \t]*(?:iwr|irm|invoke-webrequest|invoke-restmethod|new-object[ \t]+(?:system\.)?net\.webclient)\b|\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;]{0,300}\|[ \t]*(?:iex|invoke-expression)\b'''
+
+[[rules]]
+id = "pipe_powershell_encoded"
+family = "pipe_shell"
+why = "a PowerShell command passed as base64 hides what it runs"
+keywords = ["powershell", "pwsh"]
+regex = '''(?i)\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]{0,200}?[ \t]-(?:e|ec|en|enc|enco|encod|encode|encoded|encodedcommand)[ \t]+[A-Za-z0-9+/=]{16,}'''
+
+[[rules]]
+id = "encoded_base64"
+family = "encoded"
+why = "base64 text, gzip and one nested layer included, that decodes to text any other injection rule matches"
+keywords = ["*"]
+regex = '''(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2}(?:\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*)'''
+decode = "base64"
+
+[[rules]]
+id = "encoded_undecoded"
+family = "encoded"
+why = "base64 text that would pass the decode budget, so it could not be read and is held whole"
+kind = "budget"
+
+[[rules]]
+id = "scan_budget_exhausted"
+family = "budget"
+why = "the message or bundle exceeded its scan-work allowance (work counted per decode candidate and per nested scan), so this text was never scanned and is held whole"
+kind = "budget"

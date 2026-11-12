@@ -1818,7 +1818,19 @@ runs, so each worker thread can decode one blob of up to about 6 MiB past the bu
 that shared budget, or that would leave the bundle less than 8 MiB in an in-order scan, is scanned again in order with
 what the bundle has left. A scan therefore decodes at most 128 MiB plus one such blob per worker thread however many messages the bundle holds,
 and refuses or accepts exactly as an in-order scan would (a 2.67 MB forged bundle of 2000 such blobs took 13.2 s at
-04a237d5 and takes 0.75 s now). A rule
+04a237d5 and takes 0.75 s now). Decoded bytes are not the whole cost: a bundle of tiny nested base64 tokens decodes few
+bytes and still costs one decode attempt and one nested scan per token (SS-7 round 2: 4 MiB of them took 4.84 s). So the
+decoder also keeps a work budget, counted from sizes and never from a clock: 32 plus the length of every base64 candidate
+a decoding rule matches, whether it decodes or not, 1 per decoded or inflated byte, and 512 plus 2 per byte for every
+nested scan of decoded text. A
+message may spend 32 Mi of work and a bundle 256 Mi (ordinary text costs 1 to 4 per byte, so a 64 MiB bundle of Python
+source, at 1, stays under a third of it). A message that spends its work is not scanned any further and is redacted whole
+as `scan_budget_exhausted`; a bundle that spends its work does the same to every field after it, in order. The
+manifest's two fields have a work budget of their own, so they are scanned however the sessions went. Workers draw
+the work from a shared pool of the bundle's work plus one message's work per worker, and a message that ran short of the
+pool, or that would leave the bundle less than one message of work, is scanned again in order, so the result is the
+in-order one and the scan again costs at most two messages of work (256 Mi of work is about a second of one core;
+64 MiB bundles of nested-token and fan-out text took under 2 s in `media/SS-7/perf-r3.txt`). A rule
 with `each` redacts each match of that regex inside the secret. A match is dropped when the Shannon entropy of the
 secret is at or under the rule's `entropy`, or when an allowlist matches it: gitleaks' global allowlist applies to
 gitleaks rules only, RivetHub rules use the `[names]` stopwords and templates (exact words such as `null`, `none`,
@@ -2256,8 +2268,8 @@ twice after 0.5 and 1 s, and a 404 after a 5xx reports that the server failed mi
 again) into a 0600 file in the inbox as it streams, then fsyncs and renames it; a body shorter than its length, or a
 broken stream, is a hard error that says the drop is burned, and nothing is kept. It then decrypts in memory,
 decompresses at most 64 MiB (zstd window at most 16 MiB), parses the bundle (digest), checks the signature, and runs the
-note 136 ingest checks without a `--force`: a raw bundle, a secret match or an open withheld flag refuses it. A
-signature that does not verify refuses it. Verified means a valid signature by a key listed under the bundle's
+note 136 ingest checks without a `--force`: a raw bundle or an open withheld flag refuses it, and a secret match or an
+injection finding holds it (note 149). A signature that does not verify refuses it. Verified means a valid signature by a key listed under the bundle's
 `exported_by.user` in `$XDG_CONFIG_HOME/rivethub/trusted-senders.toml` (`[[sender]] name, key`), which only `rh memory
 trust add <name> <key>` writes; an unsigned bundle, an unknown key or a key trusted under another name imports as
 unverified with that reason. It imports through the note 135 path with the signer (the key fingerprint, else
@@ -2755,6 +2767,59 @@ the spool, the sweep records its size as captured so the next `Stop` does not sp
 write makes the hook exit 1 as it does for the parent. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
 same batches for every session and subagent file in the store, with `last_event` `Backfill` and no finalize, because
 on Postgres finalizing a conversation moves its `updated_at` to the time of the run.
+
+(149) Receiver checks (session-sharing phase 2, SS-7; uses notes 135, 136 and 140). Phil, 2026-11-11: "on the receiver it
+would be good to have some deterministic checking for prompt injection or anything suspicious before importing it."
+`capture::receive::check(&SessionBundle) -> Checked` is pure: it reads the bundle, writes nothing, and runs before any
+write. It replaces the note 136 secret re-scan on the receive paths and adds the injection scan, over every text field
+the sanitizer scans (title, content, tool name, tool arguments, tool results, metadata, settings, the origin fields,
+event ids and the manifest's exporter), JSON object keys included. Both scans run in one pass over each field, with the
+secret rules first: where a secret span and an injection span overlap, the secret wins, and adjacent hits of one injection
+rule run together into one finding. The injection rules are data in `crates/capture/src/rules/injection.toml`, loaded by
+the loader that loads the secret rules, so they share the Aho-Corasick keyword prefilter, `regex` and allowlists
+(note 136), and the base64 and gzip decoder with its decode budget (8 MiB per message, 64 MiB per bundle, two nested
+layers). A rule has an `id`, a `family` and a `why`; a new rule kind, `chars`, needs no keywords and runs on every field,
+for code point classes. The families are `override` ("ignore ... previous instructions", "you are now ...", "new system
+prompt"), `role_markup` (`<|im_start|>` and the other chat-template tokens, `[INST]`, `<<SYS>>`, `\n\nHuman:` and
+`\n\nAssistant:`, and fake `system`, `tool_result`, `function_calls`, `function_results` and `invoke` tags),
+`hidden_unicode` (U+E0000 to U+E007F, U+200B to U+200D, U+2060, a U+FEFF that is not at the start of the text, U+202A to
+U+202E and U+2066 to U+2069), `exfil` (a markdown image or `<img>` whose URL carries a query, except for the well-known
+badge hosts, and request-catcher hosts), `pipe_shell` (`curl` or `wget` piped into a shell, `bash <(curl ...)`,
+`iex (iwr ...)`, `powershell -enc ...`) and `encoded` (base64 or gzip text of 8 or more characters, the shortest that decodes to a rule's match, that decodes to a match of any
+other rule, or that passes the decode budget and so cannot be read). `budget` is a text the scan never reached: the
+rule `scan_budget_exhausted` holds a whole field when its message, or the bundle, has spent the work budget (note 136),
+so a bundle built to keep the check busy imports nothing unseen, and the check ends in bounded time. Secret findings are the family `secret`. `docs/CLI.md` and
+`injection.toml` are the list of rules; a test fails when a rule has no fixture line that matches it, the two budget rules aside.
+
+A bundle with any finding imports nothing. `rh memory receive` prints `held: <n> of <total> sessions has findings
+(<family> \u{d7}<count>, ...); nothing imported. Decide with --session <n>=import|skip|hold-spans`, then the report, and exits 3
+(`cli::Exit::Held`); the ciphertext stays in the inbox, so a rerun needs no network. The report lists, for each
+session, the session number and title, the event, the field, the rule and family, and an excerpt of at most 120
+characters with the span between `>>` and `<<`. Characters that a terminal would act on or a reader could not see (C0
+and C1 controls, bidirectional and zero-width characters, tag characters, variation selectors, a byte-order mark) are
+written as `<U+E0041>`, and a run of tag characters also prints the ASCII text it spells. The exporter's name and the verification reason in the receive output are written the same way. The excerpt of a secret
+finding is the placeholder, never the secret, and the title and other text in the report come from the held-spans copy
+of the session. The report goes to stdout only; nothing writes it to disk. A rerun decides each flagged session with
+`--session <n>=import|skip|hold-spans` (`n` counts from 1; repeatable) or every flagged session with
+`--all=import|skip|hold-spans`; `--session` wins over `--all`, and a session without findings imports whatever `--all`
+says (`--session <n>=skip` still skips it). `hold-spans` imports the session with each finding's span replaced by
+`[HELD:<rule id>]` (a secret-named key's value too), so the rest of the text is unchanged. A session with a secret
+finding allows only `skip` or `hold-spans`, unless `--force` is given. A finding in the manifest's own author fields,
+which no session carries, refuses the bundle unless `--force` is given. The bundle imports only when every flagged
+session has a decision. `--dry-run` runs the same checks and writes nothing. `rh memory ingest-bundle <path>` runs
+the same check and flow with the same options (`--force` no longer imports a secret by itself; it allows the `import`
+decision), and a raw bundle imported with `--force` is not checked. The MCP tool `session_import` refuses any bundle
+with a finding, names the count and families, and tells the agent to ask the user to run `rh memory ingest-bundle
+<path>`: an agent never accepts flagged content.
+
+Each session a receive imports records in its settings `receipt.checks = {rules_sha256, findings_by_family,
+decision}`: `rules_sha256` is the SHA-256 of the secret ruleset digest, a zero byte and the injection ruleset digest,
+`findings_by_family` counts that session's findings (`{}` for a clean one), and `decision` is `clean`, `import` or
+`hold_spans`. A skipped session is not imported and records nothing, and `ingest-bundle` writes no receipt (note 140), so
+it records no checks. `import_batch` still drops a receipt a bundle
+carries, so `checks` is the receiver's own. The checks are a deterministic screen, not a verdict: a rule that does not
+fire proves nothing, and one that fires asks a person to decide. Rules grow as data, in small PRs, fed by each new
+corpus.
 
 ## 4. Gaps to close before building the affected slice
 

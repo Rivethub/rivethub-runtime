@@ -278,6 +278,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::model_call::SessionModelCalls>,
     SchemaGenerator::subschema_for::<crate::capture::Receipt>,
     SchemaGenerator::subschema_for::<crate::capture::ReceiptVerification>,
+    SchemaGenerator::subschema_for::<crate::capture::ChecksDecision>,
+    SchemaGenerator::subschema_for::<crate::capture::ReceiptChecks>,
     SchemaGenerator::subschema_for::<crate::hooks::HookEventName>,
     SchemaGenerator::subschema_for::<crate::hooks::HookContextBase>,
     SchemaGenerator::subschema_for::<crate::hooks::ReflectionSource>,

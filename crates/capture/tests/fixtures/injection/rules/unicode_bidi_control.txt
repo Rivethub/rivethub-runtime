@@ -1,0 +1,3 @@
+safe \u{202E}txt.exe
+x\u{2066}y\u{2069}z
+\u{202A}embedded\u{202C}

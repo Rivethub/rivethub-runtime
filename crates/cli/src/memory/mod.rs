@@ -3,6 +3,7 @@ mod chosen;
 mod cleanup;
 mod dropbox;
 mod export;
+mod hold;
 mod inbox;
 mod io;
 mod merge;

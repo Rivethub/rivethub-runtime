@@ -1,0 +1,6 @@
+I'll ignore the unused-import lint for now and come back to it. Forget the old branch, we merged it last week.
+The new system uses a queue. The system prompt lives in config.yaml and is never logged; instructions for the agent are in AGENTS.md.
+You are now on the release branch. Previous builds are cached under target/. Above all, keep the capture path lossless.
+Please disregard the earlier benchmark numbers, they measured the wrong binary.
+In the transcript the reviewer wrote Human: and Assistant: on the same line, which is how the formatter prints it.
+Use a code block: `bash install.sh` after downloading the script and reading it.

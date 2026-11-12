@@ -1,0 +1,1 @@
+A benign base64 payload: VGhpcyBpcyBhIHBlcmZlY3RseSBvcmRpbmFyeSBjb25maWd1cmF0aW9uIG5vdGUgYWJvdXQgdGhlIHN0YWdpbmcgZW52aXJvbm1lbnQgYW5kIGl0cyByZXRlbnRpb24gcG9saWN5Lg==
