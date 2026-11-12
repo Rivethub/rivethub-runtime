@@ -2533,7 +2533,9 @@ file of the session too, so a `SubagentStop` the hook never saw is caught up, an
 skips a file whose size equals the size the hook last captured, kept in `<state>/claude-subagents/<session>/<agentId>`,
 so a long session does not re-post every subagent on each `Stop`. A subagent whose meta file is absent or unreadable is
 still captured, with `parent_session_id` and `agent_id` only, and a sweep that cannot read that record reports the
-subagent on stderr and moves on. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
+subagent on stderr and moves on. Each subagent batch goes through the writer of note 147, so a failed post leaves it in
+the spool, the sweep records its size as captured so the next `Stop` does not spool it again, and a batch the spool cannot
+write makes the hook exit 1 as it does for the parent. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
 same batches for every session and subagent file in the store, with `last_event` `Backfill` and no finalize, because
 on Postgres finalizing a conversation moves its `updated_at` to the time of the run.
 

@@ -77,6 +77,13 @@ pub enum WriteError {
     Json(#[from] serde_json::Error),
 }
 
+impl WriteError {
+    #[must_use]
+    pub fn spooled(&self) -> bool {
+        matches!(self, Self::Post(error) if !matches!(error, PostError::Client { .. }))
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Totals {
     pub inserted: u64,

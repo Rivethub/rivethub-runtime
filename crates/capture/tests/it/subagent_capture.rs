@@ -394,6 +394,53 @@ async fn a_subagent_stop_during_an_outage_spools_the_subagent_as_well_as_the_par
     Ok(())
 }
 
+fn down_hook(
+    store: &Store,
+    spool: PathBuf,
+) -> Result<capture::hook::ClaudeHook<Down>, config::ConfigError> {
+    let env = environment(store.home.path());
+    Ok(capture::hook::ClaudeHook::new(
+        capture::writer::CaptureWriter::new(
+            Down,
+            capture::spool::CaptureSpool::new(spool),
+            None,
+            None,
+        ),
+        &config::Paths::new(&env)?,
+    ))
+}
+
+#[tokio::test]
+async fn repeated_stops_during_an_outage_spool_a_subagent_once() -> TestResult {
+    let store = Store::new()?;
+    store.explorer()?;
+    let hook = down_hook(&store, store.home.path().join("spool"))?;
+    for key in ["1791656243919-30e4c5d71", "1791656243920-30e4c5d72"] {
+        let run = hook.run(&store.stdin("Stop", ""), now()?, key).await;
+        assert_eq!(run.exit, 0);
+    }
+    let keys = spooled_keys(store.home.path())?;
+    let parent = format!("claude-code:{PARENT}");
+    let subagent = format!("claude-code:{EXPLORER}");
+    assert_eq!(keys, vec![parent.clone(), parent, subagent]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_stop_that_cannot_save_the_parent_or_a_subagent_exits_1() -> TestResult {
+    let store = Store::new()?;
+    store.explorer()?;
+    let blocked = store.home.path().join("spool");
+    std::fs::write(&blocked, "not a directory")?;
+    let hook = down_hook(&store, blocked)?;
+    let run = hook
+        .run(&store.stdin("Stop", ""), now()?, "1791656243919-30e4c5d71")
+        .await;
+    assert_eq!(run.exit, 1, "{}", run.stderr);
+    assert_eq!(run.stderr.matches("capture batch was NOT saved").count(), 2);
+    Ok(())
+}
+
 #[tokio::test]
 async fn backfill_reads_every_codex_session() -> TestResult {
     let home = tempfile::tempdir()?;

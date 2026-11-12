@@ -303,6 +303,39 @@ async fn a_batch_spooled_on_401_replays_once_the_token_is_right()
     Ok(())
 }
 
+#[tokio::test]
+async fn backfill_sends_the_owner_token_and_a_rerun_adds_nothing()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let home = home();
+    let env = environment(&home);
+    let store = Arc::new(FakeMemoryStore::default());
+    let (port, stop, server) =
+        local_gateway(&store, home.path(), support::local_owner(home.path())).await?;
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    store_a_session(&home)?;
+    let args = ["capture", "backfill", "--harness", "claude-code"];
+    let first = run(&args, &env).await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    assert_eq!(
+        first.stdout,
+        "claude-code: 1 sessions, 2 messages added, 0 failures\n"
+    );
+    assert_eq!(appended_owners(store.requests().await), ["owner"]);
+    let second = run(&args, &env).await;
+    assert_eq!(second.exit, Exit::Ok, "{}", second.stderr);
+    assert_eq!(
+        second.stdout,
+        "claude-code: 1 sessions, 0 messages added, 0 failures\n"
+    );
+    assert_eq!(spool_entries(home.path()), 0);
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
 fn spool_entries(home: &Path) -> usize {
     std::fs::read_dir(home.join(".rivethub/capture-spool")).map_or(0, Iterator::count)
 }
