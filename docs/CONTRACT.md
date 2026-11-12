@@ -2630,7 +2630,7 @@ snake_case name of the port's failure (`unknown_draft` 404, `unknown_login` 404,
 span with hidden and bidi characters written as `<U+XXXX>`. It leaves rh only in these bodies, only to the local owner, and
 never in a log: the report, flag and mark types print counts, not text, in `Debug`. The code. `send` returns the share code
 once in `SentReply.code`; rh keeps no copy, and its `Debug` shows only the drop id. A team token arrives in `LoginRequest`
-and is never returned. `ServersReply.token_store` is `keyring` or `file`, the store this rh process keeps share tokens in
+and is never returned. Server sign-in, sign-out and upload go through the hub share policy of note 145, so a refused server is a 400 `bad_server` and a refused sign-out still forgets the login on this machine. `ServersReply.token_store` is `keyring` or `file`, the store this rh process keeps share tokens in
 (note 140). Drafts live in rh's memory only, at most 4, 30 minutes idle.
 
 ## 4. Gaps to close before building the affected slice

@@ -407,17 +407,18 @@ pub async fn logout(
 
 pub async fn servers(env: &Environment) -> Result<Servers, Error> {
     let servers = ShareServers::from_env(env).await?;
-    let configured = servers
-        .default_host()
-        .map(|host| host.as_str().to_owned())
-        .unwrap_or_default();
-    let configured = configured.as_str();
+    let default = match servers.default_host() {
+        Ok(host) => Some(host.to_string()),
+        Err(_refused) => None,
+    };
     let store = servers.logins();
     let logins = store.list()?;
     let mut views: Vec<ServerView> = Vec::new();
-    if !configured.is_empty() && !logins.contains_key(configured) {
+    if let Some(default) = &default
+        && !logins.contains_key(default)
+    {
         views.push(ServerView {
-            origin: configured.to_owned().into(),
+            origin: default.clone().into(),
             kind: ServerKind::Cloud,
             user: None,
             signed_in: false,
@@ -430,7 +431,7 @@ pub async fn servers(env: &Environment) -> Result<Servers, Error> {
             Listed::Team { user } => (ServerKind::Team, Some(user)),
         };
         views.push(ServerView {
-            default: host == configured,
+            default: default.as_deref() == Some(host.as_str()),
             origin: host.into(),
             kind,
             user,

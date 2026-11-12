@@ -261,8 +261,8 @@ impl ShareServers {
         })
     }
 
-    pub(crate) fn default_host(&self) -> Option<ShareServer> {
-        self.policy.default_server(self.configured.clone()).ok()
+    pub(crate) fn default_host(&self) -> Result<ShareServer, ShareRefused> {
+        self.policy.default_server(self.configured.clone())
     }
 
     pub(crate) const fn logins(&self) -> &LoginStore {
