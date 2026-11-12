@@ -89,16 +89,14 @@ impl Drop for Reservation<'_> {
     }
 }
 
-impl Default for Drafts {
-    fn default() -> Self {
+impl Drafts {
+    pub(super) fn new() -> Self {
         Self {
             slots: parking_lot::Mutex::default(),
             max_bytes: MAX_DRAFT_BYTES,
         }
     }
-}
 
-impl Drafts {
     pub(super) const fn with_byte_cap(mut self, bytes: usize) -> Self {
         self.max_bytes = bytes;
         self

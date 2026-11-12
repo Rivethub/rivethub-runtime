@@ -111,7 +111,7 @@ impl NodeDesk {
             env: env.clone(),
             memory,
             clock: Arc::new(Utc::now),
-            drafts: Drafts::default(),
+            drafts: Drafts::new(),
             logins: parking_lot::Mutex::default(),
         })
     }
