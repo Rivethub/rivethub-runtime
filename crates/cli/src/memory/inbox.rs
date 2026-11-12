@@ -119,7 +119,11 @@ impl Inbox {
     pub(super) fn mark_received(&self, slot: &Slot) -> std::io::Result<()> {
         create_private_dir(&self.dir)?;
         std::fs::File::create(self.file(slot, RECEIVED))?;
-        std::fs::remove_file(self.ciphertext_path(slot))?;
+        match std::fs::remove_file(self.ciphertext_path(slot)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         std::fs::File::open(&self.dir)?.sync_all()
     }
 }
