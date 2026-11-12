@@ -70,7 +70,10 @@ impl SqliteStore {
                 .map_err(SqliteError::query("browse"))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(SqliteError::query("browse"))?;
-            rows.into_iter().map(MemoryEntry::try_from).collect()
+            let mut seen = std::collections::HashMap::new();
+            rows.into_iter()
+                .map(|row| row.into_entry(&mut seen))
+                .collect()
         })
         .await
     }
@@ -93,7 +96,7 @@ impl SqliteStore {
             )
             .optional()
             .map_err(SqliteError::query("get full"))?
-            .map(MemoryEntry::try_from)
+            .map(|row| row.into_entry(&mut std::collections::HashMap::new()))
             .transpose()
         })
         .await

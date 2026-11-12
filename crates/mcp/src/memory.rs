@@ -239,11 +239,24 @@ async fn hit_context(
             })
             .await?
     };
-    let hit_keys = outcome
-        .results
-        .iter()
-        .filter_map(|hit| hit.session_id.as_deref());
-    let origins = crate::provenance::resolve(
+    let mut carried = crate::provenance::Origins::new();
+    let mut hit_keys = Vec::new();
+    for hit in &outcome.results {
+        let Some(key) = hit.session_id.as_deref() else {
+            continue;
+        };
+        match outcome
+            .summaries
+            .get(&hit.id)
+            .and_then(|detail| detail.provenance.clone())
+        {
+            Some(provenance) => {
+                carried.insert(key.to_owned(), provenance);
+            }
+            None => hit_keys.push(key),
+        }
+    }
+    let mut origins = crate::provenance::resolve(
         store,
         messages.values().chain(
             outcome
@@ -254,6 +267,7 @@ async fn hit_context(
         hit_keys,
     )
     .await?;
+    origins.extend(carried);
     Ok(crate::render_search::HitContext {
         messages,
         tags,

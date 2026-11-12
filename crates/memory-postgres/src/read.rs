@@ -54,9 +54,6 @@ impl TryFrom<MessageEntryRow> for MemoryEntry {
             .ok_or_else(|| Error::protocol("message row is missing its role"))?;
         let role =
             Role::from_str(role_text).map_err(|source| Error::stored("message role", source))?;
-        let provenance = stored_json(row.import_settings, "settings")?
-            .as_ref()
-            .map(kernel::memory::Provenance::from_settings);
         Ok(Self {
             id: row.id,
             session_id: row.session_key,
@@ -69,8 +66,31 @@ impl TryFrom<MessageEntryRow> for MemoryEntry {
             tool_result: row.tool_result,
             metadata: stored_json(row.metadata, "metadata")?,
             created_at: row.created_at,
-            provenance,
+            provenance: None,
         })
+    }
+}
+
+impl MessageEntryRow {
+    pub(crate) fn into_entry(
+        mut self,
+        seen: &mut std::collections::HashMap<String, Option<kernel::memory::Provenance>>,
+    ) -> Result<MemoryEntry, Error> {
+        let settings = self.import_settings.take();
+        let mut entry = MemoryEntry::try_from(self)?;
+        if let Some(text) = settings {
+            entry.provenance = match seen.get(&entry.session_id) {
+                Some(known) => known.clone(),
+                None => {
+                    let parsed = stored_json(Some(text), "settings")?
+                        .as_ref()
+                        .map(kernel::memory::Provenance::from_settings);
+                    seen.insert(entry.session_id.clone(), parsed.clone());
+                    parsed
+                }
+            };
+        }
+        Ok(entry)
     }
 }
 
@@ -195,11 +215,10 @@ impl crate::PostgresMemory {
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("browse", source))?;
-        let entries = rows
-            .into_iter()
-            .map(MemoryEntry::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(entries)
+        let mut seen = std::collections::HashMap::new();
+        rows.into_iter()
+            .map(|row| row.into_entry(&mut seen))
+            .collect()
     }
 
     pub async fn memory_get_full(&self, id: &str) -> Result<Option<MemoryEntry>, Error> {
@@ -218,7 +237,7 @@ impl crate::PostgresMemory {
         .fetch_optional(&self.pool)
         .await
         .map_err(|source| Error::operation("get full", source))?
-        .map(MemoryEntry::try_from)
+        .map(|row| row.into_entry(&mut std::collections::HashMap::new()))
         .transpose()?;
         Ok(record)
     }

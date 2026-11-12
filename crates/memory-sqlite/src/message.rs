@@ -98,6 +98,29 @@ impl EntryRow {
     }
 }
 
+impl EntryRow {
+    pub(crate) fn into_entry(
+        mut self,
+        seen: &mut std::collections::HashMap<String, Option<kernel::memory::Provenance>>,
+    ) -> Result<MemoryEntry, SqliteError> {
+        let settings = self.import_settings.take();
+        let mut entry = MemoryEntry::try_from(self)?;
+        if let Some(text) = settings {
+            entry.provenance = match seen.get(&entry.session_id) {
+                Some(known) => known.clone(),
+                None => {
+                    let parsed = Some(kernel::memory::Provenance::from_settings(&stored_object(
+                        &text, "settings",
+                    )?));
+                    seen.insert(entry.session_id.clone(), parsed.clone());
+                    parsed
+                }
+            };
+        }
+        Ok(entry)
+    }
+}
+
 impl TryFrom<EntryRow> for MemoryEntry {
     type Error = SqliteError;
 
@@ -118,13 +141,7 @@ impl TryFrom<EntryRow> for MemoryEntry {
             tool_result: row.tool_result,
             metadata: Some(stored_object(&row.metadata, "metadata")?),
             created_at: Some(time::stored(&row.created_at, "created_at")?),
-            provenance: row
-                .import_settings
-                .as_deref()
-                .map(|text| stored_object(text, "settings"))
-                .transpose()?
-                .as_ref()
-                .map(kernel::memory::Provenance::from_settings),
+            provenance: None,
         })
     }
 }

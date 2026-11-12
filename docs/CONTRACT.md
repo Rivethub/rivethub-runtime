@@ -2842,8 +2842,9 @@ control, bidi, zero-width and tag characters are removed, `·`, parentheses, bra
 name cannot pose as the verification label, whitespace runs collapse to one space, it is cut at 64 characters
 (`kernel::memory::label`), and `unknown` or an empty name reads as an unknown author. An import whose origin does not parse still gets a Provenance, with
 no author and `unreceived`, so no imported text reaches a reader unquoted. The rows `browse`, `get_full` and a message hit's `get_full` return carry `MemoryEntry.provenance`, read in the same query
-as the row (the conversation's settings, for an `import:` key only), so those calls make no second round trip. A caller
-resolves any remaining keys of one call (summary hits and source messages that carry none) with one batched
+as the row (the conversation's settings, for an `import:` key only), so those calls make no second round trip; a Postgres
+summary hit's `SummaryDetail.provenance` comes from the same query as its detail. A caller resolves any remaining keys of
+one call (a summary hit without a detail, and source messages that carry none) with one batched
 `kernel::memory::resolve_origins`; native keys never reach the store, so a native-only call makes no origin query.
 
 `kernel::memory::quote(provenance, text)` renders imported text as `Imported from <author> (verified|unverified[: unsigned|

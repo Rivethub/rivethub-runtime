@@ -92,3 +92,47 @@ async fn citations_carry_the_importing_author(pool: PgPool) -> TestResult {
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_hits_of_an_import_carry_its_provenance(pool: PgPool) -> TestResult {
+    crate::common::install_graphile(&pool).await?;
+    sqlx::query("INSERT INTO rh_wiki_topics (slug, title) VALUES ('acme', 'acme')")
+        .execute(&pool)
+        .await?;
+    cite(
+        &pool,
+        IMPORT_KEY,
+        r#"{"origin":{"author":"phil"},"receipt":{"verification":"unsigned"}}"#,
+        "acme",
+    )
+    .await?;
+    let memory = PostgresMemory::new(pool);
+
+    let found = memory
+        .search(kernel::memory::SearchQuery {
+            since: None,
+            before: None,
+            window: None,
+            expand: None,
+            synthesize: None,
+            text: "text".to_owned(),
+            mode: kernel::memory::SearchMode::Fts,
+            scope: kernel::memory::MemoryScope::Summaries,
+            agent: None,
+            role: None,
+            exclude_roles: Vec::new(),
+            tool_name: None,
+            tag: None,
+            limit: kernel::memory::Limit::clamped(None, 10, 1..=50),
+        })
+        .await?;
+
+    let provenance = found
+        .summaries
+        .values()
+        .find_map(|detail| detail.provenance.as_ref())
+        .ok_or("a summary detail with provenance")?;
+    assert_eq!(provenance.author.as_deref(), Some("phil"));
+    assert_eq!(provenance.verification, Verification::Unsigned);
+    Ok(())
+}

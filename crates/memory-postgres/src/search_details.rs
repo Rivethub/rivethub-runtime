@@ -17,6 +17,7 @@ struct SummaryRow {
     conversation_id: Uuid,
     earliest_at: Option<DateTime<Utc>>,
     latest_at: Option<DateTime<Utc>>,
+    import_settings: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -50,9 +51,17 @@ impl PostgresMemory {
             self.summary_children(&ids, expand),
             self.summary_sources(&ids, query, expand),
         )?;
-        Ok(rows
-            .into_iter()
+        rows.into_iter()
             .map(|row| {
+                let provenance = row
+                    .import_settings
+                    .as_deref()
+                    .map(|text| {
+                        serde_json::from_str::<wire::JsonObject>(text)
+                            .map(|settings| kernel::memory::Provenance::from_settings(&settings))
+                            .map_err(|source| Error::stored("settings", source))
+                    })
+                    .transpose()?;
                 let detail = SummaryDetail {
                     kind: row.kind.0,
                     earliest_at: row.earliest_at,
@@ -60,14 +69,17 @@ impl PostgresMemory {
                     tags: tags.get(&row.conversation_id).cloned().unwrap_or_default(),
                     children: children.remove(&row.id).unwrap_or_default(),
                     sources: sources.remove(&row.id).unwrap_or_default(),
+                    provenance,
                 };
-                (row.id.to_string(), detail)
+                Ok((row.id.to_string(), detail))
             })
-            .collect())
+            .collect()
     }
 
     async fn summary_rows(&self, ids: &[Uuid]) -> Result<Vec<SummaryRow>, MemoryStoreError> {
-        let rows = sqlx::query_as("SELECT id, to_json(kind) AS kind, conversation_id, earliest_at, latest_at FROM rh_summaries WHERE id = ANY($1)")
+        let rows = sqlx::query_as("SELECT s.id, to_json(s.kind) AS kind, s.conversation_id, s.earliest_at, s.latest_at,
+                    CASE WHEN c.session_key LIKE 'import:%' THEN COALESCE(c.settings::text, '{}') END AS import_settings
+               FROM rh_summaries s LEFT JOIN rh_conversations c ON c.id = s.conversation_id WHERE s.id = ANY($1)")
             .bind(ids).fetch_all(&self.pool).await.map_err(|source| Error::operation("summary detail", source))?;
         Ok(rows)
     }
