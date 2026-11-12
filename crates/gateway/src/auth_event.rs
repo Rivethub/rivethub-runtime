@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::Mutex;
+use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 const REFUSAL_LOG_CAP: usize = 100;
 const WINDOW: Duration = Duration::from_secs(60);
+const FLUSH_TICK: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AuthEvent {
@@ -73,13 +77,50 @@ struct Window {
     suppressed: u64,
 }
 
+type Windows = HashMap<(AuthEvent, Option<IpAddr>), Window>;
+
 #[derive(Debug, Default)]
 pub(crate) struct AuthLog {
-    windows: Mutex<HashMap<(AuthEvent, Option<IpAddr>), Window>>,
+    windows: Arc<Mutex<Windows>>,
+    flusher: Mutex<Option<JoinHandle<()>>>,
 }
 
 fn peer_text(peer: Option<IpAddr>) -> String {
     peer.map_or_else(|| "unknown".to_owned(), |ip| ip.to_string())
+}
+
+fn log_summaries(closed: Vec<((AuthEvent, Option<IpAddr>), u64)>) {
+    for ((event, peer), suppressed) in closed {
+        tracing::warn!(
+            event = event.name(),
+            peer = %peer_text(peer),
+            suppressed,
+            "auth event repeated: {suppressed} more in the last 60s"
+        );
+    }
+}
+
+fn drain(windows: &Mutex<Windows>, keep: impl Fn(&Window) -> bool) {
+    let mut closed = Vec::new();
+    windows.lock().retain(|key, window| {
+        let keep = keep(window);
+        if !keep && window.suppressed > 0 {
+            closed.push((*key, window.suppressed));
+        }
+        keep
+    });
+    log_summaries(closed);
+}
+
+async fn flush_when_windows_close(windows: Arc<Mutex<Windows>>) {
+    let mut tick = tokio::time::interval(FLUSH_TICK);
+    loop {
+        tick.tick().await;
+        let now = Instant::now();
+        drain(&windows, |window| {
+            now.saturating_duration_since(window.start) < WINDOW
+        });
+    }
 }
 
 impl AuthLog {
@@ -90,7 +131,9 @@ impl AuthLog {
     pub(crate) fn emit_at(&self, event: AuthEvent, peer: Option<IpAddr>, now: Instant) {
         let (name, reason) = (event.name(), event.reason());
         let text = peer_text(peer);
-        self.close_elapsed_windows(now);
+        drain(&self.windows, |window| {
+            now.saturating_duration_since(window.start) < WINDOW
+        });
         if !event.refusal() {
             tracing::info!(event = name, reason, peer = %text, "auth event");
             return;
@@ -115,25 +158,34 @@ impl AuthLog {
         };
         if first {
             tracing::warn!(event = name, reason, peer = %text, "auth event");
+            self.ensure_flusher();
         }
     }
 
-    fn close_elapsed_windows(&self, now: Instant) {
-        let mut closed = Vec::new();
-        self.windows.lock().retain(|key, window| {
-            let elapsed = now.saturating_duration_since(window.start) >= WINDOW;
-            if elapsed && window.suppressed > 0 {
-                closed.push((*key, window.suppressed));
-            }
-            !elapsed
-        });
-        for ((event, peer), suppressed) in closed {
-            tracing::warn!(
-                event = event.name(),
-                peer = %peer_text(peer),
-                suppressed,
-                "auth event repeated: {suppressed} more in the last 60s"
-            );
+    fn ensure_flusher(&self) {
+        let mut flusher = self.flusher.lock();
+        if flusher.is_some() {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let windows = Arc::clone(&self.windows);
+            *flusher = Some(runtime.spawn(flush_when_windows_close(windows)));
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        let flusher = self.flusher.lock().take();
+        if let Some(flusher) = flusher {
+            flusher.abort();
+        }
+        drain(&self.windows, |_| false);
+    }
+}
+
+impl Drop for AuthLog {
+    fn drop(&mut self) {
+        if let Some(flusher) = self.flusher.get_mut().take() {
+            flusher.abort();
         }
     }
 }
@@ -143,9 +195,10 @@ mod tests {
     use std::io::Write;
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use parking_lot::Mutex;
+    use tokio::time::Instant;
 
     use super::{AuthEvent, AuthLog};
 
@@ -208,5 +261,44 @@ mod tests {
         );
         let text = lines();
         assert!(text.contains("38 more in the last 60s"), "{text}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_followed_by_silence_still_logs_its_count() {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let log = AuthLog::default();
+        let peer = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        for _ in 0..8 {
+            log.emit(AuthEvent::ExchangeRefused, peer);
+        }
+        let lines = || String::from_utf8_lossy(&captured.0.lock()).into_owned();
+        assert!(!lines().contains("more in the last"), "{}", lines());
+        tokio::time::advance(Duration::from_secs(70)).await;
+        tokio::task::yield_now().await;
+        let text = lines();
+        assert!(text.contains("7 more in the last 60s"), "{text}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn close_flushes_pending_counts_and_stops_the_timer() {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let log = AuthLog::default();
+        for _ in 0..4 {
+            log.emit(AuthEvent::BearerRejected, None);
+        }
+        log.close();
+        let text = String::from_utf8_lossy(&captured.0.lock()).into_owned();
+        assert!(text.contains("3 more in the last 60s"), "{text}");
+        assert!(log.flusher.lock().is_none());
     }
 }

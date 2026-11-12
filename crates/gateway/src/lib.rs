@@ -240,6 +240,7 @@ impl Gateway {
             host.close().await;
         }
         self.sessions.close().await;
+        self.auth_log.close();
     }
 
     #[must_use]
