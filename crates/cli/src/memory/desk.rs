@@ -20,11 +20,9 @@ use kernel::memory::share::desk::ServerKind;
 use kernel::memory::share::desk::ServerView;
 use kernel::memory::share::desk::Servers;
 use oauth2::DeviceCodeErrorResponseType;
-use oauth2::RefreshToken;
 use oauth2::RequestTokenError;
 use oauth2::Scope;
 use oauth2::StandardDeviceAuthorizationResponse;
-use oauth2::StandardRevocableToken;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio_util::task::AbortOnDropHandle;
@@ -250,16 +248,14 @@ pub async fn start(
 }
 
 fn openable(uri: String, server: &ShareServer) -> Result<String, ServerError> {
-    let url = url::Url::parse(&uri).map_err(|error| {
-        ServerError::Protocol(format!("its verification URL is invalid: {error}"))
-    })?;
+    let url = url::Url::parse(&uri)
+        .map_err(|_| ServerError::Protocol("its verification URL is invalid"))?;
     if url.scheme() == "https" || (url.scheme() == "http" && server.is_loopback()) {
         return Ok(uri);
     }
-    Err(ServerError::Protocol(format!(
-        "its verification URL uses {}; only https opens in the browser (http only for a loopback share server)",
-        url.scheme()
-    )))
+    Err(ServerError::Protocol(
+        "its verification URL must be https (http only for a loopback share server)",
+    ))
 }
 
 async fn approval(
@@ -287,7 +283,7 @@ async fn approval(
             DeviceCodeErrorResponseType::AuthorizationPending
             | DeviceCodeErrorResponseType::SlowDown
             | DeviceCodeErrorResponseType::Basic(_) => {
-                return Err(ServerError::Refused(refusal.to_string()).into());
+                return Err(oauth::failed(RequestTokenError::ServerResponse(refusal)).into());
             }
         },
         Err(other) => return Err(oauth::failed(other).into()),
@@ -364,28 +360,27 @@ pub async fn logout(
         }
         Err(error) => return Err(error.into()),
     };
+    let outcome = sign_out(&server).await?;
+    Ok((host, outcome))
+}
+
+pub(crate) async fn sign_out(server: &Server) -> Result<LoggedOut, ServerError> {
+    let host = server.host().clone();
     let _lock = server.lock().await?;
     let login = match server.logins().load(&host).await {
-        Err(ServerError::LoggedOut(_)) => return Ok((host, LoggedOut::NotSignedIn)),
+        Err(ServerError::LoggedOut(_)) => return Ok(LoggedOut::NotSignedIn),
         loaded => loaded?,
     };
     let outcome = match login {
         Login::Team(_) => LoggedOut::Forgotten,
         Login::Device(tokens) => {
             let endpoints = server.endpoints().await?;
-            Server::oauth_client(&endpoints)
-                .revoke_token(StandardRevocableToken::RefreshToken(RefreshToken::new(
-                    tokens.refresh_token.clone(),
-                )))
-                .map_err(|error| ServerError::Protocol(error.to_string()))?
-                .request_async(&server)
-                .await
-                .map_err(oauth::failed)?;
+            server.revoke(&endpoints, &tokens.refresh_token).await?;
             LoggedOut::Revoked
         }
     };
     server.logins().forget(&host).await?;
-    Ok((host, outcome))
+    Ok(outcome)
 }
 
 pub async fn servers(env: &Environment) -> Result<Servers, Error> {
@@ -534,6 +529,11 @@ fn server_error(error: ServerError) -> DeskError {
             message: body,
         },
         ServerError::Http(error) => DeskError::Unreachable(error.to_string()),
+        error @ ServerError::Unavailable { .. } => DeskError::Unreachable(error.to_string()),
+        error @ ServerError::Answered(status) => DeskError::DropBox {
+            status,
+            message: error.to_string(),
+        },
         ServerError::Finished => DeskError::UnknownLogin,
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
         error @ ServerError::Policy(_) => DeskError::BadServer(error.to_string()),
