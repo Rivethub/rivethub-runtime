@@ -42,6 +42,8 @@ struct Seen {
     taken: Vec<bool>,
     gets: usize,
     refreshes: Vec<String>,
+    device_requests: Vec<String>,
+    device_polls: usize,
     revokes: Vec<String>,
     revoke_status: Option<StatusCode>,
     upload_status: Option<StatusCode>,
@@ -112,13 +114,74 @@ async fn download(
     }
 }
 
-#[derive(serde::Deserialize)]
-struct Refresh {
-    refresh_token: String,
+fn json(status: StatusCode, body: impl Into<String>) -> Response {
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body.into(),
+    )
+        .into_response()
 }
 
-async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Refresh>) -> Response {
-    let asked_for = asked.refresh_token;
+fn form_field(body: &[u8], name: &str) -> String {
+    url::form_urlencoded::parse(body)
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_default()
+}
+
+async fn discovery(headers: HeaderMap) -> Response {
+    let host = headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    let base = format!("http://{host}/api/auth");
+    json(
+        StatusCode::OK,
+        format!(
+            r#"{{"device_authorization_endpoint":"{base}/device/code","token_endpoint":"{base}/oauth2/token","revocation_endpoint":"{base}/oauth2/revoke"}}"#
+        ),
+    )
+}
+
+async fn device_code(State(drops): State<DropBox>, body: Bytes) -> Response {
+    drops
+        .0
+        .lock()
+        .device_requests
+        .push(String::from_utf8_lossy(&body).into_owned());
+    json(
+        StatusCode::OK,
+        r#"{"device_code":"dev-code","user_code":"ABCD-EFGH","verification_uri":"http://127.0.0.1/device","verification_uri_complete":"http://127.0.0.1/device#user_code=ABCD-EFGH","expires_in":600,"interval":1}"#,
+    )
+}
+
+async fn token(State(drops): State<DropBox>, body: Bytes) -> Response {
+    if form_field(&body, "grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
+        return refresh(&drops, &body);
+    }
+    let polls = {
+        let mut seen = drops.0.lock();
+        seen.device_polls += 1;
+        seen.device_polls
+    };
+    if form_field(&body, "device_code") != "dev-code" {
+        json(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#)
+    } else if polls < 2 {
+        json(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"authorization_pending"}"#,
+        )
+    } else {
+        json(
+            StatusCode::OK,
+            r#"{"access_token":"rhca_login","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_login","scope":"drops:write offline_access"}"#,
+        )
+    }
+}
+
+fn refresh(drops: &DropBox, body: &[u8]) -> Response {
+    let asked_for = form_field(body, "refresh_token");
     let accepted = {
         let mut seen = drops.0.lock();
         let current = seen.refreshes.last().map_or_else(
@@ -130,26 +193,20 @@ async fn refresh(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Ref
         asked_for == current
     };
     if !accepted {
-        return (StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#).into_response();
+        return json(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#);
     }
-    (
+    json(
         StatusCode::OK,
         format!(
             r#"{{"access_token":"rhca_{asked_for}","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_{asked_for}","scope":"drops:write"}}"#
         ),
     )
-        .into_response()
 }
 
-#[derive(serde::Deserialize)]
-struct Revoked {
-    token: String,
-}
-
-async fn revoke(State(drops): State<DropBox>, axum::Json(asked): axum::Json<Revoked>) -> Response {
+async fn revoke(State(drops): State<DropBox>, body: Bytes) -> Response {
     let status = {
         let mut seen = drops.0.lock();
-        seen.revokes.push(asked.token);
+        seen.revokes.push(form_field(&body, "token"));
         seen.revoke_status
     };
     match status {
@@ -176,8 +233,13 @@ async fn drop_box() -> Served {
     let drops = DropBox::default();
     let app = Router::new()
         .route("/api/drops", axum::routing::post(upload))
-        .route("/api/cli/token", axum::routing::post(refresh))
-        .route("/api/cli/revoke", axum::routing::post(revoke))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            axum::routing::get(discovery),
+        )
+        .route("/api/auth/device/code", axum::routing::post(device_code))
+        .route("/api/auth/oauth2/token", axum::routing::post(token))
+        .route("/api/auth/oauth2/revoke", axum::routing::post(revoke))
         .route("/api/drops/{id}", axum::routing::get(download))
         .with_state(drops.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -1247,4 +1309,64 @@ async fn a_login_stored_under_another_spelling_reads_as_its_server() {
         "{}",
         status.stdout
     );
+}
+
+#[tokio::test]
+async fn login_runs_the_device_grant_on_the_discovered_endpoints_and_logout_revokes_it() {
+    let served = drop_box().await;
+    let node = Node::new("phil", &served.url, None);
+    let signed_in = node.run(&["share", "login"]).await;
+    assert_eq!(signed_in.exit, Exit::Ok, "{}", signed_in.stderr);
+    assert!(
+        signed_in
+            .stdout
+            .contains("scope drops:write offline_access"),
+        "{}",
+        signed_in.stdout
+    );
+    {
+        let seen = served.drops.0.lock();
+        let first = seen.device_requests.first().expect("a device code request");
+        let asked: Vec<(String, String)> = url::form_urlencoded::parse(first.as_bytes())
+            .into_owned()
+            .collect();
+        assert!(asked.contains(&("client_id".to_owned(), "rivethub-cli".to_owned())));
+        assert!(asked.contains(&("scope".to_owned(), "drops:write offline_access".to_owned())));
+        assert_eq!(seen.device_polls, 2, "pending once, then approved");
+    }
+    let stored = logins(&node);
+    assert!(
+        stored.contains("rhca_login") && stored.contains("rhcr_login"),
+        "{stored}"
+    );
+
+    let signed_out = node.run(&["share", "logout"]).await;
+    assert_eq!(signed_out.exit, Exit::Ok, "{}", signed_out.stderr);
+    assert_eq!(served.drops.0.lock().revokes, ["rhcr_login"]);
+    assert!(!logins(&node).contains("rhcr_login"));
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_server_without_oauth_metadata_says_it_offers_no_device_sign_in() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listener");
+    let url = format!("http://{}/", listener.local_addr().expect("address"));
+    let stop = CancellationToken::new();
+    let token = stop.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, Router::new())
+            .with_graceful_shutdown(async move { token.cancelled().await })
+            .await
+    });
+    let node = Node::new("phil", &url, None);
+    let refused = node.run(&["share", "login"]).await;
+    assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
+    assert!(
+        refused.stderr.contains("offers no device sign-in"),
+        "{}",
+        refused.stderr
+    );
+    stop.cancel();
 }

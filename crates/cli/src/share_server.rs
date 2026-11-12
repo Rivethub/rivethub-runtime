@@ -12,6 +12,14 @@ use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
 use config::Environment;
+use oauth2::DeviceCodeErrorResponseType;
+use oauth2::RefreshToken;
+use oauth2::RequestTokenError;
+use oauth2::Scope;
+use oauth2::StandardDeviceAuthorizationResponse;
+use oauth2::StandardRevocableToken;
+use oauth2::TokenResponse as _;
+use oauth2::basic::BasicTokenResponse;
 use serde::Deserialize;
 use serde::Serialize;
 use thiserror::Error;
@@ -20,13 +28,10 @@ use url::Url;
 
 use crate::Report;
 
+mod oauth;
+
 const CLIENT_ID: &str = "rivethub-cli";
-const SCOPE: &str = "drops:write";
-const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
-const REFRESH_GRANT: &str = "refresh_token";
-const DEVICE_PATH: &str = "api/cli/device/code";
-const TOKEN_PATH: &str = "api/cli/token";
-const REVOKE_PATH: &str = "api/cli/revoke";
+const SCOPE: &str = "drops:write offline_access";
 const STORE_FILE: &str = "share-logins.json";
 const LOCK_FILE: &str = "share-logins.json.lock";
 const STORE_NAME: &str = "share server logins";
@@ -34,7 +39,7 @@ const STORE_CAP: u64 = 256 * 1024;
 const CA_CAP: u64 = 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const SLOW_DOWN: Duration = Duration::from_secs(5);
+const LIFETIME_WHEN_UNSTATED: Duration = Duration::from_mins(15);
 const REFRESH_MARGIN: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 #[derive(Debug, Subcommand)]
@@ -64,20 +69,27 @@ pub enum ServerError {
     #[error(transparent)]
     AllowedServer(#[from] BadAllowedServer),
     #[error(transparent)]
-    Refused(#[from] ShareRefused),
+    Policy(#[from] ShareRefused),
     #[error("this machine is not signed in to {0}; run rh share login {0}")]
     LoggedOut(ShareServer),
     #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
-    Expired {
-        server: ShareServer,
-        code: OauthCode,
-    },
+    Expired { server: ShareServer, code: String },
     #[error("the browser approval was {0}; run rh share login to try again")]
     Denied(&'static str),
     #[error("the share server answered {status}: {body}")]
     Status { status: u16, body: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
+    #[error("the share server refused the request: {0}")]
+    Refused(String),
+    #[error("the share server does not speak OAuth as expected: {0}")]
+    Protocol(String),
+    #[error(
+        "{0} offers no device sign-in (no OAuth metadata at /.well-known/oauth-authorization-server)"
+    )]
+    NoDeviceFlow(ShareServer),
+    #[error("the share server gave a token lifetime of {0} seconds, which is out of range")]
+    Lifetime(u64),
     #[error("the share login file is unreadable: {0}")]
     Store(String),
     #[error("the CA file {path} for {host} in memory.share.trusted_cas cannot be used: {reason}")]
@@ -120,68 +132,6 @@ impl std::fmt::Debug for Tokens {
 #[serde(deny_unknown_fields)]
 struct Logins {
     logins: BTreeMap<ShareServer, Tokens>,
-}
-
-#[derive(Deserialize)]
-struct Issued {
-    access_token: String,
-    refresh_token: String,
-    expires_in: i64,
-    scope: String,
-}
-
-#[derive(Deserialize)]
-struct Device {
-    #[serde(rename = "device_code")]
-    code: String,
-    user_code: String,
-    verification_uri: String,
-    verification_uri_complete: Option<String>,
-    expires_in: u64,
-    interval: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct OauthError {
-    error: OauthCode,
-    interval: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, strum::Display)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum OauthCode {
-    AuthorizationPending,
-    SlowDown,
-    AccessDenied,
-    ExpiredToken,
-    InvalidGrant,
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Serialize)]
-struct DeviceRequest<'a> {
-    client_id: &'a str,
-    scope: &'a str,
-    client_name: &'a str,
-}
-
-#[derive(Serialize)]
-struct Grant<'a> {
-    #[serde(rename = "grant_type")]
-    kind: &'a str,
-    client_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    device_code: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    refresh_token: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct Revoke<'a> {
-    client_id: &'a str,
-    token: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -414,59 +364,25 @@ impl Server {
         if (fresh && rejected.is_none()) || renewed_elsewhere {
             return Ok(tokens.access_token);
         }
-        let response = self
-            .client
-            .post(self.endpoint(TOKEN_PATH)?)
-            .json(&Grant {
-                kind: REFRESH_GRANT,
-                client_id: CLIENT_ID,
-                device_code: None,
-                refresh_token: Some(&tokens.refresh_token),
-            })
-            .send()
-            .await?;
-        if response.status().is_client_error() {
-            let status = response.status().as_u16();
-            let body = response.text().await?;
-            let error: OauthError =
-                serde_json::from_str(&body).map_err(|_| ServerError::Status { status, body })?;
-            return Err(ServerError::Expired {
-                server: self.host.clone(),
-                code: error.error,
-            });
-        }
-        let renewed = tokens_from(checked(response).await?.json().await?);
+        let endpoints = self.endpoints().await?;
+        let refresh = RefreshToken::new(tokens.refresh_token.clone());
+        let refreshed = Self::oauth_client(&endpoints)
+            .exchange_refresh_token(&refresh)
+            .request_async(self)
+            .await;
+        let renewed = match refreshed {
+            Ok(issued) => Tokens::issued(&issued, Some(&tokens))?,
+            Err(RequestTokenError::ServerResponse(refusal)) => {
+                return Err(ServerError::Expired {
+                    server: self.host.clone(),
+                    code: refusal.error().to_string(),
+                });
+            }
+            Err(other) => return Err(oauth::failed(other)),
+        };
         let access = renewed.access_token.clone();
         self.keep(renewed)?;
         Ok(access)
-    }
-
-    async fn start(&self, client_name: &str) -> Result<Device, ServerError> {
-        let device: Device = checked(
-            self.client
-                .post(self.endpoint(DEVICE_PATH)?)
-                .json(&DeviceRequest {
-                    client_id: CLIENT_ID,
-                    scope: SCOPE,
-                    client_name,
-                })
-                .send()
-                .await?,
-        )
-        .await?
-        .json()
-        .await?;
-        let link = device
-            .verification_uri_complete
-            .as_deref()
-            .unwrap_or(&device.verification_uri);
-        writeln!(
-            std::io::stderr(),
-            "Open {link} and approve the code {} (it expires in {} minutes).",
-            device.user_code,
-            device.expires_in.div_ceil(60)
-        )?;
-        Ok(device)
     }
 
     async fn login(
@@ -474,63 +390,57 @@ impl Server {
         client_name: &str,
         shutdown: &CancellationToken,
     ) -> Result<Report, ServerError> {
-        let device = self.start(client_name).await?;
-        let mut interval = Duration::from_secs(device.interval.unwrap_or(5).max(1));
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(device.expires_in);
-        loop {
-            tokio::select! {
-                () = shutdown.cancelled() => return Err(ServerError::Cancelled),
-                () = tokio::time::sleep(interval) => {}
+        let client = Self::oauth_client(&self.endpoints().await?);
+        let device: StandardDeviceAuthorizationResponse = client
+            .exchange_device_code()
+            .add_scopes(SCOPE.split(' ').map(|scope| Scope::new(scope.to_owned())))
+            .add_extra_param("client_name", client_name.to_owned())
+            .request_async(self)
+            .await
+            .map_err(oauth::failed)?;
+        let link = device.verification_uri_complete().map_or_else(
+            || device.verification_uri().to_string(),
+            |link| link.secret().clone(),
+        );
+        writeln!(
+            std::io::stderr(),
+            "Open {link} and approve the code {} (it expires in {} minutes).",
+            device.user_code().secret(),
+            device.expires_in().as_secs().div_ceil(60)
+        )?;
+        let approved = tokio::select! {
+            () = shutdown.cancelled() => return Err(ServerError::Cancelled),
+            approved = client
+                .exchange_device_access_token(&device)
+                .request_async(self, tokio::time::sleep, None) => approved,
+        };
+        let issued = match approved {
+            Ok(issued) => issued,
+            Err(RequestTokenError::ServerResponse(refusal)) => {
+                return Err(match refusal.error() {
+                    DeviceCodeErrorResponseType::AccessDenied => {
+                        ServerError::Denied("denied in the browser")
+                    }
+                    DeviceCodeErrorResponseType::ExpiredToken => {
+                        ServerError::Denied("not given before the code expired")
+                    }
+                    DeviceCodeErrorResponseType::AuthorizationPending
+                    | DeviceCodeErrorResponseType::SlowDown
+                    | DeviceCodeErrorResponseType::Basic(_) => {
+                        ServerError::Refused(refusal.to_string())
+                    }
+                });
             }
-            if tokio::time::Instant::now() > deadline {
-                return Err(ServerError::Denied("not given before the code expired"));
-            }
-            let response = self
-                .client
-                .post(self.endpoint(TOKEN_PATH)?)
-                .json(&Grant {
-                    kind: DEVICE_GRANT,
-                    client_id: CLIENT_ID,
-                    device_code: Some(&device.code),
-                    refresh_token: None,
-                })
-                .send()
-                .await?;
-            if response.status().is_success() {
-                let tokens = tokens_from(response.json().await?);
-                let scope = tokens.scope.clone();
-                let _lock = lock(&self.lock).await?;
-                self.keep(tokens)?;
-                return Ok(Report::success(format!(
-                    "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
-                    self.host, self.host
-                )));
-            }
-            let status = response.status().as_u16();
-            let body = response.text().await?;
-            let error: OauthError =
-                serde_json::from_str(&body).map_err(|_| ServerError::Status {
-                    status,
-                    body: body.clone(),
-                })?;
-            match error.error {
-                OauthCode::AuthorizationPending => {}
-                OauthCode::SlowDown => {
-                    interval = error
-                        .interval
-                        .map_or(interval + SLOW_DOWN, Duration::from_secs);
-                }
-                OauthCode::AccessDenied => {
-                    return Err(ServerError::Denied("denied in the browser"));
-                }
-                OauthCode::ExpiredToken => {
-                    return Err(ServerError::Denied("not given before the code expired"));
-                }
-                OauthCode::InvalidGrant | OauthCode::Other => {
-                    return Err(ServerError::Status { status, body });
-                }
-            }
-        }
+            Err(other) => return Err(oauth::failed(other)),
+        };
+        let tokens = Tokens::issued(&issued, None)?;
+        let scope = tokens.scope.clone();
+        let _lock = lock(&self.lock).await?;
+        self.keep(tokens)?;
+        Ok(Report::success(format!(
+            "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
+            self.host, self.host
+        )))
     }
 
     async fn logout(&self) -> Result<Report, ServerError> {
@@ -542,17 +452,14 @@ impl Server {
                 self.host
             )));
         };
-        checked(
-            self.client
-                .post(self.endpoint(REVOKE_PATH)?)
-                .json(&Revoke {
-                    client_id: CLIENT_ID,
-                    token: &tokens.refresh_token,
-                })
-                .send()
-                .await?,
-        )
-        .await?;
+        let refresh =
+            StandardRevocableToken::RefreshToken(RefreshToken::new(tokens.refresh_token.clone()));
+        Self::oauth_client(&self.endpoints().await?)
+            .revoke_token(refresh)
+            .map_err(|error| ServerError::Protocol(error.to_string()))?
+            .request_async(self)
+            .await
+            .map_err(oauth::failed)?;
         logins.logins.remove(&self.host);
         write_logins(&self.store, &logins)?;
         Ok(Report::success(format!(
@@ -562,12 +469,37 @@ impl Server {
     }
 }
 
-fn tokens_from(issued: Issued) -> Tokens {
-    Tokens {
-        access_token: issued.access_token,
-        refresh_token: issued.refresh_token,
-        expires_at: Utc::now() + chrono::TimeDelta::seconds(issued.expires_in),
-        scope: issued.scope,
+impl Tokens {
+    fn issued(issued: &BasicTokenResponse, previous: Option<&Self>) -> Result<Self, ServerError> {
+        let refresh_token = issued
+            .refresh_token()
+            .map(|token| token.secret().clone())
+            .or_else(|| previous.map(|tokens| tokens.refresh_token.clone()))
+            .ok_or_else(|| {
+                ServerError::Protocol("the token response has no refresh_token".to_owned())
+            })?;
+        let scope = issued
+            .scopes()
+            .map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|scope| scope.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .or_else(|| previous.map(|tokens| tokens.scope.clone()))
+            .unwrap_or_else(|| SCOPE.to_owned());
+        let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
+        let out_of_range = || ServerError::Lifetime(lifetime.as_secs());
+        let expires_at = Utc::now()
+            .checked_add_signed(chrono::TimeDelta::from_std(lifetime).map_err(|_| out_of_range())?)
+            .ok_or_else(out_of_range)?;
+        Ok(Self {
+            access_token: issued.access_token().secret().clone(),
+            refresh_token,
+            expires_at,
+            scope,
+        })
     }
 }
 
