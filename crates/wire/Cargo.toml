@@ -20,6 +20,7 @@ sha2 = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 url = { workspace = true, features = ["serde"] }
+uuid = { workspace = true }
 values = { workspace = true }
 
 [dev-dependencies]

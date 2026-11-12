@@ -10,6 +10,7 @@ pub use capture::listing::store_roots;
 use std::sync::Arc;
 
 use cli::memory::MemoryExporter;
+use cli::memory::SessionStore;
 use config::{Config, Environment};
 use gateway::Gateway;
 use gateway::sessions::SessionRegistry;
@@ -26,6 +27,8 @@ use memory_sqlite::SqliteStore;
 use thiserror::Error;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+
+use crate::share_desk::NodeDesk;
 
 #[derive(Debug, Error)]
 pub enum ComposeError {
@@ -112,6 +115,7 @@ struct Backing {
     )>,
     model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
     tenancy: Option<Arc<dyn kernel::tenancy::TenancyStore>>,
+    sessions: Option<SessionStore>,
 }
 
 fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
@@ -304,6 +308,7 @@ impl Composition {
             tenancy: Some(Arc::new(memory_postgres::PostgresTenancy::new(
                 memory.pool().clone(),
             ))),
+            sessions: Some(SessionStore::Postgres(Arc::clone(memory))),
         };
         let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
             .await?
@@ -340,6 +345,7 @@ impl Composition {
             model_calls: Some(store.clone()),
             summaries: Some(store.clone()),
             tenancy: Some(store.clone()),
+            sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
         };
         let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
             .await?
@@ -362,10 +368,11 @@ impl Composition {
         config: &Config,
         env: &Environment,
         store: Arc<dyn MemoryStore>,
-        backing: Backing,
+        mut backing: Backing,
         shutdown: &CancellationToken,
         factory: &crate::models::ModelFactory,
     ) -> Result<Self, ComposeError> {
+        let memory = Arc::clone(&store);
         let settings = gateway_settings(config, env)?;
         let node_name = settings.node.clone();
         let section = config.gateway.clone();
@@ -401,6 +408,17 @@ impl Composition {
         let tracker = tokio_util::task::TaskTracker::new();
         gateway = drop_box(gateway, config, &tracker, shutdown).await?;
         gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;
+        if let Some(sessions) = backing.sessions.take() {
+            let desk = Arc::new(NodeDesk::new::<ComposeError>(
+                config,
+                env,
+                identity.primary(),
+                sessions,
+                memory,
+            )?);
+            tracker.spawn(Arc::clone(&desk).sweep_until(shutdown.child_token()));
+            gateway = gateway.with_share_desk(desk);
+        }
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
         spool::replay_captures(&tracker, env, shutdown);
         let started = plugins::started(gateway, env, vec![bind.port]);

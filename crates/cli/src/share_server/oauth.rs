@@ -255,9 +255,9 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::*;
-    use crate::share_server::Logins;
+    use crate::share_server::Login;
     use crate::share_server::Tokens;
-    use crate::share_server::write_logins;
+    use crate::share_server::logins::LoginStore;
 
     const CANARY: &str = "canary-9d41e7";
 
@@ -308,23 +308,23 @@ mod tests {
             base: Url::parse(&host.base_url()).expect("base"),
             host,
             client,
-            store: dir.join(crate::share_server::STORE_FILE),
+            logins: LoginStore::with_vault(dir.join(crate::share_server::STORE_FILE), None),
             lock: dir.join(crate::share_server::LOCK_FILE),
         }
     }
 
-    fn signed_in(server: &Server) {
-        let mut logins = Logins::default();
-        logins.logins.insert(
-            server.host.clone(),
-            Tokens {
-                access_token: "access".to_owned(),
-                refresh_token: "refresh".to_owned(),
-                expires_at: chrono::DateTime::<chrono::Utc>::MAX_UTC,
-                scope: "drops:write".to_owned(),
-            },
-        );
-        write_logins(&server.store, &logins).expect("logins");
+    async fn signed_in(server: &Server) {
+        let tokens = Tokens {
+            access_token: "access".to_owned(),
+            refresh_token: "refresh".to_owned(),
+            expires_at: chrono::DateTime::<chrono::Utc>::MAX_UTC,
+            scope: "drops:write".to_owned(),
+        };
+        server
+            .logins
+            .save(&server.host, &Login::Device(tokens))
+            .await
+            .expect("logins");
     }
 
     #[tokio::test]
@@ -333,8 +333,8 @@ mod tests {
             let dir = tempfile::tempdir().expect("dir");
             let (proxy, seen) = wire_recorder().await;
             let server = server_via(host, proxy, dir.path());
-            signed_in(&server);
-            let report = server.logout().await;
+            signed_in(&server).await;
+            let report = crate::memory::desk::sign_out(&server).await;
             assert!(report.is_ok(), "{host}: {report:?}");
             let authority = Url::parse(&format!("http://{host}/"))
                 .expect("url")

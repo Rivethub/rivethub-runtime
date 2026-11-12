@@ -10,7 +10,10 @@ pub(crate) fn home() -> TempDir {
 }
 
 pub(crate) fn environment(home: &TempDir) -> Environment {
-    Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())])
+    Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_TOKEN_STORE".as_ref(), "file".as_ref()),
+    ])
 }
 
 pub(crate) fn local_owner(

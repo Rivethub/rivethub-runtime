@@ -1,6 +1,7 @@
 mod bundle;
 mod chosen;
 mod cleanup;
+pub mod desk;
 mod dropbox;
 mod export;
 mod hold;
@@ -21,16 +22,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Report;
 
+pub use desk::Shared;
 pub use dropbox::DropError;
 pub use export::MemoryExporter;
-pub use share::SealedFile;
 pub use share::ShareError;
-pub use share::Shared;
 pub use share::code_line;
 pub use share::read_bundle_file;
-pub use share::seal_bytes;
-pub use share::seal_file;
-pub use share::upload;
 pub use store::SessionStore;
 
 pub async fn execute(

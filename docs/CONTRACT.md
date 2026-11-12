@@ -14,7 +14,7 @@ Reference material that survives from the first attempt (read-only; `/rivet-shar
 
 | # | Boundary | Who observes it | Spec (inventory) | Pinned by (recording) | Acceptance test |
 |---|---|---|---|---|---|
-| B1 | Gateway HTTP + WS API (`/api/*`, `/healthz`, the static web app and the wiki pages, the notice socket `/api/events/ws` (`topic.changed`, `plugin.changed`, `plugin.views`) and `/api/notifications/ws` (`plugin.notification`); the Topics routes `GET/POST /api/topics`, `GET /api/topics/search?q=`, `GET/PATCH/DELETE /api/topics/{id}` (note 29), `POST /api/topics/{id}/merge`, `GET /api/topics/{id}/sessions`, `GET /api/topics/filing` and `GET /api/sessions/suggestions` (note 70), `GET/PUT /api/topics/{id}/page` (note 63), `GET/POST /api/topics/{id}/decisions`, `PATCH /api/topics/{id}/decisions/{decision}`, `POST /api/topics/{id}/decisions/{decision}/supersede` (note 27) and `GET/PUT/DELETE /api/sessions/{session}/placement`; the stored session reads `GET /api/harnesses`, `GET /api/harnesses/{harness}/sessions`, `GET /api/harness-sessions/previews`, `GET /api/harness-sessions/{session}`, `GET /api/harness-sessions/{session}/transcript`, `PUT /api/harness-sessions/{session}/title` and `GET /api/harness-sessions/{session}/tools/{tool}/output`; the `topic.changed` notice (note 110); session deletion `DELETE /api/sessions/{session}`, `POST /api/sessions/delete` and `GET /api/sessions/trash` (note 75) and `PUT /api/sessions/{session}/keep` (note 85); the model calls a proxy reported for a session `GET /api/sessions/{session}/model-calls` (note 141); note 132 lists the routes removed with live sessions, delegation, the mesh and client certificates) | RivetHub web, hooks, scripts | gateway-api.md §2–§17 (route table §4, aliases §5) | `golden/gateway/` (28 files, recorded traffic incl. startup refusals) + `golden/term/` (17) | replay every recorded exchange: same status, headers (names case-insensitive), body; WS frames in order |
+| B1 | Gateway HTTP + WS API (`/api/*`, `/healthz`, the static web app and the wiki pages, the notice socket `/api/events/ws` (`topic.changed`, `plugin.changed`, `plugin.views`) and `/api/notifications/ws` (`plugin.notification`); the Topics routes `GET/POST /api/topics`, `GET /api/topics/search?q=`, `GET/PATCH/DELETE /api/topics/{id}` (note 29), `POST /api/topics/{id}/merge`, `GET /api/topics/{id}/sessions`, `GET /api/topics/filing` and `GET /api/sessions/suggestions` (note 70), `GET/PUT /api/topics/{id}/page` (note 63), `GET/POST /api/topics/{id}/decisions`, `PATCH /api/topics/{id}/decisions/{decision}`, `POST /api/topics/{id}/decisions/{decision}/supersede` (note 27) and `GET/PUT/DELETE /api/sessions/{session}/placement`; the stored session reads `GET /api/harnesses`, `GET /api/harnesses/{harness}/sessions`, `GET /api/harness-sessions/previews`, `GET /api/harness-sessions/{session}`, `GET /api/harness-sessions/{session}/transcript`, `PUT /api/harness-sessions/{session}/title` and `GET /api/harness-sessions/{session}/tools/{tool}/output`; the `topic.changed` notice (note 110); session deletion `DELETE /api/sessions/{session}`, `POST /api/sessions/delete` and `GET /api/sessions/trash` (note 75) and `PUT /api/sessions/{session}/keep` (note 85); the model calls a proxy reported for a session `GET /api/sessions/{session}/model-calls` (note 141); the local-owner share routes `/api/share/**` (note 151); note 132 lists the routes removed with live sessions, delegation, the mesh and client certificates) | RivetHub web, hooks, scripts | gateway-api.md §2–§17 (route table §4, aliases §5) | `golden/gateway/` (28 files, recorded traffic incl. startup refusals) + `golden/term/` (17) | replay every recorded exchange: same status, headers (names case-insensitive), body; WS frames in order |
 | B2 | **Removed (note 132).** The live session event stream v1 (`AgentEvent`) and its snapshots; T3 Code runs live sessions | none | gateway-api.md §6, core-domain.md §1.10 | gateway + term recordings (events and snapshots) | accept/reject decisions and emitted snapshots identical on recorded inputs |
 | B3 | Capture ingest: hook payloads from every harness → `POST /api/capture` batch body; per-call model records a proxy reports → `POST /api/capture/model-calls` batch body, read back by `GET /api/sessions/{session}/model-calls` (note 141) | 10 harness integration kits (claude, codex, grok, kimi, qwen, opencode, hermes, pi, cursor, cowork); model-call sinks in a proxy | data-layer.md §3.1–§3.6; harness-control-plane.md §3; note 141 | `golden/capture/` (22: pg arms), `golden/capture-zod/` (batch validation), `crates/wire/tests/fixtures/model_call/batch.json` | same rows written for the same hook input; same validation errors; a model-call batch that names a credential header is refused whole |
 | B4 | Postgres schema and data (`rh_*` tables, migrations 0001–0020 including `0020_tag_removals`, then 0021 renames `ros_*` to `rh_*` with `ros_*` views over them, through 0028 `rh_session_startup` (note 24), 0029 `rh_session_startup.delivered_via` (note 25) and 0040 `rh_tasks_archive` and the new `rh_tasks` (note 74), and 0052 the `graphile_worker` queue schema when it is absent (note 105), views, triggers, graphile_worker jobs). Migrations are applied only by `rivethub-migrate postgres`, which then requires every migration file name in `_rivetos_migrations`; the runtime verifies one schema version (`memory_postgres::SCHEMA_VERSION`) at connect — equal ok, newer ok with one warning, no `_sqlx_migrations` table a `NotAdopted` error (one `rivethub-migrate postgres` adopts it, including a database whose history is only `_rivetos_migrations`), behind a `SchemaBehind` error naming the migrate command — and runs no DDL | the live datahub, the TypeScript workers during cutover, operators | data-layer.md §1–§2 | `golden/capture/pg/` (30 scenarios), `golden/memory/` | Rust migrates a 0001-era DB to the same schema; writes rows the TypeScript reads and vice versa; enqueues the same jobs with the same keys |
@@ -2230,21 +2230,29 @@ routes. `--server`, else `memory.share.server.url`, else `rivethub.cloud` names 
 `:port`; rh talks HTTPS to it, or HTTP only to a loopback host. A server with a private CA is trusted through
 `memory.share.trusted_cas: [{host, ca}]`, which adds that PEM file to the roots for that host only. The client uses
 rustls, no proxy, no redirects and timeouts. `rh share login [<server>]` runs the OAuth 2.0 device grant (RFC 8628)
-with the `oauth2` crate. It reads the server's RFC 8414 metadata from `GET /.well-known/oauth-authorization-server`
+through the `oauth2` crate. It reads the server's RFC 8414 metadata from `GET /.well-known/oauth-authorization-server`
 and takes the `device_authorization_endpoint`, `token_endpoint` and `revocation_endpoint` from it; a document that
 puts any of them on another origin is refused, so no token is posted elsewhere. A server with no metadata, such as a
 team server (note 143), whose members upload with their gateway bearer token, is told "offers no device sign-in".
 Requests are `application/x-www-form-urlencoded` (RFC 6749, RFC 8628) with `client_id=rivethub-cli`, public, and scope
 `drops:write offline_access` (`offline_access` is what makes the server issue a refresh token). rh prints the
 `verification_uri_complete` and user code, and polls the token endpoint (device grant) at the given interval,
-honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. Logins are kept per server in
-`$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers. Every change to
-that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and re-reads the file first, so
-concurrent runs never replay a rotated refresh token (a server revokes the login on reuse). The access token is
-refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share logout [<server>]`
-posts that server's refresh token to its `revocation_endpoint` (RFC 7009) and forgets the login only after the server
-answers 2xx; on any error the login stays and the error is reported.
-`rh share status` lists the logins without a request.
+honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. A 429 or a 5xx is an error (while
+polling, a backoff). A loopback server is reached over http for every endpoint; because `oauth2` accepts only an https
+revocation URL (RFC 7009 §2), rh hands it the https form of that loopback URL and sends the request over http. Logins are
+kept per server in `$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers.
+When an OS keyring is available (Secret Service on Linux, the macOS Keychain, the Windows Credential Manager, through the
+`keyring` crate) the access, refresh and team tokens live there under the service `rivethub share login` and the server's
+host, and the file keeps only the expiry, scope and user, so listing reads no secret. rh decides the store once per
+process: `RIVETHUB_TOKEN_STORE=file` forces the file, `=keyring` requires the keyring, and unset means the keyring when it
+opens (on Linux only when `DBUS_SESSION_BUS_ADDRESS` names a session bus), else the file. A file entry holding its
+tokens, as older rh wrote them, still reads, and moves into the keyring on its next write; logout erases the keyring
+entry. Every change to that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and
+re-reads the file first, so concurrent runs never replay a rotated refresh token (a server revokes the login on reuse).
+The access token is refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share
+logout [<server>]` posts that server's refresh token to its `revocation_endpoint` (RFC 7009) and forgets the login only
+after the server answers 2xx; on any error the login stays and the error is reported. `rh share status` lists the logins
+without a request.
 
 Upload. `POST <server>/api/drops` with the body `application/octet-stream` and the access token as a bearer token; on
 401 the token is refreshed once and the upload retried. On 201 `{id, expires_at, bytes}` rh unlinks the sanitized
@@ -2820,6 +2828,27 @@ it records no checks. `import_batch` still drops a receipt a bundle
 carries, so `checks` is the receiver's own. The checks are a deterministic screen, not a verdict: a rule that does not
 fire proves nothing, and one that fires asks a person to decide. Rules grow as data, in small PRs, fed by each new
 corpus.
+
+(151) Local share routes (Phil, 2026-11-11, SS-9a; uses notes 134 to 141 and 147). rivethub-desktop shares sessions through the
+gateway, so each sender step is a route under `/api/share/**` with bodies in `wire::gateway::share`: `POST
+/api/share/find`, `POST /api/share/drafts` (201), `GET /api/share/drafts/{id}`, `POST /api/share/drafts/{id}/marks`, `POST
+/api/share/drafts/{id}/send`, `DELETE /api/share/drafts/{id}` (204), `GET /api/share/servers`, `POST
+/api/share/servers/login`, `POST /api/share/servers/login/poll`, `POST /api/share/servers/logout` and `GET /api/share/key`.
+Local owner only, with the credentials of note 147. Every handler takes the local owner: the `local-owner.token` bearer or a
+browser session with its `X-RH-CSRF` header, from a direct loopback peer with a loopback `Host`. A plug-in caller, a
+non-loopback peer, a forwarder header or a foreign `Host` is a 403 `ShareRefusal` with reason `not_local`, and a missing or
+wrong credential is the plain 401 of note 147; there is no tokenless loopback, and no plug-in permission opens these routes.
+Browser `Origin` checks stay with note 147's guard, so the web app can call these routes from rh's own origin. Sending, and
+signing in or out of a share server, are sensitive: each also needs a fresh login (`FreshLogin`), so a session older than the
+fresh window gets the 401 `reauth_required` of note 147 and the owner token always passes. The 403 and the desk's own failures are a `ShareRefusal`, `{error, reason, upstream_status?}`; `reason` is the
+snake_case name of the port's failure (`unknown_draft` 404, `unknown_login` 404, `open_flags`, `counts` and
+`decide_unconfigured` 409, `full` 429, `invalid` 400, `signed_out`, `login_expired` and `bad_token` 401, `login_denied` 403,
+`drop_box` and `unreachable` 502, `failed` 500 without internals). Flag text. A draft report's `flags[].text` is the flagged
+span with hidden and bidi characters written as `<U+XXXX>`. It leaves rh only in these bodies, only to the local owner, and
+never in a log: the report, flag and mark types print counts, not text, in `Debug`. The code. `send` returns the share code
+once in `SentReply.code`; rh keeps no copy, and its `Debug` shows only the drop id. A team token arrives in `LoginRequest`
+and is never returned. Server sign-in, sign-out and upload go through the hub share policy of note 145, so a refused server is a 400 `bad_server` and a refused sign-out still forgets the login on this machine. `ServersReply.token_store` is `keyring` or `file`, the store this rh process keeps share tokens in
+(note 140). Drafts live in rh's memory only, at most 4, 30 minutes idle.
 
 ## 4. Gaps to close before building the affected slice
 

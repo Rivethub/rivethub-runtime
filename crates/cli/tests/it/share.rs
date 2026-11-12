@@ -33,6 +33,7 @@ use crate::support;
 
 const CANARY: &str = "p2canary-7f3a9c";
 const DROP_ID: &str = "Qm9iQm9iQm9iQm9iQm9iQg";
+const JSON: [(&str, &str); 1] = [("content-type", "application/json")];
 
 #[derive(Default)]
 struct Seen {
@@ -257,7 +258,7 @@ async fn revoke(State(drops): State<DropBox>, body: Bytes) -> Response {
     };
     match status {
         Some(status) => (status, "down").into_response(),
-        None => (StatusCode::OK, "{}").into_response(),
+        None => (StatusCode::OK, JSON, "{}").into_response(),
     }
 }
 
@@ -1101,7 +1102,6 @@ fn a_shared_code_never_prints_its_key_in_debug() {
         uploaded: 1,
         expires_at: chrono::DateTime::UNIX_EPOCH,
         code: format!("rhb1:{DROP_ID}#{key}"),
-        kept: None,
     };
     let shown = format!("{shared:?}");
     assert!(!shown.contains(&key), "{shown}");
@@ -1167,6 +1167,11 @@ async fn logout_keeps_the_login_when_the_revoke_fails_and_touches_only_its_serve
             .stdout
             .contains(&format!("signed in to {}", host_of(&other.url))),
         "{}",
+        status.stdout
+    );
+    assert!(
+        status.stdout.contains("share-logins.json (mode 0600)"),
+        "status names the token store: {}",
         status.stdout
     );
     team.stop.cancel();
@@ -1348,6 +1353,34 @@ async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
         !logins(&node).contains("rivethub.cloud"),
         "{}",
         logins(&node)
+    );
+}
+
+#[tokio::test]
+async fn a_refused_logout_forgets_a_keyring_login_without_reading_its_secret() {
+    let node = Node::new("phil", "https://unused.example.com/", None);
+    support::config(&node.home, "cloud:\n  disabled: true\n");
+    let path = node.home.path().join("state/rivethub/share-logins.json");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("state dir");
+    std::fs::write(
+        &path,
+        r#"{"logins":{"rivethub.cloud":{"expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}}}"#,
+    )
+    .expect("a login whose tokens live in the keyring");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+
+    let forgotten = node.run(&["share", "logout"]).await;
+
+    assert_eq!(forgotten.exit, Exit::Ok, "{}", forgotten.stderr);
+    assert!(
+        !logins(&node).contains("rivethub.cloud"),
+        "{}",
+        logins(&node)
+    );
+    assert!(
+        forgotten.stdout.contains("OS keyring"),
+        "the report must name the secret it could not erase: {}",
+        forgotten.stdout
     );
 }
 

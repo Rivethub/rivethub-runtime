@@ -1,3 +1,6 @@
+pub mod desk;
+pub mod find;
+
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -127,6 +130,62 @@ impl TryFrom<Vec<(Uuid, Choice)>> for SessionChoices {
         }
         Ok(Self(chosen))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Approve,
+    Redact,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RedactRules {
+    pub terms: Option<Vec<String>>,
+    pub drop_tool_outputs: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ChoiceRefusal {
+    #[error(
+        "session {0} is approved, so it takes no redact rules; set decision to redact to apply them"
+    )]
+    ApprovedWithRules(Uuid),
+    #[error("session {id}: {source}")]
+    Rules { id: Uuid, source: ChoiceError },
+    #[error(transparent)]
+    Choices(#[from] ChoiceError),
+}
+
+pub fn choices(
+    sessions: Vec<(Uuid, Decision, Option<RedactRules>)>,
+) -> Result<SessionChoices, ChoiceRefusal> {
+    let chosen = sessions
+        .into_iter()
+        .map(|(id, decision, rules)| {
+            let choice = match (decision, rules) {
+                (Decision::Approve, None) => Choice::Approve,
+                (Decision::Approve, Some(_)) => return Err(ChoiceRefusal::ApprovedWithRules(id)),
+                (Decision::Redact, rules) => {
+                    let RedactRules {
+                        terms,
+                        drop_tool_outputs,
+                    } = rules.unwrap_or_default();
+                    let redaction = terms
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(Term::try_from)
+                        .collect::<Result<Vec<_>, _>>()
+                        .and_then(|terms| {
+                            SessionRedaction::new(terms, drop_tool_outputs == Some(true))
+                        })
+                        .map_err(|source| ChoiceRefusal::Rules { id, source })?;
+                    Choice::Redact(redaction)
+                }
+            };
+            Ok((id, choice))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SessionChoices::try_from(chosen)?)
 }
 
 #[derive(Debug, Clone, PartialEq)]

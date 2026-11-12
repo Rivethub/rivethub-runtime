@@ -28,7 +28,7 @@ use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const RISKY: &str = "Acme Corp";
+pub(crate) const RISKY: &str = "Acme Corp";
 const WARM: &str = "churn";
 const UUID: &str = "0f3c2a9e-6d1b-4c55-9a0e-2b7d8f1c4e60";
 
@@ -43,7 +43,7 @@ struct Answer {
 }
 
 #[derive(Clone, Default)]
-struct Calls(Arc<parking_lot::Mutex<Vec<String>>>);
+pub(crate) struct Calls(Arc<parking_lot::Mutex<Vec<String>>>);
 
 impl Calls {
     fn states(&self) -> Vec<String> {
@@ -75,7 +75,7 @@ async fn info() -> &'static str {
     r#"{"model": "stub-model"}"#
 }
 
-async fn model() -> Result<(testkit::Stub, Calls), std::io::Error> {
+pub(crate) async fn model() -> Result<(testkit::Stub, Calls), std::io::Error> {
     let calls = Calls::default();
     let routes = axum::Router::new()
         .route("/v1/decide", axum::routing::post(decide))
@@ -84,14 +84,14 @@ async fn model() -> Result<(testkit::Stub, Calls), std::io::Error> {
     Ok((testkit::stub_server(routes).await?, calls))
 }
 
-fn endpoint(url: String) -> Endpoint {
+pub(crate) fn endpoint(url: String) -> Endpoint {
     Endpoint {
         url,
         concurrency: NonZeroUsize::MIN,
     }
 }
 
-fn review(top: usize, mode: Mode) -> Result<Review, &'static str> {
+pub(crate) fn review(top: usize, mode: Mode) -> Result<Review, &'static str> {
     Ok(Review {
         top: NonZeroUsize::new(top).ok_or("top is 0")?,
         threshold: 0.3,
@@ -112,7 +112,7 @@ fn message(event_id: &str, content: &str) -> CaptureMessage {
     }
 }
 
-fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
+pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     let mut tool = message("evt-2", "running it");
     tool.tool_args = Some(serde_json::from_str(&format!(
         r#"{{"command": "grep {WARM} {RISKY}.csv", "file_path": "/srv/reports/q3.csv", "limit": 40}}"#
@@ -167,7 +167,7 @@ fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     Ok(raw.bundle)
 }
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
+pub(crate) fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
     Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00.123456789Z")?.with_timezone(&Utc))
 }
 
@@ -456,7 +456,7 @@ async fn a_model_error_fails_the_run() -> TestResult {
     Ok(())
 }
 
-fn mark(report: &str, number: usize, mark: &str) -> String {
+pub(crate) fn mark(report: &str, number: usize, mark: &str) -> String {
     let heading = format!("### Flag {number} ");
     let start = report.find(&heading).unwrap_or(report.len());
     let line = report[start..].find("Mark: open").map(|at| start + at);

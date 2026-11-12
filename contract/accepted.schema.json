@@ -1534,6 +1534,33 @@
       ],
       "type": "string"
     },
+    "ChosenSession": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/SessionDecision"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "redact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RedactRules"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "decision"
+      ],
+      "type": "object"
+    },
     "CloudPolicy": {
       "enum": [
         "enabled",
@@ -1689,6 +1716,46 @@
       },
       "type": "object"
     },
+    "DecideMode": {
+      "enum": [
+        "advisory",
+        "block"
+      ],
+      "type": "string"
+    },
+    "Decision": {
+      "properties": {
+        "calls": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/DecideMode"
+        },
+        "model": {
+          "type": "string"
+        },
+        "scored": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trivial": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "scored",
+        "calls",
+        "trivial",
+        "mode"
+      ],
+      "type": "object"
+    },
     "DecisionCreateRequest": {
       "additionalProperties": false,
       "properties": {
@@ -1800,6 +1867,114 @@
         "cached"
       ],
       "type": "string"
+    },
+    "DraftReport": {
+      "properties": {
+        "best_effort": {
+          "type": "string"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "draft": {
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/Flag"
+          },
+          "type": "array"
+        },
+        "not_scanned": {
+          "type": "string"
+        },
+        "rules": {
+          "items": {
+            "$ref": "#/$defs/RuleCount"
+          },
+          "type": "array"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/DraftSession"
+          },
+          "type": "array"
+        },
+        "totals": {
+          "$ref": "#/$defs/Totals"
+        }
+      },
+      "required": [
+        "draft",
+        "expires_at",
+        "totals",
+        "rules",
+        "sessions",
+        "not_scanned",
+        "best_effort",
+        "flags"
+      ],
+      "type": "object"
+    },
+    "DraftRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "decide": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/ChosenSession"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
+      ],
+      "type": "object"
+    },
+    "DraftSession": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "messages": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "messages"
+      ],
+      "type": "object"
     },
     "DropRefusal": {
       "properties": {
@@ -2273,6 +2448,121 @@
       ],
       "type": "object"
     },
+    "FindReply": {
+      "properties": {
+        "dropped": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/FoundSession"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions",
+        "dropped"
+      ],
+      "type": "object"
+    },
+    "FindRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "before": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "string"
+        },
+        "since": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "Flag": {
+      "properties": {
+        "length": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "number": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "place": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlagPlace"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score": {
+          "format": "double",
+          "type": "number"
+        },
+        "session": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/FlagState"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "score",
+        "length",
+        "text",
+        "state"
+      ],
+      "type": "object"
+    },
     "FlagMark": {
       "enum": [
         "open",
@@ -2281,6 +2571,37 @@
         "map"
       ],
       "type": "string"
+    },
+    "FlagPlace": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "message": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "more": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "field",
+        "more"
+      ],
+      "type": "object"
     },
     "FlagStamp": {
       "properties": {
@@ -2298,6 +2619,66 @@
         "mark"
       ],
       "type": "object"
+    },
+    "FlagState": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "open",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "keep",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "redact",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "map",
+              "type": "string"
+            },
+            "placeholder": {
+              "type": "string"
+            },
+            "term": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "term",
+            "placeholder"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "FlaggedGroup": {
       "properties": {
@@ -2400,6 +2781,68 @@
       },
       "required": [
         "groups"
+      ],
+      "type": "object"
+    },
+    "FoundSession": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "best": {
+          "format": "double",
+          "type": "number"
+        },
+        "excerpts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "first": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "hits": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "imported_from": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "messages": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "first",
+        "last",
+        "messages",
+        "best",
+        "hits",
+        "excerpts"
       ],
       "type": "object"
     },
@@ -4715,6 +5158,21 @@
       ],
       "type": "object"
     },
+    "KeyReply": {
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "fingerprint"
+      ],
+      "type": "object"
+    },
     "LogLevel": {
       "enum": [
         "debug",
@@ -4738,6 +5196,253 @@
       "required": [
         "code",
         "expiresInSecs"
+      ],
+      "type": "object"
+    },
+    "LoginRequest": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "cloud",
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "origin"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "team",
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "origin",
+            "token"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LoginStep": {
+      "oneOf": [
+        {
+          "properties": {
+            "expires_at": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "interval": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "login": {
+              "type": "string"
+            },
+            "state": {
+              "const": "started",
+              "type": "string"
+            },
+            "user_code": {
+              "type": "string"
+            },
+            "verification_uri_complete": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "login",
+            "user_code",
+            "verification_uri_complete",
+            "interval",
+            "expires_at"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "interval": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "interval"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "origin": {
+              "type": "string"
+            },
+            "state": {
+              "const": "signed_in",
+              "type": "string"
+            },
+            "user": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "origin"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LogoutRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin"
+      ],
+      "type": "object"
+    },
+    "Mark": {
+      "additionalProperties": false,
+      "properties": {
+        "choice": {
+          "$ref": "#/$defs/MarkChoice"
+        },
+        "learn": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "number": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "number",
+        "choice"
+      ],
+      "type": "object"
+    },
+    "MarkChoice": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "keep",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "redact",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "map",
+              "type": "string"
+            },
+            "placeholder": {
+              "type": "string"
+            },
+            "term": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "term",
+            "placeholder"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MarksReply": {
+      "properties": {
+        "learned": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rechecked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "report": {
+          "$ref": "#/$defs/DraftReport"
+        }
+      },
+      "required": [
+        "report",
+        "rechecked"
+      ],
+      "type": "object"
+    },
+    "MarksRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "marks": {
+          "items": {
+            "$ref": "#/$defs/Mark"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "marks"
       ],
       "type": "object"
     },
@@ -7934,6 +8639,18 @@
       ],
       "type": "object"
     },
+    "PollRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "login": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "login"
+      ],
+      "type": "object"
+    },
     "ProjectRule": {
       "enum": [
         "git-remote",
@@ -8238,11 +8955,54 @@
       ],
       "type": "object"
     },
+    "RedactRules": {
+      "additionalProperties": false,
+      "properties": {
+        "drop_tool_outputs": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "terms": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ReflectionSource": {
       "enum": [
         "complexity",
         "periodic",
         "manual"
+      ],
+      "type": "string"
+    },
+    "RefusalReason": {
+      "enum": [
+        "not_local",
+        "unknown_draft",
+        "full",
+        "invalid",
+        "open_flags",
+        "counts",
+        "decide_unconfigured",
+        "unknown_sessions",
+        "signed_out",
+        "login_expired",
+        "login_denied",
+        "unknown_login",
+        "bad_token",
+        "bad_server",
+        "drop_box",
+        "unreachable",
+        "failed"
       ],
       "type": "string"
     },
@@ -8526,6 +9286,23 @@
       "pattern": "^[a-z0-9][a-z0-9_-]*$",
       "type": "string"
     },
+    "RuleCount": {
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "count"
+      ],
+      "type": "object"
+    },
     "Sanitization": {
       "oneOf": [
         {
@@ -8627,6 +9404,132 @@
       "description": "A one-time code, session token or CSRF token. Debug never prints it, so logging a body cannot leak it.",
       "type": "string"
     },
+    "SendConfirm": {
+      "additionalProperties": false,
+      "properties": {
+        "kept_flags": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sessions",
+        "kept_flags"
+      ],
+      "type": "object"
+    },
+    "SendRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "confirm": {
+          "$ref": "#/$defs/SendConfirm"
+        },
+        "server": {
+          "type": "string"
+        },
+        "signed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "server",
+        "signed",
+        "confirm"
+      ],
+      "type": "object"
+    },
+    "SentReply": {
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "code": {
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "signed": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "expires_at",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "ServerKind": {
+      "enum": [
+        "cloud",
+        "team"
+      ],
+      "type": "string"
+    },
+    "ServerView": {
+      "properties": {
+        "default": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/ServerKind"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "signed_in": {
+          "type": "boolean"
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "origin",
+        "kind",
+        "signed_in",
+        "default"
+      ],
+      "type": "object"
+    },
+    "ServersReply": {
+      "properties": {
+        "logins_file": {
+          "type": "string"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/ServerView"
+          },
+          "type": "array"
+        },
+        "token_store": {
+          "$ref": "#/$defs/TokenStore"
+        }
+      },
+      "required": [
+        "servers",
+        "logins_file",
+        "token_store"
+      ],
+      "type": "object"
+    },
     "SessionBroadcast": {
       "additionalProperties": true,
       "type": "object"
@@ -8665,6 +9568,13 @@
         "summary"
       ],
       "type": "object"
+    },
+    "SessionDecision": {
+      "enum": [
+        "approve",
+        "redact"
+      ],
+      "type": "string"
     },
     "SessionDeleteError": {
       "enum": [
@@ -9480,6 +10390,30 @@
       "required": [
         "sessionId",
         "visibility"
+      ],
+      "type": "object"
+    },
+    "ShareRefusal": {
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/RefusalReason"
+        },
+        "upstream_status": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "error",
+        "reason"
       ],
       "type": "object"
     },
@@ -10891,6 +11825,13 @@
       ],
       "type": "string"
     },
+    "TokenStore": {
+      "enum": [
+        "keyring",
+        "file"
+      ],
+      "type": "string"
+    },
     "ToolCall": {
       "properties": {
         "arguments": {
@@ -11637,6 +12578,43 @@
       "required": [
         "topicId",
         "visibility"
+      ],
+      "type": "object"
+    },
+    "Totals": {
+      "properties": {
+        "escaped": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mapped": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rechecked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "redacted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "secrets": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "secrets",
+        "mapped",
+        "redacted",
+        "escaped",
+        "rechecked"
       ],
       "type": "object"
     },

@@ -2,13 +2,14 @@ use std::fmt::Write as _;
 
 use chrono::DateTime;
 use chrono::Utc;
-use kernel::memory::Limit;
-use kernel::memory::MemoryScope;
-use kernel::memory::MemorySearchResult;
 use kernel::memory::MemoryStore;
-use kernel::memory::SearchMode;
-use kernel::memory::SearchQuery;
 use kernel::memory::SessionDigest;
+use kernel::memory::share;
+use kernel::memory::share::find::DEFAULT_SESSIONS;
+use kernel::memory::share::find::MAX_SESSIONS;
+use kernel::memory::share::find::Matched;
+use kernel::memory::share::find::Ranked;
+use kernel::memory::share::find::Search;
 use rmcp::model::CallToolResult;
 
 use super::Find;
@@ -16,68 +17,6 @@ use super::Sessions;
 use super::noun;
 use crate::Error;
 use crate::catalog::ToolInput as _;
-
-const HITS_PER_SESSION: u32 = 4;
-const MAX_HITS: u32 = 100;
-const EXCERPTS: usize = 3;
-const EXCERPT_CHARS: usize = 200;
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Ranked {
-    pub(crate) key: String,
-    pub(crate) best: f64,
-    pub(crate) hits: usize,
-    pub(crate) latest: DateTime<Utc>,
-    pub(crate) excerpts: Vec<String>,
-}
-
-pub(crate) fn group(
-    results: &[MemorySearchResult],
-    redact: impl Fn(&str) -> String,
-) -> Vec<Ranked> {
-    let mut ranked: Vec<Ranked> = Vec::new();
-    for hit in results {
-        let Some(key) = &hit.session_id else {
-            continue;
-        };
-        let excerpt = excerpt(&redact(&hit.content));
-        match ranked.iter_mut().find(|session| session.key == *key) {
-            Some(session) => {
-                session.best = session.best.max(hit.relevance_score);
-                session.hits += 1;
-                session.latest = session.latest.max(hit.created_at);
-                if session.excerpts.len() < EXCERPTS && !session.excerpts.contains(&excerpt) {
-                    session.excerpts.push(excerpt);
-                }
-            }
-            None => ranked.push(Ranked {
-                key: key.clone(),
-                best: hit.relevance_score,
-                hits: 1,
-                latest: hit.created_at,
-                excerpts: vec![excerpt],
-            }),
-        }
-    }
-    ranked.sort_by(|left, right| {
-        right
-            .best
-            .total_cmp(&left.best)
-            .then_with(|| right.hits.cmp(&left.hits))
-            .then_with(|| right.latest.cmp(&left.latest))
-    });
-    ranked
-}
-
-fn excerpt(content: &str) -> String {
-    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= EXCERPT_CHARS {
-        return flat;
-    }
-    let mut cut: String = flat.chars().take(EXCERPT_CHARS - 1).collect();
-    cut.push('…');
-    cut
-}
 
 pub(crate) async fn find(
     store: &dyn MemoryStore,
@@ -91,47 +30,33 @@ pub(crate) async fn find(
             "query must name what the sessions were about".into(),
         ));
     }
-    let wanted = crate::memory::limit(Find::NAME, args.limit, 10, 25)?.get();
+    let wanted =
+        crate::memory::limit(Find::NAME, args.limit, DEFAULT_SESSIONS, MAX_SESSIONS)?.get();
+    let tag = args
+        .tag
+        .map(|tag| tag.parse())
+        .transpose()
+        .map_err(|error: kernel::memory::TagLiteralError| Error::Invalid(error.to_string()))?;
     let outcome = store
-        .search(SearchQuery {
-            text: query.clone(),
-            mode: SearchMode::Hybrid,
-            scope: MemoryScope::Both,
-            agent: args.agent,
-            role: None,
-            exclude_roles: Vec::new(),
-            tool_name: None,
-            tag: args.tag.map(|tag| tag.parse()).transpose().map_err(
-                |error: kernel::memory::TagLiteralError| Error::Invalid(error.to_string()),
-            )?,
-            limit: Limit::clamped(
-                Some(wanted.saturating_mul(HITS_PER_SESSION)),
-                MAX_HITS,
-                1..=MAX_HITS,
-            ),
-            since: args.since,
-            before: args.before,
-            window: None,
-            expand: Some(false),
-            synthesize: Some(false),
-        })
+        .search(share::find::query(
+            Search {
+                text: query.clone(),
+                agent: args.agent,
+                tag,
+                since: args.since,
+                before: args.before,
+            },
+            wanted,
+        ))
         .await?;
-    let ranked = group(&outcome.results, |text| kit.share.redact(text));
+    let ranked = share::find::group(&outcome.results, |text| kit.share.redact(text));
     let keys: Vec<String> = ranked.iter().map(|session| session.key.clone()).collect();
     let digests = if keys.is_empty() {
         Vec::new()
     } else {
         kit.share.digests(&keys).await?
     };
-    let mut found: Vec<(&Ranked, &SessionDigest)> = Vec::new();
-    let mut dropped = 0;
-    for session in &ranked {
-        match digests.iter().find(|digest| digest.key == session.key) {
-            Some(digest) => found.push((session, digest)),
-            None => dropped += session.hits,
-        }
-    }
-    found.truncate(wanted as usize);
+    let Matched { found, dropped } = share::find::matched(&ranked, &digests, wanted);
     Ok(crate::text(render(
         &query,
         &found,

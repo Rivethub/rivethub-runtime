@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use base64::Engine as _;
@@ -5,10 +6,13 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::DateTime;
 use chrono::SecondsFormat;
 use chrono::Utc;
+use kernel::memory::share::desk::FlagChoice;
+use kernel::memory::share::desk::Mark;
 use thiserror::Error;
 
 use super::decide::Decision;
 use super::decide::Flag;
+use super::decide::LocalReview;
 use super::decide::Mode;
 use super::decide::Resolution;
 use super::report::cell;
@@ -147,14 +151,14 @@ pub struct ReportFlag {
     pub text: String,
     pub shown: String,
     pub state: MarkState,
-    line: usize,
+    line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportFlags {
     pub at: DateTime<Utc>,
     pub flags: Vec<ReportFlag>,
-    open_line: usize,
+    open_line: Option<usize>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -167,6 +171,8 @@ pub enum ReportError {
     NoFlags,
     #[error("flag {number} appears twice in the report")]
     Twice { number: usize },
+    #[error("flag {number} is not in this review")]
+    Unknown { number: usize },
     #[error("flag {number} has no Mark line")]
     NoMark { number: usize },
     #[error("flag {number} lost its hidden copy; put the section back as sanitize wrote it")]
@@ -183,6 +189,8 @@ pub enum MarkProblem {
     MapShape,
     #[error("the map term is blank")]
     BlankTerm,
+    #[error("the map placeholder is blank")]
+    BlankPlaceholder,
     #[error("the flagged text does not contain `{0}` as a whole word")]
     TermMissing(String),
     #[error("the map term `{0}` cuts into a placeholder in the flagged text")]
@@ -289,7 +297,7 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
     Ok(ReportFlags {
         at,
         flags,
-        open_line,
+        open_line: Some(open_line),
     })
 }
 
@@ -318,13 +326,14 @@ impl ReportFlag {
             shown: pending.shown.unwrap_or_default().join("\n"),
             text,
             state,
-            line,
+            line: Some(line),
         })
     }
 
     #[must_use]
-    pub fn mark_line(&self) -> std::num::NonZeroUsize {
-        std::num::NonZeroUsize::MIN.saturating_add(self.line)
+    pub fn mark_line(&self) -> Option<std::num::NonZeroUsize> {
+        self.line
+            .map(|line| std::num::NonZeroUsize::MIN.saturating_add(line))
     }
 
     #[must_use]
@@ -438,6 +447,16 @@ fn map_mark(rest: &str, original: &str) -> Result<Resolution, MarkProblem> {
     if placeholder.trim().is_empty() {
         return Err(MarkProblem::MapShape);
     }
+    checked_map(term, placeholder, original)
+}
+
+fn checked_map(term: &str, placeholder: &str, original: &str) -> Result<Resolution, MarkProblem> {
+    if term.trim().is_empty() {
+        return Err(MarkProblem::BlankTerm);
+    }
+    if placeholder.trim().is_empty() {
+        return Err(MarkProblem::BlankPlaceholder);
+    }
     let spans = super::decide::term_spans(original, term);
     if spans.is_empty() {
         return Err(MarkProblem::TermMissing(term.to_owned()));
@@ -465,6 +484,14 @@ fn map_mark(rest: &str, original: &str) -> Result<Resolution, MarkProblem> {
     })
 }
 
+fn chosen(choice: &FlagChoice, original: &str) -> Result<Resolution, MarkProblem> {
+    match choice {
+        FlagChoice::Keep => Ok(Resolution::Keep),
+        FlagChoice::Redact => Ok(Resolution::Redact),
+        FlagChoice::Map { term, placeholder } => checked_map(term, placeholder, original),
+    }
+}
+
 fn unquote(text: &str) -> &str {
     let text = text.trim();
     ['"', '\'', '`']
@@ -477,15 +504,60 @@ fn unquote(text: &str) -> &str {
 }
 
 impl ReportFlags {
+    pub fn from_choices(
+        local: &LocalReview,
+        resolved: &BTreeMap<usize, Resolution>,
+        marks: &[Mark],
+    ) -> Result<Self, ReportError> {
+        for (index, mark) in marks.iter().enumerate() {
+            let number = mark.number;
+            if marks.iter().take(index).any(|seen| seen.number == number) {
+                return Err(ReportError::Twice { number });
+            }
+            if !local.flags.iter().any(|flag| flag.number == number) {
+                return Err(ReportError::Unknown { number });
+            }
+        }
+        let flags = local
+            .flags
+            .iter()
+            .map(|flag| {
+                let number = flag.number;
+                let state = match marks.iter().find(|mark| mark.number == number) {
+                    Some(mark) => MarkState::Marked(
+                        chosen(&mark.choice, &flag.text)
+                            .map_err(|problem| ReportError::Mark { number, problem })?,
+                    ),
+                    None => resolved
+                        .get(&number)
+                        .cloned()
+                        .map_or(MarkState::Open, MarkState::Resolved),
+                };
+                Ok(ReportFlag {
+                    number,
+                    text: flag.text.clone(),
+                    shown: flag.text.clone(),
+                    state,
+                    line: None,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            at: local.at,
+            flags,
+            open_line: None,
+        })
+    }
+
     #[must_use]
     pub fn rewrite(&self, report: &str, open: usize, total: usize, applied: &[usize]) -> String {
         let mut lines: Vec<String> = report.split('\n').map(str::to_owned).collect();
-        if let Some(line) = lines.get_mut(self.open_line) {
+        if let Some(line) = self.open_line.and_then(|line| lines.get_mut(line)) {
             *line = format!("{OPEN_PREFIX}{open} of {total}");
         }
         for flag in &self.flags {
             if let (MarkState::Marked(resolution), Some(line)) =
-                (&flag.state, lines.get_mut(flag.line))
+                (&flag.state, flag.line.and_then(|line| lines.get_mut(line)))
                 && applied.contains(&flag.number)
             {
                 *line = format!("Resolved: {resolution}");

@@ -18,6 +18,7 @@ mod sanitize_boundary;
 mod sanitize_corpus;
 mod sanitize_corpus_review;
 mod sanitize_decide;
+mod sanitize_memory;
 mod sanitize_sessions;
 mod seal;
 mod session_titles;
