@@ -60,7 +60,7 @@ pub enum Verification {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct ReceiptChecks {
+pub struct ProvenanceChecks {
     pub rules_sha256: String,
     pub findings_by_family: BTreeMap<String, u32>,
     pub decision: String,
@@ -73,5 +73,5 @@ pub struct Provenance {
     pub author: Option<String>,
     pub origin_date: Option<DateTime<Utc>>,
     pub verification: Verification,
-    pub checks: Option<ReceiptChecks>,
+    pub checks: Option<ProvenanceChecks>,
 }

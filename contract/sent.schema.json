@@ -5606,6 +5606,16 @@
         "id": {
           "type": "string"
         },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "role": {
           "$ref": "#/$defs/Role"
         },
@@ -5823,6 +5833,16 @@
           "type": [
             "object",
             "null"
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "role": {
@@ -6190,6 +6210,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SummaryKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
             },
             {
               "type": "null"
@@ -6673,6 +6703,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "sourceMessageIds": {
@@ -8822,6 +8862,64 @@
       "maximum": 255,
       "minimum": 0,
       "type": "integer"
+    },
+    "Provenance": {
+      "properties": {
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProvenanceChecks"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "originDate": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verification": {
+          "$ref": "#/$defs/Verification"
+        }
+      },
+      "required": [
+        "verification"
+      ],
+      "type": "object"
+    },
+    "ProvenanceChecks": {
+      "properties": {
+        "decision": {
+          "type": "string"
+        },
+        "findingsByFamily": {
+          "additionalProperties": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "rulesSha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rulesSha256",
+        "findingsByFamily",
+        "decision"
+      ],
+      "type": "object"
     },
     "ProviderRecovery": {
       "enum": [
@@ -12919,6 +13017,15 @@
         "pending",
         "failed",
         "skipped"
+      ],
+      "type": "string"
+    },
+    "Verification": {
+      "enum": [
+        "verified",
+        "unsigned",
+        "unknown_key",
+        "unreceived"
       ],
       "type": "string"
     },

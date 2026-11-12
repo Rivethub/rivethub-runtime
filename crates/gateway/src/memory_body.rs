@@ -42,7 +42,7 @@ pub(crate) fn provenance_body(value: &Provenance) -> wire::memory::Provenance {
         checks: value
             .checks
             .as_ref()
-            .map(|checks| wire::memory::ReceiptChecks {
+            .map(|checks| wire::memory::ProvenanceChecks {
                 rules_sha256: checks.rules_sha256.clone(),
                 findings_by_family: checks.findings_by_family.clone(),
                 decision: checks.decision.clone(),
