@@ -2340,6 +2340,16 @@
           "format": "date-time",
           "type": "string"
         },
+        "importedFrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "session": {
           "$ref": "#/$defs/SessionMention"
         },
@@ -14464,6 +14474,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/Millis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "imported": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
             },
             {
               "type": "null"
