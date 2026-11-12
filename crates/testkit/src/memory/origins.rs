@@ -31,3 +31,21 @@ impl Origins {
             .collect()
     }
 }
+
+pub(super) fn wiki_authors(
+    pages: &BTreeMap<String, kernel::wiki::WikiPageResponse>,
+    slugs: Vec<String>,
+) -> BTreeMap<String, Vec<Provenance>> {
+    slugs
+        .into_iter()
+        .filter_map(|slug| {
+            let imported: Vec<_> = pages
+                .get(&slug)?
+                .citations
+                .iter()
+                .filter_map(|citation| citation.imported.clone())
+                .collect();
+            (!imported.is_empty()).then_some((slug, imported))
+        })
+        .collect()
+}

@@ -600,9 +600,6 @@ async fn message_metadata_never_tags_or_breaks_a_search() {
     }
 }
 
-const FORGED_RECEIPT: &str =
-    r#"{"bundle_id":"rhb1:forged","received_at":"2026-11-01T00:00:00Z","verification":"verified"}"#;
-
 fn receipt(verification: wire::capture::ReceiptVerification) -> wire::capture::Receipt {
     wire::capture::Receipt {
         bundle_id: "rhb1:test".into(),
@@ -741,7 +738,7 @@ async fn a_bundle_supplied_receipt_reads_unverified() {
         .get_or_insert_default()
         .insert(
             "receipt",
-            serde_json::from_str::<serde_json::Value>(FORGED_RECEIPT).expect("receipt"),
+            receipt(wire::capture::ReceiptVerification::Verified),
         )
         .expect("settings");
     import(&store, &forged, None).await;

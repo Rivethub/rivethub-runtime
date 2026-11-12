@@ -1,13 +1,12 @@
-#![expect(
-    clippy::expect_used,
-    reason = "the fixtures are constants and an in-process request that cannot be answered must fail the test"
-)]
-
 use super::*;
 
 const SIGNED: &str = "signed";
 const PLAIN: &str = "plain";
 
+#[expect(
+    clippy::expect_used,
+    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
+)]
 fn bundled(author: &str, conversation: &str, created: &str) -> wire::capture::BundledSession {
     let at = |text: &str| text.parse().expect("date");
     wire::capture::BundledSession {
@@ -45,6 +44,10 @@ fn bundled(author: &str, conversation: &str, created: &str) -> wire::capture::Bu
     }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
+)]
 fn import(
     store: &testkit::FakeMemoryStore,
     session: &wire::capture::BundledSession,
@@ -65,6 +68,10 @@ fn import(
     session_key
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
+)]
 fn get(app: &axum::Router, target: &str) -> testkit::Response {
     let response =
         block_on(answer(app.clone(), recorded("GET", target, Vec::new()))).expect("answer");
@@ -176,30 +183,27 @@ fn imported_rows_carry_provenance_and_are_quoted_over_http() {
 fn native_rows_over_http_are_unchanged() {
     let (store, app) = seeded().expect("seed store");
 
-    let browsed: serde_json::Value =
-        serde_json::from_slice(&get(&app, "/api/memory/browse").body).expect("browse body");
-    let found: serde_json::Value =
-        serde_json::from_slice(&get(&app, "/api/memory/search?q=hello").body).expect("search body");
+    let browsed = get(&app, "/api/memory/browse").body;
+    let found = get(&app, "/api/memory/search?q=hello").body;
+    for body in [&browsed, &found] {
+        assert!(!String::from_utf8_lossy(body).contains("provenance"));
+    }
 
-    let rows: Vec<&serde_json::Map<String, serde_json::Value>> = browsed
-        .pointer("/messages")
-        .and_then(serde_json::Value::as_array)
-        .expect("browse messages")
+    let browsed: wire::gateway::memory::MemoryBrowseResponse =
+        serde_json::from_slice(&browsed).expect("browse body");
+    let found: wire::gateway::memory::MemorySearchResponse =
+        serde_json::from_slice(&found).expect("search body");
+    let contents: Vec<&str> = browsed
+        .messages
         .iter()
-        .chain(
-            found
-                .pointer("/results")
-                .and_then(serde_json::Value::as_array)
-                .expect("search results"),
-        )
-        .filter_map(serde_json::Value::as_object)
-        .collect();
-    let contents: Vec<&str> = rows
-        .iter()
-        .filter_map(|row| row.get("content").and_then(serde_json::Value::as_str))
+        .map(|row| row.content.as_str())
+        .chain(found.results.iter().map(|row| row.content.as_str()))
         .collect();
     assert_eq!(contents, ["hello world", "goodbye", "hello world"]);
-    assert!(rows.iter().all(|row| !row.contains_key("provenance")));
+    assert!(
+        browsed.messages.iter().all(|row| row.provenance.is_none())
+            && found.results.iter().all(|row| row.provenance.is_none())
+    );
     assert_eq!(origin_lookups(&store), 0);
 }
 

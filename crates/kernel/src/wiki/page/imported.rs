@@ -75,13 +75,16 @@ mod tests {
     use super::*;
 
     fn provenance(author: &str, verified: bool) -> Provenance {
-        let receipt = if verified { "verified" } else { "unsigned" };
-        let settings = serde_json::from_value(serde_json::json!({
-            "origin": {"author": author},
-            "receipt": {"verification": receipt},
-        }))
-        .expect("settings");
-        Provenance::from_settings(&settings)
+        Provenance {
+            author: Some(author.to_owned()),
+            origin_date: None,
+            verification: if verified {
+                Verification::Verified
+            } else {
+                Verification::Unsigned
+            },
+            checks: None,
+        }
     }
 
     fn citation(summary: &str, imported: Option<Provenance>) -> WikiCitation {

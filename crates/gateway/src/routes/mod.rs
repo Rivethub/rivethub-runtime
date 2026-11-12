@@ -11,6 +11,7 @@ mod history;
 pub mod memory;
 mod memory_archive;
 mod memory_models;
+mod memory_rows;
 mod memory_snippet;
 pub(crate) mod model_calls;
 pub(crate) mod notices;

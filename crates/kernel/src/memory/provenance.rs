@@ -96,7 +96,7 @@ struct StoredOrigin {
 #[derive(Deserialize)]
 struct StoredReceipt {
     verification: Option<String>,
-    checks: Option<serde_json::Value>,
+    checks: Option<ReceiptChecks>,
 }
 
 impl Provenance {
@@ -120,9 +120,7 @@ impl Provenance {
                 .and_then(author),
             origin_date: origin.and_then(|origin| origin.created_at),
             verification,
-            checks: receipt
-                .and_then(|receipt| receipt.checks)
-                .and_then(|checks| serde_json::from_value(checks).ok()),
+            checks: receipt.and_then(|receipt| receipt.checks),
         }
     }
 

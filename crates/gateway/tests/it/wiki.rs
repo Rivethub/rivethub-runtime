@@ -133,24 +133,30 @@ async fn api_page_keeps_the_typed_store_payload() {
 async fn api_page_names_the_author_of_an_imported_citation() {
     let (gateway, store) = common::gateway();
     let mut imported = stored(page());
-    let settings = serde_json::from_value(serde_json::json!({
-        "origin": {"author": "phil", "created_at": "2026-10-14T09:12:00Z"},
-    }))
-    .expect("settings");
+    let provenance = kernel::memory::Provenance {
+        author: Some("phil".to_owned()),
+        origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
+        verification: kernel::memory::Verification::Unreceived,
+        checks: None,
+    };
     for citation in &mut imported.citations {
-        citation.imported = Some(kernel::memory::Provenance::from_settings(&settings));
+        citation.imported = Some(provenance.clone());
     }
     store.insert_wiki_page(imported).await;
     let response = answer(&gateway.router(false), request("GET", "/api/wiki/release")).await;
     assert_eq!(response.status, 200);
-    let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let body: wire::gateway::wiki::WikiPageResponse =
+        serde_json::from_slice(&response.body).unwrap();
     assert_eq!(
-        body.pointer("/citations/0/imported"),
-        Some(&serde_json::json!({
-            "author": "phil",
-            "originDate": "2026-10-14T09:12:00Z",
-            "verification": "unreceived",
-        }))
+        body.citations
+            .first()
+            .and_then(|citation| citation.imported.clone()),
+        Some(wire::memory::Provenance {
+            author: Some("phil".to_owned()),
+            origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
+            verification: wire::memory::Verification::Unreceived,
+            checks: None,
+        })
     );
     let native = answer(&seeded().await.0, request("GET", "/api/wiki/release")).await;
     assert!(!String::from_utf8(native.body).unwrap().contains("imported"));

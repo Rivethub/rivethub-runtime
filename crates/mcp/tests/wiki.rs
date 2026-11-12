@@ -164,12 +164,16 @@ async fn read_uses_typed_sections_and_preserves_small_markdown() {
 }
 
 fn imported(author: &str, verification: &str) -> Provenance {
-    let settings = serde_json::from_value(serde_json::json!({
-        "origin": {"author": author},
-        "receipt": {"verification": verification},
-    }))
-    .expect("settings");
-    Provenance::from_settings(&settings)
+    Provenance {
+        author: Some(author.to_owned()),
+        origin_date: None,
+        verification: match verification {
+            "verified" => kernel::memory::Verification::Verified,
+            "unsigned" => kernel::memory::Verification::Unsigned,
+            other => panic!("unexpected verification {other}"),
+        },
+        checks: None,
+    }
 }
 
 fn citing(summary: &str, imported: Option<Provenance>) -> WikiCitation {

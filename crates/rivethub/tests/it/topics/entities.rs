@@ -403,8 +403,12 @@ async fn entity_claims_name_the_importing_author() -> TestResult {
     assert_eq!(status, StatusCode::OK);
     assert!(!String::from_utf8(bytes)?.contains("importedFrom"));
 
-    let settings = serde_json::from_value(serde_json::json!({"origin": {"author": "phil"}}))?;
-    let provenance = Provenance::from_settings(&settings);
+    let provenance = Provenance {
+        author: Some("phil".to_owned()),
+        origin_date: None,
+        verification: kernel::memory::Verification::Unreceived,
+        checks: None,
+    };
     let session: SessionId = FIRST.parse()?;
     let api = Api::over(true, |store| {
         Arc::new(ImportedFrom {

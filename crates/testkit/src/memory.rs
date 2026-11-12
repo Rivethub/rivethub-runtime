@@ -213,18 +213,7 @@ impl MemoryStore for FakeMemoryStore {
         self.record(MemoryRequest::WikiImportedAuthors(slugs.clone()))
             .await;
         let pages = self.wiki_pages.lock().await;
-        Ok(slugs
-            .into_iter()
-            .filter_map(|slug| {
-                let imported: Vec<_> = pages
-                    .get(&slug)?
-                    .citations
-                    .iter()
-                    .filter_map(|citation| citation.imported.clone())
-                    .collect();
-                (!imported.is_empty()).then_some((slug, imported))
-            })
-            .collect())
+        Ok(origins::wiki_authors(&pages, slugs))
     }
 
     async fn wiki_gaps(
