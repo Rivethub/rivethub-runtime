@@ -261,7 +261,7 @@ impl ShareServers {
         timeout: Duration,
     ) -> Result<Server, ServerError> {
         self.policy.admit(host)?;
-        let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server(host.to_string()))?;
+        let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server)?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
             .https_only(!host.is_loopback())
@@ -374,9 +374,7 @@ async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certific
 
 impl Server {
     pub(crate) fn endpoint(&self, path: &str) -> Result<Url, ServerError> {
-        self.base
-            .join(path)
-            .map_err(|_| CodeError::Server(self.host.to_string()).into())
+        self.base.join(path).map_err(|_| CodeError::Server.into())
     }
 
     pub(crate) const fn host(&self) -> &ShareServer {

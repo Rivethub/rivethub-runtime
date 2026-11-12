@@ -237,7 +237,7 @@ fn a_code_names_its_server_unless_it_is_rivethub_cloud() -> TestResult {
     }
     assert!(matches!(
         format!("rhb1:te am/{DROP_ID}#{}", key.reveal()).parse::<ShareCode>(),
-        Err(CodeError::Server(_))
+        Err(CodeError::Server)
     ));
     let line = format!("send {}", hosted.reveal());
     assert_eq!(

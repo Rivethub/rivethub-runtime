@@ -7,8 +7,12 @@ use thiserror::Error;
 use crate::seal::{CodeError, ShareServer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("memory.share.allowed_servers: {0}")]
-pub struct BadAllowedServer(#[from] CodeError);
+#[error(
+    "memory.share.allowed_servers: {entry:?} is not a share server; give a host name such as rivethub.cloud or team.example.com, with an optional :port"
+)]
+pub struct BadAllowedServer {
+    entry: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ShareRefused {
@@ -40,8 +44,12 @@ impl SharePolicy {
     pub fn new(cloud_disabled: bool, allowed_servers: &[String]) -> Result<Self, BadAllowedServer> {
         let listed = allowed_servers
             .iter()
-            .map(|entry| entry.parse())
-            .collect::<Result<BTreeSet<ShareServer>, CodeError>>()?;
+            .map(|entry| {
+                entry.parse().map_err(|_: CodeError| BadAllowedServer {
+                    entry: entry.clone(),
+                })
+            })
+            .collect::<Result<BTreeSet<ShareServer>, _>>()?;
         Ok(Self {
             cloud_disabled,
             allowed: (!listed.is_empty()).then_some(listed),

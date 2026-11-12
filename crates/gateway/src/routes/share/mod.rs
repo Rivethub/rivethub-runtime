@@ -26,6 +26,7 @@ use wire::gateway::share::ShareRefusal;
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::limited_bytes;
+use crate::tenancy::OwnerRefused;
 
 const NOT_LOCAL: &str = "sharing runs only on the machine rh runs on";
 const FAILED: &str = "sharing failed; the rh log names the cause";
@@ -189,19 +190,12 @@ impl FromRequestParts<Arc<Gateway>> for ShareCaller {
 }
 
 fn admit(gateway: &Gateway, parts: &Parts) -> Result<ShareCaller, Refusal> {
-    let plugin = parts
-        .extensions
-        .get::<crate::plugins::PluginCaller>()
-        .is_some();
-    if plugin || !crate::auth::direct_local(parts) {
-        return Err(Refusal::not_local(NOT_LOCAL));
-    }
-    let (user, credential) = crate::tenancy::authenticate(gateway, parts)?;
-    let owner_credential = credential.is_local_owner();
-    if !owner_credential || gateway.tenancy.local_user() != Some(&user) {
-        return Err(Refusal::not_local(NOT_LOCAL));
-    }
-    Ok(ShareCaller)
+    crate::tenancy::local_owner(gateway, parts)
+        .map(|()| ShareCaller)
+        .map_err(|refused| match refused {
+            OwnerRefused::NotLocal => Refusal::not_local(NOT_LOCAL),
+            OwnerRefused::Auth(error) => Refusal::Api(error),
+        })
 }
 
 pub(super) struct ShareJson<T>(pub(super) T);

@@ -228,6 +228,28 @@ pub(crate) fn authenticate(
         .inspect_err(|_| gateway.auth_log().emit(AuthEvent::BearerRejected, peer))
 }
 
+pub(crate) enum OwnerRefused {
+    NotLocal,
+    Auth(ApiError),
+}
+
+pub(crate) fn local_owner(gateway: &crate::Gateway, parts: &Parts) -> Result<(), OwnerRefused> {
+    let plugin = parts
+        .extensions
+        .get::<crate::plugins::PluginCaller>()
+        .is_some();
+    if plugin || !crate::auth::direct_local(parts) {
+        return Err(OwnerRefused::NotLocal);
+    }
+    let (user, credential) = authenticate(gateway, parts).map_err(OwnerRefused::Auth)?;
+    let owner_credential = credential.is_local_owner();
+    if owner_credential && gateway.tenancy.local_user() == Some(&user) {
+        Ok(())
+    } else {
+        Err(OwnerRefused::NotLocal)
+    }
+}
+
 pub(crate) fn owner_token_presented(gateway: &crate::Gateway, parts: &Parts) -> bool {
     parts
         .headers

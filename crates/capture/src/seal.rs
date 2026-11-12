@@ -90,9 +90,9 @@ pub enum CodeError {
     )]
     Checksum,
     #[error(
-        "{0:?} is not a share server; give a host name such as rivethub.cloud or team.example.com, with an optional :port"
+        "the share server is not a host name such as rivethub.cloud or team.example.com, with an optional :port"
     )]
-    Server(String),
+    Server,
 }
 
 pub const DEFAULT_SERVER: &str = "rivethub.cloud";
@@ -165,7 +165,7 @@ impl FromStr for ShareServer {
     type Err = CodeError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let invalid = || CodeError::Server(text.to_owned());
+        let invalid = || CodeError::Server;
         let trimmed = text.trim();
         let (scheme, rest) = match trimmed.split_once("://") {
             Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),

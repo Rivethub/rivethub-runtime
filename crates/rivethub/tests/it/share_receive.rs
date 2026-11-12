@@ -441,3 +441,81 @@ async fn a_session_by_someone_else_is_not_verified_by_the_senders_key() -> TestR
     );
     Ok(())
 }
+
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_code_never_echoes_any_part_of_it() -> TestResult {
+    let rig = rig().await?;
+    let logs = Captured::default();
+    let _tracing = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(logs.clone())
+            .finish(),
+    );
+    let key = capture::seal::ShareKey::generate().reveal().clone();
+    let canary = "CanaryCanaryCanary01234";
+    for code in [
+        format!("rhb1:bad {canary}/{ID}#{key}"),
+        format!("rhb1:team..{canary}/{ID}#{key}"),
+        format!("rhb1:{canary}#{key}"),
+        format!("rhb1:team.example.com/{canary}#{key}"),
+        format!("rhb1:{ID}#{canary}"),
+        format!("rhb1:team.example.com/{ID}#{canary}"),
+        format!("rhb1:{ID}{canary}"),
+        format!("{canary}{ID}#{key}"),
+    ] {
+        for refused in [
+            rig.receiver.inspect(ReceiveCode::new(code.clone())).await,
+            rig.receiver
+                .import(
+                    ReceiveCode::new(code.clone()),
+                    import(vec![decide(1, Choice::Import)], false, true),
+                )
+                .await
+                .map(|_| unreachable!()),
+        ] {
+            let Err(ReceiveError::BadCode(message)) = refused else {
+                return Err(format!("{code}: not a bad_code refusal").into());
+            };
+            for shown in [message.as_str(), &format!("{message:?}")] {
+                assert!(
+                    !shown.contains(canary) && !shown.contains(&key) && !shown.contains(ID),
+                    "{code}: the refusal echoed the request: {shown}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        *rig.hits.lock(),
+        0,
+        "a malformed code never reaches a server"
+    );
+    let logged = String::from_utf8(logs.0.lock().clone())?;
+    assert!(
+        !logged.contains(canary) && !logged.contains(&key),
+        "tracing output carried the code: {logged}"
+    );
+    Ok(())
+}

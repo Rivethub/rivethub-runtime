@@ -456,3 +456,63 @@ async fn a_node_admin_who_is_not_the_owner_is_refused() -> TestResult {
     assert_eq!(refusal.reason, body::ReceiveReason::NotLocal);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_users_file_bearer_mapped_to_the_owner_cannot_receive_or_change_trust() -> TestResult {
+    let script = Arc::new(Script::default());
+    script.inspect.lock().push(Ok(inspected(0, false)));
+    script.import.lock().push(Ok(imported()));
+    let store: Arc<dyn MemoryStore> = Arc::new(FakeMemoryStore::default());
+    let owner = gateway::tenancy::UserId::new(testkit::OWNER.to_owned())?;
+    let tenancy =
+        gateway::tenancy::Tenancy::local(owner.clone()).with_token("owner-users-file", owner)?;
+    let gateway = common::owned(gateway::Gateway::new(store, common::settings()))
+        .with_tenancy(tenancy)
+        .with_receive_desk(Arc::new(Fake(Arc::clone(&script))));
+    let app = Arc::new(gateway).router(false);
+    for (method, path, json) in [
+        (Method::GET, "/api/share/trust", String::new()),
+        (
+            Method::POST,
+            "/api/share/trust",
+            r#"{"name":"mallory","key":"age1abc"}"#.to_owned(),
+        ),
+        (
+            Method::DELETE,
+            "/api/share/trust",
+            r#"{"name":"mallory"}"#.to_owned(),
+        ),
+        (
+            Method::POST,
+            "/api/share/receive",
+            request(r#"{"code":"CODE"}"#),
+        ),
+        (
+            Method::POST,
+            "/api/share/receive/import",
+            request(r#"{"code":"CODE","sessions":[],"force":true}"#),
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:5174")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer owner-users-file")
+            .body(Body::from(json))?;
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:41000".parse::<std::net::SocketAddr>()?,
+        ));
+        let response = app.clone().oneshot(request).await?;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await?;
+        let refusal: body::ReceiveRefusal = serde_json::from_slice(&bytes)?;
+        assert_eq!(refusal.reason, body::ReceiveReason::NotLocal, "{path}");
+    }
+    assert!(
+        script.codes.lock().is_empty(),
+        "no refused call reaches the desk"
+    );
+    assert!(script.senders.lock().is_empty(), "trust is unchanged");
+    Ok(())
+}

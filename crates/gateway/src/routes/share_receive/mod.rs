@@ -24,6 +24,7 @@ use wire::gateway::share_receive::ReceiveRefusal;
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::limited_bytes;
+use crate::tenancy::OwnerRefused;
 
 const NOT_LOCAL: &str = "receiving runs only on the machine rh runs on";
 const FAILED: &str = "receiving failed; the rh log names the cause";
@@ -178,18 +179,12 @@ impl FromRequestParts<Arc<Gateway>> for ReceiveCaller {
 }
 
 fn admit(gateway: &Gateway, parts: &Parts) -> Result<ReceiveCaller, Refusal> {
-    let plugin = parts
-        .extensions
-        .get::<crate::plugins::PluginCaller>()
-        .is_some();
-    if plugin || !crate::auth::direct_local(parts) {
-        return Err(Refusal::not_local());
-    }
-    let user = crate::tenancy::caller(gateway, parts)?;
-    if gateway.tenancy.local_user() != Some(&user) {
-        return Err(Refusal::not_local());
-    }
-    Ok(ReceiveCaller)
+    crate::tenancy::local_owner(gateway, parts)
+        .map(|()| ReceiveCaller)
+        .map_err(|refused| match refused {
+            OwnerRefused::NotLocal => Refusal::not_local(),
+            OwnerRefused::Auth(error) => Refusal::Api(error),
+        })
 }
 
 pub(super) struct ReceiveJson<T>(pub(super) T);
