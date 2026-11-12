@@ -13,6 +13,7 @@ const SPAN_CHARS: usize = 60;
 const SPAN_CHARS_WITH_NOTE: usize = 30;
 const SPELLED_CHARS: usize = 40;
 const CONTEXT_BYTES: usize = 80;
+const SHOWN_CHARS: usize = 4096;
 const TITLE_CHARS: usize = 60;
 const ROWS_PER_SESSION: usize = 20;
 
@@ -83,6 +84,10 @@ fn tail(tokens: &[String], limit: usize) -> (String, bool) {
 }
 
 pub(crate) fn excerpt(context: &str, at: &Range<usize>, shown: &str) -> String {
+    let shown = shown
+        .char_indices()
+        .nth(SHOWN_CHARS)
+        .map_or(shown, |(end, _)| shown.get(..end).unwrap_or(shown));
     let before_text = context.get(..at.start).unwrap_or_default();
     let after_text = context.get(at.end..).unwrap_or_default();
     let before_from =
@@ -247,5 +252,21 @@ fn push_rows(out: &mut String, found: &[&Finding]) {
             out,
             format_args!("  and {hidden_rows} more rows of findings"),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_excerpt_of_a_huge_span_is_cut_from_its_head() {
+        let span = "a".repeat(8 << 20);
+        let context = format!("before {span} after");
+        let at = 7..7 + span.len();
+        let shown = excerpt(&context, &at, &span);
+        assert!(shown.chars().count() <= EXCERPT_CHARS);
+        assert!(shown.contains(">>aaaa"));
+        assert!(shown.contains("\u{2026}<<"));
     }
 }
