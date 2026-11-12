@@ -8,6 +8,9 @@
         "channel": {
           "$ref": "#/$defs/ReleaseChannel"
         },
+        "cloudDisabled": {
+          "type": "boolean"
+        },
         "crashReports": {
           "type": "boolean"
         },
@@ -1562,6 +1565,13 @@
         "decision"
       ],
       "type": "object"
+    },
+    "CloudPolicy": {
+      "enum": [
+        "enabled",
+        "disabled"
+      ],
+      "type": "string"
     },
     "ColorRole": {
       "enum": [
@@ -3632,6 +3642,16 @@
         "ok": {
           "type": "boolean"
         },
+        "policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HubPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "revision": {
           "type": [
             "string",
@@ -5107,6 +5127,23 @@
         "team"
       ],
       "type": "string"
+    },
+    "HubPolicy": {
+      "properties": {
+        "cloud": {
+          "$ref": "#/$defs/CloudPolicy"
+        },
+        "shareServers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cloud"
+      ],
+      "type": "object"
     },
     "KeyReply": {
       "properties": {

@@ -112,7 +112,16 @@ impl Updater {
         &self,
         args: &UpdateArgs,
         env: &Environment,
+        config: &config::Config,
     ) -> Result<UpdateSource, UpdateError> {
+        if config.cloud_disabled() {
+            return match args.source {
+                Some(UpdateSource::RivethubCloud) => {
+                    Err(gateway::account::AccountError::CloudPolicy.into())
+                }
+                Some(UpdateSource::Github) | None => Ok(UpdateSource::Github),
+            };
+        }
         if let Some(source) = args.source {
             return Ok(source);
         }
@@ -154,7 +163,7 @@ impl Updater {
             report
                 .stdout
                 .extend(["Updating this node (", &args.channel.to_string(), ")...\n"]);
-            let version = match (args.channel, self.source(args, env).await?) {
+            let version = match (args.channel, self.source(args, env, &config).await?) {
                 (Channel::Stable | Channel::Beta, UpdateSource::RivethubCloud) => {
                     report
                         .stdout

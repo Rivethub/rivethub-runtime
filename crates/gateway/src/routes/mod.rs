@@ -129,6 +129,7 @@ pub(crate) async fn healthz(
             degraded_providers,
             version: Some(crate::VERSION.to_owned()),
             revision: crate::REVISION.filter(|_| detailed).map(str::to_owned),
+            policy: gateway.settings().policy.clone(),
         }),
     )
         .into_response()

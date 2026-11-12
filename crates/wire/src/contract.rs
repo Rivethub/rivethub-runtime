@@ -84,6 +84,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::HealthzResponse>,
     SchemaGenerator::subschema_for::<crate::gateway::DegradedProvider>,
     SchemaGenerator::subschema_for::<crate::gateway::ProviderRecovery>,
+    SchemaGenerator::subschema_for::<crate::gateway::HubPolicy>,
+    SchemaGenerator::subschema_for::<crate::gateway::CloudPolicy>,
     SchemaGenerator::subschema_for::<crate::gateway::GatewayError>,
     SchemaGenerator::subschema_for::<crate::gateway::OkReply>,
     SchemaGenerator::subschema_for::<crate::gateway::session_delete::SessionDeleted>,

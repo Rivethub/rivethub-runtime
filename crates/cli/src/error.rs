@@ -92,6 +92,15 @@ pub enum Error {
         path: std::path::PathBuf,
         host: String,
     },
+    #[error(
+        "rh local was asked to keep this hub off the cloud (--no-cloud or RIVETHUB_CLOUD=off), but {} does not turn it off; add `cloud: {{disabled: true}}` to that file and run rh local again",
+        path.display()
+    )]
+    CloudLeftOn { path: std::path::PathBuf },
+    #[error(
+        "rh local was asked to keep this hub off the cloud (--no-cloud or RIVETHUB_CLOUD=off), but the node at {origin} is running without this hub's cloud policy; restart it (stop the node, then run rh local again) so the policy applies"
+    )]
+    NodeCloudLeftOn { origin: String },
     #[error("refusing to replace the config at {}", path.display())]
     ConfigPresent { path: std::path::PathBuf },
     #[error("the node claim was already released")]

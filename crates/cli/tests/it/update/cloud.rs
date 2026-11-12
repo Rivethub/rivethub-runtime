@@ -187,3 +187,34 @@ async fn the_cloud_source_needs_a_sign_in() -> Result {
     stub.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_disabled_cloud_updates_from_github_even_when_signed_in() -> Result {
+    let fixture = Fixture::new()?;
+    let (stub, key, state) = cloud(Signing::Good).await?;
+    configure(&fixture, &stub, &key)?;
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(fixture.home.path().join(".rivethub/config.yaml"))?;
+    writeln!(config, "  disabled: true")?;
+    sign_in(&fixture)?;
+    let refused = update(&fixture, Some(UpdateSource::RivethubCloud)).await?;
+    assert_eq!(refused.exit, Exit::Failure);
+    assert!(
+        refused
+            .stderr
+            .contains("cloud sign-in is disabled by this hub's policy"),
+        "{}",
+        refused.stderr
+    );
+    let fallback = update(&fixture, None).await?;
+    assert!(
+        !fallback.stdout.contains("from rivethub.cloud"),
+        "{}",
+        fallback.stdout
+    );
+    assert!(state.asked.lock().is_empty());
+    assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+    stub.close().await?;
+    Ok(())
+}

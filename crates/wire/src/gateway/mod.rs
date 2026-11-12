@@ -36,6 +36,23 @@ pub struct HealthzResponse {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<HubPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HubPolicy {
+    pub cloud: CloudPolicy,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub share_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloudPolicy {
+    Enabled,
+    Disabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

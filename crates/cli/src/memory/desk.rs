@@ -8,6 +8,7 @@ use capture::seal::Sealed;
 use capture::seal::ShareCode;
 use capture::seal::ShareServer;
 use capture::share::ShareError as SanitizeShareError;
+use capture::share_policy::ShareRefused;
 use capture::sign::NodeKey;
 use capture::sign::PublicKey;
 use chrono::DateTime;
@@ -347,20 +348,33 @@ pub async fn login_team(env: &Environment, server: &str, token: String) -> Resul
     Ok(me.user)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoggedOut {
     NotSignedIn,
     Revoked,
     Forgotten,
     NotRevocable,
+    Refused(ShareRefused),
 }
 
 pub async fn logout(
     env: &Environment,
     server: Option<&str>,
 ) -> Result<(ShareServer, LoggedOut), Error> {
-    let server = connect(env, server).await?;
-    let host = server.host().clone();
+    let servers = ShareServers::from_env(env).await?;
+    let host = servers.logout_target(server)?;
+    let server = match servers.connect(&host, REQUEST_TIMEOUT).await {
+        Ok(server) => server,
+        Err(ServerError::Policy(refused)) => {
+            let outcome = if servers.forget_refused(&host).await? {
+                LoggedOut::Refused(refused)
+            } else {
+                LoggedOut::NotSignedIn
+            };
+            return Ok((host, outcome));
+        }
+        Err(error) => return Err(error.into()),
+    };
     let _lock = server.lock().await?;
     let login = match server.logins().load(&host).await {
         Err(ServerError::LoggedOut(_)) => return Ok((host, LoggedOut::NotSignedIn)),
@@ -393,11 +407,15 @@ pub async fn logout(
 
 pub async fn servers(env: &Environment) -> Result<Servers, Error> {
     let servers = ShareServers::from_env(env).await?;
-    let configured = servers.configured().as_str();
+    let configured = servers
+        .default_host()
+        .map(|host| host.as_str().to_owned())
+        .unwrap_or_default();
+    let configured = configured.as_str();
     let store = servers.logins();
     let logins = store.list()?;
     let mut views: Vec<ServerView> = Vec::new();
-    if !logins.contains_key(configured) {
+    if !configured.is_empty() && !logins.contains_key(configured) {
         views.push(ServerView {
             origin: configured.to_owned().into(),
             kind: ServerKind::Cloud,
@@ -535,12 +553,14 @@ fn server_error(error: ServerError) -> DeskError {
         ServerError::Finished => DeskError::UnknownLogin,
         error @ ServerError::RateLimited(_) => DeskError::Unreachable(error.to_string()),
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
+        error @ ServerError::Policy(_) => DeskError::BadServer(error.to_string()),
         other @ (ServerError::Store(_)
         | ServerError::Keyring(_)
         | ServerError::Ca { .. }
         | ServerError::File(_)
         | ServerError::Io(_)
         | ServerError::Lifetime(_)
+        | ServerError::AllowedServer(_)
         | ServerError::Refused(_)
         | ServerError::Protocol(_)
         | ServerError::NoDeviceFlow(_)

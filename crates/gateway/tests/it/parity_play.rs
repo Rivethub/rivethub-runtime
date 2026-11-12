@@ -103,6 +103,7 @@ fn settings() -> Settings {
         state_dir: scratch.join("state"),
         private_ca: None,
         request_deadline: gateway::REQUEST_DEADLINE,
+        policy: None,
     }
 }
 

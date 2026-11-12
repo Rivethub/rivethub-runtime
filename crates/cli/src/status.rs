@@ -2,12 +2,14 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
+use capture::seal::ShareServer;
+use capture::share_policy::SharePolicy;
 use config::{Config, Environment};
 use gateway::server::BindSource;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use serde::Deserialize;
-use wire::gateway::HealthzResponse;
+use wire::gateway::{CloudPolicy, HealthzResponse, HubPolicy};
 use x509_parser::extensions::GeneralName;
 
 use crate::{Error, Report, configuration, process};
@@ -89,6 +91,9 @@ async fn health(env: &Environment) -> Result<Report, Error> {
         parts.push(format!("; uptime {uptime}s"));
     }
     parts.push("\n".to_owned());
+    if let Some(policy) = &health.response.policy {
+        parts.push(policy_line(policy));
+    }
     for provider in &health.response.degraded_providers {
         parts.push(format!(
             "Provider {} is degraded ({}): {}\n",
@@ -127,6 +132,34 @@ async fn detailed_health(
 pub(crate) enum Redirects {
     Follow,
     Refuse,
+}
+
+fn policy_line(policy: &HubPolicy) -> String {
+    let cloud_disabled = policy.cloud == CloudPolicy::Disabled;
+    let mut rules = Vec::new();
+    if cloud_disabled {
+        rules.push("cloud disabled".to_owned());
+    }
+    match SharePolicy::new(cloud_disabled, &policy.share_servers) {
+        Ok(sharing) => {
+            rules.push(format!("sharing with {sharing}"));
+            let refused: Vec<&str> = policy
+                .share_servers
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .parse::<ShareServer>()
+                        .is_ok_and(|host| sharing.admit(&host).is_err())
+                })
+                .map(String::as_str)
+                .collect();
+            if !refused.is_empty() {
+                rules.push(format!("cloud.disabled refuses {}", refused.join(", ")));
+            }
+        }
+        Err(error) => rules.push(error.to_string()),
+    }
+    format!("Hub policy: {}\n", rules.join("; "))
 }
 
 pub(crate) async fn endpoint(env: &Environment, config: &Config) -> Result<Endpoint, Error> {

@@ -83,6 +83,7 @@ impl Fixture {
                 state_dir: PathBuf::from("/tmp/rr-gateway-unused-agents/state"),
                 private_ca: None,
                 request_deadline: gateway::REQUEST_DEADLINE,
+                policy: None,
             },
         )
         .with_local_owner(crate::common::local_owner())

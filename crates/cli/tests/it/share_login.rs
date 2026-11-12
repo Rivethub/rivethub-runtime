@@ -457,6 +457,26 @@ async fn the_servers_listing_names_the_token_store() {
 }
 
 #[tokio::test]
+async fn a_hub_that_disables_the_cloud_gives_the_desk_no_server_to_sign_in_to() {
+    let node = node();
+    support::config(&node.home, "cloud:\n  disabled: true\n");
+
+    let refused = desk::start(&node.env, None, "RivetHub test")
+        .await
+        .expect_err("the policy refuses rivethub.cloud");
+    let desk_error = desk::desk_error(refused);
+    let kernel::memory::share::desk::DeskError::BadServer(message) = desk_error else {
+        panic!("a policy refusal is a bad server, not {desk_error:?}");
+    };
+    assert!(
+        message.contains("disabled by this hub's policy"),
+        "{message}"
+    );
+    let servers = desk::servers(&node.env).await.expect("servers");
+    assert!(servers.servers.is_empty(), "{:?}", servers.servers);
+}
+
+#[tokio::test]
 async fn token_replies_never_reach_an_error() {
     let unparsable = ok(
         r#"{"access_token":"rhca_LEAKED","token_type":"Bearer","expires_in":"900","refresh_token":"rhcr_LEAKED","scope":"drops:write"}"#,

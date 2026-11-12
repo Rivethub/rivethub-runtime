@@ -86,23 +86,32 @@ impl AccountService {
     }
 
     fn view(&self, state: &InstallState) -> Account {
-        let allowed = !self.settings.telemetry_disabled;
+        let allowed = self.settings.access.telemetry();
+        let cloud = self.settings.access.cloud();
         Account {
             email: state.email().map(str::to_owned),
-            update_source: state.update_source(),
+            update_source: if cloud {
+                state.update_source()
+            } else {
+                UpdateSource::Github
+            },
             channel: state.channel,
             auto_download: state.auto_download,
             version: crate::VERSION.to_owned(),
             pending_update: state.pending_update.clone(),
             crash_reports: allowed && state.crash_reports,
             usage_counts: allowed && state.usage_counts,
+            cloud_disabled: !cloud,
         }
     }
 
     pub async fn update(&self, change: AccountUpdate) -> Result<Account, AccountError> {
         let enabling = change.crash_reports == Some(true) || change.usage_counts == Some(true);
-        if enabling && self.settings.telemetry_disabled {
+        if enabling && !self.settings.access.telemetry() {
             return Err(AccountError::Policy);
+        }
+        if change.update_source == Some(UpdateSource::RivethubCloud) {
+            self.cloud_allowed()?;
         }
         let mut state = self.state.lock().await;
         let mut next = state.clone();
@@ -137,7 +146,16 @@ impl AccountService {
         Ok(account)
     }
 
+    fn cloud_allowed(&self) -> Result<(), AccountError> {
+        if self.settings.access.cloud() {
+            Ok(())
+        } else {
+            Err(AccountError::CloudPolicy)
+        }
+    }
+
     pub async fn sign_in(&self, email: &str) -> Result<SignInStarted, AccountError> {
+        self.cloud_allowed()?;
         let email = email.trim();
         if email.is_empty() || email.len() > EMAIL_LIMIT || !email.contains('@') {
             return Err(AccountError::Email);
@@ -160,6 +178,7 @@ impl AccountService {
     }
 
     pub async fn poll(&self) -> Result<SignInProgress, AccountError> {
+        self.cloud_allowed()?;
         let mut state = self.state.lock().await;
         let request_id = match &state.membership {
             Membership::Pending { request_id } => request_id.clone(),
@@ -192,7 +211,7 @@ impl AccountService {
 
     pub async fn sign_out(&self) -> Result<Account, AccountError> {
         let mut state = self.state.lock().await;
-        if let Some(token) = state.token() {
+        if let Some(token) = state.token().filter(|_| self.settings.access.cloud()) {
             match self.cloud.sign_out(token).await {
                 Ok(()) | Err(AccountError::SignedOutElsewhere) => {}
                 Err(error) => {
@@ -206,6 +225,7 @@ impl AccountService {
     }
 
     pub async fn delete(&self) -> Result<Account, AccountError> {
+        self.cloud_allowed()?;
         let mut state = self.state.lock().await;
         let token = state.token().ok_or(AccountError::NotSignedIn)?;
         match self.cloud.delete(token).await {
@@ -273,7 +293,7 @@ impl AccountService {
     }
 
     async fn send_crashes(&self) -> Result<(), AccountError> {
-        let sending = !self.settings.telemetry_disabled && self.state.lock().await.crash_reports;
+        let sending = self.settings.access.telemetry() && self.state.lock().await.crash_reports;
         let files = self.files.clone();
         for path in tokio::task::spawn_blocking(move || queued(&files)).await?? {
             if sending {
@@ -294,7 +314,7 @@ impl AccountService {
         let searches = self.counters.searches.swap(0, Ordering::Relaxed);
         let app_opens = self.counters.app_opens.swap(0, Ordering::Relaxed);
         let mut state = self.state.lock().await;
-        if self.settings.telemetry_disabled || !state.usage_counts {
+        if !self.settings.access.telemetry() || !state.usage_counts {
             return Ok(());
         }
         let mut next = state.clone();
@@ -342,7 +362,10 @@ impl AccountService {
     pub async fn check_update(&self, shutdown: &CancellationToken) -> Result<(), AccountError> {
         let snapshot = self.state.lock().await.clone();
         let pending = match snapshot.token() {
-            Some(token) if snapshot.update_source() == UpdateSource::RivethubCloud => {
+            Some(token)
+                if self.settings.access.cloud()
+                    && snapshot.update_source() == UpdateSource::RivethubCloud =>
+            {
                 match self.newer(token, &snapshot, shutdown).await {
                     Ok(pending) => pending,
                     Err(AccountError::SignedOutElsewhere) => {

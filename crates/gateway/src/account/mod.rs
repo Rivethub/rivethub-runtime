@@ -46,6 +46,10 @@ pub enum AccountError {
     Url(#[from] url::ParseError),
     #[error("crash reports and usage counts are turned off by this hub's policy")]
     Policy,
+    #[error(
+        "cloud sign-in is disabled by this hub's policy (cloud.disabled), so updates come from GitHub"
+    )]
+    CloudPolicy,
     #[error("the update key is not a base64 Ed25519 public key")]
     UpdateKey,
     #[error("the release manifest is invalid")]
@@ -72,7 +76,37 @@ pub enum AccountError {
 pub struct CloudSettings {
     pub base: Url,
     pub update_key: UpdateKey,
-    pub telemetry_disabled: bool,
+    pub access: CloudAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudAccess {
+    Open,
+    NoTelemetry,
+    Disabled,
+}
+
+impl CloudAccess {
+    #[must_use]
+    pub fn from_config(config: &config::Config) -> Self {
+        if config.cloud_disabled() {
+            Self::Disabled
+        } else if config.telemetry_disabled() {
+            Self::NoTelemetry
+        } else {
+            Self::Open
+        }
+    }
+
+    #[must_use]
+    pub const fn telemetry(self) -> bool {
+        matches!(self, Self::Open)
+    }
+
+    #[must_use]
+    pub const fn cloud(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
 }
 
 impl CloudSettings {
@@ -93,7 +127,7 @@ impl CloudSettings {
         Ok(Self {
             base,
             update_key,
-            telemetry_disabled: config.telemetry.is_some_and(|section| section.disabled),
+            access: CloudAccess::from_config(config),
         })
     }
 }

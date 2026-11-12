@@ -83,7 +83,7 @@ pub(crate) enum Listed {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Records {
-    logins: BTreeMap<String, Record>,
+    logins: BTreeMap<ShareServer, Record>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -294,7 +294,7 @@ impl LoginStore {
             .records()?
             .logins
             .iter()
-            .map(|(server, record)| (server.clone(), record.listed()))
+            .map(|(server, record)| (server.to_string(), record.listed()))
             .collect())
     }
 
@@ -303,7 +303,7 @@ impl LoginStore {
         let record = self
             .records()?
             .logins
-            .remove(host)
+            .remove(server)
             .ok_or_else(|| ServerError::LoggedOut(server.clone()))?;
         let secret = match record.held(host)? {
             Held::File(secret) => secret,
@@ -337,13 +337,13 @@ impl LoginStore {
             blocking(move || vault.write(&owned, &text)).await?;
         }
         let mut records = self.records()?;
-        records.logins.insert(server.to_string(), record);
+        records.logins.insert(server.clone(), record);
         self.write(&records)
     }
 
     pub(crate) async fn forget(&self, server: &ShareServer) -> Result<(), ServerError> {
         let mut records = self.records()?;
-        let Some(record) = records.logins.remove(server.as_str()) else {
+        let Some(record) = records.logins.remove(server) else {
             return Ok(());
         };
         if let (true, Some(vault)) = (record.in_keyring(), self.vault.clone()) {

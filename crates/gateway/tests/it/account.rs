@@ -17,8 +17,8 @@ use chrono::{DateTime, Utc};
 use config::HubEntry;
 use gateway::Gateway;
 use gateway::account::{
-    AccountFiles, AccountService, CloudOs, CloudSettings, CrashJob, CrashReport, Hubs, PanicSite,
-    UpdateKey, queue, queued,
+    AccountFiles, AccountService, CloudAccess, CloudOs, CloudSettings, CrashJob, CrashReport, Hubs,
+    PanicSite, UpdateKey, queue, queued,
 };
 use gateway::tenancy::{Tenancy, UserId};
 use parking_lot::Mutex;
@@ -49,6 +49,7 @@ struct Seen {
     bearers: Mutex<Vec<(String, String)>>,
     crashes: Mutex<Vec<String>>,
     latest: Mutex<Vec<String>>,
+    requests: AtomicU32,
 }
 
 struct Fake {
@@ -133,6 +134,10 @@ async fn fake_cloud(release: Release) -> Result<Fake, Failure> {
                 )
             }),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&seen),
+            counted,
+        ))
         .with_state(Arc::clone(&seen));
     Ok(Fake {
         seen,
@@ -159,6 +164,15 @@ fn wire_manifest(version: &str, host: &str, sha: &str, signature: &str) -> Manif
         signature: signature.to_owned(),
         notes_url: "https://example.com/notes".to_owned(),
     }
+}
+
+async fn counted(
+    State(seen): State<Arc<Seen>>,
+    request: Request<Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    seen.requests.fetch_add(1, Ordering::SeqCst);
+    next.run(request).await
 }
 
 fn authorization(headers: &HeaderMap) -> String {
@@ -211,7 +225,7 @@ struct Node {
 async fn node(
     root: &Path,
     fake: &Fake,
-    disabled: bool,
+    access: CloudAccess,
     hubs: Vec<HubEntry>,
 ) -> Result<Node, Failure> {
     let owner = UserId::new("owner".to_owned())?;
@@ -221,7 +235,7 @@ async fn node(
     let cloud = CloudSettings {
         base: format!("http://{}/", fake.stub.addr).parse()?,
         update_key: fake.key,
-        telemetry_disabled: disabled,
+        access,
     };
     let hubs = Hubs::new(
         "desk-node",
@@ -291,7 +305,7 @@ fn release() -> Release {
 async fn a_fresh_install_has_an_id_and_privacy_defaults_in_an_owner_only_file() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let shown = account(&node.app).await?;
     assert_eq!(
         shown,
@@ -304,6 +318,7 @@ async fn a_fresh_install_has_an_id_and_privacy_defaults_in_an_owner_only_file() 
             pending_update: None,
             crash_reports: true,
             usage_counts: true,
+            cloud_disabled: false,
         }
     );
     let files = AccountFiles::new(&root.path().join("state"));
@@ -312,7 +327,7 @@ async fn a_fresh_install_has_an_id_and_privacy_defaults_in_an_owner_only_file() 
     let first = files.read()?.ok_or("install state missing")?.install_id;
     assert_eq!(first.get_version_num(), 4);
     drop(node);
-    let again = self::node(root.path(), &fake, false, Vec::new()).await?;
+    let again = self::node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     assert_eq!(
         again.account.files().read()?.ok_or("missing")?.install_id,
         first
@@ -324,7 +339,7 @@ async fn a_fresh_install_has_an_id_and_privacy_defaults_in_an_owner_only_file() 
 async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let (status, body) = local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     let (status, body) = local(
@@ -410,7 +425,7 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
 async fn deleting_the_account_deletes_it_in_the_cloud_then_here() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let (status, _) = local(&node.app, Method::DELETE, "/api/account", "").await?;
     assert_eq!(status, StatusCode::CONFLICT);
     local(
@@ -444,7 +459,7 @@ async fn deleting_the_account_deletes_it_in_the_cloud_then_here() -> TestResult 
 async fn account_routes_answer_only_on_loopback() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     for (method, path) in [
         (Method::GET, "/api/account"),
         (Method::PATCH, "/api/account"),
@@ -479,7 +494,7 @@ fn report(install_id: Uuid) -> CrashReport {
 async fn queued_crash_reports_are_sent_once_and_dropped_when_turned_off() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let files = node.account.files().clone();
     let install_id = files.read()?.ok_or("missing")?.install_id;
     queue(&files, &report(install_id))?;
@@ -512,7 +527,7 @@ async fn queued_crash_reports_are_sent_once_and_dropped_when_turned_off() -> Tes
 async fn a_hub_policy_turns_telemetry_off_and_keeps_it_off() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
-    let node = node(root.path(), &fake, true, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::NoTelemetry, Vec::new()).await?;
     let shown = account(&node.app).await?;
     assert_eq!((shown.crash_reports, shown.usage_counts), (false, false));
     let (status, body) = local(
@@ -535,7 +550,7 @@ async fn a_hub_policy_turns_telemetry_off_and_keeps_it_off() -> TestResult {
 async fn signed_in(release: Release) -> Result<(tempfile::TempDir, Fake, Node), Failure> {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release).await?;
-    let node = node(root.path(), &fake, false, Vec::new()).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     local(
         &node.app,
         Method::POST,
@@ -622,7 +637,7 @@ async fn hubs_list_the_serving_node_first_and_probe_the_others() -> TestResult {
             kind: HubKind::Team,
         },
     ];
-    let node = node(root.path(), &fake, false, hubs).await?;
+    let node = node(root.path(), &fake, CloudAccess::Open, hubs).await?;
     let (status, body) = local(&node.app, Method::GET, "/api/hubs", "").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let listed: Vec<Hub> = serde_json::from_str(&body)?;
@@ -701,5 +716,93 @@ async fn a_token_the_cloud_revoked_signs_this_install_out() -> TestResult {
         (shown.email, shown.update_source),
         (None, UpdateSource::Github)
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResult {
+    let (root, fake, node) = signed_in(release()).await?;
+    let files = node.account.files().clone();
+    drop(node);
+    let node = self::node(root.path(), &fake, CloudAccess::Disabled, Vec::new()).await?;
+    let before = fake.seen.requests.load(Ordering::SeqCst);
+    assert!(before > 0, "the fake cloud counts requests");
+
+    let shown = account(&node.app).await?;
+    assert!(shown.cloud_disabled);
+    assert_eq!(shown.update_source, UpdateSource::Github);
+    assert_eq!((shown.crash_reports, shown.usage_counts), (false, false));
+    for (method, path, body) in [
+        (
+            Method::POST,
+            "/api/account/signin",
+            r#"{"email":"user@example.com"}"#,
+        ),
+        (Method::POST, "/api/account/signin/poll", ""),
+        (
+            Method::PATCH,
+            "/api/account",
+            r#"{"updateSource":"rivethub-cloud"}"#,
+        ),
+        (Method::DELETE, "/api/account", ""),
+    ] {
+        let (status, text) = local(&node.app, method.clone(), path, body).await?;
+        assert_eq!(status, StatusCode::CONFLICT, "{method} {path}: {text}");
+        assert!(
+            text.contains("cloud sign-in is disabled by this hub's policy"),
+            "{method} {path}: {text}"
+        );
+    }
+
+    queue(&files, &report(files.read()?.ok_or("missing")?.install_id))?;
+    node.account.count(gateway::account::UsageEvent::Search);
+    node.account
+        .tick(Utc::now(), &CancellationToken::new())
+        .await;
+    let (status, text) = local(&node.app, Method::POST, "/api/account/signout", "").await?;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(account(&node.app).await?.email, None);
+    assert_eq!(fake.seen.requests.load(Ordering::SeqCst), before);
+    Ok(())
+}
+
+async fn healthz(yaml: &str) -> Result<String, Failure> {
+    let home = tempfile::tempdir()?;
+    let env = config::Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml)?;
+    let config = config::type_document(&document)?.config;
+    let settings =
+        gateway::Settings::from_config_in(&config, &env, "host".to_owned(), "node".to_owned())?;
+    let app = Arc::new(Gateway::new(
+        Arc::new(testkit::FakeMemoryStore::default()),
+        settings,
+    ))
+    .router(true);
+    let (status, body) = local(&app, Method::GET, "/healthz", "").await?;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Ok(body)
+}
+
+#[tokio::test]
+async fn healthz_states_a_hub_policy_only_when_one_is_set() -> TestResult {
+    let open = healthz("memory:\n  backend: sqlite\ntelemetry:\n  disabled: true\n").await?;
+    assert!(!open.contains("policy"), "{open}");
+    for (yaml, policy) in [
+        (
+            "memory:\n  backend: sqlite\n  share:\n    allowed_servers: [team.example.com]\ncloud:\n  disabled: true\n",
+            r#""policy":{"cloud":"disabled","shareServers":["team.example.com"]}"#,
+        ),
+        (
+            "cloud:\n  disabled: true\n",
+            r#""policy":{"cloud":"disabled"}"#,
+        ),
+        (
+            "memory:\n  share:\n    allowed_servers: [team.example.com]\n",
+            r#""policy":{"cloud":"enabled","shareServers":["team.example.com"]}"#,
+        ),
+    ] {
+        let body = healthz(yaml).await?;
+        assert!(body.contains(policy), "{yaml}: {body}");
+    }
     Ok(())
 }

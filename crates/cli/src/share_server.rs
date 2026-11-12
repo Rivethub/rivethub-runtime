@@ -5,6 +5,7 @@ use std::time::Duration;
 use capture::sanitize::KeyError;
 use capture::seal::CodeError;
 use capture::seal::ShareServer;
+use capture::share_policy::{BadAllowedServer, SharePolicy, ShareRefused};
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -66,6 +67,10 @@ pub enum ShareCommand {
 pub enum ServerError {
     #[error(transparent)]
     Server(#[from] CodeError),
+    #[error(transparent)]
+    AllowedServer(#[from] BadAllowedServer),
+    #[error(transparent)]
+    Policy(#[from] ShareRefused),
     #[error("this machine is not signed in to {0}; run rh share login {0}")]
     LoggedOut(ShareServer),
     #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
@@ -160,7 +165,8 @@ pub(crate) enum Login {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ShareServers {
-    configured: ShareServer,
+    policy: SharePolicy,
+    configured: Option<ShareServer>,
     logins: LoginStore,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
@@ -178,13 +184,17 @@ pub(crate) struct Server {
 impl ShareServers {
     pub(crate) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
         let loaded = crate::db::load(env, None).await?;
-        let configured = match loaded.config.share_server() {
-            Some(section) => section.url.parse().map_err(ServerError::from)?,
-            None => ShareServer::rivethub_cloud(),
-        };
+        let configured = loaded
+            .config
+            .share_server()
+            .map(|section| section.url.parse())
+            .transpose()
+            .map_err(ServerError::from)?;
+        let policy = SharePolicy::from_config(&loaded.config).map_err(ServerError::from)?;
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
             configured,
+            policy,
             logins: LoginStore::choose(env, state.join(STORE_FILE)).await?,
             lock: state.join(LOCK_FILE),
             cas: loaded.config.share_trusted_cas().to_vec(),
@@ -194,7 +204,29 @@ impl ShareServers {
     pub(crate) fn pick(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
         match named {
             Some(text) => Ok(text.parse()?),
-            None => Ok(self.configured.clone()),
+            None => Ok(self.policy.default_server(self.configured.clone())?),
+        }
+    }
+
+    pub(crate) fn logout_target(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
+        match named {
+            Some(text) => Ok(text.parse()?),
+            None => Ok(self
+                .configured
+                .clone()
+                .unwrap_or_else(ShareServer::rivethub_cloud)),
+        }
+    }
+
+    pub(crate) async fn forget_refused(&self, host: &ShareServer) -> Result<bool, ServerError> {
+        let _lock = lock(&self.lock).await?;
+        match self.logins.load(host).await {
+            Err(ServerError::LoggedOut(_)) => Ok(false),
+            loaded => {
+                loaded?;
+                self.logins.forget(host).await?;
+                Ok(true)
+            }
         }
     }
 
@@ -203,6 +235,7 @@ impl ShareServers {
         host: &ShareServer,
         timeout: Duration,
     ) -> Result<Server, ServerError> {
+        self.policy.admit(host)?;
         let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server(host.to_string()))?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
@@ -228,8 +261,8 @@ impl ShareServers {
         })
     }
 
-    pub(crate) const fn configured(&self) -> &ShareServer {
-        &self.configured
+    pub(crate) fn default_host(&self) -> Option<ShareServer> {
+        self.policy.default_server(self.configured.clone()).ok()
     }
 
     pub(crate) const fn logins(&self) -> &LoginStore {
@@ -246,10 +279,14 @@ impl ShareServers {
             ),
         };
         if listed.is_empty() {
-            return Ok(Report::success(format!(
-                "not signed in to any share server; rh share login signs in to {}\n{kept}",
-                self.configured
-            )));
+            return Ok(Report::success(
+                match self.policy.default_server(self.configured.clone()) {
+                    Ok(host) => format!(
+                        "not signed in to any share server; rh share login signs in to {host}\n{kept}"
+                    ),
+                    Err(refused) => format!("not signed in to any share server; {refused}\n{kept}"),
+                },
+            ));
         }
         let mut lines = listed
             .iter()
@@ -275,6 +312,21 @@ impl ShareServers {
         lines.push_str(&kept);
         Ok(Report::success(lines))
     }
+}
+
+async fn lock(path: &std::path::Path) -> Result<std::fs::File, ServerError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(ServerError::from)
 }
 
 async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certificate, ServerError> {
@@ -311,18 +363,7 @@ impl Server {
     }
 
     pub(crate) async fn lock(&self) -> Result<std::fs::File, ServerError> {
-        if let Some(parent) = self.lock.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&self.lock)?;
-        tokio::task::spawn_blocking(move || file.lock().map(|()| file))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ServerError::from)
+        lock(&self.lock).await
     }
 
     pub(crate) const fn logins(&self) -> &LoginStore {
@@ -453,6 +494,9 @@ pub async fn run(
                 }
                 LoggedOut::NotRevocable => format!(
                     "signed out of {host}; it offers no token revocation, so the login there lasts until it expires\n"
+                ),
+                LoggedOut::Refused(refused) => format!(
+                    "signed out of {host}; the login was not revoked there because {refused}\n"
                 ),
             })
         }

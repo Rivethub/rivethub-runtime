@@ -53,6 +53,7 @@ fn settings(root: &Path) -> Settings {
         state_dir: root.join("state"),
         private_ca: None,
         request_deadline: gateway::REQUEST_DEADLINE,
+        policy: None,
     }
 }
 

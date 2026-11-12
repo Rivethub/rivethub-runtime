@@ -22,6 +22,7 @@ mod sanitize_sessions;
 mod seal;
 mod session_titles;
 mod session_transcripts;
+mod share_policy;
 mod spool_and_transport;
 mod spool_recovery;
 mod stop_reply;
