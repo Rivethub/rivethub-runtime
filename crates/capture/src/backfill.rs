@@ -26,6 +26,8 @@ pub const HARNESSES: [HarnessId; 4] = [
 
 const EVENT: &str = "Backfill";
 
+const EVERY_SESSION: usize = u32::MAX as usize;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Failure {
     pub session: String,
@@ -141,7 +143,7 @@ impl<T: CaptureTransport> Backfill<T> {
             return true;
         };
         let lister = StoreSessionLister::new(self.roots.clone());
-        let rows = match lister.harness(harness, 0).await {
+        let rows = match lister.harness(harness, EVERY_SESSION).await {
             Ok(rows) => rows,
             Err(error) => {
                 totals.fail("store", &error);

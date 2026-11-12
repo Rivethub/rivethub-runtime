@@ -170,20 +170,21 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             Ok(batch) => batch,
             Err(error) => return HookRun::failed(error.to_string()),
         };
+        let mut failures = Vec::new();
         match self.writer.write(&batch, now).await {
             Ok(totals) => {
                 self.best_effort_log(&log_line(event, session.as_str(), &totals, now))
                     .await;
             }
-            Err(error) => return HookRun::failed(error.to_string()),
+            Err(error) => failures.push(error.to_string()),
         }
-        let failures = match self
+        match self
             .capture_subagents(&payload, session.native(), event, now)
             .await
         {
-            Ok(failures) => failures,
-            Err(error) => return HookRun::failed(error.to_string()),
-        };
+            Ok(found) => failures.extend(found),
+            Err(error) => failures.push(error.to_string()),
+        }
         if failures.is_empty() {
             HookRun::done()
         } else {

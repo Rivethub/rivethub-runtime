@@ -337,3 +337,91 @@ async fn backfill_writes_the_event_ids_the_hook_wrote() -> TestResult {
     assert_eq!((totals.sessions, totals.added), (2, 0));
     Ok(())
 }
+
+#[derive(Clone, Default)]
+struct Down;
+
+#[async_trait]
+impl capture::writer::CaptureTransport for Down {
+    async fn post(&self, _body: String) -> Result<CaptureResult, capture::writer::PostError> {
+        Err(capture::writer::PostError::Network {
+            message: "connection refused".to_owned(),
+        })
+    }
+}
+
+fn spooled_keys(home: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut keys = Vec::new();
+    for entry in std::fs::read_dir(home.join("spool"))? {
+        let path = entry?.path();
+        if path.is_file() {
+            let batch: CaptureBatchRequest = serde_json::from_slice(&std::fs::read(&path)?)?;
+            keys.push(batch.session_key);
+        }
+    }
+    keys.sort();
+    Ok(keys)
+}
+
+#[tokio::test]
+async fn a_subagent_stop_during_an_outage_spools_the_subagent_as_well_as_the_parent() -> TestResult
+{
+    let store = Store::new()?;
+    store.explorer()?;
+    let env = environment(store.home.path());
+    let hook = capture::hook::ClaudeHook::new(
+        capture::writer::CaptureWriter::new(
+            Down,
+            capture::spool::CaptureSpool::new(store.home.path().join("spool")),
+            None,
+            None,
+        ),
+        &config::Paths::new(&env)?,
+    );
+    hook.run(
+        &store.stdin("SubagentStop", &format!(r#","agent_id":"{EXPLORER}""#)),
+        now()?,
+        "1791656243919-30e4c5d71",
+    )
+    .await;
+    assert_eq!(
+        spooled_keys(store.home.path())?,
+        vec![
+            format!("claude-code:{PARENT}"),
+            format!("claude-code:{EXPLORER}")
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn backfill_reads_every_codex_session() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let day = home.path().join(".codex/sessions/2026/10/30");
+    std::fs::create_dir_all(&day)?;
+    for id in [
+        "01a18e31-2073-7cc2-be8a-8e36c42f8948",
+        "01a18e31-2073-7cc2-be8a-8e36c42f8949",
+    ] {
+        std::fs::write(
+            day.join(format!("rollout-2026-10-30T15-00-00-{id}.jsonl")),
+            format!(
+                r#"{{"timestamp":"2026-10-30T15:00:00.000Z","type":"session_meta","payload":{{"id":"{id}","cwd":"/work/codex"}}}}
+{{"timestamp":"2026-10-30T15:00:03.000Z","type":"response_item","payload":{{"type":"message","role":"user","id":"msg_user","content":[{{"type":"input_text","text":"apply the patch"}}]}}}}
+{{"timestamp":"2026-10-30T15:00:10.000Z","type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"Applied."}}]}}}}
+"#
+            ),
+        )?;
+    }
+    let gateway = Gateway::default();
+    let totals = capture::backfill::Backfill::new(
+        writer(home.path(), &gateway),
+        capture::listing::store_roots(&environment(home.path())),
+    )
+    .run(&[HarnessId::Codex], false, now()?)
+    .await;
+    let codex = totals.first().ok_or("no totals")?;
+    assert_eq!((codex.sessions, codex.failures.len()), (2, 0));
+    assert!(codex.added > 0, "backfill added no codex messages");
+    Ok(())
+}
