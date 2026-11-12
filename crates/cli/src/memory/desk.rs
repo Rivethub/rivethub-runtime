@@ -20,14 +20,11 @@ use kernel::memory::share::desk::ServerKind;
 use kernel::memory::share::desk::ServerView;
 use kernel::memory::share::desk::Servers;
 use oauth2::DeviceCodeErrorResponseType;
-use oauth2::EndpointNotSet;
-use oauth2::EndpointSet;
 use oauth2::RefreshToken;
 use oauth2::RequestTokenError;
 use oauth2::Scope;
 use oauth2::StandardDeviceAuthorizationResponse;
 use oauth2::StandardRevocableToken;
-use oauth2::basic::BasicClient;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use tokio_util::task::AbortOnDropHandle;
@@ -130,9 +127,6 @@ pub async fn upload_to(
     })
 }
 
-type DeviceClient =
-    BasicClient<EndpointNotSet, EndpointSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
-
 async fn connect(env: &Environment, server: Option<&str>) -> Result<Server, Error> {
     let servers = ShareServers::from_env(env).await?;
     let host = servers.pick(server)?;
@@ -216,14 +210,10 @@ pub async fn start(
 ) -> Result<DeviceLogin, Error> {
     let server = connect(env, server).await?;
     let endpoints = server.endpoints().await?;
-    let device = endpoints
-        .device
-        .clone()
-        .ok_or_else(|| ServerError::NoDeviceFlow(server.host().clone()))?;
-    let oauth = Server::token_client(&endpoints).set_device_authorization_url(device);
+    let oauth = Server::oauth_client(&endpoints);
     let details: StandardDeviceAuthorizationResponse = oauth
         .exchange_device_code()
-        .add_scope(Scope::new(SCOPE.to_owned()))
+        .add_scopes(SCOPE.split(' ').map(|scope| Scope::new(scope.to_owned())))
         .add_extra_param("client_name", format!("{client} on {}", host_name()?))
         .request_async(&server)
         .await
@@ -274,7 +264,7 @@ fn openable(uri: String, server: &ShareServer) -> Result<String, ServerError> {
 
 async fn approval(
     server: Server,
-    oauth: DeviceClient,
+    oauth: oauth::OauthClient,
     details: StandardDeviceAuthorizationResponse,
     interval: Arc<AtomicU64>,
 ) -> Result<Approval, Error> {
@@ -353,7 +343,6 @@ pub enum LoggedOut {
     NotSignedIn,
     Revoked,
     Forgotten,
-    NotRevocable,
     Refused(ShareRefused),
 }
 
@@ -384,21 +373,15 @@ pub async fn logout(
         Login::Team(_) => LoggedOut::Forgotten,
         Login::Device(tokens) => {
             let endpoints = server.endpoints().await?;
-            match endpoints.revocation.clone() {
-                None => LoggedOut::NotRevocable,
-                Some(revocation) => {
-                    Server::token_client(&endpoints)
-                        .set_revocation_url(revocation)
-                        .revoke_token(StandardRevocableToken::RefreshToken(RefreshToken::new(
-                            tokens.refresh_token.clone(),
-                        )))
-                        .map_err(|error| ServerError::Protocol(error.to_string()))?
-                        .request_async(&server)
-                        .await
-                        .map_err(oauth::failed)?;
-                    LoggedOut::Revoked
-                }
-            }
+            Server::oauth_client(&endpoints)
+                .revoke_token(StandardRevocableToken::RefreshToken(RefreshToken::new(
+                    tokens.refresh_token.clone(),
+                )))
+                .map_err(|error| ServerError::Protocol(error.to_string()))?
+                .request_async(&server)
+                .await
+                .map_err(oauth::failed)?;
+            LoggedOut::Revoked
         }
     };
     server.logins().forget(&host).await?;
@@ -552,7 +535,6 @@ fn server_error(error: ServerError) -> DeskError {
         },
         ServerError::Http(error) => DeskError::Unreachable(error.to_string()),
         ServerError::Finished => DeskError::UnknownLogin,
-        error @ ServerError::RateLimited(_) => DeskError::Unreachable(error.to_string()),
         ServerError::Server(error) => DeskError::BadServer(error.to_string()),
         error @ ServerError::Policy(_) => DeskError::BadServer(error.to_string()),
         other @ (ServerError::Store(_)

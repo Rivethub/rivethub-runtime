@@ -2218,29 +2218,29 @@ routes. `--server`, else `memory.share.server.url`, else `rivethub.cloud` names 
 `:port`; rh talks HTTPS to it, or HTTP only to a loopback host. A server with a private CA is trusted through
 `memory.share.trusted_cas: [{host, ca}]`, which adds that PEM file to the roots for that host only. The client uses
 rustls, no proxy, no redirects and timeouts. `rh share login [<server>]` runs the OAuth 2.0 device grant (RFC 8628)
-through the `oauth2` crate. The endpoints come from the server's RFC 8414 metadata at
-`/.well-known/oauth-authorization-server` (`device_authorization_endpoint`, `token_endpoint`, `revocation_endpoint`;
-its `issuer` must be the server's origin); a server that answers 404 there uses `/api/cli/device/code`, `/api/cli/token`
-and `/api/cli/revoke`. Every request is `application/x-www-form-urlencoded` with `client_id=rivethub-cli`; the device
-request adds `scope=drops:write` and `client_name`. rh prints the `verification_uri_complete` and user code and polls
-the token endpoint at the given interval, honouring `authorization_pending`, `slow_down` (5 s more), `access_denied` and
-`expired_token`. A 429 whose `Retry-After` (delay-seconds or an HTTP date) is at most 30 s is retried after that wait,
-at most twice; a missing or unreadable `Retry-After`, a longer wait or a 5xx is an error (while polling, a backoff). A
-loopback server is reached over http for every endpoint; because `oauth2` accepts only an https revocation URL (RFC 7009
-§2), rh hands it the https form of that loopback URL and sends the request over http. Logins are kept per server in
-`$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers. When an OS
-keyring is available (Secret Service on Linux, the macOS Keychain, the Windows Credential Manager, through the `keyring`
-crate) the access, refresh and team tokens live there under the service `rivethub share login` and the server's host,
-and the file keeps only the expiry, scope and user, so listing reads no secret. rh decides the store once per process:
-`RIVETHUB_TOKEN_STORE=file` forces the file, `=keyring` requires the keyring, and unset means the keyring when it opens
-(on Linux only when `DBUS_SESSION_BUS_ADDRESS` names a session bus), else the file. A file entry holding its tokens, as
-older rh wrote them, still reads, and moves into the keyring on its next write; logout erases the keyring entry. Every change to
-that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and re-reads the file first, so
-concurrent runs never replay a rotated refresh token (a server revokes the login on reuse). The access token is
-refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share logout [<server>]` posts
-that server's refresh token to its revocation endpoint (RFC 7009) and forgets the login only after the server answers
-200; on any error the login stays and the error is reported. A server whose metadata names no revocation endpoint has
-its login forgotten without a revoke. the login stays and the error is reported. `rh share status` lists the logins without a request.
+through the `oauth2` crate. It reads the server's RFC 8414 metadata from `GET /.well-known/oauth-authorization-server`
+and takes the `device_authorization_endpoint`, `token_endpoint` and `revocation_endpoint` from it; a document that
+puts any of them on another origin is refused, so no token is posted elsewhere. A server with no metadata, such as a
+team server (note 143), whose members upload with their gateway bearer token, is told "offers no device sign-in".
+Requests are `application/x-www-form-urlencoded` (RFC 6749, RFC 8628) with `client_id=rivethub-cli`, public, and scope
+`drops:write offline_access` (`offline_access` is what makes the server issue a refresh token). rh prints the
+`verification_uri_complete` and user code, and polls the token endpoint (device grant) at the given interval,
+honouring `authorization_pending`, `slow_down`, `access_denied` and `expired_token`. A 429 or a 5xx is an error (while
+polling, a backoff). A loopback server is reached over http for every endpoint; because `oauth2` accepts only an https
+revocation URL (RFC 7009 §2), rh hands it the https form of that loopback URL and sends the request over http. Logins are
+kept per server in `$XDG_STATE_HOME/rivethub/share-logins.json` (0600), so a machine can be signed in to several servers.
+When an OS keyring is available (Secret Service on Linux, the macOS Keychain, the Windows Credential Manager, through the
+`keyring` crate) the access, refresh and team tokens live there under the service `rivethub share login` and the server's
+host, and the file keeps only the expiry, scope and user, so listing reads no secret. rh decides the store once per
+process: `RIVETHUB_TOKEN_STORE=file` forces the file, `=keyring` requires the keyring, and unset means the keyring when it
+opens (on Linux only when `DBUS_SESSION_BUS_ADDRESS` names a session bus), else the file. A file entry holding its
+tokens, as older rh wrote them, still reads, and moves into the keyring on its next write; logout erases the keyring
+entry. Every change to that file (login, refresh, logout) holds an exclusive lock on `share-logins.json.lock` and
+re-reads the file first, so concurrent runs never replay a rotated refresh token (a server revokes the login on reuse).
+The access token is refreshed (`grant_type=refresh_token`, rotated every time) a minute before it expires. `rh share
+logout [<server>]` posts that server's refresh token to its `revocation_endpoint` (RFC 7009) and forgets the login only
+after the server answers 2xx; on any error the login stays and the error is reported. `rh share status` lists the logins
+without a request.
 
 Upload. `POST <server>/api/drops` with the body `application/octet-stream` and the access token as a bearer token; on
 401 the token is refreshed once and the upload retried. On 201 `{id, expires_at, bytes}` rh unlinks the sanitized

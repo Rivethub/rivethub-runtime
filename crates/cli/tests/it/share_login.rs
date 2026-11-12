@@ -41,14 +41,12 @@ fn header(headers: &HeaderMap, name: &str) -> String {
 #[derive(Clone)]
 struct Reply {
     status: StatusCode,
-    retry_after: Option<u64>,
     body: String,
 }
 
 fn ok(body: &str) -> Reply {
     Reply {
         status: StatusCode::OK,
-        retry_after: None,
         body: body.to_owned(),
     }
 }
@@ -56,16 +54,7 @@ fn ok(body: &str) -> Reply {
 fn oauth_error(code: &str) -> Reply {
     Reply {
         status: StatusCode::BAD_REQUEST,
-        retry_after: None,
         body: format!(r#"{{"error":"{code}"}}"#),
-    }
-}
-
-fn limited(seconds: u64) -> Reply {
-    Reply {
-        status: StatusCode::TOO_MANY_REQUESTS,
-        retry_after: Some(seconds),
-        body: r#"{"error":"rate_limited"}"#.to_owned(),
     }
 }
 
@@ -116,18 +105,12 @@ async fn post(State(auth): State<Auth>, uri: Uri, headers: HeaderMap, body: Stri
     let Some(reply) = reply else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "unscripted").into_response();
     };
-    let mut response = (
+    let response = (
         reply.status,
         [("content-type", "application/json; charset=utf-8")],
         reply.body,
     )
         .into_response();
-    if let Some(seconds) = reply.retry_after {
-        response.headers_mut().insert(
-            "retry-after",
-            seconds.to_string().parse().expect("header value"),
-        );
-    }
     response
 }
 
@@ -178,9 +161,14 @@ async fn serve() -> Served {
         .fallback(axum::routing::post(post))
         .with_state(auth.clone());
     let stub = testkit::stub_server(app).await.expect("fake server");
+    let host = stub.addr.to_string();
+    let base = format!("http://{host}/api/auth");
+    auth.0.lock().metadata = Some(format!(
+        r#"{{"device_authorization_endpoint":"{base}/device/code","token_endpoint":"{base}/oauth2/token","revocation_endpoint":"{base}/oauth2/revoke"}}"#
+    ));
     Served {
         auth,
-        host: stub.addr.to_string(),
+        host,
         _stub: stub,
     }
 }
@@ -244,7 +232,7 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
     let served = serve().await;
     let base = format!("http://{}", served.host);
     served.auth.0.lock().metadata = Some(format!(
-        r#"{{"issuer":"{base}","device_authorization_endpoint":"{base}/oauth/device","token_endpoint":"{base}/oauth/token","revocation_endpoint":"{base}/oauth/revoke"}}"#
+        r#"{{"device_authorization_endpoint":"{base}/oauth/device","token_endpoint":"{base}/oauth/token","revocation_endpoint":"{base}/oauth/revoke"}}"#
     ));
     served.auth.queue("/oauth/device", [device(1)]);
     served.auth.queue(
@@ -277,7 +265,10 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
         );
     }
     let asked = &seen.first().expect("device request").params;
-    assert_eq!(asked.get("scope").map(String::as_str), Some("drops:write"));
+    assert_eq!(
+        asked.get("scope").map(String::as_str),
+        Some("drops:write offline_access")
+    );
     assert!(
         asked
             .get("client_name")
@@ -294,62 +285,20 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
 }
 
 #[tokio::test]
-async fn a_server_without_metadata_uses_the_cli_paths() {
+async fn a_server_without_metadata_offers_no_device_sign_in() {
     let served = serve().await;
-    served.auth.queue("/api/cli/device/code", [device(1)]);
-    served.auth.queue("/api/cli/token", [issued("one")]);
+    served.auth.0.lock().metadata = None;
     let node = node();
 
-    let started = desk::start(&node.env, Some(&served.host), "RivetHub test")
+    let error = desk::start(&node.env, Some(&served.host), "RivetHub test")
         .await
-        .expect("start");
-    let approval = tokio::time::timeout(Duration::from_secs(30), started.pending.finish())
-        .await
-        .expect("login never ended")
-        .expect("login");
+        .expect_err("no metadata, no device flow");
 
     assert!(
-        matches!(approval, Approval::SignedIn { .. }),
-        "{approval:?}"
+        error.to_string().contains("offers no device sign-in"),
+        "{error}"
     );
-    assert_eq!(
-        served.auth.paths(),
-        ["/api/cli/device/code", "/api/cli/token"]
-    );
-}
-
-#[tokio::test]
-async fn a_rate_limited_device_request_waits_for_retry_after() {
-    let served = serve().await;
-    served
-        .auth
-        .queue("/api/cli/device/code", [limited(1), device(1)]);
-    served
-        .auth
-        .queue("/api/cli/token", [limited(1), issued("one")]);
-    let node = node();
-    let began = std::time::Instant::now();
-
-    let approval = signed_in(&node, &served.host).await.expect("login");
-
-    assert!(
-        matches!(approval, Approval::SignedIn { .. }),
-        "{approval:?}"
-    );
-    assert_eq!(
-        served.auth.paths(),
-        [
-            "/api/cli/device/code",
-            "/api/cli/device/code",
-            "/api/cli/token",
-            "/api/cli/token"
-        ]
-    );
-    assert!(
-        began.elapsed() >= Duration::from_secs(2),
-        "{:?}",
-        began.elapsed()
-    );
+    assert_eq!(served.auth.paths(), Vec::<String>::new());
 }
 
 #[tokio::test]
@@ -359,8 +308,10 @@ async fn denied_and_expired_approvals_end_the_login() {
         ("expired_token", Approval::Expired),
     ] {
         let served = serve().await;
-        served.auth.queue("/api/cli/device/code", [device(1)]);
-        served.auth.queue("/api/cli/token", [oauth_error(code)]);
+        served.auth.queue("/api/auth/device/code", [device(1)]);
+        served
+            .auth
+            .queue("/api/auth/oauth2/token", [oauth_error(code)]);
         let node = node();
 
         let approval = signed_in(&node, &served.host).await.expect("login");
@@ -373,10 +324,11 @@ async fn denied_and_expired_approvals_end_the_login() {
 #[tokio::test]
 async fn slow_down_adds_five_seconds_to_the_interval() {
     let served = serve().await;
-    served.auth.queue("/api/cli/device/code", [device(1)]);
-    served
-        .auth
-        .queue("/api/cli/token", [oauth_error("slow_down"), issued("one")]);
+    served.auth.queue("/api/auth/device/code", [device(1)]);
+    served.auth.queue(
+        "/api/auth/oauth2/token",
+        [oauth_error("slow_down"), issued("one")],
+    );
     let node = node();
     let started = desk::start(&node.env, Some(&served.host), "RivetHub test")
         .await
@@ -426,7 +378,6 @@ async fn a_team_login_is_checked_with_api_me() {
 
     served.auth.0.lock().me = Some(Reply {
         status: StatusCode::UNAUTHORIZED,
-        retry_after: None,
         body: r#"{"error":"invalid_token"}"#.to_owned(),
     });
     let other = self::node();
@@ -483,15 +434,14 @@ async fn token_replies_never_reach_an_error() {
     );
     let failing = Reply {
         status: StatusCode::INTERNAL_SERVER_ERROR,
-        retry_after: None,
         body: r#"{"access_token":"rhca_LEAKED","refresh_token":"rhcr_LEAKED"}"#.to_owned(),
     };
     for (path, reply) in [
-        ("/api/cli/token", unparsable),
-        ("/api/cli/device/code", failing),
+        ("/api/auth/oauth2/token", unparsable),
+        ("/api/auth/device/code", failing),
     ] {
         let served = serve().await;
-        served.auth.queue("/api/cli/device/code", [device(1)]);
+        served.auth.queue("/api/auth/device/code", [device(1)]);
         served
             .auth
             .0
@@ -524,7 +474,7 @@ async fn a_verification_url_must_open_in_a_browser() {
     ] {
         let served = serve().await;
         served.auth.queue(
-            "/api/cli/device/code",
+            "/api/auth/device/code",
             [ok(&format!(
                 r#"{{"device_code":"rhcd_x","user_code":"ABCD-EFGH","verification_uri":"https://share.example.com/device","verification_uri_complete":"{uri}","expires_in":600,"interval":1}}"#
             ))],

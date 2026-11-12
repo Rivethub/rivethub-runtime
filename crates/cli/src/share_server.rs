@@ -30,10 +30,7 @@ pub(crate) mod logins;
 pub(crate) mod oauth;
 
 pub(crate) const CLIENT_ID: &str = "rivethub-cli";
-pub(crate) const SCOPE: &str = "drops:write";
-pub(crate) const DEVICE_PATH: &str = "api/cli/device/code";
-pub(crate) const TOKEN_PATH: &str = "api/cli/token";
-pub(crate) const REVOKE_PATH: &str = "api/cli/revoke";
+pub(crate) const SCOPE: &str = "drops:write offline_access";
 pub(crate) const STORE_FILE: &str = "share-logins.json";
 pub(crate) const ME_PATH: &str = "api/me";
 const LOCK_FILE: &str = "share-logins.json.lock";
@@ -83,14 +80,12 @@ pub enum ServerError {
     Status { status: u16, body: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("the share server is rate limiting this machine; try again in {0} seconds")]
-    RateLimited(u64),
     #[error("the share server refused the request: {0}")]
     Refused(String),
     #[error("the share server does not speak OAuth as expected: {0}")]
     Protocol(String),
     #[error(
-        "{0} offers no device sign-in (no device_authorization_endpoint in its OAuth metadata)"
+        "{0} offers no device sign-in (no OAuth metadata at /.well-known/oauth-authorization-server)"
     )]
     NoDeviceFlow(ShareServer),
     #[error("the share server gave a device code lifetime of {0} seconds, which is out of range")]
@@ -405,7 +400,7 @@ impl Server {
         }
         let endpoints = self.endpoints().await?;
         let refresh = RefreshToken::new(tokens.refresh_token.clone());
-        let refreshed = Self::token_client(&endpoints)
+        let refreshed = Self::oauth_client(&endpoints)
             .exchange_refresh_token(&refresh)
             .request_async(self)
             .await;
@@ -492,9 +487,6 @@ pub async fn run(
                 LoggedOut::Forgotten => {
                     format!("signed out of {host} and forgot its team token on this machine\n")
                 }
-                LoggedOut::NotRevocable => format!(
-                    "signed out of {host}; it offers no token revocation, so the login there lasts until it expires\n"
-                ),
                 LoggedOut::Refused(refused) => format!(
                     "signed out of {host}; the login was not revoked there because {refused}\n"
                 ),
