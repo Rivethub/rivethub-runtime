@@ -24,9 +24,9 @@ use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Fact;
-use wire::gateway::imported::ImportVerification;
 use wire::gateway::topics::TopicList;
 use wire::gateway::topics::TopicRecord;
+use wire::memory::Verification as ImportVerification;
 use wire::session_id::SessionId;
 
 use super::Api;

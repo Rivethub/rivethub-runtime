@@ -389,24 +389,7 @@ pub(crate) fn wiki_citation_body(
         title: value.title,
         channel: value.channel,
         topic_id: value.topic_id,
-        imported: value.imported.as_ref().map(imported_from_body),
-    }
-}
-
-pub(crate) fn imported_from_body(
-    value: &kernel::memory::Provenance,
-) -> wire::gateway::imported::ImportedFrom {
-    use kernel::memory::Verification;
-    use wire::gateway::imported::ImportVerification;
-    wire::gateway::imported::ImportedFrom {
-        author: value.author.clone(),
-        origin_date: value.origin_date,
-        verification: match value.verification {
-            Verification::Verified => ImportVerification::Verified,
-            Verification::Unsigned => ImportVerification::Unsigned,
-            Verification::UnknownKey => ImportVerification::UnknownKey,
-            Verification::Unreceived => ImportVerification::Unreceived,
-        },
+        imported: value.imported.as_ref().map(provenance_body),
     }
 }
 

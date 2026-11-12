@@ -3,10 +3,10 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::gateway::imported::ImportedFrom;
 use crate::gateway::session_catalog::SessionSummaryRow;
 use crate::gateway::session_catalog::SharedWith;
 use crate::gateway::session_catalog::TopicPath;
+use crate::memory::Provenance;
 use crate::session_id::SessionId;
 
 #[derive(
@@ -51,7 +51,7 @@ pub struct FactSource {
     pub at: DateTime<Utc>,
     pub value: String,
     #[serde(default)]
-    pub imported_from: Option<ImportedFrom>,
+    pub imported_from: Option<Provenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

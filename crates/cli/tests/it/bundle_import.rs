@@ -189,7 +189,10 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     let phils = hits(&search, "quokka collisions").await;
     assert_eq!(phils.len(), 2, "{phils:?}");
     for (heading, _) in &phils {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{phils:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{phils:?}"
+        );
     }
     untagged(&hits(&search, "alex-native").await);
 
@@ -204,7 +207,10 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         "import changed: {imported:?} -> {later:?}"
     );
     for (heading, _) in &hits(&search, "quokka collisions").await {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{heading}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{heading}"
+        );
     }
     untagged(&hits(&search, "alex-later").await);
     stop.cancel();
@@ -384,7 +390,10 @@ async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(poo
     let found = hits(&search, "wombat-plan").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{found:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{found:?}"
+        );
     }
     alex.stop().await;
     bob.stop().await;
@@ -415,7 +424,7 @@ async fn origins_whose_node_and_conversation_share_a_colon_stay_apart(pool: PgPo
     assert!(
         phil_hits
             .iter()
-            .all(|(heading, _)| heading.ends_with(" from phil · 2026-10-01")),
+            .all(|(heading, _)| heading.ends_with(" from phil · 2026-10-01 · unverified")),
         "{phil_hits:?}"
     );
     receiver.stop().await;
@@ -489,7 +498,10 @@ async fn a_session_passed_from_user_to_user_stays_credited_to_its_first_author(p
     let found = hits(&search, "numbat-notes").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{found:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{found:?}"
+        );
     }
     alex.stop().await;
     bob.stop().await;

@@ -106,7 +106,7 @@ pub(crate) fn source(support: &Support, titles: &Titles) -> FactSource {
         imported_from: titles
             .imported
             .get(&support.session)
-            .map(crate::memory_body::imported_from_body),
+            .map(crate::memory_body::provenance_body),
     }
 }
 
