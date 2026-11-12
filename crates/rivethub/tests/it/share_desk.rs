@@ -816,3 +816,50 @@ async fn a_login_still_starting_when_logout_runs_cannot_sign_the_desk_in() -> Te
     share.close().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn a_login_stalled_on_one_origin_does_not_delay_logout_on_another() -> TestResult {
+    let approver = Approver {
+        gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        asked: Arc::default(),
+        device_gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        device_asked: Arc::default(),
+    };
+    let share = testkit::stub_server(
+        axum::Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server",
+                axum::routing::get(oauth_metadata),
+            )
+            .route("/oauth/device", axum::routing::post(oauth_device))
+            .route("/oauth/token", axum::routing::post(oauth_token))
+            .with_state(approver.clone()),
+    )
+    .await?;
+    let host = share.addr.to_string();
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&phil, false)?;
+
+    let (started, other_logout) = tokio::join!(
+        desk.login(kernel::memory::share::desk::LoginRequest::Cloud {
+            origin: host.clone().into(),
+        }),
+        async {
+            approver.device_asked.notified().await;
+            let other = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                desk.logout("127.0.0.2:9".to_owned().into()),
+            )
+            .await;
+            approver.device_gate.add_permits(1);
+            other
+        },
+    );
+
+    let other_logout =
+        other_logout.map_err(|_| "logout on another origin waited on the stalled login")?;
+    other_logout?;
+    started?;
+    share.close().await?;
+    Ok(())
+}
