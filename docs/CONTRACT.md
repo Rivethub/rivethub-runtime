@@ -2773,8 +2773,8 @@ prompt"), `role_markup` (`<|im_start|>` and the other chat-template tokens, `[IN
 `hidden_unicode` (U+E0000 to U+E007F, U+200B to U+200D, U+2060, a U+FEFF that is not at the start of the text, U+202A to
 U+202E and U+2066 to U+2069), `exfil` (a markdown image or `<img>` whose URL carries a query, except for the well-known
 badge hosts, and request-catcher hosts), `pipe_shell` (`curl` or `wget` piped into a shell, `bash <(curl ...)`,
-`iex (iwr ...)`, `powershell -enc ...`) and `encoded` (base64 or gzip text that decodes to a match of any other rule, or
-that passes the decode budget and so cannot be read). Secret findings are the family `secret`. `docs/CLI.md` and
+`iex (iwr ...)`, `powershell -enc ...`) and `encoded` (base64 or gzip text of 8 or more characters, the shortest that decodes to a rule's match, that decodes to a match of any
+other rule, or that passes the decode budget and so cannot be read). Secret findings are the family `secret`. `docs/CLI.md` and
 `injection.toml` are the list of rules; a test fails when a rule has no fixture line that matches it.
 
 A bundle with any finding imports nothing. `rh memory receive` prints `held: <n> of <total> sessions has findings
@@ -2783,7 +2783,7 @@ A bundle with any finding imports nothing. `rh memory receive` prints `held: <n>
 session, the session number and title, the event, the field, the rule and family, and an excerpt of at most 120
 characters with the span between `>>` and `<<`. Characters that a terminal would act on or a reader could not see (C0
 and C1 controls, bidirectional and zero-width characters, tag characters, variation selectors, a byte-order mark) are
-written as `<U+E0041>`, and a run of tag characters also prints the ASCII text it spells. The excerpt of a secret
+written as `<U+E0041>`, and a run of tag characters also prints the ASCII text it spells. The exporter's name and the verification reason in the receive output are written the same way. The excerpt of a secret
 finding is the placeholder, never the secret, and the title and other text in the report come from the held-spans copy
 of the session. The report goes to stdout only; nothing writes it to disk. A rerun decides each flagged session with
 `--session <n>=import|skip|hold-spans` (`n` counts from 1; repeatable) or every flagged session with

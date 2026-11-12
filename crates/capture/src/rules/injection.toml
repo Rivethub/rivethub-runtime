@@ -129,7 +129,7 @@ regex = '''(?i)\b(?:curl|wget)\b[^\n|;&]{0,300}\|[ \t]*(?:sudo[ \t]+(?:-\S+[ \t]
 id = "pipe_process_substitution"
 family = "pipe_shell"
 why = "a shell reading a curl or wget download through process substitution runs whatever the server sends"
-keywords = ["<(curl", "<( curl", "<(wget", "<( wget"]
+keywords = ["curl", "wget"]
 regex = '''(?i)\b(?:ba|z|da|k)?sh[ \t]+(?:-\S+[ \t]+)*<\([ \t]*(?:curl|wget)\b'''
 
 [[rules]]
@@ -151,7 +151,7 @@ id = "encoded_base64"
 family = "encoded"
 why = "base64 text, gzip and one nested layer included, that decodes to text any other injection rule matches"
 keywords = ["*"]
-regex = '''(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{40,}={0,2}(?:\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*)'''
+regex = '''(?:^|[^A-Za-z0-9+/_-])([A-Za-z0-9+/_-]{8,}={0,2}(?:\r?\n[ \t]*[A-Za-z0-9+/_-]{4,}={0,2})*)'''
 decode = "base64"
 
 [[rules]]
