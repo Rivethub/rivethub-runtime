@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use capture::backfill::Backfill;
+use capture::backfill::HarnessTotals;
 use capture::hook::ClaudeHook;
 use capture::hook::store::StoreHarness;
 use capture::hook::store::StoreHook;
@@ -12,6 +14,7 @@ use clap::Subcommand;
 use clap::ValueEnum;
 use config::Environment;
 use tokio::io::AsyncReadExt as _;
+use wire::harness::HarnessId;
 
 use crate::status::Endpoint;
 use crate::{Error, Exit, Report, db, status};
@@ -26,6 +29,36 @@ pub enum CaptureCommand {
         #[arg(long, value_enum, default_value_t = HookHarness::ClaudeCode)]
         harness: HookHarness,
     },
+    #[command(
+        about = "Capture every stored session of the harness stores, Claude Code subagents included"
+    )]
+    Backfill {
+        #[arg(long = "harness", value_enum)]
+        harnesses: Vec<BackfillHarness>,
+        #[arg(long, help = "Read and count the sessions and post nothing")]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BackfillHarness {
+    ClaudeCode,
+    GrokBuild,
+    Opencode,
+    Codex,
+}
+
+impl BackfillHarness {
+    fn id(self) -> HarnessId {
+        match self {
+            Self::ClaudeCode => HarnessId::ClaudeCode,
+            Self::GrokBuild => HarnessId::GrokBuild,
+            Self::Opencode => HarnessId::Opencode,
+            Self::Codex => HarnessId::Codex,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -59,7 +92,91 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
                 HookHarness::Dsh => store_hook(env, &stdin, Utc::now(), StoreHarness::Dsh).await,
             })
         }
+        CaptureCommand::Backfill {
+            harnesses,
+            dry_run,
+            json,
+        } => {
+            let ids: Vec<HarnessId> = harnesses.into_iter().map(BackfillHarness::id).collect();
+            Ok(backfill(env, &ids, dry_run, json, Utc::now()).await)
+        }
     }
+}
+
+pub async fn backfill(
+    env: &Environment,
+    harnesses: &[HarnessId],
+    dry_run: bool,
+    json: bool,
+    now: DateTime<Utc>,
+) -> Report {
+    let (writer, _) = match writer(env).await {
+        Ok(found) => found,
+        Err(error) => return Report::failure(&error),
+    };
+    let wanted = if harnesses.is_empty() {
+        &capture::backfill::HARNESSES[..]
+    } else {
+        harnesses
+    };
+    let totals = Backfill::new(writer, capture::listing::store_roots(env))
+        .run(wanted, dry_run, now)
+        .await;
+    let failed = totals.iter().any(|found| !found.failures.is_empty());
+    let (stdout, stderr) = if json {
+        match serde_json::to_string(&BackfillJson {
+            dry_run,
+            harnesses: &totals,
+        }) {
+            Ok(text) => (format!("{text}\n"), String::new()),
+            Err(error) => return Report::failure(&error),
+        }
+    } else {
+        (summary(&totals, dry_run), failure_lines(&totals))
+    };
+    Report {
+        stdout,
+        stderr,
+        exit: if failed { Exit::Failure } else { Exit::Ok },
+        stdout_raw: Vec::new(),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct BackfillJson<'a> {
+    dry_run: bool,
+    harnesses: &'a [HarnessTotals],
+}
+
+fn summary(totals: &[HarnessTotals], dry_run: bool) -> String {
+    totals
+        .iter()
+        .map(|found| {
+            let messages = if dry_run {
+                format!("{} messages read, none posted", found.messages)
+            } else {
+                format!("{} messages added", found.added)
+            };
+            format!(
+                "{}: {} sessions, {messages}, {} failures\n",
+                found.harness,
+                found.sessions,
+                found.failures.len()
+            )
+        })
+        .collect::<Vec<String>>()
+        .concat()
+}
+
+fn failure_lines(totals: &[HarnessTotals]) -> String {
+    totals
+        .iter()
+        .flat_map(|found| {
+            found.failures.iter().map(move |failure| {
+                format!("{} {}: {}\n", found.harness, failure.session, failure.error)
+            })
+        })
+        .collect()
 }
 
 pub async fn hook(env: &Environment, stdin: &str, now: DateTime<Utc>) -> Report {

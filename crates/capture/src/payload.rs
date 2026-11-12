@@ -42,6 +42,9 @@ pub struct HookPayload {
     pub tool_result: Option<String>,
     pub tool_use_id: Option<String>,
     pub last_assistant_message: Option<String>,
+    pub agent_id: Option<String>,
+    pub agent_type: Option<String>,
+    pub agent_transcript_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -58,6 +61,9 @@ struct HookPayloadWire {
     tool_result: Option<String>,
     tool_use_id: Option<String>,
     last_assistant_message: Option<String>,
+    agent_id: Option<String>,
+    agent_type: Option<String>,
+    agent_transcript_path: Option<std::path::PathBuf>,
 }
 
 impl HookPayload {
@@ -88,6 +94,9 @@ impl From<HookPayloadWire> for HookPayload {
             tool_result: wire.tool_result,
             tool_use_id: wire.tool_use_id,
             last_assistant_message: wire.last_assistant_message,
+            agent_id: wire.agent_id,
+            agent_type: wire.agent_type,
+            agent_transcript_path: wire.agent_transcript_path,
         }
     }
 }
