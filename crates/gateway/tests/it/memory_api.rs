@@ -78,6 +78,7 @@ fn entry(id: &str, content: &str, created_at: &str) -> MemoryEntry {
             .with_timezone(&chrono::Utc)
     }
     MemoryEntry {
+        provenance: None,
         id: Some(id.to_owned()),
         session_id: SESSION.to_owned(),
         agent: "rivet-claude".to_owned(),
@@ -216,6 +217,8 @@ fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
 
 #[path = "memory_api/archive.rs"]
 mod archive;
+#[path = "memory_api/provenance.rs"]
+mod provenance;
 #[path = "memory_api/search_port.rs"]
 mod search_port;
 #[path = "memory_api/tags_and_health.rs"]

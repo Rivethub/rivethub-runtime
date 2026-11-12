@@ -118,6 +118,10 @@ fn sessions_from(count: usize, authors: &[String]) -> String {
     if authors.is_empty() {
         count
     } else {
+        let authors: Vec<_> = authors
+            .iter()
+            .map(|author| crate::provenance::own_text(true, author))
+            .collect();
         format!("{count} from {}", authors.join(", "))
     }
 }
@@ -133,9 +137,9 @@ fn listed(session: &ListedSession) -> String {
     };
     format!(
         "{} ({}): {} from {}, {dates}\n",
-        session.key,
-        session.agent,
+        crate::provenance::own_text(true, &session.key),
+        crate::provenance::own_text(true, &session.agent),
         noun(session.messages, "message", "messages"),
-        session.author,
+        crate::provenance::own_text(true, &session.author),
     )
 }

@@ -69,6 +69,7 @@ use wire::session_id::SessionId;
 
 fn memory_entry(session: &str, content: &str, at: DateTime<Utc>) -> MemoryEntry {
     MemoryEntry {
+        provenance: None,
         id: Some(format!("m-{}", content.len())),
         session_id: session.to_string(),
         agent: "agent-a".to_string(),

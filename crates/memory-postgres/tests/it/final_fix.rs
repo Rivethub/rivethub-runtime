@@ -116,6 +116,7 @@ async fn append_rejects_wrong_event_id_types_and_hashes_absent_ids_without_colli
 ) -> TestResult {
     let store = PostgresMemory::new(pool.clone());
     let mut entry = MemoryEntry {
+        provenance: None,
         id: None,
         session_id: "session".to_owned(),
         agent: "agent".to_owned(),

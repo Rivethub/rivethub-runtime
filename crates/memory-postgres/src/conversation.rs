@@ -119,23 +119,31 @@ impl crate::PostgresMemory {
     pub(crate) async fn conversation_origins(
         &self,
         session_keys: &[String],
-    ) -> Result<std::collections::BTreeMap<String, JsonObject>, Error> {
-        if session_keys.is_empty() {
+    ) -> Result<std::collections::BTreeMap<String, kernel::memory::Provenance>, Error> {
+        let imported: Vec<&str> = session_keys
+            .iter()
+            .map(String::as_str)
+            .filter(|key| kernel::memory::is_imported(key))
+            .collect();
+        if imported.is_empty() {
             return Ok(std::collections::BTreeMap::new());
         }
-        let rows = sqlx::query!(
-            "select session_key, settings -> 'origin' as \"origin!: sqlx::types::Json<JsonObject>\"
-               from rh_conversations
-              where session_key = any($1)
-                and jsonb_typeof(settings -> 'origin') = 'object'",
-            session_keys
+        let rows: Vec<(String, Option<sqlx::types::Json<JsonObject>>)> = sqlx::query_as(
+            "select session_key, settings from rh_conversations where session_key = any($1)",
         )
+        .bind(&imported)
         .fetch_all(&self.pool)
         .await
         .map_err(|source| Error::operation("origin lookup", source))?;
         Ok(rows
             .into_iter()
-            .map(|row| (row.session_key, row.origin.0))
+            .map(|(session_key, settings)| {
+                let settings = settings.map(|json| json.0).unwrap_or_default();
+                (
+                    session_key,
+                    kernel::memory::Provenance::from_settings(&settings),
+                )
+            })
             .collect())
     }
 }

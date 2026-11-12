@@ -43,6 +43,7 @@ async fn seed(pool: &PgPool) -> TestResult {
     .into_iter()
     .map(|time| {
         Ok(MemoryEntry {
+            provenance: None,
             id: None,
             session_id: "search-port".into(),
             agent: "acme".into(),

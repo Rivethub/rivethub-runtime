@@ -368,7 +368,7 @@ impl ShareDesk for NodeDesk {
                     best: ranked.best,
                     hits: ranked.hits,
                     excerpts: ranked.excerpts.clone(),
-                    imported_from: digest.imported_from.clone(),
+                    imported_from: digest.imported_author(),
                 })
                 .collect(),
             dropped: matched.dropped,

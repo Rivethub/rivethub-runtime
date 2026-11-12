@@ -25,6 +25,17 @@ impl SqliteStore {
         owner: &Owner,
         now: DateTime<Utc>,
     ) -> Result<Vec<String>, SqliteError> {
+        if let Some(entry) = entries
+            .iter()
+            .find(|entry| kernel::memory::is_imported(&entry.session_id))
+        {
+            return Err(SqliteError::Invalid {
+                message: format!(
+                    "{} is an imported session; only a receive writes one (CONTRACT note 150)",
+                    entry.session_id
+                ),
+            });
+        }
         let owner = owner.clone();
         self.with_conn(move |conn| {
             let tx = conn
@@ -73,6 +84,7 @@ fn append_one(
     let task_id = task_id(entry);
     let conversation = match key.find(tx)? {
         Some(found) => {
+            admit(tx, &found, owner)?;
             tx.execute(
                 "UPDATE ros_conversations
                     SET updated_at = ?2,
@@ -128,6 +140,32 @@ fn append_one(
         Some(id) => message.insert_as(tx, id.clone()),
         None => message.insert(tx),
     }
+}
+
+fn admit(
+    tx: &Transaction<'_>,
+    found: &crate::conversation::StoredConversation,
+    owner: &str,
+) -> Result<(), SqliteError> {
+    if found.owner.as_deref().is_some_and(|stored| stored != owner) {
+        return Err(SqliteError::Invalid {
+            message: "this session belongs to another user".to_owned(),
+        });
+    }
+    let received: bool = tx
+        .query_row(
+            "SELECT json_extract(settings, '$.receipt') IS NOT NULL FROM ros_conversations WHERE id = ?1",
+            [&found.id],
+            |row| row.get(0),
+        )
+        .map_err(SqliteError::query("conversation receipt"))?;
+    if received {
+        return Err(SqliteError::Invalid {
+            message: "this session carries a receive receipt; only a receive writes it (CONTRACT note 150)"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn title(entry: &MemoryEntry) -> String {

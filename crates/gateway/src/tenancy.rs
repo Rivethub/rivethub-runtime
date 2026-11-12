@@ -166,8 +166,15 @@ impl FromRequestParts<std::sync::Arc<crate::Gateway>> for UserId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Credential {
     Plugin,
+    OwnerToken,
     Bearer,
     Session { auth_time: i64 },
+}
+
+impl Credential {
+    pub(crate) fn is_local_owner(self) -> bool {
+        matches!(self, Self::OwnerToken | Self::Session { .. })
+    }
 }
 
 pub(crate) fn caller(gateway: &crate::Gateway, parts: &Parts) -> Result<UserId, ApiError> {
@@ -207,7 +214,7 @@ pub(crate) fn authenticate(
         .is_some_and(|owner| owner.verify(token))
     {
         if crate::auth::direct_local(parts) {
-            return Ok((local()?, Credential::Bearer));
+            return Ok((local()?, Credential::OwnerToken));
         }
         gateway
             .auth_log()

@@ -74,6 +74,7 @@ fn page() -> WikiPageResponse {
             title: None,
             channel: None,
             topic_id: None,
+            imported: None,
         }],
         markdown: "# Release\nReady 🚀".to_owned(),
         sources: Vec::new(),
@@ -126,6 +127,39 @@ async fn api_page_keeps_the_typed_store_payload() {
             "{retired}"
         );
     }
+}
+
+#[tokio::test]
+async fn api_page_names_the_author_of_an_imported_citation() {
+    let (gateway, store) = common::gateway();
+    let mut imported = stored(page());
+    let provenance = kernel::memory::Provenance {
+        author: Some("phil".to_owned()),
+        origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
+        verification: kernel::memory::Verification::Unreceived,
+        checks: None,
+    };
+    for citation in &mut imported.citations {
+        citation.imported = Some(provenance.clone());
+    }
+    store.insert_wiki_page(imported).await;
+    let response = answer(&gateway.router(false), request("GET", "/api/wiki/release")).await;
+    assert_eq!(response.status, 200);
+    let body: wire::gateway::wiki::WikiPageResponse =
+        serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(
+        body.citations
+            .first()
+            .and_then(|citation| citation.imported.clone()),
+        Some(wire::memory::Provenance {
+            author: Some("phil".to_owned()),
+            origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
+            verification: wire::memory::Verification::Unreceived,
+            checks: None,
+        })
+    );
+    let native = answer(&seeded().await.0, request("GET", "/api/wiki/release")).await;
+    assert!(!String::from_utf8(native.body).unwrap().contains("imported"));
 }
 
 #[tokio::test]

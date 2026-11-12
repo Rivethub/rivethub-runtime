@@ -367,6 +367,52 @@ async fn a_session_needs_the_right_csrf_header_on_reads_too() -> TestResult {
 }
 
 #[tokio::test]
+async fn an_owner_browser_session_may_record_a_receipt() -> TestResult {
+    let rig = rig()?;
+    let browser = login(&rig).await?;
+    let mut settings = wire::JsonObject::default();
+    settings.insert(
+        "receipt",
+        wire::capture::Receipt {
+            bundle_id: "rhb1:t".into(),
+            received_at: "2026-11-09T00:00:00Z".parse()?,
+            verification: wire::capture::ReceiptVerification::Verified,
+            key_fingerprint: Some("ed25519:abcd".into()),
+            checks: None,
+        },
+    )?;
+    let body = wire::capture::CaptureBatchRequest {
+        session_key: "import:[\"node\",\"conversation\"]".into(),
+        agent: "rivet".into(),
+        channel: None,
+        title: None,
+        settings: Some(settings),
+        task_id: None,
+        finalize: None,
+        created_at: None,
+        updated_at: None,
+        messages: vec![wire::capture::CaptureMessage {
+            event_id: "e1".into(),
+            role: wire::message::Role::User,
+            content: "hello".into(),
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: None,
+            created_at: None,
+        }],
+    };
+    let sent = rig
+        .call("POST", "/api/capture")
+        .browser(&browser)
+        .json(&body)?
+        .send()
+        .await?;
+    assert_eq!(sent.status, StatusCode::OK, "{}", sent.text());
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_session_is_refused_behind_a_forwarder_or_on_a_foreign_host() -> TestResult {
     let rig = rig()?;
     let browser = login(&rig).await?;

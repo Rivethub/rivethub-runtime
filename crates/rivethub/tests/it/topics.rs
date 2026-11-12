@@ -42,7 +42,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const BODY_LIMIT: usize = 1 << 20;
 
-fn settings(root: &Path) -> Settings {
+pub(crate) fn settings(root: &Path) -> Settings {
     Settings {
         hostname: "node-a-host".to_owned(),
         node: "node-a".to_owned(),
@@ -67,6 +67,13 @@ struct Api {
 
 impl Api {
     fn new(topics: bool) -> TestResult<Self> {
+        Self::over(topics, |store| store)
+    }
+
+    fn over(
+        topics: bool,
+        facts: impl FnOnce(Arc<SqliteStore>) -> Arc<dyn kernel::facts::FactStore>,
+    ) -> TestResult<Self> {
         let root = tempfile::tempdir()?;
         let path = root.path().join("memory.sqlite");
         migrate::sqlite(&path)?;
@@ -80,7 +87,7 @@ impl Api {
             gateway = gateway
                 .with_topics(store.clone(), store.clone())
                 .with_decisions(store.clone())
-                .with_facts(store.clone())
+                .with_facts(facts(store.clone()))
                 .with_review(store.clone())
                 .with_changes(store.clone(), store.clone())
                 .with_session_catalog(lookups.clone())

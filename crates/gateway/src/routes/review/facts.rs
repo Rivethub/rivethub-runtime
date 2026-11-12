@@ -69,13 +69,7 @@ pub(super) async fn items(
         .map(|quote| quote.support.session.clone())
         .collect();
     let sessions: Vec<SessionId> = sessions.into_iter().collect();
-    let titles: Titles = store
-        .fact_sessions(&sessions)
-        .await
-        .map_err(map::error)?
-        .into_iter()
-        .filter_map(|session| session.title.map(|title| (session.session, title)))
-        .collect();
+    let titles = Titles::of(&store.fact_sessions(&sessions).await.map_err(map::error)?);
     Ok(found
         .into_iter()
         .map(|(entity, review)| item(entity, topics, review, &titles))

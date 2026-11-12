@@ -52,7 +52,7 @@ pub(super) async fn build(
         .collect();
     let own = sessions_of(&claims);
     let found = facts.fact_sessions(&own).await.map_err(map::error)?;
-    let titles = titles_of(&found);
+    let titles = Titles::of(&found);
     let links: Vec<SessionLink> = facts
         .session_links()
         .await
@@ -114,19 +114,7 @@ pub(super) async fn titles(gateway: &Gateway, states: &[FactState]) -> Result<Ti
         .fact_sessions(&sessions)
         .await
         .map_err(map::error)?;
-    Ok(titles_of(&found))
-}
-
-fn titles_of(found: &[FactSession]) -> Titles {
-    found
-        .iter()
-        .filter_map(|session| {
-            session
-                .title
-                .clone()
-                .map(|title| (session.session.clone(), title))
-        })
-        .collect()
+    Ok(Titles::of(&found))
 }
 
 fn sessions_of(claims: &[Claim]) -> Vec<SessionId> {

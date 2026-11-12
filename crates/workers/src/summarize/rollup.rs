@@ -106,11 +106,11 @@ fn rollup_prompt(
     match kind {
         SummaryKind::Branch => {
             let nodes = window.leaves.get(..take).ok_or(WorkerError::Count)?;
-            branch_user(&window.conversation, nodes)
+            branch_user(&window.conversation, window.provenance.as_ref(), nodes)
         }
         SummaryKind::Root => {
             let nodes = window.branches.get(..take).ok_or(WorkerError::Count)?;
-            root_user(&window.conversation, nodes)
+            root_user(&window.conversation, window.provenance.as_ref(), nodes)
         }
         SummaryKind::Leaf => Err(WorkerError::Count),
     }

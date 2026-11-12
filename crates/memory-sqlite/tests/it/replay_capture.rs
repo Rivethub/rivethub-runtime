@@ -57,6 +57,7 @@ struct Plan {
 
 fn entry(session: &str, channel: &str, role: Role, content: &str) -> MemoryEntry {
     MemoryEntry {
+        provenance: None,
         id: None,
         session_id: session.to_owned(),
         agent: "rivet".to_owned(),

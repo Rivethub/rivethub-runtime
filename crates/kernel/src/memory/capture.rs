@@ -55,6 +55,7 @@ impl CaptureBatchRequest {
         self.messages
             .iter()
             .map(|message| MemoryEntry {
+                provenance: None,
                 id: Some(message.event_id.clone()),
                 session_id: self.session_key.clone(),
                 agent: self.agent.clone(),

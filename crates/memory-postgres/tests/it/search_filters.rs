@@ -21,6 +21,7 @@ fn entry(
     content: &str,
 ) -> TestResult<MemoryEntry> {
     Ok(MemoryEntry {
+        provenance: None,
         id: None,
         session_id: session.into(),
         agent: agent.into(),
