@@ -465,6 +465,11 @@ pub trait MemoryStore: Send + Sync {
         limit: u32,
     ) -> Result<crate::wiki::WikiGapsResponse, MemoryStoreError>;
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<Provenance>>, MemoryStoreError>;
+
     async fn wiki_archive(
         &self,
         slug: &crate::wiki::page::WikiSlug,

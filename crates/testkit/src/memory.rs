@@ -206,6 +206,27 @@ impl MemoryStore for FakeMemoryStore {
         })
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError> {
+        self.record(MemoryRequest::WikiImportedAuthors(slugs.clone()))
+            .await;
+        let pages = self.wiki_pages.lock().await;
+        Ok(slugs
+            .into_iter()
+            .filter_map(|slug| {
+                let imported: Vec<_> = pages
+                    .get(&slug)?
+                    .citations
+                    .iter()
+                    .filter_map(|citation| citation.imported.clone())
+                    .collect();
+                (!imported.is_empty()).then_some((slug, imported))
+            })
+            .collect())
+    }
+
     async fn wiki_gaps(
         &self,
         limit: u32,

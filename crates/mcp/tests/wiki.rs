@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use kernel::memory::Provenance;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::page::WikiHistoryEntry;
 use kernel::wiki::{WikiCitation, WikiPageResponse};
@@ -58,6 +59,7 @@ fn page() -> WikiPageResponse {
             title: None,
             channel: None,
             topic_id: None,
+            imported: None,
         }],
         markdown: MARKDOWN.into(),
         sources: vec![],
@@ -99,13 +101,16 @@ async fn search_preserves_typed_results_and_validates_limits() {
             "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀"
         );
         assert_eq!(
-            store.requests().await.last(),
-            Some(&MemoryRequest::WikiTopics(WikiFilter {
-                query: Some("日本語".into()),
-                tag: None,
-                limit,
-                offset: 0,
-            }))
+            store.requests().await.last_chunk::<2>(),
+            Some(&[
+                MemoryRequest::WikiTopics(WikiFilter {
+                    query: Some("日本語".into()),
+                    tag: None,
+                    limit,
+                    offset: 0,
+                }),
+                MemoryRequest::WikiImportedAuthors(vec!["acme".into()]),
+            ])
         );
     }
     let result = support::call(&server, "wiki_search", r#"{"query":"missing"}"#).await;
@@ -156,6 +161,84 @@ async fn read_uses_typed_sections_and_preserves_small_markdown() {
         store.requests().await,
         vec![MemoryRequest::WikiPage("acme".into()); 7]
     );
+}
+
+fn imported(author: &str, verification: &str) -> Provenance {
+    let settings = serde_json::from_value(serde_json::json!({
+        "origin": {"author": author},
+        "receipt": {"verification": verification},
+    }))
+    .expect("settings");
+    Provenance::from_settings(&settings)
+}
+
+fn citing(summary: &str, imported: Option<Provenance>) -> WikiCitation {
+    WikiCitation {
+        summary_id: summary.into(),
+        imported,
+        ..WikiCitation {
+            summary_id: String::new(),
+            date: None,
+            kind: Some("leaf".into()),
+            note: None,
+            conversation_id: None,
+            session_id: None,
+            title: None,
+            channel: None,
+            topic_id: None,
+            imported: None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn citations_name_imported_authors() {
+    let (server, store) = setup();
+    let native = page();
+    let mut mixed = page();
+    mixed.slug = "mixed".into();
+    mixed.markdown = MARKDOWN.replace("slug: acme", "slug: mixed").replace(
+        "| Decision 🦀 |\n",
+        "| Decision 🦀 |\n| 2026-10-15 | leaf | `00000000-0000-4000-8000-000000000002` | Second |\n| 2026-10-16 | leaf | `00000000-0000-4000-8000-000000000003` | Third |\n",
+    );
+    mixed.citations = vec![
+        citing(
+            "00000000-0000-4000-8000-000000000001",
+            Some(imported("phil", "unsigned")),
+        ),
+        citing(
+            "00000000-0000-4000-8000-000000000002",
+            Some(imported("alex", "verified")),
+        ),
+        citing("00000000-0000-4000-8000-000000000003", None),
+    ];
+    store.insert_wiki_page(native.clone()).await;
+    store.insert_wiki_page(mixed.clone()).await;
+
+    let read = support::call(&server, "wiki_read", r#"{"slug":"mixed"}"#).await;
+    let view = text(&read);
+    assert!(view.starts_with(
+        "Built partly from imported sessions: phil (unverified), alex (verified).\n\n---\n"
+    ));
+    assert!(view.contains("| Decision 🦀 (imported from phil, unverified) |"));
+    assert!(view.contains("| Second (imported from alex, verified) |"));
+    assert!(view.contains("| Third |"));
+    assert_eq!(view.matches("imported from").count(), 2);
+
+    let read = support::call(&server, "wiki_read", r#"{"slug":"acme"}"#).await;
+    assert_eq!(text(&read), native.markdown);
+
+    let search = support::call(&server, "wiki_search", r#"{"query":"日本語"}"#).await;
+    assert_eq!(
+        text(&search),
+        "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀\n\n## Acme 日本語 (mixed) — verified 2026-10-14\nBuilt partly from imported sessions: phil (unverified), alex (verified).\nReady 🦀"
+    );
+    let requests = store.requests().await;
+    let lookups = requests
+        .iter()
+        .filter(|request| matches!(request, MemoryRequest::WikiImportedAuthors(_)))
+        .count();
+    assert_eq!(lookups, 1);
 }
 
 #[tokio::test]

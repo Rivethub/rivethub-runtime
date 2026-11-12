@@ -326,6 +326,13 @@ impl MemoryStore for crate::PostgresMemory {
         self.read_wiki_gaps(limit).await.map_err(Into::into)
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError> {
+        Ok(self.wiki_imported_authors(&slugs).await?)
+    }
+
     async fn wiki_archive(
         &self,
         slug: &kernel::wiki::page::WikiSlug,

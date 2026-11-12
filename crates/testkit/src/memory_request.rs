@@ -24,6 +24,7 @@ pub enum MemoryRequest {
     Search(SearchQuery),
     Browse(BrowseFilter),
     Stats,
+    WikiImportedAuthors(Vec<String>),
     GetFull(String),
     Context {
         session: String,

@@ -38,4 +38,5 @@ mod summary_title;
 mod topics;
 mod unembedded_sweep;
 mod wiki_consolidate;
+mod wiki_imports;
 mod wiki_routes;

@@ -15,10 +15,14 @@ use kernel::facts::NewClaim;
 use kernel::facts::Said;
 use kernel::facts::SessionLink;
 use kernel::filing::conversation_keys;
+use kernel::memory::Provenance;
 use kernel::owner::Owner;
 use kernel::topics::TopicId;
 use sqlx::PgConnection;
+use sqlx::types::Json;
 use uuid::Uuid;
+use wire::JsonObject;
+use wire::capture::IMPORTED_SESSION_PREFIX;
 use wire::session_id::SessionId;
 
 use crate::PostgresMemory;
@@ -41,13 +45,16 @@ const LINKS_SQL: &str = "SELECT DISTINCT f.topic_id, c.session_id
       ORDER BY f.topic_id, c.session_id";
 
 const SESSION_SQL: &str = "WITH conv AS (
-         SELECT id, title, created_at, updated_at FROM rh_conversations WHERE session_key = ANY($1)
+         SELECT id, session_key, title, created_at, updated_at, settings
+           FROM rh_conversations WHERE session_key = ANY($1)
      )
      SELECT (SELECT title FROM conv WHERE title IS NOT NULL ORDER BY updated_at DESC LIMIT 1) AS title,
             (SELECT min(created_at) FROM conv) AS started_at,
             (SELECT max(updated_at) FROM conv) AS last_at,
             (SELECT coalesce(sum(n.total), 0)::bigint FROM rh_message_counts n
-              WHERE n.conversation_id IN (SELECT id FROM conv)) AS messages";
+              WHERE n.conversation_id IN (SELECT id FROM conv)) AS messages,
+            (SELECT coalesce(settings, '{}'::jsonb) FROM conv WHERE starts_with(session_key, $2)
+              ORDER BY updated_at DESC LIMIT 1) AS import_settings";
 
 const FACT_SQL: &str = "WITH found AS (
          SELECT id FROM rh_entity_facts WHERE topic_id = $1 AND key = $2
@@ -90,6 +97,7 @@ struct SessionRow {
     started_at: Option<DateTime<Utc>>,
     last_at: Option<DateTime<Utc>>,
     messages: i64,
+    import_settings: Option<Json<JsonObject>>,
 }
 
 fn failed(operation: &'static str) -> impl FnOnce(sqlx::Error) -> FactError {
@@ -225,6 +233,7 @@ impl FactStore for PostgresMemory {
         for session in sessions {
             let row = sqlx::query_as::<_, SessionRow>(SESSION_SQL)
                 .bind(conversation_keys(session))
+                .bind(IMPORTED_SESSION_PREFIX)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(failed("fact sessions"))?;
@@ -236,6 +245,9 @@ impl FactStore for PostgresMemory {
                     last_at,
                     messages: u64::try_from(row.messages)
                         .map_err(|error| stored("fact session messages", error))?,
+                    provenance: row
+                        .import_settings
+                        .map(|settings| Provenance::from_settings(&settings.0)),
                 });
             }
         }

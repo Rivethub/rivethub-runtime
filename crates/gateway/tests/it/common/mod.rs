@@ -261,6 +261,14 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        _slugs: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError>
+    {
+        unavailable()
+    }
+
     async fn lookup_origins(
         &self,
         _session_keys: Vec<String>,
@@ -479,6 +487,14 @@ impl MemoryStore for GatedStore {
     ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::TagWire>>, MemoryStoreError>
     {
         self.inner.lookup_tags(lookup).await
+    }
+
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError>
+    {
+        self.inner.wiki_imported_authors(slugs).await
     }
 
     async fn lookup_origins(

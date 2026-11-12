@@ -73,6 +73,13 @@ impl MemoryStore for SqliteStore {
         self.read_wiki_gaps(limit).await
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError> {
+        self.read_wiki_imported_authors(slugs).await
+    }
+
     async fn capture(
         &self,
         batch: kernel::memory::CaptureBatchRequest,

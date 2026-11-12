@@ -3,6 +3,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::gateway::imported::ImportedFrom;
 use crate::gateway::session_catalog::SessionSummaryRow;
 use crate::gateway::session_catalog::SharedWith;
 use crate::gateway::session_catalog::TopicPath;
@@ -42,12 +43,15 @@ pub struct SessionMention {
     pub title: String,
 }
 
+#[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FactSource {
     pub session: SessionMention,
     pub at: DateTime<Utc>,
     pub value: String,
+    #[serde(default)]
+    pub imported_from: Option<ImportedFrom>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

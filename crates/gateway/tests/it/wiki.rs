@@ -74,6 +74,7 @@ fn page() -> WikiPageResponse {
             title: None,
             channel: None,
             topic_id: None,
+            imported: None,
         }],
         markdown: "# Release\nReady 🚀".to_owned(),
         sources: Vec::new(),
@@ -126,6 +127,33 @@ async fn api_page_keeps_the_typed_store_payload() {
             "{retired}"
         );
     }
+}
+
+#[tokio::test]
+async fn api_page_names_the_author_of_an_imported_citation() {
+    let (gateway, store) = common::gateway();
+    let mut imported = stored(page());
+    let settings = serde_json::from_value(serde_json::json!({
+        "origin": {"author": "phil", "created_at": "2026-10-14T09:12:00Z"},
+    }))
+    .expect("settings");
+    for citation in &mut imported.citations {
+        citation.imported = Some(kernel::memory::Provenance::from_settings(&settings));
+    }
+    store.insert_wiki_page(imported).await;
+    let response = answer(&gateway.router(false), request("GET", "/api/wiki/release")).await;
+    assert_eq!(response.status, 200);
+    let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(
+        body.pointer("/citations/0/imported"),
+        Some(&serde_json::json!({
+            "author": "phil",
+            "originDate": "2026-10-14T09:12:00Z",
+            "verification": "unreceived",
+        }))
+    );
+    let native = answer(&seeded().await.0, request("GET", "/api/wiki/release")).await;
+    assert!(!String::from_utf8(native.body).unwrap().contains("imported"));
 }
 
 #[tokio::test]

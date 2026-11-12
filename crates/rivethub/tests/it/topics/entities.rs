@@ -1,20 +1,30 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::http::StatusCode;
 use chrono::DateTime;
 use chrono::TimeDelta;
 use chrono::Utc;
+use kernel::facts::Claim;
 use kernel::facts::Evidence;
+use kernel::facts::FactError;
 use kernel::facts::FactKey;
-use kernel::facts::FactStore as _;
+use kernel::facts::FactSession;
+use kernel::facts::FactStore;
 use kernel::facts::FactValue;
 use kernel::facts::NewClaim;
 use kernel::facts::Said;
+use kernel::facts::SessionLink;
+use kernel::memory::Provenance;
 use kernel::owner::Owner;
 use kernel::topics::TopicId;
+use memory_sqlite::SqliteStore;
 use uuid::Uuid;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Fact;
+use wire::gateway::imported::ImportVerification;
 use wire::gateway::topics::TopicList;
 use wire::gateway::topics::TopicRecord;
 use wire::session_id::SessionId;
@@ -349,5 +359,89 @@ async fn only_an_entity_has_an_article() -> TestResult {
             "{key}"
         );
     }
+    Ok(())
+}
+
+struct ImportedFrom {
+    inner: Arc<SqliteStore>,
+    session: SessionId,
+    provenance: Provenance,
+}
+
+#[async_trait]
+impl FactStore for ImportedFrom {
+    async fn assert_facts(&self, claims: &[NewClaim]) -> Result<(), FactError> {
+        self.inner.assert_facts(claims).await
+    }
+
+    async fn claims(&self, entity: TopicId) -> Result<Vec<Claim>, FactError> {
+        self.inner.claims(entity).await
+    }
+
+    async fn session_links(&self) -> Result<Vec<SessionLink>, FactError> {
+        self.inner.session_links().await
+    }
+
+    async fn fact_sessions(&self, sessions: &[SessionId]) -> Result<Vec<FactSession>, FactError> {
+        let mut found = self.inner.fact_sessions(sessions).await?;
+        for session in &mut found {
+            if session.session == self.session {
+                session.provenance = Some(self.provenance.clone());
+            }
+        }
+        Ok(found)
+    }
+}
+
+#[tokio::test]
+async fn entity_claims_name_the_importing_author() -> TestResult {
+    let native = Api::new(true)?;
+    let host = seeded(&native).await?;
+    let (status, bytes) = native
+        .call("GET", &format!("/api/entities/{}", host.id), "")
+        .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!String::from_utf8(bytes)?.contains("importedFrom"));
+
+    let settings = serde_json::from_value(serde_json::json!({"origin": {"author": "phil"}}))?;
+    let provenance = Provenance::from_settings(&settings);
+    let session: SessionId = FIRST.parse()?;
+    let api = Api::over(true, |store| {
+        Arc::new(ImportedFrom {
+            inner: store,
+            session,
+            provenance,
+        })
+    })?;
+    let host = seeded(&api).await?;
+    let article: EntityArticle = api
+        .json(
+            "GET",
+            &format!("/api/entities/{}", host.id),
+            "",
+            StatusCode::OK,
+        )
+        .await?;
+    let address = fact(&article, "address")?;
+    let source = address.sources.first().ok_or("the address has a source")?;
+    assert_eq!(
+        source.session.title,
+        "Set up web01 (imported from phil, unverified)"
+    );
+    let from = source
+        .imported_from
+        .as_ref()
+        .ok_or("the source is an import")?;
+    assert_eq!(from.author.as_deref(), Some("phil"));
+    assert_eq!(from.verification, ImportVerification::Unreceived);
+    let rivals: Vec<bool> = address
+        .conflict
+        .as_ref()
+        .ok_or("two sessions disagree within a day")?
+        .candidates
+        .iter()
+        .map(|candidate| candidate.imported_from.is_some())
+        .collect();
+    assert_eq!(rivals, [true, false]);
     Ok(())
 }

@@ -4,8 +4,10 @@ use kernel::cleanup::EntityType as SeededType;
 use kernel::facts::FactChange;
 use kernel::facts::FactError;
 use kernel::facts::FactEvent;
+use kernel::facts::FactSession;
 use kernel::facts::FactState;
 use kernel::facts::Support;
+use kernel::memory::Provenance;
 use strum::IntoEnumIterator as _;
 use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Fact;
@@ -18,7 +20,43 @@ use wire::session_id::SessionId;
 
 use crate::error::ApiError;
 
-pub(crate) type Titles = BTreeMap<SessionId, String>;
+#[derive(Default)]
+pub(crate) struct Titles {
+    names: BTreeMap<SessionId, String>,
+    imported: BTreeMap<SessionId, Provenance>,
+}
+
+impl Titles {
+    pub(crate) fn of(found: &[FactSession]) -> Self {
+        let mut titles = Self::default();
+        for session in found {
+            if let Some(title) = &session.title {
+                titles.names.insert(session.session.clone(), title.clone());
+            }
+            if let Some(provenance) = &session.provenance {
+                titles
+                    .imported
+                    .insert(session.session.clone(), provenance.clone());
+            }
+        }
+        titles
+    }
+
+    fn label(&self, session: &SessionId) -> String {
+        let title = self
+            .names
+            .get(session)
+            .map_or_else(|| session.as_str().to_owned(), Clone::clone);
+        match self.imported.get(session) {
+            Some(provenance) => format!(
+                "{title} (imported from {}, {})",
+                provenance.author_label(),
+                provenance.verification.short()
+            ),
+            None => title,
+        }
+    }
+}
 
 pub(super) fn entity_type(root: &str) -> Option<EntityType> {
     let seeded = SeededType::iter().find(|seeded| seeded.to_string() == root)?;
@@ -56,10 +94,7 @@ pub(crate) fn error(error: FactError) -> ApiError {
 pub(crate) fn mention(session: &SessionId, titles: &Titles) -> SessionMention {
     SessionMention {
         id: session.clone(),
-        title: titles
-            .get(session)
-            .cloned()
-            .unwrap_or_else(|| session.as_str().to_owned()),
+        title: titles.label(session),
     }
 }
 
@@ -68,6 +103,10 @@ pub(crate) fn source(support: &Support, titles: &Titles) -> FactSource {
         session: mention(&support.session, titles),
         at: support.at,
         value: support.value.as_str().to_owned(),
+        imported_from: titles
+            .imported
+            .get(&support.session)
+            .map(crate::memory_body::imported_from_body),
     }
 }
 

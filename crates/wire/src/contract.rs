@@ -142,6 +142,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiPageQuery>,
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiSlug>,
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiHistoryEntry>,
+    SchemaGenerator::subschema_for::<crate::gateway::imported::ImportVerification>,
+    SchemaGenerator::subschema_for::<crate::gateway::imported::ImportedFrom>,
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiCitation>,
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiSource>,
     SchemaGenerator::subschema_for::<crate::gateway::wiki::WikiSourceKind>,

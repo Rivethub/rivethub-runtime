@@ -4,6 +4,7 @@ use serde_with::serde_as;
 use values::SessionId;
 
 use super::page::{WikiHistoryEntry, WikiSourceKind};
+use crate::memory::Provenance;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +129,8 @@ pub struct WikiCitation {
     pub channel: Option<String>,
     #[serde(default)]
     pub topic_id: Option<String>,
+    #[serde(default)]
+    pub imported: Option<Provenance>,
 }
 
 #[serde_with::skip_serializing_none]
@@ -165,6 +168,7 @@ mod tests {
             title: None,
             channel: None,
             topic_id: topic.map(str::to_owned),
+            imported: None,
         }
     }
 
