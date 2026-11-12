@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use capture::bundle::Sealed;
 use capture::sanitize::LocalKey;
-use capture::sanitize::LocalReview;
 use capture::sanitize::ReportFlags;
 use capture::sanitize::decide::DecideError;
 use capture::sanitize::decide::Mode;
@@ -20,7 +18,6 @@ use kernel::memory::MemoryStore;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::SessionShare as _;
 use kernel::memory::share::ShareFailure;
-use kernel::memory::share::desk::DRAFT_IDLE;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
 use kernel::memory::share::desk::DraftDecision;
@@ -38,8 +35,6 @@ use kernel::memory::share::desk::FoundSession;
 use kernel::memory::share::desk::LoginId;
 use kernel::memory::share::desk::LoginRequest;
 use kernel::memory::share::desk::LoginStep;
-use kernel::memory::share::desk::MAX_DRAFT_BYTES;
-use kernel::memory::share::desk::MAX_DRAFTS;
 use kernel::memory::share::desk::Mark;
 use kernel::memory::share::desk::Marked;
 use kernel::memory::share::desk::NodeKeyView;
@@ -57,6 +52,12 @@ use uuid::Uuid;
 
 use crate::sessions::NodeShare;
 
+mod drafts;
+
+use drafts::DraftState;
+use drafts::Drafts;
+use drafts::Phase;
+
 const DRAFT_LABEL: &str = "the draft bundle";
 const CLIENT: &str = "RivetHub desktop";
 const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_mins(1);
@@ -68,75 +69,8 @@ pub struct NodeDesk {
     env: Environment,
     memory: Arc<dyn MemoryStore>,
     clock: Clock,
-    max_bytes: usize,
-    drafts: parking_lot::Mutex<BTreeMap<DraftId, Slot>>,
+    drafts: Drafts,
     logins: parking_lot::Mutex<BTreeMap<LoginId, Pending>>,
-}
-
-struct Slot {
-    bytes: usize,
-    touched: DateTime<Utc>,
-    draft: Held,
-}
-
-enum Held {
-    Reserved,
-    Ready(Arc<Mutex<DraftState>>),
-}
-
-struct Reservation<'desk> {
-    desk: &'desk NodeDesk,
-    id: DraftId,
-    kept: bool,
-}
-
-impl Reservation<'_> {
-    fn commit(mut self, state: DraftState) -> Result<Draft, DeskError> {
-        let expires_at = self.desk.resize(self.id, state.held())?;
-        let draft = view(self.id, &state, expires_at);
-        if let Some(slot) = self.desk.drafts.lock().get_mut(&self.id) {
-            slot.draft = Held::Ready(Arc::new(Mutex::new(state)));
-        }
-        self.kept = true;
-        Ok(draft)
-    }
-}
-
-impl Drop for Reservation<'_> {
-    fn drop(&mut self) {
-        if !self.kept {
-            self.desk.drafts.lock().remove(&self.id);
-        }
-    }
-}
-
-struct DraftState {
-    phase: Phase,
-    sealed: Sealed,
-    local: Option<LocalReview>,
-    report: capture::sanitize::Report,
-    resolved: BTreeMap<usize, Resolution>,
-    conversations: Vec<Uuid>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Open,
-    Sending,
-    Closed,
-}
-
-impl DraftState {
-    fn held(&self) -> usize {
-        held_bytes(&self.sealed, self.local.as_ref(), &self.report)
-    }
-
-    fn open(&self) -> Result<(), DeskError> {
-        match self.phase {
-            Phase::Open => Ok(()),
-            Phase::Sending | Phase::Closed => Err(DeskError::UnknownDraft),
-        }
-    }
 }
 
 struct Pending {
@@ -155,7 +89,7 @@ impl std::fmt::Debug for NodeDesk {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("NodeDesk")
-            .field("drafts", &self.drafts.lock().len())
+            .field("drafts", &self.drafts.len())
             .field("logins", &self.logins.lock().len())
             .finish_non_exhaustive()
     }
@@ -177,8 +111,7 @@ impl NodeDesk {
             env: env.clone(),
             memory,
             clock: Arc::new(Utc::now),
-            max_bytes: MAX_DRAFT_BYTES,
-            drafts: parking_lot::Mutex::default(),
+            drafts: Drafts::default(),
             logins: parking_lot::Mutex::default(),
         })
     }
@@ -190,8 +123,8 @@ impl NodeDesk {
     }
 
     #[must_use]
-    pub const fn with_byte_cap(mut self, bytes: usize) -> Self {
-        self.max_bytes = bytes;
+    pub fn with_byte_cap(mut self, bytes: usize) -> Self {
+        self.drafts = self.drafts.with_byte_cap(bytes);
         self
     }
 
@@ -207,9 +140,7 @@ impl NodeDesk {
 
     pub fn sweep(&self) {
         let now = (self.clock)();
-        self.drafts.lock().retain(|_, slot| {
-            matches!(slot.draft, Held::Reserved) || slot.touched + DRAFT_IDLE > now
-        });
+        self.drafts.sweep(now);
         self.logins
             .lock()
             .retain(|_, pending| pending.expires_at > now);
@@ -217,104 +148,8 @@ impl NodeDesk {
 
     fn slot(&self, id: DraftId) -> Result<(Arc<Mutex<DraftState>>, DateTime<Utc>), DeskError> {
         self.sweep();
-        let now = (self.clock)();
-        match self.drafts.lock().get_mut(&id) {
-            Some(Slot {
-                touched,
-                draft: Held::Ready(state),
-                ..
-            }) => {
-                *touched = now;
-                Ok((Arc::clone(state), now + DRAFT_IDLE))
-            }
-            Some(Slot {
-                draft: Held::Reserved,
-                ..
-            })
-            | None => Err(DeskError::UnknownDraft),
-        }
+        self.drafts.get(id, (self.clock)())
     }
-
-    fn reserve(&self, estimate: usize) -> Result<Reservation<'_>, DeskError> {
-        self.sweep();
-        let mut drafts = self.drafts.lock();
-        let bytes: usize = drafts.values().map(|slot| slot.bytes).sum();
-        if drafts.len() >= MAX_DRAFTS || bytes + estimate > self.max_bytes {
-            return Err(DeskError::Full);
-        }
-        let id = DraftId::random();
-        drafts.insert(
-            id,
-            Slot {
-                bytes: estimate,
-                touched: (self.clock)(),
-                draft: Held::Reserved,
-            },
-        );
-        drop(drafts);
-        Ok(Reservation {
-            desk: self,
-            id,
-            kept: false,
-        })
-    }
-
-    fn resize(&self, id: DraftId, bytes: usize) -> Result<DateTime<Utc>, DeskError> {
-        let now = (self.clock)();
-        let mut drafts = self.drafts.lock();
-        let others: usize = drafts
-            .iter()
-            .filter(|(other, _)| **other != id)
-            .map(|(_, slot)| slot.bytes)
-            .sum();
-        if others + bytes > self.max_bytes {
-            return Err(DeskError::Full);
-        }
-        let slot = drafts.get_mut(&id).ok_or(DeskError::UnknownDraft)?;
-        slot.bytes = bytes;
-        slot.touched = now;
-        drop(drafts);
-        Ok(now + DRAFT_IDLE)
-    }
-}
-
-#[derive(Default)]
-struct Counted(usize);
-
-impl std::io::Write for Counted {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0 += bytes.len();
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl std::fmt::Write for Counted {
-    fn write_str(&mut self, text: &str) -> std::fmt::Result {
-        self.0 += text.len();
-        Ok(())
-    }
-}
-
-fn json_size(value: &impl serde::Serialize) -> usize {
-    let mut counted = Counted::default();
-    serde_json::to_writer(&mut counted, value).map_or(0, |()| counted.0)
-}
-
-fn debug_size(value: &impl std::fmt::Debug) -> usize {
-    let mut counted = Counted::default();
-    std::fmt::write(&mut counted, format_args!("{value:?}")).map_or(0, |()| counted.0)
-}
-
-fn held_bytes(
-    sealed: &Sealed,
-    local: Option<&LocalReview>,
-    report: &capture::sanitize::Report,
-) -> usize {
-    2 * sealed.text.len() + local.map_or(0, json_size) + debug_size(report)
 }
 
 fn view(id: DraftId, state: &DraftState, expires_at: DateTime<Utc>) -> Draft {
@@ -558,7 +393,10 @@ impl ShareDesk for NodeDesk {
             .map_err(failed)?;
         let chosen =
             share::chosen(self.share.author.clone(), sessions, Utc::now()).map_err(failed)?;
-        let reservation = self.reserve(2 * json_size(&chosen.bundle))?;
+        self.sweep();
+        let reservation = self
+            .drafts
+            .reserve(2 * drafts::json_size(&chosen.bundle)?, (self.clock)())?;
         let outcome = share::sanitize_in_memory(
             share::Job {
                 bundle: &chosen.bundle,
@@ -572,14 +410,17 @@ impl ShareDesk for NodeDesk {
         )
         .await
         .map_err(sanitize_failed)?;
-        reservation.commit(DraftState {
-            phase: Phase::Open,
-            sealed: outcome.sanitized,
-            local: outcome.local,
-            report: outcome.report,
-            resolved: BTreeMap::new(),
-            conversations,
-        })
+        reservation.commit(
+            DraftState {
+                phase: Phase::Open,
+                sealed: outcome.sanitized,
+                local: outcome.local,
+                report: outcome.report,
+                resolved: BTreeMap::new(),
+                conversations,
+            },
+            (self.clock)(),
+        )
     }
 
     async fn report(&self, id: DraftId) -> Result<Draft, DeskError> {
@@ -612,9 +453,9 @@ impl ShareDesk for NodeDesk {
         let key = LocalKey::load_or_create(&self.share.key).map_err(failed)?;
         let resolved = capture::sanitize::resolve(&state.sealed.bundle, &flags, local, &key)
             .map_err(|error| marks_error(&error))?;
-        let grown = held_bytes(&resolved.sealed, Some(local), &state.report)
-            + debug_size(&resolved.rechecked);
-        let expires_at = self.resize(id, grown)?;
+        let grown = drafts::held_bytes(&resolved.sealed, Some(local), &state.report)?
+            + drafts::debug_size(&resolved.rechecked)?;
+        let expires_at = self.drafts.resize(id, grown, (self.clock)())?;
         let rechecked: Vec<String> = resolved.rechecked.iter().map(ToString::to_string).collect();
         state.report.rechecked += resolved.rechecked.len();
         state.report.changes.extend(resolved.rechecked);
@@ -665,7 +506,7 @@ impl ShareDesk for NodeDesk {
         };
         drop(state);
         let shared = shared?;
-        self.drafts.lock().remove(&id);
+        self.drafts.remove(id);
         Ok(Sent {
             code: shared.code,
             expires_at: shared.expires_at,
@@ -682,7 +523,7 @@ impl ShareDesk for NodeDesk {
         }
         state.phase = Phase::Closed;
         drop(state);
-        self.drafts.lock().remove(&id);
+        self.drafts.remove(id);
         Ok(())
     }
 
