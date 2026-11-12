@@ -51,6 +51,7 @@ fn only_an_unforwarded_loopback_peer_is_direct_local() -> TestResult {
         "x-forwarded-proto",
         "x-forwarded-port",
         "x-real-ip",
+        "via",
     ] {
         assert_eq!(
             peer("127.0.0.1:9", &[(header, "203.0.113.9")], &[])?,

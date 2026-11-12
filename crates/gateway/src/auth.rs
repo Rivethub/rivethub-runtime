@@ -66,6 +66,7 @@ fn is_loopback_host(host: &str) -> bool {
 
 pub(crate) fn names_a_forwarder(headers: &axum::http::HeaderMap) -> bool {
     headers.contains_key(header::FORWARDED)
+        || headers.contains_key(header::VIA)
         || headers.contains_key(X_REAL_IP)
         || headers.keys().any(|name| {
             name.as_str() == X_FORWARDED || name.as_str().starts_with(X_FORWARDED_PREFIX)

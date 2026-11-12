@@ -122,6 +122,7 @@ async fn forwarded_loopback_is_not_the_owner() -> Outcome {
         ("forwarded", "for=203.0.113.9;proto=https"),
         ("x-real-ip", "203.0.113.9"),
         ("x-forwarded-host", "team.example.test"),
+        ("via", "1.1 forwarder"),
     ] {
         let anonymous = me(&node, &[header]).await?;
         assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED, "{header:?}");
