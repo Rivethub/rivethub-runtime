@@ -106,15 +106,14 @@ impl EntryRow {
         let settings = self.import_settings.take();
         let mut entry = MemoryEntry::try_from(self)?;
         if let Some(text) = settings {
-            entry.provenance = match seen.get(&entry.session_id) {
-                Some(known) => known.clone(),
-                None => {
-                    let parsed = Some(kernel::memory::Provenance::from_settings(&stored_object(
-                        &text, "settings",
-                    )?));
-                    seen.insert(entry.session_id.clone(), parsed.clone());
-                    parsed
-                }
+            entry.provenance = if let Some(known) = seen.get(&entry.session_id) {
+                known.clone()
+            } else {
+                let parsed = Some(kernel::memory::Provenance::from_settings(&stored_object(
+                    &text, "settings",
+                )?));
+                seen.insert(entry.session_id.clone(), parsed.clone());
+                parsed
             };
         }
         Ok(entry)
