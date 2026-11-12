@@ -105,13 +105,12 @@ async fn post(State(auth): State<Auth>, uri: Uri, headers: HeaderMap, body: Stri
     let Some(reply) = reply else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "unscripted").into_response();
     };
-    let response = (
+    (
         reply.status,
         [("content-type", "application/json; charset=utf-8")],
         reply.body,
     )
-        .into_response();
-    response
+        .into_response()
 }
 
 async fn metadata(State(auth): State<Auth>) -> Response {
