@@ -45,6 +45,7 @@ pub struct CaptureSpool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
     pub entries: usize,
+    pub dead: usize,
     pub bytes: u64,
 }
 
@@ -92,14 +93,14 @@ impl CaptureSpool {
     }
 
     pub async fn usage(&self) -> Result<Usage, std::io::Error> {
-        let mut entries = 0;
-        let mut bytes = 0;
-        for dir in [self.dir.clone(), self.dead_dir()] {
-            let found = queued_files(&dir).await?;
-            entries += found.len();
-            bytes += found.iter().map(|entry| entry.bytes).sum::<u64>();
-        }
-        Ok(Usage { entries, bytes })
+        let live = queued_files(&self.dir).await?;
+        let dead = queued_files(&self.dead_dir()).await?;
+        let bytes = live.iter().chain(&dead).map(|entry| entry.bytes).sum();
+        Ok(Usage {
+            entries: live.len() + dead.len(),
+            dead: dead.len(),
+            bytes,
+        })
     }
 
     pub async fn crossed_threshold(&self) -> Result<Option<Usage>, std::io::Error> {
@@ -176,6 +177,17 @@ impl CaptureSpool {
                         );
                     }
                 }
+                Err(PostError::Throttled {
+                    status,
+                    retry_after_seconds,
+                }) => {
+                    tracing::warn!(
+                        "capture server answered HTTP {status} for spooled batch {}; holding it",
+                        entry.path.display()
+                    );
+                    self.hold(&entry.path, now, retry_after_seconds).await?;
+                    break;
+                }
                 Err(error @ (PostError::Unauthorized | PostError::Refused { .. })) => {
                     tracing::warn!(
                         "spooled capture batch {} kept: {error}",
@@ -190,6 +202,57 @@ impl CaptureSpool {
             }
         }
         Ok(())
+    }
+
+    pub async fn hold(
+        &self,
+        path: &Path,
+        now: DateTime<Utc>,
+        retry_after_seconds: Option<u64>,
+    ) -> Result<(), SpoolError> {
+        let name = parse_name(path).ok_or_else(|| {
+            SpoolError::Io(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "spool file has an unknown name",
+            ))
+        })?;
+        let delay = retry_after_seconds.map_or_else(
+            || backoff(1),
+            |seconds| {
+                TimeDelta::seconds(
+                    i64::try_from(seconds).map_or(BACKOFF_CEILING_SECONDS, |seconds| {
+                        seconds.min(BACKOFF_CEILING_SECONDS)
+                    }),
+                )
+            },
+        );
+        let target = self.dir.join(format!(
+            "{}-{}.{}.{}{SUFFIX}",
+            name.prefix,
+            name.id,
+            name.attempts,
+            (now + delay).timestamp_millis()
+        ));
+        match fs::rename(path, &target).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn requeue_dead(&self) -> Result<usize, std::io::Error> {
+        let mut moved = 0;
+        for entry in queued_files(&self.dead_dir()).await? {
+            let target = self
+                .dir
+                .join(format!("{}-{}{SUFFIX}", entry.name.prefix, entry.name.id));
+            match fs::rename(&entry.path, &target).await {
+                Ok(()) => moved += 1,
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(moved)
     }
 
     async fn defer(

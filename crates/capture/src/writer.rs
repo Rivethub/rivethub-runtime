@@ -42,6 +42,11 @@ pub enum PostError {
     Refused { reason: String },
     #[error("capture HTTP {status}")]
     Client { status: u16 },
+    #[error("capture HTTP {status}: the gateway asked for a retry")]
+    Throttled {
+        status: u16,
+        retry_after_seconds: Option<u64>,
+    },
     #[error("capture HTTP {status}")]
     Server { status: u16 },
     #[error("capture request failed: {message}")]
@@ -116,6 +121,17 @@ impl CaptureTransport for HttpCaptureTransport {
             if status == 401 {
                 return Err(PostError::Unauthorized);
             }
+            if status == 408 || status == 429 {
+                let retry_after_seconds = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<u64>().ok());
+                return Err(PostError::Throttled {
+                    status,
+                    retry_after_seconds,
+                });
+            }
             if (400..500).contains(&status) {
                 return Err(PostError::Client { status });
             }
@@ -161,6 +177,18 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         Ok(())
     }
 
+    async fn warn_on_overflow(&self) {
+        match self.spool.crossed_threshold().await {
+            Ok(Some(usage)) => tracing::warn!(
+                "capture spool holds {} entries and {} bytes; the gateway is not taking them. Nothing is dropped, so run `rh status` and start the gateway",
+                usage.entries,
+                usage.bytes
+            ),
+            Ok(None) => {}
+            Err(error) => tracing::warn!("capture spool size is unknown: {error}"),
+        }
+    }
+
     pub async fn write(
         &self,
         batch: &CaptureBatchRequest,
@@ -174,15 +202,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
             let path = self.spool.spool(&body, now).await?;
             saved.push((chunk, body, path));
         }
-        match self.spool.crossed_threshold().await {
-            Ok(Some(usage)) => tracing::warn!(
-                "capture spool holds {} entries and {} bytes; the gateway is not taking them. Nothing is dropped, so run `rh status` and start the gateway",
-                usage.entries,
-                usage.bytes
-            ),
-            Ok(None) => {}
-            Err(error) => tracing::warn!("capture spool size is unknown: {error}"),
-        }
+        self.warn_on_overflow().await;
         let kept: Vec<PathBuf> = saved.iter().map(|(_, _, path)| path.clone()).collect();
         if let Err(error) = self
             .spool
@@ -195,7 +215,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         }
         let mut totals = Totals::default();
         let mut rejected = None;
-        for (chunk, body, path) in saved {
+        for (index, (chunk, body, path)) in saved.into_iter().enumerate() {
             match self.transport.post(body).await {
                 Ok(result) => {
                     totals.add(&result);
@@ -220,7 +240,25 @@ impl<T: CaptureTransport> CaptureWriter<T> {
                     }
                     rejected.get_or_insert(error);
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    if let PostError::Throttled {
+                        retry_after_seconds,
+                        ..
+                    } = &error
+                    {
+                        for path in kept.iter().skip(index) {
+                            if let Err(hold_error) =
+                                self.spool.hold(path, now, *retry_after_seconds).await
+                            {
+                                tracing::warn!(
+                                    "batch {} was not held: {hold_error}",
+                                    path.display()
+                                );
+                            }
+                        }
+                    }
+                    return Err(error.into());
+                }
             }
         }
         match rejected {

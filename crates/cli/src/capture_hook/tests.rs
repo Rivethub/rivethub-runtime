@@ -51,6 +51,7 @@ fn expected(error: &PostError) -> Outcome {
         PostError::Unauthorized
         | PostError::Refused { .. }
         | PostError::Server { .. }
+        | PostError::Throttled { .. }
         | PostError::Network { .. } => Outcome::Spooled,
         PostError::Client { .. } => Outcome::DeadLettered,
     }
@@ -160,6 +161,30 @@ async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothin
             prep: Prep::None,
             error: Some(PostError::Client { status: 400 }),
             needle: "HTTP 400",
+        },
+        Row {
+            name: "408",
+            reply: Reply::Status(408),
+            token: Token::Valid,
+            foreign: false,
+            prep: Prep::None,
+            error: Some(PostError::Throttled {
+                status: 408,
+                retry_after_seconds: None,
+            }),
+            needle: "HTTP 408",
+        },
+        Row {
+            name: "429 with Retry-After",
+            reply: Reply::Status(429),
+            token: Token::Valid,
+            foreign: false,
+            prep: Prep::None,
+            error: Some(PostError::Throttled {
+                status: 429,
+                retry_after_seconds: None,
+            }),
+            needle: "HTTP 429",
         },
         Row {
             name: "500",
@@ -276,12 +301,19 @@ async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothin
                 let canned = match reply {
                     Reply::Ok => (
                         axum::http::StatusCode::OK,
+                        [("retry-after", "120")],
                         r#"{"ok":true,"conversation_id":"c","inserted":1,"skipped":0}"#,
                     ),
-                    Reply::Garbage => (axum::http::StatusCode::OK, "not json"),
-                    Reply::Status(code) => {
-                        (axum::http::StatusCode::from_u16(code).expect("status"), "")
-                    }
+                    Reply::Garbage => (
+                        axum::http::StatusCode::OK,
+                        [("retry-after", "120")],
+                        "not json",
+                    ),
+                    Reply::Status(code) => (
+                        axum::http::StatusCode::from_u16(code).expect("status"),
+                        [("retry-after", "120")],
+                        "",
+                    ),
                     Reply::None | Reply::Hangup => unreachable!(),
                 };
                 let app = axum::Router::new().fallback(
@@ -411,6 +443,25 @@ async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothin
                 seen.iter()
                     .all(|request| !request.contains("authorization")),
                 "{name}: an Authorization header was sent"
+            );
+        }
+        if name == "429 with Retry-After" {
+            let held = std::fs::read_dir(&spool)
+                .expect("spool")
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name().into_string().ok()?;
+                    name.strip_suffix(".json")?
+                        .rsplit('.')
+                        .next()?
+                        .parse::<i64>()
+                        .ok()
+                })
+                .max()
+                .expect("a held batch");
+            assert!(
+                held >= (Utc::now() + chrono::TimeDelta::seconds(100)).timestamp_millis(),
+                "{name}: the batch is not held for the Retry-After"
             );
         }
         if name == "delivered" {

@@ -49,7 +49,8 @@ async fn the_capture_command_lists_the_hook_subcommand() {
     assert!(
         report
             .stdout
-            .contains("Capture one harness hook payload read from stdin"),
+            .contains("Capture one harness hook payload read from stdin")
+            && report.stdout.contains("spool"),
         "{}",
         report.stdout
     );

@@ -32,6 +32,11 @@ pub enum CaptureCommand {
         #[arg(long, value_enum, default_value_t = HookHarness::ClaudeCode)]
         harness: HookHarness,
     },
+    #[command(about = "Show the capture spool, or move dead-lettered batches back to it")]
+    Spool {
+        #[arg(long)]
+        requeue_dead: bool,
+    },
     #[command(
         about = "Capture every stored session of the harness stores, Claude Code subagents included"
     )]
@@ -75,6 +80,7 @@ pub enum HookHarness {
 
 pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Report, Error> {
     match command {
+        CaptureCommand::Spool { requeue_dead } => spool_command(env, requeue_dead).await,
         CaptureCommand::Hook { harness } => {
             let mut stdin = String::new();
             tokio::io::stdin().read_to_string(&mut stdin).await?;
@@ -245,18 +251,49 @@ pub(crate) async fn ingest_bundle(
     Ok(totals)
 }
 
+fn spool_at(env: &Environment) -> Result<CaptureSpool, Error> {
+    Ok(CaptureSpool::new(
+        config::Paths::new(env)?.state_dir().join(SPOOL_DIR),
+    ))
+}
+
+async fn spool_command(env: &Environment, requeue_dead: bool) -> Result<Report, Error> {
+    let spool = spool_at(env)?;
+    let moved = if requeue_dead {
+        Some(spool.requeue_dead().await?)
+    } else {
+        None
+    };
+    let usage = spool.usage().await?;
+    let mut text = format!(
+        "{} batches are waiting to be delivered and {} are dead-lettered in {}.\n",
+        usage.entries - usage.dead,
+        usage.dead,
+        spool.dir().display()
+    );
+    if let Some(moved) = moved {
+        text = format!("{text}Moved {moved} dead-lettered batches back to the spool.\n");
+    }
+    Ok(Report::success(text))
+}
+
 pub(crate) async fn spool_warning(env: &Environment) -> Result<Option<String>, Error> {
-    let paths = config::Paths::new(env)?;
-    let usage = CaptureSpool::new(paths.state_dir().join(SPOOL_DIR))
-        .usage()
-        .await?;
-    Ok(usage.over_threshold().then(|| {
-        format!(
+    let usage = spool_at(env)?.usage().await?;
+    let mut lines = Vec::new();
+    if usage.over_threshold() {
+        lines.push(format!(
             "The capture spool holds {} entries ({} MB). Nothing is dropped, but the gateway is not taking them. Start it with `rh local --ensure`.",
             usage.entries,
             usage.bytes / (1024 * 1024)
-        )
-    }))
+        ));
+    }
+    if usage.dead > 0 {
+        lines.push(format!(
+            "{} capture batches were dead-lettered. Run `rh capture spool --requeue-dead` to retry them.",
+            usage.dead
+        ));
+    }
+    Ok((!lines.is_empty()).then(|| lines.join("\n")))
 }
 
 pub async fn replay_spool(env: &Environment, now: DateTime<Utc>) -> Result<(), Error> {
