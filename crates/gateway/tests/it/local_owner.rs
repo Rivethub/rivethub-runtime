@@ -186,11 +186,19 @@ fn concrete(path: &str) -> String {
     out
 }
 
-const METHODS: [Method; 4] = [Method::GET, Method::POST, Method::PATCH, Method::DELETE];
-const OPEN_ROUTES: [&str; 3] = ["/", "/healthz", "/login"];
+const METHODS: [Method; 5] = [
+    Method::GET,
+    Method::HEAD,
+    Method::POST,
+    Method::PATCH,
+    Method::DELETE,
+];
 
 fn is_open(method: &Method, route: &str) -> bool {
-    OPEN_ROUTES.contains(&route) || (route == "/api/auth/session" && method == Method::POST)
+    let reads = method == Method::GET || method == Method::HEAD;
+    route == "/healthz"
+        || (route == "/api/auth/session" && method == Method::POST)
+        || (reads && matches!(route, "/" | "/login"))
 }
 
 async fn call(

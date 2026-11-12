@@ -307,7 +307,7 @@ async fn dead_letters_can_be_requeued_and_delivered() -> Result<(), Box<dyn std:
     spool.replay(50, now, reject).await?;
     assert_eq!(bodies(&spool.dead_dir())?, vec!["poison"]);
     assert_eq!(spool.requeue_dead().await?, 1);
-    assert!(bodies(&spool.dead_dir())?.is_empty());
+    assert_eq!(bodies(&spool.dead_dir())?, Vec::<String>::new());
     let transport = RuleTransport::default();
     let transport_ref = &transport;
     spool
@@ -316,6 +316,6 @@ async fn dead_letters_can_be_requeued_and_delivered() -> Result<(), Box<dyn std:
         })
         .await?;
     assert_eq!(transport.posted(), vec!["poison"]);
-    assert!(bodies(dir.path())?.is_empty());
+    assert_eq!(bodies(dir.path())?, Vec::<String>::new());
     Ok(())
 }

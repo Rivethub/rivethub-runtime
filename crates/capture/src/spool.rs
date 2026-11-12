@@ -208,7 +208,7 @@ impl CaptureSpool {
         &self,
         path: &Path,
         now: DateTime<Utc>,
-        retry_after_seconds: Option<u64>,
+        retry_after_seconds: Option<u32>,
     ) -> Result<(), SpoolError> {
         let name = parse_name(path).ok_or_else(|| {
             SpoolError::Io(std::io::Error::new(
@@ -218,13 +218,7 @@ impl CaptureSpool {
         })?;
         let delay = retry_after_seconds.map_or_else(
             || backoff(1),
-            |seconds| {
-                TimeDelta::seconds(
-                    i64::try_from(seconds).map_or(BACKOFF_CEILING_SECONDS, |seconds| {
-                        seconds.min(BACKOFF_CEILING_SECONDS)
-                    }),
-                )
-            },
+            |seconds| TimeDelta::seconds(i64::from(seconds).min(BACKOFF_CEILING_SECONDS)),
         );
         let target = self.dir.join(format!(
             "{}-{}.{}.{}{SUFFIX}",

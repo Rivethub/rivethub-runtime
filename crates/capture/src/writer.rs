@@ -34,6 +34,16 @@ pub(crate) fn metadata_keep() -> &'static [&'static str] {
     ]
 }
 
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<u32> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?;
+    if let Ok(text) = value.to_str()
+        && let Ok(seconds) = text.trim().parse::<u32>()
+    {
+        return Some(seconds);
+    }
+    None
+}
+
 #[derive(Debug, Error)]
 pub enum PostError {
     #[error("capture HTTP 401: the owner token is missing or stale")]
@@ -45,7 +55,7 @@ pub enum PostError {
     #[error("capture HTTP {status}: the gateway asked for a retry")]
     Throttled {
         status: u16,
-        retry_after_seconds: Option<u64>,
+        retry_after_seconds: Option<u32>,
     },
     #[error("capture HTTP {status}")]
     Server { status: u16 },
@@ -122,11 +132,7 @@ impl CaptureTransport for HttpCaptureTransport {
                 return Err(PostError::Unauthorized);
             }
             if status == 408 || status == 429 {
-                let retry_after_seconds = response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.trim().parse::<u64>().ok());
+                let retry_after_seconds = retry_after(response.headers());
                 return Err(PostError::Throttled {
                     status,
                     retry_after_seconds,
