@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-use std::str::FromStr;
-
 use thiserror::Error;
 use wire::capture::BundledSession;
 use wire::capture::ChecksDecision;
@@ -11,29 +9,8 @@ use super::Checked;
 use super::Family;
 use super::tally;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Decision {
-    Import,
-    Skip,
-    HoldSpans,
-}
-
-#[derive(Debug, Error, PartialEq, Eq)]
-#[error("{0:?} is not a decision; use import, skip or hold-spans")]
-pub struct DecisionError(String);
-
-impl FromStr for Decision {
-    type Err = DecisionError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text {
-            "import" => Ok(Self::Import),
-            "skip" => Ok(Self::Skip),
-            "hold-spans" => Ok(Self::HoldSpans),
-            other => Err(DecisionError(other.to_owned())),
-        }
-    }
-}
+pub use wire::capture::DecisionError;
+pub use wire::capture::ReceiveDecision as Decision;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Decisions {

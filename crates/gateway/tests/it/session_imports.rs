@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use gateway::sessions::{SessionRegistry, owners_file};
-use kernel::memory::{ImportOrigin, MemoryState, SessionActivity, SessionRecord};
+use kernel::memory::share::receive::Verification;
+use kernel::memory::{ImportOrigin, ImportReceipt, MemoryState, SessionActivity, SessionRecord};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
+use wire::capture::ReceiptVerification;
 use wire::gateway::session_catalog::{
     SessionDetail, SessionOriginLabel, SessionSummaryPage, SharedWith,
 };
@@ -58,6 +60,10 @@ fn imported() -> SessionRecord<SessionKey> {
             author: Some("alex".to_owned()),
             created_at: Some(at("2026-11-02T09:14:00Z")),
             updated_at: Some(at("2026-11-02T10:01:00Z")),
+            receipt: Some(ImportReceipt {
+                bundle_id: "bundle-1".to_owned(),
+                verification: Verification::Verified,
+            }),
         }),
     }
 }
@@ -142,7 +148,7 @@ async fn view(setup: &Setup, name: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_team_user_lists_an_import_labelled_with_its_author_and_date() {
+async fn a_team_user_lists_an_import_labelled_with_its_author_date_and_verification() {
     let setup = setup();
     let (status, body) = call(&setup, "GET", "/api/sessions", "").await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -161,6 +167,8 @@ async fn a_team_user_lists_an_import_labelled_with_its_author_and_date() {
             author: Some("alex".to_owned()),
             created_at: Some(at("2026-11-02T09:14:00Z")),
             updated_at: Some(at("2026-11-02T10:01:00Z")),
+            verification: Some(ReceiptVerification::Verified),
+            bundle_id: Some("bundle-1".to_owned()),
         })
     );
     assert_eq!(row.visibility, SharedWith::Private);

@@ -196,6 +196,31 @@ pub enum ChecksDecision {
     HoldSpans,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiveDecision {
+    Import,
+    Skip,
+    HoldSpans,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("{0:?} is not a decision; use import, skip or hold-spans")]
+pub struct DecisionError(String);
+
+impl std::str::FromStr for ReceiveDecision {
+    type Err = DecisionError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "import" => Ok(Self::Import),
+            "skip" => Ok(Self::Skip),
+            "hold-spans" => Ok(Self::HoldSpans),
+            other => Err(DecisionError(other.to_owned())),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptChecks {
     pub rules_sha256: String,
