@@ -122,3 +122,14 @@ fn a_disabled_cloud_refuses_rivethub_cloud_however_it_is_spelled() -> TestResult
     assert_eq!(closed.to_string(), "only team.example.com");
     Ok(())
 }
+
+#[test]
+fn a_disabled_cloud_refuses_rivethub_cloud_on_any_port() -> TestResult {
+    let closed = policy(true, &["rivethub.cloud:8443", "team.example.com"])?;
+    for spelling in ["rivethub.cloud:8443", "RivetHub.Cloud.:8443"] {
+        let refused = refusal(closed.admit(&host(spelling)?));
+        assert!(refused.contains("cloud.disabled"), "{spelling}: {refused}");
+    }
+    assert_eq!(closed.to_string(), "only team.example.com");
+    Ok(())
+}

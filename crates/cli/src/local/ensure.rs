@@ -10,6 +10,7 @@ use nix::errno::Errno;
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use tokio::time::Instant;
 
 use super::{apply_bind, bind_host, bind_port, refuse_cloud_left_on};
@@ -52,20 +53,22 @@ struct NodeIdentity {
     name: String,
     node: String,
     version: Option<String>,
-    policy: Option<NodePolicy>,
+    policy: Option<Box<RawValue>>,
 }
 
-#[derive(Debug, Deserialize)]
-struct NodePolicy {
+#[derive(Deserialize)]
+struct CloudPolicy {
     cloud: Option<String>,
 }
 
 impl NodeIdentity {
     fn cloud_disabled(&self) -> bool {
-        self.policy
-            .as_ref()
-            .and_then(|policy| policy.cloud.as_deref())
-            == Some("disabled")
+        self.policy.as_ref().is_some_and(|raw| {
+            matches!(
+                serde_json::from_str::<CloudPolicy>(raw.get()),
+                Ok(CloudPolicy { cloud: Some(cloud) }) if cloud == "disabled"
+            )
+        })
     }
 }
 

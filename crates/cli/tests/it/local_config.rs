@@ -199,6 +199,24 @@ async fn ensure_no_cloud_refuses_a_running_node_that_lacks_the_policy() {
 }
 
 #[tokio::test]
+async fn ensure_accepts_a_node_whose_policy_has_a_shape_it_does_not_inspect() {
+    let stub = testkit::stub_server(Router::new().route(
+        "/healthz",
+        get(|| async {
+            r#"{"ok":true,"sessions":0,"name":"host","node":"node","policy":{"cloud":{"mode":"disabled"}}}"#
+        }),
+    ))
+    .await
+    .expect("health route");
+    let home = home();
+    let env = local_config(&home, stub.addr.port(), "");
+    let report = run(&["local", "--ensure"], &env).await;
+    stub.close().await.expect("stub shuts down");
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(report.stdout.contains("is running at"), "{}", report.stdout);
+}
+
+#[tokio::test]
 async fn ensure_no_cloud_accepts_a_running_node_under_the_policy_even_when_degraded() {
     let stub = testkit::stub_server(Router::new().route(
         "/healthz",

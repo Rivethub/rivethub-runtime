@@ -123,6 +123,15 @@ impl ShareServer {
     }
 
     #[must_use]
+    pub fn is_cloud(&self) -> bool {
+        let host = self
+            .0
+            .rsplit_once(':')
+            .map_or(self.0.as_str(), |(host, _)| host);
+        host == DEFAULT_SERVER
+    }
+
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

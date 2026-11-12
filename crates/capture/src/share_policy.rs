@@ -51,7 +51,7 @@ impl SharePolicy {
     pub fn admit(&self, host: &ShareServer) -> Result<(), ShareRefused> {
         match (self.cloud_disabled, &self.allowed) {
             (true, None) => Err(ShareRefused::Off),
-            (true, Some(_)) if host.is_default() => Err(ShareRefused::Cloud),
+            (true, Some(_)) if host.is_cloud() => Err(ShareRefused::Cloud),
             (_, Some(allowed)) if !allowed.contains(host) => Err(ShareRefused::Unlisted {
                 host: host.clone(),
                 allowed: joined(allowed),
