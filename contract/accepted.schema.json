@@ -1793,6 +1793,24 @@
       ],
       "type": "string"
     },
+    "DropRefusal": {
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "status": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "error",
+        "status"
+      ],
+      "type": "object"
+    },
     "Effort": {
       "enum": [
         "low",
@@ -8534,6 +8552,25 @@
       ],
       "type": "object"
     },
+    "ScopedToken": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "$ref": "#/$defs/TokenScope"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "digest",
+        "scopes"
+      ],
+      "type": "object"
+    },
     "SearchMode": {
       "enum": [
         "hybrid",
@@ -10805,6 +10842,13 @@
       ],
       "type": "object"
     },
+    "TokenScope": {
+      "enum": [
+        "full",
+        "drops:write"
+      ],
+      "type": "string"
+    },
     "ToolCall": {
       "properties": {
         "arguments": {
@@ -11640,6 +11684,28 @@
       ],
       "type": "string"
     },
+    "Uploaded": {
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expires_at",
+        "bytes"
+      ],
+      "type": "object"
+    },
     "UserRecord": {
       "properties": {
         "admin": {
@@ -11683,7 +11749,7 @@
         },
         "tokens": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/UserToken"
           },
           "type": [
             "array",
@@ -11726,6 +11792,16 @@
         "defaultVisibility"
       ],
       "type": "object"
+    },
+    "UserToken": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/ScopedToken"
+        }
+      ]
     },
     "UsersRegistry": {
       "properties": {

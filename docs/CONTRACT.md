@@ -2397,6 +2397,158 @@ one POST per batch with a JSON body as above, the request headers copied from th
 credential, and no body content. The proxy-side sink, cost tables, quota, account management and matching other
 harnesses (add a row to the table) are not part of this route.
 
+(143) A team server serves the drop API (session-sharing phase 3, SS-11; uses note 140). Phil decided, 2026-11-11, that
+a self-hosted RivetHub team server can be a share server (note 140), and approved the plan that has the rh gateway serve
+the rivethub.cloud drop API (cloud PR #1) with the same routes, statuses and bodies, with members uploading with the
+gateway bearer token they already hold in the users file instead of the cloud's email device login. Everything else
+below is the plan's design.
+
+Config. `gateway.drops` (off by default): `enabled` (false), `root` (default `drops` under the gateway's state
+directory, `RIVETHUB_STATE_DIR` else the hub home), `max_bytes` (64 MiB; 0 or more than 64 MiB is refused at load,
+because `rh memory receive` refuses larger downloads), `per_user_drops` (50) and `per_user_bytes` (512 MiB). An unknown
+key under `gateway.drops` is a type error. With drops off nothing below exists and a remote anonymous request stays 401.
+
+Routes (`wire::gateway::drops`, mounted only when enabled). `POST /api/drops` takes an age file body and answers 201
+`Uploaded {id, expires_at, bytes}`; a drop expires 7 days after its upload. `GET /api/drops/{id}` is anonymous and
+answers 200 `application/octet-stream` with `content-length` once. `DELETE /api/drops/{id}` revokes and answers 204.
+Every refusal is `DropRefusal {error, status}`: 401 `invalid_token` when the upload or revoke carries no
+`Authorization` header (a token only in the query counts as none, and a loopback caller without a header is refused
+too), with `www-authenticate: Bearer realm="rivethub", scope="drops:write"` and no `error` attribute (RFC 6750 section
+3.1), or carries a header that is not `Bearer <token>` (the scheme in any case) or names a token the users file does
+not list, with `www-authenticate: Bearer realm="rivethub", error="invalid_token", scope="drops:write"`; 403
+`insufficient_scope` with `www-authenticate: Bearer realm="rivethub", error="insufficient_scope", scope="drops:write"`
+for a token without `drops:write` (none exists today, because every scope implies it); 413 `payload
+too large` for a declared `content-length` over `max_bytes` (the body is drained, not reset) or a body streamed past
+its reservation; 400 `body is not an age file` for a body, the empty one included, that does not start
+`age-encryption.org/v1\n`; 429 `rate limit exceeded` with `retry-after`; 429 `drop quota exceeded`; 404 `not found`;
+405 `method not allowed` for any other method on these paths, `HEAD` included, so a `HEAD` never claims a drop; 500
+`internal error`. An unknown, consumed, expired, claimed or malformed id gives a byte-identical 404, headers included;
+malformed covers any path segment that is not a drop id, one that decodes to invalid UTF-8 (`%FF`) included, and on
+`GET` it passes the download limit and counts as a miss like any other 404. A revoke by another user, or of an unknown
+or malformed id, is 404 (after the token check). Every drop response carries `cache-control: no-store`. An upload
+must finish within 10 minutes (the request body deadline on this route is 11 minutes instead of
+`ServeOptions.request_timeout`), and a download is cut after 15 minutes. The body is streamed, never buffered.
+
+Guard. With drops enabled, `GET /api/drops/{id}` is open to any caller. `POST /api/drops` and `DELETE
+/api/drops/{id}` pass the guard without a resolved token only over a secure transport (below) or from a direct local
+caller, and the handler then authenticates with the cloud-shaped errors above; any other caller gets the guard's 401,
+so a token never crosses cleartext. A direct local caller counts as a secure transport, so `rh` on the same machine
+uploads with its token over plain HTTP to `127.0.0.1`. Upload and revoke match the bearer token against the users-file
+digests with the same constant-time compare the other routes use (`Tenancy::user_for_token`); the drop's owner is that
+user. The local owner token (note 147) is not a users-file token, so it cannot upload. The
+route differs from the cloud on purpose in two places: a request with no credentials gets the challenge without an
+`error` attribute (the cloud sends `error="invalid_token"`), and the cloud's 403 for a token without `drops:write`
+cannot happen here.
+
+Peers (the audit of 2026-11-11 found that a team server behind a reverse proxy on the same host made every remote
+request the owner; note 147 has since removed tokenless loopback, so a proxy can no longer confer the owner, and this
+section decides only which transport a request used and which address it came from). The guard computes one
+`gateway::peer::Peer` per request from the socket address, the forwarding headers and `gateway.trusted_proxies`, and
+puts it in the request extensions; the guard and the drop download limit read it. `DirectLocal`: the peer is
+`127.0.0.1`, `::1` or `::ffff:127.0.0.1`, the request carries none of `Forwarded`, `X-Real-IP` or any `X-Forwarded-*`
+header (the check note 147 uses for the owner token, `auth::names_a_forwarder`), and the peer is not a trusted proxy. It
+counts as a secure transport. `Proxied`: the peer is in `gateway.trusted_proxies`; the client address is the rightmost
+`X-Forwarded-For` entry that is not itself a trusted proxy, walking right to left over every `X-Forwarded-For` header: a
+port is stripped (`203.0.113.9:5678`, `[2001:db8::7]:80`), a hop that does not parse is skipped and the walk goes on, a
+header value that is not UTF-8 contributes no hops, and the peer's own address is used when no usable hop remains. The
+request counts as a secure transport only when it carries exactly one `X-Forwarded-Proto` whose value is `https`.
+`Remote`: everything else, a loopback peer that sends forwarding headers and is not a trusted proxy included, so a
+same-host proxy the operator did not list fails closed (a users-file token is accepted only over TLS). The drop download
+limit and miss count key on the client address (the peer's, or the forwarded client's behind a trusted proxy).
+
+`gateway.trusted_proxies` (default empty) lists IP addresses or CIDR blocks; an entry that is neither is a type error at
+load, and an IPv4-mapped IPv6 entry (`::ffff:127.0.0.1/128`) is read as its IPv4 block (`127.0.0.1/32`), as a mapped
+peer address is read as its IPv4 address. A trusted proxy must overwrite `X-Forwarded-Proto`, not append to it, or a
+client could send its own `https`: Caddy overwrites it; nginx needs `proxy_set_header X-Forwarded-Proto $scheme`. With Caddy on the team server forwarding to the gateway:
+
+```
+team.example.com {
+	reverse_proxy 127.0.0.1:5174
+}
+```
+
+```yaml
+gateway:
+  host: 127.0.0.1
+  trusted_proxies: ["127.0.0.1/32"]
+  drops:
+    enabled: true
+```
+
+Caddy sets `X-Forwarded-For` and `X-Forwarded-Proto: https`, so members' uploads pass the guard and the limit keys on
+each member's address.
+
+Local owner. Loopback is not the owner on any node (note 147), so a team server needs no switch of its own: a request
+with no credential is 401 whatever its peer, a same-host forwarder that adds no header included (the re-review of
+2026-11-11 proved that such a forwarder made remote callers the tokenless owner before note 147 removed that mode). A
+team server's own tools read `<state_dir>/local-owner.token` as note 147 says, or `memory.capture.gateway.token` for a
+remote capture gateway.
+
+Scopes. A `users.json` `users.<id>.tokens[]` entry is either the hex SHA-256 of the secret, as before, or an object
+`{"digest": "<hex sha256>", "scopes": ["drops:write"]}` (`wire::gateway::users::UserToken`, untagged; unknown keys,
+unknown scopes and an empty list are refused at load). The scopes are `full` and `drops:write`, and `full` implies
+`drops:write`. A bare digest string is `full`: every token in an existing users file keeps full access, as before.
+Operators should mint a `drops:write`-only token for a member who only shares sessions, because a full token copied for
+uploads also reads all memory. `Tenancy::resolve_bearer` accepts a `drops:write`-only token for `POST /api/drops`, `DELETE
+/api/drops/{id}` and `GET /api/me` and nowhere else; on any other route (a direct local caller included) the guard or
+the route answers 403 `{"error": "the token's scope does not cover this route", "code": "insufficient_scope"}` with
+`www-authenticate: Bearer realm="rivethub", error="insufficient_scope", scope="full"`.
+
+Challenges. Every gateway 401 carries `WWW-Authenticate` (RFC 7235 section 3.1), the HTML sign-in page included:
+`Bearer realm="rivethub"` when the request sent no `Authorization` header, and `Bearer realm="rivethub",
+error="invalid_token"` when it sent a users-file token the gateway did not accept (`ApiError::Unauthorized` and
+`ApiError::InvalidToken`). The guard's 401 on a drop route has the same shape; the drop handler's own refusals keep
+their `scope="drops:write"` challenges above.
+
+Token check. A client checks a team token with `GET /api/me` and its bearer: 200 `MeResponse {user, spaces, settings}`
+for a token the users file lists (a `drops:write`-only token included) and 401 for an unknown one. No other probe
+exists; the gateway has no `DELETE` probe.
+
+Storage and claim. Files live in the root, which is created 0700; at start the gateway refuses to run unless the root
+is a real directory (not a symlink) owned by its user with no group or other access, and the error names the path and
+the rule. A file name is built only from a parsed drop id (22 characters of base64url, 16 random bytes). A drop's
+lifecycle on disk: `<id>.age` (0600, opened `O_CREAT|O_EXCL|O_NOFOLLOW`, written as it streams, hashed with SHA-256,
+fsynced) is written first; `<id>.json` `{owner, bytes, sha256, created_at, expires_at}` is written last through
+`<id>.json.draft` and a rename, so a record means a complete upload; the root directory is fsynced after that rename
+and before the 201, so an acknowledged upload survives a power cut. A refused or cut upload removes its files, the
+record included, and a failed directory fsync is such a refusal (500). A
+download reads the record (none is 404), deletes an expired drop (404), then claims it with `rename(<id>.age,
+<id>.sending)`: only the caller whose rename succeeds proceeds, and every other caller gets the same 404. The winner
+opens `<id>.sending` with `O_NOFOLLOW` and checks its size and SHA-256 against the record; a mismatch deletes the drop
+and answers 500 (a corrupt file never heals, and the CLI reports a 500 then 404 as a drop that failed mid-download); an
+open or read failure renames the file back and answers 500. On success it unlinks `<id>.sending` and `<id>.json`
+and fsyncs the root directory before the 200 starts, so a power cut cannot bring a downloaded drop back, and streams
+from the open descriptor, so a stalled or aborted download leaves no second copy; a failed directory fsync answers 500
+and the drop stays deleted. A revoke claims with the same rename, so it races cleanly with a download; a revoke
+that wins the claim unlinks both files and fsyncs the root before its 204 (a failed fsync answers 500 and the drop
+stays deleted). A revoke that
+finds its owner's drop claimed by a download that has not yet started its 200 wins: it answers 204, and that download
+answers 404, or, if it fails, deletes the drop instead of renaming it back. A download whose 200 has started is not
+affected. An expiry (on download or in the sweep) deletes only a drop whose claim it won; one that loses leaves the
+files and the index entry to the claim's winner. At start a `<id>.sending` beside its record (a claim a crash cut
+short) is renamed back, and a record with neither `<id>.age` nor `<id>.sending` (a crash between a deletion's unlinks)
+is deleted and not counted toward quota. An in-memory index, rebuilt from the records at start, holds each live
+drop's owner, size and expiry plus the uploads in flight; it serves the quota and the sweep only, and the files decide
+every claim. Quota counts a user's live drops and uploads in flight, each upload in flight reserving its declared
+length, or `max_bytes` when chunked, before a byte is stored. Every 10 minutes (on the composition's task tracker,
+stopped at shutdown) a sweep deletes expired drops and, more than an hour after their last change, files of no live or
+in-flight drop (`.age`, `.sending`, `.json`, `.json.draft`), and prunes the rate windows; it must clear 10,000 expired
+drops in under 10 seconds.
+
+Limits (fixed windows: a key's first hit opens a window, at most the limit counts in it, and a refusal tells the seconds
+until it closes). Per address (the client address of the request's peer, above): 20 downloads a minute; a GET answered
+404 is a miss, and once an address has 10 misses in 10 minutes every drop GET from it is 429 until that window closes
+(misses are checked before the download is counted, as the cloud does). Per user: 30 uploads an hour. Per user at most
+`per_user_drops` live drops and `per_user_bytes`.
+
+Logging. The gateway never logs a drop id, a path holding one, or a token; a drop failure logs the operation and the
+io error kind only, and `DropId`'s `Debug` prints `DropId(..)`.
+
+Clients. `rh memory share --server <team>` and `rh memory receive rhb1:<team>/<id>#<key>` work unchanged (note 140);
+`rh memory share` reads the 201 body as `wire::gateway::drops::Uploaded`. How the CLI holds a team server's gateway
+token for uploads is SS-9a's team-token login. A team server whose certificate a private CA signs is trusted through
+`memory.share.trusted_cas: [{host, ca}]` on each member's machine (note 140).
+
 (144) The sanitize MAC, format 2 (Phil, 2026-11-11; session-sharing SS-14, auth audit §4; changes notes 136 and 137):
 every HMAC under the local sanitize key (ids, fingerprints, the policy hash, task-id UUIDs, the collision order and both
 review seals) is HMAC-SHA256 from the RustCrypto `hmac` crate. No hand-written primitive is left. Format 2 feeds the MAC
