@@ -349,6 +349,20 @@ async fn share_routes_need_the_local_owner_credential() -> TestResult {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_users_file_bearer_for_the_owner_is_not_the_local_owner() -> TestResult {
+    let desk = Arc::new(FakeDesk::default());
+    let app = node(&desk)?;
+    for route in routes() {
+        let (status, _, body) = call_as(&app, &route, LOOPBACK, &[], Some(DEVICE)).await?;
+        let label = format!("{} {}", route.method, route.path);
+        assert_eq!(status, StatusCode::FORBIDDEN, "{label}: {body}");
+        assert_eq!(refusal(&body)?.reason, RefusalReason::NotLocal, "{label}");
+    }
+    assert_eq!(desk.calls(), Vec::<&str>::new());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn share_routes_are_refused_to_plugins_with_memory_read() -> TestResult {
     let root = tempfile::tempdir()?;
     let source = root.path().join("source");

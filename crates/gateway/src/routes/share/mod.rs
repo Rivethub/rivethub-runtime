@@ -26,6 +26,7 @@ use wire::gateway::share::ShareRefusal;
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::limited_bytes;
+use crate::tenancy::Credential;
 
 const NOT_LOCAL: &str = "sharing runs only on the machine rh runs on";
 const FAILED: &str = "sharing failed; the rh log names the cause";
@@ -196,11 +197,15 @@ fn admit(gateway: &Gateway, parts: &Parts) -> Result<ShareCaller, Refusal> {
     if plugin || !crate::auth::direct_local(parts) {
         return Err(Refusal::not_local(NOT_LOCAL));
     }
-    let user = crate::tenancy::caller(gateway, parts)?;
-    gateway
-        .tenancy
-        .owner(&user)
-        .map_err(|_| Refusal::not_local(NOT_LOCAL))?;
+    let (user, credential) = crate::tenancy::authenticate(gateway, parts)?;
+    let owner_credential = match credential {
+        Credential::Session { .. } => true,
+        Credential::Bearer => crate::tenancy::owner_token_presented(gateway, parts),
+        Credential::Plugin => false,
+    };
+    if !owner_credential || gateway.tenancy.local_user() != Some(&user) {
+        return Err(Refusal::not_local(NOT_LOCAL));
+    }
     Ok(ShareCaller)
 }
 
