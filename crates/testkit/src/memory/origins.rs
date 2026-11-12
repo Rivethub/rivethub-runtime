@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::MemoryEntry;
 use kernel::memory::Provenance;
@@ -59,4 +60,13 @@ pub(super) fn wiki_authors(
             (!imported.is_empty()).then_some((slug, imported))
         })
         .collect()
+}
+
+pub(super) fn browsed(filter: &BrowseFilter, entry: &MemoryEntry) -> bool {
+    filter.agent.as_deref().is_none_or(|a| entry.agent == a)
+        && filter.role.is_none_or(|r| entry.role == r)
+        && filter
+            .tool_name
+            .as_deref()
+            .is_none_or(|t| entry.tool_name.as_deref() == Some(t))
 }

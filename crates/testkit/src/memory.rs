@@ -378,14 +378,7 @@ impl MemoryStore for FakeMemoryStore {
             .lock()
             .await
             .iter()
-            .filter(|e| filter.agent.as_deref().is_none_or(|a| e.agent == a))
-            .filter(|e| filter.role.is_none_or(|r| e.role == r))
-            .filter(|e| {
-                filter
-                    .tool_name
-                    .as_deref()
-                    .is_none_or(|t| e.tool_name.as_deref() == Some(t))
-            })
+            .filter(|e| origins::browsed(&filter, e))
             .take(filter.limit.get() as usize)
             .cloned()
             .collect();
