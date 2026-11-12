@@ -1152,3 +1152,99 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
     first.stop.cancel();
     second.stop.cancel();
 }
+
+#[tokio::test]
+async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
+    let node = Node::new("phil", "https://unused.example.com/", None);
+    support::config(&node.home, "cloud:\n  disabled: true\n");
+    let report = node.run(&["share", "login"]).await;
+    assert_eq!(report.exit, Exit::Failure, "{}", report.stdout);
+    assert!(
+        report
+            .stderr
+            .contains("sharing is disabled by this hub's policy"),
+        "{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("memory.share.allowed_servers"),
+        "{}",
+        report.stderr
+    );
+
+    node.sign_in("rivethub.cloud");
+    let forgotten = node.run(&["share", "logout"]).await;
+    assert_eq!(forgotten.exit, Exit::Ok, "{}", forgotten.stderr);
+    assert!(
+        forgotten
+            .stdout
+            .contains("signed out of rivethub.cloud; the login was not revoked there because sharing is disabled by this hub's policy"),
+        "{}",
+        forgotten.stdout
+    );
+    assert!(
+        !logins(&node).contains("rivethub.cloud"),
+        "{}",
+        logins(&node)
+    );
+}
+
+#[tokio::test]
+async fn a_disabled_cloud_reaches_only_listed_share_servers() {
+    let served = drop_box().await;
+    let node = Node::new("phil", &served.url, None);
+    let share_config = format!(
+        "memory:\n  share:\n    server:\n      url: {}\n",
+        served.url
+    );
+    support::config(
+        &node.home,
+        &format!("{share_config}cloud:\n  disabled: true\n"),
+    );
+    node.sign_in(&served.url);
+    let refused = node.run(&["share", "login"]).await;
+    assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
+    assert!(
+        refused.stderr.contains("disabled by this hub's policy"),
+        "{}",
+        refused.stderr
+    );
+    let forgotten = node.run(&["share", "logout"]).await;
+    assert_eq!(forgotten.exit, Exit::Ok, "{}", forgotten.stderr);
+    assert!(
+        forgotten.stdout.contains("was not revoked there because"),
+        "{}",
+        forgotten.stdout
+    );
+    assert!(!logins(&node).contains(&host_of(&served.url)));
+    assert_eq!(served.drops.0.lock().revokes.len(), 0);
+
+    node.sign_in(&served.url);
+
+    support::config(
+        &node.home,
+        &format!(
+            "{share_config}    allowed_servers:\n      - {}\ncloud:\n  disabled: true\n",
+            host_of(&served.url)
+        ),
+    );
+    let allowed = node.run(&["share", "logout"]).await;
+    assert_eq!(allowed.exit, Exit::Ok, "{}", allowed.stderr);
+    assert_eq!(served.drops.0.lock().revokes.len(), 1);
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn a_login_stored_under_another_spelling_reads_as_its_server() {
+    let node = Node::new("phil", "https://team.example.com/", None);
+    node.sign_in("Team.Example.com:443");
+    let status = node.run(&["share", "status"]).await;
+    assert_eq!(status.exit, Exit::Ok, "{}", status.stderr);
+    assert!(
+        status
+            .stdout
+            .starts_with("signed in to team.example.com (scope"),
+        "{}",
+        status.stdout
+    );
+}

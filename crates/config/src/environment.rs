@@ -80,6 +80,7 @@ pub const NODE_NAME_VARIABLE: &str = "RIVETHUB_NODE_NAME";
 pub const NODE_ID_VARIABLE: &str = "RIVETHUB_NODE_ID";
 pub const MODEL_RUN_VARIABLE: &str = "RIVETHUB_MODEL_RUN";
 pub const POSTGRES_URL_VARIABLE: &str = "RIVETHUB_PG_URL";
+pub const CLOUD_VARIABLE: &str = "RIVETHUB_CLOUD";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Alias {
@@ -213,6 +214,14 @@ impl Environment {
             .or_else(|| Some(hostname.trim()).filter(|name| !name.is_empty()))
             .map(str::to_owned)
             .ok_or(crate::ConfigError::NodeName)
+    }
+
+    pub fn cloud_switched_off(&self) -> Result<bool, crate::ConfigError> {
+        match self.trimmed(CLOUD_VARIABLE) {
+            None | Some("on") => Ok(false),
+            Some("off") => Ok(true),
+            Some(other) => Err(crate::ConfigError::CloudSwitch(other.to_owned())),
+        }
     }
 
     pub fn postgres_url(&self) -> Option<String> {

@@ -10,9 +10,10 @@ use nix::errno::Errno;
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use tokio::time::Instant;
 
-use super::{apply_bind, bind_host, bind_port};
+use super::{apply_bind, bind_host, bind_port, refuse_cloud_left_on};
 use crate::exit::Exit;
 use crate::status::{Endpoint, probe_endpoint};
 use crate::{Error, Report, process};
@@ -27,6 +28,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub(crate) struct Ensure {
     pub(crate) port: Option<u16>,
     pub(crate) no_lan: bool,
+    pub(crate) no_cloud: bool,
     pub(crate) wait_seconds: u64,
 }
 
@@ -51,6 +53,23 @@ struct NodeIdentity {
     name: String,
     node: String,
     version: Option<String>,
+    policy: Option<Box<RawValue>>,
+}
+
+#[derive(Deserialize)]
+struct CloudPolicy {
+    cloud: Option<String>,
+}
+
+impl NodeIdentity {
+    fn cloud_disabled(&self) -> bool {
+        self.policy.as_ref().is_some_and(|raw| {
+            matches!(
+                serde_json::from_str::<CloudPolicy>(raw.get()),
+                Ok(CloudPolicy { cloud: Some(cloud) }) if cloud == "disabled"
+            )
+        })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,7 +172,7 @@ pub(crate) async fn ensure(
     if request.port == Some(0) {
         return Err(Error::GatewayPort);
     }
-    let (config, adopted) = bound_config(env, request.port, request.no_lan).await?;
+    let (config, adopted) = bound_config(env, request).await?;
     let endpoint = probe_endpoint(env, &config).await?;
     let origin = endpoint.url.origin().ascii_serialization();
     let port = endpoint.url.port_or_known_default().ok_or(Error::Address)?;
@@ -170,6 +189,11 @@ pub(crate) async fn ensure(
             Err(refusal) => return Ok(Err(refusal)),
         },
     };
+    if request.no_cloud && !health.cloud_disabled() {
+        return Err(Error::NodeCloudLeftOn {
+            origin: target.origin,
+        });
+    }
     #[cfg_attr(
         dylint_lib = "rr_lints",
         expect(
@@ -317,14 +341,18 @@ fn refused_token(env: &Environment) -> Result<String, Error> {
 
 async fn bound_config(
     env: &Environment,
-    port: Option<u16>,
-    no_lan: bool,
+    request: Ensure,
 ) -> Result<(Config, Option<String>), Error> {
     let env = env.clone();
+    let Ensure { port, no_lan, .. } = request;
     tokio::task::spawn_blocking(move || {
         let adopted = config::adopt_legacy_state(&env)?;
         let mut config = match config::resolve_config_path(&env)? {
-            Some(location) => Config::load(&env, &location, Profile::Standalone)?.config,
+            Some(location) => {
+                let config = Config::load(&env, &location, Profile::Standalone)?.config;
+                refuse_cloud_left_on(&config, request.no_cloud, location.path())?;
+                config
+            }
             None => generated(&env, port, no_lan)?,
         };
         apply_bind(&mut config, port, no_lan);
@@ -424,6 +452,9 @@ fn spawn(env: &Environment, request: Ensure, home: &Path, logs: &Path) -> Result
     }
     if request.no_lan {
         command.arg("--no-lan");
+    }
+    if request.no_cloud {
+        command.arg("--no-cloud");
     }
     command
         .env_clear()

@@ -13,6 +13,7 @@ pub mod rules;
 pub mod sanitize;
 pub mod seal;
 pub mod share;
+pub mod share_policy;
 pub mod sign;
 pub mod spool;
 pub mod store_path;

@@ -2296,7 +2296,8 @@ sends waiting reports to `POST /v1/telemetry/crash` every ten minutes (the first
 once the cloud answers `202` or `422`, or at once while crash reports are off. With usage counts on it keeps the day's
 counts of searches and app opens in `install.json` and sends them to `POST /v1/telemetry/usage` once the day is over.
 `telemetry: {disabled: true}` in config.yaml is the hub's policy: no hook, nothing sent, both settings read `false` and
-turning either on is `409`. Updates: while signed in with `updateSource` `rivethub-cloud`, the gateway asks
+turning either on is `409`. `cloud: {disabled: true}` implies it and also stops sign-in, the cloud update check and
+sharing through rivethub.cloud (note 145). Updates: while signed in with `updateSource` `rivethub-cloud`, the gateway asks
 `GET /v1/updates/latest?channel=&os=` at start and every six hours; a newer version whose signature verifies becomes
 `pendingUpdate`, and with `autoDownload` the archive is downloaded, checked against the signed SHA-256 and kept under
 `account/updates/` for `rh update`. A `401` from the cloud signs this install out. The release signature is Ed25519 over the 32 raw bytes of the archive's SHA-256,
@@ -2415,6 +2416,64 @@ file refuses it as sealed under another machine's key. Bundles already sanitized
 receiver never recomputes them. If you sanitize the same raw input again after this change, it gets new event ids and a
 new `origin.identity`, as after a key rotation (note 136). A re-import of such a bundle then duplicates its sessions
 once. The policy hash and the report fingerprints of a re-run also differ from the 0.8.0 run.
+
+(145) Hub cloud policy (SS-12). Phil decided, 2026-11-11: an operator who must keep every byte inside their environment
+can turn the cloud off for the whole hub at install time, and no user can turn it back on. Cloud features stay on by
+default. The policy lives only in config.yaml, which the operator owns; no route, CLI flag or account setting changes it.
+This hub's gateway and the `rh` CLI enforce it, each reading this hub's config.yaml, including the share rules below.
+It governs the hub, not every binary on the machine: a shell user who runs `rh` with a config of their own (through
+`RIVETHUB_CONFIG`, `RIVETHUB_HOME` or their own home directory) is not bound by it, and keeping such a user off the network is the operator's job.
+
+Keys. `cloud: {disabled: true}` turns the cloud off; an http or https `cloud.url` that is also set is ignored, not an
+error, while any other `cloud.url` is still the config error `The cloud url must be http or https`. It implies
+`telemetry: {disabled: true}` (`Config::telemetry_disabled` is true when either key is set, and `Config::cloud_disabled`
+reads the first). `memory.share.allowed_servers` (also `allowedServers`) lists share servers, each a host with an
+optional `:port` in the grammar `--server` takes (note 140); a missing or empty list allows any server.
+
+What `cloud.disabled` stops. `POST /api/account/signin`, `POST /api/account/signin/poll` and `DELETE /api/account`
+answer `409` with `cloud sign-in is disabled by this hub's policy (cloud.disabled), so updates come from GitHub`.
+`POST /api/account/signout` deletes the local sign-in without calling the cloud. `GET /api/account` adds
+`cloudDisabled: true` (omitted when false, so existing responses are byte-identical) and reports `updateSource: github`,
+and `PATCH /api/account` with `updateSource: rivethub-cloud` is `409` with the same message. The gateway never asks
+`/v1/updates/latest`, even when `install.json` still holds a token from before the policy, and clears a pending update.
+`rh update` takes GitHub releases and refuses `--source rivethub-cloud` with the same message. Telemetry follows note
+131's policy: no panic hook, nothing sent, both settings `false`, turning either on is `409`. Sharing through
+rivethub.cloud is refused even when `memory.share.allowed_servers` lists it, and there is no rivethub.cloud fallback when
+neither `--server` nor `memory.share.server.url` names a server.
+
+Share servers. `capture::share_policy::SharePolicy` holds the rules, and the CLI applies them in
+`cli::share_server::ShareServers`, which every `rh share login`, `rh share logout`, `rh memory share` and
+`rh memory receive` passes before its first request. `rh share logout` is always allowed, because forgetting a token is
+local: it revokes the login at the server only when the policy admits that server, and otherwise deletes the token from
+this machine and says it was not revoked because of the policy. With no `--server` it signs out of
+`memory.share.server.url`, or rivethub.cloud when that is unset, even when the policy refuses that server. With `cloud.disabled` and no list, sharing is off and every server
+is refused. A non-empty list admits only its servers. Otherwise any server is admitted, as before. A refusal says
+`disabled by this hub's policy` and names the key that controls it. A list entry that is not a share server is an error
+naming `memory.share.allowed_servers` and the entry, from every command that loads the policy and from `rh doctor`.
+The config validator does not check the entries, because the host grammar lives in `capture`, which `config` cannot use. Every
+share server is compared in one canonical form, which `ShareServer` takes when it is parsed: lowercase host, trailing
+dot dropped, port written as a plain number, and `:443` dropped for a non-loopback host (it is reached over https).
+`rivethub.cloud:443`, `RivetHub.Cloud` and `rivethub.cloud.` are therefore rivethub.cloud, in the policy, in
+`--server`, in `memory.share.server.url` and in a share code, which prints its server in that form. The login store
+(`share-logins.json`) is keyed by the same form; a login stored under another spelling (`team.example.com:443` from
+before this note) is read as its canonical server and written back in that form on the next login, refresh or logout,
+so nobody signs in again.
+
+Install time. `rh local --no-cloud`, or `RIVETHUB_CLOUD=off`, writes `cloud: {disabled: true}` into the config
+`rh local` generates. When a config already exists without `cloud.disabled: true`, `rh local` (with or without
+`--ensure`) exits 1 and tells the operator to add `cloud: {disabled: true}` to that file. It never edits an existing
+config and never starts a node with the cloud on after the operator asked for it off. `rh local --ensure` with the
+switch also reads the running node's `/healthz` `policy`, whether it found the node already running or started it; when
+`cloud` is not `disabled` (a node started before the policy), it exits 1 and tells the operator to restart the node so
+the policy applies. It never restarts the node itself. `RIVETHUB_CLOUD=on` or unset changes nothing, and any other value
+exits 1.
+
+Status. `/healthz` adds `policy` (`wire::gateway::HubPolicy`: `cloud` is `enabled` or `disabled`, and `shareServers`
+lists `memory.share.allowed_servers` as written, omitted when empty) only when `cloud.disabled` is set or the list is
+non-empty, so the healthz goldens are unchanged. `rh status` prints `Hub policy: cloud disabled; sharing with only
+<servers>` from it, naming the servers the policy admits (the same words `rh doctor` uses), and adds
+`cloud.disabled refuses <entries>` for list entries the policy refuses, as written in config.yaml. `rh doctor` adds a `policy` check that passes with `cloud on|off, telemetry on|off, sharing with
+any share server|only <servers>|no share server`, and fails on a bad list entry. No table is added.
 
 (146) `rh local --ensure` checks who answers (2026-11-11; desktop plan G1 and G3): B9 changes for one argv. Before,
 `rh local --ensure` exited 0 when anything answered the address's `/healthz`, so a foreign server on the port read as a

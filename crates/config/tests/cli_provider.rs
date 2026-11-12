@@ -77,7 +77,8 @@ fn absent_options_remain_absent_and_invalid_timeouts_are_rejected() {
             | ConfigError::StateHome
             | ConfigError::NodeName
             | ConfigError::Substitution(_)
-            | ConfigError::EnvironmentText { .. }) => {
+            | ConfigError::EnvironmentText { .. }
+            | ConfigError::CloudSwitch(_)) => {
                 panic!("unexpected error {other}")
             }
         }

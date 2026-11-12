@@ -65,6 +65,7 @@ pub struct TelemetrySection {
 pub struct CloudSection {
     pub url: Option<url::Url>,
     pub update_key: Option<String>,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -186,6 +187,8 @@ pub struct MemorySection {
 pub struct ShareSection {
     pub server: Option<ShareServerSection>,
     pub trusted_cas: Vec<TrustedCa>,
+    #[serde(alias = "allowedServers")]
+    pub allowed_servers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -509,6 +512,23 @@ impl Config {
 
     pub fn share_server(&self) -> Option<&ShareServerSection> {
         self.memory.as_ref()?.share.server.as_ref()
+    }
+
+    #[must_use]
+    pub fn cloud_disabled(&self) -> bool {
+        self.cloud.as_ref().is_some_and(|section| section.disabled)
+    }
+
+    #[must_use]
+    pub fn telemetry_disabled(&self) -> bool {
+        self.cloud_disabled() || self.telemetry.is_some_and(|section| section.disabled)
+    }
+
+    #[must_use]
+    pub fn share_allowed_servers(&self) -> &[String] {
+        self.memory
+            .as_ref()
+            .map_or(&[], |memory| memory.share.allowed_servers.as_slice())
     }
 
     pub fn share_trusted_cas(&self) -> &[TrustedCa] {

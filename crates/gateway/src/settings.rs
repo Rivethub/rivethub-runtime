@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use wire::gateway::{CloudPolicy, HubPolicy};
+
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
     #[error(transparent)]
@@ -18,6 +20,7 @@ pub struct Settings {
     pub state_dir: PathBuf,
     pub private_ca: Option<PathBuf>,
     pub request_deadline: Duration,
+    pub policy: Option<HubPolicy>,
 }
 
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
@@ -65,8 +68,22 @@ impl Settings {
             request_deadline: section
                 .request_deadline_secs
                 .map_or(REQUEST_DEADLINE, |secs| Duration::from_secs(secs.get())),
+            policy: hub_policy(config),
         })
     }
+}
+
+fn hub_policy(config: &config::Config) -> Option<HubPolicy> {
+    let share_servers = config.share_allowed_servers().to_vec();
+    let cloud = if config.cloud_disabled() {
+        CloudPolicy::Disabled
+    } else {
+        CloudPolicy::Enabled
+    };
+    (cloud == CloudPolicy::Disabled || !share_servers.is_empty()).then_some(HubPolicy {
+        cloud,
+        share_servers,
+    })
 }
 
 fn canonical_dir(path: PathBuf) -> PathBuf {

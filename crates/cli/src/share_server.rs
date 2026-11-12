@@ -7,6 +7,7 @@ use capture::sanitize::KeyError;
 use capture::sanitize::key::PrivateFile;
 use capture::seal::CodeError;
 use capture::seal::ShareServer;
+use capture::share_policy::{BadAllowedServer, SharePolicy, ShareRefused};
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -60,6 +61,10 @@ pub enum ShareCommand {
 pub enum ServerError {
     #[error(transparent)]
     Server(#[from] CodeError),
+    #[error(transparent)]
+    AllowedServer(#[from] BadAllowedServer),
+    #[error(transparent)]
+    Refused(#[from] ShareRefused),
     #[error("this machine is not signed in to {0}; run rh share login {0}")]
     LoggedOut(ShareServer),
     #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
@@ -114,7 +119,7 @@ impl std::fmt::Debug for Tokens {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Logins {
-    logins: BTreeMap<String, Tokens>,
+    logins: BTreeMap<ShareServer, Tokens>,
 }
 
 #[derive(Deserialize)]
@@ -181,7 +186,8 @@ struct Revoke<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ShareServers {
-    configured: ShareServer,
+    policy: SharePolicy,
+    configured: Option<ShareServer>,
     store: PathBuf,
     lock: PathBuf,
     cas: Vec<config::model::TrustedCa>,
@@ -199,13 +205,17 @@ pub(crate) struct Server {
 impl ShareServers {
     pub(crate) async fn from_env(env: &Environment) -> Result<Self, crate::Error> {
         let loaded = crate::db::load(env, None).await?;
-        let configured = match loaded.config.share_server() {
-            Some(section) => section.url.parse().map_err(ServerError::from)?,
-            None => ShareServer::rivethub_cloud(),
-        };
+        let configured = loaded
+            .config
+            .share_server()
+            .map(|section| section.url.parse())
+            .transpose()
+            .map_err(ServerError::from)?;
+        let policy = SharePolicy::from_config(&loaded.config).map_err(ServerError::from)?;
         let state = capture::share::state_home(env)?.join(capture::sanitize::key::DIR_NAME);
         Ok(Self {
             configured,
+            policy,
             store: state.join(STORE_FILE),
             lock: state.join(LOCK_FILE),
             cas: loaded.config.share_trusted_cas().to_vec(),
@@ -215,8 +225,35 @@ impl ShareServers {
     pub(crate) fn pick(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
         match named {
             Some(text) => Ok(text.parse()?),
-            None => Ok(self.configured.clone()),
+            None => Ok(self.policy.default_server(self.configured.clone())?),
         }
+    }
+
+    fn logout_target(&self, named: Option<&str>) -> Result<ShareServer, ServerError> {
+        match named {
+            Some(text) => Ok(text.parse()?),
+            None => Ok(self
+                .configured
+                .clone()
+                .unwrap_or_else(ShareServer::rivethub_cloud)),
+        }
+    }
+
+    async fn logout(&self, host: &ShareServer) -> Result<Report, ServerError> {
+        let Err(refused) = self.policy.admit(host) else {
+            return self.connect(host, REQUEST_TIMEOUT).await?.logout().await;
+        };
+        let _lock = lock(&self.lock).await?;
+        let mut logins = read_logins(&self.store)?;
+        if logins.logins.remove(host).is_none() {
+            return Ok(Report::success(format!(
+                "this machine is not signed in to {host}\n"
+            )));
+        }
+        write_logins(&self.store, &logins)?;
+        Ok(Report::success(format!(
+            "signed out of {host}; the login was not revoked there because {refused}\n"
+        )))
     }
 
     pub(crate) async fn connect(
@@ -224,6 +261,7 @@ impl ShareServers {
         host: &ShareServer,
         timeout: Duration,
     ) -> Result<Server, ServerError> {
+        self.policy.admit(host)?;
         let base = Url::parse(&host.base_url()).map_err(|_| CodeError::Server(host.to_string()))?;
         let mut builder = reqwest::Client::builder()
             .no_proxy()
@@ -252,16 +290,20 @@ impl ShareServers {
     fn status(&self) -> Result<Report, ServerError> {
         let logins = read_logins(&self.store)?;
         if logins.logins.is_empty() {
-            return Ok(Report::success(format!(
-                "not signed in to any share server; rh share login signs in to {}\n",
-                self.configured
-            )));
+            return Ok(Report::success(
+                match self.policy.default_server(self.configured.clone()) {
+                    Ok(host) => format!(
+                        "not signed in to any share server; rh share login signs in to {host}\n"
+                    ),
+                    Err(refused) => format!("not signed in to any share server; {refused}\n"),
+                },
+            ));
         }
         Ok(Report::success(logins.logins.iter().fold(
             String::new(),
             |mut lines, (server, tokens)| {
                 lines.push_str("signed in to ");
-                lines.push_str(server);
+                lines.push_str(server.as_str());
                 lines.push_str(" (scope ");
                 lines.push_str(&tokens.scope);
                 lines.push_str("); the access token renews itself, next at ");
@@ -289,6 +331,21 @@ async fn read_ca(trusted: &config::model::TrustedCa) -> Result<reqwest::Certific
         .await
         .map_err(|error| failed(error.to_string()))?;
     reqwest::Certificate::from_pem(&pem).map_err(|error| failed(error.to_string()))
+}
+
+async fn lock(path: &std::path::Path) -> Result<std::fs::File, ServerError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    tokio::task::spawn_blocking(move || file.lock().map(|()| file))
+        .await
+        .map_err(std::io::Error::other)?
+        .map_err(ServerError::from)
 }
 
 fn read_logins(store: &std::path::Path) -> Result<Logins, ServerError> {
@@ -332,31 +389,16 @@ impl Server {
         &self.client
     }
 
-    async fn lock(&self) -> Result<std::fs::File, ServerError> {
-        if let Some(parent) = self.lock.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&self.lock)?;
-        tokio::task::spawn_blocking(move || file.lock().map(|()| file))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ServerError::from)
-    }
-
     fn mine(&self) -> Result<Tokens, ServerError> {
         read_logins(&self.store)?
             .logins
-            .remove(self.host.as_str())
+            .remove(&self.host)
             .ok_or_else(|| ServerError::LoggedOut(self.host.clone()))
     }
 
     fn keep(&self, tokens: Tokens) -> Result<(), ServerError> {
         let mut logins = read_logins(&self.store)?;
-        logins.logins.insert(self.host.to_string(), tokens);
+        logins.logins.insert(self.host.clone(), tokens);
         write_logins(&self.store, &logins)
     }
 
@@ -365,7 +407,7 @@ impl Server {
         if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
             return Ok(tokens.access_token);
         }
-        let _lock = self.lock().await?;
+        let _lock = lock(&self.lock).await?;
         let tokens = self.mine()?;
         let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
         let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
@@ -457,7 +499,7 @@ impl Server {
             if response.status().is_success() {
                 let tokens = tokens_from(response.json().await?);
                 let scope = tokens.scope.clone();
-                let _lock = self.lock().await?;
+                let _lock = lock(&self.lock).await?;
                 self.keep(tokens)?;
                 return Ok(Report::success(format!(
                     "signed in to {} (scope {scope}); the login lasts until rh share logout {} or a revoke on the server\n",
@@ -492,9 +534,9 @@ impl Server {
     }
 
     async fn logout(&self) -> Result<Report, ServerError> {
-        let _lock = self.lock().await?;
+        let _lock = lock(&self.lock).await?;
         let mut logins = read_logins(&self.store)?;
-        let Some(tokens) = logins.logins.get(self.host.as_str()) else {
+        let Some(tokens) = logins.logins.get(&self.host) else {
             return Ok(Report::success(format!(
                 "this machine is not signed in to {}\n",
                 self.host
@@ -511,7 +553,7 @@ impl Server {
                 .await?,
         )
         .await?;
-        logins.logins.remove(self.host.as_str());
+        logins.logins.remove(&self.host);
         write_logins(&self.store, &logins)?;
         Ok(Report::success(format!(
             "signed out of {} and revoked this machine's login there\n",
@@ -558,12 +600,8 @@ pub async fn run(
                 .await?
         }
         ShareCommand::Logout { server } => {
-            let host = servers.pick(server.as_deref())?;
-            servers
-                .connect(&host, REQUEST_TIMEOUT)
-                .await?
-                .logout()
-                .await?
+            let host = servers.logout_target(server.as_deref())?;
+            servers.logout(&host).await?
         }
         ShareCommand::Status => servers.status()?,
     })

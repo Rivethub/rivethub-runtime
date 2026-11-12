@@ -31,15 +31,21 @@ pub(crate) async fn prepare(
     env: &Environment,
     port: Option<u16>,
     no_lan: bool,
+    no_cloud: bool,
 ) -> Result<Prepared, Error> {
     if port == Some(0) {
         return Err(Error::GatewayPort);
     }
     let owned = env.clone();
-    tokio::task::spawn_blocking(move || prepare_blocking(&owned, port, no_lan)).await?
+    tokio::task::spawn_blocking(move || prepare_blocking(&owned, port, no_lan, no_cloud)).await?
 }
 
-fn prepare_blocking(env: &Environment, port: Option<u16>, no_lan: bool) -> Result<Prepared, Error> {
+fn prepare_blocking(
+    env: &Environment,
+    port: Option<u16>,
+    no_lan: bool,
+    no_cloud: bool,
+) -> Result<Prepared, Error> {
     if let Some(notice) = config::adopt_legacy_state(env)? {
         tracing::warn!("{notice}");
     }
@@ -49,9 +55,10 @@ fn prepare_blocking(env: &Environment, port: Option<u16>, no_lan: bool) -> Resul
     let guard = ClaimGuard { claim: Some(claim) };
     let location = match found {
         Some(location) => location,
-        None => write_generated(env, &state, port, no_lan)?,
+        None => write_generated(env, &state, port, no_lan, no_cloud)?,
     };
     let mut loaded = config::Config::load(env, &location, config::Profile::Standalone)?;
+    refuse_cloud_left_on(&loaded.config, no_cloud, location.path())?;
     for finding in &loaded.warnings {
         tracing::warn!("[{}] {}", finding.path, finding.message);
     }
@@ -75,6 +82,7 @@ fn write_generated(
     state: &Path,
     port: Option<u16>,
     no_lan: bool,
+    no_cloud: bool,
 ) -> Result<ConfigLocation, Error> {
     let database = state.join("memory.sqlite");
     let host = bind_host(env, no_lan)?;
@@ -83,12 +91,21 @@ fn write_generated(
             "serving on {LOOPBACK_HOST} only: a LAN bind needs TLS (set gateway.host to {LAN_HOST} with gateway.tls_cert and gateway.tls_key)"
         );
     }
-    let yaml = config::standalone_config_yaml(&database, host, bind_port(port))?;
+    let yaml = config::standalone_config_yaml(&database, host, bind_port(port), no_cloud)?;
     let destination = state.join("config.yaml");
     refuse_existing(&destination)?;
     let partial = state.join(".config.yaml.partial");
     publish(&partial, &destination, yaml.as_bytes())?;
     Ok(ConfigLocation::Current(destination))
+}
+
+fn refuse_cloud_left_on(config: &Config, no_cloud: bool, path: &Path) -> Result<(), Error> {
+    if no_cloud && !config.cloud_disabled() {
+        return Err(Error::CloudLeftOn {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
 }
 
 fn refuse_existing(destination: &Path) -> Result<(), Error> {

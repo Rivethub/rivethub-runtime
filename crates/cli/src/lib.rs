@@ -133,10 +133,12 @@ async fn command_dispatch(
             ensure,
             wait,
             json,
+            no_cloud,
         } => {
             let request = local::Ensure {
                 port,
                 no_lan,
+                no_cloud: no_cloud || env.cloud_switched_off()?,
                 wait_seconds: wait,
             };
             if ensure {
@@ -203,7 +205,7 @@ async fn run_local(
     request: local::Ensure,
     shutdown: &CancellationToken,
 ) -> Result<Dispatch, Error> {
-    let prepared = local::prepare(env, request.port, request.no_lan).await?;
+    let prepared = local::prepare(env, request.port, request.no_lan, request.no_cloud).await?;
     if shutdown.is_cancelled() {
         prepared.release()?;
         return Ok(Dispatch::Complete(Report::success("")));

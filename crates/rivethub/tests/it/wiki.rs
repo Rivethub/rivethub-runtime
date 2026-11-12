@@ -81,6 +81,7 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
                 state_dir: home.path().join("state"),
                 private_ca: None,
                 request_deadline: gateway::REQUEST_DEADLINE,
+                policy: None,
             },
         )
         .with_local_owner(crate::owner::holder())
