@@ -17,7 +17,6 @@ use oauth2::RefreshToken;
 use oauth2::RequestTokenError;
 use oauth2::Scope;
 use oauth2::StandardDeviceAuthorizationResponse;
-use oauth2::StandardRevocableToken;
 use oauth2::TokenResponse as _;
 use oauth2::basic::BasicTokenResponse;
 use serde::Deserialize;
@@ -73,17 +72,27 @@ pub enum ServerError {
     #[error("this machine is not signed in to {0}; run rh share login {0}")]
     LoggedOut(ShareServer),
     #[error("the login on {server} expired or was revoked; run rh share login {server} ({code})")]
-    Expired { server: ShareServer, code: String },
+    Expired {
+        server: ShareServer,
+        code: OauthErrorCode,
+    },
     #[error("the browser approval was {0}; run rh share login to try again")]
     Denied(&'static str),
     #[error("the share server answered {status}: {body}")]
     Status { status: u16, body: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
-    #[error("the share server refused the request: {0}")]
-    Refused(String),
+    #[error("the share server refused the request ({0})")]
+    Refused(OauthErrorCode),
+    #[error("the share server answered {0}")]
+    Answered(u16),
+    #[error("the share server is busy or down (HTTP {status}); try again {}", retry_hint(*.retry_after))]
+    Unavailable {
+        status: u16,
+        retry_after: Option<Duration>,
+    },
     #[error("the share server does not speak OAuth as expected: {0}")]
-    Protocol(String),
+    Protocol(&'static str),
     #[error(
         "{0} offers no device sign-in (no OAuth metadata at /.well-known/oauth-authorization-server)"
     )]
@@ -104,6 +113,33 @@ pub enum ServerError {
     Io(#[from] std::io::Error),
     #[error("login was cancelled")]
     Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, strum::Display)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum OauthErrorCode {
+    InvalidRequest,
+    InvalidClient,
+    InvalidGrant,
+    UnauthorizedClient,
+    UnsupportedGrantType,
+    InvalidScope,
+    AuthorizationPending,
+    SlowDown,
+    AccessDenied,
+    ExpiredToken,
+    UnsupportedTokenType,
+    #[serde(other)]
+    #[strum(serialize = "unrecognised error")]
+    Other,
+}
+
+fn retry_hint(wait: Option<Duration>) -> String {
+    wait.map_or_else(
+        || "shortly".to_owned(),
+        |wait| format!("in {} seconds", wait.as_secs()),
+    )
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -375,7 +411,7 @@ impl Server {
             Err(RequestTokenError::ServerResponse(refusal)) => {
                 return Err(ServerError::Expired {
                     server: self.host.clone(),
-                    code: refusal.error().to_string(),
+                    code: oauth::code(refusal.error().as_ref())?,
                 });
             }
             Err(other) => return Err(oauth::failed(other)),
@@ -427,7 +463,7 @@ impl Server {
                     DeviceCodeErrorResponseType::AuthorizationPending
                     | DeviceCodeErrorResponseType::SlowDown
                     | DeviceCodeErrorResponseType::Basic(_) => {
-                        ServerError::Refused(refusal.to_string())
+                        oauth::refused(refusal.error().as_ref())
                     }
                 });
             }
@@ -452,14 +488,8 @@ impl Server {
                 self.host
             )));
         };
-        let refresh =
-            StandardRevocableToken::RefreshToken(RefreshToken::new(tokens.refresh_token.clone()));
-        Self::oauth_client(&self.endpoints().await?)
-            .revoke_token(refresh)
-            .map_err(|error| ServerError::Protocol(error.to_string()))?
-            .request_async(self)
-            .await
-            .map_err(oauth::failed)?;
+        self.revoke(&self.endpoints().await?, &tokens.refresh_token)
+            .await?;
         logins.logins.remove(&self.host);
         write_logins(&self.store, &logins)?;
         Ok(Report::success(format!(
@@ -475,9 +505,7 @@ impl Tokens {
             .refresh_token()
             .map(|token| token.secret().clone())
             .or_else(|| previous.map(|tokens| tokens.refresh_token.clone()))
-            .ok_or_else(|| {
-                ServerError::Protocol("the token response has no refresh_token".to_owned())
-            })?;
+            .ok_or_else(|| ServerError::Protocol("the token response has no refresh_token"))?;
         let scope = issued
             .scopes()
             .map(|scopes| {

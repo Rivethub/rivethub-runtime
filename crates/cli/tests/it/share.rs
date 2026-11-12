@@ -46,7 +46,44 @@ struct Seen {
     device_polls: usize,
     revokes: Vec<String>,
     revoke_status: Option<StatusCode>,
+    hostile: Vec<(&'static str, Hostile)>,
     upload_status: Option<StatusCode>,
+}
+
+#[derive(Clone, Copy)]
+enum Hostile {
+    Refusal,
+    Garbage,
+}
+
+fn hostile_answer(drops: &DropBox, endpoint: &str) -> Option<Response> {
+    let kind = drops
+        .0
+        .lock()
+        .hostile
+        .iter()
+        .find(|(name, _)| *name == endpoint)
+        .map(|(_, kind)| *kind)?;
+    Some(match (kind, endpoint) {
+        (Hostile::Refusal, _) => json(
+            StatusCode::BAD_REQUEST,
+            format!(
+                r#"{{"error":"{CANARY}-code","error_description":"{CANARY}-description","error_uri":"https://evil.example/{CANARY}-uri","device_code":"{CANARY}-device","access_token":"{CANARY}-token"}}"#
+            ),
+        ),
+        (Hostile::Garbage, "device") => json(
+            StatusCode::OK,
+            format!(
+                r#"{{"device_code":"{CANARY}-device","user_code":"{CANARY}-user","verification_uri":"http://127.0.0.1/device","expires_in":"{CANARY}-lifetime"}}"#
+            ),
+        ),
+        (Hostile::Garbage, _) => json(
+            StatusCode::OK,
+            format!(
+                r#"{{"access_token":"{CANARY}-token","token_type":"Bearer","expires_in":"{CANARY}-lifetime"}}"#
+            ),
+        ),
+    })
 }
 
 #[derive(Clone, Default)]
@@ -145,6 +182,9 @@ async fn discovery(headers: HeaderMap) -> Response {
 }
 
 async fn device_code(State(drops): State<DropBox>, body: Bytes) -> Response {
+    if let Some(answer) = hostile_answer(&drops, "device") {
+        return answer;
+    }
     drops
         .0
         .lock()
@@ -157,6 +197,9 @@ async fn device_code(State(drops): State<DropBox>, body: Bytes) -> Response {
 }
 
 async fn token(State(drops): State<DropBox>, body: Bytes) -> Response {
+    if let Some(answer) = hostile_answer(&drops, "token") {
+        return answer;
+    }
     if form_field(&body, "grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
         return refresh(&drops, &body);
     }
@@ -204,6 +247,9 @@ fn refresh(drops: &DropBox, body: &[u8]) -> Response {
 }
 
 async fn revoke(State(drops): State<DropBox>, body: Bytes) -> Response {
+    if let Some(answer) = hostile_answer(&drops, "revoke") {
+        return answer;
+    }
     let status = {
         let mut seen = drops.0.lock();
         seen.revokes.push(form_field(&body, "token"));
@@ -1369,4 +1415,123 @@ async fn a_server_without_oauth_metadata_says_it_offers_no_device_sign_in() {
         refused.stderr
     );
     stop.cancel();
+}
+
+#[tokio::test]
+async fn oauth_failures_never_put_server_text_on_stderr() {
+    let served = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let node = Node::new("phil", &served.url, None);
+    for (endpoint, kind) in [
+        ("device", Hostile::Refusal),
+        ("device", Hostile::Garbage),
+        ("token", Hostile::Refusal),
+        ("token", Hostile::Garbage),
+    ] {
+        served.drops.0.lock().hostile = vec![(endpoint, kind)];
+        let report = node.run(&["share", "login"]).await;
+        assert_eq!(report.exit, Exit::Failure, "login {endpoint}");
+        let shown = format!("{}{}", report.stdout, report.stderr);
+        assert!(!shown.contains(CANARY), "login {endpoint}: {shown}");
+    }
+
+    node.sign_in_until(&served.url, "2020-01-01T00:00:00Z");
+    let bundle = sanitized(&node, outside.path(), None).await;
+    let bundle = bundle.display().to_string();
+    for kind in [Hostile::Refusal, Hostile::Garbage] {
+        served.drops.0.lock().hostile = vec![("token", kind)];
+        let report = node.run(&["memory", "share", &bundle]).await;
+        assert_eq!(report.exit, Exit::Failure, "refresh");
+        let shown = format!("{}{}", report.stdout, report.stderr);
+        assert!(!shown.contains(CANARY), "refresh: {shown}");
+    }
+
+    served.drops.0.lock().hostile = vec![("revoke", Hostile::Refusal)];
+    let report = node.run(&["share", "logout"]).await;
+    assert_eq!(report.exit, Exit::Failure, "revoke");
+    let shown = format!("{}{}", report.stdout, report.stderr);
+    assert!(!shown.contains(CANARY), "revoke: {shown}");
+    assert!(
+        logins(&node).contains("rhcr_throwaway"),
+        "a refused revoke keeps the login"
+    );
+    served.stop.cancel();
+}
+
+async fn discovery_answering(
+    status: StatusCode,
+    retry_after: Option<&'static str>,
+) -> (String, CancellationToken) {
+    let app = Router::new().fallback(move || async move {
+        let mut response = (status, "down").into_response();
+        if let Some(seconds) = retry_after {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static(seconds),
+            );
+        }
+        response
+    });
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listener");
+    let url = format!("http://{}/", listener.local_addr().expect("address"));
+    let stop = CancellationToken::new();
+    let token = stop.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { token.cancelled().await })
+            .await
+    });
+    (url, stop)
+}
+
+#[tokio::test]
+async fn a_busy_or_down_server_is_transient_not_a_missing_device_flow() {
+    for (status, retry_after, expect) in [
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            Some("7"),
+            "try again in 7 seconds",
+        ),
+        (StatusCode::TOO_MANY_REQUESTS, None, "try again shortly"),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("120"),
+            "try again in 120 seconds",
+        ),
+        (StatusCode::BAD_GATEWAY, None, "try again shortly"),
+    ] {
+        let (url, stop) = discovery_answering(status, retry_after).await;
+        let node = Node::new("phil", &url, None);
+        let refused = node.run(&["share", "login"]).await;
+        assert_eq!(refused.exit, Exit::Failure, "{status}");
+        assert!(
+            refused.stderr.contains(expect),
+            "{status}: {}",
+            refused.stderr
+        );
+        assert!(
+            refused.stderr.contains(status.as_str()),
+            "{status}: {}",
+            refused.stderr
+        );
+        assert!(
+            !refused.stderr.contains("offers no device sign-in"),
+            "{status}: {}",
+            refused.stderr
+        );
+        stop.cancel();
+    }
+    for status in [StatusCode::NOT_FOUND, StatusCode::GONE] {
+        let (url, stop) = discovery_answering(status, None).await;
+        let node = Node::new("phil", &url, None);
+        let refused = node.run(&["share", "login"]).await;
+        assert!(
+            refused.stderr.contains("offers no device sign-in"),
+            "{status}: {}",
+            refused.stderr
+        );
+        stop.cancel();
+    }
 }
