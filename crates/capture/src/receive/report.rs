@@ -15,7 +15,7 @@ const SPELLED_CHARS: usize = 40;
 const CONTEXT_BYTES: usize = 80;
 const SHOWN_CHARS: usize = 4096;
 const TITLE_CHARS: usize = 60;
-const ROWS_PER_SESSION: usize = 20;
+pub const ROWS_PER_SESSION: usize = 20;
 
 #[must_use]
 pub fn visible(text: &str) -> String {
@@ -161,12 +161,27 @@ fn push_line(out: &mut String, line: fmt::Arguments<'_>) {
     out.push('\n');
 }
 
-struct Row<'a> {
-    first: &'a Finding,
-    count: usize,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub event: Option<String>,
+    pub field: String,
+    pub rule: &'static str,
+    pub family: Family,
+    pub count: usize,
+    pub excerpt: String,
 }
 
 impl Checked {
+    #[must_use]
+    pub fn session_rows(&self, index: usize) -> Vec<Row> {
+        rows(&self.of_session(index).collect::<Vec<_>>())
+    }
+
+    #[must_use]
+    pub fn manifest_rows(&self) -> Vec<Row> {
+        rows(&self.of_manifest().collect::<Vec<_>>())
+    }
+
     #[must_use]
     pub fn report(&self, bundle: &SessionBundle) -> String {
         let mut out = String::new();
@@ -178,18 +193,21 @@ impl Checked {
                     || "untitled".to_owned(),
                     |title| clipped(title, TITLE_CHARS),
                 );
-            let found: Vec<&Finding> = self.of_session(index).collect();
             push_line(
                 &mut out,
-                format_args!("session {} \"{title}\": {}", index + 1, noun(found.len())),
+                format_args!(
+                    "session {} \"{title}\": {}",
+                    index + 1,
+                    noun(self.of_session(index).count())
+                ),
             );
-            push_rows(&mut out, &found);
+            push_rows(&mut out, &self.session_rows(index));
         }
-        let manifest: Vec<&Finding> = self.of_manifest().collect();
+        let manifest = self.manifest_rows();
         if !manifest.is_empty() {
             push_line(
                 &mut out,
-                format_args!("bundle author fields: {}", noun(manifest.len())),
+                format_args!("bundle author fields: {}", noun(self.of_manifest().count())),
             );
             push_rows(&mut out, &manifest);
         }
@@ -205,34 +223,42 @@ fn noun(count: usize) -> String {
     }
 }
 
-fn push_rows(out: &mut String, found: &[&Finding]) {
-    let mut rows: Vec<Row<'_>> = Vec::new();
+fn rows(found: &[&Finding]) -> Vec<Row> {
+    let mut rows: Vec<Row> = Vec::new();
     for finding in found {
-        match rows.iter_mut().find(|row| {
-            row.first.event_id == finding.event_id
-                && row.first.field == finding.field
-                && row.first.rule == finding.rule
-        }) {
+        let event = finding.event_id.as_deref().map(|id| clipped(id, 40));
+        let field = visible(&finding.field.to_string());
+        match rows
+            .iter_mut()
+            .find(|row| row.event == event && row.field == field && row.rule == finding.rule)
+        {
             Some(row) => row.count += 1,
             None => rows.push(Row {
-                first: finding,
+                event,
+                field,
+                rule: finding.rule,
+                family: finding.family,
                 count: 1,
+                excerpt: finding.excerpt.clone(),
             }),
         }
     }
+    rows
+}
+
+fn push_rows(out: &mut String, rows: &[Row]) {
     let hidden_rows = rows.len().saturating_sub(ROWS_PER_SESSION);
     for row in rows.iter().take(ROWS_PER_SESSION) {
-        let finding = row.first;
-        let event = finding
-            .event_id
+        let event = row
+            .event
             .as_deref()
-            .map_or_else(String::new, |id| format!("event {}, ", clipped(id, 40)));
+            .map_or_else(String::new, |id| format!("event {id}, "));
         let times = if row.count > 1 {
             format!(" \u{d7}{}", row.count)
         } else {
             String::new()
         };
-        let family = match finding.family {
+        let family = match row.family {
             Family::Secret => "secret",
             Family::Injection(_) => "injection",
         };
@@ -240,10 +266,7 @@ fn push_rows(out: &mut String, found: &[&Finding]) {
             out,
             format_args!(
                 "  {event}field {}, {family} rule {} ({}){times}\n    {}",
-                visible(&finding.field.to_string()),
-                finding.rule,
-                finding.family,
-                finding.excerpt
+                row.field, row.rule, row.family, row.excerpt
             ),
         );
     }
