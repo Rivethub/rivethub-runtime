@@ -74,6 +74,7 @@ pub(super) enum MemoryCommand {
         path: PathBuf,
         force: bool,
         dry_run: bool,
+        decisions: capture::receive::Decisions,
     },
     Sanitize(super::sanitize::Job),
     Share(super::share::ShareCommand),
