@@ -491,8 +491,8 @@ async fn receive(
             .map_err(std::io::Error::other)?
             .map_err(ShareError::from)?;
     screen(&opened.bundle)?;
-    let user = opened.bundle.manifest.exported_by.user.clone();
-    let reason = opened.verification.reason(&user);
+    let user = capture::receive::visible(&opened.bundle.manifest.exported_by.user);
+    let reason = capture::receive::visible(&opened.verification.reason(&user));
     let checked = capture::receive::check(&opened.bundle);
     let plan = match checked.plan(&opened.bundle, decisions, force) {
         Ok(plan) => plan,

@@ -426,14 +426,19 @@ fn session_saying(
 }
 
 async fn sanitized(node: &Node, outside: &Path, settings: Option<wire::JsonObject>) -> PathBuf {
-    sanitized_sessions(node, outside, vec![session(settings)]).await
+    sanitized_sessions(node, outside, "phil", vec![session(settings)]).await
 }
 
-async fn sanitized_sessions(node: &Node, outside: &Path, sessions: Vec<BundledSession>) -> PathBuf {
+async fn sanitized_sessions(
+    node: &Node,
+    outside: &Path,
+    exporter: &str,
+    sessions: Vec<BundledSession>,
+) -> PathBuf {
     let raw = outside.join("raw.json");
     let sealed = capture::bundle::seal(
         wire::capture::BundleAuthor {
-            user: "phil".to_owned(),
+            user: exporter.to_owned(),
             node: "desk".to_owned(),
         },
         chrono::DateTime::UNIX_EPOCH,
@@ -566,6 +571,43 @@ async fn the_code_key_never_reaches_a_url() {
         assert!(!uri.contains('#') && !uri.contains(&key), "{uri}");
     }
     drop(seen);
+    served.stop.cancel();
+}
+
+#[tokio::test]
+async fn the_receive_output_escapes_the_exporter_name() {
+    let served = drop_box().await;
+    let outside = tempfile::tempdir().expect("outside");
+    let sender = Node::new("phil", &served.url, None);
+    sender.sign_in(&served.url);
+    let bundle = sanitized_sessions(
+        &sender,
+        outside.path(),
+        "phil\u{1b}[2J",
+        vec![session(None)],
+    )
+    .await;
+    let shared = sender
+        .run(&[
+            "memory",
+            "share",
+            &bundle.display().to_string(),
+            "--unsigned",
+        ])
+        .await;
+    assert_eq!(shared.exit, Exit::Ok, "{}", shared.stderr);
+    let alex = Node::new("alex", &served.url, None);
+    let dry = alex
+        .run(&["memory", "receive", &code_of(&shared.stdout), "--dry-run"])
+        .await;
+    assert_eq!(dry.exit, Exit::Ok, "{}", dry.stderr);
+    assert!(
+        dry.stdout
+            .starts_with("would import 1 session from phil<U+001B>[2J "),
+        "{}",
+        dry.stdout
+    );
+    assert!(!dry.stdout.contains('\u{1b}'), "{}", dry.stdout);
     served.stop.cancel();
 }
 
@@ -1557,6 +1599,7 @@ async fn a_flagged_bundle_is_held_then_imported_by_decision(pool: PgPool) {
     let bundle = sanitized_sessions(
         &sender,
         outside.path(),
+        "phil",
         vec![
             session_saying(None, 1, "all good here"),
             session_saying(
