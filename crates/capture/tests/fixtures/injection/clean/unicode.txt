@@ -1,0 +1,1 @@
+Accents and emoji are fine: café, naïve, ❤️, 日本語, and a BOM at the very start belongs to the file.

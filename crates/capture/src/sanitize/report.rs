@@ -88,9 +88,17 @@ pub enum Pass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuleId {
     Pattern(&'static str),
+    Injection {
+        id: &'static str,
+        family: crate::rules::injection::Family,
+    },
     SecretKey,
-    Mapped { line: usize },
-    Redacted { line: usize },
+    Mapped {
+        line: usize,
+    },
+    Redacted {
+        line: usize,
+    },
     FlagLiteral,
     SessionTerm,
     DropToolOutputs,
@@ -108,7 +116,7 @@ impl RuleId {
     #[must_use]
     pub const fn change_kind(self) -> ChangeKind {
         match self {
-            Self::Pattern(_) | Self::SecretKey => ChangeKind::Secret,
+            Self::Pattern(_) | Self::Injection { .. } | Self::SecretKey => ChangeKind::Secret,
             Self::Mapped { .. } => ChangeKind::Mapped,
             Self::Redacted { .. } | Self::SessionTerm | Self::DropToolOutputs => {
                 ChangeKind::Redacted
@@ -119,7 +127,7 @@ impl RuleId {
 
     const fn order(self) -> usize {
         match self {
-            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => 0,
+            Self::Pattern(_) | Self::Injection { .. } | Self::SecretKey | Self::FlagLiteral => 0,
             Self::Mapped { line } | Self::Redacted { line } => line,
             Self::SessionTerm | Self::DropToolOutputs => usize::MAX,
         }
@@ -127,7 +135,9 @@ impl RuleId {
 
     const fn pass(self) -> Pass {
         match self {
-            Self::Pattern(_) | Self::SecretKey | Self::FlagLiteral => Pass::Secrets,
+            Self::Pattern(_) | Self::Injection { .. } | Self::SecretKey | Self::FlagLiteral => {
+                Pass::Secrets
+            }
             Self::Mapped { .. }
             | Self::Redacted { .. }
             | Self::SessionTerm
@@ -139,7 +149,7 @@ impl RuleId {
 impl fmt::Display for RuleId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pattern(name) => formatter.write_str(name),
+            Self::Pattern(name) | Self::Injection { id: name, .. } => formatter.write_str(name),
             Self::SecretKey => formatter.write_str("secret key name"),
             Self::Mapped { line } => write!(formatter, "rule at line {line} (map)"),
             Self::Redacted { line } => write!(formatter, "rule at line {line} (redact)"),
@@ -163,6 +173,7 @@ pub struct Change {
     pub rule: RuleId,
     pub fingerprint: String,
     pub replacement: String,
+    pub excerpt: String,
 }
 
 impl fmt::Display for Change {
@@ -348,11 +359,13 @@ impl Report {
         );
         let rules = crate::rules::ruleset();
         let (ours, theirs) = rules.counts();
+        let pinned = rules
+            .upstream()
+            .map_or_else(String::new, |upstream| format!(" ({})", upstream.version));
         push_line(
             out,
             format_args!(
-                "- Secret rules: {ours} RivetHub rules and {theirs} gitleaks rules ({})",
-                rules.upstream().version
+                "- Secret rules: {ours} RivetHub rules and {theirs} gitleaks rules{pinned}"
             ),
         );
         push_line(out, format_args!("- Mapping: {}", cell(mapping)));

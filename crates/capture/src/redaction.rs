@@ -10,6 +10,7 @@ use crate::rules::Ruleset;
 pub const ENV_VARIABLE: &str = "RIVETHUB_CAPTURE_REDACTION";
 const SCAN_LIMIT: usize = 16_000;
 const SCAN_MARGIN: usize = 8_192;
+pub(crate) const SECRET_KEY_KIND: &str = "secret_key";
 pub(crate) const SECRET_KEY_PLACEHOLDER: &str = "[REDACTED:secret_key]";
 
 #[derive(Debug)]
@@ -219,6 +220,11 @@ fn apply_spans(text: &str, redaction: &Redaction) -> (String, u64) {
 #[must_use]
 pub fn placeholder(kind: &str) -> String {
     format!("[REDACTED:{kind}]")
+}
+
+#[must_use]
+pub fn held_placeholder(kind: &str) -> String {
+    format!("[HELD:{kind}]")
 }
 
 fn scan_text(text: &str, redaction: &Redaction) -> Option<(String, u64)> {

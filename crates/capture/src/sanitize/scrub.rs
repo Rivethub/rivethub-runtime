@@ -24,6 +24,13 @@ use crate::rules::names::DROP_TOOL_OUTPUTS_KIND;
 use crate::rules::names::SESSION_TERM_KIND;
 
 const FINGERPRINT_HEX: usize = 12;
+const EXCERPTS_PER_TEXT: usize = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Posture {
+    Sanitize,
+    Receive,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Location {
@@ -37,6 +44,7 @@ pub(super) struct Scrubber<'a> {
     key: Option<&'a LocalKey>,
     digest: &'a str,
     pub(super) budget: Budget<'a>,
+    pub(super) posture: Posture,
     pub(super) whole: bool,
     pub(super) escape_flags: bool,
     pub(super) sessions: &'a SessionRules,
@@ -51,6 +59,12 @@ struct Hit {
     replacement: String,
 }
 
+struct Shown {
+    change: usize,
+    at: Range<usize>,
+    original: Range<usize>,
+}
+
 impl<'a> Scrubber<'a> {
     pub(super) fn new(mapping: &'a Mapping, key: Option<&'a LocalKey>, digest: &'a str) -> Self {
         Self {
@@ -59,6 +73,7 @@ impl<'a> Scrubber<'a> {
             key,
             digest,
             budget: Budget::after(0),
+            posture: Posture::Sanitize,
             whole: false,
             escape_flags: false,
             sessions: &super::chosen::NONE,
@@ -157,16 +172,39 @@ impl<'a> Scrubber<'a> {
         object.scrub(&mut adapter);
     }
 
+    fn placeholder(&self, kind: &str) -> String {
+        match self.posture {
+            Posture::Sanitize => redaction::placeholder(kind),
+            Posture::Receive => redaction::held_placeholder(kind),
+        }
+    }
+
     fn secret_hits(&mut self, text: &str) -> Vec<Hit> {
-        self.rules
+        let mut hits: Vec<Hit> = self
+            .rules
             .spans_within(text, &mut self.budget)
             .into_iter()
             .map(|span| Hit {
                 range: span.range,
                 rule: RuleId::Pattern(&span.rule.id),
-                replacement: redaction::placeholder(&span.rule.id),
+                replacement: self.placeholder(&span.rule.id),
             })
-            .collect()
+            .collect();
+        if self.posture == Posture::Receive {
+            let injected = crate::rules::injection::spans(text, &mut self.budget);
+            hits.extend(injected.into_iter().map(|(span, family)| Hit {
+                range: span.range,
+                rule: RuleId::Injection {
+                    id: &span.rule.id,
+                    family,
+                },
+                replacement: self.placeholder(&span.rule.id),
+            }));
+            hits.sort_by_key(|hit| hit.range.start);
+            hits = overlapping_as_one(hits);
+            hits = run_together(hits);
+        }
+        hits
     }
 
     fn secrets_only(&mut self, field: &Field, text: &mut String) {
@@ -247,6 +285,7 @@ impl<'a> Scrubber<'a> {
         let mut out = String::with_capacity(text.len());
         let mut copied = 0;
         let whole = hits.first().map(|hit| hit.replacement.clone());
+        let mut shown: Vec<Shown> = Vec::new();
         for hit in hits {
             for piece in unprotected(&hit.range, &protected) {
                 if piece.start < copied {
@@ -259,8 +298,16 @@ impl<'a> Scrubber<'a> {
                     continue;
                 }
                 out.push_str(text.get(copied..piece.start).unwrap_or_default());
+                let at = out.len();
                 self.record(field.clone(), hit.rule, original, &hit.replacement);
                 out.push_str(&hit.replacement);
+                if matches!(hit.rule, RuleId::Injection { .. }) && shown.len() < EXCERPTS_PER_TEXT {
+                    shown.push(Shown {
+                        change: self.changes.len() - 1,
+                        at: at..out.len(),
+                        original: piece.clone(),
+                    });
+                }
                 copied = piece.end;
             }
         }
@@ -274,10 +321,20 @@ impl<'a> Scrubber<'a> {
             return;
         }
         out.push_str(text.get(copied..).unwrap_or_default());
+        for shown in shown {
+            let original = text.get(shown.original).unwrap_or_default();
+            if let Some(change) = self.changes.get_mut(shown.change) {
+                change.excerpt = crate::receive::excerpt(&out, &shown.at, original);
+            }
+        }
         *text = out;
     }
 
     fn record(&mut self, field: Field, rule: RuleId, original: &str, replacement: &str) {
+        let excerpt = match self.posture {
+            Posture::Sanitize => String::new(),
+            Posture::Receive => replacement.to_owned(),
+        };
         let fingerprint = self.key.map_or_else(String::new, |key| {
             let mut hex = key.hex(&[b"fingerprint", self.digest.as_bytes(), original.as_bytes()]);
             hex.truncate(FINGERPRINT_HEX);
@@ -291,6 +348,7 @@ impl<'a> Scrubber<'a> {
             rule,
             fingerprint,
             replacement: replacement.to_owned(),
+            excerpt,
         });
     }
 }
@@ -366,15 +424,48 @@ impl Scrub for ObjectScrub<'_, '_> {
             return false;
         }
         let field = self.spot(path, false);
-        self.scrubber.record(
-            field,
-            RuleId::SecretKey,
-            text,
-            redaction::SECRET_KEY_PLACEHOLDER,
-        );
-        redaction::SECRET_KEY_PLACEHOLDER.clone_into(text);
+        let placeholder = self.scrubber.placeholder(redaction::SECRET_KEY_KIND);
+        self.scrubber
+            .record(field, RuleId::SecretKey, text, &placeholder);
+        *text = placeholder;
         true
     }
+}
+
+fn overlapping_as_one(hits: Vec<Hit>) -> Vec<Hit> {
+    let mut merged: Vec<Hit> = Vec::with_capacity(hits.len());
+    for hit in hits {
+        match merged.last_mut() {
+            Some(last) if hit.range.start < last.range.end => {
+                last.range.end = last.range.end.max(hit.range.end);
+                if matches!(last.rule, RuleId::Injection { .. })
+                    && !matches!(hit.rule, RuleId::Injection { .. })
+                {
+                    last.rule = hit.rule;
+                    last.replacement = hit.replacement;
+                }
+            }
+            _ => merged.push(hit),
+        }
+    }
+    merged
+}
+
+fn run_together(hits: Vec<Hit>) -> Vec<Hit> {
+    let mut merged: Vec<Hit> = Vec::with_capacity(hits.len());
+    for hit in hits {
+        match merged.last_mut() {
+            Some(last)
+                if matches!(hit.rule, RuleId::Injection { .. })
+                    && last.rule == hit.rule
+                    && hit.range.start == last.range.end =>
+            {
+                last.range.end = hit.range.end;
+            }
+            _ => merged.push(hit),
+        }
+    }
+    merged
 }
 
 fn unprotected(hit: &Range<usize>, protected: &[Range<usize>]) -> Vec<Range<usize>> {

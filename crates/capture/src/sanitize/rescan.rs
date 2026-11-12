@@ -11,6 +11,7 @@ use super::key::LocalKey;
 use super::mapping::Mapping;
 use super::report::Change;
 use super::report::Collision;
+use super::scrub::Posture;
 use super::scrub::Scrubber;
 use crate::rules::Budget;
 use crate::rules::Pool;
@@ -43,6 +44,7 @@ pub(super) struct Rescan<'a> {
     pub(super) key: Option<&'a LocalKey>,
     pub(super) digest: &'a str,
     pub(super) whole: bool,
+    pub(super) posture: Posture,
 }
 
 impl Rescan<'_> {
@@ -137,6 +139,7 @@ impl Rescan<'_> {
     fn scrubber<'s>(&'s self, mapping: &'s Mapping, budget: Budget<'s>) -> Scrubber<'s> {
         let mut scrubber = Scrubber::new(mapping, self.key, self.digest);
         scrubber.whole = self.whole;
+        scrubber.posture = self.posture;
         scrubber.budget = budget;
         scrubber
     }

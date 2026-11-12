@@ -10,6 +10,7 @@ mod hook_replay;
 mod listing_claude_grok;
 mod listing_stores;
 mod opencode_v2_store;
+mod receive_checks;
 mod redaction;
 mod redaction_gaps;
 mod sanitize;
