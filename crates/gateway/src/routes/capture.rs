@@ -2,18 +2,24 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::request::Parts;
 use wire::capture::CaptureResult;
 
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::routes::capture_schema::ValidatedBatch;
-use crate::tenancy::UserId;
 
 pub(crate) async fn ingest(
     State(gateway): State<Arc<Gateway>>,
-    user: UserId,
-    ValidatedBatch(batch): ValidatedBatch,
+    parts: Parts,
+    ValidatedBatch(mut batch): ValidatedBatch,
 ) -> Result<Json<CaptureResult>, ApiError> {
+    let (user, credential) = crate::tenancy::authenticate(&gateway, &parts)?;
+    if !credential.is_local_owner() && batch.drop_receipt() {
+        tracing::debug!(
+            "dropped a settings.receipt from a caller without the local owner credential"
+        );
+    }
     let session_key = batch.session_key.clone();
     let captured = gateway
         .store()

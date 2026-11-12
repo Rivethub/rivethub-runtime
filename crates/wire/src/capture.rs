@@ -25,6 +25,17 @@ pub struct CaptureBatchRequest {
     pub messages: Vec<CaptureMessage>,
 }
 
+impl CaptureBatchRequest {
+    pub fn drop_receipt(&mut self) -> bool {
+        let Some(settings) = self.settings.as_mut() else {
+            return false;
+        };
+        let had = settings.get(RECEIPT_KEY).is_some();
+        settings.retain(|key| key != RECEIPT_KEY);
+        had
+    }
+}
+
 #[serde_as]
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
