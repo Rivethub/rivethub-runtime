@@ -172,6 +172,23 @@ pub struct Receipt {
     pub verification: ReceiptVerification,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<ReceiptChecks>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksDecision {
+    Clean,
+    Import,
+    HoldSpans,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReceiptChecks {
+    pub rules_sha256: String,
+    pub findings_by_family: std::collections::BTreeMap<String, u32>,
+    pub decision: ChecksDecision,
 }
 
 impl Receipt {

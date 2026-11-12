@@ -563,7 +563,7 @@ async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
 }
 
 #[tokio::test]
-async fn a_forged_sanitized_stamp_is_refused_when_a_secret_still_matches() {
+async fn a_forged_sanitized_stamp_is_held_when_a_secret_still_matches() {
     let node = node(&[]);
     let forged = planted_bundle(
         node.directory.path(),
@@ -576,16 +576,55 @@ async fn a_forged_sanitized_stamp_is_refused_when_a_secret_still_matches() {
         }),
     );
 
-    let report = run(&["memory", "ingest-bundle", &forged], &node.environment).await;
+    let held = run(&["memory", "ingest-bundle", &forged], &node.environment).await;
 
-    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(held.exit, Exit::Held, "{}", held.stderr);
+    assert!(
+        held.stdout.starts_with(
+            "held: 1 of 1 session has findings (secret \u{d7}1); nothing imported. Decide with --session 1=import|skip|hold-spans\n"
+        ),
+        "{}",
+        held.stdout
+    );
+    assert!(
+        held.stdout.contains("[HELD:github_token]"),
+        "{}",
+        held.stdout
+    );
+    assert!(!held.stdout.contains(PLANTED_TOKEN));
+
+    let import = run(
+        &["memory", "ingest-bundle", &forged, "--session", "1=import"],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(import.exit, Exit::Failure);
     assert_eq!(
-        report.stderr,
+        import.stderr,
         format!(
-            "Error: {forged} claims to be sanitized, but 1 secret pattern match(es) remain (session 1 message 1 content: github_token); sanitize the raw bundle again, or pass --force to ingest it as it is\n"
+            "Error: {forged}: session 1 has secret findings, which only skip or hold-spans may import; pass --force to import them as they are; nothing was imported\n"
         )
     );
-    assert!(!report.stderr.contains(PLANTED_TOKEN));
+
+    let spans = run(
+        &[
+            "memory",
+            "ingest-bundle",
+            &forged,
+            "--all=hold-spans",
+            "--dry-run",
+        ],
+        &node.environment,
+    )
+    .await;
+    assert_eq!(spans.exit, Exit::Ok, "{}", spans.stderr);
+    assert!(
+        spans
+            .stdout
+            .ends_with("would ingest 1 session from phil (spans held in 1); nothing written\n"),
+        "{}",
+        spans.stdout
+    );
 }
 
 #[tokio::test]

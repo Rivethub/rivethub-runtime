@@ -69,7 +69,7 @@ fn mcp_exit(error: &mcp::Error) -> Exit {
         | mcp::Error::Path(_)
         | mcp::Error::Share(_)
         | mcp::Error::RawBundle(_)
-        | mcp::Error::BundleSecrets { .. }
+        | mcp::Error::BundleHeld { .. }
         | mcp::Error::BundleWithheld { .. } => Exit::Failure,
     }
 }

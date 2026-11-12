@@ -40,6 +40,8 @@ the existing service startup codes. Every visible command:
 | `rh harness disconnect` | `<id> [--capture \| --recall] [--dry-run]` | Remove rh's hook and MCP entry from a harness |
 | `rh logs` | `[agent] [-f, --follow \| --no-follow] [-n, --lines N] [--since TIME] [--level NAME] [-g, --grep TEXT] [--json] [--bare-metal]` | Read the service journal |
 
+`rh memory receive <code>` and `rh memory ingest-bundle <path>` check a bundle for secrets and prompt injection before they write anything (CONTRACT note 149). A bundle with findings imports nothing: the command prints `held: ...` and the escaped report, keeps the ciphertext, and exits 3 (`cli::Exit::Held`; `rh gateway` uses 3 for a failed bind). Rerun with `--session <n>=import|skip|hold-spans` (repeatable; `n` counts sessions from 1) for each flagged session, or `--all=import|skip|hold-spans`. `hold-spans` imports the session with each finding's span replaced by `[HELD:<rule id>]`. A session with a secret finding allows only `skip` or `hold-spans` unless `--force` is given. `--dry-run` runs the same checks and writes nothing.
+
 `--check` on a service root validates its configuration and exits without serving. `rh mesh`, `rh ca`, `rh cert` and
 `rh update --mesh` were removed with the mesh and client certificates (CONTRACT note 132).
 

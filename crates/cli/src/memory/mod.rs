@@ -4,6 +4,7 @@ mod cleanup;
 pub mod desk;
 mod dropbox;
 mod export;
+mod hold;
 mod inbox;
 mod io;
 mod merge;

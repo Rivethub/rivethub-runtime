@@ -1,0 +1,2 @@
+hello \u{E0049}\u{E0067}\u{E006E}\u{E006F}\u{E0072}\u{E0065} world
+\u{E0001}tagged

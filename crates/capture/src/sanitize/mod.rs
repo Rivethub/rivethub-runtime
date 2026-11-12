@@ -43,6 +43,7 @@ pub use report::SessionLine;
 pub use report::Spot;
 use rescan::Found;
 use rescan::Rescan;
+use scrub::Posture;
 use scrub::Scrubber;
 
 const RECHECKS: usize = 4;
@@ -456,6 +457,7 @@ fn recheck(
             key,
             digest,
             whole: round == RECHECKS,
+            posture: Posture::Sanitize,
         }
         .run(sessions, exported_by);
         if found.changes.is_empty() {
@@ -469,15 +471,34 @@ fn recheck(
 
 #[must_use]
 pub fn secrets(bundle: &SessionBundle) -> Vec<Change> {
+    scan_received(bundle, Posture::Sanitize).changes
+}
+
+#[derive(Debug)]
+pub struct Held {
+    pub changes: Vec<Change>,
+    pub sessions: Vec<BundledSession>,
+}
+
+#[must_use]
+pub fn held(bundle: &SessionBundle) -> Held {
+    scan_received(bundle, Posture::Receive)
+}
+
+fn scan_received(bundle: &SessionBundle, posture: Posture) -> Held {
     let mut sessions = bundle.sessions.clone();
     let mut exported_by = bundle.manifest.exported_by.clone();
-    Rescan {
+    let found = Rescan {
         key: None,
         digest: &bundle.manifest.bundle_sha256,
         whole: false,
+        posture,
     }
-    .run(&mut sessions, &mut exported_by)
-    .changes
+    .run(&mut sessions, &mut exported_by);
+    Held {
+        changes: found.changes,
+        sessions,
+    }
 }
 
 fn event_ids(key: &LocalKey, session: &BundledSession) -> Vec<String> {
