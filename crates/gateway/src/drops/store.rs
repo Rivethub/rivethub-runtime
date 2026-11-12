@@ -178,10 +178,15 @@ fn logged(op: &'static str, error: &std::io::Error) {
     tracing::warn!(op, kind = ?error.kind(), "drop file operation failed");
 }
 
+fn unlink(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
 fn remove(path: &Path, op: &'static str) {
-    if let Err(error) = std::fs::remove_file(path)
-        && error.kind() != ErrorKind::NotFound
-    {
+    if let Err(error) = unlink(path) {
         logged(op, &error);
     }
 }
@@ -427,12 +432,12 @@ impl Store {
         self.take_locked(&mut self.index.lock(), id)
     }
 
-    fn forget(&self, id: &DropId) -> Option<Fate> {
-        remove(&self.path(id, Part::Sending), "unlink");
-        remove(&self.path(id, Part::Record), "unlink");
+    fn forget(&self, id: &DropId) -> std::io::Result<Option<Fate>> {
+        unlink(&self.path(id, Part::Sending))?;
+        unlink(&self.path(id, Part::Record))?;
         let mut index = self.index.lock();
         index.live.remove(id);
-        index.claimed.remove(id)
+        Ok(index.claimed.remove(id))
     }
 
     fn sync_root(&self) -> std::io::Result<()> {
@@ -443,7 +448,9 @@ impl Store {
         let mut index = self.index.lock();
         if index.claimed.get(id) == Some(&Fate::Burn) {
             drop(index);
-            self.forget(id);
+            if let Err(error) = self.forget(id) {
+                logged("unlink", &error);
+            }
             return;
         }
         index.claimed.remove(id);
@@ -490,7 +497,14 @@ impl Store {
         let checked = digest(&mut file).and_then(|sums| file.rewind().map(|()| sums));
         match checked {
             Ok((bytes, sha256)) if bytes == record.bytes && sha256 == record.sha256 => {
-                let fate = self.forget(id);
+                let fate = match self.forget(id) {
+                    Ok(fate) => fate,
+                    Err(error) => {
+                        logged("unlink", &error);
+                        self.put_back(id);
+                        return Claim::Failed;
+                    }
+                };
                 if let Err(error) = self.sync_root() {
                     logged("sync", &error);
                     return Claim::Failed;
@@ -502,7 +516,9 @@ impl Store {
             }
             Ok(_) => {
                 tracing::warn!(op = "integrity", "drop file does not match its record");
-                self.forget(id);
+                if let Err(error) = self.forget(id) {
+                    logged("unlink", &error);
+                }
                 Claim::Failed
             }
             Err(error) => {
@@ -521,7 +537,10 @@ impl Store {
         let mut index = self.index.lock();
         if self.take_locked(&mut index, id)? {
             drop(index);
-            self.forget(id);
+            if let Err(error) = self.forget(id) {
+                self.put_back(id);
+                return Err(error);
+            }
             self.sync_root()?;
             return Ok(true);
         }
@@ -535,10 +554,14 @@ impl Store {
 
     fn discard(&self, id: &DropId) -> bool {
         match self.take(id) {
-            Ok(true) => {
-                self.forget(id);
-                true
-            }
+            Ok(true) => match self.forget(id) {
+                Ok(_) => true,
+                Err(error) => {
+                    logged("expire", &error);
+                    self.put_back(id);
+                    false
+                }
+            },
             Ok(false) => false,
             Err(error) => {
                 logged("expire", &error);

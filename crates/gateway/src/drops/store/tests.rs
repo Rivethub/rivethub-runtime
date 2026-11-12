@@ -226,3 +226,26 @@ fn a_record_without_its_body_is_deleted_at_start() {
     assert_eq!(names(&root), Vec::<String>::new());
     assert_eq!(store.index.lock().usage(&alice()), (0, 0));
 }
+
+#[test]
+fn a_drop_whose_files_cannot_be_deleted_is_not_consumed() {
+    let dir = tempfile::tempdir().expect("temp");
+    let root = private_root(&dir);
+    let id = plant(&root, TimeDelta::days(1));
+    let store = Store::open(&config(root.clone())).expect("open");
+    assert!(store.take(&id).expect("claim"));
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500)).expect("mode");
+    let forgotten = store.forget(&id);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("mode");
+    assert!(
+        forgotten.is_err(),
+        "single use holds only when the unlink is durable"
+    );
+    assert_eq!(
+        names(&root),
+        vec![
+            format!("{}.json", id.as_str()),
+            format!("{}.sending", id.as_str())
+        ]
+    );
+}
