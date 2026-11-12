@@ -1,5 +1,6 @@
 pub mod account;
 pub mod auth;
+pub mod drops;
 pub mod entities;
 pub mod files;
 pub mod flagged;
