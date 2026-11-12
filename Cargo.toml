@@ -53,6 +53,7 @@ memory-postgres = { path = "crates/memory-postgres", version = "0.8.1" }
 memory-sqlite = { path = "crates/memory-sqlite", version = "0.8.1" }
 migrate = { path = "crates/migrate", version = "0.8.1" }
 nix = { version = "0.30", features = ["process", "signal", "fs", "user"] }
+oauth2 = { version = "5.0.0", default-features = false }
 opener = "0.9"
 parking_lot = "0.12"
 percent-encoding = "2"
