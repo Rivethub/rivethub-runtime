@@ -159,3 +159,9 @@ id = "encoded_undecoded"
 family = "encoded"
 why = "base64 text that would pass the decode budget, so it could not be read and is held whole"
 kind = "budget"
+
+[[rules]]
+id = "scan_budget_exhausted"
+family = "budget"
+why = "the bundle spent its scan budget (work counted per decode candidate and per nested scan), so this text was never scanned and is held whole"
+kind = "budget"

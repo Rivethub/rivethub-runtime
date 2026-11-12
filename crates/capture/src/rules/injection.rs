@@ -17,6 +17,7 @@ use super::parse;
 
 const INJECTION: &str = include_str!("injection.toml");
 const INJECTION_FILE: &str = "injection.toml";
+pub(crate) const BUDGET_EXHAUSTED: &str = "scan_budget_exhausted";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, strum::Display)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +29,7 @@ pub enum Family {
     Exfil,
     PipeShell,
     Encoded,
+    Budget,
 }
 
 #[expect(
@@ -83,5 +85,11 @@ mod tests {
         let rules = load().unwrap_or_else(|error| panic!("{error}"));
         assert!(rules.rules().len() > 10);
         assert!(rules.upstream().is_none());
+        assert!(
+            rules
+                .rules()
+                .iter()
+                .any(|rule| rule.id == BUDGET_EXHAUSTED && rule.family == Some(Family::Budget))
+        );
     }
 }

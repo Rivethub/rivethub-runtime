@@ -19,6 +19,7 @@ use compile::compile;
 use compile::compile_allow;
 pub use decode::Budget;
 pub use decode::Pool;
+pub use decode::Spent;
 pub use names::Family;
 pub use names::Names;
 pub use scan::Span;

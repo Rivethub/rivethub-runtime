@@ -1818,7 +1818,19 @@ runs, so each worker thread can decode one blob of up to about 6 MiB past the bu
 that shared budget, or that would leave the bundle less than 8 MiB in an in-order scan, is scanned again in order with
 what the bundle has left. A scan therefore decodes at most 128 MiB plus one such blob per worker thread however many messages the bundle holds,
 and refuses or accepts exactly as an in-order scan would (a 2.67 MB forged bundle of 2000 such blobs took 13.2 s at
-04a237d5 and takes 0.75 s now). A rule
+04a237d5 and takes 0.75 s now). Decoded bytes are not the whole cost: a bundle of tiny nested base64 tokens decodes few
+bytes and still costs one decode attempt and one nested scan per token (SS-7 round 2: 4 MiB of them took 4.84 s). So the
+decoder also keeps a work budget, counted from sizes and never from a clock: 32 plus the length of every base64 candidate
+a decoding rule matches, whether it decodes or not, 1 per decoded or inflated byte, and 512 plus 2 per byte for every
+nested scan of decoded text. A
+message may spend 32 Mi of work and a bundle 256 Mi (ordinary text costs 1 to 4 per byte, so a 64 MiB bundle of Python
+source, at 1, stays under a third of it). A message that spends its work is not scanned any further and is redacted whole
+as `scan_budget_exhausted`; a bundle that spends its work does the same to every field after it, in order. The
+manifest's two fields have a work budget of their own, so they are scanned however the sessions went. Workers draw
+the work from a shared pool of the bundle's work plus one message's work per worker, and a message that ran short of the
+pool, or that would leave the bundle less than one message of work, is scanned again in order, so the result is the
+in-order one and the scan again costs at most two messages of work (256 Mi of work is about a second of one core;
+64 MiB bundles of nested-token and fan-out text took under 2 s in `media/SS-7/perf-r3.txt`). A rule
 with `each` redacts each match of that regex inside the secret. A match is dropped when the Shannon entropy of the
 secret is at or under the rule's `entropy`, or when an allowlist matches it: gitleaks' global allowlist applies to
 gitleaks rules only, RivetHub rules use the `[names]` stopwords and templates (exact words such as `null`, `none`,
@@ -2774,8 +2786,10 @@ prompt"), `role_markup` (`<|im_start|>` and the other chat-template tokens, `[IN
 U+202E and U+2066 to U+2069), `exfil` (a markdown image or `<img>` whose URL carries a query, except for the well-known
 badge hosts, and request-catcher hosts), `pipe_shell` (`curl` or `wget` piped into a shell, `bash <(curl ...)`,
 `iex (iwr ...)`, `powershell -enc ...`) and `encoded` (base64 or gzip text of 8 or more characters, the shortest that decodes to a rule's match, that decodes to a match of any
-other rule, or that passes the decode budget and so cannot be read). Secret findings are the family `secret`. `docs/CLI.md` and
-`injection.toml` are the list of rules; a test fails when a rule has no fixture line that matches it.
+other rule, or that passes the decode budget and so cannot be read). `budget` is a text the scan never reached: the
+rule `scan_budget_exhausted` holds a whole field when its message, or the bundle, has spent the work budget (note 136),
+so a bundle built to keep the check busy imports nothing unseen, and the check ends in bounded time. Secret findings are the family `secret`. `docs/CLI.md` and
+`injection.toml` are the list of rules; a test fails when a rule has no fixture line that matches it, the two budget rules aside.
 
 A bundle with any finding imports nothing. `rh memory receive` prints `held: <n> of <total> sessions has findings
 (<family> \u{d7}<count>, ...); nothing imported. Decide with --session <n>=import|skip|hold-spans`, then the report, and exits 3

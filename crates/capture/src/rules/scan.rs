@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+use regex::Captures;
+use regex::Match;
+
 use super::Allow;
 use super::Decode;
 use super::Matcher;
@@ -10,7 +13,10 @@ use super::Secret;
 use super::Source;
 use super::Target;
 use super::decode::Budget;
+use super::decode::CANDIDATE_WORK;
 use super::decode::Decoded;
+use super::decode::SCAN_WORK;
+use super::decode::SCANNED_BYTE_WORK;
 use super::decode::decoded;
 use super::value::shannon_entropy;
 
@@ -36,7 +42,7 @@ struct Scope {
 impl Ruleset {
     #[must_use]
     pub fn spans(&self, text: &str) -> Vec<Span<'_>> {
-        self.spans_within(text, &mut Budget::after(0))
+        self.spans_within(text, &mut Budget::fresh())
     }
 
     #[must_use]
@@ -53,7 +59,7 @@ impl Ruleset {
                 offset: 0,
                 depth: 0,
             };
-            self.matches(rule, text, scope, &mut Budget::after(0), &mut found);
+            self.matches(rule, text, scope, &mut Budget::fresh(), &mut found);
         }
         found
     }
@@ -163,19 +169,14 @@ impl Ruleset {
             let Some(whole) = captures.get(0) else {
                 continue;
             };
-            let secret = match rule.secret {
-                Secret::Whole => Some(whole),
-                Secret::Group(group) => captures.get(group),
-                Secret::FirstGroup => Some(
-                    (1..captures.len())
-                        .filter_map(|group| captures.get(group))
-                        .find(|group| !group.is_empty())
-                        .unwrap_or(whole),
-                ),
-            };
-            let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+            let Some(secret) = rule.secret_of(&captures, whole) else {
                 continue;
             };
+            if rule.decode == Some(Decode::Base64)
+                && !budget.charge(CANDIDATE_WORK + secret.len() as u64)
+            {
+                break;
+            }
             if let Some(floor) = rule.entropy
                 && shannon_entropy(secret.as_str()) <= floor
             {
@@ -216,6 +217,22 @@ impl Ruleset {
     }
 }
 
+impl Rule {
+    fn secret_of<'s>(&self, captures: &Captures<'s>, whole: Match<'s>) -> Option<Match<'s>> {
+        let secret = match self.secret {
+            Secret::Whole => Some(whole),
+            Secret::Group(group) => captures.get(group),
+            Secret::FirstGroup => Some(
+                (1..captures.len())
+                    .filter_map(|group| captures.get(group))
+                    .find(|group| !group.is_empty())
+                    .unwrap_or(whole),
+            ),
+        };
+        secret.filter(|secret| !secret.is_empty())
+    }
+}
+
 impl Ruleset {
     fn global_allowlist(&self, source: Source) -> &[Allow] {
         match source {
@@ -243,6 +260,9 @@ impl Ruleset {
         let undecoded = self.budget_rule(rule);
         match found {
             Decoded::Text(inner) => {
+                if !budget.charge(SCAN_WORK + SCANNED_BYTE_WORK * inner.len() as u64) {
+                    return Some(undecoded);
+                }
                 let inner = self.scan(&inner, depth + 1, budget);
                 if inner.is_empty() {
                     None
@@ -355,6 +375,41 @@ fn window_end(text: &str, start: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn blob(text: &str) -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.encode(text)
+    }
+
+    fn fan_out(bytes: usize) -> String {
+        let token = blob("AAAAAA");
+        blob(&format!("{token} ").repeat(bytes / 4 * 3 / (token.len() + 1)))
+    }
+
+    #[test]
+    fn nested_candidates_spend_a_small_work_allowance_and_stop_the_scan() {
+        let rules = crate::rules::injection::ruleset();
+        let text = fan_out(256 << 10);
+        let mut budget = Budget::fresh().with_work(1 << 20);
+        let spans = rules.spans_within(&text, &mut budget);
+        assert!(budget.exhausted());
+        assert!(!spans.is_empty());
+        let mut again = Budget::fresh().with_work(1 << 20);
+        let repeat = rules.spans_within(&text, &mut again);
+        assert_eq!(budget.spent(), again.spent());
+        assert_eq!(spans.len(), repeat.len());
+    }
+
+    #[test]
+    fn ordinary_text_leaves_the_work_allowance_nearly_whole() {
+        let rules = crate::rules::injection::ruleset();
+        let text =
+            "Configuration persistence serialization, authentication tokens. ".repeat(16 << 10);
+        let mut budget = Budget::fresh();
+        assert!(rules.spans_within(&text, &mut budget).is_empty());
+        assert!(!budget.exhausted());
+        assert!(budget.spent().work <= 4 * text.len() as u64);
+    }
 
     #[test]
     fn a_window_ends_on_a_char_boundary() {

@@ -20,6 +20,7 @@ use super::report::Spot;
 use crate::redaction;
 use crate::rules::Budget;
 use crate::rules::Ruleset;
+use crate::rules::injection;
 use crate::rules::names::DROP_TOOL_OUTPUTS_KIND;
 use crate::rules::names::SESSION_TERM_KIND;
 
@@ -72,7 +73,7 @@ impl<'a> Scrubber<'a> {
             rules: crate::rules::ruleset(),
             key,
             digest,
-            budget: Budget::after(0),
+            budget: Budget::fresh(),
             posture: Posture::Sanitize,
             whole: false,
             escape_flags: false,
@@ -179,7 +180,24 @@ impl<'a> Scrubber<'a> {
         }
     }
 
+    fn unscanned(&self, text: &str) -> Vec<Hit> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        vec![Hit {
+            range: 0..text.len(),
+            rule: RuleId::Injection {
+                id: injection::BUDGET_EXHAUSTED,
+                family: injection::Family::Budget,
+            },
+            replacement: self.placeholder(injection::BUDGET_EXHAUSTED),
+        }]
+    }
+
     fn secret_hits(&mut self, text: &str) -> Vec<Hit> {
+        if self.budget.exhausted() {
+            return self.unscanned(text);
+        }
         let mut hits: Vec<Hit> = self
             .rules
             .spans_within(text, &mut self.budget)
@@ -190,8 +208,11 @@ impl<'a> Scrubber<'a> {
                 replacement: self.placeholder(&span.rule.id),
             })
             .collect();
+        if self.budget.exhausted() {
+            return self.unscanned(text);
+        }
         if self.posture == Posture::Receive {
-            let injected = crate::rules::injection::spans(text, &mut self.budget);
+            let injected = injection::spans(text, &mut self.budget);
             hits.extend(injected.into_iter().map(|(span, family)| Hit {
                 range: span.range,
                 rule: RuleId::Injection {
@@ -201,6 +222,9 @@ impl<'a> Scrubber<'a> {
                 replacement: self.placeholder(&span.rule.id),
             }));
             hits.sort_by_key(|hit| hit.range.start);
+            if self.budget.exhausted() {
+                return self.unscanned(text);
+            }
             hits = overlapping_as_one(hits);
             hits = run_together(hits);
         }
