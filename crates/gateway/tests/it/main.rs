@@ -7,6 +7,8 @@ mod auth;
 mod browser_login;
 mod capture;
 mod capture_owner;
+mod drops;
+mod drops_auth;
 mod harness_setup;
 mod local_owner;
 mod memory_api;

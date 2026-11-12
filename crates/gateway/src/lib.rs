@@ -2,6 +2,7 @@ pub mod account;
 mod attach;
 pub mod auth;
 mod auth_event;
+pub mod drops;
 pub mod error;
 pub mod extract;
 mod history;
@@ -9,6 +10,7 @@ pub mod local_owner;
 mod login;
 mod memory_body;
 mod models;
+pub mod peer;
 pub mod plugins;
 pub mod routes;
 mod scope;
@@ -88,6 +90,8 @@ pub struct Gateway {
     digests: Option<Arc<dyn kernel::changes::DigestStore>>,
     account: Option<Arc<account::AccountService>>,
     model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
+    drops: Option<Arc<drops::Drops>>,
+    trusted_proxies: Vec<config::model::TrustedProxy>,
 }
 
 impl Gateway {
@@ -133,7 +137,29 @@ impl Gateway {
             digests: None,
             account: None,
             model_calls: None,
+            drops: None,
+            trusted_proxies: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_drops(mut self, drops: Arc<drops::Drops>) -> Self {
+        self.drops = Some(drops);
+        self
+    }
+
+    #[must_use]
+    pub fn with_trusted_proxies(mut self, proxies: Vec<config::model::TrustedProxy>) -> Self {
+        self.trusted_proxies = proxies;
+        self
+    }
+
+    pub(crate) fn trusted_proxies(&self) -> &[config::model::TrustedProxy] {
+        &self.trusted_proxies
+    }
+
+    pub(crate) fn drops_open(&self, method: &axum::http::Method, path: &str, secure: bool) -> bool {
+        self.drops.is_some() && drops::open_to_anyone(method, path, secure)
     }
 
     #[must_use]
@@ -305,6 +331,10 @@ impl Gateway {
                     )),
             )
             .nest("/api/memory", routes::memory::router());
+        let routed = match &self.drops {
+            Some(drops) => routed.merge(routes::drops::router(Arc::clone(drops))),
+            None => routed,
+        };
         let layered = routes::mount(routed.merge(routes::router()))
             .layer(middleware::from_fn(routes::contract_header))
             .with_state(Arc::clone(self))

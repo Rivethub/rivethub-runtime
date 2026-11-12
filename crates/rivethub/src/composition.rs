@@ -57,6 +57,8 @@ pub enum ComposeError {
     Account(#[from] gateway::account::AccountError),
     #[error(transparent)]
     LocalOwner(#[from] gateway::local_owner::TokenError),
+    #[error("gateway.drops cannot start: {0}")]
+    Drops(#[from] gateway::drops::OpenError),
 }
 
 pub(crate) async fn local_owner(
@@ -169,6 +171,40 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
         Some(pages) => gateway.with_topic_pages(pages),
         None => gateway,
     }
+}
+
+pub(crate) fn trusted_proxies(config: &Config) -> Vec<config::model::TrustedProxy> {
+    config
+        .gateway
+        .as_ref()
+        .map(|section| section.trusted_proxies.clone())
+        .unwrap_or_default()
+}
+
+async fn drop_box(
+    gateway: Gateway,
+    config: &Config,
+    tracker: &tokio_util::task::TaskTracker,
+    shutdown: &CancellationToken,
+) -> Result<Gateway, ComposeError> {
+    let enabled = config
+        .gateway
+        .as_ref()
+        .map(|section| &section.drops)
+        .filter(|drops| drops.enabled);
+    let Some(section) = enabled else {
+        return Ok(gateway);
+    };
+    let root = section
+        .root
+        .clone()
+        .unwrap_or_else(|| gateway.settings().state_dir.join("drops"));
+    let drops_config = gateway::drops::DropsConfig::new(root, section);
+    let drops =
+        tokio::task::spawn_blocking(move || gateway::drops::Drops::open(&drops_config)).await??;
+    let drops = Arc::new(drops);
+    drops.spawn_sweeper(tracker, shutdown.child_token());
+    Ok(gateway.with_drops(drops))
 }
 
 fn with_session_stores(gateway: Gateway, env: &Environment) -> Gateway {
@@ -359,9 +395,11 @@ impl Composition {
             .with_tenancy(identity.tenancy.clone())
             .with_local_owner(local_owner)
             .with_auth_policy(gateway::AuthPolicy::from_config(config))
+            .with_trusted_proxies(trusted_proxies(config))
             .with_sessions(sessions);
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         let tracker = tokio_util::task::TaskTracker::new();
+        gateway = drop_box(gateway, config, &tracker, shutdown).await?;
         gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;
         identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
         spool::replay_captures(&tracker, env, shutdown);
