@@ -18,8 +18,6 @@ use super::noun;
 use crate::Error;
 use crate::catalog::ToolInput as _;
 
-const UNKNOWN_SENDER: &str = "unknown sender";
-
 pub(crate) async fn find(
     store: &dyn MemoryStore,
     kit: &Sessions,
@@ -101,16 +99,8 @@ fn render(
             ranked.best,
             noun(ranked.hits, "hit", "hits"),
         )?;
-        if imported {
-            let author = digest
-                .imported_from
-                .as_deref()
-                .and_then(kernel::memory::display_author);
-            write!(
-                out,
-                "  from {} (imported)",
-                author.as_deref().unwrap_or(UNKNOWN_SENDER)
-            )?;
+        if let Some(author) = digest.imported_author() {
+            write!(out, "  from {author} (imported)")?;
         }
         out.push('\n');
         for excerpt in &ranked.excerpts {

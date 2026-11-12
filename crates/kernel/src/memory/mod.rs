@@ -51,6 +51,7 @@ pub use deletion::TrashVerdict;
 pub use deletion::trash_verdict;
 pub use deletion::used_since;
 pub use digest::SessionDigest;
+pub use digest::UNKNOWN_SENDER;
 pub use embed::EmbedModelMismatch;
 pub use embed::EmbedTable;
 pub use embed::EmbedTarget;
