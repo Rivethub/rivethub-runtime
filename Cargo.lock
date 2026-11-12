@@ -1030,6 +1030,7 @@ dependencies = [
 name = "config"
 version = "0.8.1"
 dependencies = [
+ "ipnet",
  "libtest-mimic",
  "nix 0.30.1",
  "regress",

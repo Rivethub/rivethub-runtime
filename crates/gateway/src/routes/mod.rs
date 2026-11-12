@@ -3,6 +3,7 @@ mod auth;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
+pub(crate) mod drops;
 mod entities;
 mod flagged;
 pub mod harnesses;

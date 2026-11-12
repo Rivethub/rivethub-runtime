@@ -220,7 +220,8 @@ pub async fn compose(
     let gateway = Gateway::new(store, settings)
         .with_local_owner(local_owner)
         .with_auth_policy(gateway::AuthPolicy::from_config(config))
-        .with_tenancy(identity.tenancy);
+        .with_tenancy(identity.tenancy)
+        .with_trusted_proxies(crate::composition::trusted_proxies(config));
     Ok(Arc::new(gateway))
 }
 

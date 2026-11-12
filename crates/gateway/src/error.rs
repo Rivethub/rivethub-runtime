@@ -10,6 +10,9 @@ const BODY_MUST_BE_OBJECT: &str = "body must be a JSON object";
 const INTERNAL_ERROR: &str = "internal error";
 const STORE_UNAVAILABLE: &str = "memory store unavailable";
 const STORE_QUERY_FAILED: &str = "memory query failed";
+const INSUFFICIENT_SCOPE: &str =
+    r#"Bearer realm="rivethub", error="insufficient_scope", scope="full""#;
+const INVALID_TOKEN: &str = r#"Bearer realm="rivethub", error="invalid_token""#;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -51,6 +54,10 @@ pub enum ApiError {
     RequestTimeout,
     #[error("unauthorized")]
     Unauthorized,
+    #[error("unauthorized")]
+    InvalidToken,
+    #[error("the token's scope does not cover this route")]
+    InsufficientScope,
     #[error("reauthentication required")]
     ReauthRequired,
     #[error("too many requests")]
@@ -121,7 +128,10 @@ impl ApiError {
                 StatusCode::REQUEST_TIMEOUT,
                 GatewayError::new("request timeout"),
             ),
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized")),
+            Self::Unauthorized | Self::InvalidToken => {
+                (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized"))
+            }
+            Self::InsufficientScope => insufficient_scope(),
             Self::ReauthRequired => (
                 StatusCode::UNAUTHORIZED,
                 GatewayError::new(wire::gateway::auth::REAUTH_REQUIRED),
@@ -176,6 +186,18 @@ pub fn harness_status(code: wire::harness::HarnessCode) -> StatusCode {
     }
 }
 
+impl ApiError {
+    pub(crate) const fn challenge(&self) -> &'static str {
+        if matches!(self, Self::InvalidToken) {
+            INVALID_TOKEN
+        } else if matches!(self, Self::InsufficientScope) {
+            INSUFFICIENT_SCOPE
+        } else {
+            crate::auth::CHALLENGE
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let retry_after = if let Self::RateLimited(wait) = &self {
@@ -183,6 +205,8 @@ impl IntoResponse for ApiError {
         } else {
             None
         };
+        let challenge = self.challenge();
+        let challenged = matches!(self, Self::InsufficientScope);
         let (status, body) = self.status_and_body();
         let mut response = (status, Json(body)).into_response();
         if let Some(secs) = retry_after {
@@ -190,14 +214,21 @@ impl IntoResponse for ApiError {
                 .headers_mut()
                 .insert(axum::http::header::RETRY_AFTER, secs.into());
         }
-        if status == StatusCode::UNAUTHORIZED {
+        if status == StatusCode::UNAUTHORIZED || challenged {
             response.headers_mut().insert(
                 axum::http::header::WWW_AUTHENTICATE,
-                axum::http::HeaderValue::from_static(crate::auth::CHALLENGE),
+                axum::http::HeaderValue::from_static(challenge),
             );
         }
         response
     }
+}
+
+fn insufficient_scope() -> (StatusCode, GatewayError) {
+    (
+        StatusCode::FORBIDDEN,
+        GatewayError::new("the token's scope does not cover this route").code("insufficient_scope"),
+    )
 }
 
 fn adapter_failure(error: &kernel::harness::HarnessAdapterError) -> (StatusCode, GatewayError) {

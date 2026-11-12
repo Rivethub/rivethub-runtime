@@ -1,13 +1,11 @@
 use std::time::Duration;
 
 use capture::seal::DropId;
-use chrono::DateTime;
-use chrono::Utc;
 use futures::StreamExt as _;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
-use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
+use wire::gateway::drops::Uploaded;
 
 use capture::seal::ShareServer;
 
@@ -24,13 +22,6 @@ const RETRY_DELAY: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub(super) struct DropBox {
     server: Server,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct Uploaded {
-    pub(super) id: String,
-    pub(super) expires_at: DateTime<Utc>,
-    pub(super) bytes: u64,
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -44,6 +44,7 @@ http-body = { version = "1", default-features = false }
 httparse = "1"
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false, features = ["service", "tokio"] }
+ipnet = "2.12"
 kernel = { path = "crates/kernel", version = "0.8.1" }
 keyring = { version = "4.2.0", default-features = false, features = ["v1"] }
 landlock = "0.4.7"

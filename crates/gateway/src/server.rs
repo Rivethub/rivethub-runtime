@@ -308,7 +308,12 @@ impl tower::Service<Request<Incoming>> for GatewayService {
         self.keep_alive.disarm();
         request.extensions_mut().insert(ConnectInfo(self.remote));
         let start = self.clock.start();
-        let request = request.map(|body| DeadlineBody::new(body, start, self.request_timeout));
+        let timeout = if crate::drops::is_upload(request.method(), request.uri().path()) {
+            self.request_timeout.max(crate::drops::UPLOAD_BODY_DEADLINE)
+        } else {
+            self.request_timeout
+        };
+        let request = request.map(|body| DeadlineBody::new(body, start, timeout));
         let routed = self.router.call(request);
         let keep_alive = self.keep_alive.clone();
         let clock = self.clock.clone();

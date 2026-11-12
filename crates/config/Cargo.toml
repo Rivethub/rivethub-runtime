@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ipnet.workspace = true
 nix.workspace = true
 regress.workspace = true
 serde = { workspace = true }

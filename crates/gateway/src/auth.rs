@@ -23,6 +23,7 @@ use url::Url;
 
 use crate::GuardState;
 use crate::error::ApiError;
+use crate::peer::Peer;
 
 const EXCHANGE_PATH: &str = "/api/auth/session";
 pub(crate) const CHALLENGE: &str = "Bearer realm=\"rivethub\"";
@@ -63,16 +64,21 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost" | "::ffff:127.0.0.1")
 }
 
+pub(crate) fn names_a_forwarder(headers: &axum::http::HeaderMap) -> bool {
+    headers.contains_key(header::FORWARDED)
+        || headers.contains_key(header::VIA)
+        || headers.contains_key(X_REAL_IP)
+        || headers.keys().any(|name| {
+            name.as_str() == X_FORWARDED || name.as_str().starts_with(X_FORWARDED_PREFIX)
+        })
+}
+
 pub(crate) fn direct_local(parts: &Parts) -> bool {
     let loopback = parts
         .extensions
         .get::<ConnectInfo<SocketAddr>>()
         .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
-    let forwarded = parts.headers.contains_key(header::FORWARDED)
-        || parts.headers.contains_key(X_REAL_IP)
-        || parts.headers.keys().any(|name| {
-            name.as_str() == X_FORWARDED || name.as_str().starts_with(X_FORWARDED_PREFIX)
-        });
+    let forwarded = names_a_forwarder(&parts.headers);
     let host = header_text(&parts.headers, &header::HOST)
         .map(str::to_owned)
         .or_else(|| {
@@ -242,7 +248,8 @@ pub(crate) async fn guard(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let caller_loopback = is_loopback_remote(addr);
+    let peer = Peer::of(addr, request.headers(), state.gateway.trusted_proxies());
+    request.extensions_mut().insert(peer);
     request.headers_mut().remove("x-rivetos-user");
     let path = request.uri().path().to_string();
     let origin = header_text(request.headers(), &header::ORIGIN);
@@ -250,7 +257,7 @@ pub(crate) async fn guard(
     let check = OriginCheck {
         origin,
         host,
-        caller_loopback,
+        caller_loopback: is_loopback_remote(addr),
         plain_http: !state.secure,
     };
     if let Decision::Deny { reason } = state.gateway.policy().evaluate(&check) {
@@ -261,35 +268,66 @@ pub(crate) async fn guard(
         .extensions()
         .get::<crate::plugins::PluginCaller>()
         .is_some();
-    let open = path == "/healthz" || (path == EXCHANGE_PATH && request.method() == Method::POST);
-    let admitted = plugin
-        || open
-        || (caller_loopback || state.secure) && {
-            let public = crate::routes::serves_public_asset(request.method(), &path);
-            let (parts, body) = request.into_parts();
-            let resolved = public || crate::tenancy::caller(&state.gateway, &parts).is_ok();
-            request = Request::from_parts(parts, body);
-            resolved
+    let secure = peer.secure(state.secure);
+    let open = path == "/healthz"
+        || (path == EXCHANGE_PATH && request.method() == Method::POST)
+        || state.gateway.drops_open(request.method(), &path, secure);
+    let refusal = if plugin || open {
+        None
+    } else {
+        let public = crate::routes::serves_public_asset(request.method(), &path);
+        let (parts, body) = request.into_parts();
+        let resolved = if public {
+            Ok(())
+        } else {
+            crate::tenancy::caller(&state.gateway, &parts).map(drop)
         };
-    if !admitted {
-        return unauthorized(&request, &path);
+        request = Request::from_parts(parts, body);
+        refused(secure, &resolved)
+    };
+    if let Some(refusal) = refusal {
+        return match refusal {
+            Refused::InsufficientScope => ApiError::InsufficientScope.into_response(),
+            Refused::Unauthorized => unauthorized(&request, &path),
+        };
     }
     next.run(request).await
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refused {
+    Unauthorized,
+    InsufficientScope,
+}
+
+fn refused(secure: bool, resolved: &Result<(), ApiError>) -> Option<Refused> {
+    if secure && matches!(resolved, Err(ApiError::InsufficientScope)) {
+        Some(Refused::InsufficientScope)
+    } else if secure && resolved.is_ok() {
+        None
+    } else {
+        Some(Refused::Unauthorized)
+    }
+}
+
 fn unauthorized(request: &Request, path: &str) -> Response {
+    let refusal = if request.headers().contains_key(header::AUTHORIZATION) {
+        ApiError::InvalidToken
+    } else {
+        ApiError::Unauthorized
+    };
     let method = request.method();
     let wants_html = (method == Method::GET || method == Method::HEAD)
         && !path.starts_with("/api/")
         && header_text(request.headers(), &header::ACCEPT)
             .is_some_and(|accept| accept.contains("text/html"));
     if wants_html {
-        return html_unauthorized();
+        return html_unauthorized(&refusal);
     }
-    ApiError::Unauthorized.into_response()
+    refusal.into_response()
 }
 
-fn html_unauthorized() -> Response {
+fn html_unauthorized(refusal: &ApiError) -> Response {
     let body = concat!(
         "<!doctype html>\n",
         "<html>\n",
@@ -306,7 +344,7 @@ fn html_unauthorized() -> Response {
         StatusCode::UNAUTHORIZED,
         [
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
-            (header::WWW_AUTHENTICATE, CHALLENGE.to_owned()),
+            (header::WWW_AUTHENTICATE, refusal.challenge().to_owned()),
         ],
         body,
     )
