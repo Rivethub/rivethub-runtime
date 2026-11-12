@@ -52,9 +52,9 @@ impl crate::PostgresMemory {
                     session_key,
                     ..batch.clone()
                 };
-                self.capture_keyed(&owned, options).await
+                self.capture_keyed(&owned, options, Write::Capture).await
             }
-            None => self.capture_keyed(batch, options).await,
+            None => self.capture_keyed(batch, options, Write::Capture).await,
         }
     }
 
@@ -62,9 +62,17 @@ impl crate::PostgresMemory {
         &self,
         batch: &CaptureBatchRequest,
         options: &CaptureOptions,
+        write: Write,
     ) -> Result<CaptureResult, Error> {
         let channel = batch.channel.as_deref().ok_or(Error::MissingChannel)?;
         let mut writer = CaptureWriter::begin(&self.pool, &batch.session_key).await?;
+        if write == Write::Append
+            && writer
+                .carries_receipt(&batch.session_key, options.owner.as_str())
+                .await?
+        {
+            return Err(Error::ReceivedSession);
+        }
         if let Some(dropped) = dropped_when_deleted(&mut writer, batch).await? {
             return Ok(dropped);
         }
@@ -158,6 +166,12 @@ async fn upsert_batch_conversation(
             dates: ConversationDates::of(batch),
         })
         .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Write {
+    Capture,
+    Append,
 }
 
 struct EntryGroup {
@@ -368,10 +382,38 @@ impl MemoryStore for crate::PostgresMemory {
     ) -> Result<u64, MemoryStoreError> {
         let mut inserted = 0u64;
         let options = CaptureOptions::owned_by(owner);
+        if let Some(entry) = batch
+            .iter()
+            .find(|entry| kernel::memory::is_imported(&entry.session_id))
+        {
+            return Err(MemoryStoreError::InvalidRequest {
+                message: format!(
+                    "{} is an imported session; only a receive writes one (CONTRACT note 150)",
+                    entry.session_id
+                ),
+            });
+        }
+        let keys: Vec<&str> = batch
+            .iter()
+            .map(|entry| entry.session_id.as_str())
+            .collect();
+        let received: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM rh_conversations
+              WHERE owner_user_id = $1 AND session_key = ANY($2) AND settings ? 'receipt')",
+        )
+        .bind(owner.as_str())
+        .bind(&keys)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|source| Error::operation("append receipt check", source))
+        .map_err(MemoryStoreError::from)?;
+        if received {
+            return Err(Error::ReceivedSession.into());
+        }
         for group in group_entries(batch) {
             let request = capture_request(&group)?;
             let result = self
-                .capture_batch(&request, &options)
+                .capture_keyed(&request, &options, Write::Append)
                 .await
                 .map_err(MemoryStoreError::from)?;
             inserted += result.inserted;

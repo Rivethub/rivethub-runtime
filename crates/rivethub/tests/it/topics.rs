@@ -42,7 +42,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const BODY_LIMIT: usize = 1 << 20;
 
-fn settings(root: &Path) -> Settings {
+pub(crate) fn settings(root: &Path) -> Settings {
     Settings {
         hostname: "node-a-host".to_owned(),
         node: "node-a".to_owned(),

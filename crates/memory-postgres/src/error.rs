@@ -12,6 +12,10 @@ pub enum Error {
     WikiScope(#[source] kernel::wiki::builder::WikiStoreError),
     #[error("capture channel is required")]
     MissingChannel,
+    #[error(
+        "a session that carries a receive receipt takes no appends; only a receive writes it (CONTRACT note 150)"
+    )]
+    ReceivedSession,
     #[error("time windows must be resolved by the caller with its time zone")]
     UnresolvedWindow,
     #[error("invalid memory id: {0}")]
@@ -119,6 +123,7 @@ impl From<Error> for MemoryStoreError {
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::MissingChannel
+            | Error::ReceivedSession
             | Error::WikiContainment
             | Error::UnresolvedWindow
             | Error::InvalidId(_)
@@ -184,6 +189,7 @@ impl From<Error> for JobQueueError {
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::MissingChannel
+            | Error::ReceivedSession
             | Error::WikiContainment
             | Error::WikiIo(_)
             | Error::WikiScope(_)

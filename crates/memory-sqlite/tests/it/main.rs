@@ -5,6 +5,7 @@
 mod common;
 mod search_support;
 
+mod append_imports;
 mod bundle;
 mod capture_activity;
 mod capture_rules;

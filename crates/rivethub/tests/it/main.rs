@@ -1,5 +1,6 @@
 pub mod process;
 
+mod append_imports;
 mod cli;
 mod cli_provider;
 mod composed;

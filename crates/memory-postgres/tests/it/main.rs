@@ -1,5 +1,6 @@
 mod common;
 
+mod append_imports;
 mod bundle;
 mod capture_pg;
 mod counts;
