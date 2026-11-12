@@ -3,11 +3,14 @@ use std::time::Duration;
 use capture::backfill::Backfill;
 use capture::backfill::HarnessTotals;
 use capture::hook::ClaudeHook;
+use capture::hook::HookRun;
 use capture::hook::store::StoreHarness;
 use capture::hook::store::StoreHook;
 use capture::spool::CaptureSpool;
+use capture::writer::CaptureTransport;
 use capture::writer::CaptureWriter;
 use capture::writer::HttpCaptureTransport;
+use capture::writer::PostError;
 use chrono::DateTime;
 use chrono::Utc;
 use clap::Subcommand;
@@ -28,6 +31,11 @@ pub enum CaptureCommand {
     Hook {
         #[arg(long, value_enum, default_value_t = HookHarness::ClaudeCode)]
         harness: HookHarness,
+    },
+    #[command(about = "Show the capture spool, or move dead-lettered batches back to it")]
+    Spool {
+        #[arg(long)]
+        requeue_dead: bool,
     },
     #[command(
         about = "Capture every stored session of the harness stores, Claude Code subagents included"
@@ -72,11 +80,12 @@ pub enum HookHarness {
 
 pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Report, Error> {
     match command {
+        CaptureCommand::Spool { requeue_dead } => spool_command(env, requeue_dead).await,
         CaptureCommand::Hook { harness } => {
             let mut stdin = String::new();
             tokio::io::stdin().read_to_string(&mut stdin).await?;
             if env.get(config::MODEL_RUN_VARIABLE).is_some() {
-                return Ok(report(String::new()));
+                return Ok(report(HookRun::done()));
             }
             Ok(match harness {
                 HookHarness::ClaudeCode => hook(env, &stdin, Utc::now()).await,
@@ -180,16 +189,20 @@ fn failure_lines(totals: &[HarnessTotals]) -> String {
 }
 
 pub async fn hook(env: &Environment, stdin: &str, now: DateTime<Utc>) -> Report {
-    let stderr = match writer(env).await {
-        Ok((writer, paths)) => {
+    hook_as(env, stdin, now, nix::unistd::getuid().as_raw()).await
+}
+
+async fn hook_as(env: &Environment, stdin: &str, now: DateTime<Utc>, owner_uid: u32) -> Report {
+    match writer_as(env, owner_uid).await {
+        Ok((writer, paths)) => report(
             ClaudeHook::new(writer, &paths)
                 .run(stdin, now, &capture::hook::ingest_key(now))
-                .await
-                .stderr
-        }
-        Err(error) => format!("capture hook is not configured: {error}"),
-    };
-    report(stderr)
+                .await,
+        ),
+        Err(error) => report(HookRun::failed(format!(
+            "capture hook is not configured: {error}"
+        ))),
+    }
 }
 
 pub async fn store_hook(
@@ -198,16 +211,19 @@ pub async fn store_hook(
     now: DateTime<Utc>,
     harness: StoreHarness,
 ) -> Report {
-    let stderr = match writer(env).await {
+    match writer(env).await {
         Ok((writer, paths)) => {
             match StoreHook::new(harness, writer, &capture::listing::store_roots(env), &paths) {
-                Some(hook) => hook.run(stdin, now).await.stderr,
-                None => format!("capture hook has no {harness:?} store: HOME is unset"),
+                Some(hook) => report(hook.run(stdin, now).await),
+                None => report(HookRun::failed(format!(
+                    "capture hook has no {harness:?} store: HOME is unset"
+                ))),
             }
         }
-        Err(error) => format!("capture hook is not configured: {error}"),
-    };
-    report(stderr)
+        Err(error) => report(HookRun::failed(format!(
+            "capture hook is not configured: {error}"
+        ))),
+    }
 }
 
 pub(crate) async fn ingest_bundle(
@@ -235,12 +251,58 @@ pub(crate) async fn ingest_bundle(
     Ok(totals)
 }
 
+fn spool_at(env: &Environment) -> Result<CaptureSpool, Error> {
+    Ok(CaptureSpool::new(
+        config::Paths::new(env)?.state_dir().join(SPOOL_DIR),
+    ))
+}
+
+async fn spool_command(env: &Environment, requeue_dead: bool) -> Result<Report, Error> {
+    let spool = spool_at(env)?;
+    let moved = if requeue_dead {
+        Some(spool.requeue_dead().await?)
+    } else {
+        None
+    };
+    let usage = spool.usage().await?;
+    let mut text = format!(
+        "{} batches are waiting to be delivered and {} are dead-lettered in {}.\n",
+        usage.entries - usage.dead,
+        usage.dead,
+        spool.dir().display()
+    );
+    if let Some(moved) = moved {
+        text = format!("{text}Moved {moved} dead-lettered batches back to the spool.\n");
+    }
+    Ok(Report::success(text))
+}
+
+pub(crate) async fn spool_warning(env: &Environment) -> Result<Option<String>, Error> {
+    let usage = spool_at(env)?.usage().await?;
+    let mut lines = Vec::new();
+    if usage.over_threshold() {
+        lines.push(format!(
+            "The capture spool holds {} entries ({} MB). Nothing is dropped, but the gateway is not taking them. Start it with `rh local --ensure`.",
+            usage.entries,
+            usage.bytes / (1024 * 1024)
+        ));
+    }
+    if usage.dead > 0 {
+        lines.push(format!(
+            "{} capture batches were dead-lettered. Run `rh capture spool --requeue-dead` to retry them.",
+            usage.dead
+        ));
+    }
+    Ok((!lines.is_empty()).then(|| lines.join("\n")))
+}
+
 pub async fn replay_spool(env: &Environment, now: DateTime<Utc>) -> Result<(), Error> {
     let (writer, _) = writer(env).await?;
     Ok(writer.replay(now).await?)
 }
 
-fn report(stderr: String) -> Report {
+fn report(run: HookRun) -> Report {
+    let stderr = run.stderr;
     Report {
         stdout: String::new(),
         stderr: if stderr.is_empty() {
@@ -248,14 +310,23 @@ fn report(stderr: String) -> Report {
         } else {
             format!("{stderr}\n")
         },
-        exit: Exit::Ok,
+        exit: if run.exit == 0 {
+            Exit::Ok
+        } else {
+            Exit::Failure
+        },
         stdout_raw: Vec::new(),
     }
 }
 
-async fn writer(
+async fn writer(env: &Environment) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
+    writer_as(env, nix::unistd::getuid().as_raw()).await
+}
+
+async fn writer_as(
     env: &Environment,
-) -> Result<(CaptureWriter<HttpCaptureTransport>, config::Paths), Error> {
+    owner_uid: u32,
+) -> Result<(CaptureWriter<HookTransport>, config::Paths), Error> {
     let loaded = db::load(env, None).await?;
     let paths = config::Paths::new(env)?;
     let remote = loaded
@@ -263,18 +334,43 @@ async fn writer(
         .memory
         .as_ref()
         .and_then(|memory| memory.capture.gateway.as_ref());
-    let Endpoint { url, client } = match remote {
-        Some(remote) => remote_gateway(remote).await?,
-        None => status::gateway(env, &loaded.config, POST_TIMEOUT).await?,
+    let endpoint = match remote {
+        Some(remote) => remote_gateway(remote).await,
+        None => status::gateway_as(env, &loaded.config, POST_TIMEOUT, Some(owner_uid)).await,
+    };
+    let transport = match endpoint {
+        Ok(Endpoint { url, client }) => HookTransport::Http(HttpCaptureTransport::new(
+            url.as_str().trim_end_matches('/').to_owned(),
+            client,
+        )),
+        Err(error) => HookTransport::Refused(error.to_string()),
     };
     let redaction = capture::redaction::resolve(Some(loaded.config.capture_redaction()), env);
     let writer = CaptureWriter::new(
-        HttpCaptureTransport::new(url.as_str().trim_end_matches('/').to_owned(), client),
+        transport,
         CaptureSpool::new(paths.state_dir().join(SPOOL_DIR)),
         None,
         redaction,
     );
     Ok((writer, paths))
+}
+
+#[derive(Debug)]
+pub(crate) enum HookTransport {
+    Http(HttpCaptureTransport),
+    Refused(String),
+}
+
+#[async_trait::async_trait]
+impl CaptureTransport for HookTransport {
+    async fn post(&self, body: String) -> Result<wire::capture::CaptureResult, PostError> {
+        match self {
+            Self::Http(transport) => transport.post(body).await,
+            Self::Refused(reason) => Err(PostError::Refused {
+                reason: reason.clone(),
+            }),
+        }
+    }
 }
 
 async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoint, Error> {
@@ -298,3 +394,6 @@ async fn remote_gateway(remote: &config::model::CaptureGateway) -> Result<Endpoi
         client,
     })
 }
+
+#[cfg(test)]
+mod tests;

@@ -40,6 +40,7 @@ use crate::transcript::report_skipped;
 use crate::writer::CaptureTransport;
 use crate::writer::CaptureWriter;
 use crate::writer::Totals;
+use crate::writer::WriteError;
 
 pub const AGENT: &str = "rivet-claude";
 pub const CHANNEL: &str = "claude-code";
@@ -79,10 +80,35 @@ impl HookRun {
         }
     }
 
-    fn failed(message: String) -> Self {
+    #[must_use]
+    pub fn failed(message: String) -> Self {
         Self {
             exit: 0,
             stderr: message,
+        }
+    }
+
+    fn absorb(&mut self, other: &Self) {
+        self.exit = self.exit.max(other.exit);
+        if other.stderr.is_empty() {
+            return;
+        }
+        if !self.stderr.is_empty() {
+            self.stderr.push('\n');
+        }
+        self.stderr.push_str(&other.stderr);
+    }
+
+    pub(crate) fn write_failed(error: &WriteError) -> Self {
+        match error {
+            WriteError::Spool(_) => Self {
+                exit: 1,
+                stderr: format!("capture batch was NOT saved: {error}"),
+            },
+            WriteError::ChunkTooLarge
+            | WriteError::Post(_)
+            | WriteError::Replay(_)
+            | WriteError::Json(_) => Self::failed(error.to_string()),
         }
     }
 }
@@ -170,26 +196,22 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             Ok(batch) => batch,
             Err(error) => return HookRun::failed(error.to_string()),
         };
-        let mut failures = Vec::new();
+        let mut run = HookRun::done();
         match self.writer.write(&batch, now).await {
             Ok(totals) => {
                 self.best_effort_log(&log_line(event, session.as_str(), &totals, now))
                     .await;
             }
-            Err(error) => failures.push(error.to_string()),
+            Err(error) => run.absorb(&HookRun::write_failed(&error)),
         }
         match self
             .capture_subagents(&payload, session.native(), event, now)
             .await
         {
-            Ok(found) => failures.extend(found),
-            Err(error) => failures.push(error.to_string()),
+            Ok(found) => found.iter().for_each(|found| run.absorb(found)),
+            Err(error) => run.absorb(&HookRun::failed(error.to_string())),
         }
-        if failures.is_empty() {
-            HookRun::done()
-        } else {
-            HookRun::failed(failures.join("\n"))
-        }
+        run
     }
 
     async fn capture_subagents(
@@ -198,7 +220,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         native: &str,
         event: HookEvent,
         now: DateTime<Utc>,
-    ) -> Result<Vec<String>, HookError> {
+    ) -> Result<Vec<HookRun>, HookError> {
         let selection = subagents::select(payload, native, event).await?;
         let last_event = event.to_string();
         let mut failures = Vec::new();
@@ -206,7 +228,10 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             let bytes = match tokio::fs::metadata(&file.path).await {
                 Ok(metadata) => metadata.len(),
                 Err(error) => {
-                    failures.push(format!("subagent {} was not read: {error}", file.id));
+                    failures.push(HookRun::failed(format!(
+                        "subagent {} was not read: {error}",
+                        file.id
+                    )));
                     continue;
                 }
             };
@@ -215,7 +240,10 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                     Ok(true) => continue,
                     Ok(false) => {}
                     Err(error) => {
-                        failures.push(format!("subagent {} was not checked: {error}", file.id));
+                        failures.push(HookRun::failed(format!(
+                            "subagent {} was not checked: {error}",
+                            file.id
+                        )));
                         continue;
                     }
                 }
@@ -231,19 +259,28 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 Ok(Some(batch)) => batch,
                 Ok(None) => continue,
                 Err(error) => {
-                    failures.push(format!("subagent {}: {error}", file.id));
+                    failures.push(HookRun::failed(format!("subagent {}: {error}", file.id)));
                     continue;
                 }
             };
-            match self.writer.write(&batch, now).await {
+            let written = self.writer.write(&batch, now).await;
+            match &written {
                 Ok(totals) => {
-                    self.best_effort_log(&log_line(event, &batch.session_key, &totals, now))
+                    self.best_effort_log(&log_line(event, &batch.session_key, totals, now))
                         .await;
-                    if let Err(error) = self.captured.record(native, &file.id, bytes).await {
-                        tracing::warn!("subagent {} was not recorded: {error}", file.id);
-                    }
                 }
-                Err(error) => failures.push(format!("subagent {}: {error}", file.id)),
+                Err(error) => {
+                    let mut run = HookRun::write_failed(error);
+                    run.stderr = format!("subagent {}: {}", file.id, run.stderr);
+                    failures.push(run);
+                }
+            }
+            let kept = match &written {
+                Ok(_) => true,
+                Err(error) => error.spooled(),
+            };
+            if kept && let Err(error) = self.captured.record(native, &file.id, bytes).await {
+                tracing::warn!("subagent {} was not recorded: {error}", file.id);
             }
         }
         Ok(failures)

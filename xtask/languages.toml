@@ -9,6 +9,9 @@ paths = [
   "contract/sent.schema.json",
   "LICENSE",
   "coverage-floor.txt",
+  "crates/cli/tests/browser/login-flow.mjs",
+  "crates/gateway/src/routes/login.html",
+  "crates/gateway/src/routes/login.js",
   "lints/Cargo.lock",
 ]
 globs = [

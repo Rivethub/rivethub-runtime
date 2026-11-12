@@ -62,6 +62,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Manage the local owner token")]
+    Auth {
+        #[command(subcommand)]
+        command: crate::auth::AuthCommand,
+    },
+    #[command(about = "Open the web app in your browser, signed in with a one-time code")]
+    Open {
+        #[arg(long, help = "Print the login URL and do not launch a browser")]
+        no_browser: bool,
+    },
     #[command(about = "Report gateway health")]
     Status,
     #[command(about = "Signal the running instance to stop")]

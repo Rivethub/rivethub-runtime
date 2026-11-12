@@ -2,6 +2,7 @@ mod support;
 #[cfg(test)]
 mod wiki_support;
 
+mod auth;
 mod bundle_import;
 mod capture_hook;
 mod cleanup_guard;
@@ -19,6 +20,7 @@ mod memory_review;
 mod memory_sanitize_sessions;
 mod memory_titles;
 mod migrate_binary;
+mod open;
 mod pg_import;
 mod process;
 mod search_eval;

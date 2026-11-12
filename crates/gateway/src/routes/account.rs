@@ -1,9 +1,7 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -18,7 +16,7 @@ use wire::gateway::account::{
 
 use crate::Gateway;
 use crate::account::AccountError;
-use crate::auth::is_loopback_remote;
+use crate::auth::FreshLogin;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::tenancy::UserId;
@@ -104,7 +102,7 @@ impl IntoResponse for Refused {
     }
 }
 
-struct LocalOwner;
+pub(super) struct LocalOwner;
 
 impl FromRequestParts<Arc<Gateway>> for LocalOwner {
     type Rejection = ApiError;
@@ -119,11 +117,7 @@ impl FromRequestParts<Arc<Gateway>> for LocalOwner {
 
 fn local_owner(gateway: &Gateway, parts: &Parts) -> Result<LocalOwner, ApiError> {
     let user = crate::tenancy::caller(gateway, parts)?;
-    let loopback = parts
-        .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
-    if !loopback {
+    if !crate::auth::direct_local(parts) {
         return Err(ApiError::Forbidden(LOCAL_ONLY.to_owned()));
     }
     gateway.tenancy.owner(&user)?;
@@ -139,6 +133,7 @@ async fn show(
 
 async fn change(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
     Body(body): Body<AccountUpdate>,
 ) -> Result<Json<Account>, Refused> {
@@ -147,6 +142,7 @@ async fn change(
 
 async fn delete(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
 ) -> Result<Json<Account>, Refused> {
     Ok(Json(gateway.account()?.delete().await?))
@@ -154,6 +150,7 @@ async fn delete(
 
 async fn sign_in(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
     Body(body): Body<SignInRequest>,
 ) -> Result<Json<SignInStarted>, Refused> {
@@ -169,6 +166,7 @@ async fn poll(
 
 async fn sign_out(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: FreshLogin,
     _owner: LocalOwner,
 ) -> Result<Json<Account>, Refused> {
     Ok(Json(gateway.account()?.sign_out().await?))

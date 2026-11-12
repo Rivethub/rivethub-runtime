@@ -55,6 +55,18 @@ pub enum ComposeError {
     Memory(#[from] memory_postgres::Error),
     #[error(transparent)]
     Account(#[from] gateway::account::AccountError),
+    #[error(transparent)]
+    LocalOwner(#[from] gateway::local_owner::TokenError),
+}
+
+pub(crate) async fn local_owner(
+    state_dir: &std::path::Path,
+) -> Result<Arc<gateway::local_owner::LocalOwner>, ComposeError> {
+    let dir = state_dir.to_path_buf();
+    let holder =
+        tokio::task::spawn_blocking(move || gateway::local_owner::LocalOwner::load_or_create(&dir))
+            .await??;
+    Ok(Arc::new(holder))
 }
 
 #[expect(
@@ -323,6 +335,7 @@ impl Composition {
         let section = config.gateway.clone();
         let tls_env = env.clone();
         let shared = config::shared_dir(env);
+        let local_owner = local_owner(&settings.state_dir).await?;
         let bind = tokio::task::spawn_blocking(move || {
             gateway::server::BindSource::resolve_section(
                 section.as_ref(),
@@ -344,6 +357,8 @@ impl Composition {
         );
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
+            .with_local_owner(local_owner)
+            .with_auth_policy(gateway::AuthPolicy::from_config(config))
             .with_sessions(sessions);
         gateway = with_backing(with_session_stores(gateway, env), &backing);
         let tracker = tokio_util::task::TaskTracker::new();

@@ -172,6 +172,7 @@ pub(crate) async fn conversation_summaries(
 
 pub(crate) async fn export(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: crate::auth::FreshLogin,
     Query(params): Query<ExportParams>,
 ) -> Result<Response, ApiError> {
     let exporter = gateway

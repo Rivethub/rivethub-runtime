@@ -1,8 +1,8 @@
+use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
 use std::time::Duration;
 
 use sqlx::ConnectOptions as _;
-use sqlx::PgPool;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -11,10 +11,10 @@ use tokio::net::TcpStream;
 
 use super::{TestResult, interrupt, provider_config, terminate, write_state};
 
-#[sqlx::test(migrations = false)]
-async fn a_retired_certificate_authority_section_only_warns_and_the_gateway_serves(
-    pool: PgPool,
-) -> TestResult {
+#[tokio::test]
+async fn a_retired_certificate_authority_section_only_warns_and_the_gateway_serves() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let url = pool.connect_options().to_url_lossy();
     let home = tempfile::tempdir()?;
@@ -43,7 +43,7 @@ async fn a_retired_certificate_authority_section_only_warns_and_the_gateway_serv
 }
 
 struct Started {
-    child: tokio::process::Child,
+    child: crate::process::guard::Guarded,
     logs: tokio::task::JoinHandle<std::io::Result<String>>,
 }
 
@@ -54,7 +54,7 @@ async fn start_gateway(home: &std::path::Path) -> TestResult<Started> {
         .env("HOME", home)
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let logs = tokio::spawn(async move {
@@ -86,10 +86,10 @@ async fn start_gateway(home: &std::path::Path) -> TestResult<Started> {
     }
 }
 
-#[sqlx::test(migrations = false)]
-async fn gateway_with_a_partial_request_exits_within_the_grace_on_sigint(
-    pool: PgPool,
-) -> TestResult {
+#[tokio::test]
+async fn gateway_with_a_partial_request_exits_within_the_grace_on_sigint() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let url = pool.connect_options().to_url_lossy();
     let home = tempfile::tempdir()?;

@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use capture::spool::CaptureSpool;
-use capture::spool::SpoolLimits;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
 use chrono::DateTime;
@@ -189,28 +188,35 @@ async fn a_batch_that_keeps_failing_is_dead_lettered() -> Result<(), Box<dyn std
 }
 
 #[tokio::test]
-async fn the_spool_keeps_only_the_newest_batches_within_its_bounds()
+async fn the_spool_warns_once_per_threshold_crossing_and_never_drops_a_batch()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let limits = SpoolLimits {
-        max_files: 3,
-        max_bytes: 1024,
-    };
-    let spool = CaptureSpool::with_limits(dir.path().to_path_buf(), limits);
+    let spool = CaptureSpool::new(dir.path().to_path_buf());
     let now = now_at("2026-10-10T12:00:00Z")?;
-    for index in 0..5_u64 {
-        spool
-            .spool(
-                &format!("batch-{index}"),
-                now + Duration::from_millis(index),
-            )
-            .await?;
+    let mut paths = Vec::new();
+    for index in 0..1000_u64 {
+        paths.push(spool.spool("b", now + Duration::from_millis(index)).await?);
     }
-    assert_eq!(bodies(dir.path())?, vec!["batch-2", "batch-3", "batch-4"]);
-    let large = "x".repeat(600);
-    spool.spool(&large, now + Duration::from_millis(9)).await?;
-    spool.spool(&large, now + Duration::from_millis(10)).await?;
-    assert_eq!(bodies(dir.path())?, vec![large]);
+    assert_eq!(spool.crossed_threshold().await?, None);
+    paths.push(spool.spool("b", now + Duration::from_millis(1000)).await?);
+    let crossed = spool.crossed_threshold().await?;
+    assert_eq!(crossed.map(|usage| usage.entries), Some(1001));
+    paths.push(spool.spool("b", now + Duration::from_millis(1001)).await?);
+    assert_eq!(spool.crossed_threshold().await?, None);
+    assert!(
+        paths.iter().all(|path| path.is_file()),
+        "a batch was dropped"
+    );
+    for path in paths.drain(..2) {
+        std::fs::remove_file(path)?;
+    }
+    assert_eq!(spool.crossed_threshold().await?, None);
+    spool.spool("b", now + Duration::from_millis(1002)).await?;
+    spool.spool("b", now + Duration::from_millis(1003)).await?;
+    assert_eq!(
+        spool.crossed_threshold().await?.map(|usage| usage.entries),
+        Some(1002)
+    );
     Ok(())
 }
 
@@ -260,5 +266,56 @@ async fn every_unsent_chunk_is_spooled_when_the_server_fails()
             .iter()
             .any(|body| body.contains(r#""event_id":"e2""#))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_throttled_batch_waits_for_its_retry_after_and_is_never_dead_lettered()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let spool = CaptureSpool::new(dir.path().to_path_buf());
+    let now = now_at("2026-10-10T12:00:00Z")?;
+    spool.spool("held", now).await?;
+    let posts = std::sync::atomic::AtomicUsize::new(0);
+    let throttle = |_body: String| {
+        posts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async {
+            Err::<CaptureResult, _>(PostError::Throttled {
+                status: 429,
+                retry_after_seconds: Some(120),
+            })
+        }
+    };
+    for hour in 0..24 {
+        let at = now + Duration::from_secs(3600 * hour + 130);
+        spool.replay(50, at, throttle).await?;
+    }
+    assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst), 24);
+    assert!(!spool.dead_dir().exists());
+    assert_eq!(bodies(dir.path())?, vec!["held"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_letters_can_be_requeued_and_delivered() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let spool = CaptureSpool::new(dir.path().to_path_buf());
+    let now = now_at("2026-10-10T12:00:00Z")?;
+    spool.spool("poison", now).await?;
+    let reject =
+        |_body: String| async { Err::<CaptureResult, _>(PostError::Client { status: 422 }) };
+    spool.replay(50, now, reject).await?;
+    assert_eq!(bodies(&spool.dead_dir())?, vec!["poison"]);
+    assert_eq!(spool.requeue_dead().await?, 1);
+    assert_eq!(bodies(&spool.dead_dir())?, Vec::<String>::new());
+    let transport = RuleTransport::default();
+    let transport_ref = &transport;
+    spool
+        .replay(50, now, |body| async move {
+            capture::writer::CaptureTransport::post(&transport_ref, body).await
+        })
+        .await?;
+    assert_eq!(transport.posted(), vec!["poison"]);
+    assert_eq!(bodies(dir.path())?, Vec::<String>::new());
     Ok(())
 }

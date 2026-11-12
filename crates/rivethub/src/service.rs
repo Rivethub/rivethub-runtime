@@ -216,7 +216,11 @@ pub async fn compose(
     let node = crate::identity::announce_resolved("gateway", config, env)?;
     let settings = Settings::from_config_in(config, env, node.hostname, node.name)?;
     let identity = crate::composition::identities::load(config, env).await?;
-    let gateway = Gateway::new(store, settings).with_tenancy(identity.tenancy);
+    let local_owner = crate::composition::local_owner(&settings.state_dir).await?;
+    let gateway = Gateway::new(store, settings)
+        .with_local_owner(local_owner)
+        .with_auth_policy(gateway::AuthPolicy::from_config(config))
+        .with_tenancy(identity.tenancy);
     Ok(Arc::new(gateway))
 }
 

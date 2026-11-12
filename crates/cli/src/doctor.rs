@@ -23,6 +23,7 @@ pub enum CheckName {
     Config,
     StateDirectory,
     DiskSpace,
+    CaptureSpool,
     Memory,
 }
 
@@ -140,6 +141,7 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
                 message: validation.to_string(),
             });
             checks.extend(directories?);
+            checks.push(spool_check(env).await);
             checks.push(schema_check(&loaded.config, env).await);
         }
         Err(error) => {
@@ -154,6 +156,17 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
     let mut report = DoctorReport::new(checks).render(json)?;
     report.stderr = stderr;
     Ok(report)
+}
+
+async fn spool_check(env: &Environment) -> Check {
+    match crate::capture_hook::spool_warning(env).await {
+        Ok(Some(warning)) => Check::warn(CheckName::CaptureSpool, warning),
+        Ok(None) => Check::pass(
+            CheckName::CaptureSpool,
+            "The capture spool is within bounds.",
+        ),
+        Err(error) => Check::fail(CheckName::CaptureSpool, error),
+    }
 }
 
 fn state_checks(path: &Path) -> Vec<Check> {

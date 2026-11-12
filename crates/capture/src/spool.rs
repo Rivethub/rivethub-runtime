@@ -19,8 +19,9 @@ const SUFFIX: &str = ".json";
 pub const MAX_TRANSIENT_ATTEMPTS: u64 = 8;
 const BACKOFF_BASE_SECONDS: i64 = 30;
 const BACKOFF_CEILING_SECONDS: i64 = 3600;
-const DEFAULT_MAX_FILES: usize = 1000;
-const DEFAULT_MAX_BYTES: u64 = 64 * 1024 * 1024;
+const WARNED_MARKER: &str = "overflow-warned";
+pub const WARN_ENTRIES: usize = 1000;
+pub const WARN_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum SpoolError {
@@ -36,23 +37,23 @@ pub enum ReplayError {
     Spool(#[from] SpoolError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpoolLimits {
-    pub max_files: usize,
-    pub max_bytes: u64,
-}
-
-impl SpoolLimits {
-    pub const STANDARD: Self = Self {
-        max_files: DEFAULT_MAX_FILES,
-        max_bytes: DEFAULT_MAX_BYTES,
-    };
-}
-
 #[derive(Debug)]
 pub struct CaptureSpool {
     dir: PathBuf,
-    limits: SpoolLimits,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Usage {
+    pub entries: usize,
+    pub dead: usize,
+    pub bytes: u64,
+}
+
+impl Usage {
+    #[must_use]
+    pub fn over_threshold(self) -> bool {
+        self.entries > WARN_ENTRIES || self.bytes > WARN_BYTES
+    }
 }
 
 #[derive(Debug)]
@@ -72,11 +73,7 @@ struct Entry {
 
 impl CaptureSpool {
     pub fn new(dir: PathBuf) -> Self {
-        Self::with_limits(dir, SpoolLimits::STANDARD)
-    }
-
-    pub fn with_limits(dir: PathBuf, limits: SpoolLimits) -> Self {
-        Self { dir, limits }
+        Self { dir }
     }
 
     pub fn dir(&self) -> &Path {
@@ -88,20 +85,39 @@ impl CaptureSpool {
     }
 
     pub async fn spool(&self, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
-        let target = write_new(&self.dir, body, now).await?;
-        prune(&self.dir, self.limits, &target, "capture spool").await?;
-        Ok(target)
+        write_new(&self.dir, body, now).await
     }
 
-    pub async fn dead_letter_body(
-        &self,
-        body: &str,
-        now: DateTime<Utc>,
-    ) -> Result<PathBuf, SpoolError> {
-        let dead = self.dead_dir();
-        let target = write_new(&dead, body, now).await?;
-        prune(&dead, self.limits, &target, "capture dead letters").await?;
-        Ok(target)
+    pub async fn discard(&self, path: &Path) -> Result<(), SpoolError> {
+        Ok(remove_present(path).await?)
+    }
+
+    pub async fn usage(&self) -> Result<Usage, std::io::Error> {
+        let live = queued_files(&self.dir).await?;
+        let dead = queued_files(&self.dead_dir()).await?;
+        let bytes = live.iter().chain(&dead).map(|entry| entry.bytes).sum();
+        Ok(Usage {
+            entries: live.len() + dead.len(),
+            dead: dead.len(),
+            bytes,
+        })
+    }
+
+    pub async fn crossed_threshold(&self) -> Result<Option<Usage>, std::io::Error> {
+        let usage = self.usage().await?;
+        let marker = self.dir.join(WARNED_MARKER);
+        let warned = fs::try_exists(&marker).await?;
+        if !usage.over_threshold() {
+            if warned {
+                remove_present(&marker).await?;
+            }
+            return Ok(None);
+        }
+        if warned {
+            return Ok(None);
+        }
+        fs::write(&marker, b"").await?;
+        Ok(Some(usage))
     }
 
     pub async fn replay<F, Future_>(
@@ -114,18 +130,41 @@ impl CaptureSpool {
         F: Fn(String) -> Future_,
         Future_: std::future::Future<Output = Result<CaptureResult, PostError>>,
     {
+        self.replay_except(max, now, &[], post).await
+    }
+
+    pub async fn replay_except<F, Future_>(
+        &self,
+        max: usize,
+        now: DateTime<Utc>,
+        skip: &[PathBuf],
+        post: F,
+    ) -> Result<(), ReplayError>
+    where
+        F: Fn(String) -> Future_,
+        Future_: std::future::Future<Output = Result<CaptureResult, PostError>>,
+    {
         let mut queued = queued_files(&self.dir).await?;
-        queued.sort_by_key(|entry| entry.name.prefix);
+        queued.sort_by(|a, b| (a.name.prefix, &a.name.id).cmp(&(b.name.prefix, &b.name.id)));
         let now_millis = now.timestamp_millis().unsigned_abs();
         let due = queued
             .into_iter()
-            .filter(|entry| entry.name.not_before <= now_millis)
+            .filter(|entry| entry.name.not_before <= now_millis && !skip.contains(&entry.path))
             .take(max);
         for entry in due {
             let body = match fs::read_to_string(&entry.path).await {
                 Ok(body) => body,
                 Err(error) if error.kind() == ErrorKind::NotFound => continue,
-                Err(error) => return Err(ReplayError::Io(error)),
+                Err(error) => {
+                    if let Some(moved) = self.dead_letter(&entry.path).await? {
+                        tracing::warn!(
+                            "spooled capture batch {} is unreadable ({error}); moved it to {}",
+                            entry.path.display(),
+                            moved.display()
+                        );
+                    }
+                    continue;
+                }
             };
             match post(body).await {
                 Ok(_) => remove_present(&entry.path).await?,
@@ -138,6 +177,24 @@ impl CaptureSpool {
                         );
                     }
                 }
+                Err(PostError::Throttled {
+                    status,
+                    retry_after_seconds,
+                }) => {
+                    tracing::warn!(
+                        "capture server answered HTTP {status} for spooled batch {}; holding it",
+                        entry.path.display()
+                    );
+                    self.hold(&entry.path, now, retry_after_seconds).await?;
+                    break;
+                }
+                Err(error @ (PostError::Unauthorized | PostError::Refused { .. })) => {
+                    tracing::warn!(
+                        "spooled capture batch {} kept: {error}",
+                        entry.path.display()
+                    );
+                    break;
+                }
                 Err(error) => {
                     self.defer(&entry, now, &error).await?;
                     break;
@@ -145,6 +202,51 @@ impl CaptureSpool {
             }
         }
         Ok(())
+    }
+
+    pub async fn hold(
+        &self,
+        path: &Path,
+        now: DateTime<Utc>,
+        retry_after_seconds: Option<u32>,
+    ) -> Result<(), SpoolError> {
+        let name = parse_name(path).ok_or_else(|| {
+            SpoolError::Io(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "spool file has an unknown name",
+            ))
+        })?;
+        let delay = retry_after_seconds.map_or_else(
+            || backoff(1),
+            |seconds| TimeDelta::seconds(i64::from(seconds).min(BACKOFF_CEILING_SECONDS)),
+        );
+        let target = self.dir.join(format!(
+            "{}-{}.{}.{}{SUFFIX}",
+            name.prefix,
+            name.id,
+            name.attempts,
+            (now + delay).timestamp_millis()
+        ));
+        match fs::rename(path, &target).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub async fn requeue_dead(&self) -> Result<usize, std::io::Error> {
+        let mut moved = 0;
+        for entry in queued_files(&self.dead_dir()).await? {
+            let target = self
+                .dir
+                .join(format!("{}-{}{SUFFIX}", entry.name.prefix, entry.name.id));
+            match fs::rename(&entry.path, &target).await {
+                Ok(()) => moved += 1,
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(moved)
     }
 
     async fn defer(
@@ -184,7 +286,7 @@ impl CaptureSpool {
         }
     }
 
-    async fn dead_letter(&self, path: &Path) -> Result<Option<PathBuf>, SpoolError> {
+    pub async fn dead_letter(&self, path: &Path) -> Result<Option<PathBuf>, SpoolError> {
         let name = path.file_name().ok_or_else(|| {
             SpoolError::Io(std::io::Error::new(
                 ErrorKind::InvalidData,
@@ -200,7 +302,6 @@ impl CaptureSpool {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         }
-        prune(&dead, self.limits, &target, "capture dead letters").await?;
         Ok(Some(target))
     }
 }
@@ -227,36 +328,6 @@ async fn write_new(dir: &Path, body: &str, now: DateTime<Utc>) -> Result<PathBuf
     set_mode(&temporary, FILE_MODE).await?;
     fs::rename(&temporary, &target).await?;
     Ok(target)
-}
-
-async fn prune(
-    dir: &Path,
-    limits: SpoolLimits,
-    keep: &Path,
-    what: &str,
-) -> Result<(), std::io::Error> {
-    let mut queued = queued_files(dir).await?;
-    queued.sort_by_key(|entry| entry.name.prefix);
-    let mut files = queued.len();
-    let mut bytes: u64 = queued.iter().map(|entry| entry.bytes).sum();
-    for entry in queued {
-        if files <= limits.max_files && bytes <= limits.max_bytes {
-            break;
-        }
-        if entry.path == keep {
-            continue;
-        }
-        remove_present(&entry.path).await?;
-        files = files.saturating_sub(1);
-        bytes = bytes.saturating_sub(entry.bytes);
-        tracing::warn!(
-            "{what} is over its bound of {} files or {} bytes; dropped the oldest batch {}",
-            limits.max_files,
-            limits.max_bytes,
-            entry.path.display()
-        );
-    }
-    Ok(())
 }
 
 async fn remove_present(path: &Path) -> Result<(), std::io::Error> {

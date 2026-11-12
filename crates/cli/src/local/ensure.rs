@@ -75,13 +75,14 @@ pub(crate) enum Refusal {
         source: Unrecognized,
     },
     #[error(
-        "RivetHub local node did not answer at {origin} within {seconds}s; its output is in {}",
+        "RivetHub local node did not answer at {origin} within {seconds}s{cause}; its output is in {}",
         log.display()
     )]
     NotReady {
         origin: String,
         port: u16,
         seconds: u64,
+        cause: String,
         log: PathBuf,
     },
 }
@@ -300,8 +301,17 @@ async fn start(
             origin: target.origin.clone(),
             port: target.port,
             seconds: request.wait_seconds,
+            cause: refused_token(env)?,
             log: logs.join(LOG_FILE),
         }),
+    })
+}
+
+fn refused_token(env: &Environment) -> Result<String, Error> {
+    let state = gateway::state_dir(env)?;
+    Ok(match gateway::local_owner::read_token(&state) {
+        Err(error) => format!(" ({error})"),
+        Ok(_) => String::new(),
     })
 }
 

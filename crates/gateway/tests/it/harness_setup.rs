@@ -119,6 +119,7 @@ async fn node(root: &std::path::Path) -> Result<Node, Box<dyn std::error::Error 
     settings.state_dir = root.join("state");
     let setup = Arc::new(ScriptedSetup::default());
     let gateway = Gateway::new(store, settings)
+        .with_local_owner(crate::common::local_owner())
         .with_tenancy(tenancy)
         .with_harness_setup(setup.clone());
     Ok(Node {

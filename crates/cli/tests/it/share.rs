@@ -229,6 +229,11 @@ impl Node {
         Self { home, environment }
     }
 
+    fn with_owner(self, token: &gateway::local_owner::OwnerToken) -> Self {
+        support::install_owner_token(&self.environment, token);
+        self
+    }
+
     fn sign_in_also(&self, cloud: &str) {
         let path = self.home.path().join("state/rivethub/share-logins.json");
         let text = std::fs::read_to_string(&path).expect("logins");
@@ -552,14 +557,18 @@ async fn receive_keeps_ciphertext_on_failure() {
 }
 
 struct Gateway {
+    owner: gateway::local_owner::OwnerToken,
     stop: CancellationToken,
     port: u16,
     task: tokio::task::JoinHandle<Result<(), gateway::server::ServeError>>,
 }
 
 async fn gateway_for(store: &Arc<PostgresMemory>, user: &str, home: &Path) -> Gateway {
+    let holder = Arc::new(gateway::local_owner::LocalOwner::unpersisted().expect("owner token"));
+    let owner = holder.current();
     let gateway =
         gateway::Gateway::new(Arc::clone(store) as _, crate::capture_hook::settings(home))
+            .with_local_owner(holder)
             .with_tenancy(Tenancy::local(UserId::new(user.to_owned()).expect("user")));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -572,7 +581,12 @@ async fn gateway_for(store: &Arc<PostgresMemory>, user: &str, home: &Path) -> Ga
         None,
         stop.clone(),
     ));
-    Gateway { stop, port, task }
+    Gateway {
+        owner,
+        stop,
+        port,
+        task,
+    }
 }
 
 async fn receipts(pool: &PgPool) -> Vec<Option<Receipt>> {
@@ -614,7 +628,7 @@ async fn bundle_receipt_is_stripped(pool: PgPool) {
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
     let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port));
+    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let received = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
     assert_eq!(
@@ -666,7 +680,7 @@ async fn a_trusted_signed_bundle_imports_as_verified(pool: PgPool) {
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
     let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port));
+    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let trusted = receiver
         .run(&["memory", "trust", "add", "phil", &key])
         .await;
@@ -699,7 +713,8 @@ async fn ingest_bundle_strips_a_bundle_receipt(pool: PgPool) {
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
     let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", "http://127.0.0.1:9/", Some(gateway.port));
+    let receiver =
+        Node::new("alex", "http://127.0.0.1:9/", Some(gateway.port)).with_owner(&gateway.owner);
     let bundle = sanitized(&receiver, outside.path(), Some(forged_receipt())).await;
     let ingested = receiver
         .run(&["memory", "ingest-bundle", &bundle.display().to_string()])
@@ -813,7 +828,7 @@ async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
     let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port));
+    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let trusted = receiver
         .run(&["memory", "trust", "add", "phil", &key])
         .await;
@@ -1109,7 +1124,7 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
     let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &first.url, Some(gateway.port));
+    let receiver = Node::new("alex", &first.url, Some(gateway.port)).with_owner(&gateway.owner);
     let got_one = receiver.run(&["memory", "receive", &code_one]).await;
     assert_eq!(got_one.exit, Exit::Ok, "{}", got_one.stderr);
     assert!(

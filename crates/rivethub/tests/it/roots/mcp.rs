@@ -1,3 +1,4 @@
+use crate::process::guard::SpawnGuarded;
 use std::collections::BTreeSet;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -51,13 +52,17 @@ fn served_names(tools: &[Arc<dyn kernel::tool::Tool>]) -> BTreeSet<String> {
         .collect()
 }
 
-#[sqlx::test(migrations = false)]
-async fn mcp_lists_recorded_tools_over_stdio_and_stops_on_sigterm(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn mcp_lists_recorded_tools_over_stdio_and_stops_on_sigterm() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     stop_mcp(pool, false).await
 }
 
-#[sqlx::test(migrations = false)]
-async fn mcp_with_a_stdio_client_exits_within_the_grace_on_sigint(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn mcp_with_a_stdio_client_exits_within_the_grace_on_sigint() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     stop_mcp(pool, true).await
 }
 
@@ -74,7 +79,7 @@ async fn stop_mcp(pool: PgPool, interrupt_process: bool) -> TestResult {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let logs = tokio::spawn(async move {
         let mut stderr = stderr;

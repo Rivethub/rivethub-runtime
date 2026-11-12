@@ -976,7 +976,7 @@ harness store; summaries and wiki provenance are indexed by conversation (migrat
 wiki citations and provenance). Nothing is deleted without a request naming it, except trash past retention (127). A trashed session is not a candidate. The bodies are `wire::gateway::session_delete` in
 `contract/*.schema.json`; the verdict is `kernel::memory::trash_verdict`. The routes are new, with no TypeScript
 recording.
-(76) Grok capture through rh (Phil, 2026-10-30): `rh capture hook --harness grok-build` captures a Grok Build session from its hook command, replacing the rivetOS grok kit's capture worker. On `Stop`, `PreCompact` or `SessionEnd` (`hook_event_name`; any other event is ignored) it reads the session's whole `updates.jsonl` under the Grok home, with no size cap, maps it as the Grok store reader does, including the turn still running, and posts one batch through `POST /api/capture`: agent `rivet-grok`, channel `grok-build`, session key `grok-build:<session>`, the title the session list shows for it (a manual title, else Grok's generated title, else its session summary; none while untitled, so (72) applies), settings `{source: "grok-build-hook", session_id, cwd, last_event, last_ingest_at}` with the payload's `cwd` (the filing folder rule now applies to Grok sessions), and `finalize` on `SessionEnd`. A session whose log holds no message yet posts nothing, so a session start or a model discovery run no longer leaves an empty conversation. The Grok store reader's event ids are now the kit's, `grok-build:<session>:<ordinal>`, so capture appends to the conversations the kit wrote without duplicating them: the ordinal is `turn × 1,000,000 + sub`, where a `user_message_chunk`'s turn is its `promptIndex` (else the current turn, at least 0) and its sub counts that turn's user chunks from 0, and any other update's turn is the order of its `promptId` among the log's distinct prompt ids (else the current turn, -1 before any) and its sub is 10,000 plus its 0-based line. A line that is not JSON takes no ordinal and moves no turn, as in the kit. Failed posts spool as (B3) capture does; the command always exits 0.
+(76) Grok capture through rh (Phil, 2026-10-30): `rh capture hook --harness grok-build` captures a Grok Build session from its hook command, replacing the rivetOS grok kit's capture worker. On `Stop`, `PreCompact` or `SessionEnd` (`hook_event_name`; any other event is ignored) it reads the session's whole `updates.jsonl` under the Grok home, with no size cap, maps it as the Grok store reader does, including the turn still running, and posts one batch through `POST /api/capture`: agent `rivet-grok`, channel `grok-build`, session key `grok-build:<session>`, the title the session list shows for it (a manual title, else Grok's generated title, else its session summary; none while untitled, so (72) applies), settings `{source: "grok-build-hook", session_id, cwd, last_event, last_ingest_at}` with the payload's `cwd` (the filing folder rule now applies to Grok sessions), and `finalize` on `SessionEnd`. A session whose log holds no message yet posts nothing, so a session start or a model discovery run no longer leaves an empty conversation. The Grok store reader's event ids are now the kit's, `grok-build:<session>:<ordinal>`, so capture appends to the conversations the kit wrote without duplicating them: the ordinal is `turn × 1,000,000 + sub`, where a `user_message_chunk`'s turn is its `promptIndex` (else the current turn, at least 0) and its sub counts that turn's user chunks from 0, and any other update's turn is the order of its `promptId` among the log's distinct prompt ids (else the current turn, -1 before any) and its sub is 10,000 plus its 0-based line. A line that is not JSON takes no ordinal and moves no turn, as in the kit. Failed posts spool as (B3) capture does; the command exits 0, or 1 when a batch cannot be saved to the spool.
 (77) Session context (Phil, 2026-10-30): `HarnessEvent` gains `context`,
 `{ "type": "context", "sessionId", "used", "window"?, "source" }`: how many tokens a chat's context holds and, when the
 agent says, the size of its window. With `source` `harness` it is the ACP agent's own `session/update` `usage_update`
@@ -2427,6 +2427,97 @@ values are pinned by `crates/rivethub/tests/it/local_ensure.rs`; docs/CLI.md has
 this object and never the prose. `pid` is null when the pid file is missing or unreadable; a node that answers is still
 reported as running.
 
+(147) Local credentials and browser login (Phil, 2026-11-11; session-sharing SS-15a; 0.8.1 security fix). Loopback no
+longer means owner. Every route other than `/healthz`, the static shell, `/login` and `POST /api/auth/session` refuses a
+caller with no credential. There is no tokenless mode and no opt-in for one. Three credentials reach `/api/**`, the wiki
+pages and every other owner route.
+
+1. **Local owner token.** `<state_dir>/local-owner.token` holds 32 random bytes in base64url without padding. The gateway
+creates it before it binds (`O_EXCL`, mode 0600) and refuses a symlink, a non-regular file or any group or other bit. A
+caller sends `Authorization: Bearer <token>` (the scheme is case-insensitive) and the gateway compares it in constant
+time. `Debug` and the logs never show it.
+2. **Browser session.** An `HttpOnly` cookie plus a CSRF header. On plain-HTTP loopback the cookie is `rh_session`
+with `HttpOnly`, `SameSite=Strict`, `Path=/`, no `Domain` and no `Secure`, and it has no `__Host-` prefix. Under TLS
+(`gateway.tls_cert`) it is `__Host-rh_session` with `Secure` and the same other attributes. `Secure` is not used on plain
+HTTP because Safari does not treat `http://127.0.0.1` as a secure context for cookies and would drop a `Secure` cookie,
+which breaks login there, while Chrome and Firefox would keep it. The `__Host-` prefix requires `Secure`, so it goes
+with it. Dropping both costs nothing on loopback. Loopback traffic never crosses the network, so nothing can read or
+alter the cookie in transit, and the gateway honors a session only from a direct loopback peer with a loopback `Host`.
+The CSRF header (below), the `SameSite=Strict` flag and the Origin check carry the cross-site protection that `Secure`
+would not have added. Every cookie-authenticated request
+carries `X-RH-CSRF: <csrf>`, reads included, because cookies are not port-scoped and another local server could otherwise
+replay one. The one exception is `GET` and `HEAD` of `/wiki` and `/wiki/**`, which are navigations that cannot add a
+header. The session id is a fresh random 128-bit value at every login (`cycle_id`), so an id set before login never
+authenticates.
+3. **Users-file token.** As before, for team members and mobile, with TLS off-loopback.
+
+The owner token and the session are honored only from a direct loopback peer, with no `Forwarded`, `X-Forwarded`, `X-Forwarded-*` or
+`X-Real-IP` header, and a `Host` of `127.0.0.1`, `[::1]` or `localhost` on any port. Anything else gets 401 with
+`WWW-Authenticate: Bearer realm="rivethub"`, so a bare same-host forwarder (`nginx proxy_pass`, `ssh -R`, `socat`) gains
+nothing. Account and harness routes still need that direct connection plus a credential.
+
+**Routes.** All four answer `Cache-Control: no-store`.
+
+| Route | Credential | Result |
+|---|---|---|
+| `POST /api/auth/login-codes` | the owner token only | `LoginCodeResponse {code, expiresInSecs}`. The code is 256 random bits, valid 60 s, single use, held only as its SHA-256, at most 16 live (the 17th is 429 with `Retry-After`). |
+| `POST /api/auth/session` `SessionRequest {code}` | none, but a live code | Compares in constant time, consumes the code, mints a new session id, sets the cookie and answers `SessionResponse {csrf}`. A failed exchange burns no live code. 401 otherwise. |
+| `POST /api/auth/logout` | session plus CSRF, or the owner token | 204. The session is deleted and the cookie expired. |
+| `POST /api/auth/rotate` | step-up (below) and a direct local owner | `RotateResponse {rotated: true}`. The gateway writes a new token (temp file 0600, then `rename`), swaps it in memory, and ends every session and every live code. The old token stops working at once. |
+
+`GET /login` serves a small static page that reads `location.hash` (`#code=...`), removes it with
+`history.replaceState`, posts the code, stores the CSRF token in `localStorage` under `rh-csrf`, and goes to `/`. Its one
+inline script is allowed by a SHA-256 `script-src` in that response's CSP. It is a stand-in. The real login screen lands
+in rivethub-app (SS-15b) and replaces the page, and then `/login` is served from `static_dir` and this route goes.
+
+**Lifetimes.** A code lives 60 s. A session ends after 7 days idle (sliding) or 30 days from login, whichever comes
+first, and at gateway restart (the store is in memory; `rh open` logs in again). `gateway.fresh_login_secs` (default 300)
+sets the step-up window.
+
+**Rate limits.** `POST /api/auth/login-codes` and `POST /api/auth/session` share one budget per peer address (10 a
+minute) and one global budget (20 a minute), counted with the `governor` crate. Failed attempts count. A refusal is 429
+with `Retry-After` in whole seconds. These two routes also refuse any caller that is not a direct local peer before they
+count it, so the table of peers stays at three loopback spellings.
+
+**Step-up.** A session carries `auth_time`, set at the code exchange. A sensitive route needs a session whose `auth_time`
+is within `gateway.fresh_login_secs`. A stale session gets 401 `{"error":"reauth_required"}`, distinct from a plain 401
+(`GatewayError` with that `error` and nothing else), so a client can run `rh open` again and retry. The owner token and a
+users-file token are presented on every request, so they are always fresh. The sensitive routes today are
+`POST /api/auth/rotate`, `PATCH /api/account`, `DELETE /api/account`, `POST /api/account/signin`,
+`POST /api/account/signout` and `GET /api/memory/export`. Harness connect only edits local hook files, so it is not
+included. `/api/share/**` does not exist on this base. `gateway::auth::FreshLogin` is a public extractor, and a handler
+takes it as its first argument after `State`, so SS-9a adopts it on its share routes without new code. SS-9a must adopt
+`FreshLogin` on every `/api/share/**` route that exports, seals, uploads or signs in. A stale session on any of them then
+gets `reauth_required` instead of acting on a login that may be days old.
+
+**Origins and CORS.** The `Origin` check on every request stays: absent, same-origin or listed passes, and `null`
+fails. CORS is the `tower_http` `CorsLayer`, with the origins from `gateway.allowed_origins` plus `app://bundle`,
+credentials on, methods `GET, POST, PATCH, DELETE`, and headers `authorization, content-type, x-rh-csrf,
+x-rivet-conversation, x-rivet-title`. A same-origin page needs none of it. Only an exact match of a normalized listed
+origin (scheme and host lowercase, no path, no trailing slash, no default port) is echoed in `Access-Control-Allow-Origin`.
+Anything else gets none: an unlisted origin, `null`, `*`, a different case or a spelling with a path. The answer is never
+a wildcard, and `Access-Control-Allow-Credentials: true` is sent only together with an echoed listed origin. A preflight
+(`OPTIONS`) gets 200 with the allowed methods and headers whether or not the origin is listed, and the browser then
+refuses the actual request when no origin was echoed. The `*.localhost`
+host exemption is gone.
+
+**Headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY` and `Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`, unless the route sets a
+stricter policy (the wiki and `/login` do). Every `/api/**` response carries `Cache-Control: no-store`. A web build that
+needs inline script or style must hash it or move it to a file, because the shell is served under that policy.
+
+**Logs.** Tokens, login codes, session ids and CSRF tokens never appear in a log line, an error body or a `Debug`
+string. The wire types hold them as `wire::gateway::auth::Secret`, whose `Debug` prints `Secret(..)`.
+
+**Migration, 0.8.0 to 0.8.1.** `rh` is one binary, and the old gateway process keeps running until it restarts. A new
+client sends no `Authorization` header when `local-owner.token` is missing, so it still works against a running 0.8.0
+gateway. The new gateway creates the file at start, before it binds. The capture hook spools a request refused with 401
+and retries it, so an upgrade window loses nothing. Hand-run `curl` against `127.0.0.1:5174` now needs
+`-H "Authorization: Bearer $(cat $(rh auth token-path))"`. For a browser, run `rh open`. **Downgrade to 0.8.0:** delete
+`local-owner.token`, because the 0.8.0 gateway rejects the Bearer that the new clients still send.
+
+Squatter defence (review fix): anonymous health probes (`rh local --ensure`, the first `rh status` request, any `/healthz` caller) never carry a token. `rh status` sends a credentialed detailed `/healthz` only after the listener check below passes. A client that carries the owner token (the capture hook, `rh open`, `rh auth rotate`, the detailed `rh status` probe) first checks that the TCP listener on the gateway port is owned by the current uid. It refuses with `ListenerNotOurs` when a listener of another user holds the port and with `GatewayNotRunning` ("the gateway is not running on port N") when nothing listens, and it never connects, so a local user who takes the port while the gateway is down never sees the token or the payload. The capture hook builds its writer and spool before that check: a refused listener, an unreadable or refused token file, or any other failure to build the gateway client writes the batch to the spool (`PostError::Refused`), sends nothing, and the next hook delivers it once the gateway answers. A refusal, like a 401, leaves a spooled file untouched: no attempt is counted and it is never dead-lettered. The capture spool never evicts: a batch is written to it before anything is posted or replayed, so no failure loses it, and nothing deletes a queued or dead-lettered batch except a delivery. Disk space is the only limit, and a batch that cannot be written exits the hook with 1 (never 2) and `capture batch was NOT saved` on stderr. The hook logs one warning each time the spool passes 1,000 entries or 100 MB, and `rh status` and `rh doctor` warn while it is past either. `dead/` holds only a permanent 4xx (any except 401, 408 and 429), an entry that cannot be read (invalid UTF-8) and a batch that failed eight transient attempts; 408 and 429 stay in the spool and retry after `Retry-After` seconds (at most an hour), never counting an attempt. A corrupt entry is quarantined to `dead/` and the rest of the spool still replays. `rh capture spool` lists live and dead counts and `--requeue-dead` moves every dead letter back to the live spool. A burst of refused logins logs its first refusal, then one `N more in the last 60s` line per 60 second window, per event and peer. On Linux the check reads `/proc/net/tcp{,6}` (uid column of every LISTEN row on that port; any foreign row refuses); elsewhere `lsof -nP -iTCP:<port> -sTCP:LISTEN -F pun` is parsed the same way (any LISTEN socket of another uid refuses; a missing `lsof`, a failed run or unparsable output refuses too). A gateway on verified TLS (private CA) skips the check because the certificate already authenticates it. Decision record: a Unix domain socket with peer credentials (reqwest 0.13 has `ClientBuilder::unix_socket`) is the stronger design but needs a second accept loop, a non-`SocketAddr` peer type through `direct_local`, `peer_ip`, the origin policy and every table test, so it is deferred; an HMAC challenge on `/healthz` was rejected as a hand-rolled protocol. Residual race: a squatter that binds between the check and the connect while the gateway dies in that same window. `/healthz` omits `revision` for an anonymous caller (name, node and version stay). `rh auth rotate` never deletes the file on a connect error: it posts through the gateway, and deletes only when no live pid in this state directory's pid file owns it, else it refuses and says to run `rh stop`. Login rate limit: only failed exchanges, and failed mints by a non-owner caller, count (10 per minute per loopback peer, 20 overall); a valid code or a valid owner token is never limited, and a flood is answered 429 with Retry-After. Live codes stay capped at 16. Known limit on macOS: an unprivileged `lsof` may not list another user's sockets, so the listener check can pass while a foreign co-listener exists. Linux is fully covered. The check-then-connect race applies on both platforms. A Unix-socket owner channel authenticated by peer credentials is the follow-up that removes both limits. Auth events (login-code mint and refusal, exchange success and refusal, rate limits, logout, rotate, a rejected bearer token, an owner token sent with a forwarding header) log at info or warn with an `event`, a `reason` and the `peer`, never a token, code, cookie or CSRF value; refusals log once per event and peer.
+
 (148) Claude Code subagent capture (Phil, 2026-11-11, "data capture should always aim for 100%"): a subagent transcript
 (`<projects>/<slug>/<parent session>/subagents/agent-<agentId>.jsonl`, or under `subagents/workflows/<run>/`) is its own
 conversation keyed `claude-code:<agentId>`, agent `rivet-claude`, channel `claude-code`. Its rows are folded exactly as
@@ -2442,7 +2533,9 @@ file of the session too, so a `SubagentStop` the hook never saw is caught up, an
 skips a file whose size equals the size the hook last captured, kept in `<state>/claude-subagents/<session>/<agentId>`,
 so a long session does not re-post every subagent on each `Stop`. A subagent whose meta file is absent or unreadable is
 still captured, with `parent_session_id` and `agent_id` only, and a sweep that cannot read that record reports the
-subagent on stderr and moves on. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
+subagent on stderr and moves on. Each subagent batch goes through the writer of note 147, so a failed post leaves it in
+the spool, the sweep records its size as captured so the next `Stop` does not spool it again, and a batch the spool cannot
+write makes the hook exit 1 as it does for the parent. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
 same batches for every session and subagent file in the store, with `last_event` `Backfill` and no finalize, because
 on Postgres finalizing a conversation moves its `updated_at` to the time of the run.
 

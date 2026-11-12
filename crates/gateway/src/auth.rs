@@ -5,23 +5,30 @@ use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 
 use axum::extract::ConnectInfo;
+use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::HeaderName;
 use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::StatusCode;
 use axum::http::header;
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use parking_lot::Mutex;
+use tower_http::set_header::SetResponseHeaderLayer;
 use url::Url;
 
 use crate::GuardState;
 use crate::error::ApiError;
 
-const CORS_METHODS: &str = "GET, POST, PATCH, DELETE, OPTIONS";
-const CORS_HEADERS: &str = "content-type, authorization, x-rivet-conversation, x-rivet-title";
+const EXCHANGE_PATH: &str = "/api/auth/session";
+pub(crate) const CHALLENGE: &str = "Bearer realm=\"rivethub\"";
+const X_REAL_IP: header::HeaderName = header::HeaderName::from_static("x-real-ip");
+const X_FORWARDED: &str = "x-forwarded";
+const X_FORWARDED_PREFIX: &str = "x-forwarded-";
 const BUILTIN_ORIGIN: &str = "app://bundle";
 const DENIAL_LOG_CAP: usize = 100;
 
@@ -56,6 +63,27 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "::1" | "localhost" | "::ffff:127.0.0.1")
 }
 
+pub(crate) fn direct_local(parts: &Parts) -> bool {
+    let loopback = parts
+        .extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(remote)| is_loopback_remote(*remote));
+    let forwarded = parts.headers.contains_key(header::FORWARDED)
+        || parts.headers.contains_key(X_REAL_IP)
+        || parts.headers.keys().any(|name| {
+            name.as_str() == X_FORWARDED || name.as_str().starts_with(X_FORWARDED_PREFIX)
+        });
+    let host = header_text(&parts.headers, &header::HOST)
+        .map(str::to_owned)
+        .or_else(|| {
+            parts
+                .uri
+                .authority()
+                .map(|authority| authority.as_str().to_owned())
+        });
+    loopback && !forwarded && host.is_some_and(|host| is_loopback_host(&host_token(&host)))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow { echo: Option<String> },
@@ -88,9 +116,7 @@ impl OriginPolicy {
     pub fn evaluate(&self, check: &OriginCheck<'_>) -> Decision {
         if check.plain_http && check.caller_loopback {
             let host = host_header_token(check.host);
-            let allowed = is_loopback_host(&host)
-                || host.ends_with(".localhost")
-                || self.allowed_hosts.contains(&host);
+            let allowed = is_loopback_host(&host) || self.allowed_hosts.contains(&host);
             if !allowed {
                 return Decision::Deny {
                     reason: format!(
@@ -227,42 +253,28 @@ pub(crate) async fn guard(
         caller_loopback,
         plain_http: !state.secure,
     };
-    let echo = match state.gateway.policy().evaluate(&check) {
-        Decision::Deny { reason } => {
-            state.gateway.denials().log(&reason);
-            return ApiError::ForbiddenOrigin.into_response();
-        }
-        Decision::Allow { echo } => echo,
-    };
-    if request.method() == Method::OPTIONS {
-        let mut response = StatusCode::NO_CONTENT.into_response();
-        append_cors(&mut response, echo.as_deref());
-        return response;
+    if let Decision::Deny { reason } = state.gateway.policy().evaluate(&check) {
+        state.gateway.denials().log(&reason);
+        return ApiError::ForbiddenOrigin.into_response();
     }
     let plugin = request
         .extensions()
         .get::<crate::plugins::PluginCaller>()
         .is_some();
-    let open = path == "/healthz";
+    let open = path == "/healthz" || (path == EXCHANGE_PATH && request.method() == Method::POST);
     let admitted = plugin
         || open
-        || caller_loopback
-        || state.secure && {
+        || (caller_loopback || state.secure) && {
+            let public = crate::routes::serves_public_asset(request.method(), &path);
             let (parts, body) = request.into_parts();
-            let resolved = state.gateway.tenancy.resolve(&parts).is_ok();
+            let resolved = public || crate::tenancy::caller(&state.gateway, &parts).is_ok();
             request = Request::from_parts(parts, body);
             resolved
         };
     if !admitted {
-        let mut unauthorized = unauthorized(&request, &path);
-        if header_text(unauthorized.headers(), &header::CONTENT_TYPE) == Some("application/json") {
-            append_cors(&mut unauthorized, echo.as_deref());
-        }
-        return unauthorized;
+        return unauthorized(&request, &path);
     }
-    let mut response = next.run(request).await;
-    append_cors(&mut response, echo.as_deref());
-    response
+    next.run(request).await
 }
 
 fn unauthorized(request: &Request, path: &str) -> Response {
@@ -284,36 +296,111 @@ fn html_unauthorized() -> Response {
         "<head><title>RivetHub — sign-in required</title></head>\n",
         "<body>\n",
         "<h1>Sign-in required</h1>\n",
-        "<p>This RivetHub node answers other machines only with a bearer token from ",
-        "its users file. Ask the node's operator for one.</p>\n",
+        "<p>This RivetHub node answers only a caller that presents a bearer token. ",
+        "Ask the node's operator for one.</p>\n",
         "<p>Liveness is at <code>/healthz</code>.</p>\n",
         "</body>\n",
         "</html>\n",
     );
     (
         StatusCode::UNAUTHORIZED,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8".to_string())],
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+            (header::WWW_AUTHENTICATE, CHALLENGE.to_owned()),
+        ],
         body,
     )
         .into_response()
 }
 
-fn append_cors(response: &mut Response, echo: Option<&str>) {
-    let headers = response.headers_mut();
-    if let Some(origin) = echo
-        && let Ok(value) = HeaderValue::from_str(origin)
-    {
-        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
-        headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS#fallback: a configured origin that is not a valid header value lists no origin, as normalize_origin does"
+        )
+    )]
+    let listed: Vec<HeaderValue> = origins
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(BUILTIN_ORIGIN))
+        .filter_map(normalize_origin)
+        .filter_map(|origin| HeaderValue::from_str(&origin).ok())
+        .collect();
+    let credentialed = listed.clone();
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::AllowOrigin::list(listed))
+        .allow_credentials(tower_http::cors::AllowCredentials::predicate(
+            move |origin, _| credentialed.contains(origin),
+        ))
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static(crate::login::CSRF_HEADER),
+            HeaderName::from_static("x-rivet-conversation"),
+            HeaderName::from_static("x-rivet-title"),
+        ])
+}
+
+pub(crate) fn harden(router: axum::Router) -> axum::Router {
+    let fixed = |name: HeaderName, value: &'static str| {
+        SetResponseHeaderLayer::if_not_present(name, HeaderValue::from_static(value))
+    };
+    router
+        .layer(fixed(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+        ))
+        .layer(fixed(header::X_CONTENT_TYPE_OPTIONS, "nosniff"))
+        .layer(fixed(header::REFERRER_POLICY, "no-referrer"))
+        .layer(fixed(header::X_FRAME_OPTIONS, "DENY"))
+        .layer(axum::middleware::from_fn(no_store_api))
+}
+
+async fn no_store_api(request: Request, next: Next) -> Response {
+    let api = request.uri().path().starts_with("/api/");
+    let mut response = next.run(request).await;
+    if api {
+        response
+            .headers_mut()
+            .entry(header::CACHE_CONTROL)
+            .or_insert(HeaderValue::from_static("no-store"));
     }
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static(CORS_METHODS),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static(CORS_HEADERS),
-    );
+    response
+}
+
+pub(crate) fn csrf_exempt(parts: &Parts) -> bool {
+    let path = parts.uri.path();
+    (parts.method == Method::GET || parts.method == Method::HEAD)
+        && (path == "/wiki" || path.starts_with("/wiki/"))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FreshLogin;
+
+impl FromRequestParts<std::sync::Arc<crate::Gateway>> for FreshLogin {
+    type Rejection = ApiError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        gateway: &std::sync::Arc<crate::Gateway>,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        std::future::ready(fresh(gateway, parts))
+    }
+}
+
+fn fresh(gateway: &crate::Gateway, parts: &Parts) -> Result<FreshLogin, ApiError> {
+    let (_, credential) = crate::tenancy::authenticate(gateway, parts)?;
+    if let crate::tenancy::Credential::Session { auth_time } = credential {
+        let age = chrono::Utc::now().timestamp().saturating_sub(auth_time);
+        let window = gateway.browser().policy().fresh.as_secs();
+        if !u64::try_from(age).is_ok_and(|age| age < window) {
+            return Err(ApiError::ReauthRequired);
+        }
+    }
+    Ok(FreshLogin)
 }
 
 #[cfg(test)]

@@ -85,6 +85,7 @@ impl Fixture {
                 request_deadline: gateway::REQUEST_DEADLINE,
             },
         )
+        .with_local_owner(crate::common::local_owner())
         .with_tenancy(tenancy)
         .with_sessions(registry.clone());
         let gateway = Arc::new(ports.wire(gateway));
@@ -111,6 +112,7 @@ pub(crate) async fn http(
     let mut request = request
         .body(axum::body::Body::from(body.into()))
         .expect("request");
+    crate::common::authorize(&mut request);
     request.extensions_mut().insert(axum::extract::ConnectInfo(
         "127.0.0.1:1234"
             .parse::<std::net::SocketAddr>()

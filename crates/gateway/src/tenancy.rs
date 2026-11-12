@@ -1,8 +1,8 @@
-use std::net::SocketAddr;
-
-use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
+use headers::Authorization;
+use headers::HeaderMapExt as _;
+use headers::authorization::Bearer;
 use kernel::owner::Owner;
 use kernel::tenancy::Space;
 use kernel::tenancy::Viewer;
@@ -10,6 +10,7 @@ use kernel::tenancy::Visibility;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+use crate::auth_event::AuthEvent;
 use crate::error::ApiError;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -112,25 +113,15 @@ impl Tenancy {
         }
     }
 
-    pub(crate) fn resolve(&self, parts: &Parts) -> Result<UserId, ApiError> {
-        if let Some(header) = parts.headers.get(axum::http::header::AUTHORIZATION) {
-            let text = header.to_str().map_err(|_| ApiError::Unauthorized)?;
-            let token = text.strip_prefix("Bearer ").ok_or(ApiError::Unauthorized)?;
-            let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
-            let mut found = None;
-            for (secret, user) in &self.tokens {
-                if bool::from(secret.ct_eq(&digest)) {
-                    found = Some(user.clone());
-                }
+    pub(crate) fn resolve_bearer(&self, token: &str) -> Result<UserId, ApiError> {
+        let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        let mut found = None;
+        for (secret, user) in &self.tokens {
+            if bool::from(secret.ct_eq(&digest)) {
+                found = Some(user.clone());
             }
-            return found.ok_or(ApiError::Unauthorized);
         }
-        if let Some(ConnectInfo(remote)) = parts.extensions.get::<ConnectInfo<SocketAddr>>()
-            && crate::auth::is_loopback_remote(*remote)
-        {
-            return self.local.clone().ok_or(ApiError::Unauthorized);
-        }
-        Err(ApiError::Unauthorized)
+        found.ok_or(ApiError::Unauthorized)
     }
 }
 
@@ -145,19 +136,95 @@ impl FromRequestParts<std::sync::Arc<crate::Gateway>> for UserId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Credential {
+    Plugin,
+    Bearer,
+    Session { auth_time: i64 },
+}
+
 pub(crate) fn caller(gateway: &crate::Gateway, parts: &Parts) -> Result<UserId, ApiError> {
+    authenticate(gateway, parts).map(|(user, _)| user)
+}
+
+pub(crate) fn authenticate(
+    gateway: &crate::Gateway,
+    parts: &Parts,
+) -> Result<(UserId, Credential), ApiError> {
+    let local = || {
+        gateway
+            .tenancy
+            .local_user()
+            .cloned()
+            .ok_or(ApiError::Unauthorized)
+    };
     if parts
         .extensions
         .get::<crate::plugins::PluginCaller>()
         .is_some()
     {
-        return gateway
-            .tenancy
-            .local_user()
-            .cloned()
-            .ok_or(ApiError::Unauthorized);
+        return Ok((local()?, Credential::Plugin));
     }
-    gateway.tenancy.resolve(parts)
+    let Some(presented) = parts
+        .headers
+        .typed_try_get::<Authorization<Bearer>>()
+        .map_err(|_| ApiError::Unauthorized)?
+    else {
+        let auth_time = session(parts)?;
+        return Ok((local()?, Credential::Session { auth_time }));
+    };
+    let token = presented.token();
+    let peer = crate::login::peer_ip(parts);
+    if gateway
+        .local_owner()
+        .is_some_and(|owner| owner.verify(token))
+    {
+        if crate::auth::direct_local(parts) {
+            return Ok((local()?, Credential::Bearer));
+        }
+        gateway
+            .auth_log()
+            .emit(AuthEvent::ForwardedTokenRefused, peer);
+        return Err(ApiError::Unauthorized);
+    }
+    gateway
+        .tenancy
+        .resolve_bearer(token)
+        .map(|user| (user, Credential::Bearer))
+        .inspect_err(|_| gateway.auth_log().emit(AuthEvent::BearerRejected, peer))
+}
+
+pub(crate) fn owner_token_presented(gateway: &crate::Gateway, parts: &Parts) -> bool {
+    parts
+        .headers
+        .typed_get::<Authorization<Bearer>>()
+        .is_some_and(|presented| {
+            crate::auth::direct_local(parts)
+                && gateway
+                    .local_owner()
+                    .is_some_and(|owner| owner.verify(presented.token()))
+        })
+}
+
+fn session(parts: &Parts) -> Result<i64, ApiError> {
+    let login = parts
+        .extensions
+        .get::<crate::login::BrowserLogin>()
+        .filter(|_| crate::auth::direct_local(parts))
+        .ok_or(ApiError::Unauthorized)?;
+    if crate::auth::csrf_exempt(parts) {
+        return Ok(login.auth_time);
+    }
+    let sent: [u8; 32] = parts
+        .headers
+        .get(crate::login::CSRF_HEADER)
+        .map(|value| Sha256::digest(value.as_bytes()).into())
+        .ok_or(ApiError::Unauthorized)?;
+    if bool::from(sent.ct_eq(&login.csrf)) {
+        Ok(login.auth_time)
+    } else {
+        Err(ApiError::Unauthorized)
+    }
 }
 
 #[cfg(test)]

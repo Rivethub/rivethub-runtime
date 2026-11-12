@@ -119,6 +119,7 @@ async fn a_harness_that_fails_discovery_degrades_its_provider_not_the_gateway() 
     .await?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
+        .default_headers(crate::owner::headers(&gateway::state_dir(&env)?)?)
         .build()?;
     reports_degraded_health(&client, server.addr, home.path()).await?;
     let reply = factory

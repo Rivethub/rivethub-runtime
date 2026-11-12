@@ -1,4 +1,5 @@
 mod account;
+mod auth;
 pub mod capture;
 pub mod capture_schema;
 pub(crate) mod capture_status;
@@ -38,6 +39,9 @@ use wire::gateway::{DegradedProvider, HealthzResponse};
 use crate::Gateway;
 use crate::error::ApiError;
 
+const PUBLIC_DEGRADED: &str = "database unreachable";
+const PUBLIC_PROVIDER_REASON: &str = "unavailable; see the gateway log";
+
 pub(crate) const BODY_LIMIT: usize = 256 * 1024;
 
 pub(crate) async fn contract_header(
@@ -57,6 +61,7 @@ pub(crate) async fn contract_header(
 
 pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
     harnesses::mount(wiki::router())
+        .merge(auth::router())
         .merge(notices::router())
         .merge(account::router())
         .merge(history::router())
@@ -69,6 +74,10 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(plugins::router())
         .merge(session_delete::router())
         .merge(model_calls::router())
+}
+
+pub(crate) fn serves_public_asset(method: &axum::http::Method, path: &str) -> bool {
+    surface::serves_public_asset(method, path)
 }
 
 pub(crate) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
@@ -85,43 +94,45 @@ pub(crate) fn join_task<T>(joined: Result<T, tokio::task::JoinError>) -> Result<
     }
 }
 
-pub(crate) async fn healthz(State(gateway): State<Arc<Gateway>>) -> axum::response::Response {
+pub(crate) async fn healthz(
+    State(gateway): State<Arc<Gateway>>,
+    parts: axum::http::request::Parts,
+) -> axum::response::Response {
+    let detailed = crate::tenancy::caller(&gateway, &parts).is_ok();
     let name = gateway.settings().hostname.clone();
     let node = gateway.settings().node.clone();
-    let degraded_providers = degraded_providers(gateway.provider_health());
-    match gateway.store().probe().await {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(HealthzResponse {
-                ok: true,
-                sessions: 0,
-                name,
-                node,
-                degraded: None,
-                degraded_providers,
-                version: Some(crate::VERSION.to_owned()),
-                revision: crate::REVISION.map(str::to_owned),
-            }),
-        )
-            .into_response(),
-        Err(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(HealthzResponse {
-                ok: false,
-                sessions: 0,
-                name,
-                node,
-                degraded: Some(degraded_reason(&error)),
-                degraded_providers,
-                version: Some(crate::VERSION.to_owned()),
-                revision: crate::REVISION.map(str::to_owned),
-            }),
-        )
-            .into_response(),
-    }
+    let degraded_providers = degraded_providers(gateway.provider_health(), detailed);
+    let probed = gateway.store().probe().await;
+    let (status, ok, degraded) = match probed {
+        Ok(()) => (StatusCode::OK, true, None),
+        Err(error) => {
+            let reason = degraded_reason(&error);
+            tracing::warn!("{reason}");
+            let shown = if detailed {
+                reason
+            } else {
+                PUBLIC_DEGRADED.to_owned()
+            };
+            (StatusCode::SERVICE_UNAVAILABLE, false, Some(shown))
+        }
+    };
+    (
+        status,
+        Json(HealthzResponse {
+            ok,
+            sessions: 0,
+            name,
+            node,
+            degraded,
+            degraded_providers,
+            version: Some(crate::VERSION.to_owned()),
+            revision: crate::REVISION.filter(|_| detailed).map(str::to_owned),
+        }),
+    )
+        .into_response()
 }
 
-fn degraded_providers(providers: &[ProviderHealth]) -> Vec<DegradedProvider> {
+fn degraded_providers(providers: &[ProviderHealth], detailed: bool) -> Vec<DegradedProvider> {
     providers
         .iter()
         .filter_map(|provider| match &*provider.status.borrow() {
@@ -129,13 +140,17 @@ fn degraded_providers(providers: &[ProviderHealth]) -> Vec<DegradedProvider> {
             ProviderStatus::Degraded(degradation) => Some(DegradedProvider {
                 id: provider.id.clone(),
                 recovery: recovery_body(degradation.recovery),
-                reason: degradation.cause.to_string(),
+                reason: if detailed {
+                    degradation.cause.to_string()
+                } else {
+                    PUBLIC_PROVIDER_REASON.to_owned()
+                },
             }),
         })
         .collect()
 }
 
-const fn recovery_body(recovery: ProviderRecovery) -> wire::gateway::ProviderRecovery {
+fn recovery_body(recovery: ProviderRecovery) -> wire::gateway::ProviderRecovery {
     match recovery {
         ProviderRecovery::Retrying => wire::gateway::ProviderRecovery::Retrying,
         ProviderRecovery::Permanent => wire::gateway::ProviderRecovery::Permanent,

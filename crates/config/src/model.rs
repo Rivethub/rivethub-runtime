@@ -336,6 +336,7 @@ pub struct GatewaySection {
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
     pub request_deadline_secs: Option<NonZeroU64>,
+    pub fresh_login_secs: Option<u64>,
 }
 
 fn default_gateway_port() -> u16 {

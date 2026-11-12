@@ -122,6 +122,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         Arc::clone(&store) as _,
         crate::capture_hook::settings(receiver_home.path()),
     )
+    .with_local_owner(crate::support::local_owner(receiver_home.path()))
     .with_tenancy(Tenancy::local(
         UserId::new("alex".to_owned()).expect("alex"),
     ));
@@ -253,6 +254,7 @@ impl Receiver {
             Arc::clone(store) as _,
             crate::capture_hook::settings(home.path()),
         )
+        .with_local_owner(crate::support::local_owner(home.path()))
         .with_tenancy(Tenancy::local(UserId::new(user.to_owned()).expect("user")));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await

@@ -14,6 +14,7 @@ mod model_calls;
 #[path = "local/summarize.rs"]
 mod summarize;
 
+use crate::process::guard::SpawnGuarded;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
@@ -37,7 +38,7 @@ const DELEGATE_TEXT: &str = "delegate finished the ledger";
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 struct Started {
-    child: tokio::process::Child,
+    child: crate::process::guard::Guarded,
     logs: tokio::task::JoinHandle<std::io::Result<String>>,
 }
 
@@ -64,7 +65,7 @@ async fn start(
         .current_dir(home)
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let logs = tokio::spawn(async move {
@@ -142,7 +143,10 @@ async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestRe
         &["gateway listening on "],
     )
     .await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home.path())?)
+        .build()?;
     let base = format!("http://127.0.0.1:{port}");
     let health = client
         .get(format!("{base}/healthz"))
