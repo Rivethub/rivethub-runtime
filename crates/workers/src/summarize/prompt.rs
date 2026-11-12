@@ -16,6 +16,7 @@ pub const BRANCH_SYSTEM_PROMPT: &str = "You summarize leaf summaries into one br
 pub const ROOT_SYSTEM_PROMPT: &str = "You summarize branch summaries into one root summary of the whole conversation. Keep the decisions, the names, and the constraints. Start with the work itself and never describe the batches or the conversation: no batch, branch or message numbers, ids, channel names or timestamps. Write prose.";
 
 const VALUE_COLUMN: usize = 13;
+const FIELD_CHARS: usize = 120;
 
 const LEAF_CLOSING: &str =
     "Write the leaf summary of the batch above now. Do not continue the transcript.";
@@ -40,7 +41,7 @@ pub(super) fn leaf_user(
     );
     let mut blocks = Vec::with_capacity(messages.len());
     for (index, message) in messages.iter().enumerate() {
-        blocks.push(message_block(index, message)?);
+        blocks.push(message_block(index, message, provenance.is_some())?);
     }
     Ok(document(
         header,
@@ -110,7 +111,7 @@ fn rollup_user(
     );
     let mut blocks = Vec::with_capacity(nodes.len());
     for (index, node) in nodes.iter().enumerate() {
-        blocks.push(node_block(index, level.kind, node)?);
+        blocks.push(node_block(index, level.kind, node, provenance.is_some())?);
     }
     Ok(document(
         header,
@@ -128,11 +129,12 @@ fn header(
         Some(title) => title.as_str(),
         None => "",
     };
+    let imported = provenance.is_some();
     let mut lines = vec![
         ("id", head.id.to_string()),
-        ("agent", head.agent.clone()),
-        ("channel", head.channel.clone()),
-        ("title", title.to_owned()),
+        ("agent", own(imported, &head.agent)),
+        ("channel", own(imported, &head.channel)),
+        ("title", own(imported, title)),
     ];
     if let Some(provenance) = provenance {
         lines.push((
@@ -153,20 +155,40 @@ fn header(
     block
 }
 
-fn message_block(index: usize, message: &WindowMessage) -> Result<String, WorkerError> {
+fn message_block(
+    index: usize,
+    message: &WindowMessage,
+    imported: bool,
+) -> Result<String, WorkerError> {
     let shown = display_index(index)?;
     let mut block = format!(
         "[#{shown:02} {} {}/{}]\n{}",
         prompt_time(message.created_at),
-        message.agent,
+        own(imported, &message.agent),
         message.role,
-        message.content
+        guarded(imported, &message.content)
     );
     if let Some(tool) = &message.tool {
-        push_tool_line(&mut block, "input", &tool.input);
-        push_tool_line(&mut block, "result", &tool.result);
+        push_tool_line(&mut block, "input", &guarded(imported, &tool.input));
+        push_tool_line(&mut block, "result", &guarded(imported, &tool.result));
     }
     Ok(block)
+}
+
+fn own(imported: bool, text: &str) -> String {
+    if imported {
+        kernel::memory::label(text, FIELD_CHARS)
+    } else {
+        text.to_owned()
+    }
+}
+
+fn guarded(imported: bool, text: &str) -> String {
+    if imported {
+        text.replace("[end]", "[ end ]")
+    } else {
+        text.to_owned()
+    }
 }
 
 fn push_tool_line(block: &mut String, label: &str, text: &str) {
@@ -178,14 +200,19 @@ fn push_tool_line(block: &mut String, label: &str, text: &str) {
     }
 }
 
-fn node_block(index: usize, kind: &str, node: &SummaryNode) -> Result<String, WorkerError> {
+fn node_block(
+    index: usize,
+    kind: &str,
+    node: &SummaryNode,
+    imported: bool,
+) -> Result<String, WorkerError> {
     let shown = display_index(index)?;
     Ok(format!(
         "[{kind} #{shown:02} {} → {} | {} msgs]\n{}",
         prompt_time(node.earliest_at),
         prompt_time(node.latest_at),
         node.message_count,
-        node.content
+        guarded(imported, &node.content)
     ))
 }
 

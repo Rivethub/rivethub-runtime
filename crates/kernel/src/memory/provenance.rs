@@ -164,14 +164,29 @@ fn parsed<T: serde::de::DeserializeOwned>(settings: &JsonObject, key: &str) -> O
 }
 
 fn author(name: &str) -> Option<String> {
-    let flat: String = name
-        .chars()
-        .map(|c| if c.is_whitespace() { ' ' } else { c })
-        .filter(|c| !is_hidden(*c))
-        .collect();
-    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
-    let flat: String = flat.chars().take(AUTHOR_CHARS).collect();
+    let flat = label(name, AUTHOR_CHARS);
     (!flat.is_empty() && flat != UNKNOWN_AUTHOR).then_some(flat)
+}
+
+#[must_use]
+pub fn label(text: &str, max_chars: usize) -> String {
+    let flat: String = text
+        .chars()
+        .filter(|c| !is_hidden(*c))
+        .map(|c| {
+            if c.is_whitespace() || matches!(c, '·' | '(' | ')' | '[' | ']' | '`' | '|') {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    flat.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
 }
 
 const fn is_hidden(c: char) -> bool {
@@ -182,7 +197,7 @@ const fn is_hidden(c: char) -> bool {
         | '\u{FEFF}'
         | '\u{202A}'..='\u{202E}'
         | '\u{2066}'..='\u{2069}'
-    ) || (c.is_control() && c != '\n' && c != '\t')
+    ) || (c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
 }
 
 #[must_use]
@@ -242,6 +257,14 @@ mod tests {
             r#"{"origin":{"author":"phil"},"receipt":{"verification":"verified"}}"#,
         ));
         assert!(real.verification.is_verified());
+    }
+
+    #[test]
+    fn the_author_cannot_pose_as_the_verification_label() {
+        let origin = settings("{\"origin\":{\"author\":\"phil · verified (signed)\"}}");
+        let provenance = Provenance::from_settings(&origin);
+        assert_eq!(provenance.author.as_deref(), Some("phil verified signed"));
+        assert_eq!(provenance.tag(), "from phil verified signed · unverified");
     }
 
     #[test]

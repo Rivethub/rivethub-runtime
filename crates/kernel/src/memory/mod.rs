@@ -73,6 +73,7 @@ pub use provenance::ReceiptChecks;
 pub use provenance::Verification;
 pub use provenance::escape_hidden;
 pub use provenance::is_imported;
+pub use provenance::label;
 pub use provenance::origins_of;
 pub use provenance::quote;
 pub use records::{

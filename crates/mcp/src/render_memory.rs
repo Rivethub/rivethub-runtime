@@ -144,9 +144,19 @@ pub(crate) fn browse(
         if let Some(date) = entry.created_at {
             write!(heading, "[{}] ", timestamp(date, zone))?;
         }
-        write!(heading, "{}/{}", entry.agent, entry.role)?;
+        let imported = origins.contains_key(&entry.session_id);
+        write!(
+            heading,
+            "{}/{}",
+            crate::provenance::own_text(imported, &entry.agent),
+            entry.role
+        )?;
         if let Some(name) = &entry.tool_name {
-            write!(heading, " [tool: {name}]")?;
+            write!(
+                heading,
+                " [tool: {}]",
+                crate::provenance::own_text(imported, name)
+            )?;
         }
         if let Some(provenance) = origins.get(&entry.session_id) {
             write!(

@@ -120,9 +120,18 @@ fn message(
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
     let origin = found.origins.get(&entry.session_id);
-    let mut heading = format!("- [{}/{}]", entry.agent, entry.role);
+    let imported = origin.is_some();
+    let mut heading = format!(
+        "- [{}/{}]",
+        crate::provenance::own_text(imported, &entry.agent),
+        entry.role
+    );
     if let Some(name) = &entry.tool_name {
-        write!(heading, " [tool: {name}]")?;
+        write!(
+            heading,
+            " [tool: {}]",
+            crate::provenance::own_text(imported, name)
+        )?;
     }
     write!(
         heading,

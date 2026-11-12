@@ -8,6 +8,8 @@ use kernel::memory::Provenance;
 use crate::Error;
 use crate::render_memory;
 
+const LABEL_CHARS: usize = 64;
+
 pub(crate) type Origins = BTreeMap<String, Provenance>;
 
 pub(crate) async fn lookup<'a>(
@@ -35,5 +37,13 @@ pub(crate) fn quoted(origins: &Origins, session_key: &str, text: String) -> Stri
     match origins.get(session_key) {
         Some(provenance) => kernel::memory::quote(provenance, &text),
         None => text,
+    }
+}
+
+pub(crate) fn own_text(imported: bool, text: &str) -> std::borrow::Cow<'_, str> {
+    if imported {
+        std::borrow::Cow::Owned(kernel::memory::label(text, LABEL_CHARS))
+    } else {
+        std::borrow::Cow::Borrowed(text)
     }
 }

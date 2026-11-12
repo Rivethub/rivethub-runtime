@@ -79,16 +79,20 @@ fn render(
     }
     let day = |at: DateTime<Utc>| at.with_timezone(&zone).format("%Y-%m-%d").to_string();
     for (index, (ranked, digest)) in found.iter().enumerate() {
+        let imported = digest.imported_from.is_some();
         write!(
             out,
             "{}. {}  \"{}\"  {}  {} to {}  {}  best {:.2} ({})",
             index + 1,
             digest.conversation_id,
-            digest
-                .title
-                .as_deref()
-                .map_or_else(|| "untitled".to_owned(), &redact),
-            digest.agent,
+            crate::provenance::own_text(
+                imported,
+                &digest
+                    .title
+                    .as_deref()
+                    .map_or_else(|| "untitled".to_owned(), &redact)
+            ),
+            crate::provenance::own_text(imported, &digest.agent),
             day(digest.first),
             day(digest.last),
             noun(digest.messages, "message", "messages"),
@@ -96,11 +100,23 @@ fn render(
             noun(ranked.hits, "hit", "hits"),
         )?;
         if let Some(author) = &digest.imported_from {
-            write!(out, "  from {author}")?;
+            write!(
+                out,
+                "  from {} (imported)",
+                crate::provenance::own_text(true, author)
+            )?;
         }
         out.push('\n');
         for excerpt in &ranked.excerpts {
-            writeln!(out, "   > {excerpt}")?;
+            if imported {
+                writeln!(
+                    out,
+                    "   > {}",
+                    kernel::memory::escape_hidden(&excerpt.replace(['\n', '\r'], " "))
+                )?;
+            } else {
+                writeln!(out, "   > {excerpt}")?;
+            }
         }
     }
     if dropped > 0 {
