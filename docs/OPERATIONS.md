@@ -199,7 +199,13 @@ WantedBy=timers.target
 ## Several people on one store
 
 - List the people and the SHA-256 digests of their bearer tokens in the users file (`gateway.users_file`; README,
-  Tenancy). Rows captured with a bearer token take that person as owner; loopback, plug-ins and `rh mcp` act as the node owner.
+  Tenancy). Rows captured with a bearer token take that person as owner; loopback, plug-ins and `rh mcp` act as the node owner
+  on a personal node.
+- No node treats loopback as the owner (CONTRACT note 147), so a team server needs no extra switch: every caller needs
+  a credential, and a same-host forwarder gains nothing. Give the server's own tools one: `rh` and the capture hook read
+  `<state_dir>/local-owner.token`, and `memory.capture.gateway.token` names a remote capture gateway's token.
+- Behind a reverse proxy, list it in `gateway.trusted_proxies` and have it overwrite `X-Forwarded-Proto`, not append
+  to it: Caddy does; nginx needs `proxy_set_header X-Forwarded-Proto $scheme`.
 - A capture kit that writes to Postgres directly names its person in the connection:
   `?options=-c%20rh.principal%3D<user>`.
 - `rh memory merge-store --from <url> --owner <user> [--moves <file>] [--dry-run]` copies another memory database into
