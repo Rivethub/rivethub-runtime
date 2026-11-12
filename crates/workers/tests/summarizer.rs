@@ -357,6 +357,7 @@ fn window(
             channel: "cli".to_owned(),
             title: Some(title.to_owned()),
         },
+        provenance: None,
         messages,
         leaves: Vec::new(),
         branches: Vec::new(),

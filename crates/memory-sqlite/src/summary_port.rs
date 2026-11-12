@@ -6,6 +6,7 @@ use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
+use kernel::memory::Provenance;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummaryNode;
 use kernel::memory::SummaryStore;
@@ -249,7 +250,9 @@ fn load_window(
     };
     let messages = load_messages(conn, &id.to_string())?;
     let latest = latest_message(conn, &id.to_string())?;
+    let provenance = provenance_of(conn, &id.to_string(), &session_key)?;
     Ok(Some(ConversationWindow {
+        provenance,
         conversation: ConversationHead {
             id: parse_id(&head_id)?,
             session_key,
@@ -262,6 +265,31 @@ fn load_window(
         branches: load_nodes(conn, &id.to_string(), SummaryKind::Branch)?,
         latest_message_at: latest,
     }))
+}
+
+fn provenance_of(
+    conn: &rusqlite::Connection,
+    id: &str,
+    session_key: &str,
+) -> Result<Option<Provenance>, SqliteError> {
+    if !kernel::memory::is_imported(session_key) {
+        return Ok(None);
+    }
+    let settings: Option<String> = conn
+        .query_row(
+            "SELECT settings FROM ros_conversations WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .map_err(SqliteError::query("load import origin"))?;
+    let settings = match settings {
+        Some(text) => serde_json::from_str(&text).map_err(|source| SqliteError::StoredJson {
+            column: "settings",
+            source,
+        })?,
+        None => wire::JsonObject::default(),
+    };
+    Ok(Some(Provenance::from_settings(&settings)))
 }
 
 fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMessage>, SqliteError> {

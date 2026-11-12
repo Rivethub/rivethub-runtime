@@ -39,7 +39,7 @@ pub(super) async fn write_leaves(
                 .messages
                 .get(..usize_of(take)?)
                 .ok_or(WorkerError::Count)?;
-            leaf_user(&window.conversation, messages)?
+            leaf_user(&window.conversation, window.provenance.as_ref(), messages)?
         };
         let response = chat(env, LEAF_SYSTEM_PROMPT, &user, env.settings.leaf_max_tokens).await?;
         if response.finish_reason == Some(FinishReason::Length) {
