@@ -73,6 +73,7 @@ pub struct NodeDesk {
     clock: Clock,
     drafts: Drafts,
     logins: parking_lot::Mutex<BTreeMap<LoginId, Pending>>,
+    sign_in_out: Mutex<()>,
 }
 
 #[cfg_attr(
@@ -110,6 +111,7 @@ impl NodeDesk {
             clock: Arc::new(Utc::now),
             drafts: Drafts::new(),
             logins: parking_lot::Mutex::default(),
+            sign_in_out: Mutex::new(()),
         })
     }
 
@@ -533,6 +535,7 @@ impl ShareDesk for NodeDesk {
     async fn login(&self, request: LoginRequest) -> Result<LoginStep, DeskError> {
         match request {
             LoginRequest::Cloud { origin } => {
+                let _registering = self.sign_in_out.lock().await;
                 let started = cli_desk::start(&self.env, Some(origin.as_str()), CLIENT)
                     .await
                     .map_err(cli_desk::desk_error)?;
@@ -599,6 +602,7 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn logout(&self, origin: ServerOrigin) -> Result<(), DeskError> {
+        let _signing_out = self.sign_in_out.lock().await;
         logins::cancel(&self.logins, &origin).await?;
         let (host, outcome) = cli_desk::logout(&self.env, Some(origin.as_str()))
             .await

@@ -639,6 +639,8 @@ async fn a_share_server_echoing_the_token_never_reaches_the_desk_error() -> Test
 struct Approver {
     gate: Arc<tokio::sync::Semaphore>,
     asked: Arc<tokio::sync::Notify>,
+    device_gate: Arc<tokio::sync::Semaphore>,
+    device_asked: Arc<tokio::sync::Notify>,
 }
 
 async fn oauth_metadata(headers: axum::http::HeaderMap) -> axum::response::Response {
@@ -655,7 +657,13 @@ async fn oauth_metadata(headers: axum::http::HeaderMap) -> axum::response::Respo
         .into_response()
 }
 
-async fn oauth_device() -> axum::response::Response {
+async fn oauth_device(
+    axum::extract::State(approver): axum::extract::State<Approver>,
+) -> axum::response::Response {
+    approver.device_asked.notify_one();
+    if let Ok(permit) = approver.device_gate.acquire().await {
+        permit.forget();
+    }
     (
         [("content-type", "application/json")],
         r#"{"device_code":"rhcd_x","user_code":"ABCD-EFGH","verification_uri":"http://example.invalid/device","verification_uri_complete":"http://example.invalid/device#user_code=ABCD-EFGH","expires_in":600,"interval":1}"#,
@@ -683,6 +691,8 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
     let approver = Approver {
         gate: Arc::new(tokio::sync::Semaphore::new(0)),
         asked: Arc::default(),
+        device_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        device_asked: Arc::default(),
     };
     let share = testkit::stub_server(
         axum::Router::new()
@@ -692,6 +702,10 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
             )
             .route("/oauth/device", axum::routing::post(oauth_device))
             .route("/oauth/token", axum::routing::post(oauth_token))
+            .route(
+                "/oauth/revoke",
+                axum::routing::post(|| async { StatusCode::OK }),
+            )
             .with_state(approver.clone()),
     )
     .await?;
@@ -728,6 +742,76 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
     assert!(
         servers.servers.iter().all(|server| !server.signed_in),
         "the approval signed the desk back in: {servers:?}"
+    );
+    share.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_login_still_starting_when_logout_runs_cannot_sign_the_desk_in() -> TestResult {
+    let approver = Approver {
+        gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        asked: Arc::default(),
+        device_gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        device_asked: Arc::default(),
+    };
+    let share = testkit::stub_server(
+        axum::Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server",
+                axum::routing::get(oauth_metadata),
+            )
+            .route("/oauth/device", axum::routing::post(oauth_device))
+            .route("/oauth/token", axum::routing::post(oauth_token))
+            .route(
+                "/oauth/revoke",
+                axum::routing::post(|| async { StatusCode::OK }),
+            )
+            .with_state(approver.clone()),
+    )
+    .await?;
+    let host = share.addr.to_string();
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&phil, false)?;
+
+    let (started, logged_out) = tokio::join!(
+        desk.login(kernel::memory::share::desk::LoginRequest::Cloud {
+            origin: host.clone().into(),
+        }),
+        async {
+            approver.device_asked.notified().await;
+            let mut logout = std::pin::pin!(desk.logout(host.clone().into()));
+            let early =
+                tokio::time::timeout(std::time::Duration::from_millis(200), &mut logout).await;
+            approver.device_gate.add_permits(1);
+            match early {
+                Ok(done) => done,
+                Err(_) => logout.await,
+            }
+        },
+    );
+    logged_out?;
+    let kernel::memory::share::desk::LoginStep::Started { login, .. } = started? else {
+        return Err("the login did not start".into());
+    };
+
+    let polled = desk.poll(login).await;
+    assert!(
+        matches!(polled, Err(DeskError::UnknownLogin)),
+        "a login that started during logout stayed pollable: {polled:?}"
+    );
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            sleep,
+            reason = "no signal says a cancelled login stayed quiet, so the test gives a late save time to show"
+        )
+    )]
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let servers = desk.servers().await?;
+    assert!(
+        servers.servers.iter().all(|server| !server.signed_in),
+        "a login that started during logout signed the desk in: {servers:?}"
     );
     share.close().await?;
     Ok(())
