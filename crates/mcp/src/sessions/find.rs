@@ -18,6 +18,8 @@ use super::noun;
 use crate::Error;
 use crate::catalog::ToolInput as _;
 
+const UNKNOWN_SENDER: &str = "unknown sender";
+
 pub(crate) async fn find(
     store: &dyn MemoryStore,
     kit: &Sessions,
@@ -79,7 +81,7 @@ fn render(
     }
     let day = |at: DateTime<Utc>| at.with_timezone(&zone).format("%Y-%m-%d").to_string();
     for (index, (ranked, digest)) in found.iter().enumerate() {
-        let imported = digest.imported_from.is_some();
+        let imported = kernel::memory::is_imported(&digest.key);
         write!(
             out,
             "{}. {}  \"{}\"  {}  {} to {}  {}  best {:.2} ({})",
@@ -99,11 +101,15 @@ fn render(
             ranked.best,
             noun(ranked.hits, "hit", "hits"),
         )?;
-        if let Some(author) = &digest.imported_from {
+        if imported {
+            let author = digest
+                .imported_from
+                .as_deref()
+                .and_then(kernel::memory::display_author);
             write!(
                 out,
                 "  from {} (imported)",
-                crate::provenance::own_text(true, author)
+                author.as_deref().unwrap_or(UNKNOWN_SENDER)
             )?;
         }
         out.push('\n');

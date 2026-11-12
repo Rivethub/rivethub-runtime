@@ -71,6 +71,7 @@ pub use origin::DumpSource;
 pub use provenance::Provenance;
 pub use provenance::ReceiptChecks;
 pub use provenance::Verification;
+pub use provenance::display_author;
 pub use provenance::escape_hidden;
 pub use provenance::is_imported;
 pub use provenance::label;

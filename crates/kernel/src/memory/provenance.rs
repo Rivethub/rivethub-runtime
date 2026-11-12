@@ -138,7 +138,7 @@ impl Provenance {
             author: origin
                 .as_ref()
                 .and_then(|origin| origin.author.as_deref())
-                .and_then(author),
+                .and_then(display_author),
             origin_date: origin.and_then(|origin| origin.created_at),
             verification,
             checks: receipt.and_then(|receipt| receipt.checks),
@@ -184,7 +184,8 @@ fn parsed<T: serde::de::DeserializeOwned>(settings: &JsonObject, key: &str) -> O
     parsed
 }
 
-fn author(name: &str) -> Option<String> {
+#[must_use]
+pub fn display_author(name: &str) -> Option<String> {
     let flat = label(name, AUTHOR_CHARS);
     (!flat.is_empty() && flat != UNKNOWN_AUTHOR).then_some(flat)
 }
