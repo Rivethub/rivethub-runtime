@@ -2427,6 +2427,25 @@ values are pinned by `crates/rivethub/tests/it/local_ensure.rs`; docs/CLI.md has
 this object and never the prose. `pid` is null when the pid file is missing or unreadable; a node that answers is still
 reported as running.
 
+(148) Claude Code subagent capture (Phil, 2026-11-11, "data capture should always aim for 100%"): a subagent transcript
+(`<projects>/<slug>/<parent session>/subagents/agent-<agentId>.jsonl`, or under `subagents/workflows/<run>/`) is its own
+conversation keyed `claude-code:<agentId>`, agent `rivet-claude`, channel `claude-code`. Its rows are folded exactly as
+note 84 folds a parent transcript, so event ids are `claude-code:<agentId>:<line uuid>` and
+`claude-code:<agentId>:tool:<tool_use id>` and never collide with the parent's. The batch settings add
+`parent_session_id` (the parent session uuid), `agent_id`, and, when known, `agent_type`, `description` and
+`tool_use_id`, read from the sibling `agent-<agentId>.meta.json` and, for `agent_type`, from the hook payload. The title
+is the meta `description`, else the first prompt. Nothing is written to `rh_tasks` or the delegation tables. On
+`SubagentStop` the hook captures the subagent's own transcript, from `agent_transcript_path`, else
+`<dirname(transcript_path)>/<session_id>/subagents/agent-<agent_id>.jsonl`, and finalizes it. With no `agent_id`, or a
+file that is not there, it captures every subagent file of the session. `Stop` and `SessionEnd` capture every subagent
+file of the session too, so a `SubagentStop` the hook never saw is caught up, and `SessionEnd` finalizes them. A sweep
+skips a file whose size equals the size the hook last captured, kept in `<state>/claude-subagents/<session>/<agentId>`,
+so a long session does not re-post every subagent on each `Stop`. A subagent whose meta file is absent or unreadable is
+still captured, with `parent_session_id` and `agent_id` only, and a sweep that cannot read that record reports the
+subagent on stderr and moves on. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
+same batches for every session and subagent file in the store, with `last_event` `Backfill` and no finalize, because
+on Postgres finalizing a conversation moves its `updated_at` to the time of the run.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

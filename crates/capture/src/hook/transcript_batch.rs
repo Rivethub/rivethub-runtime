@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -15,8 +16,6 @@ use super::pending::Pending;
 use crate::event_id::OccurrenceKind;
 use crate::event_id::occurrence_digest;
 use crate::event_id::occurrence_event_id;
-use crate::payload::HookEvent;
-use crate::payload::HookPayload;
 use crate::records::HookEventMetadata;
 use crate::records::SOURCE;
 use crate::records::TranscriptMetadata;
@@ -73,24 +72,21 @@ struct Source<'a> {
 }
 
 pub(super) fn build(
-    payload: &HookPayload,
+    path: Option<&Path>,
     session_key: &str,
     transcript: &[Line],
-    event: HookEvent,
+    finalize: bool,
     pending: &[Pending],
 ) -> Result<CaptureBatchRequest, HookError> {
     let mut source = Source {
         session_key,
-        path: payload
-            .transcript_path
-            .as_ref()
-            .map(|path| path.display().to_string()),
+        path: path.map(|path| path.display().to_string()),
         rows: Vec::new(),
     };
     let results = results(transcript);
     let folded: Vec<Folded<'_>> = transcript.iter().filter_map(fold).collect();
     let mut batch = base_batch(session_key);
-    batch.finalize = (event == HookEvent::SessionEnd).then_some(true);
+    batch.finalize = finalize.then_some(true);
     for message in &folded {
         if message.assistant() {
             let event_id = source.id(message, OccurrenceKind::Assistant);

@@ -70,10 +70,79 @@ async fn the_capture_command_lists_the_hook_subcommand() {
     assert!(
         report
             .stdout
-            .contains("hook  Capture one harness hook payload read from stdin"),
+            .contains("Capture one harness hook payload read from stdin"),
         "{}",
         report.stdout
     );
+    assert!(report.stdout.contains("backfill"), "{}", report.stdout);
+}
+
+fn store_a_session(home: &tempfile::TempDir) -> std::io::Result<()> {
+    let slug = home.path().join(".claude/projects/-work-demo");
+    std::fs::create_dir_all(&slug)?;
+    std::fs::write(
+        slug.join("55555555-5555-5555-5555-555555555555.jsonl"),
+        concat!(
+            r#"{"type":"user","uuid":"u1","timestamp":"2026-10-10T12:00:00.000Z","message":{"role":"user","content":"say hello"}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a1","timestamp":"2026-10-10T12:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}"#,
+            "\n"
+        ),
+    )
+}
+
+#[tokio::test]
+async fn backfill_reports_what_it_would_capture_and_posts_nothing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = home();
+    let env = environment(&home);
+    config(&home, "gateway:\n  host: 127.0.0.1\n  port: 1\n");
+    store_a_session(&home)?;
+    let report = run(
+        &[
+            "capture",
+            "backfill",
+            "--dry-run",
+            "--harness",
+            "claude-code",
+        ],
+        &env,
+    )
+    .await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(
+        report.stdout,
+        "claude-code: 1 sessions, 2 messages read, none posted, 0 failures\n"
+    );
+    assert!(!home.path().join(".rivethub/capture-spool").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn backfill_exits_1_and_names_the_failure_when_the_gateway_is_unreachable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let port = testkit::ports::claim()?;
+    let home = home();
+    let env = environment(&home);
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    store_a_session(&home)?;
+    let report = run(&["capture", "backfill", "--harness", "claude-code"], &env).await;
+    assert_eq!(report.exit, Exit::Failure);
+    assert_eq!(
+        report.stdout,
+        "claude-code: 1 sessions, 0 messages added, 1 failures\n"
+    );
+    assert!(
+        report.stderr.starts_with(
+            "claude-code 55555555-5555-5555-5555-555555555555: capture request failed"
+        ),
+        "{}",
+        report.stderr
+    );
+    Ok(())
 }
 
 #[tokio::test]

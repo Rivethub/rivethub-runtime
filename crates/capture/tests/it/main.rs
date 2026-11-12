@@ -28,5 +28,6 @@ mod store_hook;
 mod store_paths;
 mod store_readers;
 mod store_transcripts;
+mod subagent_capture;
 mod transcript_reader;
 mod writer_replay;

@@ -55,7 +55,22 @@ struct Transcript {
     times: FileTimes,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClaudeFile {
+    pub(crate) id: String,
+    pub(crate) parent: Option<String>,
+    pub(crate) path: PathBuf,
+}
+
 impl Transcript {
+    fn file(self) -> ClaudeFile {
+        ClaudeFile {
+            id: self.id,
+            parent: self.parent,
+            path: self.path,
+        }
+    }
+
     fn key(&self) -> (Option<String>, String) {
         (self.parent.clone(), self.id.clone())
     }
@@ -112,6 +127,33 @@ pub(crate) fn list(root: &Path, limit: usize) -> Result<Vec<StoreSession>, Trans
             }
             row
         })
+        .collect())
+}
+
+pub(crate) fn store_files(root: &Path) -> Result<Vec<ClaudeFile>, TranscriptReaderError> {
+    let Some(store) = projects(root)? else {
+        return Ok(Vec::new());
+    };
+    let mut files: Vec<ClaudeFile> = dedup(transcripts(&store))
+        .into_iter()
+        .map(Transcript::file)
+        .collect();
+    files.sort_by(|left, right| {
+        (left.parent.is_some(), &left.id).cmp(&(right.parent.is_some(), &right.id))
+    });
+    Ok(files)
+}
+
+pub(crate) fn session_agents(
+    slug_dir: &Path,
+    parent: &str,
+) -> Result<Vec<ClaudeFile>, TranscriptReaderError> {
+    let Some(store) = open_store(slug_dir)? else {
+        return Ok(Vec::new());
+    };
+    Ok(dedup(agent_files(&store, &slug_dir.join(parent), parent))
+        .into_iter()
+        .map(Transcript::file)
         .collect())
 }
 
