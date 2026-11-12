@@ -163,5 +163,5 @@ kind = "budget"
 [[rules]]
 id = "scan_budget_exhausted"
 family = "budget"
-why = "the bundle spent its scan budget (work counted per decode candidate and per nested scan), so this text was never scanned and is held whole"
+why = "the message or bundle exceeded its scan-work allowance (work counted per decode candidate and per nested scan), so this text was never scanned and is held whole"
 kind = "budget"
