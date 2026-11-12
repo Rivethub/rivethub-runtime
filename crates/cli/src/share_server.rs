@@ -24,6 +24,7 @@ use crate::Report;
 use crate::memory::desk;
 use crate::memory::desk::Approval;
 use crate::memory::desk::LoggedOut;
+use logins::Forgot;
 use logins::Listed;
 use logins::LoginStore;
 
@@ -80,8 +81,6 @@ pub enum ServerError {
     Denied(&'static str),
     #[error("{server} refused the team token (HTTP {status}); sign in again with a valid token")]
     TokenRefused { server: ShareServer, status: u16 },
-    #[error("the share server answered {status}: {body}")]
-    Status { status: u16, body: String },
     #[error("the share server could not be reached: {0}")]
     Http(#[from] reqwest::Error),
     #[error("the share server refused the request ({0})")]
@@ -251,16 +250,9 @@ impl ShareServers {
         }
     }
 
-    pub(crate) async fn forget_refused(&self, host: &ShareServer) -> Result<bool, ServerError> {
+    pub(crate) async fn forget_refused(&self, host: &ShareServer) -> Result<Forgot, ServerError> {
         let _lock = lock(&self.lock).await?;
-        match self.logins.load(host).await {
-            Err(ServerError::LoggedOut(_)) => Ok(false),
-            loaded => {
-                loaded?;
-                self.logins.forget(host).await?;
-                Ok(true)
-            }
-        }
+        self.logins.forget_record(host).await
     }
 
     pub(crate) async fn connect(
@@ -493,16 +485,11 @@ impl Tokens {
     }
 }
 
-pub(crate) async fn checked(response: reqwest::Response) -> Result<reqwest::Response, ServerError> {
+pub(crate) fn checked(response: reqwest::Response) -> Result<reqwest::Response, ServerError> {
     if response.status().is_success() {
         return Ok(response);
     }
-    let status = response.status().as_u16();
-    let body = response.text().await?;
-    Err(ServerError::Status {
-        status,
-        body: body.chars().take(200).collect(),
-    })
+    Err(ServerError::Answered(response.status().as_u16()))
 }
 
 pub async fn run(
@@ -523,9 +510,14 @@ pub async fn run(
                 LoggedOut::Forgotten => {
                     format!("signed out of {host} and forgot its team token on this machine\n")
                 }
-                LoggedOut::Refused(refused) => format!(
-                    "signed out of {host}; the login was not revoked there because {refused}\n"
-                ),
+                LoggedOut::Refused { refused, keyring } => {
+                    let kept = keyring.map_or_else(String::new, |reason| {
+                        format!("; its secret stays in the OS keyring because {reason}")
+                    });
+                    format!(
+                        "signed out of {host}; the login was not revoked there because {refused}{kept}\n"
+                    )
+                }
             })
         }
         ShareCommand::Status => servers.status()?,

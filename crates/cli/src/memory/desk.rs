@@ -25,6 +25,7 @@ use oauth2::Scope;
 use oauth2::StandardDeviceAuthorizationResponse;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
 use super::dropbox::DropBox;
@@ -41,6 +42,7 @@ use crate::share_server::ShareServers;
 use crate::share_server::TeamLogin;
 use crate::share_server::Tokens;
 use crate::share_server::checked;
+use crate::share_server::logins::Forgot;
 use crate::share_server::logins::Listed;
 use crate::share_server::oauth;
 
@@ -144,6 +146,7 @@ pub struct PendingLogin {
     server: ShareServer,
     interval: Arc<AtomicU64>,
     expires_at: DateTime<Utc>,
+    cancel: CancellationToken,
     task: Option<AbortOnDropHandle<Result<Approval, Error>>>,
 }
 
@@ -181,6 +184,13 @@ impl PendingLogin {
             None => Err(ServerError::Finished.into()),
             Some(task) if !task.is_finished() => Ok(None),
             Some(_) => self.finished().await.map(Some),
+        }
+    }
+
+    pub async fn cancel(&mut self) {
+        self.cancel.cancel();
+        if let Some(task) = self.task.take() {
+            drop(task.await);
         }
     }
 
@@ -232,7 +242,14 @@ pub async fn start(
     )?;
     let user_code = details.user_code().secret().clone();
     let host = server.host().clone();
-    let task = tokio::spawn(approval(server, oauth, details, Arc::clone(&interval)));
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(approval(
+        server,
+        oauth,
+        details,
+        Arc::clone(&interval),
+        cancel.clone(),
+    ));
     Ok(DeviceLogin {
         verification_uri_complete,
         user_code,
@@ -242,6 +259,7 @@ pub async fn start(
             server: host,
             interval,
             expires_at,
+            cancel,
             task: Some(AbortOnDropHandle::new(task)),
         },
     })
@@ -263,18 +281,20 @@ async fn approval(
     oauth: oauth::OauthClient,
     details: StandardDeviceAuthorizationResponse,
     interval: Arc<AtomicU64>,
+    cancel: CancellationToken,
 ) -> Result<Approval, Error> {
-    let asked = oauth
-        .exchange_device_access_token(&details)
-        .request_async(
-            &server,
-            |wait| {
-                interval.store(wait.as_secs(), Ordering::Relaxed);
-                tokio::time::sleep(wait)
-            },
-            None,
-        )
-        .await;
+    let polling = oauth.exchange_device_access_token(&details).request_async(
+        &server,
+        |wait| {
+            interval.store(wait.as_secs(), Ordering::Relaxed);
+            tokio::time::sleep(wait)
+        },
+        None,
+    );
+    let asked = tokio::select! {
+        () = cancel.cancelled() => return Err(ServerError::Cancelled.into()),
+        asked = polling => asked,
+    };
     let issued = match asked {
         Ok(issued) => issued,
         Err(RequestTokenError::ServerResponse(refusal)) => match refusal.error() {
@@ -291,6 +311,9 @@ async fn approval(
     let tokens = Tokens::issued(&issued, None)?;
     let scope = tokens.scope.clone();
     let _lock = server.lock().await?;
+    if cancel.is_cancelled() {
+        return Err(ServerError::Cancelled.into());
+    }
     server.keep(&Login::Device(tokens)).await?;
     Ok(Approval::SignedIn { scope })
 }
@@ -319,11 +342,7 @@ pub async fn login_team(env: &Environment, server: &str, token: String) -> Resul
         }
         .into());
     }
-    let me: Me = checked(response)
-        .await?
-        .json()
-        .await
-        .map_err(ServerError::from)?;
+    let me: Me = checked(response)?.json().await.map_err(ServerError::from)?;
     let _lock = server.lock().await?;
     server
         .keep(&Login::Team(TeamLogin {
@@ -339,7 +358,10 @@ pub enum LoggedOut {
     NotSignedIn,
     Revoked,
     Forgotten,
-    Refused(ShareRefused),
+    Refused {
+        refused: ShareRefused,
+        keyring: Option<String>,
+    },
 }
 
 pub async fn logout(
@@ -351,10 +373,16 @@ pub async fn logout(
     let server = match servers.connect(&host, REQUEST_TIMEOUT).await {
         Ok(server) => server,
         Err(ServerError::Policy(refused)) => {
-            let outcome = if servers.forget_refused(&host).await? {
-                LoggedOut::Refused(refused)
-            } else {
-                LoggedOut::NotSignedIn
+            let outcome = match servers.forget_refused(&host).await? {
+                Forgot::Absent => LoggedOut::NotSignedIn,
+                Forgot::Clean => LoggedOut::Refused {
+                    refused,
+                    keyring: None,
+                },
+                Forgot::SecretKept(reason) => LoggedOut::Refused {
+                    refused,
+                    keyring: Some(reason),
+                },
             };
             return Ok((host, outcome));
         }
@@ -524,10 +552,6 @@ fn server_error(error: ServerError) -> DeskError {
         ServerError::Expired { server, .. } => DeskError::LoginExpired(server.to_string().into()),
         ServerError::Denied(reason) => DeskError::LoginDenied(reason),
         ServerError::TokenRefused { status, .. } => DeskError::BadToken(format!("HTTP {status}")),
-        ServerError::Status { status, body } => DeskError::DropBox {
-            status,
-            message: body,
-        },
         ServerError::Http(error) => DeskError::Unreachable(error.to_string()),
         error @ ServerError::Unavailable { .. } => DeskError::Unreachable(error.to_string()),
         error @ ServerError::Answered(status) => DeskError::DropBox {

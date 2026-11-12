@@ -124,6 +124,13 @@ enum Secret {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Forgot {
+    Absent,
+    Clean,
+    SecretKept(String),
+}
+
 enum Held<T> {
     File(T),
     Keyring,
@@ -351,6 +358,33 @@ impl LoginStore {
             blocking(move || vault.erase(&owned)).await?;
         }
         self.write(&records)
+    }
+
+    pub(crate) async fn forget_record(&self, server: &ShareServer) -> Result<Forgot, ServerError> {
+        let mut records = self.records()?;
+        let Some(record) = records.logins.remove(server) else {
+            return Ok(Forgot::Absent);
+        };
+        let kept = if record.in_keyring() {
+            self.erase_secret(server).await.err()
+        } else {
+            None
+        };
+        self.write(&records)?;
+        Ok(kept.map_or(Forgot::Clean, Forgot::SecretKept))
+    }
+
+    async fn erase_secret(&self, server: &ShareServer) -> Result<(), String> {
+        let Some(vault) = self.vault.clone() else {
+            return Err(format!(
+                "{TOKEN_STORE_VARIABLE}=file keeps this process out of the OS keyring"
+            ));
+        };
+        let owned = server.as_str().to_owned();
+        tokio::task::spawn_blocking(move || vault.erase(&owned))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())
     }
 
     fn records(&self) -> Result<Records, ServerError> {

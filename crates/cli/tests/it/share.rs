@@ -1303,6 +1303,34 @@ async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
 }
 
 #[tokio::test]
+async fn a_refused_logout_forgets_a_keyring_login_without_reading_its_secret() {
+    let node = Node::new("phil", "https://unused.example.com/", None);
+    support::config(&node.home, "cloud:\n  disabled: true\n");
+    let path = node.home.path().join("state/rivethub/share-logins.json");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("state dir");
+    std::fs::write(
+        &path,
+        r#"{"logins":{"rivethub.cloud":{"expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}}}"#,
+    )
+    .expect("a login whose tokens live in the keyring");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+
+    let forgotten = node.run(&["share", "logout"]).await;
+
+    assert_eq!(forgotten.exit, Exit::Ok, "{}", forgotten.stderr);
+    assert!(
+        !logins(&node).contains("rivethub.cloud"),
+        "{}",
+        logins(&node)
+    );
+    assert!(
+        forgotten.stdout.contains("OS keyring"),
+        "the report must name the secret it could not erase: {}",
+        forgotten.stdout
+    );
+}
+
+#[tokio::test]
 async fn a_disabled_cloud_reaches_only_listed_share_servers() {
     let served = drop_box().await;
     let node = Node::new("phil", &served.url, None);

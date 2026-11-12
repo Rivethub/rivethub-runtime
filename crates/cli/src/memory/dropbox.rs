@@ -81,8 +81,7 @@ impl DropBox {
                 rejected = Some(token);
                 continue;
             }
-            let uploaded: Uploaded = crate::share_server::checked(response)
-                .await?
+            let uploaded: Uploaded = crate::share_server::checked(response)?
                 .json()
                 .await
                 .map_err(ServerError::from)?;
@@ -118,7 +117,7 @@ impl DropBox {
         if response.status() == StatusCode::NOT_FOUND {
             return Err(DropError::Gone(id.clone()));
         }
-        let response = crate::share_server::checked(response).await?;
+        let response = crate::share_server::checked(response)?;
         let declared = response.content_length();
         if declared.is_some_and(|length| length > MAX_DROP_BYTES as u64) {
             return Err(DropError::TooLarge);

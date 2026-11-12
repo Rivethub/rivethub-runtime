@@ -583,3 +583,152 @@ async fn find_matches_session_find() -> TestResult {
     );
     Ok(())
 }
+
+async fn echo_the_bearer(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let bearer = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("upstream saw {bearer}"),
+    )
+        .into_response()
+}
+
+#[tokio::test]
+async fn a_share_server_echoing_the_token_never_reaches_the_desk_error() -> TestResult {
+    const TEAM_TOKEN: &str = "rht_team_canary";
+    let echo = testkit::stub_server(
+        axum::Router::new()
+            .route("/api/me", axum::routing::get(echo_the_bearer))
+            .route("/api/drops", axum::routing::post(echo_the_bearer)),
+    )
+    .await?;
+    let host = echo.addr.to_string();
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&phil)?;
+    let desk = desk(&phil, false)?;
+
+    let signed_in = desk
+        .login(kernel::memory::share::desk::LoginRequest::Team {
+            origin: host.clone().into(),
+            token: TEAM_TOKEN.to_owned(),
+        })
+        .await;
+    sign_in(&phil, &host)?;
+    let draft = desk.draft(request(&[&alpha], false)?).await?;
+    let sent = desk.send(draft.id, send(&host, 1, 0)).await;
+
+    for (step, refused) in [("login", signed_in.err()), ("send", sent.err())] {
+        let refused = refused.ok_or("the echoing server must fail the step")?;
+        assert!(
+            matches!(refused, DeskError::DropBox { status: 500, .. }),
+            "{step}: {refused:?}"
+        );
+        let shown = format!("{refused} {refused:?}");
+        for secret in [TEAM_TOKEN, "rhca_x", "upstream saw"] {
+            assert!(!shown.contains(secret), "{step}: {shown}");
+        }
+    }
+    echo.close().await?;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct Approver {
+    gate: Arc<tokio::sync::Semaphore>,
+    asked: Arc<tokio::sync::Notify>,
+}
+
+async fn oauth_metadata(headers: axum::http::HeaderMap) -> axum::response::Response {
+    let host = headers
+        .get("host")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    (
+        [("content-type", "application/json")],
+        format!(
+            r#"{{"device_authorization_endpoint":"http://{host}/oauth/device","token_endpoint":"http://{host}/oauth/token","revocation_endpoint":"http://{host}/oauth/revoke"}}"#
+        ),
+    )
+        .into_response()
+}
+
+async fn oauth_device() -> axum::response::Response {
+    (
+        [("content-type", "application/json")],
+        r#"{"device_code":"rhcd_x","user_code":"ABCD-EFGH","verification_uri":"http://example.invalid/device","verification_uri_complete":"http://example.invalid/device#user_code=ABCD-EFGH","expires_in":600,"interval":1}"#,
+    )
+        .into_response()
+}
+
+async fn oauth_token(
+    axum::extract::State(approver): axum::extract::State<Approver>,
+) -> axum::response::Response {
+    approver.asked.notify_one();
+    let Ok(permit) = approver.gate.acquire().await else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    permit.forget();
+    (
+        [("content-type", "application/json")],
+        r#"{"access_token":"rhca_late","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_late","scope":"drops:write"}"#,
+    )
+        .into_response()
+}
+
+#[tokio::test]
+async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> TestResult {
+    let approver = Approver {
+        gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        asked: Arc::default(),
+    };
+    let share = testkit::stub_server(
+        axum::Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server",
+                axum::routing::get(oauth_metadata),
+            )
+            .route("/oauth/device", axum::routing::post(oauth_device))
+            .route("/oauth/token", axum::routing::post(oauth_token))
+            .with_state(approver.clone()),
+    )
+    .await?;
+    let host = share.addr.to_string();
+    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&phil, false)?;
+
+    let started = desk
+        .login(kernel::memory::share::desk::LoginRequest::Cloud {
+            origin: host.clone().into(),
+        })
+        .await?;
+    let kernel::memory::share::desk::LoginStep::Started { login, .. } = started else {
+        return Err(format!("{started:?}").into());
+    };
+    approver.asked.notified().await;
+    desk.logout(host.clone().into()).await?;
+    approver.gate.add_permits(1);
+
+    let polled = desk.poll(login).await;
+    assert!(
+        matches!(polled, Err(DeskError::UnknownLogin)),
+        "a logged-out login stayed pollable: {polled:?}"
+    );
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            sleep,
+            reason = "no signal says a cancelled login stayed quiet, so the test gives a late save time to show"
+        )
+    )]
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let servers = desk.servers().await?;
+    assert!(
+        servers.servers.iter().all(|server| !server.signed_in),
+        "the approval signed the desk back in: {servers:?}"
+    );
+    share.close().await?;
+    Ok(())
+}

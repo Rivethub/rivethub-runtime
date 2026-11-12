@@ -53,10 +53,12 @@ use uuid::Uuid;
 use crate::sessions::NodeShare;
 
 mod drafts;
+mod logins;
 
 use drafts::DraftState;
 use drafts::Drafts;
 use drafts::Phase;
+use logins::Pending;
 
 const DRAFT_LABEL: &str = "the draft bundle";
 const CLIENT: &str = "RivetHub desktop";
@@ -71,11 +73,6 @@ pub struct NodeDesk {
     clock: Clock,
     drafts: Drafts,
     logins: parking_lot::Mutex<BTreeMap<LoginId, Pending>>,
-}
-
-struct Pending {
-    expires_at: DateTime<Utc>,
-    login: Arc<Mutex<cli_desk::PendingLogin>>,
 }
 
 #[cfg_attr(
@@ -602,10 +599,18 @@ impl ShareDesk for NodeDesk {
     }
 
     async fn logout(&self, origin: ServerOrigin) -> Result<(), DeskError> {
-        cli_desk::logout(&self.env, Some(origin.as_str()))
+        logins::cancel(&self.logins, &origin).await?;
+        let (host, outcome) = cli_desk::logout(&self.env, Some(origin.as_str()))
             .await
-            .map(|_| ())
-            .map_err(cli_desk::desk_error)
+            .map_err(cli_desk::desk_error)?;
+        if let cli_desk::LoggedOut::Refused {
+            keyring: Some(reason),
+            ..
+        } = outcome
+        {
+            tracing::warn!(%host, %reason, "signed out, but the OS keyring still holds the login secret");
+        }
+        Ok(())
     }
 
     async fn key(&self) -> Result<NodeKeyView, DeskError> {
