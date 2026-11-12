@@ -58,6 +58,7 @@ impl CaptureBatchRequest {
                 tool_result: message.tool_result.clone(),
                 metadata: message.metadata.clone(),
                 created_at: message.created_at,
+                provenance: None,
             })
             .collect()
     }

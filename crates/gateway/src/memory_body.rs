@@ -1,12 +1,57 @@
+use std::collections::BTreeMap;
+
+use kernel::memory::MemoryStore;
+use kernel::memory::Provenance;
+
+use crate::error::ApiError;
+
+pub(crate) type Origins = BTreeMap<String, Provenance>;
+
+pub(crate) async fn origins_of<'a>(
+    store: &dyn MemoryStore,
+    session_keys: impl IntoIterator<Item = &'a str>,
+) -> Result<Origins, ApiError> {
+    Ok(kernel::memory::origins_of(store, session_keys).await?)
+}
+
+pub(crate) fn quoted(origin: Option<&Provenance>, text: String) -> String {
+    match origin {
+        Some(provenance) => kernel::memory::quote(provenance, &text),
+        None => text,
+    }
+}
+
+pub(crate) fn provenance_body(value: &Provenance) -> wire::memory::Provenance {
+    wire::memory::Provenance {
+        author: value.author.clone(),
+        origin_date: value.origin_date,
+        verification: match value.verification {
+            kernel::memory::Verification::Verified => wire::memory::Verification::Verified,
+            kernel::memory::Verification::Unsigned => wire::memory::Verification::Unsigned,
+            kernel::memory::Verification::UnknownKey => wire::memory::Verification::UnknownKey,
+            kernel::memory::Verification::Unreceived => wire::memory::Verification::Unreceived,
+        },
+        checks: value
+            .checks
+            .as_ref()
+            .map(|checks| wire::memory::ReceiptChecks {
+                rules_sha256: checks.rules_sha256.clone(),
+                findings_by_family: checks.findings_by_family.clone(),
+                decision: checks.decision.clone(),
+            }),
+    }
+}
+
 pub(crate) fn memory_chunk_match_body(
     value: kernel::memory::MemoryChunkMatch,
+    origin: Option<&Provenance>,
 ) -> wire::memory::MemoryChunkMatch {
     wire::memory::MemoryChunkMatch {
         index: value.index,
         total: value.total,
         char_start: value.char_start,
         char_end: value.char_end,
-        content: value.content,
+        content: quoted(origin, value.content),
     }
 }
 
@@ -36,19 +81,24 @@ pub(crate) const fn memory_fallback_body(
     }
 }
 
-pub(crate) fn memory_entry_body(value: kernel::memory::MemoryEntry) -> wire::memory::MemoryEntry {
+pub(crate) fn memory_entry_body(
+    value: kernel::memory::MemoryEntry,
+    origins: &Origins,
+) -> wire::memory::MemoryEntry {
+    let origin = origins.get(&value.session_id);
     wire::memory::MemoryEntry {
         id: value.id,
         session_id: value.session_id,
         agent: value.agent,
         channel: value.channel,
         role: value.role,
-        content: value.content,
+        content: quoted(origin, value.content),
         tool_name: value.tool_name,
         tool_args: value.tool_args,
-        tool_result: value.tool_result,
+        tool_result: value.tool_result.map(|text| quoted(origin, text)),
         metadata: value.metadata,
         created_at: value.created_at,
+        provenance: origin.map(provenance_body),
     }
 }
 
@@ -93,13 +143,14 @@ pub(crate) fn recent_session_body(
 
 pub(crate) fn memory_summary_node_body(
     value: kernel::memory::MemorySummaryNode,
+    origin: Option<&Provenance>,
 ) -> wire::gateway::memory::MemorySummaryNode {
     wire::gateway::memory::MemorySummaryNode {
         id: value.id,
         parent_id: value.parent_id,
         level: value.level,
         kind: summary_kind_body(value.kind),
-        content: value.content,
+        content: quoted(origin, value.content),
         message_count: value.message_count,
         earliest_at: value.earliest_at,
         latest_at: value.latest_at,
@@ -108,6 +159,7 @@ pub(crate) fn memory_summary_node_body(
         vector: vector_state_body(value.vector),
         truncated: value.truncated,
         children: value.children,
+        provenance: origin.map(provenance_body),
     }
 }
 

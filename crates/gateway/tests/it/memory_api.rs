@@ -216,6 +216,8 @@ fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
 
 #[path = "memory_api/archive.rs"]
 mod archive;
+#[path = "memory_api/provenance.rs"]
+mod provenance;
 #[path = "memory_api/search_port.rs"]
 mod search_port;
 #[path = "memory_api/tags_and_health.rs"]

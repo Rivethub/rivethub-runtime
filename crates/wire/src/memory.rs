@@ -3,6 +3,7 @@ use crate::gateway::memory::MemoryHitSource;
 use crate::message::Role;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -19,6 +20,7 @@ pub struct MemoryEntry {
     pub tool_result: Option<String>,
     pub metadata: Option<JsonObject>,
     pub created_at: Option<DateTime<Utc>>,
+    pub provenance: Option<Provenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -45,4 +47,31 @@ pub struct MemoryChunkMatch {
     pub char_start: u32,
     pub char_end: u32,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Verification {
+    Verified,
+    Unsigned,
+    UnknownKey,
+    Unreceived,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptChecks {
+    pub rules_sha256: String,
+    pub findings_by_family: BTreeMap<String, u32>,
+    pub decision: String,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Provenance {
+    pub author: Option<String>,
+    pub origin_date: Option<DateTime<Utc>>,
+    pub verification: Verification,
+    pub checks: Option<ReceiptChecks>,
 }

@@ -42,6 +42,7 @@ pub struct MemorySummaryNode {
     pub truncated: bool,
     #[serde(default)]
     pub children: Option<u64>,
+    pub provenance: Option<crate::memory::Provenance>,
 }
 
 #[derive(
