@@ -2427,7 +2427,7 @@ values are pinned by `crates/rivethub/tests/it/local_ensure.rs`; docs/CLI.md has
 this object and never the prose. `pid` is null when the pid file is missing or unreadable; a node that answers is still
 reported as running.
 
-(147) Claude Code subagent capture (Phil, 2026-11-11, "data capture should always aim for 100%"): a subagent transcript
+(148) Claude Code subagent capture (Phil, 2026-11-11, "data capture should always aim for 100%"): a subagent transcript
 (`<projects>/<slug>/<parent session>/subagents/agent-<agentId>.jsonl`, or under `subagents/workflows/<run>/`) is its own
 conversation keyed `claude-code:<agentId>`, agent `rivet-claude`, channel `claude-code`. Its rows are folded exactly as
 note 84 folds a parent transcript, so event ids are `claude-code:<agentId>:<line uuid>` and

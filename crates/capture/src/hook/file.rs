@@ -97,7 +97,7 @@ async fn meta(transcript: &Path) -> Meta {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a subagent whose meta file is absent or unreadable is still captured, without the link fields (CONTRACT note 147)"
+            reason = "PATTERNS FALLBACK: a subagent whose meta file is absent or unreadable is still captured, without the link fields (CONTRACT note 148)"
         )
     )]
     let found: Option<Meta> = tokio::fs::read(&path)
