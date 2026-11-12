@@ -9,6 +9,8 @@ use chrono::Utc;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub mod receive;
+
 use super::CaptureBatchRequest;
 use super::MemoryStoreError;
 use super::SessionDigest;

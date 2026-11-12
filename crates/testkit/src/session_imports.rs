@@ -1,5 +1,6 @@
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::ImportOrigin;
+use kernel::memory::ImportReceipt;
 use kernel::memory::MemoryState;
 use kernel::memory::MemoryStore;
 use kernel::memory::MemoryStoreError;
@@ -8,6 +9,7 @@ use kernel::memory::SessionDeletion;
 use kernel::memory::SessionQuery;
 use kernel::memory::SessionRecord;
 use kernel::memory::SessionView;
+use kernel::memory::share::receive::Verification;
 use wire::capture::BundledSession;
 use wire::capture::SessionOrigin;
 use wire::harness::HarnessId;
@@ -94,13 +96,27 @@ async fn imported(
     memory: &dyn MemoryStore,
     session: &BundledSession,
 ) -> Result<SessionKey, Box<dyn std::error::Error>> {
+    stored(memory, session.import_batch()?).await
+}
+
+async fn received(
+    memory: &dyn MemoryStore,
+    session: &BundledSession,
+    receipt: &wire::capture::Receipt,
+) -> Result<SessionKey, Box<dyn std::error::Error>> {
+    stored(memory, session.received_batch(receipt)?).await
+}
+
+async fn stored(
+    memory: &dyn MemoryStore,
+    batch: wire::capture::CaptureBatchRequest,
+) -> Result<SessionKey, Box<dyn std::error::Error>> {
     let owner = crate::owner()?;
-    let posted: CaptureBatchRequest =
-        serde_json::from_value(serde_json::to_value(session.import_batch()?)?)?;
+    let session_key = batch.session_key.clone();
+    let posted: CaptureBatchRequest = serde_json::from_value(serde_json::to_value(batch)?)?;
     memory.capture(posted, &owner, None).await?;
     let key =
-        wire::capture::owned_import_key(owner.as_str(), &session.import_batch()?.session_key)?
-            .ok_or("an import key")?;
+        wire::capture::owned_import_key(owner.as_str(), &session_key)?.ok_or("an import key")?;
     Ok(key.parse()?)
 }
 
@@ -130,7 +146,14 @@ pub async fn an_import_lists_with_its_origin(
     let seeded = seed(memory).await?;
     let known = bundle("alex", "desk", "7b0e7d1c-0000-4000-8000-000000000001", 50);
     let anonymous = bundle(UNKNOWN, UNKNOWN, UNKNOWN, 70);
-    let key = imported(memory, &known).await?;
+    let receipt = wire::capture::Receipt {
+        bundle_id: "drop-1".to_owned(),
+        received_at: at(90),
+        verification: wire::capture::ReceiptVerification::UnknownKey,
+        key_fingerprint: Some("ed25519:abc".to_owned()),
+        checks: None,
+    };
+    let key = received(memory, &known, &receipt).await?;
     let hidden = imported(memory, &anonymous).await?;
 
     let all = catalog.list(&SessionQuery::new(SessionView::All)).await?;
@@ -146,6 +169,10 @@ pub async fn an_import_lists_with_its_origin(
             author: Some("alex".to_owned()),
             created_at: known.origin.created_at,
             updated_at: known.origin.updated_at,
+            receipt: Some(ImportReceipt {
+                bundle_id: "drop-1".to_owned(),
+                verification: Verification::UnknownKey,
+            }),
         }),
     )?;
     same(
