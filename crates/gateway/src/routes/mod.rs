@@ -20,6 +20,7 @@ mod plugins;
 mod review;
 mod session_delete;
 mod share;
+mod share_receive;
 pub mod tags;
 mod tidy;
 mod today;
@@ -77,6 +78,7 @@ pub(crate) fn router() -> axum::Router<Arc<Gateway>> {
         .merge(plugins::router())
         .merge(session_delete::router())
         .merge(share::router())
+        .merge(share_receive::router())
         .merge(model_calls::router())
 }
 

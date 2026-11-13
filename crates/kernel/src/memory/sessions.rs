@@ -79,6 +79,38 @@ pub struct ImportOrigin {
     pub author: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub receipt: Option<ImportReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportReceipt {
+    pub bundle_id: String,
+    pub verification: super::share::receive::Verification,
+}
+
+#[derive(serde::Deserialize)]
+struct StoredReceipt {
+    bundle_id: String,
+    verification: super::share::receive::Verification,
+}
+
+impl ImportReceipt {
+    #[must_use]
+    pub fn from_settings(settings: &values::JsonObject) -> Option<Self> {
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "CONTRACT B1 (note 152): a stored receipt that does not parse is no receipt, so the session lists without a verification"
+            )
+        )]
+        let stored: Option<StoredReceipt> =
+            serde_json::from_value(settings.get("receipt")?.clone()).ok();
+        stored.map(|stored| Self {
+            bundle_id: stored.bundle_id,
+            verification: stored.verification,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

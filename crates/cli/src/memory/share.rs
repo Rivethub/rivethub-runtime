@@ -1,7 +1,6 @@
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use tokio::io::AsyncReadExt as _;
 
@@ -17,28 +16,17 @@ use capture::sign::KeyParseError;
 use capture::sign::PublicKey;
 use capture::sign::SignError;
 use capture::sign::TrustError;
-use capture::sign::TrustStore;
-use capture::sign::Verification;
-use chrono::DateTime;
 use chrono::Utc;
 use config::Environment;
 use thiserror::Error;
-use wire::capture::Receipt;
-use wire::capture::Sanitization;
-use wire::capture::SessionBundle;
 
 use super::desk::Shared;
-use super::dropbox::DropBox;
-use super::dropbox::MAX_DROP_BYTES;
-use super::inbox::Inbox;
-use super::inbox::Slot;
 use super::parse::MemoryCommand;
 use super::parse::reject;
 use crate::Error;
 use crate::Report;
 use crate::argv::Scan;
 use crate::argv::Taken;
-use crate::share_server::ShareServers;
 
 #[derive(Debug, Error)]
 pub enum ShareError {
@@ -241,10 +229,7 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
         } => receive(env, code, dry_run, force, &decisions).await,
         ShareCommand::KeyShow => key_show(env),
         ShareCommand::TrustAdd { name, key } => {
-            let path = trust_path(env)?;
-            let mut trust = TrustStore::load(&path).map_err(ShareError::from)?;
-            trust.add(&name, key).map_err(ShareError::from)?;
-            trust.save(&path).map_err(ShareError::from)?;
+            super::receiving::trust_sender(env, &name, key)?;
             Ok(Report::success(format!(
                 "trusted {key} ({}) as {}; bundles {name} signs with it now import as verified\n",
                 key.fingerprint(),
@@ -253,19 +238,12 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
         }
         ShareCommand::TrustList => trust_list(env),
         ShareCommand::TrustRemove { name, key } => {
-            let path = trust_path(env)?;
-            let mut trust = TrustStore::load(&path).map_err(ShareError::from)?;
-            let removed = trust.remove(&name, key.as_ref());
-            trust.save(&path).map_err(ShareError::from)?;
+            let removed = super::receiving::untrust_sender(env, &name, key.as_ref())?;
             Ok(Report::success(format!(
                 "removed {removed} trusted key(s) for {name}\n"
             )))
         }
     }
-}
-
-fn trust_path(env: &Environment) -> Result<PathBuf, Error> {
-    Ok(TrustStore::path_in(&capture::share::config_home(env)?))
 }
 
 fn key_show(env: &Environment) -> Result<Report, Error> {
@@ -277,13 +255,13 @@ fn key_show(env: &Environment) -> Result<Report, Error> {
 }
 
 fn trust_list(env: &Environment) -> Result<Report, Error> {
-    let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
-    if trust.senders().is_empty() {
+    let senders = super::receiving::trusted_senders(env)?;
+    if senders.is_empty() {
         return Ok(Report::success(
             "no trusted senders; rh memory trust add <name> <key> adds one\n".to_owned(),
         ));
     }
-    Ok(Report::success(trust.senders().iter().fold(
+    Ok(Report::success(senders.iter().fold(
         String::new(),
         |mut lines, sender| {
             lines.push_str(&sender.name);
@@ -358,47 +336,30 @@ async fn receive(
     force: bool,
     decisions: &Decisions,
 ) -> Result<Report, Error> {
-    let inbox = Inbox::in_state(&capture::share::state_home(env)?);
-    inbox.prune(SystemTime::now())?;
-    let id = code.id.clone();
-    let slot = Slot::of(&code.server, &id);
-    if inbox.was_received(&slot) {
-        return Ok(Report::success(format!(
-            "bundle {id} was already received on this machine; nothing was downloaded\n"
-        )));
-    }
-    let ciphertext = if let Some(kept) = inbox.read(&slot, MAX_DROP_BYTES)? {
-        kept
-    } else {
-        let servers = ShareServers::from_env(env).await?;
-        let drops = DropBox::on(&servers, &code.server).await?;
-        writeln!(std::io::stderr(), "downloading from {}", code.server)?;
-        let partial = inbox.partial()?;
-        drops.download(&id, partial.as_file().try_clone()?).await?;
-        inbox.keep(&slot, partial)?;
-        inbox
-            .read(&slot, MAX_DROP_BYTES)?
-            .ok_or_else(|| std::io::Error::other("the inbox lost the download"))?
+    let fetched = match super::receiving::fetch(env, code, |server| {
+        writeln!(std::io::stderr(), "downloading from {server}")
+    })
+    .await
+    {
+        Ok(fetched) => fetched,
+        Err(error @ super::receiving::FetchError::AlreadyReceived(_)) => {
+            return Ok(Report::success(format!("{error}\n")));
+        }
+        Err(error) => return Err(error.into()),
     };
-    let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
-    let opened =
-        tokio::task::spawn_blocking(move || capture::seal::open(ciphertext, &code.key, &trust))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ShareError::from)?;
-    screen(&opened.bundle)?;
-    let user = capture::receive::visible(&opened.bundle.manifest.exported_by.user);
-    let reason = capture::receive::visible(&opened.verification.reason(&user));
-    let checked = capture::receive::check(&opened.bundle);
-    let plan = match checked.plan(&opened.bundle, decisions, force) {
+    let bundle = fetched.bundle();
+    let user = capture::receive::visible(&bundle.manifest.exported_by.user);
+    let reason = capture::receive::visible(&fetched.opened.verification.reason(&user));
+    let checked = capture::receive::check(bundle);
+    let plan = match checked.plan(bundle, decisions, force) {
         Ok(plan) => plan,
         Err(Blocked::Undecided { .. }) => {
             return Ok(super::hold::held_report(
                 &checked,
-                &opened.bundle,
+                bundle,
                 &format!(
                     "The ciphertext stays in {}; rerun this command with your decisions.",
-                    inbox.ciphertext_path(&slot).display()
+                    fetched.ciphertext_path().display()
                 ),
             ));
         }
@@ -409,11 +370,11 @@ async fn receive(
     if dry_run {
         return Ok(Report::success(format!(
             "would import {sessions} from {user} ({reason}){decided}; nothing written, and the ciphertext stays in {}\n",
-            inbox.ciphertext_path(&slot).display()
+            fetched.ciphertext_path().display()
         )));
     }
     let now = Utc::now();
-    let receipt = receipt(&id, now, &opened.verification);
+    let receipt = fetched.receipt(now);
     let imports: Vec<_> = plan
         .imports
         .iter()
@@ -428,33 +389,12 @@ async fn receive(
     } else {
         crate::capture_hook::ingest_bundle(env, &imports, Some(&receipt), now).await?
     };
-    inbox.mark_received(&slot)?;
+    fetched.mark_received()?;
     Ok(Report::success(format!(
         "received {} from {user} ({reason}); imported {}{decided}: {} messages inserted, {} skipped\n",
-        sessions_noun(opened.bundle.sessions.len()),
+        sessions_noun(bundle.sessions.len()),
         plan.imports.len(),
         totals.inserted,
         totals.skipped
     )))
-}
-
-fn receipt(id: &capture::seal::DropId, at: DateTime<Utc>, verification: &Verification) -> Receipt {
-    Receipt {
-        bundle_id: id.to_string(),
-        received_at: at,
-        verification: verification.kind(),
-        key_fingerprint: verification.key().map(PublicKey::fingerprint),
-        checks: None,
-    }
-}
-
-fn screen(bundle: &SessionBundle) -> Result<(), ShareError> {
-    if bundle.manifest.sanitization == Sanitization::Raw {
-        return Err(ShareError::Raw);
-    }
-    let flags = capture::sanitize::open_flags(bundle).map_err(SealError::from)?;
-    if flags.withheld > 0 {
-        return Err(ShareError::Withheld(flags.withheld));
-    }
-    Ok(())
 }

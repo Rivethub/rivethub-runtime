@@ -253,6 +253,21 @@
       ],
       "type": "object"
     },
+    "BundleSigner": {
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "fingerprint"
+      ],
+      "type": "object"
+    },
     "BundledSession": {
       "properties": {
         "batch": {
@@ -2521,6 +2536,52 @@
       },
       "required": [
         "query"
+      ],
+      "type": "object"
+    },
+    "FindingFamily": {
+      "enum": [
+        "secret",
+        "injection"
+      ],
+      "type": "string"
+    },
+    "FindingRow": {
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excerpt": {
+          "type": "string"
+        },
+        "family": {
+          "$ref": "#/$defs/FindingFamily"
+        },
+        "field": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "rule",
+        "family",
+        "kind",
+        "count",
+        "excerpt"
       ],
       "type": "object"
     },
@@ -5165,6 +5226,197 @@
       },
       "required": [
         "cloud"
+      ],
+      "type": "object"
+    },
+    "ImportReply": {
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "bundle": {
+          "type": "string"
+        },
+        "imported": {
+          "items": {
+            "$ref": "#/$defs/ImportedSession"
+          },
+          "type": "array"
+        },
+        "receivedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "signer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BundleSigner"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skipped": {
+          "items": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "verification": {
+          "$ref": "#/$defs/ReceiptVerification"
+        }
+      },
+      "required": [
+        "bundle",
+        "receivedAt",
+        "author",
+        "verification",
+        "imported",
+        "skipped"
+      ],
+      "type": "object"
+    },
+    "ImportRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "force": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "sessions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SessionChoice"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
+    "ImportVerdict": {
+      "enum": [
+        "clean",
+        "import",
+        "hold_spans"
+      ],
+      "type": "string"
+    },
+    "ImportedSession": {
+      "properties": {
+        "inserted": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "n": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "verdict": {
+          "$ref": "#/$defs/ImportVerdict"
+        },
+        "verification": {
+          "$ref": "#/$defs/ReceiptVerification"
+        }
+      },
+      "required": [
+        "n",
+        "key",
+        "verification",
+        "verdict",
+        "inserted",
+        "skipped"
+      ],
+      "type": "object"
+    },
+    "InboundSession": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "allowed": {
+          "items": {
+            "$ref": "#/$defs/ReceiveDecision"
+          },
+          "type": "array"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "findings": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messages": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "n": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/FindingRow"
+          },
+          "type": "array"
+        },
+        "secret": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "n",
+        "title",
+        "agent",
+        "messages",
+        "findings",
+        "rows",
+        "secret",
+        "allowed"
       ],
       "type": "object"
     },
@@ -9031,6 +9283,152 @@
       ],
       "type": "string"
     },
+    "ReceiveDecision": {
+      "enum": [
+        "import",
+        "skip",
+        "hold_spans"
+      ],
+      "type": "string"
+    },
+    "ReceiveReason": {
+      "enum": [
+        "not_local",
+        "invalid",
+        "bad_code",
+        "already_received",
+        "gone",
+        "burned",
+        "too_large",
+        "unreachable",
+        "refused",
+        "undecryptable",
+        "unreadable",
+        "bad_signature",
+        "raw",
+        "withheld",
+        "no_such_session",
+        "undecided",
+        "secret_import",
+        "author_findings",
+        "bad_key",
+        "bad_name",
+        "duplicate",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "ReceiveRefusal": {
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ReceiveReason"
+        },
+        "sessions": {
+          "items": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "error",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ReceiveReport": {
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "authorFindings": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "authorRows": {
+          "items": {
+            "$ref": "#/$defs/FindingRow"
+          },
+          "type": "array"
+        },
+        "bundle": {
+          "type": "string"
+        },
+        "downloaded": {
+          "type": "boolean"
+        },
+        "held": {
+          "type": "boolean"
+        },
+        "node": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/$defs/InboundSession"
+          },
+          "type": "array"
+        },
+        "signer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BundleSigner"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/ReceiptVerification"
+        }
+      },
+      "required": [
+        "bundle",
+        "server",
+        "downloaded",
+        "author",
+        "node",
+        "verification",
+        "reason",
+        "sessions",
+        "authorFindings",
+        "authorRows",
+        "summary",
+        "held"
+      ],
+      "type": "object"
+    },
+    "ReceiveRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "type": "object"
+    },
     "RecentSession": {
       "properties": {
         "agent": {
@@ -9677,6 +10075,24 @@
       ],
       "type": "object"
     },
+    "SessionChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ReceiveDecision"
+        },
+        "n": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "decision"
+      ],
+      "type": "object"
+    },
     "SessionDecision": {
       "enum": [
         "approve",
@@ -10088,6 +10504,12 @@
             "null"
           ]
         },
+        "bundleId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "createdAt": {
           "format": "date-time",
           "type": [
@@ -10100,6 +10522,16 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "verification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReceiptVerification"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -12778,6 +13210,55 @@
       ],
       "type": "string"
     },
+    "TrustReply": {
+      "properties": {
+        "senders": {
+          "items": {
+            "$ref": "#/$defs/TrustedSender"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "senders"
+      ],
+      "type": "object"
+    },
+    "TrustRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "key"
+      ],
+      "type": "object"
+    },
+    "TrustedSender": {
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "key",
+        "fingerprint"
+      ],
+      "type": "object"
+    },
     "TurnComplexity": {
       "properties": {
         "hadErrorRecovery": {
@@ -12802,6 +13283,37 @@
         "hadErrorRecovery",
         "hadUserCorrection",
         "uniqueTools"
+      ],
+      "type": "object"
+    },
+    "UntrustReply": {
+      "properties": {
+        "removed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "type": "object"
+    },
+    "UntrustRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
       ],
       "type": "object"
     },

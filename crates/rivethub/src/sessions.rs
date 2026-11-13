@@ -292,7 +292,9 @@ fn author_of(session: &BundledSession) -> &str {
     session.origin.known_author().unwrap_or("an unknown author")
 }
 
-fn kernel_batch(batch: wire::capture::CaptureBatchRequest) -> kernel::memory::CaptureBatchRequest {
+pub(crate) fn kernel_batch(
+    batch: wire::capture::CaptureBatchRequest,
+) -> kernel::memory::CaptureBatchRequest {
     kernel::memory::CaptureBatchRequest {
         session_key: batch.session_key,
         agent: batch.agent,

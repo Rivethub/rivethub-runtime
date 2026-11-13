@@ -15,6 +15,8 @@ pub use hold::Decision;
 pub use hold::DecisionError;
 pub use hold::Decisions;
 pub use hold::Plan;
+pub use report::ROWS_PER_SESSION;
+pub use report::Row;
 pub(crate) use report::excerpt;
 pub use report::visible;
 

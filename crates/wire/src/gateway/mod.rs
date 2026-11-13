@@ -12,6 +12,7 @@ pub mod session_catalog;
 pub mod session_delete;
 pub mod sessions;
 pub mod share;
+pub mod share_receive;
 pub mod tenancy;
 pub mod tidy;
 pub mod today;

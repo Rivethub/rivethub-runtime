@@ -25,6 +25,8 @@ use kernel::topics::TopicStore;
 use memory_postgres::PostgresMemory;
 use memory_sqlite::SqliteStore;
 use thiserror::Error;
+
+use crate::share_receive::NodeReceiver;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -375,6 +377,7 @@ impl Composition {
         let memory = Arc::clone(&store);
         let settings = gateway_settings(config, env)?;
         let node_name = settings.node.clone();
+        let receiver_node = settings.node.clone();
         let section = config.gateway.clone();
         let tls_env = env.clone();
         let shared = config::shared_dir(env);
@@ -408,6 +411,13 @@ impl Composition {
         let tracker = tokio_util::task::TaskTracker::new();
         gateway = drop_box(gateway, config, &tracker, shutdown).await?;
         gateway = account::attach(gateway, config, env, &bind, shutdown, &tracker).await?;
+        gateway = gateway.with_receive_desk(Arc::new(NodeReceiver::new(
+            config,
+            env,
+            identity.primary(),
+            receiver_node,
+            Arc::clone(&memory),
+        )));
         if let Some(sessions) = backing.sessions.take() {
             let desk = Arc::new(NodeDesk::new::<ComposeError>(
                 config,

@@ -5,6 +5,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use kernel::filing::stored_keys;
 use kernel::memory::ImportOrigin;
+use kernel::memory::ImportReceipt;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -152,8 +153,12 @@ struct Row {
 }
 
 fn import_origin(settings: Option<sqlx::types::Json<JsonObject>>) -> ImportOrigin {
+    let receipt = settings
+        .as_ref()
+        .and_then(|settings| ImportReceipt::from_settings(&settings.0));
     let origin = settings.and_then(|settings| SessionOrigin::of(&settings.0));
     ImportOrigin {
+        receipt,
         author: origin
             .as_ref()
             .and_then(SessionOrigin::known_author)

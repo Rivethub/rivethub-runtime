@@ -8,6 +8,7 @@ pub mod models;
 pub mod service;
 pub mod sessions;
 pub mod share_desk;
+pub mod share_receive;
 mod shutdown;
 pub mod sidecar;
 mod signals;
