@@ -114,26 +114,45 @@ struct StoredOrigin {
     created_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Receipt {
+    pub(crate) bundle_id: Option<String>,
+    pub(crate) verification: Verification,
+    pub(crate) checks: Option<ReceiptChecks>,
+}
+
 #[derive(Deserialize)]
 struct StoredReceipt {
+    bundle_id: Option<String>,
     verification: Option<String>,
     checks: Option<ReceiptChecks>,
+}
+
+impl Receipt {
+    pub(crate) fn from_settings(settings: &JsonObject) -> Option<Self> {
+        let stored = parsed::<StoredReceipt>(settings, "receipt")?;
+        let verification = match stored.verification.as_deref() {
+            Some("verified") => Verification::Verified,
+            Some("unsigned") => Verification::Unsigned,
+            Some("unknown_key") => Verification::UnknownKey,
+            _ => Verification::Unreceived,
+        };
+        Some(Self {
+            bundle_id: stored.bundle_id,
+            verification,
+            checks: stored.checks,
+        })
+    }
 }
 
 impl Provenance {
     #[must_use]
     pub fn from_settings(settings: &JsonObject) -> Self {
         let origin = parsed::<StoredOrigin>(settings, "origin");
-        let receipt = parsed::<StoredReceipt>(settings, "receipt");
-        let verification = match receipt
+        let receipt = Receipt::from_settings(settings);
+        let verification = receipt
             .as_ref()
-            .and_then(|receipt| receipt.verification.as_deref())
-        {
-            Some("verified") => Verification::Verified,
-            Some("unsigned") => Verification::Unsigned,
-            Some("unknown_key") => Verification::UnknownKey,
-            _ => Verification::Unreceived,
-        };
+            .map_or(Verification::Unreceived, |receipt| receipt.verification);
         Self {
             author: origin
                 .as_ref()
@@ -180,7 +199,8 @@ fn parsed<T: serde::de::DeserializeOwned>(settings: &JsonObject, key: &str) -> O
             reason = "CONTRACT B6 (note 150): a stored origin or receipt that does not parse reads as unattributed and unverified, and the recall still succeeds"
         )
     )]
-    let parsed = serde_json::from_value(settings.get(key)?.clone()).ok();
+    let parsed =
+        serde_json::from_value(settings.get(key).filter(|value| value.is_object())?.clone()).ok();
     parsed
 }
 
@@ -275,6 +295,10 @@ mod tests {
             r#"{"origin":{"author":"phil"},"receipt":{"verification":"trusted-ish"}}"#,
         ));
         assert_eq!(odd.verification, Verification::Unreceived);
+        let forged = Provenance::from_settings(&settings(
+            r#"{"origin":{"author":"phil"},"receipt":[null,"verified",null]}"#,
+        ));
+        assert_eq!(forged.verification, Verification::Unreceived);
         let real = Provenance::from_settings(&settings(
             r#"{"origin":{"author":"phil"},"receipt":{"verification":"verified"}}"#,
         ));
