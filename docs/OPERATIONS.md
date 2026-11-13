@@ -42,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(62 at 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.1, unchanged from 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -69,6 +69,85 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     ON rh_messages (conversation_id, (metadata ->> 'event_id'))
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
+
+## Upgrading from 0.8.0 to 0.8.1
+
+0.8.1 needs no schema migration. It is also a security release, so these things behave differently after the upgrade
+(CONTRACT notes 143 to 152 have the rules).
+
+### Local access
+
+- **Loopback is not the owner any more.** Every route needs a credential except `/healthz` (name, node and version
+  only), the static shell and `/login`, `POST /api/auth/session` (which needs a live single-use login code), and
+  `GET /api/drops/{id}` when a team server has drops enabled. A script or a `curl` that talked to `127.0.0.1:5174`
+  without a credential now gets 401. Send the local owner token:
+  `curl -H "Authorization: Bearer $(cat $(rh auth token-path))" ...`. `rh`, the capture hook and the systemd user unit
+  read that file themselves. For a browser, run `rh open` and use the single-use link it prints.
+- **The owner credential has limits.** The gateway honors the owner token or an owner browser session only from a direct
+  loopback peer, with a `Host` of `127.0.0.1`, `[::1]` or `localhost`, and with no `Forwarded`, `X-Forwarded-*` or
+  `X-Real-IP` header. A reverse proxy or an `ssh -R` tunnel in front of the gateway no longer reaches the owner routes,
+  and a desktop or script integration must connect directly to the loopback port. Behind a proxy, use a users-file
+  token instead.
+- **Fresh login for sensitive actions.** Token rotation, account sign-in, sign-out and edits, and memory export need a
+  browser login made within `gateway.fresh_login_secs` (300 seconds by default), else 401 `reauth_required`: run `rh open`
+  again. The owner token is always fresh. The same holds for sending a share and for signing in or out of a share
+  server. `/api/share/**` takes only the owner token or an owner browser session, never a users-file token or a plug-in.
+- **Rotation and downgrade.** The gateway creates `<state_dir>/local-owner.token` the first time the new version starts.
+  `rh auth rotate` replaces it and ends every browser session. A new `rh` against a still-running 0.8.0 gateway keeps
+  working until the gateway restarts. To go back to 0.8.0, delete `local-owner.token` first.
+
+### Capture
+
+The hook writes each batch to `~/.rivethub/capture-spool/` before it posts, and a 401 or a refused connection leaves it
+there for the next hook to deliver. Nothing evicts the spool, so disk space is the only limit: the hook warns past 1,000
+entries or 100 MB, and `rh status` and `rh doctor` warn too. A batch that cannot be written exits the hook with 1 and
+`capture batch was NOT saved`. `rh capture spool` lists the queue and `--requeue-dead` retries the dead letters. `rh
+capture backfill` captures everything already on disk, including Claude Code subagent transcripts.
+
+Only the local owner's capture can record a share receipt. A batch from any other principal (a team member's token, a
+plug-in) is kept, but the gateway strips its `settings.receipt`, so a session a member receives through your server reads
+as unverified. `memory_append` and `memory_ingest_session` refuse an entry for an imported session (an `import:` key) or
+one that carries a receipt.
+
+### Receiving shared sessions
+
+`rh memory receive` and `rh memory ingest-bundle` check every sanitized bundle for secrets and prompt injection before
+they write. A sanitized bundle with any finding imports nothing: the command prints a `held:` report and exits 3, and a
+received bundle's ciphertext stays in the inbox for a rerun. Decide per session with
+`--session <n>=import|skip|hold-spans`, or for all with `--all=import|skip|hold-spans`. A session with a secret finding
+takes only `skip` or `hold-spans` unless you also pass `--force`. For a sanitized bundle, `--force` alone imports
+nothing flagged, because a decision is still needed. A raw bundle (one `rh memory sanitize` has not stamped) is different:
+`ingest-bundle` refuses it unless you pass `--force`, and a forced raw import skips these checks entirely. The MCP tool
+`session_import` refuses any bundle with findings and tells the agent to ask you to run the CLI command. The desktop's
+receive routes apply the same rules to sanitized bundles.
+
+### Share servers
+
+- **Team servers.** A users-file token is not enough to serve shares: `gateway.drops.enabled` is `false` by default, and
+  until it is on, the server has no drop routes. To turn it on, put this in config.yaml. `root` defaults to a `drops`
+  directory in the state directory and must be owned by the server's user with mode 0700. Defaults are shown:
+
+  ```yaml
+  gateway:
+    drops:
+      enabled: true
+      root: /var/lib/rivethub/drops   # optional
+      max_bytes: 67108864             # at most 64 MiB per drop
+      per_user_drops: 50
+      per_user_bytes: 536870912       # 512 MiB per member
+  ```
+
+  A drop expires after 7 days and downloads once. Members upload with a bearer token from their entry in the users
+  file, and a bare digest is a full token that also reads all memory, so give a member who only shares
+  `{"digest": "<sha-256 hex>", "scopes": ["drops:write"]}`. The local owner token is not a users-file token and cannot
+  upload. Serve it over TLS, or list the reverse proxy in `gateway.trusted_proxies` so the server
+  can tell that a request arrived over HTTPS (CONTRACT note 143).
+- **Sign in to share again.** 0.8.0 signed in to rivethub.cloud with its own `/api/cli` endpoints, which the cloud no
+  longer serves. `rh share login` now uses OAuth device sign-in found through the server's RFC 8414 metadata, and asks
+  for `offline_access` so the login can refresh. Run `rh share login` once on each machine. A team server offers no
+  device sign-in: members use the users-file token.
+- **`cloud.disabled`.** New and off by default. See "Keeping data on your network" below to keep a hub off
+  rivethub.cloud, and `rh local --no-cloud` to write it into a new standalone config.
 
 ## Backups
 
