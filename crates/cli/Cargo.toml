@@ -43,11 +43,13 @@ serde_json = { workspace = true }
 strum = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "macros", "process", "rt", "time", "io-util", "io-std"] }
+tokio = { workspace = true, features = ["fs", "macros", "process", "rt", "rt-multi-thread", "time", "io-util", "io-std"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
+sqlx = { workspace = true, features = ["macros"] }
+tracing-subscriber = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
@@ -78,6 +80,10 @@ path = "tests/search-eval/eval.rs"
 [[bin]]
 name = "search-eval-server"
 path = "tests/search-eval/server.rs"
+
+[[bin]]
+name = "wiki-eval"
+path = "tests/wiki-eval/main.rs"
 
 [lints]
 workspace = true
