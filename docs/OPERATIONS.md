@@ -368,6 +368,20 @@ or usage count is written or sent, `rh update` fetches GitHub releases, and noth
 Users cannot turn any of it back on; only an edit to config.yaml does. `rh status`, `rh doctor` and `/healthz` report
 the policy. CONTRACT note 145 has the full rules.
 
+To keep crash reports and usage counts but send them to your own collector, name it in `telemetry.url`:
+
+```yaml
+telemetry:
+  url: https://telemetry.example.com/
+```
+
+The node then posts crash reports to `<url>/v1/telemetry/crash` and daily usage counts to `<url>/v1/telemetry/usage`
+with the same JSON rivethub.cloud receives, and nothing goes to rivethub.cloud for telemetry. Answer `202` to accept a
+report; `422` or `413` drops it. On any other answer a crash report stays queued for the next try, but a day's usage
+report is not resent. This also works with `cloud: {disabled:
+true}`: the cloud stays off and only telemetry goes to your url. `telemetry: {disabled: true}` turns telemetry off
+everywhere and wins over the url. CONTRACT note 154 has the rules.
+
 This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
 config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config
 of their own is not bound by it; to keep such users off the network, restrict their outbound traffic as well.

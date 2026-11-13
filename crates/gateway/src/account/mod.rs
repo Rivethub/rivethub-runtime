@@ -75,6 +75,7 @@ pub enum AccountError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudSettings {
     pub base: Url,
+    pub telemetry: Url,
     pub update_key: UpdateKey,
     pub access: CloudAccess,
 }
@@ -83,51 +84,60 @@ pub struct CloudSettings {
 pub enum CloudAccess {
     Open,
     NoTelemetry,
+    TelemetryOnly,
     Disabled,
 }
 
 impl CloudAccess {
     #[must_use]
     pub fn from_config(config: &config::Config) -> Self {
-        if config.cloud_disabled() {
-            Self::Disabled
-        } else if config.telemetry_disabled() {
-            Self::NoTelemetry
-        } else {
-            Self::Open
+        match (config.cloud_disabled(), config.telemetry_disabled()) {
+            (true, true) => Self::Disabled,
+            (true, false) => Self::TelemetryOnly,
+            (false, true) => Self::NoTelemetry,
+            (false, false) => Self::Open,
         }
     }
 
     #[must_use]
     pub const fn telemetry(self) -> bool {
-        matches!(self, Self::Open)
+        matches!(self, Self::Open | Self::TelemetryOnly)
     }
 
     #[must_use]
     pub const fn cloud(self) -> bool {
-        !matches!(self, Self::Disabled)
+        matches!(self, Self::Open | Self::NoTelemetry)
     }
 }
 
 impl CloudSettings {
     pub fn from_config(config: &config::Config) -> Result<Self, AccountError> {
         let section = config.cloud.clone().unwrap_or_default();
-        let mut base = match section.url {
+        let base = directory(match section.url {
             Some(url) => url,
             None => Url::parse(DEFAULT_CLOUD)?,
-        };
-        if !base.path().ends_with('/') {
-            let path = format!("{}/", base.path());
-            base.set_path(&path);
-        }
+        });
+        let telemetry = config
+            .telemetry_url()
+            .cloned()
+            .map_or_else(|| base.clone(), directory);
         let update_key = match section.update_key.as_deref() {
             Some(text) => UpdateKey::parse(text)?,
             None => RELEASE_KEY,
         };
         Ok(Self {
             base,
+            telemetry,
             update_key,
             access: CloudAccess::from_config(config),
         })
     }
+}
+
+fn directory(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    url
 }

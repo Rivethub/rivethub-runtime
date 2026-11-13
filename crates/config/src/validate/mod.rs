@@ -351,6 +351,9 @@ fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
     if let Some(entries) = &config.hubs {
         hubs::validate(out, entries);
     }
+    if let Some(section) = &config.telemetry {
+        hubs::telemetry(out, section);
+    }
     if let Some(section) = &config.cloud {
         hubs::cloud(out, section);
     }
