@@ -152,6 +152,11 @@ impl From<Error> for MemoryStoreError {
             Error::Operation {
                 message, source, ..
             } if unstorable_text(&source) => Self::InvalidRequest { message },
+            Error::Operation { source, .. } if refused(&source) => Self::Forbidden {
+                message: source
+                    .as_database_error()
+                    .map_or_else(|| source.to_string(), |error| error.message().to_owned()),
+            },
             error @ Error::Operation { .. } if cancelled(&error) => {
                 Self::Unavailable(Box::new(error))
             }
@@ -170,6 +175,13 @@ fn cancelled(error: &Error) -> bool {
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
         .is_some_and(|code| code == "57014"))
+}
+
+fn refused(source: &sqlx::Error) -> bool {
+    source
+        .as_database_error()
+        .and_then(sqlx::error::DatabaseError::code)
+        .is_some_and(|code| code == "42501")
 }
 
 fn unstorable_text(source: &sqlx::Error) -> bool {

@@ -141,25 +141,34 @@ impl ApiError {
                 GatewayError::new("too many requests"),
             ),
             Self::ForbiddenOrigin => (StatusCode::FORBIDDEN, GatewayError::new("forbidden origin")),
-            Self::Store(MemoryStoreError::InvalidRequest { message }) => {
-                (StatusCode::BAD_REQUEST, GatewayError::new(message))
-            }
-            Self::Store(MemoryStoreError::Unavailable(_)) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                GatewayError::new(STORE_UNAVAILABLE),
-            ),
-            Self::Store(MemoryStoreError::Query { source, .. }) => {
-                tracing::error!(error = %source, "memory query failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    GatewayError::new(STORE_QUERY_FAILED),
-                )
-            }
-            Self::Store(error @ MemoryStoreError::TagTablesMissing) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                GatewayError::new(error.to_string()),
-            ),
+            Self::Store(error) => store_error(error),
         }
+    }
+}
+
+fn store_error(error: MemoryStoreError) -> (StatusCode, GatewayError) {
+    match error {
+        MemoryStoreError::InvalidRequest { message } => {
+            (StatusCode::BAD_REQUEST, GatewayError::new(message))
+        }
+        MemoryStoreError::Forbidden { message } => {
+            (StatusCode::FORBIDDEN, GatewayError::new(message))
+        }
+        MemoryStoreError::Unavailable(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            GatewayError::new(STORE_UNAVAILABLE),
+        ),
+        MemoryStoreError::Query { source, .. } => {
+            tracing::error!(error = %source, "memory query failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                GatewayError::new(STORE_QUERY_FAILED),
+            )
+        }
+        error @ MemoryStoreError::TagTablesMissing => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            GatewayError::new(error.to_string()),
+        ),
     }
 }
 
