@@ -17,11 +17,12 @@ use crate::writer::CaptureWriter;
 use crate::writer::PostError;
 use crate::writer::WriteError;
 
-pub const HARNESSES: [HarnessId; 4] = [
+pub const HARNESSES: [HarnessId; 5] = [
     HarnessId::ClaudeCode,
     HarnessId::GrokBuild,
     HarnessId::Opencode,
     HarnessId::Codex,
+    HarnessId::Dsh,
 ];
 
 const EVENT: &str = "Backfill";
@@ -87,13 +88,12 @@ impl<T: CaptureTransport> Backfill<T> {
             let mut totals = HarnessTotals::new(harness);
             let reachable = match harness {
                 HarnessId::ClaudeCode => self.claude(&mut totals, dry_run, now).await,
-                HarnessId::GrokBuild | HarnessId::Opencode | HarnessId::Codex => {
+                HarnessId::GrokBuild | HarnessId::Opencode | HarnessId::Codex | HarnessId::Dsh => {
                     self.store(&mut totals, dry_run, now).await
                 }
                 HarnessId::KimiCode
                 | HarnessId::Hermes
                 | HarnessId::Omp
-                | HarnessId::Dsh
                 | HarnessId::Cursor
                 | HarnessId::Cowork => true,
             };
@@ -201,11 +201,11 @@ fn store_harness(harness: HarnessId) -> Option<StoreHarness> {
         HarnessId::GrokBuild => Some(StoreHarness::GrokBuild),
         HarnessId::Opencode => Some(StoreHarness::Opencode),
         HarnessId::Codex => Some(StoreHarness::Codex),
+        HarnessId::Dsh => Some(StoreHarness::Dsh),
         HarnessId::ClaudeCode
         | HarnessId::KimiCode
         | HarnessId::Hermes
         | HarnessId::Omp
-        | HarnessId::Dsh
         | HarnessId::Cursor
         | HarnessId::Cowork => None,
     }

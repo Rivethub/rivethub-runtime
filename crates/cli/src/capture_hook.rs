@@ -29,8 +29,8 @@ const POST_TIMEOUT: Duration = Duration::from_secs(15);
 pub enum CaptureCommand {
     #[command(about = "Capture one harness hook payload read from stdin")]
     Hook {
-        #[arg(long, value_enum, default_value_t = HookHarness::ClaudeCode)]
-        harness: HookHarness,
+        #[arg(long, value_enum, default_value_t = CaptureHarness::ClaudeCode)]
+        harness: CaptureHarness,
     },
     #[command(about = "Show the capture spool, or move dead-lettered batches back to it")]
     Spool {
@@ -42,7 +42,7 @@ pub enum CaptureCommand {
     )]
     Backfill {
         #[arg(long = "harness", value_enum)]
-        harnesses: Vec<BackfillHarness>,
+        harnesses: Vec<CaptureHarness>,
         #[arg(long, help = "Read and count the sessions and post nothing")]
         dry_run: bool,
         #[arg(long)]
@@ -51,31 +51,24 @@ pub enum CaptureCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum BackfillHarness {
+pub enum CaptureHarness {
     ClaudeCode,
     GrokBuild,
     Opencode,
     Codex,
+    Dsh,
 }
 
-impl BackfillHarness {
+impl CaptureHarness {
     fn id(self) -> HarnessId {
         match self {
             Self::ClaudeCode => HarnessId::ClaudeCode,
             Self::GrokBuild => HarnessId::GrokBuild,
             Self::Opencode => HarnessId::Opencode,
             Self::Codex => HarnessId::Codex,
+            Self::Dsh => HarnessId::Dsh,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum HookHarness {
-    ClaudeCode,
-    GrokBuild,
-    Opencode,
-    Codex,
-    Dsh,
 }
 
 pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Report, Error> {
@@ -88,17 +81,17 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
                 return Ok(report(HookRun::done()));
             }
             Ok(match harness {
-                HookHarness::ClaudeCode => hook(env, &stdin, Utc::now()).await,
-                HookHarness::GrokBuild => {
+                CaptureHarness::ClaudeCode => hook(env, &stdin, Utc::now()).await,
+                CaptureHarness::GrokBuild => {
                     store_hook(env, &stdin, Utc::now(), StoreHarness::GrokBuild).await
                 }
-                HookHarness::Opencode => {
+                CaptureHarness::Opencode => {
                     store_hook(env, &stdin, Utc::now(), StoreHarness::Opencode).await
                 }
-                HookHarness::Codex => {
+                CaptureHarness::Codex => {
                     store_hook(env, &stdin, Utc::now(), StoreHarness::Codex).await
                 }
-                HookHarness::Dsh => store_hook(env, &stdin, Utc::now(), StoreHarness::Dsh).await,
+                CaptureHarness::Dsh => store_hook(env, &stdin, Utc::now(), StoreHarness::Dsh).await,
             })
         }
         CaptureCommand::Backfill {
@@ -106,7 +99,7 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
             dry_run,
             json,
         } => {
-            let ids: Vec<HarnessId> = harnesses.into_iter().map(BackfillHarness::id).collect();
+            let ids: Vec<HarnessId> = harnesses.into_iter().map(CaptureHarness::id).collect();
             Ok(backfill(env, &ids, dry_run, json, Utc::now()).await)
         }
     }
