@@ -100,9 +100,15 @@ async fn the_topic_page_is_cited_without_a_proposal(pool: PgPool) -> TestResult 
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_second_session_naming_an_entity_gives_it_its_own_page(pool: PgPool) -> TestResult {
+async fn a_typed_entity_mention_does_not_create_a_page(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
-    wiki_routes::a_second_session_naming_an_entity_gives_it_its_own_page(
+    wiki_routes::a_typed_entity_mention_does_not_create_a_page(seeded.stores(), &seeded.job).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn an_entity_page_is_not_written_by_the_topic_router(pool: PgPool) -> TestResult {
+    let seeded = Seeded::new(pool).await?;
+    testkit::wiki_mentions::an_entity_page_is_not_written_by_the_topic_router(
         seeded.stores(),
         &seeded.job,
     )
@@ -110,20 +116,10 @@ async fn a_second_session_naming_an_entity_gives_it_its_own_page(pool: PgPool) -
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn an_entity_page_names_the_sessions_that_cite_it(pool: PgPool) -> TestResult {
-    let seeded = Seeded::new(pool).await?;
-    testkit::wiki_mentions::an_entity_page_names_the_sessions_that_cite_it(
-        seeded.stores(),
-        &seeded.job,
-    )
-    .await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_mention_held_before_its_entity_existed_still_lands(pool: PgPool) -> TestResult {
+async fn a_held_entity_mention_is_left_for_the_entity_worker(pool: PgPool) -> TestResult {
     let earlier = summarized(&pool, testkit::wiki_mentions::EARLIER_KEY).await?;
     let seeded = Seeded::new(pool).await?;
-    testkit::wiki_mentions::a_mention_held_before_its_entity_existed_still_lands(
+    testkit::wiki_mentions::a_held_entity_mention_is_left_for_the_entity_worker(
         seeded.stores(),
         &seeded.job,
         &earlier,
@@ -132,16 +128,16 @@ async fn a_mention_held_before_its_entity_existed_still_lands(pool: PgPool) -> T
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn an_entity_type_is_found_by_its_whole_path(pool: PgPool) -> TestResult {
+async fn an_entity_type_path_does_not_create_a_page(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
-    testkit::wiki_mentions::an_entity_type_is_found_by_its_whole_path(seeded.stores(), &seeded.job)
+    testkit::wiki_mentions::an_entity_type_path_does_not_create_a_page(seeded.stores(), &seeded.job)
         .await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn an_entity_goes_by_its_names_never_by_a_description(pool: PgPool) -> TestResult {
+async fn an_entity_name_is_not_merged_by_the_topic_router(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
-    testkit::wiki_mentions::an_entity_goes_by_its_names_never_by_a_description(
+    testkit::wiki_mentions::an_entity_name_is_not_merged_by_the_topic_router(
         seeded.stores(),
         &seeded.job,
     )
@@ -224,10 +220,10 @@ async fn concurrent_rewrites_of_one_page_keep_both(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn an_entity_mention_is_merged_into_its_page(pool: PgPool) -> TestResult {
+async fn an_entity_mention_is_not_merged_by_the_topic_router(pool: PgPool) -> TestResult {
     let second = summarized(&pool, testkit::wiki_mentions::EARLIER_KEY).await?;
     let seeded = Seeded::new(pool).await?;
-    testkit::wiki_bounded::an_entity_mention_is_merged_into_its_page(
+    testkit::wiki_bounded::an_entity_mention_is_not_merged_by_the_topic_router(
         seeded.stores(),
         &seeded.job,
         &second,

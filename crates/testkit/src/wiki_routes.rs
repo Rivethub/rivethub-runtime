@@ -146,7 +146,6 @@ impl RouteStores<'_> {
             topics: TopicPorts {
                 topics: self.pages.topics,
                 pages: self.pages.pages,
-                facts: self.facts,
                 filing: self.filing,
                 lineage: self.lineage,
             },
@@ -318,25 +317,22 @@ pub async fn the_topic_page_is_cited_without_a_proposal(
     Ok(())
 }
 
-pub async fn a_second_session_naming_an_entity_gives_it_its_own_page(
+pub async fn a_typed_entity_mention_does_not_create_a_page(
     stores: RouteStores<'_>,
     job: &ExtractWiki,
 ) -> Outcome {
-    let text = "The build box runs the nightly AcmeKit builds.";
-    let host = host(text)?;
+    let host = host("The build box runs the nightly AcmeKit builds.")?;
     stores.mentioned_elsewhere(job, &host).await?;
     stores.route(job, vec![host]).await?;
+    same(
+        "no entity page",
+        stores.named(TopicKind::Entity, HOST).await?,
+        None,
+    )?;
     let hosts = stores
         .named(TopicKind::Type, "Hosts")
         .await?
         .ok_or("the Hosts type is seeded")?;
-    let entity = stores
-        .named(TopicKind::Entity, HOST)
-        .await?
-        .ok_or("the second mention creates the entity")?;
-    same("type", entity.parent, Some(hosts.id))?;
-    let page = stores.pages.page(&entity).await?;
-    same("own page", page.summary.as_str(), text)?;
     same(
         "type page",
         stores.pages.topics.page_slug(hosts.id).await?,

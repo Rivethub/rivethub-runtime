@@ -80,7 +80,6 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
         filing: store.clone(),
         pages: store.clone(),
         decisions: store.clone(),
-        facts: store.clone(),
         changes: store.clone(),
         digests: store.clone(),
         tidy: store.clone(),

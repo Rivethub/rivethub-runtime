@@ -6,11 +6,7 @@ mod store;
 mod target;
 
 pub use answer::Answer;
-pub(crate) use answer::MAX_NAME_CHARS;
-pub(crate) use answer::MAX_NAME_WORDS;
 pub use answer::Refusal;
-pub(crate) use answer::file_name;
-pub(crate) use answer::identifier;
 pub use correction::Correction;
 pub use correction::CorrectionExample;
 pub use decide::Evidence;

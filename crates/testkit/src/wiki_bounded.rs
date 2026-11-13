@@ -146,19 +146,19 @@ pub async fn concurrent_rewrites_of_one_page_keep_both(
     Ok(())
 }
 
-pub async fn an_entity_mention_is_merged_into_its_page(
+pub async fn an_entity_mention_is_not_merged_by_the_topic_router(
     stores: RouteStores<'_>,
     first: &ExtractWiki,
     second: &ExtractWiki,
 ) -> Outcome {
-    let built = "The build box runs the nightly AcmeKit builds.";
-    let mention = host(built)?;
+    let mention = host("The build box runs the nightly AcmeKit builds.")?;
     stores.mentioned_elsewhere(first, &mention).await?;
     stores.route(first, vec![mention]).await?;
-    let entity = stores
-        .named(TopicKind::Entity, HOST)
-        .await?
-        .ok_or("the second mention creates the entity")?;
+    same(
+        "no entity page",
+        stores.named(TopicKind::Entity, HOST).await?,
+        None,
+    )?;
     let merger = RecordingMerger::default();
     let router = stores.router_with(&merger);
     let read = {
@@ -174,25 +174,7 @@ pub async fn an_entity_mention_is_merged_into_its_page(
         vec![host("It now has 64 GB of memory.")?],
     )
     .await?;
-    let seen = merger.seen.lock().clone();
-    same("one merge", seen.len(), 1)?;
-    let input = seen.first().ok_or("merge input")?;
-    same("current summary sent", input.summary.as_str(), built)?;
-    same(
-        "mention sent",
-        input
-            .material
-            .iter()
-            .any(|text| text.contains("64 GB of memory")),
-        true,
-    )?;
-    let page = stores.pages.page(&entity).await?;
-    same("the lead stays", page.summary.as_str(), built)?;
-    same(
-        "the merged article lands",
-        page.article.contains("64 GB of memory"),
-        true,
-    )?;
+    same("nothing merged", merger.seen.lock().len(), 0)?;
     Ok(())
 }
 

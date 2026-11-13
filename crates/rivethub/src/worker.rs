@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use config::{Config, Environment};
-use kernel::facts::FactStore;
 use kernel::filing::FilingStore;
 use kernel::memory::{EmbeddingStore, MemoryStore, SummaryStore};
 use kernel::queue::JobQueue;
@@ -157,7 +156,6 @@ async fn run(
         let filing: Arc<dyn FilingStore> = memory.clone();
         let pages: Arc<dyn TopicPageStore> = memory.clone();
         let decisions: Arc<dyn DecisionStore> = memory.clone();
-        let facts: Arc<dyn FactStore> = memory.clone();
         let changes: Arc<dyn kernel::changes::ChangeFeed> = memory.clone();
         let digests: Arc<dyn kernel::changes::DigestStore> = memory.clone();
         let tidy: Arc<dyn TidyStore> = memory.clone();
@@ -175,7 +173,6 @@ async fn run(
                 filing,
                 pages,
                 decisions,
-                facts,
                 changes,
                 digests,
                 tidy,
@@ -250,7 +247,6 @@ pub struct WorkerPorts<Q> {
     pub filing: Arc<dyn FilingStore>,
     pub pages: Arc<dyn TopicPageStore>,
     pub decisions: Arc<dyn DecisionStore>,
-    pub facts: Arc<dyn FactStore>,
     pub changes: Arc<dyn kernel::changes::ChangeFeed>,
     pub digests: Arc<dyn kernel::changes::DigestStore>,
     pub tidy: Arc<dyn TidyStore>,
@@ -337,12 +333,7 @@ pub fn with_models<Q: JobQueue + 'static>(
         runner
     };
     let runner = runner
-        .with_topic_pages(
-            Arc::clone(&ports.topics),
-            ports.pages,
-            ports.decisions,
-            ports.facts,
-        )
+        .with_topic_pages(Arc::clone(&ports.topics), ports.pages, ports.decisions)
         .with_tidy(ports.tidy)
         .with_daily_digests(ports.changes, ports.digests)
         .with_session_topics(workers::SessionTopics {

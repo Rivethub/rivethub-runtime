@@ -82,23 +82,22 @@ async fn the_topic_page_is_cited_without_a_proposal() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_second_session_naming_an_entity_gives_it_its_own_page() -> TestResult {
+async fn a_typed_entity_mention_does_not_create_a_page() -> TestResult {
     let (_directory, store, job) = seeded().await?;
-    wiki_routes::a_second_session_naming_an_entity_gives_it_its_own_page(stores(&store), &job)
+    wiki_routes::a_typed_entity_mention_does_not_create_a_page(stores(&store), &job).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_entity_page_is_not_written_by_the_topic_router() -> TestResult {
+    let (_directory, store, job) = seeded().await?;
+    testkit::wiki_mentions::an_entity_page_is_not_written_by_the_topic_router(stores(&store), &job)
         .await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn an_entity_page_names_the_sessions_that_cite_it() -> TestResult {
-    let (_directory, store, job) = seeded().await?;
-    testkit::wiki_mentions::an_entity_page_names_the_sessions_that_cite_it(stores(&store), &job)
-        .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_mention_held_before_its_entity_existed_still_lands() -> TestResult {
+async fn a_held_entity_mention_is_left_for_the_entity_worker() -> TestResult {
     let (_directory, store, job) = seeded().await?;
     execute(
         &store,
@@ -115,7 +114,7 @@ async fn a_mention_held_before_its_entity_existed_still_lands() -> TestResult {
         summary_id: Uuid::parse_str(EARLIER_SUMMARY)?,
         conversation_id: Some(Uuid::parse_str(EARLIER_CONVERSATION)?),
     };
-    testkit::wiki_mentions::a_mention_held_before_its_entity_existed_still_lands(
+    testkit::wiki_mentions::a_held_entity_mention_is_left_for_the_entity_worker(
         stores(&store),
         &job,
         &earlier,
@@ -125,20 +124,18 @@ async fn a_mention_held_before_its_entity_existed_still_lands() -> TestResult {
 }
 
 #[tokio::test]
-async fn an_entity_type_is_found_by_its_whole_path() -> TestResult {
+async fn an_entity_type_path_does_not_create_a_page() -> TestResult {
     let (_directory, store, job) = seeded().await?;
-    testkit::wiki_mentions::an_entity_type_is_found_by_its_whole_path(stores(&store), &job).await?;
+    testkit::wiki_mentions::an_entity_type_path_does_not_create_a_page(stores(&store), &job)
+        .await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn an_entity_goes_by_its_names_never_by_a_description() -> TestResult {
+async fn an_entity_name_is_not_merged_by_the_topic_router() -> TestResult {
     let (_directory, store, job) = seeded().await?;
-    testkit::wiki_mentions::an_entity_goes_by_its_names_never_by_a_description(
-        stores(&store),
-        &job,
-    )
-    .await?;
+    testkit::wiki_mentions::an_entity_name_is_not_merged_by_the_topic_router(stores(&store), &job)
+        .await?;
     Ok(())
 }
 
@@ -255,11 +252,15 @@ async fn concurrent_rewrites_of_one_page_keep_both() -> TestResult {
 }
 
 #[tokio::test]
-async fn an_entity_mention_is_merged_into_its_page() -> TestResult {
+async fn an_entity_mention_is_not_merged_by_the_topic_router() -> TestResult {
     let (_directory, store, job) = seeded().await?;
     let next = second(&store).await?;
-    testkit::wiki_bounded::an_entity_mention_is_merged_into_its_page(stores(&store), &job, &next)
-        .await?;
+    testkit::wiki_bounded::an_entity_mention_is_not_merged_by_the_topic_router(
+        stores(&store),
+        &job,
+        &next,
+    )
+    .await?;
     Ok(())
 }
 

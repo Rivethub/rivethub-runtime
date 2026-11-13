@@ -3,7 +3,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use kernel::facts::FactStore;
 use kernel::memory::EmbeddingStore;
 use kernel::memory::SummaryStore;
 use kernel::model::ModelProvider;
@@ -271,13 +270,11 @@ where
         topics: Arc<dyn TopicStore>,
         pages: Arc<dyn TopicPageStore>,
         decisions: Arc<dyn DecisionStore>,
-        facts: Arc<dyn FactStore>,
     ) -> Self {
         self.topic_pages = Some(crate::topic_page::TopicPages {
             topics,
             pages,
             decisions,
-            facts,
         });
         self
     }

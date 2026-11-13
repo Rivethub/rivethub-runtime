@@ -8,13 +8,10 @@ use values::SessionId;
 
 use super::builder::DeferredWiki;
 use super::builder::ExtractWiki;
-use super::builder::HeldEntity;
 use super::builder::WikiBuilderStore;
 use super::builder::WikiRouting;
-use super::builder::WikiStoreError;
 use super::builder::WikiSummary;
 use super::entity::Catalog;
-use super::entity::Filed;
 use super::merge::MergedPage;
 use super::merge::PageMerger;
 use super::origin::NoteOrigin;
@@ -22,7 +19,6 @@ use super::page::WikiPatch;
 use super::page::WikiSlug;
 use super::page::bound::MergeBase;
 use super::page::demote_h2_headings;
-use crate::facts::FactStore;
 use crate::filing::Filable;
 use crate::filing::FilingStore;
 use crate::filing::Target;
@@ -103,7 +99,6 @@ impl TopicTarget {
 pub struct TopicPorts<'a> {
     pub topics: &'a dyn TopicStore,
     pub pages: &'a dyn TopicPageStore,
-    pub facts: &'a dyn FactStore,
     pub filing: &'a dyn FilingStore,
     pub lineage: &'a dyn SessionLister,
 }
@@ -125,8 +120,6 @@ struct Routed {
     pages: Vec<WikiPatch>,
     written: Vec<WikiSlug>,
     cited: Vec<WikiSlug>,
-    earlier: Vec<(Uuid, WikiSlug)>,
-    held: Vec<HeldEntity>,
     notes: Vec<WikiPatch>,
     merged: Vec<MergedPage>,
 }
@@ -205,19 +198,10 @@ impl WikiRouter<'_> {
                 .collect(),
             ..Routed::default()
         };
-        let mut entities = None;
         for patch in patches {
             if let Some(topic) = target.filter(|topic| topic.claims(&patch)) {
                 self.route_to_topic(topic, patch, &mut routed).await?;
             } else if patch.entity_type.is_some() {
-                let known = match entities.take() {
-                    Some(known) => known,
-                    None => Catalog::load(self.topics.topics).await?,
-                };
-                entities = Some(
-                    self.route_to_entity(known, summary, patch, &mut routed)
-                        .await?,
-                );
             } else {
                 if let Some(topic) = target {
                     self.write_note(topic, &patch).await?;
@@ -297,50 +281,6 @@ impl WikiRouter<'_> {
         Ok(())
     }
 
-    async fn route_to_entity(
-        &self,
-        mut known: Catalog,
-        summary: &WikiSummary,
-        patch: WikiPatch,
-        routed: &mut Routed,
-    ) -> Result<Catalog, TopicPageError> {
-        let filing = known
-            .file(self.topics.topics, self.wiki, summary, patch, self.now)
-            .await?;
-        let Some(Filed {
-            entity,
-            patches,
-            earlier,
-            held,
-            claims,
-        }) = filing
-        else {
-            return Ok(known);
-        };
-        if !claims.is_empty() {
-            self.topics
-                .facts
-                .assert_facts(&claims)
-                .await
-                .map_err(|error| WikiStoreError::Query(Box::new(error)))?;
-        }
-        if let Some(page) = self.topics.target(&entity, self.now).await? {
-            routed.held.extend(held);
-            routed
-                .earlier
-                .extend(earlier.into_iter().map(|id| (id, page.page_slug.clone())));
-            let patches = patches
-                .into_iter()
-                .map(|patch| page.page_patch(patch))
-                .collect();
-            let patches = self
-                .merge_entity(&page, patches, &mut routed.merged)
-                .await?;
-            routed.pages.extend(patches);
-        }
-        Ok(known)
-    }
-
     async fn finish(
         &self,
         job: &ExtractWiki,
@@ -377,12 +317,6 @@ impl WikiRouter<'_> {
             .wiki
             .apply_wiki(job, routed.pages, &routing, self.now)
             .await?;
-        for (earlier, page) in &routed.earlier {
-            self.wiki.cite_wiki(*earlier, page, self.now).await?;
-        }
-        if !routed.held.is_empty() {
-            self.wiki.release_entity(&routed.held).await?;
-        }
         touched.extend(routed.written.into_iter().map(String::from));
         touched.sort();
         touched.dedup();
