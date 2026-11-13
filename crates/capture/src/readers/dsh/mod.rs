@@ -16,6 +16,7 @@ use super::message::report;
 use crate::store_path::DirState;
 use crate::store_path::Root;
 use crate::store_path::dir_state;
+use crate::store_path::is_not_found;
 use crate::store_path::session_component;
 use crate::transcript::read_uncapped;
 
@@ -61,31 +62,67 @@ pub(crate) async fn title(
     .await
 }
 
+pub(crate) fn sessions(root: &Path) -> Result<Vec<(String, PathBuf)>, TranscriptReaderError> {
+    let Some((root, workspaces)) = workspaces(root)? else {
+        return Ok(Vec::new());
+    };
+    let mut found = Vec::new();
+    for workspace in workspaces {
+        for folder in root.directories(&workspace)? {
+            let Some(id) = folder.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if session_component(id).is_err() {
+                continue;
+            }
+            if let Some(path) = newest_transcript(&root, &folder)? {
+                found.push((id.to_owned(), path));
+            }
+        }
+    }
+    Ok(found)
+}
+
 fn transcript(
     root: &Path,
     native_id: &str,
 ) -> Result<Option<(PathBuf, String)>, TranscriptReaderError> {
     session_component(native_id)?;
-    let root = Root::open(root)?;
-    let sessions = root.canonical().join("sessions");
-    if dir_state(&root, &sessions)? == DirState::Absent {
+    let Some((root, workspaces)) = workspaces(root)? else {
         return Ok(None);
-    }
-    for workspace in root.directories(&sessions)? {
+    };
+    for workspace in workspaces {
         let folder = workspace.join(native_id);
         if dir_state(&root, &folder)? == DirState::Absent {
             continue;
         }
-        if let Some(path) = root
-            .files(&folder)?
-            .into_iter()
-            .rfind(|path| transcript_name(path))
-        {
+        if let Some(path) = newest_transcript(&root, &folder)? {
             let text = decode(&path)?;
             return Ok(Some((path, text)));
         }
     }
     Ok(None)
+}
+
+fn workspaces(root: &Path) -> Result<Option<(Root, Vec<PathBuf>)>, TranscriptReaderError> {
+    let root = match Root::open(root) {
+        Ok(root) => root,
+        Err(error) if is_not_found(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let sessions = root.canonical().join("sessions");
+    if dir_state(&root, &sessions)? == DirState::Absent {
+        return Ok(None);
+    }
+    let workspaces = root.directories(&sessions)?;
+    Ok(Some((root, workspaces)))
+}
+
+fn newest_transcript(root: &Root, folder: &Path) -> Result<Option<PathBuf>, TranscriptReaderError> {
+    Ok(root
+        .files(folder)?
+        .into_iter()
+        .rfind(|path| transcript_name(path)))
 }
 
 fn transcript_name(path: &Path) -> bool {

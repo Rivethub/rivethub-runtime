@@ -2776,7 +2776,11 @@ subagent on stderr and moves on. Each subagent batch goes through the writer of 
 the spool, the sweep records its size as captured so the next `Stop` does not spool it again, and a batch the spool cannot
 write makes the hook exit 1 as it does for the parent. `PostToolUse` is unchanged (note 84). `rh capture backfill` (docs/CLI.md) builds the
 same batches for every session and subagent file in the store, with `last_event` `Backfill` and no finalize, because
-on Postgres finalizing a conversation moves its `updated_at` to the time of the run.
+on Postgres finalizing a conversation moves its `updated_at` to the time of the run. It covers `claude-code`,
+`grok-build`, `opencode`, `codex` and `dsh`; the others post through the store hook's reader and title. `dsh` lists every
+`sessions/<workspace>/<session>/` folder that holds a `session*.jsonl[.zst|.zstd]` and posts it under the ids its
+`turn/end` hook writes. `cursor` is not backfilled: its reader parses a `{role, content, timestamp}` line, and the
+transcripts Cursor writes are `{role, message: {content: [...]}}` lines with no timestamp, so it reads none of them.
 
 (149) Receiver checks (session-sharing phase 2, SS-7; uses notes 135, 136 and 140). Phil, 2026-11-11: "on the receiver it
 would be good to have some deterministic checking for prompt injection or anything suspicious before importing it."
