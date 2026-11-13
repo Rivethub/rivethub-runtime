@@ -1161,7 +1161,7 @@ async fn no_secret_reaches_the_logs_or_a_debug_string() -> TestResult {
         .with_max_level(tracing::Level::TRACE)
         .with_writer(captured.clone())
         .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let _guard = common::capture_logs(subscriber);
 
     let rig = rig()?;
     let old_token = rig.token();
@@ -1290,7 +1290,7 @@ async fn every_auth_event_is_logged_with_a_reason_and_the_peer_and_no_secret() -
         .with_ansi(false)
         .with_writer(captured.clone())
         .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    let _guard = common::capture_logs(subscriber);
     let rig = rig_with(
         AuthPolicy {
             attempts_per_minute: NonZeroU32::new(3).ok_or("three")?,
