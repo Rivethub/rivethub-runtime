@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use config::provider::ProviderBody;
 use config::{Config, ConfigLocation, Environment, Loaded, Profile, ValidationResult};
 
+use crate::service::NodeKind;
 use crate::tree::ConfigCommand;
 use crate::{Error, Exit, Report};
 
@@ -16,13 +17,29 @@ pub(crate) async fn load(env: &Environment) -> Result<(ConfigLocation, Loaded), 
     .await?
 }
 
+pub(crate) fn node_kind(env: &Environment) -> Result<NodeKind, config::ConfigError> {
+    match config::resolve_config_path(env)? {
+        Some(location) => Ok(load_kind(env, &location)?.0),
+        None => Ok(NodeKind::Standalone),
+    }
+}
+
 fn load_at(env: &Environment, location: &ConfigLocation) -> Result<Loaded, config::ConfigError> {
+    load_kind(env, location).map(|(_, loaded)| loaded)
+}
+
+fn load_kind(
+    env: &Environment,
+    location: &ConfigLocation,
+) -> Result<(NodeKind, Loaded), config::ConfigError> {
     let node_error = match Config::load(env, location, Profile::Node) {
-        Ok(loaded) => return Ok(loaded),
+        Ok(loaded) => return Ok((NodeKind::Node, loaded)),
         Err(error) => error,
     };
     match Config::load(env, location, Profile::Standalone) {
-        Ok(standalone) if standalone.config.sqlite_selected() => Ok(standalone),
+        Ok(standalone) if standalone.config.sqlite_selected() => {
+            Ok((NodeKind::Standalone, standalone))
+        }
         Ok(_) | Err(_) => Err(node_error),
     }
 }

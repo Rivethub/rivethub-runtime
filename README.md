@@ -23,7 +23,7 @@ To do the same by hand: every release `v<version>` publishes one archive per tar
 archive holds `rh`, `rivethub-migrate` and `LICENSE`. Unpack both binaries into a directory on your `PATH`:
 
 ```sh
-version=0.8.2                      # a release tag without its v
+version=0.8.3                      # a release tag without its v
 target=x86_64-unknown-linux-gnu    # or aarch64-unknown-linux-gnu, universal-apple-darwin
 base=https://github.com/Rivethub/rivethub-runtime/releases/download/v$version
 curl -fL -O "$base/rh-$version-$target.tar.gz" -O "$base/SHA256SUMS"
@@ -40,10 +40,13 @@ Linux builds need glibc 2.35 or newer; on Windows, run the Linux archive under W
 installation current:
 
 - `rh update` installs the latest stable release; `rh update --channel beta` the newest release, prereleases included.
-  The channel is not remembered: pass `--channel beta` every time you want beta. `--version <tag>` pins one release.
+  The channel is not remembered: pass `--channel beta` every time you want beta. Without `--version` it never installs a
+  release older than the running `rh`, and says so when it is already up to date. `--version <tag>` pins exactly that
+  release, a prerelease included, on any channel.
 - It verifies the archive against `SHA256SUMS`, runs the new `rivethub-migrate` against the configured memory backend,
-  swaps both binaries in place (keeping `rh.previous` and `rivethub-migrate.previous`) and restarts the systemd unit
-  unless `--no-restart` is given. On macOS restarting is up to you, so pass `--no-restart`.
+  swaps both binaries in place (keeping `rh.previous` and `rivethub-migrate.previous`) and restarts the node unless
+  `--no-restart` is given: through the systemd unit when there is one, otherwise by stopping the node `rh local --ensure`
+  started and starting it again with the new binary. When no node is running there is nothing to restart.
 - `--channel nightly` builds from the clean `main` checkout named by `RIVETHUB_INSTALL_ROOT` instead.
 
 Every merge to `main` publishes a beta prerelease versioned as the higher of the workspace version and the last tag plus one patch; the Promote workflow marks a beta stable.
@@ -80,7 +83,8 @@ serves one person: it stores visibility marks but does not filter reads by them.
 1. Prepare the database and run `rivethub-migrate postgres` (see [docs/OPERATIONS.md](docs/OPERATIONS.md)). No service
    migrates on start; each refuses to run behind the schema it needs.
 2. Write `~/.rivethub/config.yaml` (below) and check it: `rh config validate`, `rh gateway --check`, `rh doctor`.
-3. `rh service init` writes a systemd unit (a system unit as root, a user unit otherwise) that runs `rh start`;
+3. `rh service init` writes and enables a systemd unit (a system unit as root, a user unit otherwise) that runs
+   `rh start` for a node config, or `rh local` for the standalone SQLite config `rh local` writes;
    `rh service start|stop|restart|status|logs` control it. `rh start` supervises `rh gateway`, and `rh mcp` when
    `transports.mcp` names a host or socket, restarting either with backoff.
 

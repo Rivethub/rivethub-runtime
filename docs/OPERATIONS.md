@@ -42,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(62 at 0.8.2, unchanged since 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.3, unchanged since 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -69,6 +69,35 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     ON rh_messages (conversation_id, (metadata ->> 'event_id'))
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
+
+## Upgrading from 0.8.2 to 0.8.3
+
+0.8.3 needs no schema migration. It fixes what a new user on a standalone SQLite node (the one `local.sh` installs and
+`rh local --ensure` starts) ran into:
+
+- `rh service init` wrote a unit that ran `rh start`, which refuses the standalone config `rh local` writes (no
+  `runtime`, `agents` or `providers`), so the unit restarted forever. The unit now runs `rh local` for a standalone
+  SQLite config, or when no config exists yet, and `rh start` for a node config; it prints which. A unit written by an
+  older `rh` for a standalone node still says `rh start`: stop it, delete the file and run `rh service init` again.
+- `rh service init` now also runs `systemctl [--user] enable rivethub`, so the node comes back after a reboot (or, for a
+  user unit, at login, and at boot when lingering is on). A unit written before 0.8.3 is not enabled: run
+  `systemctl --user enable rivethub` (or `systemctl enable rivethub` as root).
+- `rh update` failed with a bare `No such file or directory (os error 2)` on every node without a systemd unit. Without
+  a unit it now stops the node `rh local --ensure` started and starts it again with the new binary, keeping its port and
+  bind flags, and confirms its health; with no node running it installs and says nothing needed a restart. `--no-restart`
+  still skips this.
+- Without `--version`, `rh update` no longer installs a release older than the running `rh`: GitHub's latest stable
+  release can be an old tag (`v0.1.4`), which 0.8.2 tried to install over itself. It says the running `rh` is already
+  newer or up to date and exits 0.
+- `rh update --version <tag>` pins exactly that release, a prerelease included, on the default stable channel; 0.8.2
+  refused a pinned prerelease with a misleading "no archive for this platform". A missing tag, a draft or a missing asset
+  is now named as such.
+- `rh harness connect opencode` installs the OpenCode capture plug-in embedded in `rh`; `RIVETHUB_OPENCODE_PLUGIN` is no
+  longer needed and, when set, still names a file used instead. A connect that skips a part no longer ends with a bare
+  `connected.`: it names the skipped part and says which part it connected. A 0.8.2 `rh harness connect opencode` that
+  printed `connected.` wired recall only; run it again to add capture.
+- `rh harness connect` (and `disconnect`) that only created new files printed `Dry run: nothing was written.` although
+  it wrote them; it now prints that line only for `--dry-run`.
 
 ## Upgrading from 0.8.1 to 0.8.2
 

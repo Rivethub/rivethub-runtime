@@ -29,6 +29,12 @@ const NOTHING_TO_INSTALL: &str =
     "rh reads this harness's own store, or the client pushes, so there is nothing to install";
 const NOT_FOUND: &str = "it is not installed on this machine";
 
+#[derive(Debug)]
+pub struct SetupChange {
+    pub outcome: ConnectOutcome,
+    pub skipped: Option<SetupError>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HarnessSetupService {
     locator: Arc<Locator>,
@@ -60,10 +66,11 @@ impl HarnessSetupService {
         part: Option<ConnectPart>,
         dry_run: bool,
         now: DateTime<Utc>,
-    ) -> Result<ConnectOutcome, SetupError> {
+    ) -> Result<SetupChange, SetupError> {
         let spec = known(id)?;
-        let edits = self.plan(spec, part, Direction::Connect)?;
-        plan::apply(&edits, &self.backups, id, dry_run, now)
+        let (edits, skipped) = self.plan(spec, part, Direction::Connect)?;
+        let outcome = plan::apply(&edits, &self.backups, id, dry_run, now)?;
+        Ok(SetupChange { outcome, skipped })
     }
 
     pub fn disconnect_now(
@@ -72,10 +79,11 @@ impl HarnessSetupService {
         part: Option<ConnectPart>,
         dry_run: bool,
         now: DateTime<Utc>,
-    ) -> Result<ConnectOutcome, SetupError> {
+    ) -> Result<SetupChange, SetupError> {
         let spec = known(id)?;
-        let edits = self.plan(spec, part, Direction::Disconnect)?;
-        plan::apply(&edits, &self.backups, id, dry_run, now)
+        let (edits, skipped) = self.plan(spec, part, Direction::Disconnect)?;
+        let outcome = plan::apply(&edits, &self.backups, id, dry_run, now)?;
+        Ok(SetupChange { outcome, skipped })
     }
 
     fn plan(
@@ -83,7 +91,7 @@ impl HarnessSetupService {
         spec: &'static HarnessSpec,
         part: Option<ConnectPart>,
         direction: Direction,
-    ) -> Result<Vec<FileEdit>, SetupError> {
+    ) -> Result<(Vec<FileEdit>, Option<SetupError>), SetupError> {
         let explicit = part.is_some();
         let parts = part.map_or_else(
             || vec![ConnectPart::Capture, ConnectPart::Recall],
@@ -111,7 +119,8 @@ impl HarnessSetupService {
         }
         match (planned, refusal) {
             (false, Some(error)) => Err(error),
-            (false, None) | (true, _) => Ok(edits),
+            (true, skipped) => Ok((edits, skipped)),
+            (false, None) => Ok((edits, None)),
         }
     }
 
@@ -227,7 +236,9 @@ impl HarnessSetup for HarnessSetupService {
         let service = self.clone();
         let id = id.to_owned();
         tokio::task::spawn_blocking(move || {
-            service.connect_now(&id, Some(part), dry_run, Utc::now())
+            service
+                .connect_now(&id, Some(part), dry_run, Utc::now())
+                .map(|change| change.outcome)
         })
         .await
         .map_err(joined)?

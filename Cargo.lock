@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "capture"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "age",
  "aho-corasick",
@@ -910,7 +910,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "config"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "ipnet",
  "libtest-mimic",
@@ -1877,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "gateway"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -2015,7 +2015,7 @@ dependencies = [
 
 [[package]]
 name = "harness-acp"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2846,7 +2846,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "memory-postgres"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "memory-sqlite"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "migrate"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "hex",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "providers"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -3833,7 +3833,7 @@ dependencies = [
 
 [[package]]
 name = "rivethub"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -4923,7 +4923,7 @@ dependencies = [
 
 [[package]]
 name = "testkit"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -5572,7 +5572,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "values"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "schemars 1.2.3",
@@ -5973,7 +5973,7 @@ dependencies = [
 
 [[package]]
 name = "wire"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -6000,7 +6000,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workers"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6060,7 +6060,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "cargo_metadata",
  "chrono",

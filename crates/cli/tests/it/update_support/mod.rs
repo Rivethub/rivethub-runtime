@@ -18,7 +18,12 @@ use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
-pub(crate) const BINARY: &[u8] = b"#!/bin/sh\nprintf 'new binary\\n'\n";
+pub(crate) const BINARY: &[u8] = br#"#!/bin/sh
+printf 'rh' >> "$RIVETHUB_TEST_CALLS"
+for arg do printf '|%s' "$arg" >> "$RIVETHUB_TEST_CALLS"; done
+printf '\n' >> "$RIVETHUB_TEST_CALLS"
+printf 'Started RivetHub local node at http://127.0.0.1:6123\n'
+"#;
 pub(crate) const MIGRATION: &[u8] = br#"#!/bin/sh
 printf 'migrate' >> "$RIVETHUB_TEST_CALLS"
 for arg do printf '|%s' "$arg" >> "$RIVETHUB_TEST_CALLS"; done
@@ -133,12 +138,24 @@ if [ "$failed" = yes ] && [ "$last" != true ]; then exit 1; fi
         env: &Environment,
         published: Published,
     ) -> Result<cli::Report> {
+        self.run_as(args, env, published, env!("CARGO_PKG_VERSION"))
+            .await
+    }
+
+    pub(crate) async fn run_as(
+        &self,
+        args: &UpdateArgs,
+        env: &Environment,
+        published: Published,
+        running: &str,
+    ) -> Result<cli::Report> {
         let server = server(published).await?;
         let updater = Updater::new(
             self.binary.clone(),
             format!("http://{}/releases/", server.addr).parse()?,
             Scope::User,
-        );
+        )
+        .running(running);
         let report = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             updater.run(args, env, &CancellationToken::new()),

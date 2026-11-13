@@ -25,7 +25,7 @@ the existing service startup codes. Every visible command:
 | `rh update` | `[--channel stable\|beta\|nightly] [--source rivethub-cloud\|github] [--version TAG] [--no-restart]` | Update this node |
 | `rh db migrate` | `[-c, --config FILE] [--url URL \| --path FILE]` | Apply database migrations |
 | `rh db status` | `[-c, --config FILE] [--url URL \| --path FILE]` | Report schema status read-only |
-| `rh service init` | | Write the systemd unit (system unit as root, user unit otherwise) |
+| `rh service init` | | Write and enable the systemd unit (system unit as root, user unit otherwise); it runs `rh start` for a node config and `rh local` for a standalone SQLite config or when no config exists yet |
 | `rh service start`, `rh service stop`, `rh service restart` | | Control the systemd unit |
 | `rh service status` | | Show the systemd unit status |
 | `rh service logs` | | Print the unit's journal |
@@ -36,7 +36,7 @@ the existing service startup codes. Every visible command:
 | `rh capture backfill` | `[--harness claude-code\|grok-build\|opencode\|codex\|dsh]... [--dry-run] [--json]` | Capture every stored session of the harness stores, Claude Code subagents included, through the writer the hooks use |
 | `rh capture spool` | `[--requeue-dead]` | Prints how many captured batches wait in the spool and how many are dead-lettered; `--requeue-dead` moves every dead-lettered batch back to the spool for another try |
 | `rh harness status` | `[--json]` | Show which harnesses are found, how they capture and whether recall is wired |
-| `rh harness connect` | `<id> [--capture \| --recall] [--dry-run]` | Add rh's hook or plug-in and its MCP entry to a harness, printing the diff and backing the file up first; for `opencode --capture` the plug-in is copied from the file named by `RIVETHUB_OPENCODE_PLUGIN` |
+| `rh harness connect` | `<id> [--capture \| --recall] [--dry-run]` | Add rh's hook or plug-in and its MCP entry to a harness, printing the diff and backing the file up first; for `opencode --capture` rh writes the plug-in embedded in it, or the file named by `RIVETHUB_OPENCODE_PLUGIN`. Without `--capture` or `--recall`, a part rh cannot write is skipped and named on stderr, and the closing line says which part was connected; when no part can be written it exits 1 |
 | `rh harness disconnect` | `<id> [--capture \| --recall] [--dry-run]` | Remove rh's hook and MCP entry from a harness |
 | `rh logs` | `[agent] [-f, --follow \| --no-follow] [-n, --lines N] [--since TIME] [--level NAME] [-g, --grep TEXT] [--json] [--bare-metal]` | Read the service journal |
 
@@ -73,9 +73,9 @@ gateway:
 An unlisted origin is refused with `origin "<origin>" is not allowed (add it to the gateway allowed_origins setting)`.
 
 Platforms: `rh` targets Linux and macOS (Apple Silicon). CI builds `rh` and runs the
-`cli` tests on `macos-latest`. `rh service` and the restart step of `rh update` manage systemd units only. On macOS
-running `rh start` under launchd (a LaunchAgent or LaunchDaemon plist) is the operator's job, so `rh update` on macOS
-installs the universal archive and needs `--no-restart`; it refuses platforms without a published archive.
+`cli` tests on `macos-latest`. `rh service` manages systemd units only. On macOS running `rh start` under launchd (a
+LaunchAgent or LaunchDaemon plist) is the operator's job; `rh update` on macOS installs the universal archive and
+restarts only a node `rh local --ensure` started. It refuses platforms without a published archive.
 
 Doctor calls `migrate`'s read-only schema status library APIs in-process. Postgres uses the async status API;
 SQLite runs on a blocking task. The typed status stays in `migrate`. Doctor never runs migrations or opens a store
@@ -95,12 +95,22 @@ tests assert unchanged database state. Timing tests await events with deadlines.
 
 `rh update [--channel stable|beta|nightly] [--source rivethub-cloud|github] [--version TAG] [--no-restart]`
 updates Linux x86_64 and aarch64 and macOS installations. Stable is the default and resolves the latest published
-stable GitHub release, or the exact tag supplied with `--version`; it refuses prereleases. Beta resolves the highest
-semantic version among published releases, prereleases included, or the exact tag supplied with `--version`. The
+stable GitHub release; Beta resolves the highest semantic version among published releases, prereleases included.
+Either way, a resolved release that is not newer than the running `rh` installs nothing: the updater prints
+`rh X is already newer than the latest <channel> release Y; nothing to do` or `rh X is already up to date` and exits 0.
+`--version TAG` pins exactly that published release on any channel, prerelease or not, older or not; a tag with no
+release, or a draft, is refused by name. The
 updater downloads the release archive for the running platform, checks its SHA-256 against the release's
 `SHA256SUMS`, and only then unpacks `rh` and `rivethub-migrate` from it; an archive missing either binary is refused.
 HTTPS redirects are supported; HTTPS downloads cannot downgrade to HTTP. Version tags are URL path components, never
 shell expressions.
+
+After migrating and swapping the binaries the updater restarts the node unless `--no-restart` is given. With a systemd
+unit (`rh service init`) it runs `systemctl restart`. A directory or other non-file at the unit path is refused by name.
+Without a unit it reads the node's pid file: no node running means nothing to restart; a node whose command line is
+`rh local` gets SIGTERM, and once it has exited (within 30 seconds) the new binary runs `rh local --ensure --wait 30`
+with the node's own `--port`, `--no-lan` and `--no-cloud`, which starts it in the background and confirms its health; a
+node that `rh local` did not start (such as `rh start` in a terminal) is left running with a note to restart it.
 
 Every release tag `v<version>` carries one archive per target and one `SHA256SUMS` listing the archives:
 

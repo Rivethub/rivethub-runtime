@@ -1,4 +1,5 @@
 use capture::harnesses::HarnessSetupService;
+use capture::harnesses::SetupChange;
 use chrono::Utc;
 use clap::Args;
 use clap::Subcommand;
@@ -8,6 +9,7 @@ use kernel::harness_setup::CaptureHistory;
 use kernel::harness_setup::ConnectOutcome;
 use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::HarnessStatus;
+use kernel::harness_setup::SetupError;
 
 use crate::Error;
 use crate::Report;
@@ -77,23 +79,46 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
             }
         }
         HarnessCommand::Connect(args) => {
+            let dry_run = args.dry_run;
             let outcome = tokio::task::spawn_blocking(move || {
                 service.connect_now(&args.id, args.part(), args.dry_run, Utc::now())
             })
             .await??;
-            Ok(Report::success(change_text(&outcome, "connected")))
+            Ok(change_report(&outcome, dry_run, "connected"))
         }
         HarnessCommand::Disconnect(args) => {
+            let dry_run = args.dry_run;
             let outcome = tokio::task::spawn_blocking(move || {
                 service.disconnect_now(&args.id, args.part(), args.dry_run, Utc::now())
             })
             .await??;
-            Ok(Report::success(change_text(&outcome, "disconnected")))
+            Ok(change_report(&outcome, dry_run, "disconnected"))
         }
     }
 }
 
-fn change_text(outcome: &ConnectOutcome, done: &str) -> String {
+fn change_report(change: &SetupChange, dry_run: bool, done: &str) -> Report {
+    let Some(skipped) = &change.skipped else {
+        return Report::success(change_text(&change.outcome, dry_run, done));
+    };
+    let done = match skipped {
+        SetupError::Unsupported { part, .. } => {
+            let other = match part {
+                ConnectPart::Capture => ConnectPart::Recall,
+                ConnectPart::Recall => ConnectPart::Capture,
+            };
+            format!("{done} {other} only")
+        }
+        SetupError::UnknownHarness(_) | SetupError::Config { .. } | SetupError::Io { .. } => {
+            done.to_owned()
+        }
+    };
+    let mut report = Report::success(change_text(&change.outcome, dry_run, &done));
+    report.stderr = format!("Skipped: {skipped}\n");
+    report
+}
+
+fn change_text(outcome: &ConnectOutcome, dry_run: bool, done: &str) -> String {
     if outcome.diff.is_empty() {
         return "Nothing to change.\n".to_owned();
     }
@@ -102,10 +127,10 @@ fn change_text(outcome: &ConnectOutcome, done: &str) -> String {
     } else {
         "\n"
     };
-    let closing = if outcome.backup_path.is_empty() {
-        "Dry run: nothing was written.\n".to_owned()
-    } else {
-        format!("Backed up to {}\n{done}.\n", outcome.backup_path)
+    let closing = match (dry_run, outcome.backup_path.as_str()) {
+        (true, _) => "Dry run: nothing was written.\n".to_owned(),
+        (false, "") => format!("{done}.\n"),
+        (false, backup) => format!("Backed up to {backup}\n{done}.\n"),
     };
     format!("{}{separator}{closing}", outcome.diff)
 }

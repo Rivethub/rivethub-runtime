@@ -5,7 +5,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cli::service::{Scope, ServiceCommand, ServiceError, Unit};
+use cli::service::{NodeKind, Scope, ServiceCommand, ServiceError, Unit};
 use cli::{Cli, Dispatch, Exit};
 use config::Environment;
 use tempfile::TempDir;
@@ -206,8 +206,11 @@ async fn init_reports_lingering_and_never_overwrites() {
                 .starts_with(&format!("Created service file: {}\n", path.display()))
         );
         assert!(report.stdout.contains(message));
+        assert!(report.stdout.contains("It runs: rh local\n"));
+        assert!(report.stdout.contains("Enabled: it starts when you log in"));
         let contents = std::fs::read_to_string(&path).expect("unit");
         assert!(contents.contains("Type=simple\n"));
+        assert!(contents.contains(" local\nEnvironmentFile="));
         assert!(
             contents.contains(
                 "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n"
@@ -226,8 +229,78 @@ async fn init_reports_lingering_and_never_overwrites() {
             )
         );
         assert_eq!(std::fs::read_to_string(path).expect("unchanged"), contents);
-        assert_eq!(fixture.calls().lines().count(), 1);
+        assert_eq!(
+            fixture.calls(),
+            format!(
+                "systemctl|--user|daemon-reload\nsystemctl|--user|enable|rivethub\nloginctl|show-user|{}|--property=Linger|--value\n",
+                nix::unistd::User::from_uid(nix::unistd::geteuid())
+                    .expect("account")
+                    .expect("user")
+                    .name
+            )
+        );
     }
+}
+
+const NODE_CONFIG: &str = "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1/v1\n    model: m\n";
+
+#[tokio::test]
+async fn init_runs_the_node_the_config_describes() {
+    let standalone = "memory:\n  backend: sqlite\n  sqlite:\n    path: /home/user/.rivethub/memory.sqlite\ngateway:\n  host: 127.0.0.1\n  port: 5174\n";
+    for (config, runs) in [(standalone, "local"), (NODE_CONFIG, "start")] {
+        let fixture = Fixture::new();
+        let state = fixture.home.path().join(".rivethub");
+        std::fs::create_dir(&state).expect("state");
+        std::fs::write(state.join("config.yaml"), config).expect("config");
+        let report = fixture
+            .run(Scope::User, ServiceCommand::Init, &[])
+            .await
+            .expect("init");
+        assert!(report.stdout.contains(&format!("It runs: rh {runs}\n")));
+        let unit =
+            std::fs::read_to_string(Scope::User.unit_path(fixture.home.path())).expect("unit");
+        assert!(
+            unit.contains(&format!(" {runs}\nEnvironmentFile=")),
+            "{unit}"
+        );
+        assert!(
+            fixture
+                .calls()
+                .contains("systemctl|--user|enable|rivethub\n")
+        );
+    }
+}
+
+#[tokio::test]
+async fn init_refuses_a_config_it_cannot_read_and_enables_nothing() {
+    let fixture = Fixture::new();
+    let state = fixture.home.path().join(".rivethub");
+    std::fs::create_dir(&state).expect("state");
+    std::fs::write(state.join("config.yaml"), "runtime: {}\n").expect("config");
+    let error = fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect_err("invalid config");
+    assert!(matches!(error, ServiceError::Config(_)));
+    assert!(!Scope::User.unit_path(fixture.home.path()).exists());
+    assert!(!fixture.calls.exists());
+}
+
+#[tokio::test]
+async fn init_reports_a_failed_enable() {
+    let fixture = Fixture::new();
+    let error = fixture
+        .run(
+            Scope::User,
+            ServiceCommand::Init,
+            &[("RIVETHUB_TEST_FAIL", "enable")],
+        )
+        .await
+        .expect_err("enable failure");
+    assert!(
+        matches!(error, ServiceError::Failed { exit: Exit::Child(7), ref stderr } if stderr == "operation failed\n")
+    );
+    assert!(!fixture.calls().contains("loginctl"));
 }
 
 #[test]
@@ -236,6 +309,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
         Path::new("/opt/Rivet Hub/rh"),
         Path::new("/home/user/.rivethub/.env"),
         Scope::System,
+        NodeKind::Node,
     )
     .expect("unit");
     assert_eq!(
@@ -246,11 +320,12 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
         Path::new("/opt/é'\"\\%/$HOME/$(touch nope)/rh"),
         Path::new("/home/a%u/$HOME/.env"),
         Scope::User,
+        NodeKind::Standalone,
     )
     .expect("literal paths");
     assert!(
         unit.to_string()
-            .contains("ExecStart=\"/opt/é'\\\"\\\\%%/$$HOME/$$(touch nope)/rh\" start\n")
+            .contains("ExecStart=\"/opt/é'\\\"\\\\%%/$$HOME/$$(touch nope)/rh\" local\n")
     );
     assert!(
         unit.to_string()
@@ -267,7 +342,15 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
         Path::new("/home/user/.config/systemd/user/rivethub.service")
     );
     for path in ["relative/rh", "/opt/../rh"] {
-        assert!(Unit::new(Path::new(path), Path::new("/home/user/.env"), Scope::User).is_err());
+        assert!(
+            Unit::new(
+                Path::new(path),
+                Path::new("/home/user/.env"),
+                Scope::User,
+                NodeKind::Node
+            )
+            .is_err()
+        );
     }
 }
 
@@ -303,6 +386,7 @@ async fn init_refuses_escape_links_traversal_and_non_directories() {
         Path::new("/opt/rh"),
         Path::new("/home/user/.env"),
         Scope::User,
+        NodeKind::Node,
     )
     .expect("unit");
     assert!(matches!(
@@ -521,6 +605,7 @@ async fn concurrent_initializers_publish_exactly_one_complete_unit() {
             Path::new("/opt/rh"),
             Path::new("/home/user/.env"),
             Scope::User,
+            NodeKind::Node,
         )
         .expect("unit")
     };
@@ -545,6 +630,7 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
         Path::new("/opt/\u{85}/rh"),
         Path::new("/home/user/\nRestart=always\t.env"),
         Scope::User,
+        NodeKind::Node,
     )
     .expect("unit");
     assert!(
@@ -560,7 +646,8 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
         Unit::new(
             Path::new("/opt/rh\0"),
             Path::new("/home/user/.env"),
-            Scope::User
+            Scope::User,
+            NodeKind::Node
         )
         .is_err()
     );

@@ -8,7 +8,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use super::{UpdateError, files};
+use super::{Channel, UpdateError, files};
 
 #[derive(Debug, Deserialize)]
 struct Release {
@@ -48,13 +48,34 @@ pub(super) fn platform() -> Result<&'static str, UpdateError> {
     }
 }
 
+pub(super) enum Staged {
+    Ready(String),
+    UpToDate(String),
+    Newer(String),
+}
+
+impl Staged {
+    pub(super) fn version(self, running: &str, channel: Channel) -> Result<String, String> {
+        match self {
+            Self::Ready(version) => Ok(version),
+            Self::UpToDate(latest) => Err(format!(
+                "rh {running} is already up to date (latest {channel} release {latest}).\n"
+            )),
+            Self::Newer(latest) => Err(format!(
+                "rh {running} is already newer than the latest {channel} release {latest}; nothing to do.\n"
+            )),
+        }
+    }
+}
+
 pub(super) async fn stage(
     api: &Url,
     version: Option<&str>,
     beta: bool,
+    running: &str,
     directory: &Path,
     shutdown: &CancellationToken,
-) -> Result<String, UpdateError> {
+) -> Result<Staged, UpdateError> {
     let platform = platform()?;
     let client = reqwest::Client::builder()
         .user_agent("RivetHub updater")
@@ -82,20 +103,36 @@ pub(super) async fn stage(
             serde_json::from_slice(&body).map_err(|_| UpdateError::Release)?;
         newest(releases)?
     } else {
-        let body = download(&client, endpoint, 1024 * 1024, shutdown).await?;
+        let body = match download(&client, endpoint, 1024 * 1024, shutdown).await {
+            Err(UpdateError::Http(error))
+                if error.status() == Some(reqwest::StatusCode::NOT_FOUND) =>
+            {
+                return Err(version.map_or(UpdateError::NoRelease, |version| {
+                    UpdateError::NotPublished(version.to_owned())
+                }));
+            }
+            downloaded => downloaded?,
+        };
         serde_json::from_slice(&body).map_err(|_| UpdateError::Release)?
     };
-    if release.draft
-        || (release.prerelease && !beta)
-        || version.is_some_and(|version| release.tag_name != version)
-    {
-        return Err(UpdateError::Release);
-    }
+    accept(&release, version, beta)?;
     validate_version(&release.tag_name)?;
+    let pinned = version.is_some();
     let version = release
         .tag_name
         .strip_prefix('v')
         .ok_or_else(|| UpdateError::Version(release.tag_name.clone()))?;
+    if !pinned {
+        let published = semver::Version::parse(version)
+            .map_err(|_| UpdateError::Version(release.tag_name.clone()))?;
+        let running = semver::Version::parse(running)
+            .map_err(|_| UpdateError::Version(running.to_owned()))?;
+        match published.cmp(&running) {
+            std::cmp::Ordering::Less => return Ok(Staged::Newer(release.tag_name)),
+            std::cmp::Ordering::Equal => return Ok(Staged::UpToDate(release.tag_name)),
+            std::cmp::Ordering::Greater => {}
+        }
+    }
     let archive_name = format!("rh-{version}-{platform}.tar.gz");
     let manifest = asset(&release, "SHA256SUMS")?;
     let manifest = download(&client, manifest, 16 * 1024, shutdown).await?;
@@ -115,7 +152,23 @@ pub(super) async fn stage(
     }
     let directory = directory.to_owned();
     tokio::task::spawn_blocking(move || unpack(&archive, &directory)).await??;
-    Ok(release.tag_name)
+    Ok(Staged::Ready(release.tag_name))
+}
+
+fn accept(release: &Release, version: Option<&str>, beta: bool) -> Result<(), UpdateError> {
+    if release.draft {
+        return Err(UpdateError::Draft(release.tag_name.clone()));
+    }
+    match version {
+        Some(version) if release.tag_name != version => Err(UpdateError::Mismatch {
+            asked: version.to_owned(),
+            answered: release.tag_name.clone(),
+        }),
+        None if release.prerelease && !beta => {
+            Err(UpdateError::Prerelease(release.tag_name.clone()))
+        }
+        Some(_) | None => Ok(()),
+    }
 }
 
 pub(super) fn unpack(archive: &[u8], directory: &Path) -> Result<(), UpdateError> {
@@ -163,14 +216,18 @@ fn newest(releases: Vec<Release>) -> Result<Release, UpdateError> {
         .into_iter()
         .max_by(|(left, _), (right, _)| left.cmp(right))
         .map(|(_, release)| release)
-        .ok_or(UpdateError::Release)
+        .ok_or(UpdateError::NoRelease)
 }
 
 fn asset(release: &Release, name: &str) -> Result<Url, UpdateError> {
+    let missing = || UpdateError::Asset {
+        tag: release.tag_name.clone(),
+        name: name.to_owned(),
+    };
     let mut matching = release.assets.iter().filter(|asset| asset.name == name);
-    let asset = matching.next().ok_or(UpdateError::Release)?;
+    let asset = matching.next().ok_or_else(missing)?;
     if matching.next().is_some() {
-        return Err(UpdateError::Release);
+        return Err(missing());
     }
     Ok(asset.browser_download_url.clone())
 }
