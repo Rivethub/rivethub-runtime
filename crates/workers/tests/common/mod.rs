@@ -392,7 +392,7 @@ fn default_max_attempts(name: &JobName) -> u32 {
             FixedJob::SummarizeConversation
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
-            FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
+            FixedJob::FileConversation | FixedJob::ExtractWiki | FixedJob::ExtractEntities => 2,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
@@ -401,6 +401,8 @@ fn default_max_attempts(name: &JobName) -> u32 {
             | FixedJob::RecompileWiki
             | FixedJob::EnqueueStaleWiki
             | FixedJob::EnqueueStaleSummaries
+            | FixedJob::EnqueueEntityBackfill
+            | FixedJob::EnqueueStaleEntities
             | FixedJob::ReapDeadJobs
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,

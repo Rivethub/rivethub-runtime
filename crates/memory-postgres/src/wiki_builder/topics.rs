@@ -186,7 +186,7 @@ pub(super) async fn store_topic(
     store(tx, page, page.meta.slug.as_ref(), None, git_sha, now).await
 }
 
-pub(super) async fn store(
+pub(crate) async fn store(
     tx: &mut Transaction<'_, Postgres>,
     page: &WikiPage,
     key: &str,

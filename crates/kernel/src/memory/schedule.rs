@@ -53,6 +53,17 @@ impl WorkerRole {
                 }
                 entries
             }
+            Self::EntityBuilder => {
+                let mut entries = vec![cron("entity-backfill", FixedJob::EnqueueEntityBackfill, 1)];
+                if wiki_enabled {
+                    entries.push(cron(
+                        "stale-entity-sweep",
+                        FixedJob::EnqueueStaleEntities,
+                        15,
+                    ));
+                }
+                entries
+            }
         }
     }
 }

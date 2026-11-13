@@ -418,7 +418,7 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             FixedJob::SummarizeConversation
             | FixedJob::SynthesizeToolCall
             | FixedJob::DigestDay => 3,
-            FixedJob::FileConversation | FixedJob::ExtractWiki => 2,
+            FixedJob::FileConversation | FixedJob::ExtractWiki | FixedJob::ExtractEntities => 2,
             FixedJob::EnqueueUnembedded
             | FixedJob::EnqueueUnchunked
             | FixedJob::EnqueueIdle
@@ -427,6 +427,8 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             | FixedJob::RecompileWiki
             | FixedJob::EnqueueStaleWiki
             | FixedJob::EnqueueStaleSummaries
+            | FixedJob::EnqueueEntityBackfill
+            | FixedJob::EnqueueStaleEntities
             | FixedJob::ReapDeadJobs
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,

@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use kernel::facts::FactStore;
 use kernel::memory::EmbeddingStore;
 use kernel::memory::SummaryStore;
 use kernel::model::ModelProvider;
@@ -25,6 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::dispatch::JobEnv;
 use crate::embed::EmbedSettings;
+use crate::entity_builder::EntityBuilderDeps;
 use crate::error::WorkerError;
 use crate::outage::OutageGate;
 use crate::role::ProcessRole;
@@ -101,6 +103,7 @@ pub struct Runner<Q> {
     memory_jobs: Option<Arc<dyn kernel::memory::jobs::MemoryJobStore>>,
     unembedded: Option<Arc<dyn kernel::memory::jobs::UnembeddedStore>>,
     wiki: Option<WikiBuilderDeps>,
+    entity: Option<EntityBuilderDeps>,
     topics: Option<crate::SessionTopics>,
     topic_pages: Option<crate::topic_page::TopicPages>,
     tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
@@ -139,6 +142,7 @@ where
             memory_jobs: None,
             unembedded: None,
             wiki: None,
+            entity: None,
             topics: None,
             topic_pages: None,
             tidy: None,
@@ -225,6 +229,12 @@ where
     }
 
     #[must_use]
+    pub fn with_entity_builder(mut self, deps: EntityBuilderDeps) -> Self {
+        self.entity = Some(deps);
+        self
+    }
+
+    #[must_use]
     pub fn with_session_deletion(
         mut self,
         deletions: Arc<dyn kernel::memory::SessionDeletion>,
@@ -261,7 +271,7 @@ where
         topics: Arc<dyn TopicStore>,
         pages: Arc<dyn TopicPageStore>,
         decisions: Arc<dyn DecisionStore>,
-        facts: Arc<dyn kernel::facts::FactStore>,
+        facts: Arc<dyn FactStore>,
     ) -> Self {
         self.topic_pages = Some(crate::topic_page::TopicPages {
             topics,
@@ -282,6 +292,11 @@ where
         if self.wiki.is_none() && roles.contains(&WorkerRole::WikiBuilder) {
             return Err(WorkerError::MissingDependencies {
                 role: ProcessRole::WikiBuilder,
+            });
+        }
+        if self.entity.is_none() && roles.contains(&WorkerRole::EntityBuilder) {
+            return Err(WorkerError::MissingDependencies {
+                role: ProcessRole::EntityBuilder,
             });
         }
         let permits =
@@ -439,6 +454,7 @@ where
             memory_jobs: self.memory_jobs.clone(),
             unembedded: self.unembedded.clone(),
             wiki: self.wiki.clone(),
+            entity: self.entity.clone(),
             targets: Arc::clone(&self.targets),
             summaries: Arc::clone(&self.summaries),
             summarizer: Arc::clone(&self.summarizer),

@@ -11,8 +11,12 @@ rust-version.workspace = true
 async-trait = { workspace = true }
 chrono = { workspace = true }
 config = { workspace = true }
+futures = { workspace = true }
 hex = { workspace = true }
 kernel = { workspace = true }
+parking_lot = { workspace = true }
+reqwest = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -25,7 +29,6 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
-parking_lot = { workspace = true }
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
 tracing-subscriber = { workspace = true }

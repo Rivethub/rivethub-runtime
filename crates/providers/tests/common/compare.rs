@@ -25,6 +25,7 @@ pub(crate) fn replay(recorded: &ProviderScenario, actual: &ProviderTurn) {
             assert_eq!(expected.stream_options, actual.stream_options);
             assert_eq!(expected.chat_template_kwargs, actual.chat_template_kwargs);
             assert_eq!(expected.think, actual.think);
+            assert_eq!(expected.structured_outputs, actual.structured_outputs);
             assert_eq!(expected.messages.len(), actual.messages.len());
             for (expected, actual) in expected.messages.iter().zip(&actual.messages) {
                 message(expected, actual);

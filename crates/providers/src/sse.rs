@@ -74,14 +74,7 @@ async fn forward(
     let chunk: ChatCompletionChunk = match serde_json::from_str(data) {
         Ok(chunk) => chunk,
         Err(source) => {
-            send_failure(
-                tx,
-                stream_error(
-                    format!("the model server sent a malformed stream event: {source}"),
-                    source,
-                ),
-            )
-            .await;
+            send_failure(tx, undecodable(data, source)).await;
             return false;
         }
     };
@@ -96,6 +89,53 @@ async fn forward(
         }
     }
     true
+}
+
+fn undecodable(data: &str, source: serde_json::Error) -> ModelProviderError {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            untyped,
+            reason = "tool arguments and model JSON are arbitrary objects"
+        )
+    )]
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: a stream error that is not JSON is reported as the decode error"
+        )
+    )]
+    let reported = serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .and_then(|value| value.get("error").cloned());
+    if let Some(error) = reported {
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                untyped,
+                reason = "tool arguments and model JSON are arbitrary objects"
+            )
+        )]
+        let message = error
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| error.to_string(), str::to_owned);
+        let code = error
+            .get("code")
+            .filter(|code| !code.is_null())
+            .map(|code| format!(" (code {code})"))
+            .unwrap_or_default();
+        return stream_error(
+            format!("the model server reported an error mid-stream: {message}{code}"),
+            source,
+        );
+    }
+    let quoted: String = data.chars().take(300).collect();
+    stream_error(
+        format!("the model server sent a malformed stream event: {source}; event: {quoted}"),
+        source,
+    )
 }
 
 async fn send_failure(tx: &tokio::sync::mpsc::Sender<ModelStreamItem>, error: ModelProviderError) {
@@ -251,6 +291,7 @@ mod tests {
 
     use super::decode_finish;
     use super::translate;
+    use super::undecodable;
     use kernel::model::FinishReason;
     use kernel::model::ModelChunk;
     use wire::stream::openai::ChatCompletionChunk;
@@ -276,5 +317,27 @@ mod tests {
         let mut out = Vec::new();
         translate(&chunk, &mut out, None).expect("translate");
         assert_eq!(out, Vec::<ModelChunk>::new());
+    }
+
+    fn failure_text(data: &str) -> String {
+        let source = serde_json::from_str::<ChatCompletionChunk>(data).expect_err("not a chunk");
+        undecodable(data, source).to_string()
+    }
+
+    #[test]
+    fn a_mid_stream_error_object_reports_the_server_message() {
+        let text = failure_text(
+            r#"{"error":{"object":"error","message":"engine dead: KV transfer aborted","type":"InternalServerError","param":null,"code":500}}"#,
+        );
+        assert!(text.contains("reported an error mid-stream"), "{text}");
+        assert!(text.contains("engine dead: KV transfer aborted"), "{text}");
+        assert!(text.contains("(code 500)"), "{text}");
+    }
+
+    #[test]
+    fn an_unknown_event_is_quoted_in_the_failure() {
+        let text = failure_text(r#"{"weird":true}"#);
+        assert!(text.contains("malformed stream event"), "{text}");
+        assert!(text.contains(r#"{"weird":true}"#), "{text}");
     }
 }

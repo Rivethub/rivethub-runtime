@@ -419,6 +419,7 @@ async fn build_runners(
             targets: Arc::clone(store) as Arc<dyn EmbeddingStore>,
             summaries: Arc::clone(store) as Arc<dyn SummaryStore>,
             wiki: Arc::clone(store) as Arc<dyn WikiBuilderStore>,
+            entity: None,
             consolidate: Some(Arc::clone(store) as Arc<dyn WikiConsolidateStore>),
             recompile: None,
             topics: Arc::clone(store) as Arc<dyn TopicStore>,

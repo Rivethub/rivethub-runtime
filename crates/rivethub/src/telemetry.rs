@@ -20,5 +20,6 @@ pub(crate) const fn worker_job(role: ProcessRole) -> CrashJob {
         ProcessRole::Summarizer | ProcessRole::All => CrashJob::Summarizer,
         ProcessRole::Categorizer => CrashJob::Categorizer,
         ProcessRole::WikiBuilder => CrashJob::WikiWriter,
+        ProcessRole::EntityBuilder => CrashJob::EntityBuilder,
     }
 }
