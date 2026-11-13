@@ -38,6 +38,7 @@ pub struct AccountService {
     files: AccountFiles,
     settings: CloudSettings,
     cloud: Cloud,
+    telemetry: Cloud,
     state: tokio::sync::Mutex<InstallState>,
     counters: Counters,
     hubs: Hubs,
@@ -55,6 +56,7 @@ impl AccountService {
         let state = tokio::task::spawn_blocking(move || opening.open()).await??;
         Ok(Self {
             cloud: Cloud::new(settings.base.clone())?,
+            telemetry: Cloud::new(settings.telemetry.clone())?,
             files,
             settings,
             state: tokio::sync::Mutex::new(state),
@@ -298,10 +300,10 @@ impl AccountService {
         for path in tokio::task::spawn_blocking(move || queued(&files)).await?? {
             if sending {
                 let report: CrashReport = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
-                match self.cloud.crash(&report).await? {
+                match self.telemetry.crash(&report).await? {
                     Delivery::Accepted => {}
                     Delivery::Rejected => {
-                        tracing::warn!(at = %report.at, "rivethub.cloud rejected a crash report");
+                        tracing::warn!(at = %report.at, "the telemetry endpoint rejected a crash report");
                     }
                 }
             }
@@ -350,10 +352,10 @@ impl AccountService {
                 app_opens: Some(day.app_opens),
             },
         };
-        match self.cloud.usage(&report).await {
+        match self.telemetry.usage(&report).await {
             Ok(Delivery::Accepted) => {}
             Ok(Delivery::Rejected) => {
-                tracing::warn!(day = %day.day, "rivethub.cloud rejected the usage report");
+                tracing::warn!(day = %day.day, "the telemetry endpoint rejected the usage report");
             }
             Err(error) => tracing::debug!(%error, day = %day.day, "the usage report was not sent"),
         }

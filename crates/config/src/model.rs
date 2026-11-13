@@ -55,10 +55,11 @@ pub struct HubEntry {
     pub kind: wire::gateway::account::HubKind,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub struct TelemetrySection {
     pub disabled: bool,
+    pub url: Option<url::Url>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
@@ -603,7 +604,17 @@ impl Config {
 
     #[must_use]
     pub fn telemetry_disabled(&self) -> bool {
-        self.cloud_disabled() || self.telemetry.is_some_and(|section| section.disabled)
+        self.telemetry
+            .as_ref()
+            .is_some_and(|section| section.disabled)
+            || (self.cloud_disabled() && self.telemetry_url().is_none())
+    }
+
+    #[must_use]
+    pub fn telemetry_url(&self) -> Option<&url::Url> {
+        self.telemetry
+            .as_ref()
+            .and_then(|section| section.url.as_ref())
     }
 
     #[must_use]

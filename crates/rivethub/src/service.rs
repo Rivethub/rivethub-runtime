@@ -112,6 +112,10 @@ fn query_embed(
         .memory
         .as_ref()
         .and_then(|memory| memory.postgres.as_ref());
+    let instruction = query_instruction(
+        section.and_then(|section| section.embed_query_instruction.as_deref()),
+        &model,
+    );
     let provider = embed_provider(
         config.embed_provider(config::MemoryBackend::Postgres),
         section.and_then(|section| section.embed_api_key.clone()),
@@ -122,7 +126,7 @@ fn query_embed(
     )?;
     Ok(Some(memory_postgres::QueryEmbed::new(
         provider,
-        section.and_then(|section| section.embed_query_instruction.clone()),
+        Some(instruction),
         section.and_then(|section| section.embed_timeout_ms),
         section.and_then(|section| section.hnsw_ef_search),
     )))
@@ -151,9 +155,10 @@ pub(crate) fn sqlite_query_embed(
         .as_ref()
         .and_then(|memory| memory.sqlite.as_ref());
     let api_key = section.and_then(|section| section.embed_api_key.clone());
-    let instruction = section
-        .and_then(|section| section.embed_query_instruction.clone())
-        .unwrap_or_else(|| kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION.to_owned());
+    let instruction = query_instruction(
+        section.and_then(|section| section.embed_query_instruction.as_deref()),
+        &model,
+    );
     let provider = embed_provider(
         config.embed_provider(config::MemoryBackend::Sqlite),
         api_key,
@@ -168,6 +173,12 @@ pub(crate) fn sqlite_query_embed(
         SQLITE_QUERY_EMBED_TIMEOUT,
         shutdown.child_token(),
     )))
+}
+
+fn query_instruction(configured: Option<&str>, model: &str) -> String {
+    configured
+        .unwrap_or_else(|| kernel::memory_core::default_query_instruction(model))
+        .to_owned()
 }
 
 fn embed_provider(
