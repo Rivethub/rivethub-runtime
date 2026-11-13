@@ -114,26 +114,45 @@ struct StoredOrigin {
     created_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Receipt {
+    pub(crate) bundle_id: Option<String>,
+    pub(crate) verification: Verification,
+    pub(crate) checks: Option<ReceiptChecks>,
+}
+
 #[derive(Deserialize)]
 struct StoredReceipt {
+    bundle_id: Option<String>,
     verification: Option<String>,
     checks: Option<ReceiptChecks>,
+}
+
+impl Receipt {
+    pub(crate) fn from_settings(settings: &JsonObject) -> Option<Self> {
+        let stored = parsed::<StoredReceipt>(settings, "receipt")?;
+        let verification = match stored.verification.as_deref() {
+            Some("verified") => Verification::Verified,
+            Some("unsigned") => Verification::Unsigned,
+            Some("unknown_key") => Verification::UnknownKey,
+            _ => Verification::Unreceived,
+        };
+        Some(Self {
+            bundle_id: stored.bundle_id,
+            verification,
+            checks: stored.checks,
+        })
+    }
 }
 
 impl Provenance {
     #[must_use]
     pub fn from_settings(settings: &JsonObject) -> Self {
         let origin = parsed::<StoredOrigin>(settings, "origin");
-        let receipt = parsed::<StoredReceipt>(settings, "receipt");
-        let verification = match receipt
+        let receipt = Receipt::from_settings(settings);
+        let verification = receipt
             .as_ref()
-            .and_then(|receipt| receipt.verification.as_deref())
-        {
-            Some("verified") => Verification::Verified,
-            Some("unsigned") => Verification::Unsigned,
-            Some("unknown_key") => Verification::UnknownKey,
-            _ => Verification::Unreceived,
-        };
+            .map_or(Verification::Unreceived, |receipt| receipt.verification);
         Self {
             author: origin
                 .as_ref()
