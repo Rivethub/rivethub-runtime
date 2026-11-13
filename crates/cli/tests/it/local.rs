@@ -39,6 +39,8 @@ fn clap_parses_port_and_no_lan_and_rejects_unknown_flags() {
             no_lan: true,
             ensure: false,
             wait: 2,
+            json: false,
+            no_cloud: false,
         })
     ));
     let unknown = Cli::parse_args(["rh", "local", "--yes"].map(Into::into)).expect_err("flag");
@@ -62,11 +64,16 @@ fn clap_parses_ensure_with_a_bounded_wait() {
             no_lan: true,
             ensure: true,
             wait: 7,
+            json: false,
+            no_cloud: false,
         })
     ));
     let alone = Cli::parse_args(["rh", "local", "--wait", "7"].map(Into::into)).expect_err("wait");
     assert_eq!(alone.exit, Exit::Failure);
     assert!(alone.stderr.contains("--ensure"), "{}", alone.stderr);
+    let json = Cli::parse_args(["rh", "local", "--json"].map(Into::into)).expect_err("json");
+    assert_eq!(json.exit, Exit::Failure);
+    assert!(json.stderr.contains("--ensure"), "{}", json.stderr);
     let zero = Cli::parse_args(["rh", "local", "--ensure", "--wait", "0"].map(Into::into))
         .expect_err("zero wait");
     assert_eq!(zero.exit, Exit::Failure);
@@ -256,4 +263,92 @@ async fn a_lan_bind_without_tls_names_the_ways_out() {
     );
     assert!(!home.path().join(".rivethub/rivethub.pid").exists());
     assert!(!database.exists());
+}
+
+async fn first_run(
+    env: &config::Environment,
+    args: &[&str],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let home = env.home().ok_or("no HOME")?.to_owned();
+    let cli =
+        Cli::parse_args(args.iter().map(|arg| (*arg).into())).map_err(|report| report.stderr)?;
+    let dispatch = cli::dispatch(cli, env, &tokio_util::sync::CancellationToken::new()).await;
+    let Dispatch::Local(prepared) = dispatch else {
+        return Err("local did not prepare".into());
+    };
+    let disabled = prepared.config.cloud_disabled();
+    prepared.release()?;
+    if !disabled {
+        return Err("the prepared config keeps the cloud on".into());
+    }
+    Ok(std::fs::read_to_string(
+        std::path::Path::new(&home).join(".rivethub/config.yaml"),
+    )?)
+}
+
+#[tokio::test]
+async fn a_cloud_off_first_run_writes_the_policy_into_the_new_config() {
+    let flagged = home();
+    let text = first_run(&without_tls(&flagged), &["rh", "local", "--no-cloud"])
+        .await
+        .expect("first run");
+    assert!(text.contains("cloud:\n  disabled: true\n"), "{text}");
+    let variable = home();
+    let env = without_tls(&variable).with_override("RIVETHUB_CLOUD", "off");
+    let text = first_run(&env, &["rh", "local"]).await.expect("first run");
+    assert!(text.contains("cloud:\n  disabled: true\n"), "{text}");
+}
+
+#[tokio::test]
+async fn a_cloud_off_switch_refuses_a_config_without_the_policy() {
+    let home = home();
+    let database = home.path().join(".rivethub/memory.sqlite");
+    let without = format!(
+        "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\ngateway:\n  host: 127.0.0.1\n  port: 9\n",
+        database.display()
+    );
+    config(&home, &without);
+    let path = home.path().join(".rivethub/config.yaml");
+    let before = std::fs::read_to_string(&path).expect("config");
+    let switched = environment(&home).with_override("RIVETHUB_CLOUD", "off");
+    for (args, env) in [
+        (vec!["local", "--no-cloud"], environment(&home)),
+        (vec!["local", "--ensure", "--no-cloud"], environment(&home)),
+        (vec!["local"], switched.clone()),
+        (vec!["local", "--ensure"], switched),
+    ] {
+        let report = run(&args, &env).await;
+        assert_eq!(report.exit, Exit::Failure, "{args:?}: {}", report.stdout);
+        assert!(
+            report.stderr.contains("add `cloud: {disabled: true}` to"),
+            "{args:?}: {}",
+            report.stderr
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("config"), before);
+        assert!(!home.path().join(".rivethub/rivethub.pid").exists());
+    }
+    let unknown = run(
+        &["local"],
+        &environment(&home).with_override("RIVETHUB_CLOUD", "maybe"),
+    )
+    .await;
+    assert_eq!(unknown.exit, Exit::Failure, "{}", unknown.stdout);
+    assert!(
+        unknown.stderr.contains("RIVETHUB_CLOUD"),
+        "{}",
+        unknown.stderr
+    );
+
+    config(&home, &format!("{without}cloud:\n  disabled: true\n"));
+    let cli = Cli::parse_args(["rh", "local", "--no-cloud"].map(Into::into)).expect("parse");
+    let dispatch = cli::dispatch(
+        cli,
+        &environment(&home),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
+    let Dispatch::Local(prepared) = dispatch else {
+        panic!("a config with the policy did not prepare");
+    };
+    prepared.release().expect("release");
 }

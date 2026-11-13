@@ -14,9 +14,9 @@ use wire::capture::CaptureMessage;
 use wire::capture::SessionBundle;
 use wire::message::Role;
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+pub(crate) type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-const RISKY: &str = "Acme Corp";
+pub(crate) const RISKY: &str = "Acme Corp";
 const OUTPUT: &str = "payroll.csv: 41 rows, totals 88120";
 
 const DATES: [&str; 4] = [
@@ -69,7 +69,7 @@ fn batch(
     }
 }
 
-fn sessions() -> Vec<CaptureBatchRequest> {
+pub(crate) fn sessions() -> Vec<CaptureBatchRequest> {
     vec![
         batch(
             "claude-code:alpha",
@@ -121,16 +121,16 @@ fn sessions() -> Vec<CaptureBatchRequest> {
 }
 
 #[derive(serde::Deserialize)]
-struct Ask {
+pub(crate) struct Ask {
     state: String,
 }
 
 #[derive(serde::Serialize)]
-struct Answer {
+pub(crate) struct Answer {
     probabilities: [f64; 2],
 }
 
-async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
+pub(crate) async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
     let yes = if ask.state.contains(RISKY) {
         0.88
     } else {
@@ -141,15 +141,19 @@ async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
     })
 }
 
-struct Node {
-    home: tempfile::TempDir,
-    database: PathBuf,
-    owner: kernel::owner::Owner,
+pub(crate) struct Node {
+    pub(crate) home: tempfile::TempDir,
+    pub(crate) database: PathBuf,
+    pub(crate) owner: kernel::owner::Owner,
     model: String,
 }
 
 impl Node {
-    async fn new(owner: &str, model: &str, seed: &[CaptureBatchRequest]) -> TestResult<Self> {
+    pub(crate) async fn new(
+        owner: &str,
+        model: &str,
+        seed: &[CaptureBatchRequest],
+    ) -> TestResult<Self> {
         let home = tempfile::tempdir()?;
         std::fs::create_dir_all(home.path().join(".rivethub"))?;
         let database = home.path().join(".rivethub/memory.sqlite");
@@ -173,7 +177,7 @@ impl Node {
         self.home.path().join(".local/share/rivethub/share")
     }
 
-    fn server(&self, block: bool) -> TestResult<mcp::Server> {
+    pub(crate) fn loaded(&self, block: bool) -> TestResult<(config::Config, config::Environment)> {
         let state = self.home.path().join(".rivethub");
         std::fs::write(
             state.join("config.yaml"),
@@ -186,15 +190,21 @@ impl Node {
         let env = config::Environment::from_vars([
             (OsStr::new("HOME"), self.home.path().as_os_str()),
             (OsStr::new("RIVETHUB_NODE_NAME"), OsStr::new("desk")),
+            (OsStr::new("RIVETHUB_TOKEN_STORE"), OsStr::new("file")),
         ]);
         let loaded = config::Config::load(
             &env,
             &config::ConfigLocation::Current(state.join("config.yaml")),
             config::Profile::Standalone,
         )?;
+        Ok((loaded.config, env))
+    }
+
+    pub(crate) fn server(&self, block: bool) -> TestResult<mcp::Server> {
+        let (config, env) = self.loaded(block)?;
         let store = memory_sqlite::SqliteStore::open(&self.database)?;
         let kit = rivethub::sessions::kit(
-            &loaded.config,
+            &config,
             &env,
             self.owner.clone(),
             cli::memory::SessionStore::Sqlite(store.clone()),
@@ -206,7 +216,7 @@ impl Node {
         )
     }
 
-    fn column(&self, sql: &str) -> TestResult<Vec<String>> {
+    pub(crate) fn column(&self, sql: &str) -> TestResult<Vec<String>> {
         let connection = rusqlite::Connection::open(&self.database)?;
         let mut statement = connection.prepare(sql)?;
         let values = statement
@@ -216,7 +226,11 @@ impl Node {
     }
 }
 
-async fn call(server: &mcp::Server, name: &str, arguments: &str) -> TestResult<(bool, String)> {
+pub(crate) async fn call(
+    server: &mcp::Server,
+    name: &str,
+    arguments: &str,
+) -> TestResult<(bool, String)> {
     let mut request = CallToolRequestParams::new(name.to_owned());
     request.arguments = Some(serde_json::from_str(arguments)?);
     let result: CallToolResult = server.call(request).await?;
@@ -245,7 +259,7 @@ fn listing(directory: &Path) -> Vec<String> {
     names
 }
 
-fn chosen(phil: &Node) -> TestResult<(String, String, String)> {
+pub(crate) fn chosen(phil: &Node) -> TestResult<(String, String, String)> {
     let id = |key: &str| -> TestResult<String> {
         phil.column(&format!(
             "SELECT id FROM ros_conversations WHERE session_key = '{key}'"

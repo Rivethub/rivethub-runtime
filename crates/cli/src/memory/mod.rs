@@ -1,12 +1,15 @@
 mod bundle;
 mod chosen;
 mod cleanup;
+pub mod desk;
 mod dropbox;
 mod export;
+mod hold;
 mod inbox;
 mod io;
 mod merge;
 mod parse;
+mod receiving;
 mod recompile;
 mod run;
 mod sanitize;
@@ -20,16 +23,18 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Report;
 
+pub use desk::Shared;
 pub use dropbox::DropError;
 pub use export::MemoryExporter;
-pub use share::SealedFile;
+pub use receiving::FetchError;
+pub use receiving::Fetched;
+pub use receiving::fetch;
+pub use receiving::trust_sender;
+pub use receiving::trusted_senders;
+pub use receiving::untrust_sender;
 pub use share::ShareError;
-pub use share::Shared;
 pub use share::code_line;
 pub use share::read_bundle_file;
-pub use share::seal_bytes;
-pub use share::seal_file;
-pub use share::upload;
 pub use store::SessionStore;
 
 pub async fn execute(

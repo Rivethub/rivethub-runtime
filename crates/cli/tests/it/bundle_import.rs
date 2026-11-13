@@ -122,6 +122,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         Arc::clone(&store) as _,
         crate::capture_hook::settings(receiver_home.path()),
     )
+    .with_local_owner(crate::support::local_owner(receiver_home.path()))
     .with_tenancy(Tenancy::local(
         UserId::new("alex".to_owned()).expect("alex"),
     ));
@@ -188,7 +189,10 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     let phils = hits(&search, "quokka collisions").await;
     assert_eq!(phils.len(), 2, "{phils:?}");
     for (heading, _) in &phils {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{phils:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{phils:?}"
+        );
     }
     untagged(&hits(&search, "alex-native").await);
 
@@ -203,7 +207,10 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         "import changed: {imported:?} -> {later:?}"
     );
     for (heading, _) in &hits(&search, "quokka collisions").await {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{heading}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{heading}"
+        );
     }
     untagged(&hits(&search, "alex-later").await);
     stop.cancel();
@@ -253,6 +260,7 @@ impl Receiver {
             Arc::clone(store) as _,
             crate::capture_hook::settings(home.path()),
         )
+        .with_local_owner(crate::support::local_owner(home.path()))
         .with_tenancy(Tenancy::local(UserId::new(user.to_owned()).expect("user")));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
@@ -382,7 +390,10 @@ async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(poo
     let found = hits(&search, "wombat-plan").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{found:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{found:?}"
+        );
     }
     alex.stop().await;
     bob.stop().await;
@@ -413,7 +424,7 @@ async fn origins_whose_node_and_conversation_share_a_colon_stay_apart(pool: PgPo
     assert!(
         phil_hits
             .iter()
-            .all(|(heading, _)| heading.ends_with(" from phil · 2026-10-01")),
+            .all(|(heading, _)| heading.ends_with(" from phil · 2026-10-01 · unverified")),
         "{phil_hits:?}"
     );
     receiver.stop().await;
@@ -487,7 +498,10 @@ async fn a_session_passed_from_user_to_user_stays_credited_to_its_first_author(p
     let found = hits(&search, "numbat-notes").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
-        assert!(heading.ends_with(" from phil · 2026-10-01"), "{found:?}");
+        assert!(
+            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            "{found:?}"
+        );
     }
     alex.stop().await;
     bob.stop().await;

@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use capture::redaction::Redaction;
-use capture::sanitize::Change;
-use capture::sanitize::Field;
 use capture::sanitize::OpenFlags;
 use capture::sanitize::decide::Flag;
 use capture::sanitize::decide::Mode;
@@ -24,6 +22,7 @@ use config::MappingFile;
 use kernel::memory::SessionDigest;
 use kernel::memory::share::DecideMode;
 use kernel::memory::share::DecisionSummary;
+use kernel::memory::share::Findings;
 use kernel::memory::share::FlagPlace;
 use kernel::memory::share::FlagSummary;
 use kernel::memory::share::ListedSession;
@@ -31,7 +30,6 @@ use kernel::memory::share::OpenedBundle;
 use kernel::memory::share::SanitizeJob;
 use kernel::memory::share::SanitizeSummary;
 use kernel::memory::share::SanitizedBundle;
-use kernel::memory::share::Secrets;
 use kernel::memory::share::SessionShare;
 use kernel::memory::share::ShareFailure;
 use kernel::owner::Owner;
@@ -47,15 +45,65 @@ use crate::service::StartupError;
 const SHARE_DIR: &str = "rivethub/share";
 
 #[derive(Debug)]
-struct NodeShare {
-    store: SessionStore,
-    owner: Owner,
-    author: BundleAuthor,
-    mapping: MappingFile,
-    key: PathBuf,
+pub(crate) struct NodeShare {
+    pub(crate) store: SessionStore,
+    pub(crate) owner: Owner,
+    pub(crate) author: BundleAuthor,
+    pub(crate) mapping: MappingFile,
+    pub(crate) key: PathBuf,
     decider: Result<Decider, SetupError>,
     redaction: Option<Redaction>,
     excerpts: Redaction,
+}
+
+impl NodeShare {
+    pub(crate) fn new<E>(
+        config: &Config,
+        env: &Environment,
+        owner: Owner,
+        store: SessionStore,
+    ) -> Result<Self, E>
+    where
+        E: From<config::ConfigError> + From<crate::NodeError>,
+    {
+        let node = crate::identity::resolve(config, env)?.name;
+        Ok(Self {
+            store,
+            author: BundleAuthor {
+                user: owner.as_str().to_owned(),
+                node,
+            },
+            owner,
+            mapping: config.sanitize_mapping(env)?,
+            key: share::key_path(env)?,
+            decider: share::decider(config, false),
+            redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
+            excerpts: Redaction::builtins(),
+        })
+    }
+
+    pub(crate) fn decider(
+        &self,
+        decide: bool,
+        block: bool,
+    ) -> Result<Option<Decider>, ShareFailure> {
+        match (decide, &self.decider) {
+            (false, _) => Ok(None),
+            (true, Ok(decider)) => Ok(Some(Decider {
+                review: Review {
+                    mode: if block {
+                        Mode::Block
+                    } else {
+                        decider.review.mode
+                    },
+                    ..decider.review
+                },
+                ..decider.clone()
+            })),
+            (true, Err(SetupError::Unconfigured)) => Err(ShareFailure::DecideUnconfigured),
+            (true, Err(error)) => Err(failed(error)),
+        }
+    }
 }
 
 pub fn kit(
@@ -64,30 +112,17 @@ pub fn kit(
     owner: Owner,
     store: SessionStore,
 ) -> Result<Sessions, StartupError> {
-    let node = crate::identity::resolve(config, env)?.name;
+    let share = NodeShare::new::<StartupError>(config, env, owner.clone(), store)?;
     let home = config::Paths::new(env)?.home().to_path_buf();
     let data = match env.text("XDG_DATA_HOME").filter(|text| !text.is_empty()) {
         Some(text) => PathBuf::from(text),
         None => home.join(".local").join("share"),
     };
-    let share = NodeShare {
-        store,
-        owner: owner.clone(),
-        author: BundleAuthor {
-            user: owner.as_str().to_owned(),
-            node: node.clone(),
-        },
-        mapping: config.sanitize_mapping(env)?,
-        key: share::key_path(env)?,
-        decider: share::decider(config, false),
-        redaction: capture::redaction::resolve(Some(config.capture_redaction()), env),
-        excerpts: Redaction::builtins(),
-    };
     Ok(Sessions {
+        node: share.author.node.clone(),
         share: Arc::new(share),
         files: ShareFiles::new(data.join(SHARE_DIR), home),
         owner,
-        node,
     })
 }
 
@@ -98,22 +133,7 @@ impl SessionShare for NodeShare {
     }
 
     async fn sanitize(&self, job: SanitizeJob) -> Result<SanitizeSummary, ShareFailure> {
-        let decider = match (job.decide, &self.decider) {
-            (false, _) => None,
-            (true, Ok(decider)) => Some(Decider {
-                review: Review {
-                    mode: if job.block {
-                        Mode::Block
-                    } else {
-                        decider.review.mode
-                    },
-                    ..decider.review
-                },
-                ..decider.clone()
-            }),
-            (true, Err(SetupError::Unconfigured)) => return Err(ShareFailure::DecideUnconfigured),
-            (true, Err(error)) => return Err(failed(error)),
-        };
+        let decider = self.decider(job.decide, job.block)?;
         let mapping = job
             .mapping
             .map_or_else(|| self.mapping.clone(), MappingFile::Configured);
@@ -124,16 +144,18 @@ impl SessionShare for NodeShare {
             .chosen(&self.author, &self.owner, &job.sessions)
             .await?;
         let chosen = share::chosen(self.author.clone(), sessions, Utc::now()).map_err(failed)?;
-        let outcome = share::sanitize(share::Job {
-            bundle: &chosen.bundle,
-            sessions: &chosen.sessions,
-            mapping: &mapping,
-            key: &self.key,
-            decider: decider.as_ref(),
-            paths: &paths,
-            clobber: Clobber::Refuse,
-            at: Utc::now(),
-        })
+        let outcome = share::sanitize(
+            share::Job {
+                bundle: &chosen.bundle,
+                sessions: &chosen.sessions,
+                mapping: &mapping,
+                key: &self.key,
+                decider: decider.as_ref(),
+                at: Utc::now(),
+            },
+            &paths,
+            Clobber::Refuse,
+        )
         .await
         .map_err(failed)?;
         Ok(summary(&outcome, paths))
@@ -148,33 +170,32 @@ impl SessionShare for NodeShare {
         if bundle.manifest.sanitization == Sanitization::Raw {
             return Ok(OpenedBundle::Raw);
         }
-        let secrets = capture::sanitize::secrets(&bundle);
+        let checked = capture::receive::check(&bundle);
         let OpenFlags {
             withheld,
             unreviewed,
         } = capture::sanitize::open_flags(&bundle).map_err(failed)?;
+        let shown: Vec<&BundledSession> = (0..bundle.sessions.len())
+            .filter_map(|index| checked.shown(&bundle, index))
+            .collect();
         let mut authors: Vec<String> = Vec::new();
-        for (index, session) in bundle.sessions.iter().enumerate() {
-            let author = shown(index, &Field::OriginAuthor, author_of(session), &secrets);
+        for session in &shown {
+            let author = capture::receive::visible(author_of(session));
             if !authors.contains(&author) {
                 authors.push(author);
             }
         }
         Ok(OpenedBundle::Sanitized(SanitizedBundle {
-            sessions: bundle
-                .sessions
-                .iter()
-                .enumerate()
-                .map(|(index, session)| listed(index, session, &secrets))
-                .collect(),
+            sessions: shown.iter().map(|session| listed(session)).collect(),
             batches: bundle
                 .sessions
                 .iter()
                 .map(|session| self.batch(session))
                 .collect(),
-            secrets: secrets.first().map(|first| Secrets {
-                count: secrets.len(),
-                first: first.to_string(),
+            findings: (!checked.is_clean()).then(|| Findings {
+                count: checked.findings().len(),
+                sessions: checked.flagged().len(),
+                summary: checked.summary(),
             }),
             withheld,
             unreviewed,
@@ -211,12 +232,12 @@ async fn read_bundle(path: &Path) -> Result<SessionBundle, ShareFailure> {
 fn summary(outcome: &Outcome, paths: BundlePaths) -> SanitizeSummary {
     let report = &outcome.report;
     SanitizeSummary {
-        sessions: outcome.sanitized.sessions.len(),
+        sessions: outcome.sanitized.bundle.sessions.len(),
         totals: report.totals().to_string(),
         rule_counts: share::rule_counts(report),
         not_scanned: share::NOT_SCANNED.to_owned(),
         best_effort: share::BEST_EFFORT.to_owned(),
-        local: outcome.local.then_some(paths.local),
+        local: outcome.local.is_some().then_some(paths.local),
         bundle: paths.bundle,
         report: paths.report,
         decision: report.decision.as_ref().map(|decision| DecisionSummary {
@@ -237,44 +258,33 @@ fn summary(outcome: &Outcome, paths: BundlePaths) -> SanitizeSummary {
     }
 }
 
+pub(crate) fn flag_place(flag: &Flag) -> Option<FlagPlace> {
+    flag.places().split_first().map(|(place, more)| FlagPlace {
+        session: place.field.session,
+        message: place.field.message,
+        field: place.field.name.to_string(),
+        more: more.len(),
+    })
+}
+
 fn flag_summary(flag: &Flag, outcome: &Outcome) -> FlagSummary {
     FlagSummary {
         number: flag.number,
         score: flag.score,
-        place: flag.places().split_first().map(|(place, more)| FlagPlace {
-            session: place.field.session,
-            message: place.field.message,
-            field: place.field.name.to_string(),
-            more: more.len(),
-        }),
+        place: flag_place(flag),
         report_line: outcome.mark_lines.get(&flag.number).map(|line| line.get()),
         chars: flag.text.chars().count(),
     }
 }
 
-fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> ListedSession {
+fn listed(session: &BundledSession) -> ListedSession {
     let origin = &session.origin;
     ListedSession {
-        key: shown(
-            index,
-            &Field::OriginSessionKey,
-            &origin.session_key,
-            secrets,
-        ),
-        agent: shown(index, &Field::OriginAgent, &origin.agent, secrets),
+        key: capture::receive::visible(&origin.session_key),
+        agent: capture::receive::visible(&origin.agent),
         messages: session.batch.messages.len(),
-        author: shown(index, &Field::OriginAuthor, author_of(session), secrets),
+        author: capture::receive::visible(author_of(session)),
         dates: origin.created_at.zip(origin.updated_at),
-    }
-}
-
-fn shown(index: usize, field: &Field, text: &str, secrets: &[Change]) -> String {
-    match secrets
-        .iter()
-        .find(|change| change.session == Some(index) && change.field == *field)
-    {
-        Some(change) => change.replacement.clone(),
-        None => text.to_owned(),
     }
 }
 
@@ -282,7 +292,9 @@ fn author_of(session: &BundledSession) -> &str {
     session.origin.known_author().unwrap_or("an unknown author")
 }
 
-fn kernel_batch(batch: wire::capture::CaptureBatchRequest) -> kernel::memory::CaptureBatchRequest {
+pub(crate) fn kernel_batch(
+    batch: wire::capture::CaptureBatchRequest,
+) -> kernel::memory::CaptureBatchRequest {
     kernel::memory::CaptureBatchRequest {
         session_key: batch.session_key,
         agent: batch.agent,

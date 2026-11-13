@@ -1,5 +1,6 @@
 mod common;
 
+mod append_imports;
 mod bundle;
 mod capture_pg;
 mod counts;
@@ -32,5 +33,6 @@ mod vector_search;
 mod verify;
 mod visibility;
 mod wiki_bounded;
+mod wiki_imports;
 mod wiki_routes;
 mod wiki_writer;

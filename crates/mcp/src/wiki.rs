@@ -3,7 +3,9 @@ use crate::{Error, text};
 use kernel::memory::MemoryStore;
 use kernel::wiki::WikiPageResponse;
 use kernel::wiki::page::WikiSlug;
-use kernel::wiki::page::{FullPageRefused, ReadSection, format_wiki_read};
+use kernel::wiki::page::{
+    FullPageRefused, ReadSection, format_wiki_read, imported_banner, mark_imported_citations,
+};
 use kernel::wiki::{WikiFilter, WikiLookup};
 use rmcp::model::{CallToolResult, ToolAnnotations};
 use schemars::JsonSchema;
@@ -75,13 +77,24 @@ pub async fn search(store: &dyn MemoryStore, args: Search) -> Result<CallToolRes
     if topics.topics.is_empty() {
         return Ok(text(format!("No wiki topics match \"{query}\".")));
     }
+    let slugs = topics
+        .topics
+        .iter()
+        .map(|topic| topic.slug.clone())
+        .collect();
+    let imported = store.wiki_imported_authors(slugs).await?;
     Ok(text(
         topics
             .topics
             .iter()
             .map(|topic| {
+                let banner = imported
+                    .get(&topic.slug)
+                    .and_then(imported_banner)
+                    .map(|banner| format!("{banner}\n"))
+                    .unwrap_or_default();
                 format!(
-                    "## {} ({}) — verified {}\n{}",
+                    "## {} ({}) — verified {}\n{banner}{}",
                     topic.title,
                     topic.slug,
                     topic.updated_at.format("%Y-%m-%d"),
@@ -97,7 +110,16 @@ pub(crate) async fn read(store: &dyn MemoryStore, args: Read) -> Result<CallTool
     let page = lookup(store, args.slug).await?;
     let view = format_wiki_read(&page.markdown, &page.slug, args.section)
         .map_err(|FullPageRefused| Error::Refused(FULL_PAGE_REFUSED))?;
-    Ok(text(view))
+    let view = mark_imported_citations(&view, &page.citations);
+    let banner = imported_banner(
+        page.citations
+            .iter()
+            .filter_map(|citation| citation.imported.as_ref()),
+    );
+    Ok(text(match banner {
+        Some(banner) => format!("{banner}\n\n{view}"),
+        None => view,
+    }))
 }
 
 async fn lookup(store: &dyn MemoryStore, mut slug: WikiSlug) -> Result<WikiPageResponse, Error> {

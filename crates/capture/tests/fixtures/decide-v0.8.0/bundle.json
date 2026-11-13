@@ -1,0 +1,100 @@
+{
+  "version": 2,
+  "manifest": {
+    "exported_at": "1970-01-01T00:00:00Z",
+    "exported_by": {
+      "user": "phil",
+      "node": "desk"
+    },
+    "sanitization": {
+      "state": "sanitized",
+      "at": "2026-11-08T12:00:00.123456789Z",
+      "policy_sha256": "228a773040001a72ff039fc2139ab1c978645e6834dd7720d8ca4c8949af6e07",
+      "passes": [
+        "secrets",
+        "mapping",
+        "decide"
+      ],
+      "unresolved_flags": 3,
+      "review": {
+        "mode": "block",
+        "model": "stub-model",
+        "calls": 6,
+        "flags": [
+          {
+            "number": 1,
+            "mark": "open"
+          },
+          {
+            "number": 2,
+            "mark": "open"
+          },
+          {
+            "number": 3,
+            "mark": "open"
+          }
+        ],
+        "seal": "86c662d64dbb7fa20c9ddbb604d09cfc7981f11935121de791ff91b8eccebf6e"
+      }
+    },
+    "session_count": 1,
+    "bundle_sha256": "738dfb1c224d2f80d252a1dc947a6faee3003124ef5f50f22cb93e8fe148fb20"
+  },
+  "sessions": [
+    {
+      "origin": {
+        "author": "phil",
+        "node": "desk",
+        "conversation_id": "c1",
+        "session_key": "claude-code:c1",
+        "agent": "rivet",
+        "created_at": null,
+        "updated_at": null,
+        "identity": "75bc355496ee45407e4f3e4f7d6aeeb9aeeab449806ed3d0fbd3ae158cfc3b6a"
+      },
+      "batch": {
+        "session_key": "claude-code:c1",
+        "agent": "rivet",
+        "title": "numbers for Q3",
+        "task_id": "9057fcb5-48da-405e-9d4d-a7637a9f53ce",
+        "messages": [
+          {
+            "event_id": "2b2299ca35ea65b4b561b9af2c7134363a767d14cf0eee2086d26a24b4fc3f39",
+            "role": "assistant",
+            "content": "[FLAGGED:1]"
+          },
+          {
+            "event_id": "b754fec4cd9715413fe5e3a2307bf8238376d2d2189cad6f9c89043e665a061e",
+            "role": "assistant",
+            "content": "running it",
+            "tool_args": {
+              "command": "[FLAGGED:2]",
+              "file_path": "/srv/reports/q3.csv",
+              "limit": 40
+            },
+            "tool_result": "[FLAGGED:3]",
+            "metadata": {
+              "uuid": "0f3c2a9e-6d1b-4c55-9a0e-2b7d8f1c4e60",
+              "sidechain": false
+            }
+          },
+          {
+            "event_id": "4210bd70a6d8cc510a82090dc66706baf4bfe8bd3854abb022fa152c9b5f350e",
+            "role": "assistant",
+            "content": "running it"
+          },
+          {
+            "event_id": "c1997b50d46ae38f027711307c99890a4d10850b87ffdbff2718542a68fe1af4",
+            "role": "assistant",
+            "content": "running it",
+            "tool_args": {
+              "command": "[FLAGGED:2]",
+              "file_path": "/srv/reports/q3.csv",
+              "limit": 40
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

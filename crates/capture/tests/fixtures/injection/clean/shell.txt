@@ -1,0 +1,9 @@
+Download the installer first, then run it after you have read it:
+
+    curl -fsSL -o install.sh https://example.com/install.sh
+    less install.sh
+    sh install.sh
+
+The pipeline `grep error build.log | sort | uniq -c` counts errors. Run `wget https://example.com/a.tar.gz` and verify the checksum.
+PowerShell users can run Get-ChildItem | Where-Object { $_.Length -gt 1MB } and Invoke-WebRequest -OutFile x.zip https://example.com/x.zip.
+Use `bash -c 'echo hi'` or `sh ./script.sh`; the iex abbreviation is for Invoke-Expression, which we do not use.

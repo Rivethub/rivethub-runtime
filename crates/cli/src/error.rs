@@ -8,6 +8,14 @@ pub enum Error {
     MemoryBackend,
     #[error("memory.capture.gateway.token is not a valid header value")]
     CaptureToken,
+    #[error(
+        "the listener on port {port} is not owned by this user, so the owner token was not sent; stop whatever holds the port and run `rh local --ensure`"
+    )]
+    ListenerNotOurs { port: u16 },
+    #[error("the gateway is not running on port {port}; run `rh local --ensure`")]
+    GatewayNotRunning { port: u16 },
+    #[error(transparent)]
+    LocalOwnerToken(#[from] gateway::local_owner::TokenError),
     #[error("{0}")]
     GatewayCertificate(&'static str),
     #[error(transparent)]
@@ -44,6 +52,16 @@ pub enum Error {
     Signal(#[from] nix::errno::Errno),
     #[error("gateway health request failed: {0}")]
     Http(#[from] reqwest::Error),
+    #[error(
+        "a gateway (pid {pid}) holds this state directory but could not be reached, so the token file was kept; run `rh stop`, then `rh auth rotate` again"
+    )]
+    AuthRotateUnreachable { pid: i32 },
+    #[error("the gateway refused the token rotation with HTTP {status}")]
+    AuthRotate { status: u16 },
+    #[error(
+        "the gateway refused to mint a login code with HTTP {status}; the token file may be stale, restart the gateway or run `rh auth rotate`"
+    )]
+    AuthOpen { status: u16 },
     #[error("invalid gateway URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]
@@ -75,14 +93,14 @@ pub enum Error {
         host: String,
     },
     #[error(
-        "RivetHub local node did not answer at {origin} within {seconds}s; its output is in {}",
-        log.display()
+        "rh local was asked to keep this hub off the cloud (--no-cloud or RIVETHUB_CLOUD=off), but {} does not turn it off; add `cloud: {{disabled: true}}` to that file and run rh local again",
+        path.display()
     )]
-    LocalStart {
-        origin: String,
-        seconds: u64,
-        log: std::path::PathBuf,
-    },
+    CloudLeftOn { path: std::path::PathBuf },
+    #[error(
+        "rh local was asked to keep this hub off the cloud (--no-cloud or RIVETHUB_CLOUD=off), but the node at {origin} is running without this hub's cloud policy; restart it (stop the node, then run rh local again) so the policy applies"
+    )]
+    NodeCloudLeftOn { origin: String },
     #[error("refusing to replace the config at {}", path.display())]
     ConfigPresent { path: std::path::PathBuf },
     #[error("the node claim was already released")]
@@ -236,13 +254,10 @@ pub enum Error {
     BundleRaw { path: String },
     #[error(transparent)]
     Bundle(#[from] capture::bundle::BundleError),
-    #[error(
-        "{path} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again, or pass --force to ingest it as it is"
-    )]
-    BundleSecrets {
+    #[error("{path}: {source}; nothing was imported")]
+    BundleBlocked {
         path: String,
-        count: usize,
-        first: String,
+        source: capture::receive::Blocked,
     },
     #[error(transparent)]
     Sanitize(#[from] capture::sanitize::SanitizeError),

@@ -237,13 +237,42 @@ fn a_code_names_its_server_unless_it_is_rivethub_cloud() -> TestResult {
     }
     assert!(matches!(
         format!("rhb1:te am/{DROP_ID}#{}", key.reveal()).parse::<ShareCode>(),
-        Err(CodeError::Server(_))
+        Err(CodeError::Server)
     ));
     let line = format!("send {}", hosted.reveal());
     assert_eq!(
         capture::redaction::Redaction::share_codes().redact_text(&line),
         format!("send rhb1:team.example.com:8443/{DROP_ID}#[REDACTED:rivethub_share_code]")
     );
+    Ok(())
+}
+
+#[test]
+fn a_server_has_one_spelling() -> TestResult {
+    use capture::seal::ShareServer;
+    for spelling in [
+        "rivethub.cloud:443",
+        "RivetHub.Cloud",
+        "rivethub.cloud.",
+        "https://rivethub.cloud:443/",
+        "rivethub.cloud:0443",
+    ] {
+        let server: ShareServer = spelling.parse()?;
+        assert!(server.is_default(), "{spelling}");
+        assert_eq!(server, ShareServer::rivethub_cloud(), "{spelling}");
+    }
+    let team: ShareServer = "Team.Example.com.:443".parse()?;
+    assert_eq!(team.as_str(), "team.example.com");
+    let local: ShareServer = "localhost:443".parse()?;
+    assert_eq!(local.base_url(), "http://localhost:443/");
+    let key = ShareKey::generate();
+    let cloud: ShareCode = format!("rhb1:rivethub.cloud:443/{DROP_ID}#{}", key.reveal()).parse()?;
+    assert_eq!(cloud.reveal(), code(&key));
+    let hosted: ShareCode =
+        format!("rhb1:Team.Example.com.:443/{DROP_ID}#{}", key.reveal()).parse()?;
+    let canonical = format!("rhb1:team.example.com/{DROP_ID}#{}", key.reveal());
+    assert_eq!(hosted.reveal(), canonical);
+    assert_eq!(canonical.parse::<ShareCode>()?.server, hosted.server);
     Ok(())
 }
 

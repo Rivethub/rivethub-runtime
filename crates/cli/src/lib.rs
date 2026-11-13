@@ -1,4 +1,5 @@
 mod argv;
+mod auth;
 pub mod capture_hook;
 mod configuration;
 pub mod db;
@@ -6,9 +7,11 @@ pub mod doctor;
 mod error;
 mod exit;
 mod harness;
+mod listener;
 mod local;
 pub mod logs;
 pub mod memory;
+mod open;
 mod process;
 mod roots;
 pub mod service;
@@ -45,7 +48,7 @@ impl Report {
         }
     }
 
-    pub fn failure(error: &Error) -> Self {
+    pub fn failure(error: &impl std::fmt::Display) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("Error: {error}\n"),
@@ -129,13 +132,22 @@ async fn command_dispatch(
             no_lan,
             ensure,
             wait,
+            json,
+            no_cloud,
         } => {
             let request = local::Ensure {
                 port,
                 no_lan,
+                no_cloud: no_cloud || env.cloud_switched_off()?,
                 wait_seconds: wait,
             };
-            return run_local(env, request, ensure, shutdown).await;
+            if ensure {
+                return Ok(Dispatch::Complete(local::render(
+                    local::ensure(env, request).await,
+                    json,
+                )));
+            }
+            return run_local(env, request, shutdown).await;
         }
         Command::Gateway { check, config } => {
             return Ok(Dispatch::Gateway { check, config });
@@ -155,6 +167,8 @@ async fn command_dispatch(
         Command::Version => Ok(Report::success(version())),
         Command::Config { command } => configuration::run(command, env).await,
         Command::Doctor { json } => doctor::run(env, json).await,
+        Command::Auth { command } => auth::run(command, env).await,
+        Command::Open { no_browser } => open::run(env, no_browser).await,
         Command::Status => Ok(status::run(env).await),
         Command::Stop => process::stop(env).await,
         Command::Service { command } => service::Scope::for_uid(nix::unistd::geteuid().as_raw())
@@ -189,13 +203,9 @@ async fn command_dispatch(
 async fn run_local(
     env: &Environment,
     request: local::Ensure,
-    ensure: bool,
     shutdown: &CancellationToken,
 ) -> Result<Dispatch, Error> {
-    if ensure {
-        return local::ensure(env, request).await.map(Dispatch::Complete);
-    }
-    let prepared = local::prepare(env, request.port, request.no_lan).await?;
+    let prepared = local::prepare(env, request.port, request.no_lan, request.no_cloud).await?;
     if shutdown.is_cancelled() {
         prepared.release()?;
         return Ok(Dispatch::Complete(Report::success("")));

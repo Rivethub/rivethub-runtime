@@ -35,6 +35,7 @@ async fn local_folds_a_session_variant_topic_into_its_parent_and_redirects() -> 
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
+        .default_headers(crate::owner::home_headers(home.path())?)
         .build()?;
     let response = client
         .get(format!(

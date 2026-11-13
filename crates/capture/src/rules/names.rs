@@ -28,7 +28,7 @@ const KEY_WORD: &str = "key";
 const MIN_ECHO_LENGTH: usize = 4;
 const MAX_CODE_SEGMENT: usize = 40;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawNames {
     password: Vec<String>,
@@ -164,6 +164,10 @@ impl Forms {
 }
 
 impl Names {
+    pub(super) fn empty() -> Result<Self, RuleError> {
+        Self::build(RawNames::default())
+    }
+
     pub(super) fn build(raw: RawNames) -> Result<Self, RuleError> {
         let list = |sources: &[String], id: &str| {
             sources

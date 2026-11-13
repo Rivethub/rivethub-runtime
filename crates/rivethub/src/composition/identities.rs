@@ -105,8 +105,8 @@ fn registry(users: UsersRegistry) -> Result<Identity, ComposeError> {
         if record.admin == Some(true) {
             tenancy = tenancy.with_admin(user.clone());
         }
-        for digest in record.tokens.iter().flatten() {
-            tenancy = tenancy.with_token_digest(digest, user.clone())?;
+        for token in record.tokens.iter().flatten() {
+            tenancy = tenancy.with_users_file_token(token, user.clone())?;
         }
     }
     Ok(Identity { tenancy, owner })

@@ -1,5 +1,7 @@
+pub(crate) mod file;
 mod pending;
 pub mod store;
+mod subagents;
 mod transcript_batch;
 
 use std::os::unix::fs::PermissionsExt as _;
@@ -12,6 +14,7 @@ use chrono::SecondsFormat;
 use chrono::Utc;
 use pending::Pending;
 use pending::PendingPrompts;
+use subagents::Captured;
 use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use wire::JsonObject;
@@ -37,6 +40,7 @@ use crate::transcript::report_skipped;
 use crate::writer::CaptureTransport;
 use crate::writer::CaptureWriter;
 use crate::writer::Totals;
+use crate::writer::WriteError;
 
 pub const AGENT: &str = "rivet-claude";
 pub const CHANNEL: &str = "claude-code";
@@ -55,6 +59,10 @@ pub enum HookError {
     Json(#[from] serde_json::Error),
     #[error("transcript timestamp is not RFC 3339")]
     Timestamp(#[source] chrono::ParseError),
+    #[error(transparent)]
+    Read(#[from] kernel::transcript::TranscriptReaderError),
+    #[error("subagent files were not listed: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,10 +80,35 @@ impl HookRun {
         }
     }
 
-    fn failed(message: String) -> Self {
+    #[must_use]
+    pub fn failed(message: String) -> Self {
         Self {
             exit: 0,
             stderr: message,
+        }
+    }
+
+    fn absorb(&mut self, other: &Self) {
+        self.exit = self.exit.max(other.exit);
+        if other.stderr.is_empty() {
+            return;
+        }
+        if !self.stderr.is_empty() {
+            self.stderr.push('\n');
+        }
+        self.stderr.push_str(&other.stderr);
+    }
+
+    pub(crate) fn write_failed(error: &WriteError) -> Self {
+        match error {
+            WriteError::Spool(_) => Self {
+                exit: 1,
+                stderr: format!("capture batch was NOT saved: {error}"),
+            },
+            WriteError::ChunkTooLarge
+            | WriteError::Post(_)
+            | WriteError::Replay(_)
+            | WriteError::Json(_) => Self::failed(error.to_string()),
         }
     }
 }
@@ -84,6 +117,7 @@ impl HookRun {
 pub struct ClaudeHook<T: CaptureTransport> {
     writer: CaptureWriter<T>,
     pending: PendingPrompts,
+    captured: Captured,
     log_file: PathBuf,
 }
 
@@ -93,6 +127,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         Self {
             writer,
             pending: PendingPrompts::new(&paths.state_dir()),
+            captured: Captured::new(&paths.state_dir()),
             log_file: paths.state_dir().join(LOG_FILE),
         }
     }
@@ -142,10 +177,10 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             HookEvent::Stop | HookEvent::SubagentStop | HookEvent::SessionEnd => {
                 match self.pending.take(session.native()).await {
                     Ok(pending) => transcript_batch::build(
-                        &payload,
+                        payload.transcript_path.as_deref(),
                         session.as_str(),
                         &transcript,
-                        event,
+                        event == HookEvent::SessionEnd,
                         &pending,
                     ),
                     Err(error) => return HookRun::failed(error.to_string()),
@@ -161,14 +196,94 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             Ok(batch) => batch,
             Err(error) => return HookRun::failed(error.to_string()),
         };
+        let mut run = HookRun::done();
         match self.writer.write(&batch, now).await {
             Ok(totals) => {
                 self.best_effort_log(&log_line(event, session.as_str(), &totals, now))
                     .await;
-                HookRun::done()
             }
-            Err(error) => HookRun::failed(error.to_string()),
+            Err(error) => run.absorb(&HookRun::write_failed(&error)),
         }
+        match self
+            .capture_subagents(&payload, session.native(), event, now)
+            .await
+        {
+            Ok(found) => found.iter().for_each(|found| run.absorb(found)),
+            Err(error) => run.absorb(&HookRun::failed(error.to_string())),
+        }
+        run
+    }
+
+    async fn capture_subagents(
+        &self,
+        payload: &HookPayload,
+        native: &str,
+        event: HookEvent,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<HookRun>, HookError> {
+        let selection = subagents::select(payload, native, event).await?;
+        let last_event = event.to_string();
+        let mut failures = Vec::new();
+        for file in &selection.files {
+            let bytes = match tokio::fs::metadata(&file.path).await {
+                Ok(metadata) => metadata.len(),
+                Err(error) => {
+                    failures.push(HookRun::failed(format!(
+                        "subagent {} was not read: {error}",
+                        file.id
+                    )));
+                    continue;
+                }
+            };
+            if !selection.named {
+                match self.captured.holds(native, &file.id, bytes).await {
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                    Err(error) => {
+                        failures.push(HookRun::failed(format!(
+                            "subagent {} was not checked: {error}",
+                            file.id
+                        )));
+                        continue;
+                    }
+                }
+            }
+            let capture = file::FileCapture {
+                file,
+                last_event: &last_event,
+                finalize: selection.named || event == HookEvent::SessionEnd,
+                cwd: payload.cwd.as_ref().map(|path| path.display().to_string()),
+                agent_type: payload.agent_type.as_deref().filter(|_| selection.named),
+            };
+            let batch = match file::batch(&capture, now).await {
+                Ok(Some(batch)) => batch,
+                Ok(None) => continue,
+                Err(error) => {
+                    failures.push(HookRun::failed(format!("subagent {}: {error}", file.id)));
+                    continue;
+                }
+            };
+            let written = self.writer.write(&batch, now).await;
+            match &written {
+                Ok(totals) => {
+                    self.best_effort_log(&log_line(event, &batch.session_key, totals, now))
+                        .await;
+                }
+                Err(error) => {
+                    let mut run = HookRun::write_failed(error);
+                    run.stderr = format!("subagent {}: {}", file.id, run.stderr);
+                    failures.push(run);
+                }
+            }
+            let kept = match &written {
+                Ok(_) => true,
+                Err(error) => error.spooled(),
+            };
+            if kept && let Err(error) = self.captured.record(native, &file.id, bytes).await {
+                tracing::warn!("subagent {} was not recorded: {error}", file.id);
+            }
+        }
+        Ok(failures)
     }
 
     async fn hold_prompt(
@@ -310,8 +425,9 @@ fn settings_for(
             session_id: native,
             pr_url: None,
             cwd,
-            last_event: event,
+            last_event: &event.to_string(),
             last_ingest_at: iso_at(now),
+            subagent: None,
         })?
     } else {
         JsonObject::from_serialize(&PromptSettings {

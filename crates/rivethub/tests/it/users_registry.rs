@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use rivethub::composition::Composition;
-use wire::gateway::users::UsersRegistry;
+use wire::gateway::users::{UserToken, UsersRegistry};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -42,7 +42,7 @@ async fn check_refuses_explicit_missing_invalid_and_ambiguous_registries() -> Te
     let mut duplicate: UsersRegistry = serde_json::from_str(REGISTRY)?;
     let digest = "49e2e40e591e61357758299c8cee170fb9fa7da160ec8acf110a4a409d905aaf".to_owned();
     for user in duplicate.users.values_mut() {
-        user.tokens = Some(vec![digest.clone()]);
+        user.tokens = Some(vec![UserToken::Digest(digest.clone())]);
     }
     let ambiguous = serde_json::to_string(&duplicate)?;
     for content in [

@@ -33,11 +33,11 @@ const CLAIMS: &[&str] = &[
     "plain-main/options-api-disallowed-origin",
     "plain-main/options-unknown-path",
     "plain-main/options-asterisk",
+    "plain-main/remote-plain-options",
     "plain-main/origin-healthz-disallowed",
     "plain-main/host-evil-healthz",
     "plain-main/remote-plain-healthz",
     "plain-main/remote-plain-foreign-host",
-    "plain-main/remote-plain-options",
     "plain-main/not-found-file",
     "plain-main/not-found-post",
     "plain-main/not-found-api",
@@ -551,6 +551,7 @@ fn play_masked(
 
 fn translated_refusal(case: &testkit::http::HttpCase) -> Result<testkit::http::HttpCase, Failed> {
     let mut case = case.clone();
+    common::expect_cors(&mut case);
     if testkit::http::status_of(&case.response.status_line)
         .map_err(|error| Failed::from(error.to_string()))?
         != 403

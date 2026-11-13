@@ -81,6 +81,7 @@ pub struct Line {
     pub message: Option<LineMessage>,
     pub is_sidechain: Option<bool>,
     pub is_meta: Option<bool>,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone)]

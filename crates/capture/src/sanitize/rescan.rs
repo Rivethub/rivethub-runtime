@@ -11,9 +11,11 @@ use super::key::LocalKey;
 use super::mapping::Mapping;
 use super::report::Change;
 use super::report::Collision;
+use super::scrub::Posture;
 use super::scrub::Scrubber;
 use crate::rules::Budget;
 use crate::rules::Pool;
+use crate::rules::Spent;
 
 #[derive(Debug, Default)]
 pub(super) struct Found {
@@ -35,14 +37,15 @@ enum Output {
 struct Scanned {
     output: Output,
     found: Found,
-    spent: u64,
-    starved: bool,
+    spent: Spent,
+    stopped: bool,
 }
 
 pub(super) struct Rescan<'a> {
     pub(super) key: Option<&'a LocalKey>,
     pub(super) digest: &'a str,
     pub(super) whole: bool,
+    pub(super) posture: Posture,
 }
 
 impl Rescan<'_> {
@@ -62,16 +65,17 @@ impl Rescan<'_> {
                 )
             })
             .collect();
-        let pool = Pool::bundle();
-        let scanned = parallel(&units, |unit| {
+        let threads = worker_count(units.len());
+        let pool = Pool::bundle(threads);
+        let scanned = parallel(&units, threads, |unit| {
             self.scan(&mapping, &heads, sessions, &pool, unit)
         });
         let mut found = Found::default();
-        let mut spent = 0;
+        let mut spent = Spent::default();
         let mut settled = 0;
         for scanned in scanned {
             let Some(scanned) = scanned
-                .filter(|scanned| !scanned.starved && Budget::leaves_room(spent, scanned.spent))
+                .filter(|scanned| !scanned.stopped && Budget::leaves_room(spent, scanned.spent))
             else {
                 break;
             };
@@ -96,9 +100,12 @@ impl Rescan<'_> {
                 }
             }
         }
-        scrubber.manifest(exported_by);
         found.changes.append(&mut scrubber.changes);
         found.collisions.append(&mut scrubber.collisions);
+        let mut manifest = self.scrubber(&mapping, Budget::fresh());
+        manifest.manifest(exported_by);
+        found.changes.append(&mut manifest.changes);
+        found.collisions.append(&mut manifest.collisions);
         found
     }
 
@@ -126,7 +133,7 @@ impl Rescan<'_> {
         Some(Scanned {
             output,
             spent: scrubber.budget.spent(),
-            starved: scrubber.budget.starved(),
+            stopped: scrubber.budget.starved(),
             found: Found {
                 changes: scrubber.changes,
                 collisions: scrubber.collisions,
@@ -137,6 +144,7 @@ impl Rescan<'_> {
     fn scrubber<'s>(&'s self, mapping: &'s Mapping, budget: Budget<'s>) -> Scrubber<'s> {
         let mut scrubber = Scrubber::new(mapping, self.key, self.digest);
         scrubber.whole = self.whole;
+        scrubber.posture = self.posture;
         scrubber.budget = budget;
         scrubber
     }
@@ -193,10 +201,7 @@ fn scrub_message(
     }
 }
 
-fn parallel<F>(units: &[Unit], work: F) -> Vec<Option<Scanned>>
-where
-    F: Fn(Unit) -> Option<Scanned> + Sync,
-{
+fn worker_count(units: usize) -> usize {
     #[cfg_attr(
         dylint_lib = "rr_lints",
         expect(
@@ -205,7 +210,13 @@ where
         )
     )]
     let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    let threads = cores.min(units.len().max(1));
+    cores.min(units.max(1))
+}
+
+fn parallel<F>(units: &[Unit], threads: usize, work: F) -> Vec<Option<Scanned>>
+where
+    F: Fn(Unit) -> Option<Scanned> + Sync,
+{
     let next = AtomicUsize::new(0);
     let mut done: Vec<(usize, Option<Scanned>)> = thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)

@@ -14,12 +14,14 @@ use kernel::facts::NewClaim;
 use kernel::facts::Said;
 use kernel::facts::SessionLink;
 use kernel::filing::conversation_keys;
+use kernel::memory::Provenance;
 use kernel::owner::Owner;
 use kernel::topics::TopicId;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
 use uuid::Uuid;
+use wire::capture::IMPORTED_SESSION_PREFIX;
 use wire::session_id::SessionId;
 
 use crate::SqliteStore;
@@ -50,7 +52,11 @@ const SESSION_SQL: &str = "SELECT (SELECT c.title FROM ros_conversations c
             min(c.created_at), max(c.updated_at),
             (SELECT count(*) FROM ros_messages m
                JOIN ros_conversations k ON k.id = m.conversation_id
-              WHERE k.session_key IN (SELECT value FROM json_each(?1)))
+              WHERE k.session_key IN (SELECT value FROM json_each(?1))),
+            (SELECT i.settings FROM ros_conversations i
+              WHERE i.session_key IN (SELECT value FROM json_each(?1))
+                AND substr(i.session_key, 1, length(?2)) = ?2
+              ORDER BY i.updated_at DESC LIMIT 1)
        FROM ros_conversations c
       WHERE c.session_key IN (SELECT value FROM json_each(?1))";
 
@@ -197,14 +203,38 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
 fn session_row(conn: &Connection, session: &SessionId) -> Result<Option<FactSession>, FactError> {
     let keys = serde_json::to_string(&conversation_keys(session))
         .map_err(|error| invalid("session keys", error))?;
-    let row: (Option<String>, Option<String>, Option<String>, i64) = conn
-        .query_row(SESSION_SQL, params![keys], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i64,
+        Option<String>,
+    ) = conn
+        .query_row(SESSION_SQL, params![keys, IMPORTED_SESSION_PREFIX], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })
         .map_err(failed("fact sessions"))?;
-    let (title, Some(started), Some(last), messages) = row else {
+    let (title, Some(started), Some(last), messages, imported) = row else {
         return Ok(None);
     };
+    let provenance = imported
+        .map(|settings| {
+            serde_json::from_str::<wire::JsonObject>(&settings)
+                .map(|settings| Provenance::from_settings(&settings))
+                .map_err(|source| {
+                    unavailable(SqliteError::StoredJson {
+                        column: "settings",
+                        source,
+                    })
+                })
+        })
+        .transpose()?;
     Ok(Some(FactSession {
         session: session.clone(),
         title,
@@ -212,6 +242,7 @@ fn session_row(conn: &Connection, session: &SessionId) -> Result<Option<FactSess
         last_at: time::stored(&last, "updated_at").map_err(unavailable)?,
         messages: u64::try_from(messages)
             .map_err(|error| unavailable(SqliteError::Count(error)))?,
+        provenance,
     }))
 }
 

@@ -151,6 +151,7 @@ pub struct MemorySearchHit {
     pub title: Option<String>,
     pub fallback: Option<MemoryFallback>,
     pub tags: Option<Vec<TagWire>>,
+    pub provenance: Option<crate::memory::Provenance>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

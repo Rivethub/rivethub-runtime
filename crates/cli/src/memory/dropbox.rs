@@ -1,13 +1,11 @@
 use std::time::Duration;
 
 use capture::seal::DropId;
-use chrono::DateTime;
-use chrono::Utc;
 use futures::StreamExt as _;
 use reqwest::StatusCode;
 use reqwest::header::CONTENT_TYPE;
-use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
+use wire::gateway::drops::Uploaded;
 
 use capture::seal::ShareServer;
 
@@ -24,13 +22,6 @@ const RETRY_DELAY: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub(super) struct DropBox {
     server: Server,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct Uploaded {
-    pub(super) id: String,
-    pub(super) expires_at: DateTime<Utc>,
-    pub(super) bytes: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,8 +81,7 @@ impl DropBox {
                 rejected = Some(token);
                 continue;
             }
-            let uploaded: Uploaded = crate::share_server::checked(response)
-                .await?
+            let uploaded: Uploaded = crate::share_server::checked(response)?
                 .json()
                 .await
                 .map_err(ServerError::from)?;
@@ -127,7 +117,7 @@ impl DropBox {
         if response.status() == StatusCode::NOT_FOUND {
             return Err(DropError::Gone(id.clone()));
         }
-        let response = crate::share_server::checked(response).await?;
+        let response = crate::share_server::checked(response)?;
         let declared = response.content_length();
         if declared.is_some_and(|length| length > MAX_DROP_BYTES as u64) {
             return Err(DropError::TooLarge);

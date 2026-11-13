@@ -1,4 +1,4 @@
-use crate::model::GatewaySection;
+use crate::model::{DROP_MAX_BYTES, GatewaySection};
 use crate::report::ValidationResult;
 
 pub(super) fn validate(out: &mut ValidationResult, section: &GatewaySection) {
@@ -36,5 +36,24 @@ pub(super) fn validate(out: &mut ValidationResult, section: &GatewaySection) {
                 format!("\"{path}\" must be a list of non-empty strings"),
             );
         }
+    }
+    let drops = &section.drops;
+    if drops.max_bytes == 0 || drops.max_bytes > DROP_MAX_BYTES {
+        out.error(
+            "gateway.drops.max_bytes",
+            format!(
+                "\"gateway.drops.max_bytes\" must be between 1 and {DROP_MAX_BYTES} (64 MiB), the largest drop rh memory receive downloads"
+            ),
+        );
+    }
+    if drops
+        .root
+        .as_ref()
+        .is_some_and(|root| root.as_os_str().is_empty())
+    {
+        out.error(
+            "gateway.drops.root",
+            "\"gateway.drops.root\" must be a non-empty string path",
+        );
     }
 }

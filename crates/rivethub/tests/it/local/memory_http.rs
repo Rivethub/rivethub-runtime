@@ -79,7 +79,11 @@ async fn exchange(
     port: u16,
     database: &Path,
 ) -> TestResult<(MemorySummaryDagResponse, String, String)> {
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let state = database.parent().ok_or("database has no directory")?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::headers(state)?)
+        .build()?;
     let base = format!("http://127.0.0.1:{port}");
     client
         .post(format!("{base}/api/capture"))

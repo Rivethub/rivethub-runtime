@@ -144,22 +144,15 @@ struct HookSettings<'a> {
 }
 
 #[derive(Debug)]
-pub struct StoreHook<T: CaptureTransport> {
+pub struct StoreCapture {
     harness: StoreHarness,
-    writer: CaptureWriter<T>,
     reader: Reader,
     store: PathBuf,
-    log_file: PathBuf,
 }
 
-impl<T: CaptureTransport> StoreHook<T> {
+impl StoreCapture {
     #[must_use]
-    pub fn new(
-        harness: StoreHarness,
-        writer: CaptureWriter<T>,
-        roots: &StoreRoots,
-        paths: &config::Paths,
-    ) -> Option<Self> {
+    pub fn new(harness: StoreHarness, roots: &StoreRoots) -> Option<Self> {
         let store = harness.root(roots)?;
         let reader = match harness {
             StoreHarness::GrokBuild => Reader::Grok(GrokTranscriptReader::new(store.clone())),
@@ -171,9 +164,90 @@ impl<T: CaptureTransport> StoreHook<T> {
         };
         Some(Self {
             harness,
-            writer,
             reader,
             store,
+        })
+    }
+
+    pub async fn batch(
+        &self,
+        native: &str,
+        event: &str,
+        cwd: Option<String>,
+        finalize: bool,
+        now: DateTime<Utc>,
+    ) -> Result<Option<CaptureBatchRequest>, String> {
+        let profile = self.harness.profile();
+        let session = SessionId::new(profile.harness, native);
+        let slice = self
+            .reader
+            .capture(&session)
+            .await
+            .map_err(|error| error.to_string())?;
+        if slice.messages.is_empty() {
+            return Ok(None);
+        }
+        let settings = JsonObject::from_serialize(&HookSettings {
+            source: profile.source,
+            session_id: native,
+            cwd,
+            last_event: event,
+            last_ingest_at: iso_at(now),
+        })
+        .map_err(|error| error.to_string())?;
+        Ok(Some(CaptureBatchRequest {
+            session_key: session.to_string(),
+            agent: profile.agent.to_owned(),
+            channel: Some(profile.channel.to_owned()),
+            title: self.title(native).await,
+            settings: Some(settings),
+            task_id: None,
+            finalize: finalize.then_some(true),
+            created_at: None,
+            updated_at: None,
+            messages: slice.messages,
+        }))
+    }
+
+    async fn title(&self, native: &str) -> Option<String> {
+        let found = match self.harness {
+            StoreHarness::GrokBuild => grok_title(self.store.clone(), native.to_owned()).await,
+            StoreHarness::Opencode => opencode_title(self.store.clone(), native.to_owned()).await,
+            StoreHarness::Codex => codex_session_title(self.store.clone(), native.to_owned()).await,
+            StoreHarness::Dsh => {
+                crate::readers::dsh::title(self.store.clone(), native.to_owned()).await
+            }
+        };
+        match found {
+            Ok(title) => title,
+            Err(error) => {
+                tracing::debug!("session {native} has no title: {error}");
+                None
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct StoreHook<T: CaptureTransport> {
+    harness: StoreHarness,
+    writer: CaptureWriter<T>,
+    capture: StoreCapture,
+    log_file: PathBuf,
+}
+
+impl<T: CaptureTransport> StoreHook<T> {
+    #[must_use]
+    pub fn new(
+        harness: StoreHarness,
+        writer: CaptureWriter<T>,
+        roots: &StoreRoots,
+        paths: &config::Paths,
+    ) -> Option<Self> {
+        Some(Self {
+            harness,
+            writer,
+            capture: StoreCapture::new(harness, roots)?,
             log_file: paths.state_dir().join(harness.profile().log),
         })
     }
@@ -201,36 +275,12 @@ impl<T: CaptureTransport> StoreHook<T> {
         let Some(native) = payload.session_id.as_deref().filter(|id| !id.is_empty()) else {
             return HookRun::done();
         };
-        let profile = self.harness.profile();
-        let session = SessionId::new(profile.harness, native);
-        let slice = match self.reader.capture(&session).await {
-            Ok(slice) => slice,
-            Err(error) => return HookRun::failed(error.to_string()),
-        };
-        if slice.messages.is_empty() {
-            return HookRun::done();
-        }
-        let settings = match JsonObject::from_serialize(&HookSettings {
-            source: profile.source,
-            session_id: native,
-            cwd: payload.cwd.as_ref().map(|path| path.display().to_string()),
-            last_event: event,
-            last_ingest_at: iso_at(now),
-        }) {
-            Ok(settings) => settings,
-            Err(error) => return HookRun::failed(error.to_string()),
-        };
-        let batch = CaptureBatchRequest {
-            session_key: session.to_string(),
-            agent: profile.agent.to_owned(),
-            channel: Some(profile.channel.to_owned()),
-            title: self.title(native).await,
-            settings: Some(settings),
-            task_id: None,
-            finalize: (trigger == Trigger::Finalize).then_some(true),
-            created_at: None,
-            updated_at: None,
-            messages: slice.messages,
+        let cwd = payload.cwd.as_ref().map(|path| path.display().to_string());
+        let finalize = trigger == Trigger::Finalize;
+        let batch = match self.capture.batch(native, event, cwd, finalize, now).await {
+            Ok(Some(batch)) => batch,
+            Ok(None) => return HookRun::done(),
+            Err(error) => return HookRun::failed(error),
         };
         match self.writer.write(&batch, now).await {
             Ok(totals) => {
@@ -243,25 +293,7 @@ impl<T: CaptureTransport> StoreHook<T> {
                 }
                 HookRun::done()
             }
-            Err(error) => HookRun::failed(error.to_string()),
-        }
-    }
-
-    async fn title(&self, native: &str) -> Option<String> {
-        let found = match self.harness {
-            StoreHarness::GrokBuild => grok_title(self.store.clone(), native.to_owned()).await,
-            StoreHarness::Opencode => opencode_title(self.store.clone(), native.to_owned()).await,
-            StoreHarness::Codex => codex_session_title(self.store.clone(), native.to_owned()).await,
-            StoreHarness::Dsh => {
-                crate::readers::dsh::title(self.store.clone(), native.to_owned()).await
-            }
-        };
-        match found {
-            Ok(title) => title,
-            Err(error) => {
-                tracing::debug!("session {native} has no title: {error}");
-                None
-            }
+            Err(error) => HookRun::write_failed(&error),
         }
     }
 }

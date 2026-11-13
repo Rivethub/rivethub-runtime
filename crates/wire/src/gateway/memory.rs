@@ -214,6 +214,7 @@ pub struct MemoryBrowseMessage {
     pub session_id: Option<String>,
     pub tool_name: Option<String>,
     pub tags: Option<Vec<TagWire>>,
+    pub provenance: Option<crate::memory::Provenance>,
 }
 
 #[serde_with::skip_serializing_none]

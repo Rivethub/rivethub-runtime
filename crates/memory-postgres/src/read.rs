@@ -40,6 +40,8 @@ pub(crate) struct MessageEntryRow {
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: Option<String>,
     pub(crate) created_at: Option<DateTime<Utc>>,
+    #[sqlx(default)]
+    pub(crate) import_settings: Option<String>,
 }
 
 impl TryFrom<MessageEntryRow> for MemoryEntry {
@@ -64,7 +66,30 @@ impl TryFrom<MessageEntryRow> for MemoryEntry {
             tool_result: row.tool_result,
             metadata: stored_json(row.metadata, "metadata")?,
             created_at: row.created_at,
+            provenance: None,
         })
+    }
+}
+
+impl MessageEntryRow {
+    pub(crate) fn into_entry(
+        mut self,
+        seen: &mut std::collections::HashMap<String, Option<kernel::memory::Provenance>>,
+    ) -> Result<MemoryEntry, Error> {
+        let settings = self.import_settings.take();
+        let mut entry = MemoryEntry::try_from(self)?;
+        if let Some(text) = settings {
+            entry.provenance = if let Some(known) = seen.get(&entry.session_id) {
+                known.clone()
+            } else {
+                let parsed = stored_json(Some(text), "settings")?
+                    .as_ref()
+                    .map(kernel::memory::Provenance::from_settings);
+                seen.insert(entry.session_id.clone(), parsed.clone());
+                parsed
+            };
+        }
+        Ok(entry)
     }
 }
 
@@ -140,7 +165,8 @@ impl crate::PostgresMemory {
         let mut query = sqlx::QueryBuilder::new(
             "select m.id::text as id, c.session_key, m.agent, m.channel, m.role as role_text, \
              m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, \
-             m.metadata::text as metadata, m.created_at \
+             m.metadata::text as metadata, m.created_at, \
+             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id where true",
         );
         query.push(crate::session_marks::not_trashed("m"));
@@ -188,11 +214,10 @@ impl crate::PostgresMemory {
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("browse", source))?;
-        let entries = rows
-            .into_iter()
-            .map(MemoryEntry::try_from)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(entries)
+        let mut seen = std::collections::HashMap::new();
+        rows.into_iter()
+            .map(|row| row.into_entry(&mut seen))
+            .collect()
     }
 
     pub async fn memory_get_full(&self, id: &str) -> Result<Option<MemoryEntry>, Error> {
@@ -202,7 +227,8 @@ impl crate::PostgresMemory {
             "select m.id::text as id, c.session_key as \"session_key!\", \
              m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, \
              m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, \
-             m.tool_result, m.metadata::text as metadata, m.created_at \
+             m.tool_result, m.metadata::text as metadata, m.created_at, \
+             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
              from rh_messages m join rh_conversations c on c.id = m.conversation_id \
              where m.id = $1",
             uuid
@@ -210,7 +236,7 @@ impl crate::PostgresMemory {
         .fetch_optional(&self.pool)
         .await
         .map_err(|source| Error::operation("get full", source))?
-        .map(MemoryEntry::try_from)
+        .map(|row| row.into_entry(&mut std::collections::HashMap::new()))
         .transpose()?;
         Ok(record)
     }

@@ -10,7 +10,29 @@ pub(crate) fn home() -> TempDir {
 }
 
 pub(crate) fn environment(home: &TempDir) -> Environment {
-    Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())])
+    Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_TOKEN_STORE".as_ref(), "file".as_ref()),
+    ])
+}
+
+pub(crate) fn local_owner(
+    home: &std::path::Path,
+) -> std::sync::Arc<gateway::local_owner::LocalOwner> {
+    let env = Environment::from_vars([("HOME".as_ref(), home.as_os_str())]);
+    let state = gateway::state_dir(&env).expect("state directory");
+    std::sync::Arc::new(
+        gateway::local_owner::LocalOwner::load_or_create(&state).expect("local owner token"),
+    )
+}
+
+pub(crate) fn install_owner_token(env: &Environment, token: &gateway::local_owner::OwnerToken) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let state = gateway::state_dir(env).expect("state directory");
+    std::fs::create_dir_all(&state).expect("state directory");
+    let path = gateway::local_owner::token_path(&state);
+    std::fs::write(&path, token.expose()).expect("owner token");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
 }
 
 pub(crate) fn config(home: &TempDir, extra: &str) {

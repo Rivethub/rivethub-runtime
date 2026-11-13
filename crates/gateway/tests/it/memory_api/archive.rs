@@ -84,10 +84,10 @@ fn node(
 fn exporting() -> (Arc<RecordingExport>, axum::Router) {
     let export = Arc::new(RecordingExport::default());
     let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());
-    let gateway = Arc::new(
+    let gateway = Arc::new(common::owned(
         Gateway::new(store, common::settings())
             .with_memory_export(Arc::clone(&export) as Arc<dyn MemoryExport>),
-    );
+    ));
     (export, gateway.router(false))
 }
 

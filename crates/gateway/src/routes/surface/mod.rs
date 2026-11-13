@@ -69,6 +69,10 @@ async fn fallback(State(gateway): State<Arc<Gateway>>, request: Request) -> Resp
         .into_response()
 }
 
+pub(super) fn serves_public_asset(method: &Method, path: &str) -> bool {
+    (*method == Method::GET || *method == Method::HEAD) && !static_blocked(path)
+}
+
 pub(super) fn static_blocked(path: &str) -> bool {
     matches!(
         path,

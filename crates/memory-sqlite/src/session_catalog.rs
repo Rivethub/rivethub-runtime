@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use kernel::filing::session_key;
 use kernel::filing::stored_keys;
 use kernel::memory::ImportOrigin;
+use kernel::memory::ImportReceipt;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SessionCursor;
@@ -149,8 +150,10 @@ fn import_origin(settings: Option<&str>) -> Result<ImportOrigin, SqliteError> {
             })
         })
         .transpose()?;
+    let receipt = settings.as_ref().and_then(ImportReceipt::from_settings);
     let origin = settings.and_then(|settings| SessionOrigin::of(&settings));
     Ok(ImportOrigin {
+        receipt,
         author: origin
             .as_ref()
             .and_then(SessionOrigin::known_author)

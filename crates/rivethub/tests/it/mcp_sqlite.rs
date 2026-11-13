@@ -1,3 +1,4 @@
+use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,6 +14,7 @@ const ANSWER: &str = "Marguerite logged the copper lantern inventory.";
 
 fn entry(role: Role, content: &str) -> MemoryEntry {
     MemoryEntry {
+        provenance: None,
         id: None,
         session_id: "claude-code:44444444-4444-4444-8444-444444444444".to_owned(),
         agent: "rivet-claude".to_owned(),
@@ -87,7 +89,7 @@ async fn stdio_mcp_reads_the_sqlite_store_of_a_local_node() -> TestResult {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stdout = child.stdout.take().ok_or("missing stdout")?;
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(

@@ -174,6 +174,7 @@ fn receipt(fingerprint: Option<&str>) -> wire::capture::Receipt {
             wire::capture::ReceiptVerification::Unsigned
         },
         key_fingerprint: fingerprint.map(str::to_owned),
+        checks: None,
     }
 }
 
@@ -231,5 +232,25 @@ fn a_stored_receipt_from_another_signer_refuses_the_merge() -> TestResult {
     }
     assert!(wire::capture::merge_imported_settings(Some(&stored), Some(&stored)).is_ok());
     assert!(wire::capture::merge_imported_settings(Some(&plain), Some(&plain)).is_ok());
+    Ok(())
+}
+
+#[test]
+fn dropping_a_receipt_keeps_the_origin() -> TestResult {
+    let receipt = wire::capture::Receipt {
+        bundle_id: "rhb1:t".to_owned(),
+        received_at: "2026-11-09T00:00:00Z".parse()?,
+        verification: wire::capture::ReceiptVerification::Verified,
+        key_fingerprint: Some("ed25519:abcd".to_owned()),
+        checks: None,
+    };
+    let mut batch = session("desk", "c1", "evt-1").received_batch(&receipt)?;
+
+    assert!(batch.drop_receipt());
+    assert!(!batch.drop_receipt());
+
+    let settings = batch.settings.ok_or("no settings")?;
+    assert!(settings.get("receipt").is_none());
+    assert!(settings.get("origin").is_some());
     Ok(())
 }

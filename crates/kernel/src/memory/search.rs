@@ -13,6 +13,7 @@ pub struct SummaryDetail {
     pub tags: Vec<TagWire>,
     pub children: Vec<SummaryExcerpt>,
     pub sources: Vec<MemoryEntry>,
+    pub provenance: Option<super::Provenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

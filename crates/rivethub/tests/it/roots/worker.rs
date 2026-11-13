@@ -1,3 +1,4 @@
+use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -80,8 +81,10 @@ async fn wait_until_reaped(pool: &PgPool, child: &mut tokio::process::Child) -> 
     }
 }
 
-#[sqlx::test(migrations = false)]
-async fn worker_claims_a_reap_job_and_stops_on_sigterm(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn worker_claims_a_reap_job_and_stops_on_sigterm() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
@@ -99,7 +102,7 @@ async fn worker_claims_a_reap_job_and_stops_on_sigterm(pool: PgPool) -> TestResu
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let logs = tokio::spawn(async move {
         let mut stderr = stderr;
@@ -225,17 +228,19 @@ async fn seed_embed(pool: &PgPool) -> TestResult<HeldJob> {
     Ok(before)
 }
 
-#[sqlx::test(migrations = false)]
-async fn worker_blocked_on_a_provider_releases_the_job_on_sigint(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn worker_blocked_on_a_provider_releases_the_job_on_sigint() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
-    let hole = super::blackhole().await?;
+    let sink = super::blackhole().await?;
     let before = seed_embed(&pool).await?;
     let url = pool.connect_options().to_url_lossy();
     let home = tempfile::tempdir()?;
     write_state(
         home.path(),
-        &provider_at(home.path(), &url, &format!("http://{}", hole.address), ""),
+        &provider_at(home.path(), &url, &format!("http://{}", sink.address), ""),
     )?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
         .args(["worker", "--role", "embedder"])
@@ -245,7 +250,7 @@ async fn worker_blocked_on_a_provider_releases_the_job_on_sigint(pool: PgPool) -
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let stderr = child.stderr.take().ok_or("missing stderr")?;
     let logs = tokio::spawn(async move {
         let mut stderr = stderr;

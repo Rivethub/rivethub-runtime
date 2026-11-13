@@ -1,0 +1,6 @@
+Badges: ![build](https://img.shields.io/github/actions/workflow/status/acme/app/ci.yml?branch=main) and
+![coverage](https://codecov.io/gh/acme/app/branch/main/graph/badge.svg?token=abc) render in the README.
+A plain image has no query: ![logo](https://example.com/logo.png) and <img src="https://example.com/a.png" width="40">.
+The HTML snippet <div class="system">notes</div> uses the word system as a class, and <b>bold</b> is bold.
+Chat templates are documented in docs/templates.md; the token for a turn is written with pipes in the tokenizer config.
+A hash: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 and a path /usr/local/lib/python3.12/site-packages/some_package_name_that_is_long.

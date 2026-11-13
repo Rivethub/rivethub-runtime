@@ -134,6 +134,7 @@ impl Decision {
                     base: base.clone(),
                 })
                 .collect(),
+            mac_format: key.format(),
             seal: String::new(),
         }
         .sealed(key)
@@ -148,12 +149,7 @@ fn stamp_time(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
 }
 
-pub(super) fn sealed(
-    key: &LocalKey,
-    at: DateTime<Utc>,
-    unresolved: usize,
-    mut review: ReviewStamp,
-) -> ReviewStamp {
+fn sealed_parts(at: DateTime<Utc>, unresolved: usize, review: &ReviewStamp) -> Vec<Vec<u8>> {
     let mut parts: Vec<String> = vec![
         stamp_time(at),
         unresolved.to_string(),
@@ -164,12 +160,32 @@ pub(super) fn sealed(
     for flag in &review.flags {
         parts.extend([flag.number.to_string(), flag.mark.to_string()]);
     }
-    let framed: Vec<Vec<u8>> = std::iter::once(b"review".to_vec())
+    std::iter::once(b"review".to_vec())
         .chain(parts.iter().map(|part| framed(part.as_bytes())))
-        .collect();
-    let slices: Vec<&[u8]> = framed.iter().map(Vec::as_slice).collect();
+        .collect()
+}
+
+pub(super) fn sealed(
+    key: &LocalKey,
+    at: DateTime<Utc>,
+    unresolved: usize,
+    mut review: ReviewStamp,
+) -> ReviewStamp {
+    let parts = sealed_parts(at, unresolved, &review);
+    let slices: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
     review.seal = key.hex(&slices);
     review
+}
+
+pub(super) fn holds_stamp_seal(
+    key: &LocalKey,
+    at: DateTime<Utc>,
+    unresolved: usize,
+    review: &ReviewStamp,
+) -> bool {
+    let parts = sealed_parts(at, unresolved, review);
+    let slices: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    key.verifies(&slices, &review.seal)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

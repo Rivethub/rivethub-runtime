@@ -5,6 +5,7 @@ use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
+use kernel::memory::Provenance;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummaryNode;
 use kernel::memory::SummaryStore;
@@ -265,13 +266,34 @@ async fn load_window(
         .map_err(|source| query_err("load latest message time", source))?;
     let leaves = load_nodes(pool, id, SummaryKind::Leaf).await?;
     let branches = load_nodes(pool, id, SummaryKind::Branch).await?;
+    let provenance = provenance_of(pool, id, &head.session_key).await?;
     Ok(Some(ConversationWindow {
         conversation: head.into(),
+        provenance,
         messages,
         leaves,
         branches,
         latest_message_at: latest.latest_at,
     }))
+}
+
+async fn provenance_of(
+    pool: &PgPool,
+    id: Uuid,
+    session_key: &str,
+) -> Result<Option<Provenance>, SummaryStoreError> {
+    if !kernel::memory::is_imported(session_key) {
+        return Ok(None);
+    }
+    let settings: Option<sqlx::types::Json<wire::JsonObject>> =
+        sqlx::query_scalar("select settings from rh_conversations where id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(|source| query_err("load import origin", source))?;
+    Ok(Some(Provenance::from_settings(
+        &settings.map(|json| json.0).unwrap_or_default(),
+    )))
 }
 
 async fn load_nodes(

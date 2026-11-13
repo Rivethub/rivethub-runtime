@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use kernel::memory::MemoryStoreError;
+use kernel::memory::Provenance;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::WikiGapsResponse;
 use kernel::wiki::WikiLookup;
@@ -52,6 +53,15 @@ impl SqliteStore {
     ) -> Result<WikiLookup, MemoryStoreError> {
         let slug = slug.as_ref().to_owned();
         self.with_conn(move |conn| page(conn, &slug))
+            .await
+            .map_err(MemoryStoreError::from)
+    }
+
+    pub(crate) async fn read_wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<Provenance>>, MemoryStoreError> {
+        self.with_conn(move |conn| crate::wiki_citations::imported_authors(conn, &slugs))
             .await
             .map_err(MemoryStoreError::from)
     }

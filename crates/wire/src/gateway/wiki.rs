@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
+use crate::memory::Provenance;
 use crate::session_id::SessionId;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -83,6 +84,8 @@ pub struct WikiCitation {
     pub channel: Option<String>,
     #[serde(default)]
     pub topic_id: Option<String>,
+    #[serde(default)]
+    pub imported: Option<Provenance>,
 }
 
 #[serde_with::skip_serializing_none]

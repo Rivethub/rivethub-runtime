@@ -60,7 +60,8 @@ impl NewMessage<'_> {
 }
 
 pub(crate) const ENTRY_COLUMNS: &str = "m.id, c.session_key, m.agent, m.channel, m.role, m.content, \
-     m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at";
+     m.tool_name, m.tool_args, m.tool_result, m.metadata, m.created_at, \
+     CASE WHEN c.session_key LIKE 'import:%' THEN COALESCE(c.settings, '{}') END";
 
 #[derive(Debug)]
 pub(crate) struct EntryRow {
@@ -75,6 +76,7 @@ pub(crate) struct EntryRow {
     tool_result: Option<String>,
     metadata: String,
     created_at: String,
+    import_settings: Option<String>,
 }
 
 impl EntryRow {
@@ -91,7 +93,30 @@ impl EntryRow {
             tool_result: row.get(8)?,
             metadata: row.get(9)?,
             created_at: row.get(10)?,
+            import_settings: row.get(11)?,
         })
+    }
+}
+
+impl EntryRow {
+    pub(crate) fn into_entry(
+        mut self,
+        seen: &mut std::collections::HashMap<String, Option<kernel::memory::Provenance>>,
+    ) -> Result<MemoryEntry, SqliteError> {
+        let settings = self.import_settings.take();
+        let mut entry = MemoryEntry::try_from(self)?;
+        if let Some(text) = settings {
+            entry.provenance = if let Some(known) = seen.get(&entry.session_id) {
+                known.clone()
+            } else {
+                let parsed = Some(kernel::memory::Provenance::from_settings(&stored_object(
+                    &text, "settings",
+                )?));
+                seen.insert(entry.session_id.clone(), parsed.clone());
+                parsed
+            };
+        }
+        Ok(entry)
     }
 }
 
@@ -115,6 +140,7 @@ impl TryFrom<EntryRow> for MemoryEntry {
             tool_result: row.tool_result,
             metadata: Some(stored_object(&row.metadata, "metadata")?),
             created_at: Some(time::stored(&row.created_at, "created_at")?),
+            provenance: None,
         })
     }
 }

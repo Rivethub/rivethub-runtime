@@ -414,6 +414,13 @@ fn gateway_http_bodies_roundtrip() -> Result<(), String> {
 }
 
 #[test]
+fn share_report_roundtrips() -> Result<(), String> {
+    let rel = "gateway/share-report.json";
+    let text = std::fs::read_to_string(golden(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    roundtrip_as::<wire::gateway::share::DraftReport>(rel, &text)
+}
+
+#[test]
 fn gateway_ws_frames_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     roundtrip_ws_file("gateway/ws.json", &golden("gateway/ws.json"), &mut errors)?;

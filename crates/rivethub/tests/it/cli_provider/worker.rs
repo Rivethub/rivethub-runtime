@@ -15,14 +15,21 @@ struct Payload {
     conversation_id: String,
 }
 
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn composed_summarizer_runs_cli_model_without_embedder(pool: sqlx::PgPool) -> TestResult {
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
+)]
+async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let pool = db.pool();
     install_queue(&pool).await?;
     let home = tempfile::tempdir()?;
     let (config, _) = configured(home.path(), config::ProviderType::ClaudeCli, "")?;
     let store = Arc::new(memory_postgres::PostgresMemory::new(pool.clone()));
     let messages = (0..10)
         .map(|index| kernel::memory::MemoryEntry {
+            provenance: None,
             id: None,
             session_id: "cli:summary".into(),
             agent: "main".into(),

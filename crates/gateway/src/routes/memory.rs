@@ -22,7 +22,6 @@ use wire::gateway::OkReply;
 use wire::gateway::memory::EmbedHealth;
 use wire::gateway::memory::EmbedStatus;
 use wire::gateway::memory::MemoryAppendToolArgs;
-use wire::gateway::memory::MemoryBrowseMessage;
 use wire::gateway::memory::MemoryBrowseResponse;
 use wire::gateway::memory::MemoryBrowseToolArgs;
 use wire::gateway::memory::MemoryContractResponse;
@@ -31,7 +30,6 @@ use wire::gateway::memory::MemoryHealthResponse;
 use wire::gateway::memory::MemoryHealthStatus;
 use wire::gateway::memory::MemoryIngestSessionToolArgs;
 use wire::gateway::memory::MemoryScope;
-use wire::gateway::memory::MemorySearchHit;
 use wire::gateway::memory::MemorySearchResponse;
 use wire::gateway::memory::MemorySearchToolArgs;
 use wire::gateway::memory::MemoryStatsResponse;
@@ -232,6 +230,7 @@ async fn search(
         .store()
         .search(query.resolve_window(chrono::Utc::now(), &chrono::Local))
         .await?;
+    let origins = super::memory_rows::search_origins(&gateway, &results).await?;
     let snippets = params.snippet == Some(true);
     Ok(Json(MemorySearchResponse {
         scope,
@@ -240,7 +239,7 @@ async fn search(
         expanded: results
             .expanded
             .into_iter()
-            .map(memory_body::memory_entry_body)
+            .map(|entry| memory_body::memory_entry_body(entry, &origins))
             .collect(),
         synthesis: results.synthesis,
         results: results
@@ -250,31 +249,11 @@ async fn search(
                 if snippets {
                     hit.content = super::memory_snippet::snippet(&hit.content, &text);
                 }
-                search_hit(hit)
+                super::memory_rows::search_hit(hit, &origins)
             })
             .collect(),
         query: text,
     }))
-}
-
-fn search_hit(result: kernel::memory::MemorySearchResult) -> MemorySearchHit {
-    MemorySearchHit {
-        chunk: result.chunk.map(memory_body::memory_chunk_match_body),
-        id: result.id,
-        source: memory_body::memory_hit_source_body(result.source),
-        content: result.content,
-        created_at: result.created_at,
-        score: result.relevance_score,
-        role: result.role,
-        agent: result.agent,
-        kind: None,
-        tool_name: None,
-        conversation_id: None,
-        session_id: result.session_id,
-        title: result.title,
-        fallback: None,
-        tags: None,
-    }
 }
 
 async fn browse(
@@ -304,23 +283,9 @@ async fn browse(
         .store()
         .browse(filter.resolve_window(chrono::Utc::now(), &chrono::Local))
         .await?;
-    Ok(Json(MemoryBrowseResponse {
-        messages: entries.into_iter().map(browse_message).collect(),
-    }))
-}
-
-fn browse_message(entry: MemoryEntry) -> MemoryBrowseMessage {
-    MemoryBrowseMessage {
-        id: entry.id.unwrap_or_default(),
-        role: entry.role,
-        agent: Some(entry.agent),
-        content: entry.content,
-        created_at: entry.created_at.unwrap_or_default(),
-        conversation_id: None,
-        session_id: Some(entry.session_id),
-        tool_name: entry.tool_name,
-        tags: None,
-    }
+    Ok(Json(
+        super::memory_rows::browse_response(&gateway, entries).await?,
+    ))
 }
 
 async fn stats(State(gateway): State<Arc<Gateway>>) -> Result<Json<MemoryStatsResponse>, ApiError> {
@@ -477,6 +442,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
         .store()
         .search(query.resolve_window(chrono::Utc::now(), &chrono::Local))
         .await?;
+    let origins = super::memory_rows::search_origins(gateway, &results).await?;
     let response = MemorySearchResponse {
         query: args.query,
         scope,
@@ -485,10 +451,14 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
         expanded: results
             .expanded
             .into_iter()
-            .map(memory_body::memory_entry_body)
+            .map(|entry| memory_body::memory_entry_body(entry, &origins))
             .collect(),
         synthesis: results.synthesis,
-        results: results.results.into_iter().map(search_hit).collect(),
+        results: results
+            .results
+            .into_iter()
+            .map(|hit| super::memory_rows::search_hit(hit, &origins))
+            .collect(),
     };
     serialize_tool(&response)
 }
@@ -523,20 +493,25 @@ async fn browse_tool(gateway: &Gateway, args: MemoryBrowseToolArgs) -> Result<St
         .store()
         .browse(filter.resolve_window(chrono::Utc::now(), &chrono::Local))
         .await?;
-    let response = MemoryBrowseResponse {
-        messages: entries.into_iter().map(browse_message).collect(),
-    };
-    serialize_tool(&response)
+    serialize_tool(&super::memory_rows::browse_response(gateway, entries).await?)
 }
 
 async fn get_full_tool(gateway: &Gateway, args: MemoryGetFullToolArgs) -> String {
     let Some(id) = args.id.filter(|id| !id.is_empty()) else {
         return "memory_get_full: id is required (string).".to_owned();
     };
-    match gateway.store().get_full(&id).await {
-        Ok(entry) => get_full_text(&id, entry),
-        Err(error) => format!("memory_get_full failed: {error}"),
-    }
+    let entry = match gateway.store().get_full(&id).await {
+        Ok(entry) => entry,
+        Err(error) => return format!("memory_get_full failed: {error}"),
+    };
+    let origins = match memory_body::resolve(gateway.store().as_ref(), &entry, []).await {
+        Ok(origins) => origins,
+        Err(error) => return format!("memory_get_full failed: {error}"),
+    };
+    let origin = entry
+        .as_ref()
+        .and_then(|entry| origins.get(&entry.session_id));
+    memory_body::quoted(origin, get_full_text(&id, entry))
 }
 
 fn get_full_text(id: &str, entry: Option<MemoryEntry>) -> String {
@@ -570,6 +545,7 @@ async fn append_tool(
     args: MemoryAppendToolArgs,
 ) -> Result<String, ApiError> {
     let entry = MemoryEntry {
+        provenance: None,
         id: args.event_id,
         session_id: args.session_id,
         agent: args.agent.unwrap_or_default(),
@@ -595,6 +571,7 @@ async fn ingest_session_tool(
         .messages
         .into_iter()
         .map(|message| MemoryEntry {
+            provenance: None,
             id: None,
             session_id: args.session_id.clone(),
             agent: args.agent.clone().unwrap_or_default(),

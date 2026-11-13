@@ -25,6 +25,17 @@ pub struct CaptureBatchRequest {
     pub messages: Vec<CaptureMessage>,
 }
 
+impl CaptureBatchRequest {
+    pub fn drop_receipt(&mut self) -> bool {
+        let Some(settings) = self.settings.as_mut() else {
+            return false;
+        };
+        let had = settings.get(RECEIPT_KEY).is_some();
+        settings.retain(|key| key != RECEIPT_KEY);
+        had
+    }
+}
+
 #[serde_as]
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -58,6 +69,7 @@ impl CaptureBatchRequest {
                 tool_result: message.tool_result.clone(),
                 metadata: message.metadata.clone(),
                 created_at: message.created_at,
+                provenance: None,
             })
             .collect()
     }
@@ -172,6 +184,48 @@ pub struct Receipt {
     pub verification: ReceiptVerification,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks: Option<ReceiptChecks>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksDecision {
+    Clean,
+    Import,
+    HoldSpans,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiveDecision {
+    Import,
+    Skip,
+    HoldSpans,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("{0:?} is not a decision; use import, skip or hold-spans")]
+pub struct DecisionError(String);
+
+impl std::str::FromStr for ReceiveDecision {
+    type Err = DecisionError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "import" => Ok(Self::Import),
+            "skip" => Ok(Self::Skip),
+            "hold-spans" => Ok(Self::HoldSpans),
+            other => Err(DecisionError(other.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReceiptChecks {
+    pub rules_sha256: String,
+    pub findings_by_family: std::collections::BTreeMap<String, u32>,
+    pub decision: ChecksDecision,
 }
 
 impl Receipt {
