@@ -73,7 +73,7 @@ async fn wiki_runner_claims_cron_extracts_and_shuts_down(pool: PgPool) -> TestRe
         model: "fake-chat".to_owned(),
         load: None,
     })
-    .with_topic_pages(store.clone(), store.clone(), store.clone(), store.clone())
+    .with_topic_pages(store.clone(), store.clone(), store.clone())
     .with_session_topics(workers::SessionTopics {
         store: store.clone(),
         filing: store,

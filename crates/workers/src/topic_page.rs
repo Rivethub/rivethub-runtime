@@ -16,7 +16,6 @@ pub(crate) struct TopicPages {
     pub(crate) topics: Arc<dyn TopicStore>,
     pub(crate) pages: Arc<dyn TopicPageStore>,
     pub(crate) decisions: Arc<dyn DecisionStore>,
-    pub(crate) facts: Arc<dyn kernel::facts::FactStore>,
 }
 
 pub(crate) async fn handle_sync_topic_page(
