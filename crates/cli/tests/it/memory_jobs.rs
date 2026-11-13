@@ -74,6 +74,12 @@ async fn every_role_claim_is_dispatched_by_the_real_runner(pool: PgPool) -> supp
         lineage: Arc::new(testkit::wiki_routes::NoParents),
     })
     .with_tidy(memory.clone())
+    .with_entity_builder(workers::entity_builder::EntityBuilderDeps {
+        store: memory.clone(),
+        provider: provider.clone(),
+        model: "model".to_owned(),
+        settings: workers::entity_builder::MatcherSettings::default(),
+    })
     .with_wiki_builder(workers::wiki_builder::WikiBuilderDeps {
         store: memory.clone(),
         consolidate: Some(memory),

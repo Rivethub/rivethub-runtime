@@ -5,7 +5,7 @@ use kernel::queue::JobName;
 use kernel::queue::JobNameError;
 use strum::IntoEnumIterator;
 
-const FIXED: [(&str, JobName); 18] = [
+const FIXED: [(&str, JobName); 21] = [
     ("embed-target", JobName::Fixed(FixedJob::EmbedTarget)),
     (
         "enqueue-unembedded",
@@ -42,6 +42,18 @@ const FIXED: [(&str, JobName); 18] = [
     (
         "enqueue-stale-wiki",
         JobName::Fixed(FixedJob::EnqueueStaleWiki),
+    ),
+    (
+        "extract-entities",
+        JobName::Fixed(FixedJob::ExtractEntities),
+    ),
+    (
+        "entity-backfill",
+        JobName::Fixed(FixedJob::EnqueueEntityBackfill),
+    ),
+    (
+        "enqueue-stale-entities",
+        JobName::Fixed(FixedJob::EnqueueStaleEntities),
     ),
     (
         "enqueue-stale-compaction",

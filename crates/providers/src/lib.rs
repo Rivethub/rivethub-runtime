@@ -65,6 +65,7 @@ pub struct OpenAiCompatible {
     base_url: String,
     api_prefix: String,
     max_tokens: Option<u32>,
+    reasoning_disabled: bool,
     probe_models: bool,
     client: reqwest::Client,
     embedder: embed::Embedder,
@@ -110,6 +111,7 @@ impl OpenAiCompatible {
             base_url,
             api_prefix,
             max_tokens: provider.max_tokens,
+            reasoning_disabled: provider.reasoning == Some(false),
             probe_models: probe_unless_disabled(provider.probe_models),
             client,
             embedder,
@@ -140,7 +142,10 @@ impl OpenAiCompatible {
         request: &ModelRequest,
         finish: Option<Arc<AtomicU8>>,
     ) -> Result<Receiver<ModelStreamItem>, ModelProviderError> {
-        let body = body::chat_body(self.variant, request, self.max_tokens)?;
+        let mut body = body::chat_body(self.variant, request, self.max_tokens)?;
+        if self.reasoning_disabled {
+            body.reasoning = Some(wire::stream::openai::Reasoning { enabled: false });
+        }
         let url = body::chat_url(&self.base_url, &self.api_prefix);
         let pending = token::dispatch(&self.auth, || self.client.post(url.clone()).json(&body));
         tokio::pin!(pending);

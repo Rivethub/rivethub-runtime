@@ -7,6 +7,8 @@ mod recompile;
 mod topic_pages;
 mod topics;
 
+pub(crate) use topics::store as store_wiki_page;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use kernel::owner::Owner;

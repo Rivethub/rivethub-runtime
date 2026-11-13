@@ -133,6 +133,58 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
     }
 }
 
+pub(crate) async fn claims_on(
+    conn: &mut PgConnection,
+    entity: Uuid,
+) -> Result<Vec<Claim>, FactError> {
+    sqlx::query_as::<_, ClaimRow>(CLAIMS_SQL)
+        .bind(entity)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(failed("fact claims"))?
+        .iter()
+        .map(claim)
+        .collect()
+}
+
+const TOPIC_CLAIMS_SQL: &str = "SELECT f.topic_id,
+            (SELECT g.id FROM rh_entity_facts g
+              WHERE g.topic_id = f.topic_id AND g.key = f.key
+              ORDER BY g.created_at, g.id LIMIT 1) AS fact,
+            f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
+            c.at, c.recorded_at, c.owner_user_id
+       FROM rh_entity_fact_claims c
+       JOIN rh_entity_facts f ON f.id = c.fact_id
+      WHERE f.topic_id = ANY($1)
+      ORDER BY f.topic_id, c.at, c.recorded_at, c.id";
+
+#[derive(sqlx::FromRow)]
+struct TopicClaimRow {
+    topic_id: Uuid,
+    #[sqlx(flatten)]
+    claim: ClaimRow,
+}
+
+pub(crate) async fn claims_for<'e, E>(
+    executor: E,
+    topics: &[Uuid],
+) -> Result<Vec<(Uuid, Claim)>, FactError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if topics.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_as::<_, TopicClaimRow>(TOPIC_CLAIMS_SQL)
+        .bind(topics)
+        .fetch_all(executor)
+        .await
+        .map_err(failed("fact claims"))?;
+    rows.into_iter()
+        .map(|row| claim(&row.claim).map(|stored| (row.topic_id, stored)))
+        .collect()
+}
+
 pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
     Ok(Claim {
         fact: FactId::from_uuid(row.fact),
@@ -144,7 +196,7 @@ pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
     })
 }
 
-async fn insert(
+pub(crate) async fn insert_claim(
     conn: &mut PgConnection,
     claim: &NewClaim,
     now: DateTime<Utc>,
@@ -196,7 +248,7 @@ impl FactStore for PostgresMemory {
         let mut tx = self.pool.begin().await.map_err(failed("fact claim"))?;
         let now = Utc::now();
         for claim in claims {
-            insert(&mut tx, claim, now).await?;
+            insert_claim(&mut tx, claim, now).await?;
         }
         tx.commit().await.map_err(failed("fact claim"))
     }

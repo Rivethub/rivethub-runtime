@@ -11,6 +11,7 @@ mod digest;
 pub mod dump;
 pub mod embed;
 mod embedding_store;
+mod entity_builder;
 pub mod error;
 mod facts;
 mod flagged;

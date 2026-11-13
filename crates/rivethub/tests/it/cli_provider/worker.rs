@@ -73,6 +73,7 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
         targets: store.clone(),
         summaries: store.clone(),
         wiki: store.clone(),
+        entity: None,
         consolidate: None,
         recompile: None,
         topics: store.clone(),

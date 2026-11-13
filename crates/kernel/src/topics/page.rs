@@ -261,6 +261,10 @@ impl PageSync<'_> {
             return Ok(());
         };
         let home = self.ensure(&root).await?;
+
+        if root.kind == TopicKind::Entity && fold.is_empty() {
+            return Ok(());
+        }
         if root.id != topic.id
             && let Some(own) = self.topics.page_slug(topic.id).await?
             && own != home
@@ -279,7 +283,24 @@ impl PageSync<'_> {
         if let Some(slug) = self.topics.page_slug(root.id).await? {
             return Ok(slug);
         }
+        if root.kind == TopicKind::Entity {
+            return self.ensure_entity(root).await;
+        }
         let slug = self.free_slug(&root.slug).await?;
+        let page = TopicPage::empty(slug.clone(), root.name.as_str());
+        self.pages.save_topic_page(root.id, &page, self.now).await?;
+        Ok(slug)
+    }
+
+    async fn ensure_entity(&self, root: &Topic) -> Result<WikiSlug, TopicPageError> {
+        let base = page_slug_text(&root.slug);
+        let Some(text) = allocated_page_slug(&base, TopicKind::Entity, 1) else {
+            return Err(WikiStoreError::SlugConflict(base).into());
+        };
+        let slug = wiki_slug(text)?;
+        if self.pages.page_taken(&slug).await? {
+            return Ok(slug);
+        }
         let page = TopicPage::empty(slug.clone(), root.name.as_str());
         self.pages.save_topic_page(root.id, &page, self.now).await?;
         Ok(slug)
@@ -288,10 +309,8 @@ impl PageSync<'_> {
     async fn free_slug(&self, topic: &Slug) -> Result<WikiSlug, TopicPageError> {
         let base = page_slug_text(topic);
         for attempt in 1..=SLUG_ATTEMPTS {
-            let text = if attempt == 1 {
-                base.clone()
-            } else {
-                format!("{base}-{attempt}")
+            let Some(text) = allocated_page_slug(&base, TopicKind::Work, attempt) else {
+                break;
             };
             let slug = wiki_slug(text)?;
             if !self.pages.page_taken(&slug).await? {
@@ -553,6 +572,19 @@ fn append(target: &mut String, text: &str) {
     };
 }
 
+fn allocated_page_slug(base: &str, kind: TopicKind, attempt: u32) -> Option<String> {
+    match kind {
+        TopicKind::Entity => (attempt == 1).then(|| base.to_owned()),
+        TopicKind::Type | TopicKind::Work => (1..=SLUG_ATTEMPTS).contains(&attempt).then(|| {
+            if attempt == 1 {
+                base.to_owned()
+            } else {
+                format!("{base}-{attempt}")
+            }
+        }),
+    }
+}
+
 fn page_slug_text(topic: &Slug) -> String {
     let slug = normalize_slug(topic.as_str());
     if slug.is_empty() {
@@ -564,4 +596,26 @@ fn page_slug_text(topic: &Slug) -> String {
 
 fn wiki_slug(text: String) -> Result<WikiSlug, WikiStoreError> {
     WikiSlug::try_from(text).map_err(|error| WikiStoreError::Page(WikiWriteError::Slug(error)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TopicKind;
+    use super::allocated_page_slug;
+
+    #[test]
+    fn an_entity_page_does_not_take_a_numbered_slug_when_the_name_is_taken() {
+        let mut entity = Vec::new();
+        for attempt in 1..=super::SLUG_ATTEMPTS {
+            let Some(slug) = allocated_page_slug("gpubox", TopicKind::Entity, attempt) else {
+                break;
+            };
+            entity.push(slug);
+        }
+        assert_eq!(entity, vec!["gpubox".to_owned()]);
+        assert_eq!(
+            allocated_page_slug("gpubox", TopicKind::Work, 2).as_deref(),
+            Some("gpubox-2")
+        );
+    }
 }

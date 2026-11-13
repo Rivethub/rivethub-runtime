@@ -1,4 +1,8 @@
 use crate::embed::{EmbedSettings, handle_embed};
+use crate::entity_builder::{
+    EntityBuilderDeps, EntityBuilderEnv, handle_enqueue_stale_entities, handle_entity_backfill,
+    handle_extract_entities,
+};
 use crate::error::WorkerError;
 use crate::filing::{FilingEnv, SessionTopics, file_target, handle_file};
 use crate::role::ProcessRole;
@@ -23,6 +27,7 @@ pub(crate) struct JobEnv {
     pub(crate) memory_jobs: Option<Arc<dyn kernel::memory::jobs::MemoryJobStore>>,
     pub(crate) unembedded: Option<Arc<dyn kernel::memory::jobs::UnembeddedStore>>,
     pub(crate) wiki: Option<WikiBuilderDeps>,
+    pub(crate) entity: Option<EntityBuilderDeps>,
     pub(crate) targets: Arc<dyn EmbeddingStore>,
     pub(crate) summaries: Arc<dyn SummaryStore>,
     pub(crate) summarizer: Arc<dyn ModelProvider>,
@@ -108,6 +113,11 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
         JobName::Fixed(FixedJob::DigestDay) => dispatch_digest(env, job, cancel).await,
+        JobName::Fixed(
+            FixedJob::ExtractEntities
+            | FixedJob::EnqueueEntityBackfill
+            | FixedJob::EnqueueStaleEntities,
+        ) => dispatch_entities(queue, env, job, cancel).await,
         JobName::Heartbeat { .. } => Err(WorkerError::Unhandled {
             name: job.name.to_string(),
         }),
@@ -376,6 +386,63 @@ async fn dispatch_sweep<Q: JobQueue>(
         .await
         .map(|_| ()),
     }
+}
+
+async fn dispatch_entities<Q: JobQueue>(
+    queue: &Q,
+    env: &JobEnv,
+    job: &ClaimedJob,
+    cancel: &CancellationToken,
+) -> Result<(), WorkerError> {
+    if matches!(job.name, JobName::Fixed(FixedJob::EnqueueStaleEntities)) && !env.wiki_enabled {
+        return Ok(());
+    }
+    let entity = env
+        .entity
+        .as_ref()
+        .ok_or(WorkerError::MissingDependencies {
+            role: ProcessRole::EntityBuilder,
+        })?;
+    let entity_env = EntityBuilderEnv {
+        store: entity.store.as_ref(),
+        provider: entity.provider.as_ref(),
+        queue,
+        model: &entity.model,
+        settings: &entity.settings,
+        now: Utc::now(),
+        cancel,
+    };
+    match &job.name {
+        JobName::Fixed(FixedJob::ExtractEntities) => {
+            handle_extract_entities(&entity_env, &job.payload)
+                .await
+                .map(|_| ())
+        }
+        JobName::Fixed(FixedJob::EnqueueEntityBackfill) => {
+            handle_entity_backfill(&entity_env, entity_budget(env).await)
+                .await
+                .map(|_| ())
+        }
+        JobName::Fixed(FixedJob::EnqueueStaleEntities) => {
+            handle_enqueue_stale_entities(&entity_env, env.settings.wiki_sweep_limit)
+                .await
+                .map(|_| ())
+        }
+        _ => Err(WorkerError::Unhandled {
+            name: job.name.to_string(),
+        }),
+    }
+}
+
+async fn entity_budget(env: &JobEnv) -> kernel::wiki::builder::BackfillBudget {
+    if !env.settings.backfill_enabled {
+        return kernel::wiki::builder::BackfillBudget::flat(0);
+    }
+    let load = match env.wiki.as_ref().and_then(|wiki| wiki.load.as_ref()) {
+        Some(probe) => model_load(probe.as_ref()).await,
+        None => None,
+    };
+    crate::wiki_builder::backfill_budget(load, env.settings.backfill_max, env.settings.model_slots)
 }
 
 async fn model_load(probe: &dyn kernel::model::ModelLoadProbe) -> Option<kernel::model::ModelLoad> {

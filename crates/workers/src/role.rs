@@ -15,6 +15,7 @@ pub enum ProcessRole {
     Summarizer,
     Categorizer,
     WikiBuilder,
+    EntityBuilder,
     All,
 }
 
@@ -32,11 +33,13 @@ impl ProcessRole {
             Self::Summarizer => vec![WorkerRole::Summarizer],
             Self::Categorizer => vec![WorkerRole::Categorizer],
             Self::WikiBuilder => vec![WorkerRole::WikiBuilder],
+            Self::EntityBuilder => vec![WorkerRole::EntityBuilder],
             Self::All => vec![
                 WorkerRole::Embedder,
                 WorkerRole::Summarizer,
                 WorkerRole::Categorizer,
                 WorkerRole::WikiBuilder,
+                WorkerRole::EntityBuilder,
             ],
         }
     }
@@ -84,6 +87,9 @@ pub(crate) fn handler_ready(name: &JobName) -> bool {
                 | FixedJob::SyncTopicPage
                 | FixedJob::PurgeDeletedSessions
                 | FixedJob::DigestDay
+                | FixedJob::ExtractEntities
+                | FixedJob::EnqueueEntityBackfill
+                | FixedJob::EnqueueStaleEntities
         )
     )
 }

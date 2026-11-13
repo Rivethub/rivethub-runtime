@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use config::{Config, Environment};
+use kernel::facts::FactStore;
 use kernel::filing::FilingStore;
 use kernel::memory::{EmbeddingStore, MemoryStore, SummaryStore};
 use kernel::queue::JobQueue;
@@ -12,6 +13,7 @@ use kernel::topics::TopicStore;
 use kernel::transcript::SessionLister;
 use kernel::wiki::builder::WikiBuilderStore;
 use kernel::wiki::consolidate::WikiConsolidateStore;
+use kernel::wiki::entity_pass::EntityStore;
 use kernel::wiki::recompile::WikiRecompileStore;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -148,13 +150,14 @@ async fn run(
         let targets: Arc<dyn EmbeddingStore> = memory.clone();
         let summaries: Arc<dyn SummaryStore> = memory.clone();
         let wiki: Arc<dyn WikiBuilderStore> = memory.clone();
+        let entities: Arc<dyn EntityStore> = memory.clone();
         let consolidate: Arc<dyn WikiConsolidateStore> = memory.clone();
         let recompile: Arc<dyn WikiRecompileStore> = memory.clone();
         let topics: Arc<dyn TopicStore> = memory.clone();
         let filing: Arc<dyn FilingStore> = memory.clone();
         let pages: Arc<dyn TopicPageStore> = memory.clone();
         let decisions: Arc<dyn DecisionStore> = memory.clone();
-        let facts: Arc<dyn kernel::facts::FactStore> = memory.clone();
+        let facts: Arc<dyn FactStore> = memory.clone();
         let changes: Arc<dyn kernel::changes::ChangeFeed> = memory.clone();
         let digests: Arc<dyn kernel::changes::DigestStore> = memory.clone();
         let tidy: Arc<dyn TidyStore> = memory.clone();
@@ -165,6 +168,7 @@ async fn run(
                 targets,
                 summaries,
                 wiki,
+                entity: Some(entities),
                 consolidate: Some(consolidate),
                 recompile: Some(recompile),
                 topics,
@@ -239,13 +243,14 @@ pub struct WorkerPorts<Q> {
     pub targets: Arc<dyn EmbeddingStore>,
     pub summaries: Arc<dyn SummaryStore>,
     pub wiki: Arc<dyn WikiBuilderStore>,
+    pub entity: Option<Arc<dyn EntityStore>>,
     pub consolidate: Option<Arc<dyn WikiConsolidateStore>>,
     pub recompile: Option<Arc<dyn WikiRecompileStore>>,
     pub topics: Arc<dyn TopicStore>,
     pub filing: Arc<dyn FilingStore>,
     pub pages: Arc<dyn TopicPageStore>,
     pub decisions: Arc<dyn DecisionStore>,
-    pub facts: Arc<dyn kernel::facts::FactStore>,
+    pub facts: Arc<dyn FactStore>,
     pub changes: Arc<dyn kernel::changes::ChangeFeed>,
     pub digests: Arc<dyn kernel::changes::DigestStore>,
     pub tidy: Arc<dyn TidyStore>,
@@ -293,6 +298,8 @@ pub fn with_models<Q: JobQueue + 'static>(
         embedder,
         ..
     } = bindings;
+    let entity_provider = Arc::clone(&wiki_writer.provider);
+    let entity_model = wiki_writer.model.clone();
     let deps = WorkerDeps {
         targets: ports.targets,
         summaries: ports.summaries,
@@ -318,21 +325,32 @@ pub fn with_models<Q: JobQueue + 'static>(
         provider: wiki_writer.provider,
         model: wiki_writer.model,
         load: ports.load,
-    })
-    .with_topic_pages(
-        Arc::clone(&ports.topics),
-        ports.pages,
-        ports.decisions,
-        ports.facts,
-    )
-    .with_tidy(ports.tidy)
-    .with_daily_digests(ports.changes, ports.digests)
-    .with_session_topics(workers::SessionTopics {
-        store: ports.topics,
-        filing: ports.filing,
-        lineage: ports.lineage,
-    })
-    .with_activities(activities.clone());
+    });
+    let runner = if let Some(store) = ports.entity {
+        runner.with_entity_builder(workers::entity_builder::EntityBuilderDeps {
+            store,
+            provider: entity_provider,
+            model: entity_model,
+            settings: workers::entity_builder::MatcherSettings::default(),
+        })
+    } else {
+        runner
+    };
+    let runner = runner
+        .with_topic_pages(
+            Arc::clone(&ports.topics),
+            ports.pages,
+            ports.decisions,
+            ports.facts,
+        )
+        .with_tidy(ports.tidy)
+        .with_daily_digests(ports.changes, ports.digests)
+        .with_session_topics(workers::SessionTopics {
+            store: ports.topics,
+            filing: ports.filing,
+            lineage: ports.lineage,
+        })
+        .with_activities(activities.clone());
     Ok(ComposedRunner {
         runner,
         tasks: factory.tasks(),

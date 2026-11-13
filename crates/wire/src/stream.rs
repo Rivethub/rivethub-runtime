@@ -175,6 +175,21 @@ pub mod openai {
         pub enable_thinking: bool,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+    pub struct Reasoning {
+        pub enabled: bool,
+    }
+
+    #[serde_with::skip_serializing_none]
+    #[derive(
+        Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default,
+    )]
+    #[serde(default)]
+    pub struct StructuredOutputs {
+        pub json: Option<crate::JsonObject>,
+        pub disable_any_whitespace: Option<bool>,
+    }
+
     #[serde_with::skip_serializing_none]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct ChatCompletionRequest {
@@ -189,7 +204,12 @@ pub mod openai {
         pub stream_options: Option<StreamOptions>,
         pub chat_template_kwargs: Option<ChatTemplateKwargs>,
         pub think: Option<bool>,
+
+        #[serde(default)]
+        pub reasoning: Option<Reasoning>,
         pub response_format: Option<ResponseFormat>,
+        #[serde(default)]
+        pub structured_outputs: Option<StructuredOutputs>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

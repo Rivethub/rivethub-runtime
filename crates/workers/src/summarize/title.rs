@@ -45,6 +45,7 @@ impl TitleCall<'_> {
                 temperature: Some(0.0),
                 enable_thinking: None,
                 json_schema: Some(title_schema()),
+                disable_any_whitespace: false,
             },
             model: self.model.to_owned(),
             messages: vec![
