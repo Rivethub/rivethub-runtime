@@ -111,13 +111,15 @@ one that carries a receipt.
 
 ### Receiving shared sessions
 
-`rh memory receive` and `rh memory ingest-bundle` check every bundle for secrets and prompt injection before they write.
-A bundle with any finding imports nothing: the command prints a `held:` report and exits 3, and the ciphertext stays in
-the inbox for a rerun. Decide per session with `--session <n>=import|skip|hold-spans`, or for all with
-`--all=import|skip|hold-spans`. A session with a secret finding takes only `skip` or `hold-spans` unless you also pass
-`--force`. `--force` alone imports nothing flagged, because a decision is still needed. The MCP tool `session_import`
-refuses any bundle with findings and tells the agent to ask you to run the CLI command. The desktop's receive routes
-apply the same rules.
+`rh memory receive` and `rh memory ingest-bundle` check every sanitized bundle for secrets and prompt injection before
+they write. A sanitized bundle with any finding imports nothing: the command prints a `held:` report and exits 3, and a
+received bundle's ciphertext stays in the inbox for a rerun. Decide per session with
+`--session <n>=import|skip|hold-spans`, or for all with `--all=import|skip|hold-spans`. A session with a secret finding
+takes only `skip` or `hold-spans` unless you also pass `--force`. For a sanitized bundle, `--force` alone imports
+nothing flagged, because a decision is still needed. A raw bundle (one `rh memory sanitize` has not stamped) is different:
+`ingest-bundle` refuses it unless you pass `--force`, and a forced raw import skips these checks entirely. The MCP tool
+`session_import` refuses any bundle with findings and tells the agent to ask you to run the CLI command. The desktop's
+receive routes apply the same rules to sanitized bundles.
 
 ### Share servers
 
