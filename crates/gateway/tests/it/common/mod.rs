@@ -642,3 +642,17 @@ pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
         case.response.body = None;
     }
 }
+
+pub(crate) fn capture_logs(
+    subscriber: impl tracing::Subscriber + Send + Sync + 'static,
+) -> tracing::subscriber::DefaultGuard {
+    static NO_CALLSITE_IS_EVER_DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let installed = *NO_CALLSITE_IS_EVER_DISABLED.get_or_init(|| {
+        tracing::subscriber::set_global_default(tracing_subscriber::registry()).is_ok()
+    });
+    assert!(
+        installed,
+        "another global subscriber was set in the it binary"
+    );
+    tracing::subscriber::set_default(subscriber)
+}

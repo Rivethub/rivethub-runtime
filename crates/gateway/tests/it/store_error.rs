@@ -73,7 +73,7 @@ impl tracing::Subscriber for Capture {
 
 fn install() -> (tracing::subscriber::DefaultGuard, Arc<Mutex<Vec<String>>>) {
     let lines = Arc::new(Mutex::new(Vec::new()));
-    let guard = tracing::subscriber::set_default(Capture {
+    let guard = crate::common::capture_logs(Capture {
         lines: Arc::clone(&lines),
     });
     (guard, lines)
