@@ -33,6 +33,9 @@ use kernel::transcript::TranscriptWindow;
 use wire::harness::HarnessId;
 
 pub use ancestors::with_ancestors;
+pub(crate) use claude::ClaudeFile;
+pub(crate) use claude::session_agents;
+pub(crate) use claude::store_files;
 pub use roots::claude_config_file;
 pub use roots::store_roots;
 pub use transcripts::StoreTranscriptReader;

@@ -21,15 +21,26 @@ use tokio_util::sync::CancellationToken;
 const HEALTHZ_CLOSE: &[u8] =
     b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
 const HEALTHZ_KEEP_ALIVE: &[u8] = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-const SEARCH_HOLD: &[u8] = b"GET /api/memory/search?q=held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-const CAPTURE_HEAD: &[u8] = concat!(
-    "POST /api/capture HTTP/1.1\r\n",
-    "Host: 127.0.0.1\r\n",
-    "Content-Type: application/json\r\n",
-    "Content-Length: 100\r\n",
-    "\r\n"
-)
-.as_bytes();
+
+fn search_for(query: &str) -> Vec<u8> {
+    format!(
+        "GET /api/memory/search?q={query} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\n\r\n",
+        common::owner_token()
+    )
+    .into_bytes()
+}
+
+fn search_hold() -> Vec<u8> {
+    search_for("held")
+}
+
+fn capture_head() -> Vec<u8> {
+    format!(
+        "POST /api/capture HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n",
+        common::owner_token()
+    )
+    .into_bytes()
+}
 
 type ServerHandle = tokio::task::JoinHandle<Result<(), ServeError>>;
 
@@ -292,7 +303,7 @@ async fn concurrent_healthz_across_plain_and_tls() {
 async fn graceful_shutdown_finishes_in_flight_requests() {
     let store = Arc::new(GatedStore::default());
     let handle: Arc<dyn MemoryStore> = Arc::clone(&store) as Arc<dyn MemoryStore>;
-    let gateway = Arc::new(Gateway::new(handle, common::settings()));
+    let gateway = Arc::new(common::owned(Gateway::new(handle, common::settings())));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("listener");
@@ -308,7 +319,7 @@ async fn graceful_shutdown_finishes_in_flight_requests() {
     let mut entered = store.entered.subscribe();
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     stream
-        .write_all(b"GET /api/memory/search?q=hello HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .write_all(&search_for("hello"))
         .await
         .expect("request written");
     tokio::time::timeout(Duration::from_secs(5), entered.changed())
@@ -404,7 +415,10 @@ async fn trickled_request_body_hits_the_request_deadline() {
     .await;
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     let started = tokio::time::Instant::now();
-    stream.write_all(CAPTURE_HEAD).await.expect("head written");
+    stream
+        .write_all(&capture_head())
+        .await
+        .expect("head written");
     let (mut reader, mut writer) = tokio::io::split(stream);
     let trickle = tokio::spawn(async move {
         for _ in 0..100 {
@@ -467,7 +481,7 @@ async fn keep_alive_reuse_serves_a_second_request_inside_the_idle_window() {
 async fn held_request_survives_the_keep_alive_idle_window() {
     let store = Arc::new(GatedStore::default());
     let handle: Arc<dyn MemoryStore> = Arc::clone(&store) as Arc<dyn MemoryStore>;
-    let gateway = Arc::new(Gateway::new(handle, common::settings()));
+    let gateway = Arc::new(common::owned(Gateway::new(handle, common::settings())));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("listener");
@@ -488,7 +502,7 @@ async fn held_request_survives_the_keep_alive_idle_window() {
     let first = round_trip(&mut stream, HEALTHZ_KEEP_ALIVE).await;
     assert!(first.starts_with("HTTP/1.1 200 OK"), "{first}");
     stream
-        .write_all(SEARCH_HOLD)
+        .write_all(&search_hold())
         .await
         .expect("held request written");
     tokio::time::timeout(Duration::from_secs(5), entered.changed())
@@ -522,7 +536,7 @@ async fn held_request_survives_the_keep_alive_idle_window() {
 async fn pipelined_request_held_past_the_idle_window_is_not_dropped() {
     let store = Arc::new(GatedStore::default());
     let handle: Arc<dyn MemoryStore> = Arc::clone(&store) as Arc<dyn MemoryStore>;
-    let gateway = Arc::new(Gateway::new(handle, common::settings()));
+    let gateway = Arc::new(common::owned(Gateway::new(handle, common::settings())));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .expect("listener");
@@ -542,7 +556,7 @@ async fn pipelined_request_held_past_the_idle_window_is_not_dropped() {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     let mut pipelined = Vec::new();
     pipelined.extend_from_slice(HEALTHZ_KEEP_ALIVE);
-    pipelined.extend_from_slice(SEARCH_HOLD);
+    pipelined.extend_from_slice(&search_hold());
     stream
         .write_all(&pipelined)
         .await

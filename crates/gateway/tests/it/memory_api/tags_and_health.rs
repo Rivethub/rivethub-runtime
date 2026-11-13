@@ -554,7 +554,9 @@ fn search_reports_store_degradation() {
 #[test]
 fn search_with_a_wired_provider_carries_no_degradation() {
     let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());
-    let gateway = Arc::new(Gateway::new(store, common::settings()).with_embed_provider());
+    let gateway = Arc::new(common::owned(
+        Gateway::new(store, common::settings()).with_embed_provider(),
+    ));
     let app = gateway.router(false);
     let response = block_on(answer(
         app,

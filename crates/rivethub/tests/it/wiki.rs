@@ -57,25 +57,38 @@ async fn get(
     client.get(format!("{base}{target}")).send().await
 }
 
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> TestResult {
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
+)]
+async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let home = tempfile::tempdir()?;
     let memory = Arc::new(PostgresMemory::new(pool));
-    let gateway = Arc::new(Gateway::new(
-        memory,
-        gateway::Settings {
-            hostname: "wiki-test".to_owned(),
-            node: "wiki-test".to_owned(),
-            allowed_origins: Vec::new(),
-            allowed_hosts: Vec::new(),
-            static_dir: None,
-            root_redirect: None,
-            state_dir: home.path().join("state"),
-            private_ca: None,
-            request_deadline: gateway::REQUEST_DEADLINE,
-        },
-    ));
+    let gateway = Arc::new(
+        Gateway::new(
+            memory,
+            gateway::Settings {
+                hostname: "wiki-test".to_owned(),
+                node: "wiki-test".to_owned(),
+                allowed_origins: Vec::new(),
+                allowed_hosts: Vec::new(),
+                static_dir: None,
+                root_redirect: None,
+                state_dir: home.path().join("state"),
+                private_ca: None,
+                request_deadline: gateway::REQUEST_DEADLINE,
+                policy: None,
+            },
+        )
+        .with_local_owner(crate::owner::holder())
+        .with_tenancy(gateway::tenancy::Tenancy::local(
+            gateway::tenancy::UserId::new("owner".to_owned())?,
+        )),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://{}", listener.local_addr()?);
     let shutdown = CancellationToken::new();
@@ -91,6 +104,7 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
         .no_proxy()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
+        .default_headers(crate::owner::holder_headers()?)
         .build()?;
     let response = get(&client, &base, "/api/wiki/release").await?;
     assert_eq!(response.status().as_u16(), 200);
@@ -180,8 +194,10 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres(pool: PgPool) -> Test
     Ok(())
 }
 
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn filters_bind_input_and_empty_pages_keep_total(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn filters_bind_input_and_empty_pages_keep_total() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let store = PostgresMemory::new(pool);
     let mut filter = WikiFilter {
@@ -219,10 +235,10 @@ async fn filters_bind_input_and_empty_pages_keep_total(pool: PgPool) -> TestResu
     Ok(())
 }
 
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn gaps_resolve_titles_aliases_and_redirects_and_deduplicate_references(
-    pool: PgPool,
-) -> TestResult {
+#[tokio::test]
+async fn gaps_resolve_titles_aliases_and_redirects_and_deduplicate_references() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let pool = db.pool();
     seed(&pool).await?;
     let store = PostgresMemory::new(pool);
     let gaps = store.wiki_gaps(50).await?;
@@ -235,8 +251,10 @@ async fn gaps_resolve_titles_aliases_and_redirects_and_deduplicate_references(
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn absent_wiki_tables_are_errors_not_empty_results(pool: PgPool) {
+#[tokio::test]
+async fn absent_wiki_tables_are_errors_not_empty_results() {
+    let db = crate::pgdb::TestDb::bare().await.expect("test database");
+    let pool = db.pool();
     let store = PostgresMemory::new(pool);
     let slug = WikiSlug::try_from("release".to_owned()).unwrap();
     assert!(store.wiki_page(&slug).await.is_err());

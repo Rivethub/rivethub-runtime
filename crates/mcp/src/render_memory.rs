@@ -8,6 +8,7 @@ use kernel::memory::{MemoryBrowseOrder, TagWire};
 use serde::Deserialize;
 
 use crate::Error;
+use crate::provenance::Origins;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CaptureMetadata {
@@ -90,6 +91,7 @@ pub(crate) fn browse(
     entries: &[MemoryEntry],
     filter: &BrowseFilter,
     sessions: &BTreeMap<String, Vec<TagWire>>,
+    origins: &Origins,
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
     let mut details = Vec::new();
@@ -142,14 +144,32 @@ pub(crate) fn browse(
         if let Some(date) = entry.created_at {
             write!(heading, "[{}] ", timestamp(date, zone))?;
         }
-        write!(heading, "{}/{}", entry.agent, entry.role)?;
+        let imported = origins.contains_key(&entry.session_id);
+        write!(
+            heading,
+            "{}/{}",
+            crate::provenance::own_text(imported, &entry.agent),
+            entry.role
+        )?;
         if let Some(name) = &entry.tool_name {
-            write!(heading, " [tool: {name}]")?;
+            write!(
+                heading,
+                " [tool: {}]",
+                crate::provenance::own_text(imported, name)
+            )?;
+        }
+        if let Some(provenance) = origins.get(&entry.session_id) {
+            write!(
+                heading,
+                " · {}",
+                crate::provenance::tag(provenance, zone, false)
+            )?;
         }
         if let Some(tags) = tags(entry, sessions) {
             heading.push_str(&tags);
         }
-        blocks.push(format!("{heading}\n{}", payload(entry, 800)?));
+        let body = crate::provenance::quoted(origins, &entry.session_id, payload(entry, 800)?);
+        blocks.push(format!("{heading}\n{body}"));
     }
     text.push_str("\n\n");
     text.push_str(&blocks.join("\n\n---\n\n"));
@@ -166,10 +186,19 @@ pub(crate) fn local_date(date: DateTime<Utc>, zone: chrono_tz::Tz) -> String {
     date.with_timezone(&zone).format("%Y-%m-%d").to_string()
 }
 
-pub(crate) fn get_full(id: &str, entry: Option<&MemoryEntry>) -> Result<String, Error> {
+pub(crate) fn get_full(
+    id: &str,
+    entry: Option<&MemoryEntry>,
+    origins: &Origins,
+) -> Result<String, Error> {
     let Some(entry) = entry else {
         return Ok(format!("No message with id {id}."));
     };
+    let text = full_text(entry)?;
+    Ok(crate::provenance::quoted(origins, &entry.session_id, text))
+}
+
+fn full_text(entry: &MemoryEntry) -> Result<String, Error> {
     let metadata = metadata(entry)?;
     if let Some(metadata) = metadata.filter(|metadata| metadata.truncated == Some(true)) {
         let mut text =

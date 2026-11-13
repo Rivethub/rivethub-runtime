@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
+use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
+use kernel::memory::MemoryEntry;
+use kernel::memory::Provenance;
 use tokio::sync::Mutex;
 use wire::JsonObject;
 
@@ -9,31 +12,61 @@ pub(super) struct Origins(Mutex<BTreeMap<String, JsonObject>>);
 
 impl Origins {
     pub(super) async fn remember(&self, batch: &CaptureBatchRequest) {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6 (note 135): lookup_origins returns only origins that are JSON objects"
-            )
-        )]
-        let origin = batch
-            .settings
-            .as_ref()
-            .and_then(|settings| settings.get("origin"))
-            .and_then(|origin| serde_json::from_value::<JsonObject>(origin.clone()).ok());
-        if let Some(origin) = origin {
-            self.0
-                .lock()
-                .await
-                .insert(batch.session_key.clone(), origin);
+        if !kernel::memory::is_imported(&batch.session_key) {
+            return;
         }
+        self.0.lock().await.insert(
+            batch.session_key.clone(),
+            batch.settings.clone().unwrap_or_default(),
+        );
     }
 
-    pub(super) async fn lookup(&self, session_keys: Vec<String>) -> BTreeMap<String, JsonObject> {
-        let origins = self.0.lock().await;
+    pub(super) async fn attach(&self, mut entries: Vec<MemoryEntry>) -> Vec<MemoryEntry> {
+        let stored = self.0.lock().await;
+        for entry in &mut entries {
+            if let Some(settings) = stored.get(&entry.session_id) {
+                entry.provenance = Some(Provenance::from_settings(settings));
+            }
+        }
+        entries
+    }
+
+    pub(super) async fn lookup(&self, session_keys: Vec<String>) -> BTreeMap<String, Provenance> {
+        let stored = self.0.lock().await;
         session_keys
             .into_iter()
-            .filter_map(|key| origins.get(&key).map(|origin| (key, origin.clone())))
+            .filter_map(|key| {
+                stored
+                    .get(&key)
+                    .map(|settings| (key, Provenance::from_settings(settings)))
+            })
             .collect()
     }
+}
+
+pub(super) fn wiki_authors(
+    pages: &BTreeMap<String, kernel::wiki::WikiPageResponse>,
+    slugs: Vec<String>,
+) -> BTreeMap<String, Vec<Provenance>> {
+    slugs
+        .into_iter()
+        .filter_map(|slug| {
+            let imported: Vec<_> = pages
+                .get(&slug)?
+                .citations
+                .iter()
+                .filter_map(|citation| citation.imported.clone())
+                .collect();
+            (!imported.is_empty()).then_some((slug, imported))
+        })
+        .collect()
+}
+
+pub(super) fn browsed(filter: &BrowseFilter, entry: &MemoryEntry) -> bool {
+    filter.agent.as_deref().is_none_or(|a| entry.agent == a)
+        && filter.role.is_none_or(|r| entry.role == r)
+        && filter
+            .tool_name
+            .as_deref()
+            .is_none_or(|t| entry.tool_name.as_deref() == Some(t))
 }

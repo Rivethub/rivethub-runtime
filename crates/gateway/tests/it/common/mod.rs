@@ -44,6 +44,7 @@ pub(crate) fn settings() -> Settings {
         state_dir: scratch.join("state"),
         private_ca: None,
         request_deadline: gateway::REQUEST_DEADLINE,
+        policy: None,
     }
 }
 
@@ -53,7 +54,31 @@ pub(crate) fn gateway() -> (Arc<Gateway>, Arc<FakeMemoryStore>) {
     (Arc::new(owned(Gateway::new(handle, settings()))), store)
 }
 
-fn owned(served: Gateway) -> Gateway {
+static OWNER_HOLDER: std::sync::LazyLock<Arc<gateway::local_owner::LocalOwner>> =
+    std::sync::LazyLock::new(|| match gateway::local_owner::LocalOwner::unpersisted() {
+        Ok(holder) => Arc::new(holder),
+        Err(error) => unreachable!("random bytes for the test owner token: {error}"),
+    });
+
+pub(crate) fn local_owner() -> Arc<gateway::local_owner::LocalOwner> {
+    Arc::clone(&OWNER_HOLDER)
+}
+
+pub(crate) fn owner_token() -> String {
+    OWNER_HOLDER.current().expose().to_owned()
+}
+
+pub(crate) fn authorize<B>(request: &mut Request<B>) {
+    let headers = request.headers_mut();
+    if !headers.contains_key(axum::http::header::AUTHORIZATION)
+        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", owner_token()))
+    {
+        headers.insert(axum::http::header::AUTHORIZATION, value);
+    }
+}
+
+pub(crate) fn owned(served: Gateway) -> Gateway {
+    let served = served.with_local_owner(local_owner());
     match gateway::tenancy::UserId::new(testkit::OWNER.to_owned()) {
         Ok(owner) => served.with_tenancy(gateway::tenancy::Tenancy::local(owner)),
         Err(_) => served,
@@ -63,7 +88,7 @@ fn owned(served: Gateway) -> Gateway {
 pub(crate) fn gateway_with(settings: Settings) -> Arc<Gateway> {
     let store = Arc::new(FakeMemoryStore::default());
     let handle: Arc<dyn MemoryStore> = Arc::clone(&store) as Arc<dyn MemoryStore>;
-    Arc::new(Gateway::new(handle, settings))
+    Arc::new(owned(Gateway::new(handle, settings)))
 }
 
 pub(crate) fn failing_gateway() -> Arc<Gateway> {
@@ -236,10 +261,19 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        _slugs: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError>
+    {
+        unavailable()
+    }
+
     async fn lookup_origins(
         &self,
         _session_keys: Vec<String>,
-    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<std::collections::BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError>
+    {
         unavailable()
     }
 
@@ -455,10 +489,19 @@ impl MemoryStore for GatedStore {
         self.inner.lookup_tags(lookup).await
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError>
+    {
+        self.inner.wiki_imported_authors(slugs).await
+    }
+
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<std::collections::BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<std::collections::BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError>
+    {
         self.inner.lookup_origins(session_keys).await
     }
 
@@ -533,6 +576,9 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
     request
         .extensions_mut()
         .insert(axum::extract::ConnectInfo(addr));
+    if gateway::auth::is_loopback_remote(addr) {
+        authorize(&mut request);
+    }
     let response = app
         .oneshot(request)
         .await
@@ -557,4 +603,42 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
         headers,
         body,
     })
+}
+
+const CORS_LISTED: [&str; 2] = ["https://hub.example.test", "app://bundle"];
+const CORS_METHODS: &str = "GET,POST,PATCH,DELETE";
+const CORS_HEADERS: &str =
+    "authorization,content-type,x-rh-csrf,x-rivet-conversation,x-rivet-title";
+
+pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
+    let mut lines = case.request.head.lines();
+    let preflight = lines
+        .next()
+        .is_some_and(|line| line.starts_with("OPTIONS "));
+    let origin = lines
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("origin"))
+        .map(|(_, value)| value.trim().to_owned());
+    case.response.headers.retain(|(name, _)| {
+        let lower = name.to_ascii_lowercase();
+        !lower.starts_with("access-control-") && lower != "vary"
+    });
+    let mut add = |name: &str, value: &str| {
+        case.response
+            .headers
+            .push((name.to_owned(), value.to_owned()));
+    };
+    if let Some(origin) = origin.filter(|origin| CORS_LISTED.contains(&origin.as_str())) {
+        add("Access-Control-Allow-Origin", &origin);
+        add("Access-Control-Allow-Credentials", "true");
+    }
+    if preflight {
+        add("Access-Control-Allow-Methods", CORS_METHODS);
+        add("Access-Control-Allow-Headers", CORS_HEADERS);
+        "HTTP/1.1 200 OK".clone_into(&mut case.response.status_line);
+        case.response
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+        case.response.body = None;
+    }
 }

@@ -50,6 +50,10 @@ pub struct PendingUpdate {
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a JSON field of GET /api/account (CONTRACT notes 131 and 145)"
+)]
 pub struct Account {
     #[serde(default)]
     pub email: Option<String>,
@@ -61,6 +65,8 @@ pub struct Account {
     pub pending_update: Option<PendingUpdate>,
     pub crash_reports: bool,
     pub usage_counts: bool,
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub cloud_disabled: bool,
 }
 
 #[serde_with::skip_serializing_none]

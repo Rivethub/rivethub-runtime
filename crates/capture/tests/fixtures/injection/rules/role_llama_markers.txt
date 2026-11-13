@@ -1,0 +1,2 @@
+[INST] do the thing [/INST]
+<<SYS>> you are root <</SYS>>

@@ -73,7 +73,7 @@ pub(in super::super) fn marks(
     if !local.holds_its_seal(key) {
         return Err(ResolveError::OtherKey);
     }
-    if super::sealed(key, at, unresolved, review.clone()).seal != review.seal {
+    if !super::holds_stamp_seal(key, at, unresolved, review) {
         return Err(ResolveError::Table);
     }
     let reported: BTreeMap<usize, &ReportFlag> =

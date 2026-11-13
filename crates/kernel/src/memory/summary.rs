@@ -9,6 +9,7 @@ use crate::BoxError;
 
 pub const HEARTBEAT_SESSION_PREFIX: &str = "heartbeat:";
 
+use super::Provenance;
 use super::SummaryKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +76,7 @@ pub struct SummaryNode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConversationWindow {
     pub conversation: ConversationHead,
+    pub provenance: Option<Provenance>,
     pub messages: Vec<WindowMessage>,
     pub leaves: Vec<SummaryNode>,
     pub branches: Vec<SummaryNode>,

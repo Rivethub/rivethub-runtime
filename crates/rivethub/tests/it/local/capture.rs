@@ -54,7 +54,10 @@ async fn resent_capture_batches_skip_stored_events_and_keep_the_title() -> TestR
         &["gateway listening on "],
     )
     .await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home.path())?)
+        .build()?;
     let url = format!("http://127.0.0.1:{port}/api/capture");
     let mut results = Vec::new();
     for title in ["Stop", "SessionEnd"] {
@@ -214,7 +217,10 @@ async fn capture_on_node(home: &Path, sqlite: &str) -> TestResult<MemoryHealthRe
         ),
     )?;
     let started = start(home, &["local", "--no-lan"], &["gateway listening on "]).await?;
-    let client = reqwest::Client::builder().no_proxy().build()?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .default_headers(crate::owner::home_headers(home)?)
+        .build()?;
     let base = format!("http://127.0.0.1:{port}");
     let exchanged = async {
         client

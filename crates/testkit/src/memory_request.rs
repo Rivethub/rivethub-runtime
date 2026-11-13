@@ -24,6 +24,7 @@ pub enum MemoryRequest {
     Search(SearchQuery),
     Browse(BrowseFilter),
     Stats,
+    WikiImportedAuthors(Vec<String>),
     GetFull(String),
     Context {
         session: String,
@@ -45,6 +46,7 @@ pub enum MemoryRequest {
     },
     AddTag(TagAdd),
     LookupTags(TagLookup),
+    LookupOrigins(Vec<String>),
     UpsertTagTaxonomy(TagTaxonomyUpsert),
     DecideTagTaxonomy(TagTaxonomyDecision),
     MergeTagTaxonomy(TagTaxonomyMerge),

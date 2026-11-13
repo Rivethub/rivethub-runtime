@@ -1,5 +1,6 @@
 pub mod process;
 
+mod append_imports;
 mod cli;
 mod cli_provider;
 mod composed;
@@ -9,11 +10,17 @@ mod doctor;
 mod e2e;
 mod local;
 mod local_ensure;
+mod local_static;
 mod mcp_memory;
 mod mcp_sqlite;
 mod node_name;
+mod owner;
+mod pgdb;
+mod process_guard;
 mod roots;
 mod sessions;
+mod share_desk;
+mod share_receive;
 mod startup;
 mod store_roots;
 mod tls_fallback;

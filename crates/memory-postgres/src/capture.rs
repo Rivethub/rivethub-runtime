@@ -166,6 +166,22 @@ impl<'a> CaptureWriter<'a> {
         Ok(Self { tx, undated_from })
     }
 
+    pub(crate) async fn carries_receipt(
+        &mut self,
+        session_key: &str,
+        owner: &str,
+    ) -> Result<bool, Error> {
+        sqlx::query_scalar(
+            "select exists (select 1 from rh_conversations
+              where owner_user_id = $1 and session_key = $2 and settings ? 'receipt')",
+        )
+        .bind(owner)
+        .bind(session_key)
+        .fetch_one(&mut *self.tx)
+        .await
+        .map_err(|source| Error::operation("capture receipt check", source))
+    }
+
     pub async fn commit(self) -> Result<(), Error> {
         self.tx
             .commit()

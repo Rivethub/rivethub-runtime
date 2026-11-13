@@ -32,6 +32,17 @@ fn rust_syntax(source: &str) -> String {
                 if let Some(&next) = chars.get(index + 1) {
                     out.push(next);
                     index += 1;
+                    if matches!(next, 'x' | 'u' | 'U' | 'p' | 'P')
+                        && chars.get(index + 1) == Some(&'{')
+                    {
+                        while let Some(&inner) = chars.get(index + 1) {
+                            out.push(inner);
+                            index += 1;
+                            if inner == '}' {
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             '[' if !in_class => {
@@ -132,6 +143,10 @@ mod tests {
         assert_eq!(rust_syntax(r"^\$(?:\d+|{\d+})$"), r"^\$(?:\d+|\{\d+\})$");
         assert_eq!(rust_syntax(r"{{[^}]+}}"), r"\{\{[^}]+\}\}");
         assert_eq!(rust_syntax(r"a{2,3}b{4}c{5,}\{d"), r"a{2,3}b{4}c{5,}\{d");
+        assert_eq!(
+            rust_syntax(r"[\x{200B}-\x{200D}]\p{L}{2}"),
+            r"[\x{200B}-\x{200D}]\p{L}{2}"
+        );
     }
 
     #[test]

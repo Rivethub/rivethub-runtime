@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use capture::share_policy::SharePolicy;
 use chrono::{DateTime, Utc};
 use config::{Config, Environment, Paths};
 use nix::sys::statvfs::{Statvfs, statvfs};
@@ -23,7 +24,9 @@ pub enum CheckName {
     Config,
     StateDirectory,
     DiskSpace,
+    CaptureSpool,
     Memory,
+    Policy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +143,9 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
                 message: validation.to_string(),
             });
             checks.extend(directories?);
+            checks.push(spool_check(env).await);
             checks.push(schema_check(&loaded.config, env).await);
+            checks.push(policy_check(&loaded.config));
         }
         Err(error) => {
             checks.push(Check::fail(CheckName::Config, error));
@@ -154,6 +159,32 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
     let mut report = DoctorReport::new(checks).render(json)?;
     report.stderr = stderr;
     Ok(report)
+}
+
+async fn spool_check(env: &Environment) -> Check {
+    match crate::capture_hook::spool_warning(env).await {
+        Ok(Some(warning)) => Check::warn(CheckName::CaptureSpool, warning),
+        Ok(None) => Check::pass(
+            CheckName::CaptureSpool,
+            "The capture spool is within bounds.",
+        ),
+        Err(error) => Check::fail(CheckName::CaptureSpool, error),
+    }
+}
+
+fn policy_check(config: &Config) -> Check {
+    let state = |off: bool| if off { "off" } else { "on" };
+    match SharePolicy::from_config(config) {
+        Ok(sharing) => Check::pass(
+            CheckName::Policy,
+            format!(
+                "cloud {}, telemetry {}, sharing with {sharing}",
+                state(config.cloud_disabled()),
+                state(config.telemetry_disabled())
+            ),
+        ),
+        Err(error) => Check::fail(CheckName::Policy, error),
+    }
 }
 
 fn state_checks(path: &Path) -> Vec<Check> {

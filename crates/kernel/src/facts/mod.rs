@@ -9,6 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::BoxError;
+use crate::memory::Provenance;
 use crate::owner::Owner;
 use crate::topics::TopicId;
 
@@ -99,6 +100,7 @@ pub struct FactSession {
     pub started_at: DateTime<Utc>,
     pub last_at: DateTime<Utc>,
     pub messages: u64,
+    pub provenance: Option<Provenance>,
 }
 
 #[async_trait]

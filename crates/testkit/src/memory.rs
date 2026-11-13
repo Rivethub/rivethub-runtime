@@ -206,6 +206,16 @@ impl MemoryStore for FakeMemoryStore {
         })
     }
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<kernel::memory::Provenance>>, MemoryStoreError> {
+        self.record(MemoryRequest::WikiImportedAuthors(slugs.clone()))
+            .await;
+        let pages = self.wiki_pages.lock().await;
+        Ok(origins::wiki_authors(&pages, slugs))
+    }
+
     async fn wiki_gaps(
         &self,
         limit: u32,
@@ -363,20 +373,16 @@ impl MemoryStore for FakeMemoryStore {
 
     async fn browse(&self, filter: BrowseFilter) -> Result<Vec<MemoryEntry>, MemoryStoreError> {
         self.record(MemoryRequest::Browse(filter.clone())).await;
-        let entries = self.entries.lock().await;
-        Ok(entries
+        let found = self
+            .entries
+            .lock()
+            .await
             .iter()
-            .filter(|e| filter.agent.as_deref().is_none_or(|a| e.agent == a))
-            .filter(|e| filter.role.is_none_or(|r| e.role == r))
-            .filter(|e| {
-                filter
-                    .tool_name
-                    .as_deref()
-                    .is_none_or(|t| e.tool_name.as_deref() == Some(t))
-            })
+            .filter(|e| origins::browsed(&filter, e))
             .take(filter.limit.get() as usize)
             .cloned()
-            .collect())
+            .collect();
+        Ok(self.origins.attach(found).await)
     }
 
     async fn stats(&self) -> Result<MemoryStatsResponse, MemoryStoreError> {
@@ -397,13 +403,14 @@ impl MemoryStore for FakeMemoryStore {
 
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError> {
         self.record(MemoryRequest::GetFull(id.to_owned())).await;
-        Ok(self
+        let found = self
             .entries
             .lock()
             .await
             .iter()
             .find(|e| e.id.as_deref() == Some(id))
-            .cloned())
+            .cloned();
+        Ok(self.origins.attach(found.into_iter().collect()).await.pop())
     }
 
     async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
@@ -540,7 +547,9 @@ impl MemoryStore for FakeMemoryStore {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, wire::JsonObject>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, kernel::memory::Provenance>, MemoryStoreError> {
+        self.record(MemoryRequest::LookupOrigins(session_keys.clone()))
+            .await;
         Ok(self.origins.lookup(session_keys).await)
     }
 

@@ -23,7 +23,7 @@ To do the same by hand: every release `v<version>` publishes one archive per tar
 archive holds `rh`, `rivethub-migrate` and `LICENSE`. Unpack both binaries into a directory on your `PATH`:
 
 ```sh
-version=0.8.0                      # a release tag without its v
+version=0.8.1                      # a release tag without its v
 target=x86_64-unknown-linux-gnu    # or aarch64-unknown-linux-gnu, universal-apple-darwin
 base=https://github.com/Rivethub/rivethub-runtime/releases/download/v$version
 curl -fL -O "$base/rh-$version-$target.tar.gz" -O "$base/SHA256SUMS"
@@ -137,7 +137,7 @@ gateway:
 | `providers` | model endpoints: `openai-compatible` or `vllm` (`base_url`, `model`, `api_key` or `token_command`), or a harness used headless (`claude-cli`, `codex-cli`, `grok-cli`, `hermes-cli`, `opencode-cli`, `kimi-code`) |
 | `agents`, `runtime` | named agents on those providers; `runtime.default_agent` is the model the workers use |
 | `memory` | `backend` (`postgres` or `sqlite`), connection and embedding settings, `capture.redaction` (off by default) |
-| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir`, `request_deadline_secs` (default 30: a read request's database work stops then) |
+| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir`, `request_deadline_secs` (default 30: a read request's database work stops then), `fresh_login_secs` (default 300: how recent a browser login must be for account, export and token-rotation routes), `drops` (off by default: serve the drop API as a team share server, CONTRACT note 143), `trusted_proxies` (reverse proxies whose forwarding headers rh believes) |
 | `tasks` | `harnesses.<id>` (`binary`, `model`, `effort`, `cwd`) for the harnesses a headless provider runs |
 | `transports.mcp` | network MCP: `host` and `port` (default 5700, needs `auth_token`), or `socket` (an absolute path) |
 | `mesh` | `node_name` only, as this node's name; the other keys warn and are ignored |

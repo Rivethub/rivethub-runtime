@@ -40,6 +40,7 @@ mcp = { workspace = true }
 memory-postgres = { workspace = true }
 memory-sqlite = { workspace = true }
 workers = { workspace = true }
+parking_lot = { workspace = true }
 nix = { workspace = true, features = ["hostname", "inotify", "signal"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "signal", "time"] }
@@ -57,7 +58,6 @@ rcgen.workspace = true
 rustls.workspace = true
 tokio-tungstenite = { workspace = true, features = ["__rustls-tls"] }
 migrate = { workspace = true }
-parking_lot = { workspace = true }
 serde_yaml_ng = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 tempfile = { workspace = true }

@@ -35,11 +35,12 @@ fn standalone_yaml_omits_operator_sections() -> Result<(), Box<dyn std::error::E
 
 fn standalone_round_trip(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let database = home.join("memory.sqlite");
-    let yaml = standalone_config_yaml(&database, "0.0.0.0", 5174)?;
+    let yaml = standalone_config_yaml(&database, "0.0.0.0", 5174, false)?;
     assert!(yaml.contains("backend: sqlite"), "{yaml}");
     assert!(yaml.contains("0.0.0.0"), "{yaml}");
     assert!(yaml.contains("\ngateway:\n"), "{yaml}");
     assert!(!yaml.contains("den:"), "{yaml}");
+    assert!(!yaml.contains("cloud"), "{yaml}");
     assert!(!yaml.contains("runtime"), "{yaml}");
     assert!(!yaml.contains("agents"), "{yaml}");
     assert!(!yaml.contains("providers"), "{yaml}");

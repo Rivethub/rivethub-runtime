@@ -6,14 +6,14 @@ use super::Sessions;
 use super::files::Kind;
 use super::noun;
 use crate::Error;
+use kernel::memory::share::Findings;
 use kernel::memory::share::ListedSession;
 use kernel::memory::share::OpenedBundle;
 use kernel::memory::share::SanitizedBundle;
-use kernel::memory::share::Secrets;
 
 #[derive(Debug)]
 enum Verdict {
-    Secrets(Secrets),
+    Findings(Findings),
     Withheld(usize),
     Clean { unreviewed: usize },
 }
@@ -29,15 +29,15 @@ pub(crate) async fn import(
         OpenedBundle::Sanitized(bundle) => bundle,
     };
     let SanitizedBundle {
-        secrets,
+        findings,
         withheld,
         unreviewed,
         sessions: listing,
         authors,
         batches,
     } = bundle;
-    let verdict = match (secrets, withheld) {
-        (Some(secrets), _) => Verdict::Secrets(secrets),
+    let verdict = match (findings, withheld) {
+        (Some(findings), _) => Verdict::Findings(findings),
         (None, 0) => Verdict::Clean { unreviewed },
         (None, count) => Verdict::Withheld(count),
     };
@@ -52,13 +52,7 @@ pub(crate) async fn import(
                 ),
                 crate::text,
             ),
-            Verdict::Secrets(Secrets { count, first }) => (
-                format!(
-                    "refused: {} remain ({first}); nothing written\n",
-                    noun(count, "secret pattern match", "secret pattern matches")
-                ),
-                crate::refused,
-            ),
+            Verdict::Findings(findings) => (refusal(&findings, &path), crate::refused),
             Verdict::Withheld(count) => (
                 format!(
                     "refused: {} open; nothing written\n",
@@ -72,8 +66,17 @@ pub(crate) async fn import(
     }
     let unreviewed = match verdict {
         Verdict::Clean { unreviewed } => unreviewed,
-        Verdict::Secrets(Secrets { count, first }) => {
-            return Err(Error::BundleSecrets { path, count, first });
+        Verdict::Findings(Findings {
+            count,
+            sessions,
+            summary,
+        }) => {
+            return Err(Error::BundleHeld {
+                path,
+                count,
+                sessions,
+                summary,
+            });
         }
         Verdict::Withheld(count) => return Err(Error::BundleWithheld { path, count }),
     };
@@ -87,6 +90,16 @@ pub(crate) async fn import(
         "ingested {sessions}{}: {inserted} inserted, {skipped} skipped\n",
         advisory(unreviewed)
     )))
+}
+
+fn refusal(findings: &Findings, path: &std::path::Path) -> String {
+    format!(
+        "refused: {} in {} ({}); nothing written. Ask the user to run `rh memory ingest-bundle {}` in a terminal\n",
+        noun(findings.count, "finding", "findings"),
+        noun(findings.sessions, "session", "sessions"),
+        findings.summary,
+        path.display()
+    )
 }
 
 fn advisory(unreviewed: usize) -> String {
@@ -105,6 +118,10 @@ fn sessions_from(count: usize, authors: &[String]) -> String {
     if authors.is_empty() {
         count
     } else {
+        let authors: Vec<_> = authors
+            .iter()
+            .map(|author| crate::provenance::own_text(true, author))
+            .collect();
         format!("{count} from {}", authors.join(", "))
     }
 }
@@ -120,9 +137,9 @@ fn listed(session: &ListedSession) -> String {
     };
     format!(
         "{} ({}): {} from {}, {dates}\n",
-        session.key,
-        session.agent,
+        crate::provenance::own_text(true, &session.key),
+        crate::provenance::own_text(true, &session.agent),
         noun(session.messages, "message", "messages"),
-        session.author,
+        crate::provenance::own_text(true, &session.author),
     )
 }

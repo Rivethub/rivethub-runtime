@@ -137,10 +137,25 @@ const fn memory_state(state: MemoryState) -> SessionMemoryState {
 }
 
 fn label(origin: ImportOrigin) -> SessionOriginLabel {
+    use kernel::memory::share::receive::Verification;
+    use wire::capture::ReceiptVerification;
+    let (verification, bundle_id) = match origin.receipt {
+        Some(receipt) => (
+            Some(match receipt.verification {
+                Verification::Verified => ReceiptVerification::Verified,
+                Verification::Unsigned => ReceiptVerification::Unsigned,
+                Verification::UnknownKey => ReceiptVerification::UnknownKey,
+            }),
+            Some(receipt.bundle_id),
+        ),
+        None => (None, None),
+    };
     SessionOriginLabel {
         author: origin.author,
         created_at: origin.created_at,
         updated_at: origin.updated_at,
+        verification,
+        bundle_id,
     }
 }
 

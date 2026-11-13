@@ -124,6 +124,7 @@ fn message_for(row: BundleRow) -> Result<CaptureMessage, Error> {
         tool_result: row.tool_result,
         metadata: row.metadata,
         created_at: Some(row.message_at),
+        import_settings: None,
     })?;
     let mut metadata = entry.metadata.unwrap_or_default();
     let event_id = metadata

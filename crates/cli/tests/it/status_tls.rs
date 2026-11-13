@@ -64,6 +64,7 @@ async fn tls_health(dns_name: &str) -> Result<Served> {
                             degraded_providers: Vec::new(),
                             version: None,
                             revision: None,
+                            policy: None,
                         })
                     }),
                 );

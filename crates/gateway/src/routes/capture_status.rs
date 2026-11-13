@@ -1,10 +1,9 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::ConnectInfo;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::http::request::Parts;
 use chrono::Utc;
 use kernel::harness_setup::CaptureHistory;
 use kernel::harness_setup::ConnectOutcome;
@@ -14,7 +13,6 @@ use kernel::harness_setup::SetupError;
 use serde::Deserialize;
 
 use crate::Gateway;
-use crate::auth::is_loopback_remote;
 use crate::error::ApiError;
 use crate::extract::Body;
 use crate::tenancy::UserId;
@@ -29,8 +27,8 @@ pub(crate) struct ConnectBody {
     dry_run: bool,
 }
 
-fn local_owner(gateway: &Gateway, user: &UserId, remote: SocketAddr) -> Result<(), ApiError> {
-    if !is_loopback_remote(remote) {
+fn local_owner(gateway: &Gateway, user: &UserId, parts: &Parts) -> Result<(), ApiError> {
+    if !crate::auth::direct_local(parts) {
         return Err(ApiError::Forbidden(LOCAL_ONLY.to_owned()));
     }
     gateway.tenancy.owner(user)
@@ -39,9 +37,9 @@ fn local_owner(gateway: &Gateway, user: &UserId, remote: SocketAddr) -> Result<(
 pub(crate) async fn status(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    parts: Parts,
 ) -> Result<Json<Vec<HarnessStatus>>, ApiError> {
-    local_owner(&gateway, &user, remote)?;
+    local_owner(&gateway, &user, &parts)?;
     let setup = gateway.harness_setup()?;
     let activity = gateway.store().capture_activity().await?;
     let probes = setup.probe().await.map_err(setup_error)?;
@@ -59,11 +57,11 @@ pub(crate) async fn status(
 pub(crate) async fn connect(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
-    ConnectInfo(remote): ConnectInfo<SocketAddr>,
+    parts: Parts,
     Path(id): Path<String>,
     Body(body): Body<ConnectBody>,
 ) -> Result<Json<ConnectOutcome>, ApiError> {
-    local_owner(&gateway, &user, remote)?;
+    local_owner(&gateway, &user, &parts)?;
     let outcome = gateway
         .harness_setup()?
         .connect(&id, body.part, body.dry_run)

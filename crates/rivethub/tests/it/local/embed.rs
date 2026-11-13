@@ -70,6 +70,7 @@ async fn local_vector_search(
     .await?;
     let searched = reqwest::Client::builder()
         .no_proxy()
+        .default_headers(crate::owner::home_headers(home.path())?)
         .build()?
         .get(format!(
             "http://127.0.0.1:{port}/api/memory/search?q={}&mode=vector",

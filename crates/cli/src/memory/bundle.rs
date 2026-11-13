@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use capture::sanitize::Change;
-use capture::sanitize::Field;
+use capture::receive::Blocked;
+use capture::receive::Decisions;
 use chrono::Utc;
 use config::Config;
 use config::Environment;
@@ -74,9 +74,13 @@ pub(super) fn ingest_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut path = None;
     let mut force = false;
     let mut dry_run = false;
+    let mut decisions = Decisions::default();
     while let Some(token) = scan.current().map(str::to_owned) {
         if scan.flag("--force") {
             force = true;
+            continue;
+        }
+        if super::hold::take_decision(&mut scan, &mut decisions)? {
             continue;
         }
         if scan.flag("--dry-run") {
@@ -99,6 +103,7 @@ pub(super) fn ingest_args(args: &[String]) -> Result<MemoryCommand, Error> {
         path,
         force,
         dry_run,
+        decisions,
     })
 }
 
@@ -106,6 +111,7 @@ pub(super) async fn ingest(
     path: &Path,
     force: bool,
     dry_run: bool,
+    decisions: &Decisions,
     env: &Environment,
 ) -> Result<Report, Error> {
     let bundle = capture::bundle::parse(&tokio::fs::read_to_string(path).await?)?;
@@ -113,21 +119,6 @@ pub(super) async fn ingest(
     if raw && !force && !dry_run {
         return Err(Error::BundleRaw {
             path: path.display().to_string(),
-        });
-    }
-    let secrets = if raw {
-        Vec::new()
-    } else {
-        capture::sanitize::secrets(&bundle)
-    };
-    if let Some(first) = secrets.first()
-        && !force
-        && !dry_run
-    {
-        return Err(Error::BundleSecrets {
-            path: path.display().to_string(),
-            count: secrets.len(),
-            first: first.to_string(),
         });
     }
     let capture::sanitize::OpenFlags {
@@ -140,54 +131,104 @@ pub(super) async fn ingest(
             count: withheld,
         });
     }
-    let unscrubbed;
-    let state = match (raw, secrets.len(), force) {
-        (false, 0, _) => "",
-        (false, count, true) => {
-            unscrubbed = format!(" ({count} secret pattern matches forced)");
-            &unscrubbed
-        }
-        (false, count, false) => {
-            unscrubbed = format!(" ({count} secret pattern matches; ingest needs --force)");
-            &unscrubbed
-        }
-        (true, _, true) => " (raw bundle forced)",
-        (true, _, false) => " (raw bundle; ingest needs --force)",
-    };
     let open = match (withheld, force) {
         (0, _) if unreviewed > 0 => format!(" ({unreviewed} advisory flags unreviewed)"),
         (0, _) => String::new(),
         (count, true) => format!(" ({count} withheld flags forced)"),
         (count, false) => format!(" ({count} withheld flags; ingest needs --force)"),
     };
-    let state = format!("{state}{open}");
-    let sessions = sessions_from(&bundle, &secrets);
+    if raw {
+        return ingest_raw(&bundle, force, dry_run, &open, env).await;
+    }
+    let checked = capture::receive::check(&bundle);
+    let plan = match checked.plan(&bundle, decisions, force) {
+        Ok(plan) => plan,
+        Err(Blocked::Undecided { .. }) => {
+            return Ok(super::hold::held_report(
+                &checked,
+                &bundle,
+                "Rerun this command with your decisions.",
+            ));
+        }
+        Err(blocked) => {
+            return Err(Error::BundleBlocked {
+                path: path.display().to_string(),
+                source: blocked,
+            });
+        }
+    };
+    let decided = super::hold::decided(&plan);
+    let shown: Vec<&BundledSession> = plan
+        .imports
+        .iter()
+        .map(|accepted| accepted.session)
+        .collect();
+    let sessions = sessions_from(&shown);
     if dry_run {
-        let mut lines: Vec<String> = bundle
-            .sessions
-            .iter()
-            .enumerate()
-            .map(|(index, session)| listed(index, session, &secrets))
-            .collect();
-        lines.push(format!("would ingest {sessions}{state}; nothing written\n"));
+        let mut lines: Vec<String> = shown.iter().map(|session| listed(session)).collect();
+        lines.push(format!(
+            "would ingest {sessions}{decided}{open}; nothing written\n"
+        ));
         return Ok(Report::success(lines.concat()));
     }
-    let totals = crate::capture_hook::ingest_bundle(env, &bundle, None, Utc::now()).await?;
+    let imports: Vec<_> = plan
+        .imports
+        .iter()
+        .map(|accepted| (accepted.session, Some(accepted.checks.clone())))
+        .collect();
+    let totals = if imports.is_empty() {
+        capture::writer::Totals {
+            inserted: 0,
+            skipped: 0,
+            conversation_id: String::new(),
+        }
+    } else {
+        crate::capture_hook::ingest_bundle(env, &imports, None, Utc::now()).await?
+    };
     Ok(Report::success(format!(
-        "ingested {sessions}{state}: {} inserted, {} skipped\n",
+        "ingested {sessions}{decided}{open}: {} inserted, {} skipped\n",
         totals.inserted, totals.skipped
     )))
 }
 
-fn sessions_from(bundle: &SessionBundle, secrets: &[Change]) -> String {
+async fn ingest_raw(
+    bundle: &SessionBundle,
+    force: bool,
+    dry_run: bool,
+    open: &str,
+    env: &Environment,
+) -> Result<Report, Error> {
+    let state = if force {
+        " (raw bundle forced)"
+    } else {
+        " (raw bundle; ingest needs --force)"
+    };
+    let shown: Vec<&BundledSession> = bundle.sessions.iter().collect();
+    let sessions = sessions_from(&shown);
+    if dry_run {
+        let mut lines: Vec<String> = shown.iter().map(|session| listed(session)).collect();
+        lines.push(format!(
+            "would ingest {sessions}{state}{open}; nothing written\n"
+        ));
+        return Ok(Report::success(lines.concat()));
+    }
+    let imports: Vec<_> = shown.iter().map(|session| (*session, None)).collect();
+    let totals = crate::capture_hook::ingest_bundle(env, &imports, None, Utc::now()).await?;
+    Ok(Report::success(format!(
+        "ingested {sessions}{state}{open}: {} inserted, {} skipped\n",
+        totals.inserted, totals.skipped
+    )))
+}
+
+fn sessions_from(sessions: &[&BundledSession]) -> String {
     let mut authors: Vec<String> = Vec::new();
-    for (index, session) in bundle.sessions.iter().enumerate() {
-        let author = shown(index, &Field::OriginAuthor, author_of(session), secrets);
+    for session in sessions {
+        let author = capture::receive::visible(author_of(session));
         if !authors.contains(&author) {
             authors.push(author);
         }
     }
-    let count = bundle.sessions.len();
+    let count = sessions.len();
     let noun = if count == 1 { "session" } else { "sessions" };
     if authors.is_empty() {
         format!("{count} {noun}")
@@ -196,7 +237,7 @@ fn sessions_from(bundle: &SessionBundle, secrets: &[Change]) -> String {
     }
 }
 
-fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> String {
+fn listed(session: &BundledSession) -> String {
     let origin = &session.origin;
     let count = session.batch.messages.len();
     let noun = if count == 1 { "message" } else { "messages" };
@@ -210,22 +251,10 @@ fn listed(index: usize, session: &BundledSession, secrets: &[Change]) -> String 
     };
     format!(
         "{} ({}): {count} {noun} from {}, {dates}\n",
-        shown(
-            index,
-            &Field::OriginSessionKey,
-            &origin.session_key,
-            secrets
-        ),
-        shown(index, &Field::OriginAgent, &origin.agent, secrets),
-        shown(index, &Field::OriginAuthor, author_of(session), secrets),
+        capture::receive::visible(&origin.session_key),
+        capture::receive::visible(&origin.agent),
+        capture::receive::visible(author_of(session)),
     )
-}
-
-fn shown(index: usize, field: &Field, text: &str, secrets: &[Change]) -> String {
-    secrets
-        .iter()
-        .find(|change| change.session == Some(index) && change.field == *field)
-        .map_or_else(|| text.to_owned(), |change| change.replacement.clone())
 }
 
 fn author_of(session: &BundledSession) -> &str {

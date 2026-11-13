@@ -1,4 +1,6 @@
 pub mod account;
+pub mod auth;
+pub mod drops;
 pub mod entities;
 pub mod files;
 pub mod flagged;
@@ -9,6 +11,8 @@ pub mod roster;
 pub mod session_catalog;
 pub mod session_delete;
 pub mod sessions;
+pub mod share;
+pub mod share_receive;
 pub mod tenancy;
 pub mod tidy;
 pub mod today;
@@ -34,6 +38,23 @@ pub struct HealthzResponse {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<HubPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HubPolicy {
+    pub cloud: CloudPolicy,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub share_servers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloudPolicy {
+    Enabled,
+    Disabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

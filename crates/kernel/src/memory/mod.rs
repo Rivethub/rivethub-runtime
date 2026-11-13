@@ -23,6 +23,7 @@ mod embed;
 mod export;
 mod model_title;
 mod origin;
+mod provenance;
 mod records;
 mod search;
 mod sessions;
@@ -50,6 +51,7 @@ pub use deletion::TrashVerdict;
 pub use deletion::trash_verdict;
 pub use deletion::used_since;
 pub use digest::SessionDigest;
+pub use digest::UNKNOWN_SENDER;
 pub use embed::EmbedModelMismatch;
 pub use embed::EmbedTable;
 pub use embed::EmbedTarget;
@@ -67,6 +69,16 @@ pub use model_title::title_schema;
 pub use model_title::wants_model_title;
 pub use origin::DumpOrigin;
 pub use origin::DumpSource;
+pub use provenance::Provenance;
+pub use provenance::ReceiptChecks;
+pub use provenance::Verification;
+pub use provenance::display_author;
+pub use provenance::escape_hidden;
+pub use provenance::is_imported;
+pub use provenance::label;
+pub use provenance::origins_of;
+pub use provenance::quote;
+pub use provenance::resolve_origins;
 pub use records::{
     BrowseWindow, BrowseWindowError, MemoryBrowseOrder, MemoryChunkMatch, MemoryDegraded,
     MemoryEntry, MemoryFallback, MemoryHitSource, MemoryMessageTally, MemoryScope,
@@ -76,6 +88,7 @@ pub use records::{
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
 pub use sessions::ImportOrigin;
+pub use sessions::ImportReceipt;
 pub use sessions::MemoryState;
 pub use sessions::SESSION_PAGE_DEFAULT;
 pub use sessions::SESSION_PAGE_MAX;
@@ -457,6 +470,11 @@ pub trait MemoryStore: Send + Sync {
         limit: u32,
     ) -> Result<crate::wiki::WikiGapsResponse, MemoryStoreError>;
 
+    async fn wiki_imported_authors(
+        &self,
+        slugs: Vec<String>,
+    ) -> Result<BTreeMap<String, Vec<Provenance>>, MemoryStoreError>;
+
     async fn wiki_archive(
         &self,
         slug: &crate::wiki::page::WikiSlug,
@@ -563,7 +581,7 @@ pub trait MemoryStore: Send + Sync {
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
-    ) -> Result<BTreeMap<String, values::JsonObject>, MemoryStoreError>;
+    ) -> Result<BTreeMap<String, Provenance>, MemoryStoreError>;
 
     async fn upsert_tag_taxonomy(
         &self,

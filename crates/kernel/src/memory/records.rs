@@ -18,6 +18,7 @@ pub struct MemoryEntry {
     pub tool_result: Option<String>,
     pub metadata: Option<JsonObject>,
     pub created_at: Option<DateTime<Utc>>,
+    pub provenance: Option<super::Provenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

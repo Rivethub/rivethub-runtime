@@ -1,43 +1,32 @@
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use tokio::io::AsyncReadExt as _;
 
+use capture::receive::Blocked;
+use capture::receive::DecisionError;
+use capture::receive::Decisions;
 use capture::seal::CodeError;
 use capture::seal::MAX_BUNDLE_BYTES;
 use capture::seal::OpenError;
 use capture::seal::SealError;
-use capture::seal::Sealed;
 use capture::seal::ShareCode;
 use capture::sign::KeyParseError;
-use capture::sign::NodeKey;
 use capture::sign::PublicKey;
 use capture::sign::SignError;
 use capture::sign::TrustError;
-use capture::sign::TrustStore;
-use capture::sign::Verification;
-use chrono::DateTime;
 use chrono::Utc;
 use config::Environment;
 use thiserror::Error;
-use wire::capture::Receipt;
-use wire::capture::Sanitization;
-use wire::capture::SessionBundle;
 
-use super::dropbox::DropBox;
-use super::dropbox::DropError;
-use super::dropbox::MAX_DROP_BYTES;
-use super::inbox::Inbox;
-use super::inbox::Slot;
+use super::desk::Shared;
 use super::parse::MemoryCommand;
 use super::parse::reject;
 use crate::Error;
 use crate::Report;
 use crate::argv::Scan;
 use crate::argv::Taken;
-use crate::share_server::ShareServers;
 
 #[derive(Debug, Error)]
 pub enum ShareError {
@@ -59,10 +48,12 @@ pub enum ShareError {
         "the bundle is raw; a shared bundle must be sanitized by its sender, so nothing was imported"
     )]
     Raw,
-    #[error(
-        "the bundle claims to be sanitized, but {count} secret pattern match(es) remain ({first}); nothing was imported and the ciphertext stays in the inbox"
-    )]
-    Secrets { count: usize, first: String },
+    #[error("{0}; nothing was imported and the ciphertext stays in the inbox")]
+    Blocked(#[from] Blocked),
+    #[error("--session takes <number>=import|skip|hold-spans, counting sessions from 1")]
+    SessionDecision,
+    #[error(transparent)]
+    Decision(#[from] DecisionError),
     #[error(
         "the bundle still withholds {0} flagged chunks; nothing was imported and the ciphertext stays in the inbox"
     )]
@@ -82,6 +73,8 @@ pub(super) enum ShareCommand {
     Receive {
         code: ShareCode,
         dry_run: bool,
+        force: bool,
+        decisions: Decisions,
     },
     KeyShow,
     TrustAdd {
@@ -97,7 +90,7 @@ pub(super) enum ShareCommand {
 
 const SHARE_USAGE: &str =
     "usage: rh memory share <sanitized bundle> [--server <host>] [--unsigned] [--flags <n>]";
-const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run]";
+const RECEIVE_USAGE: &str = "usage: rh memory receive <share code> [--dry-run] [--session <n>=import|skip|hold-spans]... [--all=import|skip|hold-spans] [--force]";
 const KEY_USAGE: &str = "usage: rh memory key show";
 const TRUST_USAGE: &str =
     "usage: rh memory trust add <name> <key> | trust list | trust remove <name> [<key>]";
@@ -152,9 +145,18 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
     let mut scan = Scan::new(args);
     let mut code = None;
     let mut dry_run = false;
+    let mut force = false;
+    let mut decisions = Decisions::default();
     while let Some(token) = scan.current().map(str::to_owned) {
         if scan.flag("--dry-run") {
             dry_run = true;
+            continue;
+        }
+        if scan.flag("--force") {
+            force = true;
+            continue;
+        }
+        if super::hold::take_decision(&mut scan, &mut decisions)? {
             continue;
         }
         if token.starts_with('-') || code.is_some() {
@@ -167,6 +169,8 @@ pub(super) fn receive_args(args: &[String]) -> Result<MemoryCommand, Error> {
     Ok(MemoryCommand::Share(ShareCommand::Receive {
         code,
         dry_run,
+        force,
+        decisions,
     }))
 }
 
@@ -206,16 +210,26 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
             signed,
             flags,
         } => {
-            let sealed = seal_file(env, &path, signed, flags).await?;
-            Ok(share_report(&upload(env, sealed, server.as_deref()).await?))
+            let text = read_bundle_file(&path).await?;
+            let sealed = super::desk::seal_bytes(env, text, signed, flags).await?;
+            let shared = super::desk::upload_to(env, server.as_deref(), sealed).await?;
+            let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
+                format!(
+                    "warning: the bundle was shared but {} could not be removed ({error}); delete it yourself\n",
+                    path.display()
+                )
+            });
+            Ok(share_report(&shared, kept.as_deref()))
         }
-        ShareCommand::Receive { code, dry_run } => receive(env, code, dry_run).await,
+        ShareCommand::Receive {
+            code,
+            dry_run,
+            force,
+            decisions,
+        } => receive(env, code, dry_run, force, &decisions).await,
         ShareCommand::KeyShow => key_show(env),
         ShareCommand::TrustAdd { name, key } => {
-            let path = trust_path(env)?;
-            let mut trust = TrustStore::load(&path).map_err(ShareError::from)?;
-            trust.add(&name, key).map_err(ShareError::from)?;
-            trust.save(&path).map_err(ShareError::from)?;
+            super::receiving::trust_sender(env, &name, key)?;
             Ok(Report::success(format!(
                 "trusted {key} ({}) as {}; bundles {name} signs with it now import as verified\n",
                 key.fingerprint(),
@@ -224,10 +238,7 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
         }
         ShareCommand::TrustList => trust_list(env),
         ShareCommand::TrustRemove { name, key } => {
-            let path = trust_path(env)?;
-            let mut trust = TrustStore::load(&path).map_err(ShareError::from)?;
-            let removed = trust.remove(&name, key.as_ref());
-            trust.save(&path).map_err(ShareError::from)?;
+            let removed = super::receiving::untrust_sender(env, &name, key.as_ref())?;
             Ok(Report::success(format!(
                 "removed {removed} trusted key(s) for {name}\n"
             )))
@@ -235,19 +246,8 @@ pub(super) async fn run(command: ShareCommand, env: &Environment) -> Result<Repo
     }
 }
 
-fn signing_key_path(env: &Environment) -> Result<PathBuf, Error> {
-    Ok(NodeKey::path_in(&capture::share::state_home(env)?))
-}
-
-fn trust_path(env: &Environment) -> Result<PathBuf, Error> {
-    Ok(TrustStore::path_in(&capture::share::config_home(env)?))
-}
-
 fn key_show(env: &Environment) -> Result<Report, Error> {
-    let path = signing_key_path(env)?;
-    let key = NodeKey::load_or_create(&path)
-        .map_err(ShareError::from)?
-        .public_key();
+    let key = super::desk::node_key(env)?;
     Ok(Report::success(format!(
         "{key}\nfingerprint {}\nsend the key line to the people you share with; they run rh memory trust add <your name> <key> after checking the fingerprint with you\n",
         key.fingerprint()
@@ -255,13 +255,13 @@ fn key_show(env: &Environment) -> Result<Report, Error> {
 }
 
 fn trust_list(env: &Environment) -> Result<Report, Error> {
-    let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
-    if trust.senders().is_empty() {
+    let senders = super::receiving::trusted_senders(env)?;
+    if senders.is_empty() {
         return Ok(Report::success(
             "no trusted senders; rh memory trust add <name> <key> adds one\n".to_owned(),
         ));
     }
-    Ok(Report::success(trust.senders().iter().fold(
+    Ok(Report::success(senders.iter().fold(
         String::new(),
         |mut lines, sender| {
             lines.push_str(&sender.name);
@@ -273,23 +273,6 @@ fn trust_list(env: &Environment) -> Result<Report, Error> {
             lines
         },
     )))
-}
-
-#[derive(Debug)]
-pub struct SealedFile {
-    pub path: PathBuf,
-    pub bytes: usize,
-    pub sealed: Sealed,
-}
-
-pub async fn seal_file(
-    env: &Environment,
-    path: &Path,
-    sign: bool,
-    flags: usize,
-) -> Result<SealedFile, Error> {
-    let text = read_bundle_file(path).await?;
-    seal_bytes(env, path, text, sign, flags).await
 }
 
 pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
@@ -312,92 +295,6 @@ pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
     Ok(text)
 }
 
-pub async fn seal_bytes(
-    env: &Environment,
-    path: &Path,
-    text: Vec<u8>,
-    sign: bool,
-    flags: usize,
-) -> Result<SealedFile, Error> {
-    let signer = if sign {
-        Some(NodeKey::load_or_create(&signing_key_path(env)?).map_err(ShareError::from)?)
-    } else {
-        None
-    };
-    let bytes = text.len();
-    let sealed =
-        tokio::task::spawn_blocking(move || capture::seal::seal(&text, signer.as_ref(), flags))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ShareError::from)?;
-    Ok(SealedFile {
-        path: path.to_path_buf(),
-        bytes,
-        sealed,
-    })
-}
-
-pub struct Shared {
-    pub sessions: usize,
-    pub signed: Option<PublicKey>,
-    pub uploaded: u64,
-    pub expires_at: DateTime<Utc>,
-    pub code: String,
-    pub kept: Option<String>,
-}
-
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
-    )
-)]
-impl std::fmt::Debug for Shared {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let id = self
-            .code
-            .split_once('#')
-            .map_or(self.code.as_str(), |(id, _)| id);
-        formatter
-            .debug_struct("Shared")
-            .field("sessions", &self.sessions)
-            .field("code", &format_args!("{id}#.."))
-            .finish_non_exhaustive()
-    }
-}
-
-pub async fn upload(
-    env: &Environment,
-    sealed: SealedFile,
-    server: Option<&str>,
-) -> Result<Shared, Error> {
-    let servers = ShareServers::from_env(env).await?;
-    let host = servers.pick(server).map_err(DropError::from)?;
-    let drops = DropBox::on(&servers, &host).await?;
-    let SealedFile { path, sealed, .. } = sealed;
-    let (id, uploaded) = drops.upload(bytes::Bytes::from(sealed.ciphertext)).await?;
-    let kept = tokio::fs::remove_file(&path).await.err().map(|error| {
-        format!(
-            "warning: the bundle was shared but {} could not be removed ({error}); delete it yourself\n",
-            path.display()
-        )
-    });
-    Ok(Shared {
-        sessions: sealed.titles.len(),
-        signed: sealed.signed,
-        uploaded: uploaded.bytes,
-        expires_at: uploaded.expires_at,
-        code: ShareCode {
-            server: drops.host().clone(),
-            id,
-            key: sealed.key,
-        }
-        .reveal(),
-        kept,
-    })
-}
-
 #[must_use]
 pub fn code_line(shared: &Shared) -> String {
     format!(
@@ -407,7 +304,7 @@ pub fn code_line(shared: &Shared) -> String {
     )
 }
 
-fn share_report(shared: &Shared) -> Report {
+fn share_report(shared: &Shared, kept: Option<&str>) -> Report {
     let signed = shared.signed.map_or_else(
         || "unsigned".to_owned(),
         |key| format!("signed {}", key.fingerprint()),
@@ -418,7 +315,7 @@ fn share_report(shared: &Shared) -> Report {
         shared.uploaded.div_ceil(1024),
         code_line(shared)
     ));
-    if let Some(kept) = &shared.kept {
+    if let Some(kept) = kept {
         report.stderr.push_str(kept);
     }
     report
@@ -432,81 +329,72 @@ fn sessions_noun(count: usize) -> String {
     }
 }
 
-async fn receive(env: &Environment, code: ShareCode, dry_run: bool) -> Result<Report, Error> {
-    let inbox = Inbox::in_state(&capture::share::state_home(env)?);
-    inbox.prune(SystemTime::now())?;
-    let id = code.id.clone();
-    let slot = Slot::of(&code.server, &id);
-    if inbox.was_received(&slot) {
-        return Ok(Report::success(format!(
-            "bundle {id} was already received on this machine; nothing was downloaded\n"
-        )));
-    }
-    let ciphertext = if let Some(kept) = inbox.read(&slot, MAX_DROP_BYTES)? {
-        kept
-    } else {
-        let servers = ShareServers::from_env(env).await?;
-        let drops = DropBox::on(&servers, &code.server).await?;
-        writeln!(std::io::stderr(), "downloading from {}", code.server)?;
-        let partial = inbox.partial()?;
-        drops.download(&id, partial.as_file().try_clone()?).await?;
-        inbox.keep(&slot, partial)?;
-        inbox
-            .read(&slot, MAX_DROP_BYTES)?
-            .ok_or_else(|| std::io::Error::other("the inbox lost the download"))?
+async fn receive(
+    env: &Environment,
+    code: ShareCode,
+    dry_run: bool,
+    force: bool,
+    decisions: &Decisions,
+) -> Result<Report, Error> {
+    let fetched = match super::receiving::fetch(env, code, |server| {
+        writeln!(std::io::stderr(), "downloading from {server}")
+    })
+    .await
+    {
+        Ok(fetched) => fetched,
+        Err(error @ super::receiving::FetchError::AlreadyReceived(_)) => {
+            return Ok(Report::success(format!("{error}\n")));
+        }
+        Err(error) => return Err(error.into()),
     };
-    let trust = TrustStore::load(&trust_path(env)?).map_err(ShareError::from)?;
-    let opened =
-        tokio::task::spawn_blocking(move || capture::seal::open(ciphertext, &code.key, &trust))
-            .await
-            .map_err(std::io::Error::other)?
-            .map_err(ShareError::from)?;
-    screen(&opened.bundle)?;
-    let user = opened.bundle.manifest.exported_by.user.clone();
-    let reason = opened.verification.reason(&user);
-    let sessions = sessions_noun(opened.bundle.sessions.len());
+    let bundle = fetched.bundle();
+    let user = capture::receive::visible(&bundle.manifest.exported_by.user);
+    let reason = capture::receive::visible(&fetched.opened.verification.reason(&user));
+    let checked = capture::receive::check(bundle);
+    let plan = match checked.plan(bundle, decisions, force) {
+        Ok(plan) => plan,
+        Err(Blocked::Undecided { .. }) => {
+            return Ok(super::hold::held_report(
+                &checked,
+                bundle,
+                &format!(
+                    "The ciphertext stays in {}; rerun this command with your decisions.",
+                    fetched.ciphertext_path().display()
+                ),
+            ));
+        }
+        Err(blocked) => return Err(ShareError::from(blocked).into()),
+    };
+    let sessions = sessions_noun(plan.imports.len());
+    let decided = super::hold::decided(&plan);
     if dry_run {
         return Ok(Report::success(format!(
-            "would import {sessions} from {user} ({reason}); nothing written, and the ciphertext stays in {}\n",
-            inbox.ciphertext_path(&slot).display()
+            "would import {sessions} from {user} ({reason}){decided}; nothing written, and the ciphertext stays in {}\n",
+            fetched.ciphertext_path().display()
         )));
     }
     let now = Utc::now();
-    let receipt = receipt(&id, now, &opened.verification);
-    let totals =
-        crate::capture_hook::ingest_bundle(env, &opened.bundle, Some(&receipt), now).await?;
-    inbox.mark_received(&slot)?;
+    let receipt = fetched.receipt(now);
+    let imports: Vec<_> = plan
+        .imports
+        .iter()
+        .map(|accepted| (accepted.session, Some(accepted.checks.clone())))
+        .collect();
+    let totals = if imports.is_empty() {
+        capture::writer::Totals {
+            inserted: 0,
+            skipped: 0,
+            conversation_id: String::new(),
+        }
+    } else {
+        crate::capture_hook::ingest_bundle(env, &imports, Some(&receipt), now).await?
+    };
+    fetched.mark_received()?;
     Ok(Report::success(format!(
-        "received {sessions} from {user} ({reason}); imported {}: {} messages inserted, {} skipped\n",
-        opened.bundle.sessions.len(),
+        "received {} from {user} ({reason}); imported {}{decided}: {} messages inserted, {} skipped\n",
+        sessions_noun(bundle.sessions.len()),
+        plan.imports.len(),
         totals.inserted,
         totals.skipped
     )))
-}
-
-fn receipt(id: &capture::seal::DropId, at: DateTime<Utc>, verification: &Verification) -> Receipt {
-    Receipt {
-        bundle_id: id.to_string(),
-        received_at: at,
-        verification: verification.kind(),
-        key_fingerprint: verification.key().map(PublicKey::fingerprint),
-    }
-}
-
-fn screen(bundle: &SessionBundle) -> Result<(), ShareError> {
-    if bundle.manifest.sanitization == Sanitization::Raw {
-        return Err(ShareError::Raw);
-    }
-    let secrets = capture::sanitize::secrets(bundle);
-    if let Some(first) = secrets.first() {
-        return Err(ShareError::Secrets {
-            count: secrets.len(),
-            first: first.to_string(),
-        });
-    }
-    let flags = capture::sanitize::open_flags(bundle).map_err(SealError::from)?;
-    if flags.withheld > 0 {
-        return Err(ShareError::Withheld(flags.withheld));
-    }
-    Ok(())
 }

@@ -34,6 +34,8 @@ pub struct SessionOriginLabel {
     pub author: Option<String>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub verification: Option<crate::capture::ReceiptVerification>,
+    pub bundle_id: Option<String>,
 }
 
 #[serde_with::skip_serializing_none]

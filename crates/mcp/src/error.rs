@@ -50,12 +50,13 @@ pub enum Error {
     )]
     RawBundle(std::path::PathBuf),
     #[error(
-        "refused: {} claims to be sanitized, but {count} secret pattern match(es) remain ({first}); sanitize the raw bundle again", path.display()
+        "refused: {} holds {count} finding(s) in {sessions} session(s) ({summary}); nothing was written. An agent never imports flagged content: ask the user to run `rh memory ingest-bundle {}` in a terminal, which prints the report and takes a decision per session", path.display(), path.display()
     )]
-    BundleSecrets {
+    BundleHeld {
         path: std::path::PathBuf,
         count: usize,
-        first: String,
+        sessions: usize,
+        summary: String,
     },
     #[error(
         "refused: {} withholds {count} flagged chunk(s) until they are marked; mark them in the report and run rh memory sanitize --resolve <report>", path.display()

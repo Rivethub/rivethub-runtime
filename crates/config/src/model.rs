@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
@@ -65,6 +66,7 @@ pub struct TelemetrySection {
 pub struct CloudSection {
     pub url: Option<url::Url>,
     pub update_key: Option<String>,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -186,6 +188,8 @@ pub struct MemorySection {
 pub struct ShareSection {
     pub server: Option<ShareServerSection>,
     pub trusted_cas: Vec<TrustedCa>,
+    #[serde(alias = "allowedServers")]
+    pub allowed_servers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -336,10 +340,92 @@ pub struct GatewaySection {
     pub allowed_origins: Vec<String>,
     pub allowed_hosts: Vec<String>,
     pub request_deadline_secs: Option<NonZeroU64>,
+    pub fresh_login_secs: Option<u64>,
+    pub trusted_proxies: Vec<TrustedProxy>,
+    pub drops: DropsSection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct TrustedProxy(ipnet::IpNet);
+
+impl TrustedProxy {
+    #[must_use]
+    pub fn contains(&self, address: IpAddr) -> bool {
+        self.0.contains(&address.to_canonical())
+    }
+}
+
+impl TryFrom<String> for TrustedProxy {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        let text = text.trim();
+        if let Ok(net) = text.parse::<ipnet::IpNet>() {
+            return Ok(Self(unmapped(net)));
+        }
+        text.parse::<IpAddr>()
+            .map(|address| Self(ipnet::IpNet::from(address.to_canonical())))
+            .map_err(|_| format!("{text:?} is not an IP address or CIDR block"))
+    }
+}
+
+fn unmapped(net: ipnet::IpNet) -> ipnet::IpNet {
+    let ipnet::IpNet::V6(v6) = net else {
+        return net;
+    };
+    match (
+        v6.network().to_ipv4_mapped(),
+        v6.prefix_len().checked_sub(96),
+    ) {
+        (Some(network), Some(prefix)) => {
+            #[cfg_attr(
+                dylint_lib = "rr_lints",
+                expect(
+                    fallback,
+                    reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract reads a mapped block as its IPv4 block; a v6 prefix of at most 128 leaves an IPv4 prefix of at most 32, so the entry is never kept as written"
+                )
+            )]
+            let unmapped = ipnet::Ipv4Net::new(network, prefix).map_or(net, ipnet::IpNet::V4);
+            unmapped
+        }
+        _ => net,
+    }
 }
 
 fn default_gateway_port() -> u16 {
     5174
+}
+
+pub const DROP_MAX_BYTES: u64 = 64 << 20;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DropsSection {
+    pub enabled: bool,
+    pub root: Option<PathBuf>,
+    pub max_bytes: u64,
+    pub per_user_drops: u32,
+    pub per_user_bytes: u64,
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        manualderive,
+        reason = "CONTRACT note 143: the drop box defaults are the rivethub.cloud limits, not the derive's zeros"
+    )
+)]
+impl Default for DropsSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            root: None,
+            max_bytes: DROP_MAX_BYTES,
+            per_user_drops: 50,
+            per_user_bytes: 512 << 20,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -508,6 +594,23 @@ impl Config {
 
     pub fn share_server(&self) -> Option<&ShareServerSection> {
         self.memory.as_ref()?.share.server.as_ref()
+    }
+
+    #[must_use]
+    pub fn cloud_disabled(&self) -> bool {
+        self.cloud.as_ref().is_some_and(|section| section.disabled)
+    }
+
+    #[must_use]
+    pub fn telemetry_disabled(&self) -> bool {
+        self.cloud_disabled() || self.telemetry.is_some_and(|section| section.disabled)
+    }
+
+    #[must_use]
+    pub fn share_allowed_servers(&self) -> &[String] {
+        self.memory
+            .as_ref()
+            .map_or(&[], |memory| memory.share.allowed_servers.as_slice())
     }
 
     pub fn share_trusted_cas(&self) -> &[TrustedCa] {

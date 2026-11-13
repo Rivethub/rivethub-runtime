@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::common;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::HeaderName;
@@ -102,6 +103,7 @@ fn settings() -> Settings {
         state_dir: scratch.join("state"),
         private_ca: None,
         request_deadline: gateway::REQUEST_DEADLINE,
+        policy: None,
     }
 }
 
@@ -122,8 +124,11 @@ fn app(run: &str, static_dir: Option<&Path>) -> Result<axum::Router, String> {
     if let Some(dir) = static_dir {
         configured.static_dir = Some(dir.to_path_buf());
     }
-    let gateway =
-        Arc::new(gateway::Gateway::new(handle, configured).with_tenancy(Tenancy::local(owner)));
+    let gateway = Arc::new(
+        gateway::Gateway::new(handle, configured)
+            .with_local_owner(crate::common::local_owner())
+            .with_tenancy(Tenancy::local(owner)),
+    );
     for (session, name) in seeded_owners(run)? {
         let user = UserId::new(name).map_err(|error| format!("seed user: {error}"))?;
         gateway
@@ -257,6 +262,9 @@ fn http_request(recorded: testkit::Request) -> Result<Request<Body>, String> {
         .body(Body::from(recorded.body))
         .map_err(|error| format!("recorded request: {error}"))?;
     request.extensions_mut().insert(ConnectInfo(addr));
+    if gateway::auth::is_loopback_remote(addr) {
+        common::authorize(&mut request);
+    }
     Ok(request)
 }
 
@@ -299,7 +307,8 @@ async fn play(
     chunks: &BTreeMap<String, String>,
     app: &axum::Router,
 ) -> Result<(), String> {
-    let prepared = prepare(case, chunks)?;
+    let mut prepared = prepare(case, chunks)?;
+    common::expect_cors(&mut prepared);
     let request = recorded_request(&prepared)?;
     let actual = answer(app.clone(), request).await?;
     testkit::http::replay(&prepared, &masks(), |_| actual).map_err(|mismatch| mismatch.detail)

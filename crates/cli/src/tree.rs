@@ -62,6 +62,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Manage the local owner token")]
+    Auth {
+        #[command(subcommand)]
+        command: crate::auth::AuthCommand,
+    },
+    #[command(about = "Open the web app in your browser, signed in with a one-time code")]
+    Open {
+        #[arg(long, help = "Print the login URL and do not launch a browser")]
+        no_browser: bool,
+    },
     #[command(about = "Report gateway health")]
     Status,
     #[command(about = "Signal the running instance to stop")]
@@ -85,6 +95,17 @@ pub enum Command {
             help = "Seconds --ensure waits for the node to answer"
         )]
         wait: u64,
+        #[arg(
+            long,
+            requires = "ensure",
+            help = "Print the --ensure result as one JSON object"
+        )]
+        json: bool,
+        #[arg(
+            long,
+            help = "Keep this hub off rivethub.cloud: a new config gets cloud.disabled, and a config without it is refused (same as RIVETHUB_CLOUD=off)"
+        )]
+        no_cloud: bool,
     },
     #[command(about = "Administer memory", disable_help_flag = true)]
     Memory {

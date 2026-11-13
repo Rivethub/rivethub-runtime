@@ -3,7 +3,7 @@ use gateway::account::{CrashJob, install_crash_hook};
 use workers::ProcessRole;
 
 pub(crate) fn arm(config: &Config, env: &Environment, job: CrashJob) {
-    if config.telemetry.is_some_and(|section| section.disabled) {
+    if config.telemetry_disabled() {
         return;
     }
     match gateway::state_dir(env) {

@@ -1,3 +1,4 @@
+use crate::process::guard::SpawnGuarded;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
@@ -16,7 +17,6 @@ use config::RedactionSettings;
 use serde::Deserialize;
 use serde::Serialize;
 use sqlx::ConnectOptions as _;
-use sqlx::PgPool;
 use tempfile::tempdir;
 use testkit::Json;
 use tokio::io::AsyncBufReadExt;
@@ -144,7 +144,9 @@ async fn post_recorded_batches(
     base: &str,
     env: &Environment,
 ) -> Result<Vec<ExpectedRow>, Box<dyn Error>> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .default_headers(crate::owner::headers(&gateway::state_dir(env)?)?)
+        .build()?;
     let now: DateTime<Utc> = NOW.parse()?;
     let mut expected = Vec::new();
     for (name, chunk_bytes) in WRITER_CASES {
@@ -182,8 +184,14 @@ async fn post_recorded_batches(
     Ok(expected)
 }
 
-#[sqlx::test(migrations = false)]
-async fn recorded_batches_land_and_read_back_through_the_memory_api(pool: PgPool) -> TestResult {
+#[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
+)]
+async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     let url = pool.connect_options().to_url_lossy().to_string();
     migrate::postgres_pool(&pool).await?;
     let home = tempdir()?;
@@ -206,7 +214,9 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api(pool: PgPool
         shutdown.clone(),
     ));
     let base = format!("http://127.0.0.1:{port}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .default_headers(crate::owner::headers(&gateway::state_dir(&env)?)?)
+        .build()?;
 
     let expected = post_recorded_batches(&base, &env).await?;
     assert_eq!(expected.len(), 11, "recorded posts carry 11 rows");
@@ -353,8 +363,10 @@ async fn get_full_text(
     Ok(text)
 }
 
-#[sqlx::test(migrations = false)]
-async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm(pool: PgPool) -> TestResult {
+#[tokio::test]
+async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
     let url = pool.connect_options().to_url_lossy();
     migrate::postgres_pool(&pool).await?;
     let home = tempdir()?;
@@ -371,7 +383,7 @@ async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm(pool: PgPo
         .env("HOME", home.path())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
 
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::new();
@@ -476,7 +488,7 @@ async fn first_start_moves_legacy_state_and_the_alias_names_the_new_variable() -
         .env("RIVETOS_PG_URL", "postgres://127.0.0.1:1/none")
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
-        .spawn()?;
+        .spawn_guarded()?;
     let mut lines =
         tokio::io::BufReader::new(again.stderr.take().ok_or("child stderr is missing")?).lines();
     let stderr = tokio::time::timeout(Duration::from_secs(30), async {

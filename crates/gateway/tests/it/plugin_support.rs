@@ -12,6 +12,7 @@ use axum::http::{HeaderMap, Method, Request, StatusCode};
 use gateway::Gateway;
 use gateway::plugins::{HostSettings, PluginHost};
 use gateway::tenancy::{Tenancy, UserId};
+use kernel::memory::share::desk::ShareDesk;
 use serde::Serialize;
 use tower::ServiceExt as _;
 use wire::JsonObject;
@@ -80,6 +81,7 @@ impl Harness {
         request
             .extensions_mut()
             .insert(ConnectInfo("127.0.0.1:41000".parse::<SocketAddr>()?));
+        common::authorize(&mut request);
         let response =
             tokio::time::timeout(Duration::from_secs(20), self.app.clone().oneshot(request))
                 .await??;
@@ -267,6 +269,22 @@ pub(crate) async fn harness_with(
     tenancy: Tenancy,
     node_ports: Vec<u16>,
 ) -> Result<Harness, Failure> {
+    open_harness(root, tenancy, node_ports, None).await
+}
+
+pub(crate) async fn harness_with_desk(
+    root: &Path,
+    desk: Arc<dyn ShareDesk>,
+) -> Result<Harness, Failure> {
+    open_harness(root, tenancy()?, Vec::new(), Some(desk)).await
+}
+
+async fn open_harness(
+    root: &Path,
+    tenancy: Tenancy,
+    node_ports: Vec<u16>,
+    desk: Option<Arc<dyn ShareDesk>>,
+) -> Result<Harness, Failure> {
     let mut settings = common::settings();
     settings.state_dir = root.join("state");
     let host = PluginHost::open(HostSettings {
@@ -279,14 +297,17 @@ pub(crate) async fn harness_with(
     })
     .await?;
     let store = Arc::new(testkit::FakeMemoryStore::default());
-    let gateway = Arc::new(
-        Gateway::new(
-            Arc::clone(&store) as Arc<dyn kernel::memory::MemoryStore>,
-            settings,
-        )
-        .with_tenancy(tenancy)
-        .with_plugins(host),
-    );
+    let mut gateway = Gateway::new(
+        Arc::clone(&store) as Arc<dyn kernel::memory::MemoryStore>,
+        settings,
+    )
+    .with_local_owner(crate::common::local_owner())
+    .with_tenancy(tenancy)
+    .with_plugins(host);
+    if let Some(desk) = desk {
+        gateway = gateway.with_share_desk(desk);
+    }
+    let gateway = Arc::new(gateway);
     gateway::plugins::start(&gateway).await?;
     Ok(Harness {
         app: gateway.router(false),

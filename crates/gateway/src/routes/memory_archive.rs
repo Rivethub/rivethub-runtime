@@ -7,6 +7,7 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use kernel::deadline::Deadline;
+use kernel::memory::Provenance;
 use kernel::memory::SummaryDag;
 use kernel::memory::SummaryOwner;
 use kernel::memory::TreeWindow;
@@ -71,22 +72,33 @@ async fn read_dag(
     })
 }
 
-fn dag_body(session_id: String, dag: SummaryDag) -> MemorySummaryDagResponse {
+async fn origin_of(gateway: &Gateway, session: &str) -> Result<Option<Provenance>, ApiError> {
+    Ok(
+        crate::memory_body::origins_of(gateway.store().as_ref(), [session])
+            .await?
+            .remove(session),
+    )
+}
+
+fn dag_body(
+    session_id: String,
+    dag: SummaryDag,
+    origin: Option<&Provenance>,
+) -> MemorySummaryDagResponse {
     MemorySummaryDagResponse {
         session_id,
-        summaries: dag
-            .summaries
-            .into_iter()
-            .map(crate::memory_body::memory_summary_node_body)
-            .collect(),
+        summaries: nodes(dag.summaries, origin),
         messages: crate::memory_body::memory_message_tally_body(dag.messages),
         counts: None,
     }
 }
 
-fn nodes(tree: Vec<kernel::memory::MemorySummaryNode>) -> Vec<MemorySummaryNode> {
+fn nodes(
+    tree: Vec<kernel::memory::MemorySummaryNode>,
+    origin: Option<&Provenance>,
+) -> Vec<MemorySummaryNode> {
     tree.into_iter()
-        .map(crate::memory_body::memory_summary_node_body)
+        .map(|node| crate::memory_body::memory_summary_node_body(node, origin))
         .collect()
 }
 
@@ -96,6 +108,7 @@ pub(crate) async fn summaries(
     Query(params): Query<DagParams>,
 ) -> Result<Json<MemorySummaryDagResponse>, ApiError> {
     let owner = SummaryOwner::Session(session.clone());
+    let origin = origin_of(&gateway, &session).await?;
     if params.tree == Some(true) && params.latest.is_none() {
         let tree = gateway
             .store()
@@ -104,7 +117,7 @@ pub(crate) async fn summaries(
             .unwrap_or_default();
         return Ok(Json(MemorySummaryDagResponse {
             session_id: session,
-            summaries: nodes(tree.summaries),
+            summaries: nodes(tree.summaries, origin.as_ref()),
             messages: crate::memory_body::memory_message_tally_body(tree.messages),
             counts: Some(MemorySummaryCounts {
                 leaves: tree.counts.leaves,
@@ -116,7 +129,7 @@ pub(crate) async fn summaries(
         }));
     }
     let dag = read_dag(&gateway, &owner, &params).await?;
-    Ok(Json(dag_body(session, dag)))
+    Ok(Json(dag_body(session, dag, origin.as_ref())))
 }
 
 pub(crate) async fn children(
@@ -126,6 +139,7 @@ pub(crate) async fn children(
 ) -> Result<Json<MemorySummaryChildren>, ApiError> {
     Uuid::parse_str(&summary)
         .map_err(|_| ApiError::BadRequest(format!("{summary} is not a summary id")))?;
+    let origin = origin_of(&gateway, &session).await?;
     let tree = gateway
         .store()
         .summary_tree(
@@ -136,7 +150,7 @@ pub(crate) async fn children(
         .await?
         .ok_or_else(|| ApiError::Missing(format!("unknown summary {summary}")))?;
     Ok(Json(MemorySummaryChildren {
-        summaries: nodes(tree.summaries),
+        summaries: nodes(tree.summaries, origin.as_ref()),
         total: tree.total,
     }))
 }
@@ -147,11 +161,17 @@ pub(crate) async fn summary(
 ) -> Result<Json<MemorySummaryNode>, ApiError> {
     Uuid::parse_str(&summary)
         .map_err(|_| ApiError::BadRequest(format!("{summary} is not a summary id")))?;
+    let origin = origin_of(&gateway, &session).await?;
     gateway
         .store()
         .summary_node(&SummaryOwner::Session(session), &summary)
         .await?
-        .map(|node| Json(crate::memory_body::memory_summary_node_body(node)))
+        .map(|node| {
+            Json(crate::memory_body::memory_summary_node_body(
+                node,
+                origin.as_ref(),
+            ))
+        })
         .ok_or_else(|| ApiError::Missing(format!("unknown summary {summary}")))
 }
 
@@ -167,11 +187,13 @@ pub(crate) async fn conversation_summaries(
         .session_key
         .clone()
         .ok_or_else(|| ApiError::Missing(format!("unknown conversation {segment}")))?;
-    Ok(Json(dag_body(session_id, dag)))
+    let origin = origin_of(&gateway, &session_id).await?;
+    Ok(Json(dag_body(session_id, dag, origin.as_ref())))
 }
 
 pub(crate) async fn export(
     State(gateway): State<Arc<Gateway>>,
+    _fresh: crate::auth::FreshLogin,
     Query(params): Query<ExportParams>,
 ) -> Result<Response, ApiError> {
     let exporter = gateway
