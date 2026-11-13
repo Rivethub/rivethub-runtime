@@ -85,7 +85,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 62;
+pub const SCHEMA_VERSION: i64 = 67;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
