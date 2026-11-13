@@ -42,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(62 at 0.8.1, unchanged from 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.2, unchanged since 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -69,6 +69,23 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     ON rh_messages (conversation_id, (metadata ->> 'event_id'))
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
+
+## Upgrading from 0.8.1 to 0.8.2
+
+0.8.2 needs no schema migration. It fixes capture on a node whose gateway serves TLS from a certificate that lists another
+name before `localhost`: on 0.8.1 the hook reached the gateway by that name, the owner gate refused the local owner token
+with a 401, and every batch was dead-lettered. After the upgrade, move them back to the queue; the next hook delivers them:
+
+```sh
+rh capture spool --requeue-dead
+```
+
+Also in 0.8.2:
+
+- A capture into a session that belongs to another person now gets a 403, not a 500. The hook dead-letters that batch at
+  once instead of retrying it, and `rh capture backfill` counts it against that session and goes on.
+- `rh capture backfill` covers dsh sessions. A session it cannot read fails alone; the others are still captured.
+- A stored share receipt or origin that is not a JSON object reads as absent, so it never reads as verified.
 
 ## Upgrading from 0.8.0 to 0.8.1
 

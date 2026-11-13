@@ -1560,3 +1560,26 @@ async fn the_change_feed_shows_a_viewer_only_what_they_may_read(pool: PgPool) ->
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capturing_into_another_persons_session_is_forbidden(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let probe = PostgresMemory::new(probe(&pool).await?);
+    let bob = Owner::new("bob".to_owned())?;
+    let refused = Scope::Viewer(viewer("bob")?)
+        .run(kernel::memory::MemoryStore::capture(
+            &probe,
+            batch(FIRST, "bob's turn"),
+            &bob,
+            None,
+        ))
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(kernel::memory::MemoryStoreError::Forbidden { .. })
+        ),
+        "{refused:?}"
+    );
+    Ok(())
+}

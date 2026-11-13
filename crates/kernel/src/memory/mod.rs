@@ -148,6 +148,8 @@ pub enum MemoryStoreError {
     },
     #[error("{message}")]
     InvalidRequest { message: String },
+    #[error("{message}")]
+    Forbidden { message: String },
     #[error("tag tables are missing: apply migration 0019 (rivetos db migrate)")]
     TagTablesMissing,
 }

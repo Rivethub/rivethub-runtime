@@ -2,7 +2,7 @@ use crate::support;
 
 use std::sync::Arc;
 
-use axum::{Json, Router, routing::get};
+use axum::{Json, Router, http::HeaderMap, routing::get};
 use cli::Exit;
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -20,10 +20,15 @@ struct Served {
     ca_pem: String,
     cert_pem: String,
     key_pem: String,
+    hosts: Arc<parking_lot::Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
 async fn tls_health(dns_name: &str) -> Result<Served> {
+    tls_health_named(&[dns_name]).await
+}
+
+async fn tls_health_named(dns_names: &[&str]) -> Result<Served> {
     let ca_key = KeyPair::generate()?;
     let mut ca_params = CertificateParams::new(Vec::<String>::new())?;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -31,7 +36,12 @@ async fn tls_health(dns_name: &str) -> Result<Served> {
     let ca = ca_params.self_signed(&ca_key)?;
     let issuer = Issuer::from_params(&ca_params, &ca_key);
     let node_key = KeyPair::generate()?;
-    let mut node_params = CertificateParams::new(vec![dns_name.to_owned()])?;
+    let mut node_params = CertificateParams::new(
+        dns_names
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>(),
+    )?;
     node_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     let node = node_params.signed_by(&node_key, &issuer)?;
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
@@ -45,16 +55,24 @@ async fn tls_health(dns_name: &str) -> Result<Served> {
     let acceptor = TlsAcceptor::from(Arc::new(server));
     let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
     let port = listener.local_addr()?.port();
+    let hosts = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let seen = Arc::clone(&hosts);
     let task = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let acceptor = acceptor.clone();
+            let seen = Arc::clone(&seen);
             tokio::spawn(async move {
                 let Ok(tls) = acceptor.accept(stream).await else {
                     return;
                 };
                 let router = Router::new().route(
                     "/healthz",
-                    get(|| async {
+                    get(move |headers: HeaderMap| async move {
+                        if let Some(host) =
+                            headers.get("host").and_then(|value| value.to_str().ok())
+                        {
+                            seen.lock().push(host.to_owned());
+                        }
                         Json(HealthzResponse {
                             ok: true,
                             sessions: 0,
@@ -84,6 +102,7 @@ async fn tls_health(dns_name: &str) -> Result<Served> {
         ca_pem: ca.pem(),
         cert_pem: node.pem(),
         key_pem: node_key.serialize_pem(),
+        hosts,
         task,
     })
 }
@@ -134,5 +153,43 @@ async fn status_verifies_a_tls_gateway_by_the_name_its_certificate_carries() -> 
     );
     served.task.abort();
     stranger.task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn status_keeps_a_loopback_name_when_the_certificate_carries_one() -> Result {
+    let served = tls_health_named(&["node.mesh.test", "localhost"]).await?;
+    let home = home();
+    let dir = home.path().join("tls");
+    let ca = dir.join("ca.pem");
+    let env = ::config::Environment::from_vars([
+        ("HOME".as_ref(), home.path().as_os_str()),
+        ("RIVETHUB_TLS_CA".as_ref(), ca.as_os_str()),
+    ]);
+    std::fs::create_dir_all(&dir)?;
+    for (name, body) in [
+        ("ca.pem", &served.ca_pem),
+        ("node.pem", &served.cert_pem),
+        ("node.key", &served.key_pem),
+    ] {
+        std::fs::write(dir.join(name), body)?;
+    }
+    config(
+        &home,
+        &format!(
+            "gateway:\n  host: 0.0.0.0\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n",
+            served.port,
+            dir.join("node.pem").display(),
+            dir.join("node.key").display(),
+        ),
+    );
+    let status = run(&["status"], &env).await;
+    assert_eq!(status.stdout, "RivetHub is running\n", "{}", status.stderr);
+    let hosts = served.hosts.lock().clone();
+    assert!(
+        !hosts.is_empty() && hosts.iter().all(|host| host.starts_with("localhost")),
+        "the owner gate only trusts a loopback Host, so the client must not swap in the mesh name: {hosts:?}"
+    );
+    served.task.abort();
     Ok(())
 }

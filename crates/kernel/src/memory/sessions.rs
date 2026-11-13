@@ -88,27 +88,21 @@ pub struct ImportReceipt {
     pub verification: super::share::receive::Verification,
 }
 
-#[derive(serde::Deserialize)]
-struct StoredReceipt {
-    bundle_id: String,
-    verification: super::share::receive::Verification,
-}
-
 impl ImportReceipt {
     #[must_use]
     pub fn from_settings(settings: &values::JsonObject) -> Option<Self> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B1 (note 152): a stored receipt that does not parse is no receipt, so the session lists without a verification"
-            )
-        )]
-        let stored: Option<StoredReceipt> =
-            serde_json::from_value(settings.get("receipt")?.clone()).ok();
-        stored.map(|stored| Self {
-            bundle_id: stored.bundle_id,
-            verification: stored.verification,
+        use super::provenance::Verification as Read;
+        use super::share::receive::Verification;
+        let receipt = super::provenance::Receipt::from_settings(settings)?;
+        let verification = match receipt.verification {
+            Read::Verified => Verification::Verified,
+            Read::Unsigned => Verification::Unsigned,
+            Read::UnknownKey => Verification::UnknownKey,
+            Read::Unreceived => return None,
+        };
+        Some(Self {
+            bundle_id: receipt.bundle_id?,
+            verification,
         })
     }
 }
@@ -294,4 +288,33 @@ pub fn session_title(
         return native.to_owned();
     };
     derived
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn receipt(json: &str) -> Option<ImportReceipt> {
+        ImportReceipt::from_settings(&serde_json::from_str(json).expect("settings"))
+    }
+
+    #[test]
+    fn only_a_receipt_that_reads_lists_with_a_verification() {
+        assert_eq!(
+            receipt(r#"{"receipt":{"bundle_id":"rhb1:t","verification":"unknown_key"}}"#),
+            Some(ImportReceipt {
+                bundle_id: "rhb1:t".to_owned(),
+                verification: super::super::share::receive::Verification::UnknownKey,
+            })
+        );
+        assert_eq!(
+            receipt(r#"{"receipt":{"bundle_id":"rhb1:t","verification":"trusted-ish"}}"#),
+            None
+        );
+        assert_eq!(
+            receipt(r#"{"receipt":{"bundle_id":"rhb1:t","verification":"unreceived"}}"#),
+            None
+        );
+        assert_eq!(receipt(r#"{"receipt":{"verification":"verified"}}"#), None);
+    }
 }
