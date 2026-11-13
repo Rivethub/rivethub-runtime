@@ -45,6 +45,7 @@ pub struct Config {
     pub hubs: Option<Vec<HubEntry>>,
     pub telemetry: Option<TelemetrySection>,
     pub cloud: Option<CloudSection>,
+    pub entities: Option<EntitiesSection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -68,6 +69,13 @@ pub struct CloudSection {
     pub url: Option<url::Url>,
     pub update_key: Option<String>,
     pub disabled: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct EntitiesSection {
+    pub matcher: Option<String>,
+    pub matcher_url: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

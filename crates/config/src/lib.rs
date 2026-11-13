@@ -28,8 +28,8 @@ pub use memory_models::{
     EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
 };
 pub use model::{
-    CloudSection, Config, DecideSection, HarnessSlot, HubEntry, MappingFile, RedactionSettings,
-    TelemetrySection,
+    CloudSection, Config, DecideSection, EntitiesSection, HarnessSlot, HubEntry, MappingFile,
+    RedactionSettings, TelemetrySection,
 };
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{

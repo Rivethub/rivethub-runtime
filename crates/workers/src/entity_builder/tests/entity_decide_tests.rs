@@ -50,6 +50,88 @@ fn jev_last_option_is_new_and_a_missing_probability_holds() {
     assert!(MatcherSettings::selected("other", "").is_err());
 }
 
+#[test]
+fn matcher_settings_follow_the_entity_config() {
+    let configured = config::Config {
+        entities: Some(config::EntitiesSection {
+            matcher: Some("jev".to_owned()),
+            matcher_url: Some("http://host:8015".to_owned()),
+        }),
+        memory: Some(config::model::MemorySection {
+            postgres: Some(config::model::PostgresSection {
+                embed_endpoint: Some("http://embed:9402".to_owned()),
+                embed_model: Some("custom-embed".to_owned()),
+                ..config::model::PostgresSection::default()
+            }),
+            ..config::model::MemorySection::default()
+        }),
+        ..config::Config::default()
+    };
+    let settings = MatcherSettings::from_config(&configured).expect("configured matcher");
+    assert_eq!(settings.backend, MatchBackend::Jev);
+    assert_eq!(settings.matcher_url, "http://host:8015");
+    assert_eq!(settings.embed_url, "http://embed:9402");
+    assert_eq!(settings.embed_model, "custom-embed");
+    assert_eq!(
+        settings.threshold,
+        kernel::wiki::entity_match::MATCH_THRESHOLD
+    );
+
+    let sqlite = config::Config {
+        memory: Some(config::model::MemorySection {
+            backend: Some(config::MemoryBackend::Sqlite),
+            sqlite: Some(config::model::SqliteSection {
+                embed_endpoint: Some(" http://sqlite-embed:9 ".to_owned()),
+                embed_model: Some(" sqlite-model ".to_owned()),
+                ..config::model::SqliteSection::default()
+            }),
+            postgres: Some(config::model::PostgresSection {
+                embed_endpoint: Some("http://ignored:1".to_owned()),
+                embed_model: Some("ignored-model".to_owned()),
+                ..config::model::PostgresSection::default()
+            }),
+            ..config::model::MemorySection::default()
+        }),
+        ..config::Config::default()
+    };
+    let settings = MatcherSettings::from_config(&sqlite).expect("sqlite embedder");
+    assert_eq!(settings.backend, MatchBackend::ThinkingCap);
+    assert_eq!(settings.matcher_url, "");
+    assert_eq!(settings.embed_url, "http://sqlite-embed:9");
+    assert_eq!(settings.embed_model, "sqlite-model");
+
+    let blank = config::Config {
+        memory: Some(config::model::MemorySection {
+            postgres: Some(config::model::PostgresSection {
+                embed_endpoint: Some("  ".to_owned()),
+                embed_model: Some(String::new()),
+                ..config::model::PostgresSection::default()
+            }),
+            ..config::model::MemorySection::default()
+        }),
+        ..config::Config::default()
+    };
+    assert_eq!(
+        MatcherSettings::from_config(&blank).expect("blank embedder"),
+        MatcherSettings::default()
+    );
+    assert_eq!(
+        MatcherSettings::from_config(&config::Config::default()).expect("defaults"),
+        MatcherSettings::default()
+    );
+    assert_eq!(
+        MatcherSettings::from_config(&config::Config {
+            entities: Some(config::EntitiesSection {
+                matcher: Some("jev".to_owned()),
+                matcher_url: None,
+            }),
+            ..config::Config::default()
+        })
+        .expect_err("jev needs a url"),
+        "entities.matcher jev needs matcher_url"
+    );
+}
+
 #[tokio::test]
 async fn an_empty_jev_url_does_not_decide() {
     let decider = JevDecider {

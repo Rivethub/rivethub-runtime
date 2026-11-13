@@ -428,6 +428,20 @@ report is not resent. This also works with `cloud: {disabled:
 true}`: the cloud stays off and only telemetry goes to your url. `telemetry: {disabled: true}` turns telemetry off
 everywhere and wins over the url. CONTRACT note 154 has the rules.
 
+The entity worker matches observations with the ThinkingCap matcher and the embedder at `http://127.0.0.1:9402`
+(`qwen3-embedding-0.6b`) unless config.yaml says otherwise:
+
+```yaml
+entities:
+  matcher: jev            # jev | thinkingcap (default thinkingcap)
+  matcher_url: http://host:8015
+```
+
+`matcher` must be `thinkingcap` or `jev`. `jev` needs `matcher_url`, and that url must be http or https. When
+`memory.postgres.embed_endpoint` or `memory.postgres.embed_model` is set, entity matching uses it; with SQLite selected,
+the same keys under `memory.sqlite` are used instead. An omitted `entities` section keeps the ThinkingCap matcher.
+CONTRACT note 155 has the rules.
+
 This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
 config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config
 of their own is not bound by it; to keep such users off the network, restrict their outbound traffic as well.

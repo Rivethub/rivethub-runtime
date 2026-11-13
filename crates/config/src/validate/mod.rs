@@ -8,6 +8,7 @@ use checks::{
 mod agents;
 mod channels;
 mod deployment;
+mod entities;
 mod gateway;
 mod hubs;
 mod memory;
@@ -357,6 +358,9 @@ fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
     if let Some(section) = &config.cloud {
         hubs::cloud(out, section);
     }
+    if let Some(section) = &config.entities {
+        entities::validate(out, section);
+    }
 }
 
 fn ignored_findings(config: &Config, ignored: &[IgnoredPath], out: &mut ValidationResult) {
@@ -388,6 +392,14 @@ fn ignored_message(config: &Config, segments: &[Segment]) -> Option<String> {
         "deployment" => deployment_message(rest),
         "gateway" => gateway_message(rest),
         "tasks" => tasks_message(rest),
+        "entities" => entities_message(rest),
+        _ => None,
+    }
+}
+
+fn entities_message(rest: &[Segment]) -> Option<String> {
+    match rest {
+        [Segment::Key(key)] => Some(format!("Unknown entities key \"{key}\"")),
         _ => None,
     }
 }

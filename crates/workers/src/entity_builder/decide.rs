@@ -64,6 +64,80 @@ impl MatcherSettings {
             ..Self::default()
         })
     }
+
+    pub fn from_config(config: &config::Config) -> Result<Self, String> {
+        let mut settings = Self::default();
+        let (endpoint, model) = configured_embed(config);
+        if let Some(endpoint) = endpoint {
+            settings.embed_url = endpoint;
+        }
+        if let Some(model) = model {
+            settings.embed_model = model;
+        }
+        let Some(section) = &config.entities else {
+            return Ok(settings);
+        };
+        let matcher = trimmed(section.matcher.as_deref()).unwrap_or("thinkingcap");
+        settings.backend = match matcher {
+            "thinkingcap" => MatchBackend::ThinkingCap,
+            "jev" => MatchBackend::Jev,
+            other => {
+                return Err(format!(
+                    "entities.matcher must be thinkingcap or jev, not {other}"
+                ));
+            }
+        };
+        match trimmed(section.matcher_url.as_deref()) {
+            Some(url) if web_url(url) => url.clone_into(&mut settings.matcher_url),
+            Some(_) => return Err("The entities matcher url must be http or https".to_owned()),
+            None if settings.backend == MatchBackend::Jev => {
+                return Err("entities.matcher jev needs matcher_url".to_owned());
+            }
+            None => {}
+        }
+        Ok(settings)
+    }
+}
+
+fn configured_embed(config: &config::Config) -> (Option<String>, Option<String>) {
+    let memory = config.memory.as_ref();
+    if config.sqlite_selected() {
+        let sqlite = memory.and_then(|memory| memory.sqlite.as_ref());
+        return (
+            nonempty(sqlite.and_then(|section| section.embed_endpoint.clone())),
+            nonempty(sqlite.and_then(|section| section.embed_model.clone())),
+        );
+    }
+    let postgres = memory.and_then(|memory| memory.postgres.as_ref());
+    (
+        nonempty(postgres.and_then(|section| section.embed_endpoint.clone())),
+        nonempty(postgres.and_then(|section| section.embed_model.clone())),
+    )
+}
+
+fn nonempty(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
+fn trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|text| !text.is_empty())
+}
+
+fn web_url(text: &str) -> bool {
+    let rest = if let Some(rest) = text.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = text.strip_prefix("http://") {
+        rest
+    } else {
+        return false;
+    };
+    let mut parts = rest.split(['/', '?', '#']);
+    let Some(host) = parts.next() else {
+        return false;
+    };
+    !host.is_empty() && !host.contains(' ')
 }
 
 fn parse_backend(backend: &str) -> Result<MatchBackend, String> {
