@@ -42,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(62 at 0.8.1, unchanged from 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.2, unchanged since 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -69,6 +69,23 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     ON rh_messages (conversation_id, (metadata ->> 'event_id'))
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
+
+## Upgrading from 0.8.1 to 0.8.2
+
+0.8.2 needs no schema migration. It fixes capture on a node whose gateway serves TLS from a certificate that lists another
+name before `localhost`: on 0.8.1 the hook reached the gateway by that name, the owner gate refused the local owner token
+with a 401, and every batch was dead-lettered. After the upgrade, move them back to the queue; the next hook delivers them:
+
+```sh
+rh capture spool --requeue-dead
+```
+
+Also in 0.8.2:
+
+- A capture into a session that belongs to another person now gets a 403, not a 500. The hook dead-letters that batch at
+  once instead of retrying it, and `rh capture backfill` counts it against that session and goes on.
+- `rh capture backfill` covers dsh sessions. A session it cannot read fails alone; the others are still captured.
+- A stored share receipt or origin that is not a JSON object reads as absent, so it never reads as verified.
 
 ## Upgrading from 0.8.0 to 0.8.1
 
@@ -367,6 +384,20 @@ With the policy on, sign-in and the cloud update source answer `409` (`disabled 
 or usage count is written or sent, `rh update` fetches GitHub releases, and nothing is shared through rivethub.cloud.
 Users cannot turn any of it back on; only an edit to config.yaml does. `rh status`, `rh doctor` and `/healthz` report
 the policy. CONTRACT note 145 has the full rules.
+
+To keep crash reports and usage counts but send them to your own collector, name it in `telemetry.url`:
+
+```yaml
+telemetry:
+  url: https://telemetry.example.com/
+```
+
+The node then posts crash reports to `<url>/v1/telemetry/crash` and daily usage counts to `<url>/v1/telemetry/usage`
+with the same JSON rivethub.cloud receives, and nothing goes to rivethub.cloud for telemetry. Answer `202` to accept a
+report; `422` or `413` drops it. On any other answer a crash report stays queued for the next try, but a day's usage
+report is not resent. This also works with `cloud: {disabled:
+true}`: the cloud stays off and only telemetry goes to your url. `telemetry: {disabled: true}` turns telemetry off
+everywhere and wins over the url. CONTRACT note 154 has the rules.
 
 This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
 config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config

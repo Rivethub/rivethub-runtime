@@ -54,8 +54,10 @@ marks but does not filter reads by them (one user per SQLite node, CONTRACT note
 `embed_model` and `embed_api_key` (or the provider `embed_provider` names), falling back to `RIVETHUB_EMBED_URL` / `RIVETHUB_EMBED_MODEL`, the same
 endpoint the standalone embedder worker uses. Without an endpoint, those modes answer with keyword results and
 `degraded: "embedding endpoint not configured"`. `memory.sqlite.embed_query_instruction` sets the text prepended to
-each search query before it is embedded, as `memory.postgres.embed_query_instruction` does for Postgres: absent keeps
-the default retrieval instruction, an empty string embeds the bare query (for embedding models trained without one).
+each search query before it is embedded, as `memory.postgres.embed_query_instruction` does for Postgres: absent uses
+the Qwen retrieval instruction when the embed model's name contains `qwen` (any case) and no prefix for any other model,
+and an empty string embeds the bare query. A Qwen model served under a name without `qwen` needs the instruction set
+explicitly.
 With workers on, `rh local` also runs the `enqueue-unembedded` sweep on SQLite: once at start and then every ten
 minutes, the embedder queues an `embed-target` job for each message, summary and wiki topic that has no vector and
 no embed status (rows captured before an endpoint was configured, or whose last job died), heals rows whose embedding

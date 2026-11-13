@@ -2606,8 +2606,9 @@ It governs the hub, not every binary on the machine: a shell user who runs `rh` 
 
 Keys. `cloud: {disabled: true}` turns the cloud off; an http or https `cloud.url` that is also set is ignored, not an
 error, while any other `cloud.url` is still the config error `The cloud url must be http or https`. It implies
-`telemetry: {disabled: true}` (`Config::telemetry_disabled` is true when either key is set, and `Config::cloud_disabled`
-reads the first). `memory.share.allowed_servers` (also `allowedServers`) lists share servers, each a host with an
+`telemetry: {disabled: true}` unless `telemetry.url` names the operator's own destination (note 154)
+(`Config::telemetry_disabled` is true when `telemetry.disabled` is set, or when the cloud is disabled and no
+`telemetry.url` is set, and `Config::cloud_disabled` reads the first). `memory.share.allowed_servers` (also `allowedServers`) lists share servers, each a host with an
 optional `:port` in the grammar `--server` takes (note 140); a missing or empty list allows any server.
 
 What `cloud.disabled` stops. `POST /api/account/signin`, `POST /api/account/signin/poll` and `DELETE /api/account`
@@ -2983,6 +2984,23 @@ answered with a line and column, never with the value that failed. rh never stor
 only, and the desktop keeps the code in memory between the report and the import. The session list and detail labels
 (`SessionOriginLabel`) gain `verification` (`verified`, `unsigned` or `unknown_key`) and `bundleId`, read from the stored
 receipt, so a session and its list row say "from <author> \u{b7} verified|unverified" without opening the receipt.
+
+(153) The query instruction follows the embed model (Phil, 2026-11-13). When `memory.postgres.embed_query_instruction`
+or `memory.sqlite.embed_query_instruction` is absent, the instruction prepended to a search query before it is embedded
+depends on the backend's embed model: a model whose name contains `qwen` in any case (Qwen3-Embedding, gte-Qwen2) gets
+`kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION`, and every other model gets no prefix. Before, every model got the
+Qwen instruction, which skews query vectors for embedders trained without it. A configured value always wins, and `""`
+still embeds the bare query. A Qwen model served under an alias without `qwen` in its name needs the instruction set
+explicitly. Only the query side changes; stored vectors are unaffected, so no re-embedding is needed.
+(154) Telemetry to the operator's own destination (Phil, 2026-11-13). `telemetry.url`, an http or https base url
+(anything else is the config error `The telemetry url must be http or https`), sends crash reports and usage counts
+there instead of to `cloud.url` or rivethub.cloud: the same `POST v1/telemetry/crash` and `POST v1/telemetry/usage`
+joined onto it, the same JSON bodies, no credential, and the same answers (`202` accepted, `422` or `413` rejected and
+dropped; on any other answer a crash report stays queued for the next try and a day's usage report is not resent). Sign-in, updates and sharing still use `cloud.url`. The operator sets it
+in config.yaml, so it is an install-time choice like note 145's policy. With `cloud.disabled: true` and a
+`telemetry.url`, the cloud stays off (sign-in, the cloud update source and cloud sharing are refused as note 145 says)
+while telemetry goes to that url; the gateway's access is `CloudAccess::TelemetryOnly`. `telemetry.disabled: true`
+always wins and sends nothing anywhere. Each install's own crash-report and usage-count switches still apply.
 
 ## 4. Gaps to close before building the affected slice
 
