@@ -58,6 +58,18 @@ fn a_disabled_cloud_turns_telemetry_off_too() -> Result<(), Box<dyn std::error::
         ),
         ("telemetry:\n  disabled: true\n", (false, true)),
         (
+            "cloud:\n  disabled: true\ntelemetry:\n  url: https://telemetry.example.com/\n",
+            (true, false),
+        ),
+        (
+            "cloud:\n  disabled: true\ntelemetry:\n  disabled: true\n  url: https://telemetry.example.com/\n",
+            (true, true),
+        ),
+        (
+            "telemetry:\n  url: https://telemetry.example.com/\n",
+            (false, false),
+        ),
+        (
             "cloud:\n  url: https://cloud.example.com/\n",
             (false, false),
         ),
@@ -113,5 +125,24 @@ fn a_disabled_cloud_still_refuses_a_cloud_url_that_is_not_http()
         .map(|finding| finding.path.as_str())
         .collect();
     assert_eq!(paths, vec!["cloud.url"]);
+    Ok(())
+}
+
+#[test]
+fn a_telemetry_url_must_be_http_or_https() -> Result<(), Box<dyn std::error::Error>> {
+    let yaml =
+        document("memory:\n  backend: sqlite\ntelemetry:\n  url: ftp://telemetry.example.com/\n")?;
+    let result = validate_document(&yaml, Profile::Standalone);
+    let paths: Vec<_> = result
+        .errors
+        .iter()
+        .map(|finding| finding.path.as_str())
+        .collect();
+    assert_eq!(paths, vec!["telemetry.url"]);
+    let typed = type_document(&yaml)?.config;
+    assert_eq!(
+        typed.telemetry_url().map(url::Url::as_str),
+        Some("ftp://telemetry.example.com/")
+    );
     Ok(())
 }

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::model::{CloudSection, HubEntry};
+use crate::model::{CloudSection, HubEntry, TelemetrySection};
 use crate::report::ValidationResult;
 
 pub(super) fn validate(out: &mut ValidationResult, hubs: &[HubEntry]) {
@@ -24,6 +24,12 @@ pub(super) fn validate(out: &mut ValidationResult, hubs: &[HubEntry]) {
 pub(super) fn cloud(out: &mut ValidationResult, section: &CloudSection) {
     if section.url.as_ref().is_some_and(|url| !web_url(url)) {
         out.error("cloud.url", "The cloud url must be http or https");
+    }
+}
+
+pub(super) fn telemetry(out: &mut ValidationResult, section: &TelemetrySection) {
+    if section.url.as_ref().is_some_and(|url| !web_url(url)) {
+        out.error("telemetry.url", "The telemetry url must be http or https");
     }
 }
 

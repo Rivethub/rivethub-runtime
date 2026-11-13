@@ -228,12 +228,23 @@ async fn node(
     access: CloudAccess,
     hubs: Vec<HubEntry>,
 ) -> Result<Node, Failure> {
+    node_reporting_to(root, fake, access, hubs, None).await
+}
+
+async fn node_reporting_to(
+    root: &Path,
+    fake: &Fake,
+    access: CloudAccess,
+    hubs: Vec<HubEntry>,
+    telemetry: Option<&Fake>,
+) -> Result<Node, Failure> {
     let owner = UserId::new("owner".to_owned())?;
     let tenancy = Tenancy::local(owner.clone()).with_token(OWNER_DEVICE, owner)?;
     let mut settings = common::settings();
     settings.state_dir = root.join("state");
     let cloud = CloudSettings {
         base: format!("http://{}/", fake.stub.addr).parse()?,
+        telemetry: format!("http://{}/", telemetry.unwrap_or(fake).stub.addr).parse()?,
         update_key: fake.key,
         access,
     };
@@ -520,6 +531,60 @@ async fn queued_crash_reports_are_sent_once_and_dropped_when_turned_off() -> Tes
         .await;
     assert_eq!(fake.seen.crashes.lock().len(), 1);
     assert_eq!(queued(&files)?, Vec::<std::path::PathBuf>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn crash_reports_go_to_the_telemetry_url_and_never_to_the_cloud() -> TestResult {
+    for access in [CloudAccess::Open, CloudAccess::TelemetryOnly] {
+        let root = tempfile::tempdir()?;
+        let cloud = fake_cloud(release()).await?;
+        let collector = fake_cloud(release()).await?;
+        let node =
+            node_reporting_to(root.path(), &cloud, access, Vec::new(), Some(&collector)).await?;
+        let files = node.account.files().clone();
+        let install_id = files.read()?.ok_or("missing")?.install_id;
+        queue(&files, &report(install_id))?;
+        node.account
+            .tick(Utc::now(), &CancellationToken::new())
+            .await;
+        assert_eq!(collector.seen.crashes.lock().len(), 1, "{access:?}");
+        assert_eq!(cloud.seen.crashes.lock().len(), 0, "{access:?}");
+        assert_eq!(
+            queued(&files)?,
+            Vec::<std::path::PathBuf>::new(),
+            "{access:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn telemetry_only_keeps_reports_on_but_refuses_cloud_routes() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let cloud = fake_cloud(release()).await?;
+    let collector = fake_cloud(release()).await?;
+    let node = node_reporting_to(
+        root.path(),
+        &cloud,
+        CloudAccess::TelemetryOnly,
+        Vec::new(),
+        Some(&collector),
+    )
+    .await?;
+    let shown = account(&node.app).await?;
+    assert!(shown.cloud_disabled, "{shown:?}");
+    assert_eq!(shown.update_source, UpdateSource::Github);
+    assert_eq!((shown.crash_reports, shown.usage_counts), (true, true));
+    let (status, text) = local(
+        &node.app,
+        Method::POST,
+        "/api/account/signin",
+        r#"{"email":"user@example.com"}"#,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    assert_eq!(cloud.seen.requests.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
