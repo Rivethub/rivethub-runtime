@@ -23,7 +23,7 @@ To do the same by hand: every release `v<version>` publishes one archive per tar
 archive holds `rh`, `rivethub-migrate` and `LICENSE`. Unpack both binaries into a directory on your `PATH`:
 
 ```sh
-version=0.8.0                      # a release tag without its v
+version=0.8.1                      # a release tag without its v
 target=x86_64-unknown-linux-gnu    # or aarch64-unknown-linux-gnu, universal-apple-darwin
 base=https://github.com/Rivethub/rivethub-runtime/releases/download/v$version
 curl -fL -O "$base/rh-$version-$target.tar.gz" -O "$base/SHA256SUMS"

@@ -42,7 +42,7 @@ rivethub-migrate status postgres                       # current, required, pend
 
 Run it before starting any service on a new database and after every upgrade; `rh update` runs the new release's
 `rivethub-migrate` itself before swapping binaries. Services never migrate: each verifies the schema version it needs
-(62 at 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
+(62 at 0.8.1, unchanged from 0.8.0) and refuses to start behind it. `rh doctor` and `rh db status --url <url>` report the same status.
 Migrations run as maintenance, so they see and change every row. They are forward-only: rolling back a binary does not
 undo them.
 
@@ -69,6 +69,31 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     ON rh_messages (conversation_id, (metadata ->> 'event_id'))
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
+
+## Upgrading from 0.8.0 to 0.8.1
+
+0.8.1 needs no schema migration. It is also a security release, so four things behave differently after the upgrade
+(CONTRACT notes 147 and 145 have the rules).
+
+- **Loopback is not the owner any more.** Every `/api/**` call needs a credential, including one from the same host. A
+  script or a `curl` that talked to `127.0.0.1:5174` without one now gets 401. Send the local owner token:
+  `curl -H "Authorization: Bearer $(cat $(rh auth token-path))" ...`. `rh`, the capture hook and the systemd user unit
+  read that file themselves. For a browser, run `rh open` and use the single-use link it prints. The gateway creates
+  `<state_dir>/local-owner.token` the first time the new version starts, and `rh auth rotate` replaces it and ends every
+  browser session. A new `rh` against a still-running 0.8.0 gateway keeps working until the gateway restarts. To go
+  back to 0.8.0, delete `local-owner.token` first.
+- **Capture never drops a batch.** The hook writes each batch to `~/.rivethub/capture-spool/` before it posts, and a 401
+  or a refused connection leaves it there for the next hook to deliver. Nothing evicts the spool, so disk space is the
+  only limit: the hook warns past 1,000 entries or 100 MB, and `rh status` and `rh doctor` warn too. A batch that
+  cannot be written exits the hook with 1 and `capture batch was NOT saved`. `rh capture spool` lists the queue and
+  `--requeue-dead` retries the dead letters. `rh capture backfill` captures everything already on disk, including
+  Claude Code subagent transcripts.
+- **`cloud.disabled`.** New and off by default. See Keeping data on your network below to keep a hub off
+  rivethub.cloud, and `rh local --no-cloud` to write it into a new standalone config.
+- **Sign in to share again.** 0.8.0 signed in to rivethub.cloud with its own `/api/cli` endpoints, which the cloud no
+  longer serves. `rh share login` now uses OAuth device sign-in found through the server's RFC 8414 metadata, and asks
+  for `offline_access` so the login can refresh. Run `rh share login` once on each machine. A team server needs no
+  device sign-in: members upload with the gateway token in their `users.json` entry.
 
 ## Backups
 
