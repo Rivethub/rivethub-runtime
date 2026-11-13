@@ -2981,6 +2981,13 @@ only, and the desktop keeps the code in memory between the report and the import
 (`SessionOriginLabel`) gain `verification` (`verified`, `unsigned` or `unknown_key`) and `bundleId`, read from the stored
 receipt, so a session and its list row say "from <author> \u{b7} verified|unverified" without opening the receipt.
 
+(153) The query instruction follows the embed model (Phil, 2026-11-13). When `memory.postgres.embed_query_instruction`
+or `memory.sqlite.embed_query_instruction` is absent, the instruction prepended to a search query before it is embedded
+depends on the backend's embed model: a model whose name contains `qwen` in any case (Qwen3-Embedding, gte-Qwen2) gets
+`kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION`, and every other model gets no prefix. Before, every model got the
+Qwen instruction, which skews query vectors for embedders trained without it. A configured value always wins, and `""`
+still embeds the bare query. A Qwen model served under an alias without `qwen` in its name needs the instruction set
+explicitly. Only the query side changes; stored vectors are unaffected, so no re-embedding is needed.
 (154) Telemetry to the operator's own destination (Phil, 2026-11-13). `telemetry.url`, an http or https base url
 (anything else is the config error `The telemetry url must be http or https`), sends crash reports and usage counts
 there instead of to `cloud.url` or rivethub.cloud: the same `POST v1/telemetry/crash` and `POST v1/telemetry/usage`

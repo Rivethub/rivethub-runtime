@@ -90,26 +90,35 @@ async fn local_vector_search(
     Ok((response, calls))
 }
 
-#[tokio::test]
-async fn local_vector_search_embeds_the_query_with_the_sqlite_endpoint() -> TestResult {
+async fn default_inputs(model: &str) -> TestResult<Vec<Vec<String>>> {
     let (response, calls) = local_vector_search(|database, embed| {
         format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    embed_endpoint: http://{embed}\n    embed_model: embedding-model\n",
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    embed_endpoint: http://{embed}\n    embed_model: {model}\n",
             database.display()
         )
     })
     .await?;
     assert_eq!(response.degraded, None, "{response:?}");
-    assert_eq!(calls.len(), 1, "{calls:?}");
-    let prefixed = format!(
-        "{}{QUERY}",
-        kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION
+    Ok(calls.into_iter().map(|call| call.input).collect())
+}
+
+#[tokio::test]
+async fn local_vector_search_embeds_the_bare_query_for_a_non_qwen_model() -> TestResult {
+    assert_eq!(
+        default_inputs("embedding-model").await?,
+        vec![vec![QUERY.to_owned()]]
     );
-    assert!(
-        calls
-            .iter()
-            .any(|call| call.input.iter().any(|input| input == &prefixed)),
-        "{calls:?}"
+    Ok(())
+}
+
+#[tokio::test]
+async fn local_vector_search_prefixes_the_qwen_instruction_for_a_qwen_model() -> TestResult {
+    assert_eq!(
+        default_inputs("Qwen/Qwen3-Embedding-0.6B").await?,
+        vec![vec![format!(
+            "{}{QUERY}",
+            kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION
+        )]]
     );
     Ok(())
 }
