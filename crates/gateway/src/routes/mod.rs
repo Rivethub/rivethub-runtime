@@ -167,9 +167,9 @@ fn recovery_body(recovery: ProviderRecovery) -> wire::gateway::ProviderRecovery 
 fn degraded_reason(error: &MemoryStoreError) -> String {
     let detail = match error {
         MemoryStoreError::Unavailable(source) => source.to_string(),
-        MemoryStoreError::Query { message, .. } | MemoryStoreError::InvalidRequest { message } => {
-            message.clone()
-        }
+        MemoryStoreError::Query { message, .. }
+        | MemoryStoreError::InvalidRequest { message }
+        | MemoryStoreError::Forbidden { message } => message.clone(),
         MemoryStoreError::TagTablesMissing => error.to_string(),
     };
     format!("database unreachable: {detail}")
