@@ -518,3 +518,45 @@ async fn backfill_reads_every_dsh_session_and_a_second_run_adds_nothing() -> Tes
     assert_eq!((dsh.sessions, dsh.added, dsh.failures.len()), (2, 0, 0));
     Ok(())
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_unreadable_dsh_session_fails_alone_and_the_rest_are_captured() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir()?;
+    let workspace = home.path().join(".dsh/sessions/--work-dsh--");
+    let healthy = "1cf1bf29-57f2-483d-8d72-1980e4e52d20";
+    let locked = "2cf1bf29-57f2-483d-8d72-1980e4e52d21";
+    for id in [healthy, locked] {
+        let folder = workspace.join(id);
+        std::fs::create_dir_all(&folder)?;
+        let log = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","cwd":"/work/dsh"}}
+{{"type":"user/message","seq":1,"time":1793018984235,"data":{{"content":[{{"type":"text","text":"list the files"}}],"source":{{"kind":"user"}},"role":"user","id":"u-1"}}}}
+{{"type":"turn/end","seq":2,"data":{{"turn":1,"reason":{{"kind":"completed"}}}}}}
+"#
+        );
+        std::fs::write(
+            folder.join("session.v4.jsonl.zstd"),
+            zstd::encode_all(log.as_bytes(), 0)?,
+        )?;
+    }
+    let locked_folder = workspace.join(locked);
+    std::fs::set_permissions(&locked_folder, std::fs::Permissions::from_mode(0o000))?;
+    if std::fs::read_dir(&locked_folder).is_ok() {
+        std::fs::set_permissions(&locked_folder, std::fs::Permissions::from_mode(0o755))?;
+        return Ok(());
+    }
+    let gateway = Gateway::default();
+    let totals = capture::backfill::Backfill::new(
+        writer(home.path(), &gateway),
+        capture::listing::store_roots(&environment(home.path())),
+    )
+    .run(&[HarnessId::Dsh], false, now()?)
+    .await;
+    std::fs::set_permissions(&locked_folder, std::fs::Permissions::from_mode(0o755))?;
+    let dsh = totals.first().ok_or("no dsh totals")?;
+    assert_eq!((dsh.sessions, dsh.failures.len()), (2, 1));
+    assert_eq!(gateway.keys(), vec![format!("dsh:{healthy}")]);
+    Ok(())
+}
