@@ -4,6 +4,7 @@ pub(crate) mod codex;
 pub(crate) mod cowork;
 mod cursor;
 mod databases;
+mod dsh;
 mod field;
 mod files;
 mod grok;
@@ -167,7 +168,7 @@ fn list_harness(
             absent_store(roots.cursor.as_deref(), |root| cursor::list(root, limit))
         }
         HarnessId::Cowork => Ok(cowork::list(&roots.cowork, limit)),
-        HarnessId::Dsh => Ok(Vec::new()),
+        HarnessId::Dsh => absent_store(roots.dsh.as_deref(), |root| dsh::list(root, limit)),
     }
 }
 
