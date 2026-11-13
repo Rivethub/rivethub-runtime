@@ -327,7 +327,8 @@ pub fn with_models<Q: JobQueue + 'static>(
             store,
             provider: entity_provider,
             model: entity_model,
-            settings: workers::entity_builder::MatcherSettings::default(),
+            settings: workers::entity_builder::MatcherSettings::from_config(config)
+                .map_err(RootError::Invalid)?,
         })
     } else {
         runner
