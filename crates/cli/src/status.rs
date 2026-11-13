@@ -288,19 +288,19 @@ fn verified(
 ) -> Result<reqwest::ClientBuilder, Error> {
     let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
     let builder = builder.tls_certs_only(roots);
-    let Some(name) = served_name(cert)? else {
-        return Ok(builder);
-    };
     let address = match url.host() {
         Some(url::Host::Ipv4(address)) => IpAddr::V4(address),
         Some(url::Host::Ipv6(address)) => IpAddr::V6(address),
         Some(url::Host::Domain(_)) | None => return Ok(builder),
     };
+    let Some(name) = served_name(cert, address)? else {
+        return Ok(builder);
+    };
     url.set_host(Some(&name))?;
     Ok(builder.resolve(&name, SocketAddr::new(address, port)))
 }
 
-fn served_name(cert: &Path) -> Result<Option<String>, Error> {
+fn served_name(cert: &Path, address: IpAddr) -> Result<Option<String>, Error> {
     let der = CertificateDer::from_pem_file(cert)
         .map_err(|_| Error::GatewayCertificate("gateway certificate is not a PEM certificate"))?;
     let (_, parsed) = x509_parser::parse_x509_certificate(&der)
@@ -308,23 +308,34 @@ fn served_name(cert: &Path) -> Result<Option<String>, Error> {
     let names = parsed
         .subject_alternative_name()
         .map_err(|_| Error::GatewayCertificate("invalid gateway certificate SAN"))?;
-    Ok(names.and_then(|san| {
-        san.value
-            .general_names
+    let dns: Vec<String> = names
+        .map(|san| {
+            san.value
+                .general_names
+                .iter()
+                .filter_map(|general| match general {
+                    GeneralName::DNSName(name) => Some((*name).to_owned()),
+                    GeneralName::OtherName(_, _)
+                    | GeneralName::RFC822Name(_)
+                    | GeneralName::X400Address(_)
+                    | GeneralName::DirectoryName(_)
+                    | GeneralName::EDIPartyName(_)
+                    | GeneralName::URI(_)
+                    | GeneralName::IPAddress(_)
+                    | GeneralName::RegisteredID(_)
+                    | GeneralName::Invalid(_, _) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if address.is_loopback()
+        && dns
             .iter()
-            .find_map(|general| match general {
-                GeneralName::DNSName(name) => Some((*name).to_owned()),
-                GeneralName::OtherName(_, _)
-                | GeneralName::RFC822Name(_)
-                | GeneralName::X400Address(_)
-                | GeneralName::DirectoryName(_)
-                | GeneralName::EDIPartyName(_)
-                | GeneralName::URI(_)
-                | GeneralName::IPAddress(_)
-                | GeneralName::RegisteredID(_)
-                | GeneralName::Invalid(_, _) => None,
-            })
-    }))
+            .any(|name| name.eq_ignore_ascii_case("localhost"))
+    {
+        return Ok(Some("localhost".to_owned()));
+    }
+    Ok(dns.into_iter().next())
 }
 
 fn host_name() -> Result<String, Error> {
