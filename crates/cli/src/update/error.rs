@@ -12,8 +12,36 @@ pub enum UpdateError {
     Platform,
     #[error("invalid release version: {0}")]
     Version(String),
-    #[error("no matching published release has an archive for this platform")]
+    #[error("the release metadata GitHub answered is not a release")]
     Release,
+    #[error("no published release is tagged {0}")]
+    NotPublished(String),
+    #[error("no published release found")]
+    NoRelease,
+    #[error("release {0} is a draft, not a published release")]
+    Draft(String),
+    #[error("the latest release {0} is a prerelease; use --channel beta or --version {0}")]
+    Prerelease(String),
+    #[error("asked for release {asked} but GitHub answered {answered}")]
+    Mismatch { asked: String, answered: String },
+    #[error("release {tag} does not have exactly one asset named {name}")]
+    Asset { tag: String, name: String },
+    #[error("cannot read the service unit {}: {source}", path.display())]
+    Unit {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("cannot restart the local node: {action}: {source}")]
+    Local {
+        action: String,
+        #[source]
+        source: Box<crate::Error>,
+    },
+    #[error(
+        "the local node (PID {pid}) did not stop within {seconds}s of SIGTERM; the new binary is installed, run `rh stop` and `rh local --ensure`"
+    )]
+    Stopping { pid: i32, seconds: u64 },
     #[error("release archive must contain exactly one regular file named {0}")]
     Archive(&'static str),
     #[error("release download failed: {0}")]

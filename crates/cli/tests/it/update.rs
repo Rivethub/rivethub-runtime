@@ -102,11 +102,20 @@ async fn explicit_version_and_no_restart_still_migrate() -> Result {
 }
 
 #[tokio::test]
-async fn only_beta_accepts_prerelease_tags_and_drafts_are_refused() -> Result {
-    for (channel, tag, exit) in [
-        (Channel::Stable, "v0.10.0", Exit::Failure),
-        (Channel::Beta, "v0.10.0", Exit::Ok),
-        (Channel::Beta, "v0.11.0", Exit::Failure),
+async fn an_explicit_version_pins_a_prerelease_and_drafts_are_refused() -> Result {
+    for (channel, tag, outcome) in [
+        (Channel::Stable, "v0.10.0", Ok(())),
+        (Channel::Beta, "v0.10.0", Ok(())),
+        (
+            Channel::Stable,
+            "v0.11.0",
+            Err("release v0.11.0 is a draft, not a published release"),
+        ),
+        (
+            Channel::Stable,
+            "v0.12.0",
+            Err("no published release is tagged v0.12.0"),
+        ),
     ] {
         let fixture = Fixture::new()?;
         let mut args = args();
@@ -114,11 +123,174 @@ async fn only_beta_accepts_prerelease_tags_and_drafts_are_refused() -> Result {
         args.version = Some(tag.to_owned());
         args.no_restart = true;
         let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
-        assert_eq!(report.exit, exit, "{}", report.stderr);
+        match outcome {
+            Ok(()) => assert_eq!(report.exit, Exit::Ok, "{}", report.stderr),
+            Err(message) => {
+                assert_eq!(report.exit, Exit::Failure);
+                assert!(report.stderr.contains(message), "{}", report.stderr);
+            }
+        }
         let installed = std::fs::read(&fixture.binary)? == BINARY;
-        assert_eq!(installed, exit == Exit::Ok);
+        assert_eq!(installed, outcome.is_ok());
     }
     Ok(())
+}
+
+#[tokio::test]
+async fn an_unpinned_update_never_installs_an_older_or_the_same_release() -> Result {
+    for (channel, running, message) in [
+        (
+            Channel::Stable,
+            "0.12.0",
+            "rh 0.12.0 is already newer than the latest stable release v0.9.0; nothing to do.\n",
+        ),
+        (
+            Channel::Beta,
+            "0.12.0",
+            "rh 0.12.0 is already newer than the latest beta release v0.10.0; nothing to do.\n",
+        ),
+        (
+            Channel::Stable,
+            "0.9.0",
+            "rh 0.9.0 is already up to date (latest stable release v0.9.0).\n",
+        ),
+    ] {
+        let fixture = Fixture::new()?;
+        let mut args = args();
+        args.channel = channel;
+        let report = fixture
+            .run_as(&args, &fixture.env(), Published::Good, running)
+            .await?;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+        assert!(report.stdout.ends_with(message), "{}", report.stdout);
+        assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+        assert_eq!(std::fs::read_to_string(&fixture.calls)?, "");
+    }
+    let fixture = Fixture::new()?;
+    let mut args = args();
+    args.version = Some("v0.9.0".to_owned());
+    args.no_restart = true;
+    let report = fixture
+        .run_as(&args, &fixture.env(), Published::Good, "0.12.0")
+        .await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_a_unit_and_without_a_running_node_nothing_is_restarted() -> Result {
+    let fixture = Fixture::new()?;
+    std::fs::remove_file(Scope::User.unit_path(fixture.home.path()))?;
+    let report = fixture
+        .run(&args(), &fixture.env(), Published::Good)
+        .await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(
+        report
+            .stdout
+            .ends_with("No RivetHub node is running, so none needed a restart.\n"),
+        "{}",
+        report.stdout
+    );
+    assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+    let calls = std::fs::read_to_string(&fixture.calls)?;
+    assert!(!calls.contains("systemctl"));
+    assert!(!calls.contains("rh|"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_a_unit_a_local_node_is_stopped_and_started_with_the_new_binary() -> Result {
+    let fixture = Fixture::new()?;
+    std::fs::remove_file(Scope::User.unit_path(fixture.home.path()))?;
+    let (pid, node) = fake_node(&fixture, &["local", "--port", "6123", "--no-lan"])?;
+    let report = fixture
+        .run(&args(), &fixture.env(), Published::Good)
+        .await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(
+        report
+            .stdout
+            .contains(&format!("Stopping the local node (PID {pid})...\n"))
+    );
+    assert!(
+        report
+            .stdout
+            .ends_with("Started RivetHub local node at http://127.0.0.1:6123\n"),
+        "{}",
+        report.stdout
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), node).await???;
+    let calls = std::fs::read_to_string(&fixture.calls)?;
+    assert!(!calls.contains("systemctl"));
+    assert!(
+        calls.ends_with("rh|local|--ensure|--wait|30|--port|6123|--no-lan\n"),
+        "{calls}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn without_a_unit_a_node_rh_local_did_not_start_is_left_running() -> Result {
+    let fixture = Fixture::new()?;
+    std::fs::remove_file(Scope::User.unit_path(fixture.home.path()))?;
+    let (pid, node) = fake_node(&fixture, &["start"])?;
+    let report = fixture
+        .run(&args(), &fixture.env(), Published::Good)
+        .await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(report.stdout.ends_with(&format!(
+        "The RivetHub node running as PID {pid} was not started by `rh local`; restart it to run the new binary.\n"
+    )));
+    assert!(!node.is_finished());
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(i32::try_from(pid)?),
+        nix::sys::signal::Signal::SIGTERM,
+    )?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), node).await???;
+    assert!(!std::fs::read_to_string(&fixture.calls)?.contains("rh|"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_unit_path_that_is_not_a_file_is_named() -> Result {
+    let fixture = Fixture::new()?;
+    let unit = Scope::User.unit_path(fixture.home.path());
+    std::fs::remove_file(&unit)?;
+    std::fs::create_dir(&unit)?;
+    let report = fixture
+        .run(&args(), &fixture.env(), Published::Good)
+        .await?;
+    assert_eq!(report.exit, Exit::Failure);
+    assert!(
+        report.stderr.contains(&unit.display().to_string()),
+        "{}",
+        report.stderr
+    );
+    assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+    Ok(())
+}
+
+fn fake_node(
+    fixture: &Fixture,
+    arguments: &[&str],
+) -> Result<(
+    u32,
+    tokio::task::JoinHandle<std::io::Result<std::process::ExitStatus>>,
+)> {
+    let mut child = tokio::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("trap 'exit 0' TERM; while :; do sleep 0.05; done")
+        .args(arguments)
+        .kill_on_drop(true)
+        .spawn()?;
+    let pid = child.id().ok_or("node pid")?;
+    std::fs::write(
+        fixture.home.path().join(".rivethub/rivethub.pid"),
+        format!("{pid}\n"),
+    )?;
+    Ok((pid, tokio::spawn(async move { child.wait().await })))
 }
 
 #[tokio::test]

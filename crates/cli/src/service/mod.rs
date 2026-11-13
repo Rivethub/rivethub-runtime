@@ -23,6 +23,14 @@ pub enum ServiceCommand {
 
 pub const UNIT_NAME: &str = "rivethub";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+pub enum NodeKind {
+    #[strum(serialize = "start")]
+    Node,
+    #[strum(serialize = "local")]
+    Standalone,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     System,
@@ -126,9 +134,25 @@ impl Scope {
         let paths = Paths::new(env).map_err(|_| ServiceError::Home)?;
         let home = paths.home().to_path_buf();
         let executable = tokio::task::spawn_blocking(std::env::current_exe).await??;
-        let unit = Unit::new(&executable, &paths.env_file(), self)?;
+        let owned = env.clone();
+        let kind =
+            tokio::task::spawn_blocking(move || crate::configuration::node_kind(&owned)).await??;
+        let unit = Unit::new(&executable, &paths.env_file(), self, kind)?;
         let path = unit.install(home).await?;
-        let mut message = format!("Created service file: {}\n", path.display());
+        let mut message = format!(
+            "Created service file: {}\nIt runs: rh {kind}\n",
+            path.display()
+        );
+        self.systemctl(&["daemon-reload"], env, shutdown)
+            .await
+            .and_then(command::require_success)?;
+        self.systemctl(&["enable", UNIT_NAME], env, shutdown)
+            .await
+            .and_then(command::require_success)?;
+        message.push_str(match self {
+            Self::System => "Enabled: it starts at boot.\n",
+            Self::User => "Enabled: it starts when you log in, and at boot when lingering is on.\n",
+        });
         if self == Self::User {
             let user =
                 tokio::task::spawn_blocking(|| nix::unistd::User::from_uid(nix::unistd::geteuid()))
@@ -160,6 +184,8 @@ pub enum ServiceError {
     Exists(PathBuf),
     #[error("invalid service path: {}", .0.display())]
     Path(PathBuf),
+    #[error("cannot tell which node the service should run from the config: {0}")]
+    Config(#[from] config::ConfigError),
     #[error("HOME is required for service initialization")]
     Home,
     #[error("current user has no account entry")]

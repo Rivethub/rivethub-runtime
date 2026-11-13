@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use capture::harnesses::HarnessSetupService;
 use capture::harnesses::REGISTRY;
+use capture::harnesses::SetupChange;
 use chrono::TimeZone;
 use chrono::Utc;
 use config::Environment;
@@ -89,6 +90,15 @@ impl Machine {
         part: Option<ConnectPart>,
         dry_run: bool,
     ) -> Result<kernel::harness_setup::ConnectOutcome, SetupError> {
+        self.change(id, part, dry_run).map(|change| change.outcome)
+    }
+
+    fn change(
+        &self,
+        id: &str,
+        part: Option<ConnectPart>,
+        dry_run: bool,
+    ) -> Result<SetupChange, SetupError> {
         let now = Utc
             .with_ymd_and_hms(2026, 11, 6, 12, 0, 0)
             .single()
@@ -417,6 +427,9 @@ fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult
         Some(RH)
     );
     let plugin = machine.read(".config/opencode/plugins/rivethub-capture.ts")?;
+    assert!(
+        plugin.starts_with("export default { id: 'rivethub-capture' }\nconst COMMAND: string = ")
+    );
     assert!(plugin.contains("capture hook --harness opencode"));
     assert!(plugin.contains(RH));
     assert!(!plugin.contains("__COMMAND__"));
@@ -456,20 +469,53 @@ fn an_oddly_formatted_config_is_backed_up_exactly_and_rewritten_as_two_space_jso
 }
 
 #[test]
-fn opencode_capture_without_the_plugin_source_says_where_to_build_it() -> TestResult {
+fn opencode_capture_without_an_override_installs_the_plugin_embedded_in_rh() -> TestResult {
     let machine = machine_with_plugin(false)?;
     machine.write(".config/opencode/.keep", "")?;
+    let connected = machine.change("opencode", Some(ConnectPart::Capture), false)?;
+    assert!(connected.skipped.is_none());
+    let plugin = machine.read(".config/opencode/plugins/rivethub-capture.ts")?;
+    assert!(plugin.contains("id: 'rivethub-capture'"));
+    assert!(plugin.contains("ctx.event.subscribe({ signal })"));
+    assert!(plugin.contains(&format!("exec {RH} capture hook --harness opencode")));
+    assert!(!plugin.contains("__COMMAND__"));
+    assert!(machine.probe("opencode")?.capture_installed);
+    Ok(())
+}
+
+#[test]
+fn an_opencode_override_that_cannot_be_read_names_its_path() -> TestResult {
+    let machine = machine()?;
+    machine.write(".config/opencode/.keep", "")?;
+    fs::remove_file(machine.path("plugin-source.ts"))?;
     let error = machine
         .connect("opencode", Some(ConnectPart::Capture), false)
         .err()
         .ok_or("connect should refuse")?;
-    assert!(matches!(error, SetupError::Unsupported { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("opencode plug-in not available; build it from the rivethub repo")
-    );
+    assert!(matches!(error, SetupError::Io { .. }));
+    assert!(error.to_string().contains("plugin-source.ts"), "{error}");
     assert!(!machine.path(".config/opencode/plugins").exists());
+    Ok(())
+}
+
+#[test]
+fn connecting_both_parts_names_the_part_rh_cannot_write() -> TestResult {
+    let machine = machine()?;
+    machine.write(".cursor/.keep", "")?;
+    let change = machine.change("cursor", None, false)?;
+    assert!(matches!(
+        change.skipped,
+        Some(SetupError::Unsupported {
+            part: ConnectPart::Capture,
+            ..
+        })
+    ));
+    assert!(change.outcome.diff.contains("rivethub"));
+    let opencode = machine_with_plugin(false)?;
+    opencode.write(".config/opencode/.keep", "")?;
+    let both = opencode.change("opencode", None, false)?;
+    assert!(both.skipped.is_none());
+    assert!(opencode.probe("opencode")?.capture_installed);
     Ok(())
 }
 

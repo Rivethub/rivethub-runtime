@@ -10,6 +10,7 @@ use super::entries::HookFile;
 use super::entries::HookGroup;
 use super::json_edit;
 use super::locate::Locator;
+use super::opencode_plugin;
 use super::plan::FileEdit;
 use super::plan::read_optional;
 use super::registry::CaptureInstall;
@@ -22,7 +23,6 @@ const OPENCODE_MARKER: &str = "capture hook --harness opencode";
 const DSH_MARKER: &str = "capture hook --harness dsh";
 const OPENCODE_PLUGIN: &str = "rivethub-capture.ts";
 const OPENCODE_PLACEHOLDER: &str = "'__COMMAND__'";
-const OPENCODE_MISSING: &str = "opencode plug-in not available; build it from the rivethub repo and set RIVETHUB_OPENCODE_PLUGIN to its capture.ts";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InstallView {
@@ -258,9 +258,7 @@ pub(super) fn plan_connect(
 ) -> Result<Vec<FileEdit>, SetupError> {
     match install {
         CaptureInstall::HookFile(hooks) => connect_hooks(locator, id, hooks, rh),
-        CaptureInstall::OpencodePlugin { directory } => {
-            connect_opencode(locator, id, *directory, rh)
-        }
+        CaptureInstall::OpencodePlugin { directory } => connect_opencode(locator, *directory, rh),
         CaptureInstall::DshPlugin { .. } => Err(SetupError::Unsupported {
             id: id.to_owned(),
             part: kernel::harness_setup::ConnectPart::Capture,
@@ -306,14 +304,11 @@ fn connect_hooks(
     }])
 }
 
-fn opencode_template(locator: &Locator, id: &str) -> Result<String, SetupError> {
-    let unavailable = || SetupError::Unsupported {
-        id: id.to_owned(),
-        part: kernel::harness_setup::ConnectPart::Capture,
-        reason: OPENCODE_MISSING,
+fn opencode_template(locator: &Locator) -> Result<String, SetupError> {
+    let Some(source) = locator.opencode_plugin() else {
+        return Ok(opencode_plugin::TEMPLATE.to_owned());
     };
-    let source = locator.opencode_plugin().ok_or_else(unavailable)?;
-    let template = fs::read_to_string(source).map_err(|_| unavailable())?;
+    let template = fs::read_to_string(source).map_err(|error| io_error(source, error))?;
     if template.contains(OPENCODE_PLACEHOLDER) {
         Ok(template)
     } else {
@@ -326,7 +321,6 @@ fn opencode_template(locator: &Locator, id: &str) -> Result<String, SetupError> 
 
 fn connect_opencode(
     locator: &Locator,
-    id: &str,
     directory: Location,
     rh: &Path,
 ) -> Result<Vec<FileEdit>, SetupError> {
@@ -336,7 +330,7 @@ fn connect_opencode(
     if plugin_with_marker(&target, PluginKind::Opencode)?.is_some() {
         return Ok(Vec::new());
     }
-    let template = opencode_template(locator, id)?;
+    let template = opencode_template(locator)?;
     let quoted = shlex::try_quote(&rh.to_string_lossy())
         .map_err(|error| config(rh, error.to_string()))?
         .into_owned();

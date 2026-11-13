@@ -9,6 +9,7 @@ mod cleanup_guard;
 mod cli_docs;
 mod contract;
 mod db;
+mod harness_connect;
 mod local;
 mod local_config;
 mod logs;

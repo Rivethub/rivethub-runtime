@@ -1,6 +1,7 @@
 mod cloud;
 mod error;
 mod files;
+mod node;
 mod release;
 mod source;
 
@@ -17,6 +18,8 @@ use crate::service::command::{capture, require_success};
 use crate::service::{Scope, ServiceCommand};
 use crate::{Error, Exit, Report, configuration, db};
 pub use error::UpdateError;
+use node::Restart;
+use release::Staged;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, strum::Display)]
 #[strum(serialize_all = "lowercase")]
@@ -43,6 +46,7 @@ pub struct Updater {
     binary: PathBuf,
     releases: Url,
     scope: Scope,
+    running: String,
 }
 
 #[derive(Debug)]
@@ -50,6 +54,7 @@ struct Prepared {
     installation: Arc<files::Installation>,
     config: config::Config,
     target: db::Target,
+    restart: Restart,
 }
 
 impl Updater {
@@ -58,7 +63,14 @@ impl Updater {
             binary,
             releases,
             scope,
+            running: env!("CARGO_PKG_VERSION").to_owned(),
         }
+    }
+
+    #[must_use]
+    pub fn running(mut self, version: &str) -> Self {
+        version.clone_into(&mut self.running);
+        self
     }
 
     pub async fn run(
@@ -90,13 +102,8 @@ impl Updater {
         let loaded = db::load(env, None).await?;
         report.stderr.push_str(&configuration::notices(&loaded));
         let target = db::Target::configured(&loaded.config, env)?;
-        if !args.no_restart {
-            let paths = config::Paths::new(env)?;
-            let unit = self.scope.unit_path(paths.home());
-            if !tokio::fs::metadata(&unit).await?.is_file() {
-                return Err(UpdateError::Path(unit).into());
-            }
-        }
+        let unit = self.scope.unit_path(config::Paths::new(env)?.home());
+        let restart = Restart::plan(&unit, args.no_restart).await?;
         let binary = self.binary.clone();
         let installation = Arc::new(
             tokio::task::spawn_blocking(move || files::Installation::prepare(binary)).await??,
@@ -105,6 +112,7 @@ impl Updater {
             installation,
             config: loaded.config,
             target,
+            restart,
         })
     }
 
@@ -158,45 +166,44 @@ impl Updater {
             installation,
             config,
             target,
+            restart,
         } = self.prepare(args, env, shutdown, report).await?;
         let result = async {
             report
                 .stdout
                 .extend(["Updating this node (", &args.channel.to_string(), ")...\n"]);
-            let version = match (args.channel, self.source(args, env, &config).await?) {
+            let directory = installation.staging.path();
+            let staged = match (args.channel, self.source(args, env, &config).await?) {
                 (Channel::Stable | Channel::Beta, UpdateSource::RivethubCloud) => {
                     report
                         .stdout
                         .push_str("Fetching the signed release from rivethub.cloud...\n");
-                    cloud::stage(&config, env, args, installation.staging.path(), shutdown).await?
+                    Staged::Ready(cloud::stage(&config, env, args, directory, shutdown).await?)
                 }
                 (Channel::Stable | Channel::Beta, UpdateSource::Github) => {
                     release::stage(
                         &self.releases,
                         args.version.as_deref(),
                         args.channel == Channel::Beta,
-                        installation.staging.path(),
+                        &self.running,
+                        directory,
                         shutdown,
                     )
                     .await?
                 }
                 (Channel::Nightly, _) => {
-                    source::stage(args, env, installation.staging.path(), shutdown).await?
+                    Staged::Ready(source::stage(args, env, directory, shutdown).await?)
+                }
+            };
+            let version = match staged.version(&self.running, args.channel) {
+                Ok(version) => version,
+                Err(nothing) => {
+                    report.stdout.push_str(&nothing);
+                    return Ok(());
                 }
             };
             check_cancelled(shutdown)?;
-            report.stdout.push_str("Applying database migrations...\n");
-            let mut migration =
-                tokio::process::Command::new(installation.staging.path().join("rivethub-migrate"));
-            migration
-                .env_clear()
-                .envs(env.iter())
-                .kill_on_drop(true)
-                .args(target.arguments());
-            let migrated =
-                require_success(capture(migration, "rivethub-migrate", shutdown).await?)?;
-            report.stdout.push_str(&migrated.stdout);
-            report.stderr.push_str(&migrated.stderr);
+            migrate(directory, &target, env, shutdown, report).await?;
             check_cancelled(shutdown)?;
             let installing = Arc::clone(&installation);
             tokio::task::spawn_blocking(move || installing.install()).await??;
@@ -205,10 +212,12 @@ impl Updater {
                 &version,
                 "; previous binaries saved with .previous suffix.\n",
             ]);
-            if args.no_restart {
-                report.stdout.push_str("Restart skipped (--no-restart).\n");
-            } else {
-                self.restart(env, shutdown, report).await?;
+            match restart {
+                Restart::Skipped => report.stdout.push_str("Restart skipped (--no-restart).\n"),
+                Restart::Service => self.restart(env, shutdown, report).await?,
+                Restart::Standalone => {
+                    node::restart_standalone(&self.binary, env, shutdown, report).await?;
+                }
             }
             Ok::<_, Error>(())
         }
@@ -240,6 +249,26 @@ pub(crate) async fn run(
         Scope::for_uid(nix::unistd::geteuid().as_raw()),
     );
     Ok(updater.run(&args, env, shutdown).await)
+}
+
+async fn migrate(
+    staging: &std::path::Path,
+    target: &db::Target,
+    env: &Environment,
+    shutdown: &CancellationToken,
+    report: &mut Report,
+) -> Result<(), Error> {
+    report.stdout.push_str("Applying database migrations...\n");
+    let mut migration = tokio::process::Command::new(staging.join("rivethub-migrate"));
+    migration
+        .env_clear()
+        .envs(env.iter())
+        .kill_on_drop(true)
+        .args(target.arguments());
+    let migrated = require_success(capture(migration, "rivethub-migrate", shutdown).await?)?;
+    report.stdout.push_str(&migrated.stdout);
+    report.stderr.push_str(&migrated.stderr);
+    Ok(())
 }
 
 fn check_cancelled(shutdown: &CancellationToken) -> Result<(), UpdateError> {

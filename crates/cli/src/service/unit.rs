@@ -4,13 +4,14 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 
-use super::{Scope, ServiceError};
+use super::{NodeKind, Scope, ServiceError};
 
 #[derive(Debug)]
 pub struct Unit {
     executable: String,
     environment_file: String,
     scope: Scope,
+    kind: NodeKind,
 }
 
 impl Unit {
@@ -18,11 +19,13 @@ impl Unit {
         executable: &Path,
         environment_file: &Path,
         scope: Scope,
+        kind: NodeKind,
     ) -> Result<Self, ServiceError> {
         Ok(Self {
             executable: quote_path(executable)?.replace('$', "$$"),
             environment_file: quote_path(environment_file)?,
             scope,
+            kind,
         })
     }
 
@@ -91,8 +94,8 @@ impl Display for Unit {
         };
         write!(
             f,
-            "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} start\nEnvironmentFile=-{}\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy={target}\n",
-            self.executable, self.environment_file
+            "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} {}\nEnvironmentFile=-{}\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy={target}\n",
+            self.executable, self.kind, self.environment_file
         )
     }
 }
