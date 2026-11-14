@@ -206,6 +206,7 @@ impl Row {
             SessionKey::Harness(_) => None,
         };
         Ok(SessionRecord {
+            owner: None,
             id,
             title: session_title(
                 self.title.as_deref(),

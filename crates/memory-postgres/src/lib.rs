@@ -38,6 +38,7 @@ mod session_activity;
 mod session_catalog;
 mod session_marks;
 mod stats;
+mod team;
 pub use search_complete::SearchSynthesis;
 mod jobs;
 mod stats_cache;
@@ -90,6 +91,7 @@ pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 pub struct PostgresMemory {
+    own_weight: f64,
     wiki_directory: Option<std::path::PathBuf>,
     wiki_owner: Option<kernel::owner::Owner>,
     pool: PgPool,
@@ -107,6 +109,7 @@ impl PostgresMemory {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self {
+            own_weight: 1.25,
             wiki_directory: None,
             wiki_owner: None,
             pool,
@@ -117,6 +120,12 @@ impl PostgresMemory {
             backfills: std::sync::Arc::default(),
             summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
         }
+    }
+
+    #[must_use]
+    pub fn with_own_weight(mut self, weight: f64) -> Self {
+        self.own_weight = weight;
+        self
     }
 
     #[must_use]

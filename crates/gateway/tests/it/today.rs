@@ -83,6 +83,7 @@ impl DigestStore for Digests {
 
 fn record(key: &str, title: &str, started: &str) -> SessionRecord {
     SessionRecord {
+        owner: None,
         id: session(key),
         title: title.to_owned(),
         started_at: at(started),

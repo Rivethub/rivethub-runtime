@@ -6,6 +6,7 @@ pub mod model;
 mod node_name;
 pub mod paths;
 pub mod provider;
+pub mod recall;
 pub mod report;
 mod resolve;
 mod services;

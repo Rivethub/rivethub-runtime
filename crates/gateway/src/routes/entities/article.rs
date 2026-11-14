@@ -193,6 +193,7 @@ async fn rows(
     let mut rows: Vec<SessionSummaryRow> = found
         .into_iter()
         .map(|session| SessionSummaryRow {
+            owner: None,
             title: session
                 .title
                 .unwrap_or_else(|| session.session.as_str().to_owned()),

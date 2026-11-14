@@ -109,6 +109,7 @@ impl ImportReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord<K = SessionId> {
+    pub owner: Option<String>,
     pub id: K,
     pub title: String,
     pub started_at: DateTime<Utc>,
@@ -142,6 +143,7 @@ impl SessionRecord<SessionKey> {
             gist: self.gist,
             cwd: self.cwd,
             origin: self.origin,
+            owner: self.owner,
         })
     }
 }
@@ -161,6 +163,7 @@ impl From<SessionRecord> for SessionRecord<SessionKey> {
             gist: record.gist,
             cwd: record.cwd,
             origin: record.origin,
+            owner: record.owner,
         }
     }
 }

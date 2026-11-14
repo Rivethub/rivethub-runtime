@@ -448,3 +448,19 @@ sharing is off. A list entry that is not a valid host makes every share command 
 At install time, `curl -fsSL https://get.rivethub.io/local.sh | bash -s -- --no-cloud`, `rh local --no-cloud`, or
 `RIVETHUB_CLOUD=off` writes `cloud: {disabled: true}` into the config `rh local` generates. When a config already
 exists without the key, `rh local` stops and names the file to add it to; it never edits your config.
+
+### Team-aware recall
+
+Start each person's `rh mcp` with their users file (`ownerUserId`) and pinned Postgres login
+as described under Person logins. Shared-space membership in that users file supplies the
+initialize introduction; the database's row-level security supplies all recalled sessions.
+Keep the users file's space membership synchronized with the hub's registry. Person labels
+use the stable user id, such as `alex`, rather than a token name or an imported author's name.
+No migration is required.
+
+Set `memory: {recall: {own_weight: 1.25}}` to tune hybrid search. The finite range is 1.0–2.0;
+1.0 restores unweighted ordering. A personal SQLite store ignores this preference. The
+chronological `memory_browse` order is unchanged. `memory_team` is read-only on every MCP
+transport; add it to harness tool allow-lists alongside `memory_search` and `memory_browse`.
+It accepts `window` (default `last_7d`, same local-time windows as browse) and `limit` per person
+(1–20, default 5). It returns only sessions visible through the normal store read path.

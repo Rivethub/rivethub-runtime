@@ -165,6 +165,35 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
     );
     assert_eq!(visible(&probe, members.clone(), "rh_messages").await?, 1);
 
+    {
+        use kernel::memory::MemoryStore as _;
+        let memory = PostgresMemory::new(probe.clone());
+        let records = members
+            .clone()
+            .run(memory.team_sessions(None, None, 5))
+            .await?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records.first().expect("record").session_id, SECOND);
+        assert_eq!(records.first().expect("record").owner, "alice");
+        assert_eq!(
+            records.first().expect("record").excerpt.as_deref(),
+            Some("the second session")
+        );
+        let owners = members
+            .clone()
+            .run(memory.recall_owners(vec![FIRST.into(), SECOND.into()]))
+            .await?;
+        assert!(!owners.contains_key(FIRST));
+        assert_eq!(owners.get(SECOND).map(String::as_str), Some("alice"));
+        assert!(owners.clone().into_keys().all(|key| key != FIRST));
+        let future = members
+            .clone()
+            .run(memory.team_sessions(Some(Utc::now() + Duration::days(1)), None, 5))
+            .await?;
+        assert_eq!(future.len(), 0);
+        assert!(owners.len() <= 1);
+    }
+
     let refused = members
         .clone()
         .run(tenancy.mark_session(&bob, &second, Some(&Visibility::Private), Utc::now()))
@@ -654,6 +683,20 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
     assert_eq!(seen, 1, "SET ROLE into a group widened a pinned login");
     regrouped.rollback().await?;
     let as_person = PostgresMemory::new(pinned.clone());
+    {
+        use kernel::memory::MemoryStore as _;
+        for scope in [
+            Scope::Closed,
+            Scope::Maintenance,
+            Scope::Viewer(viewer("alice")?),
+        ] {
+            let records = scope.run(as_person.team_sessions(None, None, 5)).await?;
+            assert_eq!(records.len(), 1);
+            assert_eq!(records.first().expect("record").session_id, FIRST);
+            assert_eq!(records.first().expect("record").owner, "alice");
+        }
+    }
+
     let stolen = forged
         .clone()
         .run(as_person.capture_batch(
@@ -1581,5 +1624,77 @@ async fn capturing_into_another_persons_session_is_forbidden(pool: PgPool) -> Te
         ),
         "{refused:?}"
     );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    let (writer, tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    let carol = Owner::new("carol".into())?;
+    tenancy
+        .sync_spaces(&[Space {
+            id: household()?,
+            kind: SpaceKind::Team,
+            name: "Team".into(),
+            members: vec![
+                alice.principal().clone(),
+                bob.principal().clone(),
+                carol.clone(),
+            ],
+        }])
+        .await?;
+    writer
+        .capture_batch(
+            &batch(LATER, "a later shared session"),
+            &CaptureOptions::owned_by(alice.principal()),
+        )
+        .await?;
+    writer
+        .capture_batch(
+            &batch(THIRD, "another person's shared work"),
+            &CaptureOptions::owned_by(&carol),
+        )
+        .await?;
+    let space = Visibility::Space(household()?);
+    for (who, key) in [
+        (&alice, SECOND),
+        (&alice, LATER),
+        (&viewer("carol")?, THIRD),
+    ] {
+        tenancy
+            .mark_session(who, &key.parse()?, Some(&space), Utc::now())
+            .await?;
+    }
+    sqlx::query("UPDATE rh_conversations SET updated_at = CASE WHEN session_key = $1 THEN now() - interval '2 days' ELSE now() END")
+        .bind(SECOND).execute(&pool).await?;
+    let reader = PostgresMemory::new(probe(&pool).await?);
+    let scope = Scope::Viewer(bob);
+    let records = scope
+        .clone()
+        .run(reader.team_sessions(None, None, 1))
+        .await?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records.first().expect("record").owner, "alice");
+    assert_eq!(records.first().expect("record").session_id, LATER);
+    assert_eq!(records.get(1).expect("second record").owner, "carol");
+    let all = scope
+        .clone()
+        .run(reader.team_sessions(None, None, 5))
+        .await?;
+    assert_eq!(all.len(), 3);
+    assert!(!all.iter().any(|row| row.session_id == FIRST));
+    let recent = scope
+        .clone()
+        .run(reader.team_sessions(Some(Utc::now() - Duration::days(1)), None, 5))
+        .await?;
+    assert_eq!(recent.len(), 2);
+    let older = scope
+        .run(reader.team_sessions(None, Some(Utc::now() - Duration::days(1)), 5))
+        .await?;
+    assert_eq!(older.len(), 1);
+    assert_eq!(older.first().expect("older record").session_id, SECOND);
     Ok(())
 }

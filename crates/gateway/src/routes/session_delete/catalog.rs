@@ -173,6 +173,7 @@ pub(crate) fn row<K: Into<SessionKey>>(
         .copied()
         .filter(|count| *count > 0);
     SessionSummaryRow {
+        owner: record.owner,
         harness: id.harness(),
         id,
         title: record.title,

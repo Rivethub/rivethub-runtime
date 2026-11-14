@@ -29,6 +29,7 @@ pub fn definitions() -> Result<Vec<Tool>, serde_json::Error> {
         definition::<memory::GetFull>()?,
         definition::<memory::Search>()?,
         definition::<memory::Stats>()?,
+        definition::<crate::team::Args>()?,
         definition::<tags::Args>()?,
         definition::<wiki::Read>()?,
         definition::<wiki::Search>()?,

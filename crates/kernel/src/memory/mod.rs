@@ -24,6 +24,8 @@ mod export;
 mod model_title;
 mod origin;
 mod provenance;
+mod team;
+pub use team::TeamSession;
 mod records;
 mod search;
 mod sessions;
@@ -579,6 +581,22 @@ pub trait MemoryStore: Send + Sync {
         &self,
         lookup: TagLookup,
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError>;
+
+    async fn recall_owners(
+        &self,
+        _session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
+        Ok(BTreeMap::new())
+    }
+
+    async fn team_sessions(
+        &self,
+        _since: Option<DateTime<Utc>>,
+        _before: Option<DateTime<Utc>>,
+        _limit: u32,
+    ) -> Result<Vec<TeamSession>, MemoryStoreError> {
+        Ok(Vec::new())
+    }
 
     async fn lookup_origins(
         &self,

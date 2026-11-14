@@ -21,16 +21,34 @@ pub async fn origins_of<'a>(
     store: &dyn MemoryStore,
     session_keys: impl IntoIterator<Item = &'a str>,
 ) -> Result<BTreeMap<String, Provenance>, MemoryStoreError> {
-    let keys: std::collections::BTreeSet<&str> = session_keys
-        .into_iter()
-        .filter(|key| is_imported(key))
-        .collect();
+    let keys: std::collections::BTreeSet<&str> = session_keys.into_iter().collect();
     if keys.is_empty() {
         return Ok(BTreeMap::new());
     }
-    store
-        .lookup_origins(keys.into_iter().map(str::to_owned).collect())
-        .await
+    let keys: Vec<String> = keys.into_iter().map(str::to_owned).collect();
+    let imported: Vec<String> = keys
+        .iter()
+        .filter(|key| is_imported(key))
+        .cloned()
+        .collect();
+    let mut origins = if imported.is_empty() {
+        BTreeMap::new()
+    } else {
+        store.lookup_origins(imported).await?
+    };
+    for (key, owner) in store.recall_owners(keys).await? {
+        origins
+            .entry(key)
+            .and_modify(|origin| origin.team_owner = Some(owner.clone()))
+            .or_insert_with(|| Provenance {
+                team_owner: Some(owner.clone()),
+                author: None,
+                origin_date: None,
+                verification: Verification::Unreceived,
+                checks: None,
+            });
+    }
+    Ok(origins)
 }
 
 pub async fn resolve_origins<'a>(
@@ -49,6 +67,14 @@ pub async fn resolve_origins<'a>(
         }
     }
     wanted.retain(|key| !known.contains_key(*key));
+    let keys: Vec<String> = known.keys().cloned().collect();
+    if !keys.is_empty() {
+        for (key, owner) in store.recall_owners(keys).await? {
+            if let Some(origin) = known.get_mut(&key) {
+                origin.team_owner = Some(owner.clone());
+            }
+        }
+    }
     known.extend(origins_of(store, wanted).await?);
     Ok(known)
 }
@@ -102,10 +128,12 @@ pub struct ReceiptChecks {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_owner: Option<String>,
     pub author: Option<String>,
     pub origin_date: Option<DateTime<Utc>>,
     pub verification: Verification,
-    pub checks: Option<ReceiptChecks>,
+    pub checks: Option<Box<ReceiptChecks>>,
 }
 
 #[derive(Deserialize)]
@@ -154,13 +182,14 @@ impl Provenance {
             .as_ref()
             .map_or(Verification::Unreceived, |receipt| receipt.verification);
         Self {
+            team_owner: None,
             author: origin
                 .as_ref()
                 .and_then(|origin| origin.author.as_deref())
                 .and_then(display_author),
             origin_date: origin.and_then(|origin| origin.created_at),
             verification,
-            checks: receipt.and_then(|receipt| receipt.checks),
+            checks: receipt.and_then(|receipt| receipt.checks).map(Box::new),
         }
     }
 
@@ -171,6 +200,16 @@ impl Provenance {
 
     #[must_use]
     pub fn tag(&self) -> String {
+        if let Some(owner) = &self.team_owner {
+            let owner = label(owner, AUTHOR_CHARS);
+            return match &self.author {
+                Some(author) => format!(
+                    "from {owner} · team · imported from {author} · {}",
+                    self.verification.short()
+                ),
+                None => format!("from {owner} · team"),
+            };
+        }
         match &self.author {
             Some(author) => format!("from {author} · {}", self.verification.short()),
             None => format!("imported, author unknown · {}", self.verification.short()),
@@ -179,6 +218,15 @@ impl Provenance {
 
     #[must_use]
     pub fn header(&self) -> String {
+        if let Some(owner) = &self.team_owner {
+            let owner = label(owner, AUTHOR_CHARS);
+            let imported = self
+                .author
+                .as_ref()
+                .map(|author| format!(" Imported from {author} ({}).", self.verification.label()))
+                .unwrap_or_default();
+            return format!("Session from {owner} (team).{imported} {NOT_INSTRUCTIONS}");
+        }
         let on = self
             .origin_date
             .map(|date| format!(" on {}", date.format("%Y-%m-%d")))

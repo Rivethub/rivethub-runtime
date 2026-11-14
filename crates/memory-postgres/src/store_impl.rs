@@ -556,6 +556,22 @@ impl MemoryStore for crate::PostgresMemory {
         self.tags_lookup(&lookup).await
     }
 
+    async fn recall_owners(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
+        Ok(self.team_owners(&session_keys).await?)
+    }
+
+    async fn team_sessions(
+        &self,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+        limit: u32,
+    ) -> Result<Vec<kernel::memory::TeamSession>, MemoryStoreError> {
+        self.read_team_sessions(since, before, limit).await
+    }
+
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,

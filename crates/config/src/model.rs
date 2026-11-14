@@ -174,6 +174,7 @@ pub struct ChannelTls {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct MemorySection {
+    pub recall: crate::recall::RecallSection,
     pub import_pg_dump: Option<PathBuf>,
     pub backend: Option<MemoryBackend>,
     pub postgres: Option<PostgresSection>,

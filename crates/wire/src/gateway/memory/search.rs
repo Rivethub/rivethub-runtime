@@ -136,6 +136,7 @@ pub enum MemoryHitSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySearchHit {
+    pub owner: Option<String>,
     pub chunk: Option<crate::memory::MemoryChunkMatch>,
     pub id: String,
     pub source: MemoryHitSource,

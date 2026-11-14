@@ -42,6 +42,7 @@ pub struct SessionOriginLabel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummaryRow {
+    pub owner: Option<String>,
     pub id: SessionKey,
     pub title: String,
     pub harness: Option<HarnessId>,

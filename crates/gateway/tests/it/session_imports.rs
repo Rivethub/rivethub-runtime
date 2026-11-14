@@ -45,6 +45,7 @@ fn at(text: &str) -> DateTime<Utc> {
 
 fn imported() -> SessionRecord<SessionKey> {
     SessionRecord {
+        owner: None,
         id: import_key(DIGEST),
         title: "Fix the flaky test".to_owned(),
         started_at: at("2026-11-02T09:14:00Z"),
@@ -70,6 +71,7 @@ fn imported() -> SessionRecord<SessionKey> {
 
 fn native() -> SessionRecord {
     SessionRecord {
+        owner: None,
         id: SessionId::new(HarnessId::ClaudeCode, "solo"),
         title: "Solo".to_owned(),
         started_at: at("2026-11-03T09:00:00Z"),

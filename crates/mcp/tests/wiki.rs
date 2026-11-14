@@ -165,6 +165,7 @@ async fn read_uses_typed_sections_and_preserves_small_markdown() {
 
 fn imported(author: &str, verification: &str) -> Provenance {
     Provenance {
+        team_owner: None,
         author: Some(author.to_owned()),
         origin_date: None,
         verification: match verification {

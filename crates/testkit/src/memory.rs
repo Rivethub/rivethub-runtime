@@ -1,5 +1,6 @@
 mod origins;
 mod suggestions;
+mod team;
 
 use std::collections::BTreeMap;
 
@@ -58,6 +59,7 @@ pub struct FakeMemoryStore {
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
     capture_activity: Mutex<Vec<kernel::harness_setup::CaptureActivity>>,
+    owners: Mutex<BTreeMap<String, String>>,
     origins: origins::Origins,
 }
 
@@ -168,7 +170,7 @@ impl MemoryStore for FakeMemoryStore {
                         || page.markdown.to_lowercase().contains(&query)
                 })
             })
-            .map(wiki_topic)
+            .map(team::wiki_topic)
             .collect();
         topics.sort_by(|a, b| {
             b.updated_at
@@ -271,7 +273,7 @@ impl MemoryStore for FakeMemoryStore {
         let stalest = stalest
             .into_iter()
             .take(limit as usize)
-            .map(wiki_topic)
+            .map(team::wiki_topic)
             .collect();
         drop(pages);
         Ok(kernel::wiki::WikiGapsResponse { red_links, stalest })
@@ -544,6 +546,13 @@ impl MemoryStore for FakeMemoryStore {
         Ok(BTreeMap::new())
     }
 
+    async fn recall_owners(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
+        Ok(self.owners_for(session_keys).await)
+    }
+
     async fn lookup_origins(
         &self,
         session_keys: Vec<String>,
@@ -628,17 +637,5 @@ impl MemoryStore for FakeMemoryStore {
         let stored = suggestions::count(&write)?;
         self.record(MemoryRequest::StoreTagSuggestions(write)).await;
         Ok(stored)
-    }
-}
-
-fn wiki_topic(page: &kernel::wiki::WikiPageResponse) -> kernel::wiki::WikiTopic {
-    kernel::wiki::WikiTopic {
-        slug: page.slug.clone(),
-        title: page.title.clone(),
-        tags: page.tags.clone(),
-        entities: page.entities.clone(),
-        updated_at: page.updated_at,
-        excerpt: page.current_state.chars().take(240).collect(),
-        topic_id: page.topic_id.clone(),
     }
 }

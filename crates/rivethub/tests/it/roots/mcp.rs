@@ -39,6 +39,7 @@ fn expected_tool_names() -> TestResult<BTreeSet<String>> {
     Ok(recorded
         .into_iter()
         .filter(|name| !omitted.contains(name.as_str()))
+        .chain(std::iter::once("memory_team".to_owned()))
         .chain(STDIO_ONLY.iter().map(|name| (*name).to_owned()))
         .collect())
 }

@@ -404,6 +404,7 @@ async fn entity_claims_name_the_importing_author() -> TestResult {
     assert!(!String::from_utf8(bytes)?.contains("importedFrom"));
 
     let provenance = Provenance {
+        team_owner: None,
         author: Some("phil".to_owned()),
         origin_date: None,
         verification: kernel::memory::Verification::Unreceived,

@@ -89,7 +89,13 @@ pub(crate) async fn postgres(
     let memory = PostgresMemory::connect_deferred(&url, pooling)
         .await?
         .with_wiki_directory(config.wiki_directory(env))
-        .with_wiki_owner(owner);
+        .with_wiki_owner(owner)
+        .with_own_weight(
+            config
+                .memory
+                .as_ref()
+                .map_or(1.25, |memory| memory.recall.weight()),
+        );
     Ok(match embed {
         Some(embed) => memory.with_query_embed(embed),
         None => memory,

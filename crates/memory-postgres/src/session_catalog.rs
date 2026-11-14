@@ -98,6 +98,8 @@ WITH conv AS (
       LEFT JOIN rh_messages m ON m.id = t.message_id
 )
 SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.trashed, g.native,
+       (SELECT c.owner_user_id FROM rh_conversations c WHERE c.id = ANY(g.conversations)
+         AND c.owner_user_id <> rh_scope_principal() ORDER BY c.updated_at DESC, c.id LIMIT 1) AS owner,
        g.topic_id,
        (SELECT t.name FROM rh_topics t WHERE t.id = g.topic_id) AS topic_name,
        (SELECT pt.name FROM rh_topics t JOIN rh_topics pt ON pt.id = t.parent_id
@@ -132,6 +134,7 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
     reason = "one column per SQL flag of a session row"
 )]
 struct Row {
+    owner: Option<String>,
     session_key: String,
     title: Option<String>,
     started_at: DateTime<Utc>,
@@ -184,6 +187,7 @@ impl Row {
             SessionKey::Harness(_) => None,
         };
         Ok(SessionRecord {
+            owner: self.owner,
             id,
             title: session_title(
                 self.title.as_deref(),

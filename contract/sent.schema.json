@@ -5859,6 +5859,12 @@
         "id": {
           "type": "string"
         },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "provenance": {
           "anyOf": [
             {
@@ -6467,6 +6473,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "provenance": {
@@ -10298,6 +10310,12 @@
             }
           ]
         },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "parentId": {
           "anyOf": [
             {
@@ -10770,6 +10788,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "parentId": {

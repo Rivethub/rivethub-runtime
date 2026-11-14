@@ -134,6 +134,7 @@ async fn api_page_names_the_author_of_an_imported_citation() {
     let (gateway, store) = common::gateway();
     let mut imported = stored(page());
     let provenance = kernel::memory::Provenance {
+        team_owner: None,
         author: Some("phil".to_owned()),
         origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
         verification: kernel::memory::Verification::Unreceived,
