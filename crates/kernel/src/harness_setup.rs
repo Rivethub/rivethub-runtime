@@ -26,6 +26,7 @@ pub enum CaptureMethod {
 pub enum CaptureState {
     Receiving,
     Stale,
+    Idle,
     NotConnected,
 }
 
@@ -159,12 +160,11 @@ impl HarnessProbe {
                 .is_ok_and(|age| age <= STALE_AFTER)
                 || at > now
         });
-        let state = if recent {
-            CaptureState::Receiving
-        } else if self.capture_installed {
-            CaptureState::Stale
-        } else {
-            CaptureState::NotConnected
+        let state = match (recent, self.capture_installed, history) {
+            (true, _, _) => CaptureState::Receiving,
+            (false, true, CaptureHistory::Known(None)) => CaptureState::Idle,
+            (false, true, _) => CaptureState::Stale,
+            (false, false, _) => CaptureState::NotConnected,
         };
         HarnessStatus {
             id: self.id,
