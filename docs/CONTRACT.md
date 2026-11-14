@@ -3138,6 +3138,19 @@ logout forgets it on this machine and says so ("the token stays valid on the ser
 with it"). Two machines signed in with the same team token therefore stay independent: one logging out does not end
 the other's sign-in.
 
+(171) The store-backed ports come as one bundle (Phil, 2026-11-13, architecture review R2). Sixteen gateway ports are
+backed by the memory store (topics, filing, visibility, decisions, facts, review, topic pages, tidy, upkeep, flagged
+jobs, summary watch, deletion, the session catalog, changes, digests and model calls). Both store roots built them as
+fifteen separate optional fields and attached each with its own call, so a missed one was a `503` that only the other
+root's tests would have caught. Now `gateway::StorePorts::of(store, tenancy)` builds all of them, and its trait bounds
+make the compiler refuse a store that lacks one; `Composition::on_postgres` and `Composition::on_sqlite` (which `rh
+local` uses) both pass it to `Gateway::with_store_ports`, the only way production code attaches them. The thin
+`service::compose` (a third root used only by one test, without most ports) is gone; `service::connect` returns the
+serving `PostgresMemory`. A test drives every store-backed route on both roots and fails on any `503`. The gateway
+still keeps each port as an `Option` so unit-test fixtures can attach one fake at a time; that `503` now arises only
+in such a fixture, never from a composed node. Ports a node can truly run without keep their `Option` and `503`:
+harness setup, the share and receive desks, the cloud account, memory export and the session listers.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

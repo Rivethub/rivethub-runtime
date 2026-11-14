@@ -92,6 +92,10 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
     let reply = hub.get(PHIL, "/api/memory/models").await?;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let jobs: Vec<ModelJob> = serde_json::from_value(reply.body)?;
+    let client = reqwest::Client::builder()
+        .default_headers(super::headers(PHIL)?)
+        .build()?;
+    crate::store_routes::none_unavailable(&client, &hub.base).await?;
     assert_eq!(jobs.len(), 5, "one row per role");
     assert!(
         jobs.iter()

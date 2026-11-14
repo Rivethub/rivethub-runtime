@@ -201,12 +201,21 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestRes
         (OsStr::new("RIVETHUB_SHARED_DIR"), home.path().as_os_str()),
     ]);
     let config: Config = serde_yaml_ng::from_str("gateway:\n  host: 127.0.0.1\n  port: 0\n")?;
-    let store = rivethub::service::connect(&config, &env).await?;
-    let gateway = rivethub::service::compose(&config, &env, store).await?;
+    let shutdown = CancellationToken::new();
+    let activities = kernel::shutdown::Activities::new();
+    let memory = rivethub::service::connect(&config, &env, &shutdown, &activities).await?;
+    let composition = rivethub::composition::Composition::on_postgres(
+        &config,
+        &env,
+        &memory,
+        &shutdown,
+        &activities,
+    )
+    .await?;
+    let gateway = std::sync::Arc::clone(composition.gateway());
     let (listener, tls) = rivethub::service::listen(&config, &env).await?;
     assert!(tls.is_none(), "loopback binds resolve without tls");
     let port = listener.local_addr()?.port();
-    let shutdown = CancellationToken::new();
     let server = tokio::spawn(rivethub::service::serve(
         listener,
         tls,
@@ -341,6 +350,7 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestRes
     shutdown.cancel();
     let outcome = tokio::time::timeout(Duration::from_secs(10), server).await??;
     outcome?;
+    composition.close().await?;
     Ok(())
 }
 
