@@ -339,6 +339,17 @@ pub(crate) fn body<T: serde::Serialize>(value: &T) -> Result<Value, serde_json::
     serde_json::to_value(value)
 }
 
+pub(crate) fn headers(
+    person: &str,
+) -> Result<reqwest::header::HeaderMap, Box<dyn std::error::Error>> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token(person)))?,
+    );
+    Ok(headers)
+}
+
 pub(crate) fn segment(session: &str) -> Result<String, wire::session_id::SessionIdError> {
     Ok(wire::session_id::encode_segment(&session.parse()?))
 }

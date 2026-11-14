@@ -19,6 +19,7 @@ mod session_access;
 mod session_address;
 pub mod sessions;
 mod settings;
+mod store_ports;
 pub mod tenancy;
 pub mod tls;
 mod tls_resolve;
@@ -41,6 +42,7 @@ use crate::auth::DenialLog;
 pub use crate::login::AuthPolicy;
 pub use crate::models::ModelAssignment;
 pub use crate::settings::{REQUEST_DEADLINE, Settings, SettingsError, state_dir};
+pub use crate::store_ports::StorePorts;
 pub use crate::tls_resolve::private_ca;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
