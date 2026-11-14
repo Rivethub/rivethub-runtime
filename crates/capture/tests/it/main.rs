@@ -15,6 +15,7 @@ mod hook_replay;
 mod listing_claude_grok;
 mod listing_stores;
 mod opencode_setup;
+mod opencode_v1_transcript;
 mod opencode_v2_capture;
 mod opencode_v2_store;
 mod receive_checks;
