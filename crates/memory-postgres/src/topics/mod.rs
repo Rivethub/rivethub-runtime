@@ -53,7 +53,7 @@ impl TopicStore for PostgresMemory {
         write::claim_names(&mut tx, &topic).await?;
         write::insert(&mut tx, &topic).await?;
         write::aliases(&mut tx, &topic).await?;
-        write::enqueue_syncs(&mut tx, SyncTopicPage::after_create(&topic)).await?;
+        write::enqueue_syncs(&mut tx, SyncTopicPage::after_create(&topic), self.missing).await?;
         let stored = rows::by_id(&mut tx, topic.id)
             .await?
             .ok_or_else(|| not_found(topic.id))?;
@@ -85,7 +85,12 @@ impl TopicStore for PostgresMemory {
         if updated.slug != before.slug {
             write::rename_redirect(&mut tx, &before.slug, &updated).await?;
         }
-        write::enqueue_syncs(&mut tx, SyncTopicPage::after_update(&before, &updated)).await?;
+        write::enqueue_syncs(
+            &mut tx,
+            SyncTopicPage::after_update(&before, &updated),
+            self.missing,
+        )
+        .await?;
         let stored = rows::by_id(&mut tx, id)
             .await?
             .ok_or_else(|| not_found(id))?;
@@ -111,7 +116,7 @@ impl TopicStore for PostgresMemory {
         let syncs = SyncTopicPage::after_merge(&from, &target, page);
         let merged = plan.merged(target, now);
         write::fold_into(&mut tx, &plan, &merged).await?;
-        write::enqueue_syncs(&mut tx, syncs).await?;
+        write::enqueue_syncs(&mut tx, syncs, self.missing).await?;
         let stored = rows::by_id(&mut tx, into)
             .await?
             .ok_or_else(|| not_found(into))?;
@@ -126,7 +131,7 @@ impl TopicStore for PostgresMemory {
             .ok_or_else(|| not_found(id))?;
         topic.check_delete(!write::subtopics(&mut tx, id).await?.is_empty())?;
         write::remove(&mut tx, &topic).await?;
-        write::enqueue_syncs(&mut tx, SyncTopicPage::after_delete(&topic)).await?;
+        write::enqueue_syncs(&mut tx, SyncTopicPage::after_delete(&topic), self.missing).await?;
         tx.commit().await.map_err(failed("topic delete"))
     }
 

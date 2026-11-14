@@ -163,7 +163,7 @@ fn locate(env: &Environment) -> Result<Located, Error> {
     let Some(location) = config::resolve_config_path(env)? else {
         return Err(Error::StartConfig);
     };
-    let loaded = config::Config::load(env, &location, config::Profile::Node)?;
+    let loaded = config::Config::load(env, &location)?;
     let state = config::Paths::new(env)?.state_dir();
     let claim = config::claim_node(&state, std::process::id())?;
     Ok(Located {

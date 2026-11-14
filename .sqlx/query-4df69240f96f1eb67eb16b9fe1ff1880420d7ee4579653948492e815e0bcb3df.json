@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT session_key FROM rh_conversations WHERE session_key = ANY($1) AND owner_user_id = rh_scope_principal()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "session_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "session_key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4df69240f96f1eb67eb16b9fe1ff1880420d7ee4579653948492e815e0bcb3df"
+}

@@ -38,7 +38,6 @@ impl Composed {
         let loaded = config::Config::load(
             &env,
             &config::ConfigLocation::Current(state.join("config.yaml")),
-            config::Profile::Node,
         )?;
         let shutdown = CancellationToken::new();
         let store: Arc<dyn MemoryStore> = Arc::new(testkit::FakeMemoryStore::default());

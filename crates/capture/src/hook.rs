@@ -170,18 +170,22 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             | HookEvent::UserPromptSubmit
             | HookEvent::Other => load_transcript(&payload).await,
         };
-        let batch = match event {
-            HookEvent::PostToolUse => {
-                tool_batch(&payload, session.as_str(), &transcript, ingest_key)
-            }
+        let (batch, claim) = match event {
+            HookEvent::PostToolUse => (
+                tool_batch(&payload, session.as_str(), &transcript, ingest_key),
+                None,
+            ),
             HookEvent::Stop | HookEvent::SubagentStop | HookEvent::SessionEnd => {
-                match self.pending.take(session.native()).await {
-                    Ok(pending) => transcript_batch::build(
-                        payload.transcript_path.as_deref(),
-                        session.as_str(),
-                        &transcript,
-                        event == HookEvent::SessionEnd,
-                        &pending,
+                match self.pending.claim(session.native()).await {
+                    Ok(claim) => (
+                        transcript_batch::build(
+                            payload.transcript_path.as_deref(),
+                            session.as_str(),
+                            &transcript,
+                            event == HookEvent::SessionEnd,
+                            &claim.prompts,
+                        ),
+                        Some(claim),
                     ),
                     Err(error) => return HookRun::failed(error.to_string()),
                 }
@@ -197,7 +201,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             Err(error) => return HookRun::failed(error.to_string()),
         };
         let mut run = HookRun::done();
-        match self.writer.write(&batch, now).await {
+        match self.save(&batch, claim, now).await {
             Ok(totals) => {
                 self.best_effort_log(&log_line(event, session.as_str(), &totals, now))
                     .await;
@@ -212,6 +216,26 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             Err(error) => run.absorb(&HookRun::failed(error.to_string())),
         }
         run
+    }
+
+    async fn save(
+        &self,
+        batch: &CaptureBatchRequest,
+        claim: Option<pending::Claim>,
+        now: DateTime<Utc>,
+    ) -> Result<Totals, WriteError> {
+        let written = self.writer.write(batch, now).await;
+        let saved = match &written {
+            Ok(_) => true,
+            Err(error) => error.saved(),
+        };
+        if let Some(claim) = claim
+            && saved
+            && let Err(error) = claim.acknowledge().await
+        {
+            tracing::warn!("held prompts were saved but their claim was not removed: {error}");
+        }
+        written
     }
 
     async fn capture_subagents(

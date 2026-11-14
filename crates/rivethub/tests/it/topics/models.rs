@@ -249,10 +249,14 @@ async fn only_the_owner_reads_the_models() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_node_without_assignments_lists_nothing() -> TestResult {
+async fn a_node_without_a_model_reports_every_role_as_unconfigured() -> TestResult {
     let node = node_with(Vec::new(), Vec::new())?;
     let (status, bytes) = models(&node, OWNER_DEVICE).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(String::from_utf8(bytes)?, "[]");
+    let jobs: Vec<wire::gateway::memory_models::ModelJob> = serde_json::from_slice(&bytes)?;
+    assert_eq!(jobs.len(), 5);
+    assert!(jobs.iter().all(|job| job.health
+        == wire::gateway::memory_models::ModelHealth::Unconfigured
+        && job.provider.is_none()));
     Ok(())
 }

@@ -1,6 +1,10 @@
 pub mod builder;
 pub mod consolidate;
 pub mod entity;
+pub mod entity_admit;
+pub mod entity_match;
+pub mod entity_pass;
+pub mod entity_vocab;
 pub mod merge;
 pub mod origin;
 pub mod page;

@@ -31,7 +31,11 @@ pub(super) async fn attach(
             CloudSettings::from_config(config)?,
             hubs,
         )
-        .await?,
+        .await?
+        .with_login(Arc::new(cli::account_login::NodeAccountLogin::new(
+            env.clone(),
+            &CloudSettings::from_config(config)?.base,
+        ))),
     );
     tracker.spawn(Arc::clone(&service).run(shutdown.child_token()));
     Ok(gateway.with_account(service))

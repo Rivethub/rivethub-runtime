@@ -481,32 +481,9 @@ async fn the_wiki_writer_records_an_entity_s_facts_under_the_summary_s_session(
         topics: Some(wiki_support::ports(&store)),
     };
     handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await?;
-    let claims = store.claims(host.id).await?;
-    let conversation = job.conversation_id.ok_or("a seeded conversation")?;
-    let written: Vec<(&str, &str, Option<String>, Option<&str>)> = claims
-        .iter()
-        .map(|claim| {
-            let (session, evidence) = match &claim.said {
-                kernel::facts::Said::Writer {
-                    session, evidence, ..
-                } => (
-                    Some(session.as_str().to_owned()),
-                    evidence.as_ref().map(kernel::facts::Evidence::as_str),
-                ),
-                kernel::facts::Said::You { .. } => (None, None),
-            };
-            (claim.key.as_str(), claim.value.as_str(), session, evidence)
-        })
-        .collect();
-    assert_eq!(
-        written,
-        [(
-            "os",
-            "Ubuntu 24.04",
-            Some(format!("claude-code:{conversation}")),
-            Some("acme-build was moved to Ubuntu 24.04"),
-        )],
-        "one claim, sourced to the summary's session, with its quoted evidence; the empty fact is dropped"
+    assert!(
+        store.claims(host.id).await?.is_empty(),
+        "the wiki builder does not file entity facts"
     );
     let calls = model.chat_requests().await;
     let request = calls.first().ok_or("one request")?;
@@ -519,10 +496,9 @@ async fn the_wiki_writer_records_an_entity_s_facts_under_the_summary_s_session(
         "the response schema carries facts"
     );
     handle_extract_wiki(&env, &extract_wiki_job(&job)?.payload).await?;
-    assert_eq!(
-        store.claims(host.id).await?.len(),
-        1,
-        "a finished job writes no new claim"
+    assert!(
+        store.claims(host.id).await?.is_empty(),
+        "a second pass still files no entity claim"
     );
     Ok(())
 }

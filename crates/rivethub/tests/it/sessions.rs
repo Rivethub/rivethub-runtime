@@ -195,7 +195,6 @@ impl Node {
         let loaded = config::Config::load(
             &env,
             &config::ConfigLocation::Current(state.join("config.yaml")),
-            config::Profile::Standalone,
         )?;
         Ok((loaded.config, env))
     }

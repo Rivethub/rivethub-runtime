@@ -95,6 +95,10 @@ pub enum FixedJob {
     ConsolidateWiki,
     RecompileWiki,
     EnqueueStaleWiki,
+    ExtractEntities,
+    #[strum(serialize = "entity-backfill")]
+    EnqueueEntityBackfill,
+    EnqueueStaleEntities,
     #[strum(serialize = "enqueue-stale-compaction")]
     EnqueueStaleSummaries,
     ReapDeadJobs,
@@ -171,6 +175,7 @@ pub enum WorkerRole {
     Summarizer,
     Categorizer,
     WikiBuilder,
+    EntityBuilder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +294,11 @@ impl WorkerRole {
                 JobName::Fixed(FixedJob::ConsolidateWiki),
                 JobName::Fixed(FixedJob::RecompileWiki),
                 JobName::Fixed(FixedJob::EnqueueStaleWiki),
+            ],
+            Self::EntityBuilder => &[
+                JobName::Fixed(FixedJob::ExtractEntities),
+                JobName::Fixed(FixedJob::EnqueueEntityBackfill),
+                JobName::Fixed(FixedJob::EnqueueStaleEntities),
             ],
         }
     }

@@ -171,9 +171,8 @@ impl Environment {
         self.setting(Alias::InstallRoot)
     }
 
-    pub fn users_file(&self) -> Option<&OsStr> {
-        let (current, legacy) = Alias::UsersFile.names();
-        self.get(current).or_else(|| self.get(legacy))
+    pub(crate) fn users_file(&self) -> Option<&str> {
+        self.setting(Alias::UsersFile)
     }
 
     pub fn home(&self) -> Option<&str> {

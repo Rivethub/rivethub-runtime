@@ -30,6 +30,14 @@ pub(super) fn resolve(
     {
         return Ok(Target::Sqlite(path));
     }
+    if loaded.as_ref().is_some_and(Config::sqlite_selected) {
+        if matches!(kind, Kind::Postgres) {
+            return Err(Error::PostgresUrlRequired);
+        }
+        if let Some(path) = loaded.as_ref().and_then(sqlite_path) {
+            return Ok(Target::Sqlite(path));
+        }
+    }
     if let Some(url) = env.postgres_url() {
         return Ok(Target::Postgres(url));
     }
@@ -69,7 +77,7 @@ pub(super) fn load(env: &Environment) -> Result<Option<Config>, Error> {
     let Some(location) = config::resolve_config_path(env)? else {
         return Ok(None);
     };
-    let loaded = config::Config::load(env, &location, config::Profile::Standalone)?;
+    let loaded = config::Config::load(env, &location)?;
     Ok(Some(loaded.config))
 }
 

@@ -5,8 +5,10 @@
 (`/etc/systemd/system/rivethub.service`) or user mode
 (`~/.config/systemd/user/rivethub.service`). Init generates the unit from `service::Unit`
 using this executable's absolute path and the configured state directory's `.env`.
-It publishes the file exclusively, reports user lingering, and refuses existing
-files, traversal and directory links escaping the home directory. Systemd quoting
+It publishes the file, updates a unit this `rh` generated (keeping the previous
+file beside it), reports user lingering, and leaves a hand-edited unit unchanged.
+A symlink at the unit path, traversal and directory links escaping the home
+directory are refused. Systemd quoting
 preserves spaces, quotes, Unicode, dollar signs and percent signs literally.
 
 Start and restart reload the manager, execute the action and show status. A failed
@@ -19,7 +21,7 @@ commands use `tokio::process`; blocking account lookup and unit publication run 
 The fixture directory currently contains the written contract only, with no captured
 CLI transcripts. The `service` acceptance tests exercise every service row using
 fake `systemctl`, `journalctl` and `loginctl` executables in a temporary PATH. They
-check both scopes, unit serialization, overwrite refusal, path containment, quoting,
+check both scopes, unit serialization, repair of a generated unit, hand-edit refusal, path containment, quoting,
 status codes, subprocess errors and event-driven cancellation. No service scenario is
 skipped; the existing checked deferred list covers the remaining CLI commands in
 that same fixture README. `rh start` supervises `rh gateway`, `rh worker --role`

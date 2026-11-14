@@ -75,7 +75,7 @@ impl Auth {
         };
         let static_key = match &command {
             Some(_) => None,
-            None => provider.api_key.clone().filter(|key| !key.is_empty()),
+            None => configured_key(provider)?,
         };
         Ok(Self {
             static_key,
@@ -102,6 +102,25 @@ impl Auth {
         if let Some(command) = &self.command {
             command.invalidate();
         }
+    }
+}
+
+fn configured_key(provider: &OpenaiProvider) -> Result<Option<String>, BuildError> {
+    if let Some(key) = provider.api_key.as_ref().filter(|key| !key.is_empty()) {
+        return Ok(Some(key.clone()));
+    }
+    let Some(path) = provider.api_key_file.as_ref() else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path).map_err(|source| BuildError::ApiKeyFile {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let key = text.trim();
+    if key.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(key.to_owned()))
     }
 }
 

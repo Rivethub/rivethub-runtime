@@ -72,6 +72,16 @@ async fn read_dag(
     })
 }
 
+async fn stored_session(gateway: &Gateway, segment: String) -> Result<String, ApiError> {
+    let resolved = crate::session_address::resolve(gateway, &segment).await;
+    let session = match resolved {
+        Ok(key) => key.to_string(),
+        Err(ApiError::BadRequest(_) | ApiError::NotFound(_)) => segment,
+        Err(error) => return Err(error),
+    };
+    Ok(session)
+}
+
 async fn origin_of(gateway: &Gateway, session: &str) -> Result<Option<Provenance>, ApiError> {
     Ok(
         crate::memory_body::origins_of(gateway.store().as_ref(), [session])
@@ -107,6 +117,7 @@ pub(crate) async fn summaries(
     Path(session): Path<String>,
     Query(params): Query<DagParams>,
 ) -> Result<Json<MemorySummaryDagResponse>, ApiError> {
+    let session = stored_session(&gateway, session).await?;
     let owner = SummaryOwner::Session(session.clone());
     let origin = origin_of(&gateway, &session).await?;
     if params.tree == Some(true) && params.latest.is_none() {
@@ -134,11 +145,12 @@ pub(crate) async fn summaries(
 
 pub(crate) async fn children(
     State(gateway): State<Arc<Gateway>>,
-    Path((session, summary)): Path<(String, String)>,
+    Path((segment, summary)): Path<(String, String)>,
     Query(params): Query<TreeParams>,
 ) -> Result<Json<MemorySummaryChildren>, ApiError> {
     Uuid::parse_str(&summary)
         .map_err(|_| ApiError::BadRequest(format!("{summary} is not a summary id")))?;
+    let session = stored_session(&gateway, segment).await?;
     let origin = origin_of(&gateway, &session).await?;
     let tree = gateway
         .store()
@@ -157,10 +169,11 @@ pub(crate) async fn children(
 
 pub(crate) async fn summary(
     State(gateway): State<Arc<Gateway>>,
-    Path((session, summary)): Path<(String, String)>,
+    Path((segment, summary)): Path<(String, String)>,
 ) -> Result<Json<MemorySummaryNode>, ApiError> {
     Uuid::parse_str(&summary)
         .map_err(|_| ApiError::BadRequest(format!("{summary} is not a summary id")))?;
+    let session = stored_session(&gateway, segment).await?;
     let origin = origin_of(&gateway, &session).await?;
     gateway
         .store()

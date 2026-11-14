@@ -17,7 +17,7 @@ use kernel::topics::TopicId;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
@@ -204,7 +204,7 @@ fn session_visibility(
 
 #[async_trait]
 impl TenancyStore for SqliteStore {
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    async fn sync_spaces(&self, _node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let spaces = spaces.to_vec();
         self.with_conn(move |conn| {
             let tx = conn.transaction().map_err(query("space sync"))?;
@@ -290,8 +290,8 @@ impl TenancyStore for SqliteStore {
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError> {
         let viewer = viewer.principal().as_str().to_owned();
         let sessions = sessions.to_vec();
         let now = self.now();
@@ -320,7 +320,7 @@ impl TenancyStore for SqliteStore {
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {

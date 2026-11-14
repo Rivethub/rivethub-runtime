@@ -450,3 +450,14 @@ async fn an_import_is_a_finished_record_ended_when_its_origin_ended(pool: PgPool
     session_imports::an_import_is_a_finished_record_ended_when_its_origin_ended(&memory, &memory)
         .await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog(
+    pool: PgPool,
+) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::messages_come_in_order_paged_and_counted_like_the_catalog(
+        &memory, &memory,
+    )
+    .await
+}

@@ -94,11 +94,7 @@ async fn rig() -> Result<Rig, Box<dyn std::error::Error>> {
             home.path().join("config").as_os_str(),
         ),
     ]);
-    let loaded = config::Config::load(
-        &env,
-        &config::ConfigLocation::Current(config_file),
-        config::Profile::Standalone,
-    )?;
+    let loaded = config::Config::load(&env, &config::ConfigLocation::Current(config_file))?;
     let store = Arc::new(FakeMemoryStore::default());
     let receiver = NodeReceiver::new(
         &loaded.config,

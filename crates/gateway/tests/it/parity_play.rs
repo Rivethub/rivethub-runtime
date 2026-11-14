@@ -116,7 +116,7 @@ fn static_root() -> Result<tempfile::TempDir, String> {
     Ok(root)
 }
 
-fn app(run: &str, static_dir: Option<&Path>) -> Result<axum::Router, String> {
+fn app(static_dir: Option<&Path>) -> Result<axum::Router, String> {
     let owner = UserId::new("owner".to_owned()).map_err(|error| format!("owner: {error}"))?;
     let store = Arc::new(testkit::FakeMemoryStore::default());
     let handle: Arc<dyn kernel::memory::MemoryStore> = store;
@@ -129,48 +129,7 @@ fn app(run: &str, static_dir: Option<&Path>) -> Result<axum::Router, String> {
             .with_local_owner(crate::common::local_owner())
             .with_tenancy(Tenancy::local(owner)),
     );
-    for (session, name) in seeded_owners(run)? {
-        let user = UserId::new(name).map_err(|error| format!("seed user: {error}"))?;
-        gateway
-            .sessions()
-            .seed_owner(&user, &session)
-            .map_err(|error| format!("seed {session}: {error}"))?;
-    }
     Ok(gateway.router(false))
-}
-
-#[derive(Deserialize)]
-struct OwnerDoc {
-    runs: BTreeMap<String, OwnerRun>,
-}
-
-#[derive(Deserialize)]
-struct OwnerRun {
-    #[serde(rename = "stateAfter", default)]
-    state_after: BTreeMap<String, Option<String>>,
-}
-
-fn seeded_owners(run: &str) -> Result<Vec<(String, String)>, String> {
-    for recording in http_paths() {
-        let text = std::fs::read_to_string(&recording)
-            .map_err(|error| format!("read {}: {error}", recording.display()))?;
-        let doc: OwnerDoc = serde_json::from_str(&text)
-            .map_err(|error| format!("owners {}: {error}", recording.display()))?;
-        let Some(entry) = doc.runs.get(run) else {
-            continue;
-        };
-        let Some(raw) = entry
-            .state_after
-            .get("session-owners.json")
-            .and_then(Option::as_ref)
-        else {
-            return Ok(Vec::new());
-        };
-        let owners: BTreeMap<String, String> =
-            serde_json::from_str(raw).map_err(|error| format!("session owners {run}: {error}"))?;
-        return Ok(owners.into_iter().collect());
-    }
-    Ok(Vec::new())
 }
 
 fn chunked_bodies(path: &Path) -> Result<BTreeMap<String, String>, String> {
@@ -348,7 +307,7 @@ async fn replay_run(
     lane: &mut Lane<'_>,
 ) {
     let prefix = format!("{run}/");
-    let app = match app(run, served_static(run, lane.static_root)) {
+    let app = match app(served_static(run, lane.static_root)) {
         Ok(app) => app,
         Err(error) => {
             lane.failures.push(format!("app {run}: {error}"));

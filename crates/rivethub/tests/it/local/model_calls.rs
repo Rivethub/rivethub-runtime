@@ -25,8 +25,10 @@ async fn local_stores_model_calls_per_session_and_refuses_credential_headers() -
         .build()?;
     let base = format!("http://127.0.0.1:{port}");
     let outcome = exercise(&client, &base).await;
+    let ports = crate::store_routes::none_unavailable(&client, &base).await;
     stop(started).await?;
-    outcome
+    outcome?;
+    ports
 }
 
 async fn exercise(client: &reqwest::Client, base: &str) -> TestResult {

@@ -9,7 +9,6 @@ use wire::model_call::{
 };
 use wire::session_id::SessionKey;
 
-use super::session_delete::{segment_key, visible};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Body;
@@ -51,10 +50,15 @@ pub(crate) async fn read(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionModelCalls>, ApiError> {
-    let SessionKey::Harness(session) = segment_key(&segment)? else {
+    let SessionKey::Harness(session) = crate::session_address::resolve(&gateway, &segment).await?
+    else {
         return Err(ApiError::NotFound(NOT_FOUND));
     };
-    if !visible(&gateway, &user, &session).await? {
+    let key = SessionKey::from(&session);
+    if !crate::session_access::seen_one(&gateway, &user, &key)
+        .await?
+        .readable()
+    {
         return Err(ApiError::NotFound(NOT_FOUND));
     }
     let calls = gateway.model_calls()?.session_calls(&session).await?;

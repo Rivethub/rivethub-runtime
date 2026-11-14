@@ -5,7 +5,7 @@ use std::future::Future;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use values::SessionId;
+use values::SessionKey;
 
 use crate::BoxError;
 use crate::owner::Owner;
@@ -218,13 +218,15 @@ pub enum TenancyStoreError {
     NotOwner(String),
     #[error("{0} was not found")]
     NotFound(String),
+    #[error("{0}")]
+    CatalogConflict(String),
     #[error("tenancy store is unavailable")]
     Unavailable(#[source] BoxError),
 }
 
 #[async_trait]
 pub trait TenancyStore: Send + Sync {
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError>;
+    async fn sync_spaces(&self, node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError>;
 
     async fn default_visibility(
         &self,
@@ -238,16 +240,20 @@ pub trait TenancyStore: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<VisibilityDefault, TenancyStoreError>;
 
+    fn row_secured(&self) -> bool {
+        false
+    }
+
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError>;
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError>;
 
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError>;

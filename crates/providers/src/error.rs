@@ -41,6 +41,12 @@ pub enum BuildError {
     TokenTtl,
     #[error("token_command_timeout_ms must be a positive number")]
     TokenTimeout,
+    #[error("provider \"api_key_file\" {path} could not be read: {source}")]
+    ApiKeyFile {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone, Error)]

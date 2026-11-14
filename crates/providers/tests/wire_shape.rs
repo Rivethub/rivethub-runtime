@@ -5,6 +5,8 @@
 )]
 mod common;
 
+use common::demand;
+use common::demand_some;
 use common::generic_provider;
 use common::scenario_record;
 use common::scenario_server;
@@ -181,6 +183,7 @@ async fn the_request_max_tokens_overrides_the_model_server_default() {
             temperature: Some(0.2),
             enable_thinking: Some(false),
             json_schema: Some(kernel::wiki::builder::extraction_schema()),
+            disable_any_whitespace: false,
         },
         model: "test-model".to_owned(),
         messages: Vec::new(),
@@ -217,4 +220,147 @@ async fn the_request_max_tokens_overrides_the_model_server_default() {
         wire::JsonObject::from_serialize(&kernel::wiki::builder::extraction_schema())
             .expect("schema")
     );
+}
+
+#[tokio::test]
+async fn openrouter_auth_and_reasoning_are_sent_only_when_configured() {
+    let server = openrouter_server().await;
+    let request = openrouter_request();
+    drain_openrouter(
+        &openrouter_provider(&server, Some("test-openrouter-key"), None, Some(false)),
+        &request,
+    )
+    .await;
+    drain_openrouter(&openrouter_provider(&server, None, None, None), &request).await;
+    let dir = tempfile::tempdir().expect("key dir");
+    let path = dir.path().join("openrouter_api_key");
+    std::fs::write(&path, "file-key\n").expect("key file");
+    drain_openrouter(
+        &openrouter_provider(&server, None, Some(path), Some(false)),
+        &request,
+    )
+    .await;
+    assert_openrouter_shapes(&server.recorder.lock());
+}
+
+async fn openrouter_server() -> common::ScenarioServer {
+    let recorded = scenario_record("A-text");
+    let mut canned = recorded.canned.clone();
+    canned.extend(recorded.canned.iter().cloned());
+    canned.extend(recorded.canned.iter().cloned());
+    scenario_server(canned).await
+}
+
+fn openrouter_request() -> kernel::model::ModelRequest {
+    kernel::model::ModelRequest {
+        options: kernel::model::ModelOptions {
+            enable_thinking: Some(false),
+            json_schema: Some(kernel::wiki::builder::extraction_schema()),
+            disable_any_whitespace: false,
+            ..kernel::model::ModelOptions::default()
+        },
+        model: "qwen/qwen3.8-flash".to_owned(),
+        messages: Vec::new(),
+        tools: Vec::new(),
+        thinking: None,
+        max_tokens: Some(64),
+    }
+}
+
+fn openrouter_provider(
+    server: &common::ScenarioServer,
+    api_key: Option<&str>,
+    api_key_file: Option<std::path::PathBuf>,
+    reasoning: Option<bool>,
+) -> config::provider::OpenaiProvider {
+    config::provider::OpenaiProvider {
+        model: Some("qwen/qwen3.8-flash".to_owned()),
+        base_url: Some(format!("http://{}", server.addr)),
+        api_key: api_key.map(str::to_owned),
+        api_key_file,
+        reasoning,
+        ..config::provider::OpenaiProvider::default()
+    }
+}
+
+async fn drain_openrouter(
+    provider: &config::provider::OpenaiProvider,
+    request: &kernel::model::ModelRequest,
+) {
+    let built = demand(
+        providers::OpenAiCompatible::build(
+            config::provider::ProviderType::OpenaiCompatible,
+            provider,
+        ),
+        "provider",
+    );
+    let mut rx = demand(built.stream(request.clone()).await, "stream");
+    while rx.recv().await.is_some() {}
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        untyped,
+        reason = "tool arguments and model JSON are arbitrary objects"
+    )
+)]
+fn assert_openrouter_shapes(calls: &[common::CapturedCall]) {
+    let configured = demand_some(calls.first(), "configured call");
+    assert_eq!(
+        configured.authorization.as_deref(),
+        Some("Bearer test-openrouter-key")
+    );
+    assert_reasoning(&configured.body, Some(false));
+    assert_thinking(&configured.body);
+    let configured_body = json_body(&configured.body);
+    assert_eq!(
+        configured_body
+            .get("response_format")
+            .and_then(|value| value.get("type"))
+            .and_then(serde_json::Value::as_str),
+        Some("json_schema")
+    );
+    let plain = demand_some(calls.get(1), "plain call");
+    assert_eq!(plain.authorization, None);
+    assert_reasoning(&plain.body, None);
+    assert_thinking(&plain.body);
+    let from_file = demand_some(calls.get(2), "file call");
+    assert_eq!(from_file.authorization.as_deref(), Some("Bearer file-key"));
+    assert_reasoning(&from_file.body, Some(false));
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        untyped,
+        reason = "tool arguments and model JSON are arbitrary objects"
+    )
+)]
+fn assert_reasoning(body: &str, enabled: Option<bool>) {
+    let sent = json_body(body)
+        .get("reasoning")
+        .and_then(|value| value.get("enabled"))
+        .and_then(serde_json::Value::as_bool);
+    assert_eq!(sent, enabled);
+}
+
+fn assert_thinking(body: &str) {
+    assert_eq!(
+        json_body(body)
+            .get("chat_template_kwargs")
+            .and_then(|value| value.get("enable_thinking")),
+        Some(&serde_json::Value::Bool(false))
+    );
+}
+
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        untyped,
+        reason = "tool arguments and model JSON are arbitrary objects"
+    )
+)]
+fn json_body(body: &str) -> serde_json::Value {
+    demand(serde_json::from_str(body), "body")
 }

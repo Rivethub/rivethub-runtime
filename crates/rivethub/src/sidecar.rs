@@ -215,7 +215,11 @@ async fn run_server(
     let folder = crate::composition::plugins::tools_folder(config, env)?;
     let plugins =
         mcp::plugins::SocketTools::new(folder.join("tools.sock"), folder.join("tools.token"))?;
+    let identity = crate::composition::identities::load(config, env).await?;
+    let viewer = identity.primary();
     let mut builder = mcp::Server::builder(memory, false, shutdown.child_token())
+        .store_identity(viewer.as_str())
+        .await?
         .display_zone(display_zone(env))
         .plugins(Arc::new(plugins));
     if let Some(sessions) = served.sessions {
@@ -253,7 +257,7 @@ pub(crate) fn memory_future(
 
 fn load_standalone_or_node(env: &Environment) -> Result<Config, StartupError> {
     if let Some(location) = config::resolve_config_path(env)? {
-        let standalone = Config::load(env, &location, config::Profile::Standalone)?;
+        let standalone = Config::load(env, &location)?;
         if standalone.config.sqlite_selected() {
             return Ok(announce(standalone));
         }

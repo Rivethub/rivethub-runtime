@@ -1,0 +1,94 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH sessions AS (\n                SELECT c.owner_user_id AS owner, c.session_key,\n                       max(c.updated_at) AS recent, array_agg(c.id) AS conversations,\n                       (array_agg(c.title ORDER BY c.updated_at DESC, c.id)\n                        FILTER (WHERE c.title ~ '[^[:space:]]'))[1] AS title\n                FROM rh_conversations c\n                WHERE c.owner_user_id <> rh_scope_principal() AND c.task_id IS NULL\n                  AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr WHERE tr.session_key = c.session_key)\n                GROUP BY c.owner_user_id, c.session_key\n             ), ranked AS (\n                SELECT *, row_number() OVER\n                    (PARTITION BY owner ORDER BY recent DESC, session_key DESC) AS position\n                FROM sessions WHERE ($1::timestamptz IS NULL OR recent >= $1)\n                  AND ($2::timestamptz IS NULL OR recent < $2)\n             ) SELECT r.owner AS \"owner!\", r.session_key AS \"session_key!\", r.recent AS \"recent!\", r.title,\n                (SELECT s.content FROM rh_summaries s WHERE s.conversation_id = ANY(r.conversations)\n                 ORDER BY s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,\n                (SELECT m.content FROM rh_messages m WHERE m.conversation_id = ANY(r.conversations)\n                 AND m.role = 'user' ORDER BY m.created_at, m.id LIMIT 1) AS first_user,\n                t.name AS topic_name, parent.name AS parent_name\n             FROM ranked r LEFT JOIN rh_session_placements p ON p.session_id = r.session_key\n             LEFT JOIN rh_topics t ON t.id = p.topic_id LEFT JOIN rh_topics parent ON parent.id = t.parent_id\n             WHERE r.position <= $3 ORDER BY r.owner, r.recent DESC, r.session_key DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "owner!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "owner_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "session_key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_conversations",
+            "name": "session_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "recent!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "title",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "summary",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "first_user",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "topic_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_topics",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "parent_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_topics",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null,
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "5bd6a8b415ba4c4f0498b56baefd3815026b54bacc7c6978348dca26f049cf05"
+}

@@ -66,7 +66,7 @@ async fn memory_help_and_unknown_words_exit_clean() {
 async fn memory_rejects_unknown_options_and_incomplete_flags() {
     let (_home, environment) = env(&[]);
     let missing = run(&["memory", "queue-status"], &environment).await;
-    failure(&missing, "RIVETHUB_PG_URL is required.");
+    failure(&missing, "This command needs a datahub (Postgres).");
     let unknown = run(&["memory", "queue-status", "--sqlite", "db"], &environment).await;
     failure(&unknown, "Unknown option: --sqlite");
     let retry = run(&["memory", "retry-failed"], &environment).await;
@@ -129,7 +129,50 @@ async fn sqlite_config_does_not_satisfy_a_queue_command() {
     let (home, environment) = env(&[]);
     support::config(&home, "memory:\n  sqlite:\n    path: /tmp/memory.sqlite\n");
     let report = run(&["memory", "queue-status"], &environment).await;
-    failure(&report, "RIVETHUB_PG_URL is required.");
+    failure(&report, "This command needs a datahub (Postgres).");
+    assert!(
+        !report.stderr.contains("RIVETHUB_PG_URL"),
+        "{}",
+        report.stderr
+    );
+}
+
+#[tokio::test]
+async fn a_sqlite_node_keeps_postgres_commands_off_a_stray_database_url() {
+    let (home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://127.0.0.1:1/stray")]);
+    let database = home.path().join("memory.sqlite");
+    support::config(
+        &home,
+        &format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
+            database.display()
+        ),
+    );
+    for command in ["queue-status", "consolidate-wiki", "backfill-tool-synth"] {
+        let report = run(&["memory", command], &environment).await;
+        failure(&report, "This command needs a datahub (Postgres).");
+        assert!(
+            !report.stderr.contains("RIVETHUB_PG_URL"),
+            "{command}: {}",
+            report.stderr
+        );
+    }
+    let exported = run(
+        &["memory", "export", "--out", "/tmp/unused-export.dump"],
+        &environment,
+    )
+    .await;
+    assert_eq!(exported.exit, Exit::Failure, "{}", exported.stderr);
+    assert!(
+        exported.stderr.contains("is not initialised"),
+        "{}",
+        exported.stderr
+    );
+    assert!(
+        !exported.stderr.contains("RIVETHUB_PG_URL"),
+        "{}",
+        exported.stderr
+    );
 }
 
 #[tokio::test]

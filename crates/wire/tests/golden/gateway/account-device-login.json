@@ -1,0 +1,1 @@
+{"start":{},"started":{"userCode":"ABCD-EFGH","verificationUri":"https://rivethub.cloud/device#user_code=ABCD-EFGH","expiresIn":600,"pollIntervalMs":5000},"pending":{"status":"pending"},"expired":{"status":"expired"},"denied":{"status":"denied"}}

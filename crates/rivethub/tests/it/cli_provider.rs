@@ -4,6 +4,8 @@ mod degraded;
 mod embed;
 #[path = "cli_provider/harness.rs"]
 mod harness;
+#[path = "cli_provider/lazy.rs"]
+mod lazy;
 #[path = "cli_provider/roles.rs"]
 mod roles;
 #[path = "cli_provider/worker.rs"]
@@ -71,12 +73,7 @@ fn configured(
     let path = home.join("config.yaml");
     std::fs::write(&path, text)?;
     Ok((
-        config::Config::load(
-            &env,
-            &config::ConfigLocation::Current(path),
-            config::Profile::Node,
-        )?
-        .config,
+        config::Config::load(&env, &config::ConfigLocation::Current(path))?.config,
         env,
     ))
 }

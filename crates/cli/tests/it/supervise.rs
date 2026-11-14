@@ -98,13 +98,11 @@ async fn another_owner_is_refused_with_the_state_messages() {
     let pid = std::process::id();
     std::fs::write(&pid_path, format!("{pid}\n")).expect("pid");
     let live = run(&["start"], &env).await;
-    assert_eq!(live.exit, Exit::Failure);
+    assert_eq!(live.exit, Exit::AlreadyRunning);
+    assert_eq!(live.exit.code(), std::process::ExitCode::from(11));
     assert_eq!(
         live.stderr,
-        format!(
-            "Error: refusing to move legacy state: live process {pid} owns {shown}\n",
-            shown = pid_path.display()
-        )
+        format!("Error: a RivetHub node is already running (pid {pid})\n")
     );
 
     std::fs::write(&pid_path, "not-a-pid\n").expect("invalid pid");
@@ -120,12 +118,11 @@ async fn another_owner_is_refused_with_the_state_messages() {
     std::fs::remove_file(&pid_path).expect("remove pid");
     let claim = config::claim_node(&directory, pid).expect("claim");
     let locked = run(&["start"], &env).await;
+    assert_eq!(locked.exit, Exit::AlreadyRunning);
+    assert_eq!(locked.exit.code(), std::process::ExitCode::from(11));
     assert_eq!(
         locked.stderr,
-        format!(
-            "Error: refusing to move legacy state: owner lock is held at {shown}\n",
-            shown = pid_path.display()
-        )
+        format!("Error: a RivetHub node is already running (pid {pid})\n")
     );
     claim.release().expect("release");
 }

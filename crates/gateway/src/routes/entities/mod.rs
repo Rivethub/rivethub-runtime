@@ -24,11 +24,10 @@ use kernel::topics::Topic;
 use kernel::topics::TopicId;
 use kernel::topics::TopicKey;
 use kernel::topics::TopicKind;
-use kernel::topics::TopicTree;
 use serde::Deserialize;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
-use wire::gateway::entities::EntityType;
+use wire::gateway::entities::EntityTypeInfo;
 use wire::gateway::entities::Fact;
 use wire::gateway::entities::FactEdit;
 
@@ -40,6 +39,10 @@ use crate::tenancy::UserId;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
     Router::new()
+        .route(
+            "/api/entities/types",
+            routing::get(types).fallback(super::method_not_allowed),
+        )
         .route(
             "/api/entities",
             routing::get(list).fallback(super::method_not_allowed),
@@ -59,7 +62,7 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
 #[serde(default)]
 struct ListParams {
     #[serde(rename = "type")]
-    entity_type: Option<EntityType>,
+    entity_type: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -68,9 +71,14 @@ struct ShowParams {
     as_of: Option<DateTime<Utc>>,
 }
 
+pub(super) struct Filed {
+    id: TopicId,
+    pub(super) key: String,
+    pub(super) name: String,
+}
+
 struct Known {
     topics: Vec<Topic>,
-    tree: TopicTree,
 }
 
 impl Known {
@@ -83,23 +91,31 @@ impl Known {
             .into_iter()
             .map(|listing| listing.topic)
             .collect();
-        let tree = TopicTree::of(&topics);
-        Ok(Self { topics, tree })
+        Ok(Self { topics })
     }
 
-    fn entity_type(&self, entity: &Topic) -> Option<EntityType> {
-        let root = self.tree.root(entity.id);
-        self.topics
-            .iter()
-            .find(|topic| topic.id == root && topic.kind == TopicKind::Type)
-            .and_then(|root| map::entity_type(root.name.as_str()))
+    fn filed(&self, entity: &Topic) -> Option<Filed> {
+        let mut parent = entity.parent;
+        for _ in 0..32 {
+            let id = parent?;
+            let topic = self.topics.iter().find(|topic| topic.id == id)?;
+            if topic.kind == TopicKind::Type {
+                return Some(Filed {
+                    id: topic.id,
+                    key: topic.slug.as_str().to_owned(),
+                    name: topic.name.as_str().to_owned(),
+                });
+            }
+            parent = topic.parent;
+        }
+        None
     }
 
-    fn entities(&self) -> impl Iterator<Item = (&Topic, EntityType)> {
+    fn entities(&self) -> impl Iterator<Item = (&Topic, Filed)> {
         self.topics
             .iter()
             .filter(|topic| topic.kind == TopicKind::Entity)
-            .filter_map(|topic| self.entity_type(topic).map(|kind| (topic, kind)))
+            .filter_map(|topic| self.filed(topic).map(|kind| (topic, kind)))
     }
 
     fn title(&self, id: TopicId) -> Option<&str> {
@@ -116,18 +132,55 @@ async fn list(
 ) -> Result<Json<Vec<EntitySummary>>, ApiError> {
     let known = Known::load(&gateway).await?;
     let links = gateway.facts()?.session_links().await.map_err(map::error)?;
+    let wanted = params
+        .entity_type
+        .as_deref()
+        .filter(|kind| !kind.is_empty());
     let mut entities: Vec<EntitySummary> = known
         .entities()
-        .filter(|(_, kind)| params.entity_type.is_none_or(|wanted| wanted == *kind))
-        .map(|(topic, kind)| EntitySummary {
-            id: topic.id.to_string(),
-            title: topic.name.as_str().to_owned(),
-            entity_type: kind,
-            session_count: links.iter().filter(|link| link.entity == topic.id).count(),
-        })
+        .filter(|(_, kind)| wanted.is_none_or(|slug| slug == kind.key))
+        .map(|(topic, kind)| summary(topic, &kind, &links))
         .collect();
     entities.sort_by_key(|entity| entity.title.to_lowercase());
     Ok(Json(entities))
+}
+
+async fn types(State(gateway): State<Arc<Gateway>>) -> Result<Json<Vec<EntityTypeInfo>>, ApiError> {
+    let known = Known::load(&gateway).await?;
+    let mut counts = std::collections::BTreeMap::<TopicId, u64>::new();
+    for (_, kind) in known.entities() {
+        *counts.entry(kind.id).or_default() += 1;
+    }
+    let mut listed: Vec<EntityTypeInfo> = known
+        .topics
+        .iter()
+        .filter(|topic| topic.kind == TopicKind::Type)
+        .map(|topic| EntityTypeInfo {
+            key: topic.slug.as_str().to_owned(),
+            type_name: topic.name.as_str().to_owned(),
+            count: match counts.get(&topic.id) {
+                Some(count) => *count,
+                None => 0,
+            },
+        })
+        .collect();
+    listed.sort_by(|left, right| {
+        left.type_name
+            .to_lowercase()
+            .cmp(&right.type_name.to_lowercase())
+            .then(left.key.cmp(&right.key))
+    });
+    Ok(Json(listed))
+}
+
+fn summary(topic: &Topic, kind: &Filed, links: &[kernel::facts::SessionLink]) -> EntitySummary {
+    EntitySummary {
+        id: topic.id.to_string(),
+        title: topic.name.as_str().to_owned(),
+        entity_type: kind.key.clone(),
+        type_name: kind.name.clone(),
+        session_count: links.iter().filter(|link| link.entity == topic.id).count(),
+    }
 }
 
 async fn show(
@@ -140,7 +193,7 @@ async fn show(
     let (entity, kind) = resolve(&gateway, &known, &key).await?;
     let viewer = gateway.tenancy.viewer(&user);
     Ok(Json(
-        article::build(&gateway, &known, &entity, kind, &viewer, params.as_of).await?,
+        article::build(&gateway, &known, &entity, &kind, &viewer, params.as_of).await?,
     ))
 }
 
@@ -202,11 +255,7 @@ fn named(claims: &[Claim], id: &str, key: &FactKey) -> Result<(), ApiError> {
     }
 }
 
-async fn resolve(
-    gateway: &Gateway,
-    known: &Known,
-    key: &str,
-) -> Result<(Topic, EntityType), ApiError> {
+async fn resolve(gateway: &Gateway, known: &Known, key: &str) -> Result<(Topic, Filed), ApiError> {
     let missing = || ApiError::Missing(format!("unknown entity {key}"));
     let id = TopicId::from_str(key).map_err(|_| missing())?;
     let topic = gateway
@@ -216,6 +265,6 @@ async fn resolve(
         .map_err(super::topics::topic_error)?
         .filter(|topic| topic.kind == TopicKind::Entity)
         .ok_or_else(missing)?;
-    let kind = known.entity_type(&topic).ok_or_else(missing)?;
+    let kind = known.filed(&topic).ok_or_else(missing)?;
     Ok((topic, kind))
 }

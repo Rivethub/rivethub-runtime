@@ -22,7 +22,6 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use wire::gateway::drops::{DropRefusal, Uploaded};
 use wire::gateway::users::{ScopedToken, TokenScope, UserToken};
-use wire::session_id::SessionId;
 
 use crate::common;
 
@@ -108,7 +107,7 @@ fn no_visibility() -> TenancyStoreError {
 
 #[async_trait::async_trait]
 impl TenancyStore for DefaultVisibility {
-    async fn sync_spaces(&self, _spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    async fn sync_spaces(&self, _node: &str, _spaces: &[Space]) -> Result<(), TenancyStoreError> {
         Ok(())
     }
 
@@ -131,15 +130,15 @@ impl TenancyStore for DefaultVisibility {
     async fn session_visibility(
         &self,
         _viewer: &Viewer,
-        _sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
+        _sessions: &[wire::session_id::SessionKey],
+    ) -> Result<BTreeMap<wire::session_id::SessionKey, SessionVisibility>, TenancyStoreError> {
         Err(no_visibility())
     }
 
     async fn mark_session(
         &self,
         _viewer: &Viewer,
-        _session: &SessionId,
+        _session: &wire::session_id::SessionKey,
         _mark: Option<&Visibility>,
         _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {

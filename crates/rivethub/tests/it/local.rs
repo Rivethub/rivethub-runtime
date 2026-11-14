@@ -133,6 +133,72 @@ fn write_config(home: &std::path::Path, body: &str) -> TestResult {
 }
 
 #[tokio::test]
+async fn a_second_local_start_names_the_running_node_and_exits_once() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let port = testkit::ports::claim()?;
+    let port_text = port.to_string();
+    let started = start(
+        home.path(),
+        &["local", "--no-lan", "--port", &port_text],
+        &["gateway listening on "],
+    )
+    .await?;
+    let pid = started.child.id().ok_or("the node already stopped")?;
+    let second = Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["local", "--no-lan", "--port", &port_text])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("TOKIO_WORKER_THREADS", "2")
+        .output()
+        .await?;
+    let stderr = String::from_utf8(second.stderr)?;
+    assert_eq!(second.status.code(), Some(11), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!("Error: a RivetHub node is already running (pid {pid})\n")
+    );
+    assert!(
+        second.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+    stop(started).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn local_refuses_workers_when_no_model_is_configured() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let port = testkit::ports::claim()?;
+    let database = home.path().join(".rivethub").join("memory.sqlite");
+    write_config(
+        home.path(),
+        &format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
+            database.display()
+        ),
+    )?;
+    let started = Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["local", "--no-lan"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("TOKIO_WORKER_THREADS", "2")
+        .output()
+        .await?;
+    let stderr = String::from_utf8(started.stderr)?;
+    assert_eq!(
+        started.status.code(),
+        Some(1),
+        "{stderr}{}",
+        String::from_utf8_lossy(&started.stdout)
+    );
+    assert_eq!(stderr, format!("Error: {}\n", config::NO_MODEL_NOTE));
+    assert_eq!(started.stdout, b"");
+    assert!(!home.path().join(".rivethub/rivethub.pid").exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestResult {
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;

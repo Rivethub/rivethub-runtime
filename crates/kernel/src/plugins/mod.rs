@@ -131,7 +131,8 @@ pub fn access(read: bool, path: &str) -> PluginAccess {
                 "api",
                 "memory",
                 "tool",
-                "memory_search" | "memory_browse" | "memory_stats" | "memory_get_full",
+                "memory_search" | "memory_browse" | "memory_team" | "memory_stats"
+                | "memory_get_full",
             ],
         )
         | (true, ["api", "memory" | "wiki", ..]) => needs(Permission::MemoryRead),

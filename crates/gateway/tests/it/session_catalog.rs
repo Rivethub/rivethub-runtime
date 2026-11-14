@@ -5,10 +5,10 @@ use crate::session_support;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use gateway::sessions::{SessionRegistry, owners_file};
+use gateway::sessions::SessionRegistry;
 use kernel::memory::{MemoryState, SessionRecord, SessionTopic};
 use kernel::topics::TopicId;
-use session_support::{Fixture, http, user};
+use session_support::{Fixture, http};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
 use wire::gateway::session_catalog::{SessionDetail, SessionSummaryPage, SharedWith};
 use wire::harness::HarnessId;
@@ -28,6 +28,7 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
     let started: DateTime<Utc> =
         DateTime::from_timestamp(1_790_000_000 + minute * 60, 0).unwrap_or(DateTime::UNIX_EPOCH);
     SessionRecord {
+        owner: None,
         id: claude(native),
         title: title.to_owned(),
         started_at: started,
@@ -40,17 +41,13 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
         gist: Some("gist".to_owned()),
         cwd: Some("/home/user/app".to_owned()),
         origin: None,
+        conversation: None,
     }
 }
 
 fn setup(stores: Stores, records: Vec<SessionRecord>) -> Setup {
     let state = tempfile::tempdir().expect("state");
-    let path = owners_file(state.path());
-    std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
-    std::fs::write(&path, "{}").expect("owners");
-    let registry = SessionRegistry::default()
-        .with_owners_file(path)
-        .with_node_owner(user("owner"));
+    let registry = SessionRegistry::default();
     let deletion = Arc::new(FakeSessionDeletion::default());
     let catalog = records.into_iter().fold(
         FakeSessionCatalog::new(deletion.clone()),
@@ -206,4 +203,33 @@ async fn a_bad_filter_is_a_bad_request() {
         let (status, _) = call(&setup, "GET", &format!("/api/sessions?{query}")).await;
         assert_eq!(status, 400, "{query}");
     }
+}
+
+#[tokio::test]
+async fn teammate_owner_is_carried_by_both_catalog_list_and_detail() {
+    let (stores, mut records) = seeded();
+    for record in &mut records {
+        if record.id == claude("solo") {
+            record.owner = Some("alex".into());
+        }
+    }
+    let setup = setup(stores, records);
+    let (_, body) = call(&setup, "GET", "/api/sessions").await;
+    let page = page(&body);
+    let solo = page
+        .items
+        .iter()
+        .find(|row| row.title == "Solo")
+        .expect("solo");
+    assert_eq!(solo.owner.as_deref(), Some("alex"));
+    let parent = page
+        .items
+        .iter()
+        .find(|row| row.title == "Parent")
+        .expect("parent");
+    assert_eq!(parent.owner, None);
+    let key = encode_segment(&claude("solo"));
+    let (_, body) = call(&setup, "GET", &format!("/api/sessions/{key}")).await;
+    let detail: SessionDetail = serde_json::from_slice(&body).expect("detail");
+    assert_eq!(detail.row.owner.as_deref(), Some("alex"));
 }

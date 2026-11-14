@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use chrono::Utc;
 use tokio::io::AsyncWriteExt as _;
@@ -12,20 +15,34 @@ const LOG_FILE: &str = "plugin.log";
 const PREVIOUS_LOG_FILE: &str = "plugin.log.1";
 pub(super) const DEFAULT_TAIL: usize = 200;
 pub(super) const MAX_TAIL: usize = 2000;
+const QUEUED_LINES: usize = 1024;
+const REPORT_EVERY: u32 = 256;
 
 #[derive(Debug, Clone)]
 pub(super) struct LogSink {
-    lines: mpsc::UnboundedSender<(PathBuf, PluginLogLine)>,
+    lines: mpsc::Sender<(PathBuf, PluginLogLine)>,
+    dropped: Dropped,
 }
+
+type Dropped = Arc<Mutex<BTreeMap<PathBuf, u64>>>;
 
 impl LogSink {
     pub(super) fn open(
         tasks: &tokio_util::task::TaskTracker,
         shutdown: tokio_util::sync::CancellationToken,
     ) -> Self {
-        let (lines, received) = mpsc::unbounded_channel();
-        tasks.spawn(write_lines(received, shutdown));
-        Self { lines }
+        Self::with_capacity(tasks, shutdown, QUEUED_LINES)
+    }
+
+    fn with_capacity(
+        tasks: &tokio_util::task::TaskTracker,
+        shutdown: tokio_util::sync::CancellationToken,
+        capacity: usize,
+    ) -> Self {
+        let (lines, received) = mpsc::channel(capacity);
+        let dropped = Dropped::default();
+        tasks.spawn(write_lines(received, Arc::clone(&dropped), shutdown));
+        Self { lines, dropped }
     }
 
     pub(super) fn write(
@@ -43,8 +60,14 @@ impl LogSink {
             stream,
             text,
         };
-        if self.lines.send((folder.to_path_buf(), line)).is_err() {
-            tracing::debug!(plugin = plugin.as_ref(), "plug-in log writer has stopped");
+        match self.lines.try_send((folder.to_path_buf(), line)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                *self.dropped.lock().entry(folder.to_path_buf()).or_default() += 1;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!(plugin = plugin.as_ref(), "plug-in log writer has stopped");
+            }
         }
     }
 }
@@ -55,10 +78,12 @@ struct OpenLog {
 }
 
 async fn write_lines(
-    mut received: mpsc::UnboundedReceiver<(PathBuf, PluginLogLine)>,
+    mut received: mpsc::Receiver<(PathBuf, PluginLogLine)>,
+    dropped: Dropped,
     shutdown: tokio_util::sync::CancellationToken,
 ) {
     let mut open: BTreeMap<PathBuf, OpenLog> = BTreeMap::new();
+    let mut since_report = 0_u32;
     loop {
         let next = tokio::select! {
             biased;
@@ -71,10 +96,34 @@ async fn write_lines(
         let Some((folder, line)) = next else {
             return;
         };
-        if let Err(error) = append(&mut open, &folder, &line).await {
-            tracing::warn!(%error, folder = %folder.display(), "plug-in log line not written");
-            open.remove(&folder);
+        written(&mut open, &folder, &line).await;
+        since_report += 1;
+        if received.is_empty() || since_report >= REPORT_EVERY {
+            since_report = 0;
+            report_dropped(&mut open, &dropped).await;
         }
+    }
+}
+
+async fn report_dropped(open: &mut BTreeMap<PathBuf, OpenLog>, dropped: &Dropped) {
+    let lost = std::mem::take(&mut *dropped.lock());
+    for (folder, count) in lost {
+        tracing::warn!(folder = %folder.display(), "{count} plug-in log lines dropped");
+        let notice = PluginLogLine {
+            at: Utc::now(),
+            stream: PluginLogStream::Host,
+            text: format!(
+                "{count} lines dropped: the plug-in wrote faster than its log could be saved"
+            ),
+        };
+        written(open, &folder, &notice).await;
+    }
+}
+
+async fn written(open: &mut BTreeMap<PathBuf, OpenLog>, folder: &Path, line: &PluginLogLine) {
+    if let Err(error) = append(open, folder, line).await {
+        tracing::warn!(%error, folder = %folder.display(), "plug-in log line not written");
+        open.remove(folder);
     }
 }
 
@@ -134,4 +183,63 @@ pub(super) async fn tail(
     }
     let skip = lines.len().saturating_sub(count);
     Ok(lines.split_off(skip))
+}
+
+#[cfg(test)]
+mod tests {
+    use wire::plugin::PluginId;
+    use wire::plugin::host::PluginLogStream;
+
+    use super::{LogSink, tail};
+
+    #[tokio::test]
+    async fn lines_beyond_the_queue_are_counted_and_reported()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let tasks = tokio_util::task::TaskTracker::new();
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let sink = LogSink::with_capacity(&tasks, shutdown.clone(), 8);
+        let plugin = PluginId::try_from("noisy".to_owned())?;
+        for index in 0..100 {
+            sink.write(
+                folder.path(),
+                &plugin,
+                PluginLogStream::Stdout,
+                format!("line {index}"),
+            );
+        }
+        sink.write(
+            folder.path(),
+            &plugin,
+            PluginLogStream::Stdout,
+            "after".to_owned(),
+        );
+        tokio::task::yield_now().await;
+        sink.write(
+            folder.path(),
+            &plugin,
+            PluginLogStream::Stdout,
+            "last".to_owned(),
+        );
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+        let lines: Vec<String> = tail(folder.path(), 1000)
+            .await?
+            .into_iter()
+            .map(|line| line.text)
+            .collect();
+        assert_eq!(lines.first().map(String::as_str), Some("line 0"));
+        assert!(
+            lines.len() <= 10,
+            "the queue held at most its capacity: {lines:?}"
+        );
+        assert!(lines.iter().any(|text| text == "last"), "{lines:?}");
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some("93 lines dropped: the plug-in wrote faster than its log could be saved"),
+            "{lines:?}"
+        );
+        Ok(())
+    }
 }

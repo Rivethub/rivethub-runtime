@@ -49,6 +49,7 @@ pub(super) async fn find(
                 hits: session.hits,
                 excerpts: session.excerpts,
                 imported_from: session.imported_from,
+                session: Some(session.session),
             })
             .collect(),
         dropped: found.dropped,

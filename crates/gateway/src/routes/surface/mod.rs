@@ -27,9 +27,14 @@ pub(super) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
         .fallback(fallback)
 }
 
+const NO_APP_PAGE: &str = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>RivetHub</title></head>\n<body>\n<h1>This RivetHub node is running</h1>\n<p>The web app is not installed on this node.</p>\n<p>Agents read memory over MCP. The app is in preview.</p>\n</body>\n</html>\n";
+
 async fn root_get(State(gateway): State<Arc<Gateway>>) -> Response {
     if let Some(target) = gateway.settings().root_redirect.clone() {
         return redirect(&target).into_response();
+    }
+    if gateway.settings().static_dir.is_none() {
+        return no_app_page(&Method::GET);
     }
     gateway.count(crate::account::UsageEvent::AppOpen);
     assets::serve(&gateway, &Method::GET, "/")
@@ -38,9 +43,34 @@ async fn root_get(State(gateway): State<Arc<Gateway>>) -> Response {
 }
 
 async fn root_head(State(gateway): State<Arc<Gateway>>) -> Response {
+    if gateway.settings().static_dir.is_none() {
+        return no_app_page(&Method::HEAD);
+    }
     assets::serve(&gateway, &Method::HEAD, "/")
         .await
         .into_response()
+}
+
+fn no_app_page(method: &Method) -> Response {
+    let body = if *method == Method::HEAD {
+        axum::body::Body::empty()
+    } else {
+        axum::body::Body::from(NO_APP_PAGE)
+    };
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the page headers are static ASCII, so building this response does not fail"
+        )
+    )]
+    return Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_LENGTH, NO_APP_PAGE.len())
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(body)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
 }
 
 fn redirect(target: &str) -> Result<Response, ApiError> {

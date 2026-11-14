@@ -443,7 +443,11 @@ pub(super) async fn page_of(
 pub(super) async fn enqueue_syncs(
     conn: &mut PgConnection,
     syncs: Vec<SyncTopicPage>,
+    missing: crate::MissingModels,
 ) -> Result<(), TopicError> {
+    if missing.language {
+        return Ok(());
+    }
     for sync in syncs {
         let job = sync
             .job()

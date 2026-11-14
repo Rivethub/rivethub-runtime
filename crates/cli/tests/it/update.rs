@@ -88,6 +88,72 @@ async fn bad_archives_and_migration_failures_preserve_installation() -> Result {
 }
 
 #[tokio::test]
+async fn no_restart_repairs_a_generated_unit_and_leaves_a_hand_edit() -> Result {
+    let fixture = Fixture::new()?;
+    let unit = Scope::User.unit_path(fixture.home.path());
+    let env_file = fixture.home.path().join(".rivethub/.env");
+    let legacy = format!(
+        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/rh\" local\nEnvironmentFile=-\"{}\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+        env_file.display()
+    );
+    std::fs::write(&unit, &legacy)?;
+    let mut args = args();
+    args.version = Some("v0.9.0".to_owned());
+    args.no_restart = true;
+    let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(
+        report
+            .stdout
+            .contains("EnvironmentFile is no longer quoted"),
+        "{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("added RestartPreventExitStatus=11"),
+        "{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("Restart skipped (--no-restart).\n"),
+        "{}",
+        report.stdout
+    );
+    let updated = std::fs::read_to_string(&unit)?;
+    assert!(!updated.contains("EnvironmentFile=-\""));
+    assert!(updated.contains("RestartPreventExitStatus=11\n"));
+    assert_eq!(
+        std::fs::read_to_string(unit.with_file_name("rivethub.service.bak"))?,
+        legacy
+    );
+    let calls = std::fs::read_to_string(&fixture.calls)?;
+    assert!(
+        calls.contains("systemctl|--user|daemon-reload\n"),
+        "{calls}"
+    );
+    assert!(!calls.contains("|restart|"), "{calls}");
+
+    let fixture = Fixture::new()?;
+    let unit = Scope::User.unit_path(fixture.home.path());
+    let original = std::fs::read_to_string(&unit)?;
+    let report = fixture.run(&args, &fixture.env(), Published::Good).await?;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert!(
+        report.stdout.contains("edited by hand"),
+        "{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("`rh service init`"),
+        "{}",
+        report.stdout
+    );
+    assert_eq!(std::fs::read_to_string(&unit)?, original);
+    assert!(!std::fs::read_to_string(&fixture.calls)?.contains("systemctl"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn explicit_version_and_no_restart_still_migrate() -> Result {
     let fixture = Fixture::new()?;
     let mut args = args();

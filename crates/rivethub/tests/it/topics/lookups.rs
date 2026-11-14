@@ -54,4 +54,18 @@ impl SessionCatalog for Lookups {
         self.calls.lock().records.push(sessions.to_vec());
         self.inner.records(sessions).await
     }
+
+    async fn conversation_session(
+        &self,
+        conversation: uuid::Uuid,
+    ) -> Result<Option<SessionKey>, MemoryStoreError> {
+        self.inner.conversation_session(conversation).await
+    }
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &kernel::memory::MessagesQuery,
+    ) -> Result<kernel::memory::SessionMessages, MemoryStoreError> {
+        self.inner.messages(key, query).await
+    }
 }

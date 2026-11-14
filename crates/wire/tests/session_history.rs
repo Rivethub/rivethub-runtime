@@ -436,3 +436,30 @@ fn session_response_flattens_the_summary_beside_redirected_to() {
     );
     roundtrip::<HarnessSessionResponse>(&summary_wire());
 }
+
+#[test]
+fn every_way_of_naming_a_session_decodes_to_the_same_reference() {
+    let id = session(&format!("claude-code:{UUID}"));
+    for segment in [
+        encode_segment(&id),
+        id.as_str().to_owned(),
+        id.as_str().replace(':', "%3A"),
+    ] {
+        assert_eq!(
+            decode_segment(&segment).unwrap().session,
+            SessionRef::Canonical(id.clone()),
+            "{segment}"
+        );
+    }
+    let import = format!("import:{}", "ab".repeat(32));
+    for segment in [import.clone(), import.replace(':', "%3A")] {
+        let decoded = decode_segment(&segment).unwrap();
+        assert_eq!(decoded.session, SessionRef::Import(import.parse().unwrap()));
+        assert_eq!(
+            decoded.session.key().map(|key| key.to_string()),
+            Some(import.clone())
+        );
+    }
+    assert_eq!(decode_segment(UUID).unwrap().session.key(), None);
+    invalid("import:short");
+}

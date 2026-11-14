@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
 use kernel::facts::FactError;
 use kernel::facts::FactId;
@@ -32,7 +33,7 @@ const CLAIMS_SQL: &str = "SELECT (SELECT g.id FROM rh_entity_facts g
                    WHERE g.topic_id = f.topic_id AND g.key = f.key
                    ORDER BY g.created_at, g.id LIMIT 1) AS fact,
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id
+            c.at, c.recorded_at, c.owner_user_id, c.settled
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
       WHERE f.topic_id = $1
@@ -56,6 +57,15 @@ const SESSION_SQL: &str = "WITH conv AS (
             (SELECT coalesce(settings, '{}'::jsonb) FROM conv WHERE starts_with(session_key, $2)
               ORDER BY updated_at DESC LIMIT 1) AS import_settings";
 
+const HISTORY_SQL: &str = "SELECT h.sentence,
+            coalesce(s.latest_at, (h.session_on::timestamp AT TIME ZONE 'UTC')) AS at,
+            c.session_key
+       FROM rh_entity_history h
+       LEFT JOIN rh_summaries s ON s.id = h.summary_id
+       LEFT JOIN rh_conversations c ON c.id = coalesce(h.conversation_id, s.conversation_id)
+      WHERE h.entity_id = $1
+      ORDER BY 2 DESC, h.summary_id DESC";
+
 const FACT_SQL: &str = "WITH found AS (
          SELECT id FROM rh_entity_facts WHERE topic_id = $1 AND key = $2
           ORDER BY created_at, id LIMIT 1
@@ -68,13 +78,14 @@ const FACT_SQL: &str = "WITH found AS (
 
 const CLAIM_SQL: &str = "INSERT INTO rh_entity_fact_claims
             (id, fact_id, value, actor, pinned, session_id, summary_id, evidence, at, recorded_at,
-             owner_user_id)
+             owner_user_id, settled)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
              coalesce($11, (SELECT s.owner_user_id FROM rh_summaries s WHERE s.id = $7),
-                      rh_scope_principal()))
+                      rh_scope_principal()),
+             $12)
      ON CONFLICT (fact_id, summary_id) WHERE summary_id IS NOT NULL DO UPDATE
         SET value = EXCLUDED.value, evidence = EXCLUDED.evidence, at = EXCLUDED.at,
-            recorded_at = EXCLUDED.recorded_at";
+            recorded_at = EXCLUDED.recorded_at, settled = EXCLUDED.settled";
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct ClaimRow {
@@ -89,6 +100,14 @@ pub(crate) struct ClaimRow {
     at: DateTime<Utc>,
     recorded_at: DateTime<Utc>,
     owner_user_id: String,
+    settled: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct HistoryRow {
+    sentence: String,
+    at: DateTime<Utc>,
+    session_key: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -125,12 +144,65 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
             session: SessionId::from_str(session).map_err(|error| stored("fact session", error))?,
             summary,
             evidence: row.evidence.as_deref().and_then(Evidence::quote),
+            settled: row.settled,
         }),
         _ => Err(FactError::Unavailable(Box::new(Error::StoredValue {
             field: "fact actor",
             source: format!("unknown claim actor {:?}", row.actor).into(),
         }))),
     }
+}
+
+pub(crate) async fn claims_on(
+    conn: &mut PgConnection,
+    entity: Uuid,
+) -> Result<Vec<Claim>, FactError> {
+    sqlx::query_as::<_, ClaimRow>(CLAIMS_SQL)
+        .bind(entity)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(failed("fact claims"))?
+        .iter()
+        .map(claim)
+        .collect()
+}
+
+const TOPIC_CLAIMS_SQL: &str = "SELECT f.topic_id,
+            (SELECT g.id FROM rh_entity_facts g
+              WHERE g.topic_id = f.topic_id AND g.key = f.key
+              ORDER BY g.created_at, g.id LIMIT 1) AS fact,
+            f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
+            c.at, c.recorded_at, c.owner_user_id, c.settled
+       FROM rh_entity_fact_claims c
+       JOIN rh_entity_facts f ON f.id = c.fact_id
+      WHERE f.topic_id = ANY($1)
+      ORDER BY f.topic_id, c.at, c.recorded_at, c.id";
+
+#[derive(sqlx::FromRow)]
+struct TopicClaimRow {
+    topic_id: Uuid,
+    #[sqlx(flatten)]
+    claim: ClaimRow,
+}
+
+pub(crate) async fn claims_for<'e, E>(
+    executor: E,
+    topics: &[Uuid],
+) -> Result<Vec<(Uuid, Claim)>, FactError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if topics.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_as::<_, TopicClaimRow>(TOPIC_CLAIMS_SQL)
+        .bind(topics)
+        .fetch_all(executor)
+        .await
+        .map_err(failed("fact claims"))?;
+    rows.into_iter()
+        .map(|row| claim(&row.claim).map(|stored| (row.topic_id, stored)))
+        .collect()
 }
 
 pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
@@ -144,7 +216,7 @@ pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
     })
 }
 
-async fn insert(
+pub(crate) async fn insert_claim(
     conn: &mut PgConnection,
     claim: &NewClaim,
     now: DateTime<Utc>,
@@ -157,12 +229,13 @@ async fn insert(
         .fetch_one(&mut *conn)
         .await
         .map_err(failed("fact create"))?;
-    let (actor, pinned, session, summary, evidence, by) = match &claim.said {
-        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str())),
+    let (actor, pinned, session, summary, evidence, by, settled) = match &claim.said {
+        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str()), false),
         Said::Writer {
             session,
             summary,
             evidence,
+            settled,
         } => (
             "wiki-writer",
             false,
@@ -170,6 +243,7 @@ async fn insert(
             Some(*summary),
             evidence.as_ref().map(Evidence::as_str),
             None,
+            *settled,
         ),
     };
     sqlx::query(CLAIM_SQL)
@@ -184,6 +258,7 @@ async fn insert(
         .bind(claim.at)
         .bind(now)
         .bind(by.or_else(|| claim.owner.as_ref().map(Owner::as_str)))
+        .bind(settled)
         .execute(&mut *conn)
         .await
         .map_err(failed("fact claim"))?;
@@ -196,7 +271,7 @@ impl FactStore for PostgresMemory {
         let mut tx = self.pool.begin().await.map_err(failed("fact claim"))?;
         let now = Utc::now();
         for claim in claims {
-            insert(&mut tx, claim, now).await?;
+            insert_claim(&mut tx, claim, now).await?;
         }
         tx.commit().await.map_err(failed("fact claim"))
     }
@@ -243,8 +318,7 @@ impl FactStore for PostgresMemory {
                     title: row.title,
                     started_at,
                     last_at,
-                    messages: u64::try_from(row.messages)
-                        .map_err(|error| stored("fact session messages", error))?,
+                    messages: crate::stats::stored_count(row.messages, "fact session messages"),
                     provenance: row
                         .import_settings
                         .map(|settings| Provenance::from_settings(&settings.0)),
@@ -253,4 +327,27 @@ impl FactStore for PostgresMemory {
         }
         Ok(found)
     }
+
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        let rows = sqlx::query_as::<_, HistoryRow>(HISTORY_SQL)
+            .bind(entity.uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(failed("entity history"))?;
+        rows.into_iter().map(history_line).collect()
+    }
+}
+
+fn history_line(row: HistoryRow) -> Result<EntityHistory, FactError> {
+    let session = match row.session_key.filter(|key| !key.is_empty()) {
+        Some(key) => Some(
+            SessionId::from_str(&key).map_err(|error| stored("entity history session", error))?,
+        ),
+        None => None,
+    };
+    Ok(EntityHistory {
+        at: row.at,
+        sentence: row.sentence,
+        session,
+    })
 }

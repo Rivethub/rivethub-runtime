@@ -165,7 +165,9 @@ what the node could not take under `~/.rivethub/capture-spool/` for the next run
 | `grok-build` | `Stop`, `PreCompact`, `SessionEnd` | `$GROK_HOME` (`~/.grok`) | `grok-build:<session>` |
 | `codex` | `Stop`, `SessionEnd` | `$CODEX_HOME/sessions` (`~/.codex/sessions`) | `codex:<session>` |
 | `opencode` | `session.idle`, `session.error` from an opencode plug-in | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
-| `dsh` | `turn/end` from a dsh plug-in | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
+| `dsh` | `turn/end` from `$DSH_HOME/plugins/rivethub-capture.mjs` | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
+
+`rh harness connect dsh` writes that plug-in and a recall MCP entry into `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`). DeepSeek Harness applies the home patch to every profile, including profiles created later. `rh harness disconnect dsh` removes both.
 
 For Claude Code, each of its events gets the same entry in `settings.json`:
 
@@ -180,7 +182,7 @@ nothing, so the workers' own model calls never become conversations. `memory.cap
 ### MCP
 
 `rh mcp` gives any MCP client this node's memory: `memory_search` (hybrid, fts, trigram, regex or vector),
-`memory_browse`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search` and `wiki_read`; then the plug-in creator's four tools and every running plug-in's tools, named `<plugin>-<tool>`. It
+`memory_browse`, `memory_team`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search` and `wiki_read`; then the plug-in creator's four tools and every running plug-in's tools, named `<plugin>-<tool>`. It
 serves stdio by default and streamable HTTP at `/mcp` when `transports.mcp` names a host (bearer `auth_token` required) or
 a socket. On a SQLite node `rh mcp` opens the node's SQLite file and serves stdio; the network transports there are
 `rh local`'s own.
@@ -188,6 +190,20 @@ a socket. On a SQLite node `rh mcp` opens the node's SQLite file and serves stdi
 ```json
 { "mcpServers": { "rivethub": { "command": "rh", "args": ["mcp"] } } }
 ```
+
+Team recall uses the database's actual person for a pinned login, with `ownerUserId` as the
+fallback on an unpinned node. Shared membership comes only from the store; per-person users
+files need no team list. On a shared hub, initialize instructions name that person and teammates. Other people's
+sessions are labelled `from <person> · team` and rendered as quoted data, never instructions.
+`memory_team` shows visible teammates' recent sessions grouped by person, with `window`
+(default `last_7d`) and `limit` per person (default 5, maximum 20). Store row-level security
+still decides what can be read; another person's private sessions never become visible.
+
+`memory.recall.own_weight` sets the Postgres hybrid ranking preference for your own sessions:
+1.25 by default, finite range 1.0–2.0; 1.0 disables it. The factor multiplies the fused score
+before sorting and limiting when teammate candidates are present. Relevance still matters:
+a strong teammate match can outrank a weak own match. Chronological browse and SQLite
+ranking are unchanged.
 
 ## Plug-ins
 

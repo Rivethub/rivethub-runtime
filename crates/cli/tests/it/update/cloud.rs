@@ -1,4 +1,5 @@
 use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::sync::Arc;
 
 use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as _};
@@ -11,7 +12,6 @@ use base64::engine::general_purpose::STANDARD;
 use cli::Exit;
 use cli::service::Scope;
 use cli::update::Updater;
-use gateway::account::{AccountFiles, Membership};
 use parking_lot::Mutex;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -59,6 +59,14 @@ async fn cloud(signing: Signing) -> Result<(testkit::Stub, String, Arc<Cloud>)> 
     let routes = axum::Router::new()
         .route("/v1/updates/latest", get(latest))
         .route(
+            "/v1/account",
+            get(|| async {
+                axum::Json(crate::account_fixture::CloudAccount {
+                    email: "you@example.com",
+                })
+            }),
+        )
+        .route(
             "/archive",
             get(|State(cloud): State<Arc<Cloud>>| async move { cloud.archive.clone() }),
         )
@@ -102,13 +110,28 @@ fn configure(fixture: &Fixture, stub: &testkit::Stub, key: &str) -> Result {
 }
 
 fn sign_in(fixture: &Fixture) -> Result {
-    let files = AccountFiles::new(&fixture.home.path().join(".rivethub"));
-    let mut state = files.open()?;
-    state.membership = Membership::SignedIn {
-        email: "user@example.com".to_owned(),
-        token: TOKEN.to_owned(),
+    let config = std::fs::read_to_string(fixture.home.path().join(".rivethub/config.yaml"))?;
+    let host = config
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("url: http://"))
+        .ok_or("host")?
+        .trim_end_matches('/');
+    let path = fixture
+        .home
+        .path()
+        .join(".local/state/rivethub/share-logins.json");
+    std::fs::create_dir_all(path.parent().ok_or("parent")?)?;
+    let record = crate::account_fixture::TokenRecord {
+        access_token: TOKEN.to_owned(),
+        refresh_token: "refresh-test".to_owned(),
+        expires_at: "2099-01-01T00:00:00Z".parse()?,
+        scope: "drops:write offline_access".to_owned(),
     };
-    files.save(&state)?;
+    let records = crate::account_fixture::LoginFile {
+        logins: std::collections::BTreeMap::from([(host.to_owned(), record)]),
+    };
+    std::fs::write(&path, serde_json::to_vec(&records)?)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 

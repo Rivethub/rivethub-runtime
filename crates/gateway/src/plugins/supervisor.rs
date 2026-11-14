@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use tokio::io::{AsyncBufReadExt as _, AsyncRead, BufReader};
+use tokio::io::{AsyncRead, BufReader};
 use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
 use wire::plugin::PluginId;
@@ -232,9 +232,9 @@ where
     let host = Arc::clone(host);
     let plugin = plugin.clone();
     host.tasks.clone().spawn(async move {
-        let mut lines = BufReader::new(output).lines();
+        let mut reader = BufReader::new(output);
         loop {
-            match lines.next_line().await {
+            match super::output::next_line(&mut reader, super::output::MAX_LINE_BYTES).await {
                 Ok(Some(line)) => host.log(&plugin, stream, line),
                 Ok(None) => break,
                 Err(error) => {

@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use url::Url;
-use uuid::Uuid;
 use wire::gateway::account::ReleaseChannel;
 
 use super::AccountError;
@@ -16,39 +15,6 @@ const RESPONSE_LIMIT: usize = 64 * 1024;
 pub struct Cloud {
     base: Url,
     http: reqwest::Client,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StartBody<'a> {
-    email: &'a str,
-    install_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Started {
-    pub request_id: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PollBody<'a> {
-    request_id: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Granted {
-    install_token: String,
-    email: String,
-}
-
-#[derive(Debug)]
-pub enum Poll {
-    Pending,
-    Expired,
-    SignedIn { token: String, email: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,69 +37,6 @@ impl Cloud {
 
     fn endpoint(&self, path: &str) -> Result<Url, AccountError> {
         Ok(self.base.join(path)?)
-    }
-
-    pub async fn start(&self, email: &str, install_id: Uuid) -> Result<Started, AccountError> {
-        let response = self
-            .http
-            .post(self.endpoint("v1/auth/start")?)
-            .json(&StartBody { email, install_id })
-            .send()
-            .await?;
-        match response.status() {
-            StatusCode::OK => json(response).await,
-            StatusCode::UNPROCESSABLE_ENTITY => Err(AccountError::Email),
-            status => Err(refused(status)),
-        }
-    }
-
-    pub async fn poll(&self, request_id: &str) -> Result<Poll, AccountError> {
-        let response = self
-            .http
-            .post(self.endpoint("v1/auth/poll")?)
-            .json(&PollBody { request_id })
-            .send()
-            .await?;
-        match response.status() {
-            StatusCode::OK => {
-                let granted: Granted = json(response).await?;
-                Ok(Poll::SignedIn {
-                    token: granted.install_token,
-                    email: granted.email,
-                })
-            }
-            StatusCode::ACCEPTED => Ok(Poll::Pending),
-            StatusCode::GONE => Ok(Poll::Expired),
-            status => Err(refused(status)),
-        }
-    }
-
-    pub async fn sign_out(&self, token: &str) -> Result<(), AccountError> {
-        self.authorized(reqwest::Method::POST, "v1/auth/signout", token)
-            .await
-    }
-
-    pub async fn delete(&self, token: &str) -> Result<(), AccountError> {
-        self.authorized(reqwest::Method::DELETE, "v1/account", token)
-            .await
-    }
-
-    async fn authorized(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        token: &str,
-    ) -> Result<(), AccountError> {
-        let response = self
-            .http
-            .request(method, self.endpoint(path)?)
-            .bearer_auth(token)
-            .send()
-            .await?;
-        match response.status() {
-            StatusCode::OK => Ok(()),
-            status => Err(refused(status)),
-        }
     }
 
     pub async fn crash(&self, report: &CrashReport) -> Result<Delivery, AccountError> {

@@ -98,6 +98,8 @@ WITH conv AS (
       LEFT JOIN rh_messages m ON m.id = t.message_id
 )
 SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.trashed, g.native,
+       (SELECT c.owner_user_id FROM rh_conversations c WHERE c.id = ANY(g.conversations)
+         AND c.owner_user_id <> rh_scope_principal() ORDER BY c.updated_at DESC, c.id LIMIT 1) AS owner,
        g.topic_id,
        (SELECT t.name FROM rh_topics t WHERE t.id = g.topic_id) AS topic_name,
        (SELECT pt.name FROM rh_topics t JOIN rh_topics pt ON pt.id = t.parent_id
@@ -122,7 +124,9 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
                SELECT left(m.content, 600) AS content, m.created_at, m.id FROM rh_messages m
                 WHERE m.conversation_id = gc.id AND m.role = 'user' AND m.content ~ '[^[:space:]]'
                 ORDER BY m.created_at, m.id LIMIT 1) AS u
-         ORDER BY u.created_at, u.id LIMIT 1) AS first_user
+         ORDER BY u.created_at, u.id LIMIT 1) AS first_user,
+       (SELECT c.id FROM rh_conversations c WHERE c.id = ANY(g.conversations)
+         ORDER BY c.created_at, c.id LIMIT 1) AS conversation_id
   FROM page g
  ORDER BY g.started_at DESC, g.session_key DESC";
 
@@ -132,6 +136,7 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
     reason = "one column per SQL flag of a session row"
 )]
 struct Row {
+    owner: Option<String>,
     session_key: String,
     title: Option<String>,
     started_at: DateTime<Utc>,
@@ -150,6 +155,7 @@ struct Row {
     cwd: Option<String>,
     import_settings: Option<sqlx::types::Json<JsonObject>>,
     first_user: Option<String>,
+    conversation_id: Option<Uuid>,
 }
 
 fn import_origin(settings: Option<sqlx::types::Json<JsonObject>>) -> ImportOrigin {
@@ -184,6 +190,7 @@ impl Row {
             SessionKey::Harness(_) => None,
         };
         Ok(SessionRecord {
+            owner: self.owner,
             id,
             title: session_title(
                 self.title.as_deref(),
@@ -201,6 +208,7 @@ impl Row {
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
             origin,
+            conversation: self.conversation_id,
         })
     }
 }
@@ -310,5 +318,35 @@ impl SessionCatalog for PostgresMemory {
         }
         let keys: Vec<String> = keys.iter().map(ToString::to_string).collect();
         Ok(self.sessions(Select::some(&keys)?).await?)
+    }
+
+    async fn conversation_session(
+        &self,
+        conversation: Uuid,
+    ) -> Result<Option<SessionKey>, MemoryStoreError> {
+        let key: Option<String> = sqlx::query_scalar(
+            "SELECT CASE WHEN c.channel = $2 AND c.session_key ~* $3 THEN $2 || ':' || c.session_key
+                         ELSE c.session_key END
+               FROM rh_conversations c WHERE c.id = $1",
+        )
+        .bind(conversation)
+        .bind(HarnessId::ClaudeCode.to_string())
+        .bind(BARE_UUID)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|source| Error::operation("conversation session", source))?;
+        Ok(key
+            .map(|key| {
+                SessionKey::from_str(&key).map_err(|source| Error::stored("session key", source))
+            })
+            .transpose()?)
+    }
+
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &kernel::memory::MessagesQuery,
+    ) -> Result<kernel::memory::SessionMessages, MemoryStoreError> {
+        Ok(self.session_messages(key, query).await?)
     }
 }

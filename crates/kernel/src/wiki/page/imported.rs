@@ -76,6 +76,7 @@ mod tests {
 
     fn provenance(author: &str, verified: bool) -> Provenance {
         Provenance {
+            team_owner: None,
             author: Some(author.to_owned()),
             origin_date: None,
             verification: if verified {

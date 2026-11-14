@@ -183,3 +183,67 @@ async fn chunks_of_said_messages_are_marked(pool: PgPool) -> TestResult {
     assert_eq!(waiting, 0);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_rows_loaded_without_triggers_recounts_instead_of_going_negative(
+    pool: PgPool,
+) -> TestResult {
+    crate::common::install_graphile(&pool).await?;
+    let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
+    messages(&pool, kitchen, "phil").await?;
+    sqlx::query("ALTER TABLE rh_messages DISABLE TRIGGER rh_message_counts_inserted")
+        .execute(&pool)
+        .await?;
+    messages(&pool, kitchen, "phil").await?;
+    sqlx::query("ALTER TABLE rh_messages ENABLE TRIGGER rh_message_counts_inserted")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "DELETE FROM rh_messages WHERE id IN (
+             SELECT id FROM rh_messages WHERE conversation_id = $1 ORDER BY created_at DESC, id LIMIT 6)",
+    )
+    .bind(kitchen)
+    .execute(&pool)
+    .await?;
+    let negative: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_message_counts WHERE total < 0 OR tool_calls < 0 OR queued < 0",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(negative, 0, "no counter goes below zero");
+    assert_eq!(
+        tallies(&pool, COUNTED).await?,
+        tallies(&pool, SCANNED).await?,
+        "the counter is recounted from the rows that remain"
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_bad_stored_counter_degrades_one_field_and_the_answers_still_come(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::facts::FactStore as _;
+    use kernel::memory::MemoryStore as _;
+    crate::common::install_graphile(&pool).await?;
+    let session = "claude-code:00000000-0000-4000-8000-0000000000f1";
+    let kitchen = conversation(&pool, session, "phil").await?;
+    messages(&pool, kitchen, "phil").await?;
+    sqlx::query("UPDATE rh_message_counts SET total = -3 WHERE conversation_id = $1")
+        .bind(kitchen)
+        .execute(&pool)
+        .await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let found = kernel::tenancy::Scope::Maintenance
+        .run(memory.fact_sessions(&[session.parse()?]))
+        .await?;
+    assert_eq!(found.len(), 1, "the session is still described");
+    assert!(
+        found.iter().all(|session| session.messages == 0),
+        "the bad count reads as zero"
+    );
+    kernel::tenancy::Scope::Maintenance
+        .run(memory.stats())
+        .await?;
+    Ok(())
+}

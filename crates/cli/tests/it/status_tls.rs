@@ -193,3 +193,43 @@ async fn status_keeps_a_loopback_name_when_the_certificate_carries_one() -> Resu
     served.task.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn status_trusts_the_root_the_config_names_without_any_variable() -> Result {
+    let served = tls_health("node.mesh.test").await?;
+    let home = home();
+    let dir = home.path().join("tls");
+    let env = ::config::Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+    std::fs::create_dir_all(&dir)?;
+    for (name, body) in [
+        ("ca.pem", &served.ca_pem),
+        ("node.pem", &served.cert_pem),
+        ("node.key", &served.key_pem),
+    ] {
+        std::fs::write(dir.join(name), body)?;
+    }
+    let gateway = |trust: &str| {
+        format!(
+            "gateway:\n  host: 0.0.0.0\n  port: {}\n  tls_cert: {}\n  tls_key: {}\n{trust}",
+            served.port,
+            dir.join("node.pem").display(),
+            dir.join("node.key").display(),
+        )
+    };
+    config(&home, &gateway(""));
+    let untrusted = run(&["status"], &env).await;
+    assert!(
+        untrusted.stderr.contains("Health unavailable"),
+        "without a trust root the private CA is unknown: {}",
+        untrusted.stderr
+    );
+    config(
+        &home,
+        &gateway(&format!("  trust_root: {}\n", dir.join("ca.pem").display())),
+    );
+    let status = run(&["status"], &env).await;
+    assert_eq!(status.exit, Exit::Ok);
+    assert_eq!(status.stdout, "RivetHub is running\n", "{}", status.stderr);
+    served.task.abort();
+    Ok(())
+}

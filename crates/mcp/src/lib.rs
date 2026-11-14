@@ -10,6 +10,7 @@ mod render_search;
 mod render_tags;
 pub mod sessions;
 pub mod tags;
+mod team;
 pub mod transport;
 pub mod wiki;
 
@@ -29,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct Server {
+    instructions: Option<String>,
     memory: Arc<dyn MemoryStore>,
     tools: Arc<Vec<Tool>>,
     memory_write: bool,
@@ -40,6 +42,7 @@ pub struct Server {
 }
 
 pub struct Builder {
+    instructions: Option<String>,
     memory: Arc<dyn MemoryStore>,
     memory_write: bool,
     shutdown: CancellationToken,
@@ -86,6 +89,8 @@ enum Operation {
     Search,
     #[strum(serialize = "memory_browse")]
     Browse,
+    #[strum(serialize = "memory_team")]
+    Team,
     #[strum(serialize = "memory_stats")]
     Stats,
     #[strum(serialize = "memory_get_full")]
@@ -119,6 +124,7 @@ impl Server {
         shutdown: CancellationToken,
     ) -> Builder {
         Builder {
+            instructions: None,
             memory,
             memory_write,
             shutdown,
@@ -167,6 +173,7 @@ impl Server {
         let result = match operation {
             Operation::Search
             | Operation::Browse
+            | Operation::Team
             | Operation::Stats
             | Operation::GetFull
             | Operation::Tags
@@ -202,6 +209,9 @@ impl Server {
             Operation::Browse => {
                 memory::browse(self.memory.as_ref(), decode(arguments)?, self.zone).await
             }
+            Operation::Team => {
+                team::call(self.memory.as_ref(), decode(arguments)?, self.zone).await
+            }
             Operation::Stats => memory::stats(self.memory.as_ref(), decode(arguments)?).await,
             Operation::GetFull => memory::get_full(self.memory.as_ref(), decode(arguments)?).await,
             Operation::Tags => {
@@ -235,6 +245,22 @@ impl Server {
 }
 
 impl Builder {
+    pub async fn store_identity(mut self, fallback: &str) -> Result<Self, Error> {
+        self.instructions = match self.memory.recall_identity().await {
+            Ok(Some(identity)) => crate::team::instructions(
+                identity.principal.as_deref().unwrap_or(fallback),
+                &identity.people,
+            ),
+            Ok(None) => None,
+            Err(kernel::memory::MemoryStoreError::Unavailable(error)) => {
+                tracing::warn!(%error, "memory unavailable; MCP introduction omitted");
+                None
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(self)
+    }
+
     #[must_use]
     pub fn display_zone(mut self, zone: chrono_tz::Tz) -> Self {
         self.zone = Some(zone);
@@ -273,6 +299,7 @@ impl Builder {
             ));
         }
         Ok(Server {
+            instructions: self.instructions,
             memory: self.memory,
             tools: Arc::new(tools),
             memory_write: self.memory_write,
@@ -287,7 +314,7 @@ impl Builder {
 
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(
+        let mut info = ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
@@ -296,7 +323,9 @@ impl ServerHandler for Server {
         .with_server_info(Implementation::new(
             "rivethub-mcp-server",
             env!("CARGO_PKG_VERSION"),
-        ))
+        ));
+        info.instructions.clone_from(&self.instructions);
+        info
     }
 
     async fn list_tools(

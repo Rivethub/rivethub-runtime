@@ -11,6 +11,7 @@ mod digest;
 pub mod dump;
 pub mod embed;
 mod embedding_store;
+mod entity_builder;
 pub mod error;
 mod facts;
 mod flagged;
@@ -37,7 +38,9 @@ mod search_vector;
 mod session_activity;
 mod session_catalog;
 mod session_marks;
+mod session_messages;
 mod stats;
+mod team;
 pub use search_complete::SearchSynthesis;
 mod jobs;
 mod stats_cache;
@@ -85,11 +88,12 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 62;
+pub const SCHEMA_VERSION: i64 = 75;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
 pub struct PostgresMemory {
+    own_weight: f64,
     wiki_directory: Option<std::path::PathBuf>,
     wiki_owner: Option<kernel::owner::Owner>,
     pool: PgPool,
@@ -99,6 +103,13 @@ pub struct PostgresMemory {
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
+    missing: MissingModels,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MissingModels {
+    pub language: bool,
+    pub embeddings: bool,
 }
 
 const SUMMARY_WRITTEN_BUFFER: usize = 256;
@@ -107,6 +118,7 @@ impl PostgresMemory {
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self {
+            own_weight: 1.25,
             wiki_directory: None,
             wiki_owner: None,
             pool,
@@ -116,12 +128,25 @@ impl PostgresMemory {
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
             summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
+            missing: MissingModels::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_own_weight(mut self, weight: f64) -> Self {
+        self.own_weight = weight;
+        self
     }
 
     #[must_use]
     pub fn with_wiki_directory(mut self, directory: std::path::PathBuf) -> Self {
         self.wiki_directory = Some(directory);
+        self
+    }
+
+    #[must_use]
+    pub fn with_missing_models(mut self, missing: MissingModels) -> Self {
+        self.missing = missing;
         self
     }
 
@@ -155,21 +180,40 @@ impl PostgresMemory {
         let options = pool_options(POOL_CONNECTIONS, Some(pooling.idle()));
         match options.connect(url).await {
             Ok(pool) => {
-                Self::prepare(&pool).await?;
+                Self::prepare_serving(&pool).await?;
                 Ok(Self::new(pool))
             }
             Err(error) if loss::unreachable(&error) => {
                 tracing::warn!(
                     %error,
-                    "the memory database is unreachable; memory stays unavailable until it answers"
+                    "the memory database is unreachable; memory stays unavailable until it answers and passes its schema and login checks"
                 );
-                let pool = lazy_pool(url, POOL_CONNECTIONS, Some(pooling.idle()))
-                    .map_err(Error::Connection)?;
-                tokio::spawn(check_when_reachable(pool.clone()));
+                let gate = std::sync::Arc::new(scope::Gate::default());
+                let pool = scope::gated(
+                    bare_options(POOL_CONNECTIONS, Some(pooling.idle())),
+                    std::sync::Arc::clone(&gate),
+                )
+                .connect_lazy(url)
+                .map_err(Error::Connection)?;
+                tokio::spawn(check_when_reachable(url.to_owned(), gate));
                 Ok(Self::new(pool))
             }
             Err(error) => Err(Error::Connection(error)),
         }
+    }
+
+    pub async fn prepare_serving(pool: &PgPool) -> Result<(), Error> {
+        Self::prepare(pool).await?;
+        let (login, bypasses): (String, bool) = sqlx::query_as(
+            "SELECT current_user::text, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|source| Error::operation("serving login check", source))?;
+        if bypasses {
+            return Err(Error::BypassingLogin { login });
+        }
+        Ok(())
     }
 
     pub async fn prepare(pool: &PgPool) -> Result<(), Error> {
@@ -229,42 +273,49 @@ impl Pooling {
     }
 }
 
-async fn check_when_reachable(pool: PgPool) {
+async fn check_when_reachable(url: String, gate: std::sync::Arc<scope::Gate>) {
+    let mut refused: Option<String> = None;
     loop {
         tokio::time::sleep(RECHECK).await;
-        match PostgresMemory::prepare(&pool).await {
+        let probe = match pool_options(1, None).connect(&url).await {
+            Ok(probe) => probe,
+            Err(error) => {
+                tracing::debug!(%error, "the memory database is still unreachable");
+                continue;
+            }
+        };
+        let verdict = PostgresMemory::prepare_serving(&probe).await;
+        probe.close().await;
+        match verdict {
             Ok(()) => {
+                gate.open();
                 tracing::info!("the memory database answered; memory is available");
                 return;
             }
-            Err(error @ (Error::SchemaBehind { .. } | Error::NotAdopted)) => {
-                tracing::error!(%error, "the memory database answered but cannot serve this build");
-                return;
+            Err(error) => {
+                let reason = error.to_string();
+                if refused.as_deref() != Some(reason.as_str()) {
+                    tracing::error!(%error, "the memory database answered but cannot serve this build; memory stays unavailable and is checked again");
+                    refused = Some(reason);
+                }
             }
-            Err(error) => tracing::debug!(%error, "the memory database is still unreachable"),
         }
     }
 }
 
-fn pool_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
-    let options = scoped(
-        PgPoolOptions::new()
-            .max_connections(max_connections)
-            .acquire_timeout(ACQUIRE_TIMEOUT)
-            .test_before_acquire(false),
-    );
+fn bare_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
+    let options = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .test_before_acquire(false);
     match idle_timeout {
         Some(idle) => options.idle_timeout(idle),
         None => options,
     }
 }
 
-pub(crate) fn lazy_pool(
-    url: &str,
-    max_connections: u32,
-    idle_timeout: Option<Duration>,
-) -> Result<PgPool, sqlx::Error> {
-    pool_options(max_connections, idle_timeout).connect_lazy(url)
+fn pool_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
+    scoped(bare_options(max_connections, idle_timeout))
 }
 
 pub(crate) async fn open_pool(

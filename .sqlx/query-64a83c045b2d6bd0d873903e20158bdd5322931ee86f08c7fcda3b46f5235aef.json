@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT rh_scope_pin()",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rh_scope_pin",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "64a83c045b2d6bd0d873903e20158bdd5322931ee86f08c7fcda3b46f5235aef"
+}

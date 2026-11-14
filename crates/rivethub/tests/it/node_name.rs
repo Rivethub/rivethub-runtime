@@ -3,7 +3,6 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use sqlx::ConnectOptions as _;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -170,7 +169,7 @@ async fn gateway_healthz_reports_the_configured_node() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     write_state(

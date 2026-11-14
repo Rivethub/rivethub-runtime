@@ -29,6 +29,8 @@ pub enum WorkerError {
     MissingMemoryJobs,
     #[error("wiki store failed: {0}")]
     WikiStore(#[from] kernel::wiki::builder::WikiStoreError),
+    #[error("entity store failed: {0}")]
+    EntityStore(#[from] kernel::wiki::entity_pass::EntityStoreError),
     #[error("invalid wiki JSON: {0}")]
     WikiJson(#[source] serde_json::Error),
     #[error("wiki model failed: {0}")]

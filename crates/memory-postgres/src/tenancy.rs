@@ -15,7 +15,7 @@ use kernel::tenancy::Visibility;
 use kernel::tenancy::VisibilityDefault;
 use kernel::topics::TopicId;
 use sqlx::PgPool;
-use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::Error;
 
@@ -54,8 +54,8 @@ struct TopicRow {
     visibility_mark: Option<String>,
 }
 
-fn session_row(row: SessionRow) -> Result<(SessionId, SessionVisibility), TenancyStoreError> {
-    let session = SessionId::try_from(row.session)
+fn session_row(row: SessionRow) -> Result<(SessionKey, SessionVisibility), TenancyStoreError> {
+    let session = SessionKey::try_from(row.session)
         .map_err(|error| TenancyStoreError::Unavailable(Box::new(error)))?;
     Ok((
         session,
@@ -70,8 +70,8 @@ fn session_row(row: SessionRow) -> Result<(SessionId, SessionVisibility), Tenanc
 const SESSIONS: &str = "WITH keys AS (SELECT DISTINCT key FROM unnest($1::text[]) AS k(key)),
      convs AS (SELECT DISTINCT ON (session_key) session_key, owner_user_id, visibility
                  FROM rh_conversations WHERE session_key = ANY ($1::text[]) ORDER BY session_key, created_at),
-     marks AS (SELECT session_key, visibility FROM rh_session_marks
-                WHERE owner_user_id = $2 AND session_key = ANY ($1::text[])),
+     marks AS (SELECT session_key, owner_user_id, visibility FROM rh_session_marks
+                WHERE session_key = ANY ($1::text[])),
      placed AS (SELECT p.session_id, p.topic_id FROM rh_session_placements p
                  WHERE p.session_id = ANY ($1::text[])
                    AND NOT EXISTS (SELECT 1 FROM convs c WHERE c.session_key = p.session_id)),
@@ -80,12 +80,44 @@ const SESSIONS: &str = "WITH keys AS (SELECT DISTINCT key FROM unnest($1::text[]
 SELECT k.key AS session, c.owner_user_id AS owner, m.visibility AS mark,
        coalesce(c.visibility,
                 rh_member_visibility($2, coalesce(m.visibility, tm.mark, rh_owner_default($2, now())))) AS effective
-  FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key
+  FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key AND m.owner_user_id = coalesce(c.owner_user_id, $2)
   LEFT JOIN placed p ON p.session_id = k.key LEFT JOIN topic_marks tm ON tm.topic_id = p.topic_id";
+
+type Catalog = std::collections::BTreeSet<(String, String, String, String)>;
+
+fn local_catalog(spaces: &[Space]) -> Catalog {
+    spaces
+        .iter()
+        .flat_map(|space| {
+            space.members.iter().map(|member| {
+                (
+                    space.id.as_str().to_owned(),
+                    space.kind.as_str().to_owned(),
+                    space.name.clone(),
+                    member.as_str().to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+async fn catalog(conn: &mut sqlx::PgConnection) -> Result<Catalog, TenancyStoreError> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT s.id, s.kind, s.name, m.user_id FROM rh_spaces s JOIN rh_space_members m ON m.space_id = s.id",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(failed("space sync"))?;
+    Ok(rows.into_iter().collect())
+}
 
 #[async_trait]
 impl TenancyStore for PostgresTenancy {
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    fn row_secured(&self) -> bool {
+        true
+    }
+
+    async fn sync_spaces(&self, node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let pinned: Option<String> = sqlx::query_scalar("SELECT rh_scope_pin()")
             .fetch_one(&self.pool)
             .await
@@ -97,6 +129,36 @@ impl TenancyStore for PostgresTenancy {
             return Ok(());
         }
         let mut tx = self.pool.begin().await.map_err(failed("space sync"))?;
+        sqlx::query("LOCK TABLE rh_membership_authority IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .map_err(failed("space sync"))?;
+        let keeper: Option<String> =
+            sqlx::query_scalar("SELECT node FROM rh_membership_authority WHERE singleton")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(failed("space sync"))?;
+        match keeper {
+            None => {
+                sqlx::query(
+                    "INSERT INTO rh_membership_authority (singleton, node, claimed_at) VALUES (true, $1, now())",
+                )
+                .bind(node)
+                .execute(&mut *tx)
+                .await
+                .map_err(failed("space sync"))?;
+            }
+            Some(keeper) if keeper == node => {}
+            Some(keeper) => {
+                let stored = catalog(&mut tx).await?;
+                if stored == local_catalog(spaces) {
+                    return tx.commit().await.map_err(failed("space sync"));
+                }
+                return Err(TenancyStoreError::CatalogConflict(format!(
+                    "the store's spaces and members are kept by node {keeper}, and this node's users file ({node}) lists different ones; make the two users files agree, or move the authority with UPDATE rh_membership_authority SET node = '{node}' as the store's admin (CONTRACT note 193)"
+                )));
+            }
+        }
         let ids: Vec<&str> = spaces.iter().map(|space| space.id.as_str()).collect();
         sqlx::query("DELETE FROM rh_spaces WHERE NOT (id = ANY ($1::text[]))")
             .bind(&ids)
@@ -189,9 +251,9 @@ impl TenancyStore for PostgresTenancy {
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
-        let keys: Vec<&str> = sessions.iter().map(SessionId::as_str).collect();
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError> {
+        let keys: Vec<&str> = sessions.iter().map(SessionKey::as_str).collect();
         sqlx::query_as::<_, SessionRow>(SESSIONS)
             .bind(&keys)
             .bind(viewer.principal().as_str())
@@ -206,7 +268,7 @@ impl TenancyStore for PostgresTenancy {
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {
@@ -224,7 +286,7 @@ impl TenancyStore for PostgresTenancy {
         if owner.is_some_and(|(owner,)| owner != viewer.principal().as_str()) {
             return Err(TenancyStoreError::NotOwner(session.as_str().to_owned()));
         }
-        match mark {
+        let written = match mark {
             Some(mark) => sqlx::query(
                 "INSERT INTO rh_session_marks (session_key, owner_user_id, visibility, marked_at)
                  VALUES ($1, $2, $3, $4)
@@ -242,8 +304,14 @@ impl TenancyStore for PostgresTenancy {
             .bind(viewer.principal().as_str()),
         }
         .execute(&mut *tx)
-        .await
-        .map_err(failed("session mark"))?;
+        .await;
+        match written {
+            Ok(_) => {}
+            Err(source) if crate::error::refused(&source) => {
+                return Err(TenancyStoreError::NotFound(session.as_str().to_owned()));
+            }
+            Err(source) => return Err(failed("session mark")(source)),
+        }
         let row = sqlx::query_as::<_, SessionRow>(SESSIONS)
             .bind(vec![session.as_str()])
             .bind(viewer.principal().as_str())

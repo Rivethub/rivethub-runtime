@@ -44,6 +44,8 @@ pub struct FoundSession {
     pub excerpts: Vec<String>,
     #[serde(default)]
     pub imported_from: Option<String>,
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[serde_with::skip_serializing_none]

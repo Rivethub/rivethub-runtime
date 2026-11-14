@@ -1,0 +1,100 @@
+mod bind;
+mod history;
+mod ledger;
+mod page;
+mod parse;
+mod prepare;
+mod reconcile;
+mod store;
+mod types;
+
+pub use bind::attribute_key;
+pub use bind::choose_slug;
+pub use bind::compact_key;
+pub use bind::pick_existing;
+pub use history::render_history;
+pub use history::session_history;
+pub use history::snapshot_of;
+pub use ledger::integrate;
+pub use ledger::place_as_of;
+pub use ledger::recompute;
+pub use page::article_with_facts;
+pub use page::facts_section;
+pub use page::prose_article;
+pub use parse::identify_schema;
+pub use parse::observation_schema;
+pub use parse::parse_identifications;
+pub use parse::parse_observations;
+pub use parse::parse_prose;
+pub use parse::parse_rewrite;
+pub use parse::prose_schema;
+pub use parse::rewrite_schema;
+pub use prepare::merge_same;
+pub use prepare::prepare;
+pub use reconcile::normalize_evidence;
+pub use reconcile::reconcile_facts;
+pub use reconcile::snapshot_facts;
+pub use store::EntityLease;
+pub use store::EntityStore;
+pub use types::AppliedMark;
+pub use types::BindHit;
+pub use types::BindRequest;
+pub use types::CandidateQuery;
+pub use types::ENTITY_LOCK_CLASS;
+pub use types::ENTITY_PIPELINE_VERSION;
+pub use types::EXTRACTION_TABLE;
+pub use types::EntityIdentification;
+pub use types::EntityIdentifications;
+pub use types::EntityLeaf;
+pub use types::EntityMerge;
+pub use types::EntityObservation;
+pub use types::EntityObservations;
+pub use types::EntityPage;
+pub use types::EntityProse;
+pub use types::EntityRewrite;
+pub use types::EntityStoreError;
+pub use types::EntityView;
+pub use types::EntityWork;
+pub use types::ExtractEntities;
+pub use types::FactReconciliation;
+pub use types::FactRecord;
+pub use types::FactState;
+pub use types::FollowingLeaf;
+pub use types::HISTORY_CHARS;
+pub use types::HistoryLine;
+pub use types::KNOWN_LIMIT;
+pub use types::KnownEntity;
+pub use types::KnownFact;
+pub use types::LeafClock;
+pub use types::LiveFact;
+pub use types::MatchCandidate;
+pub use types::MatchDecision;
+pub use types::MentionNote;
+pub use types::ObserveContext;
+pub use types::ObservedFact;
+pub use types::ObservedHistory;
+pub use types::PreparedEntity;
+pub use types::PreparedFact;
+pub use types::PreparedHistory;
+pub use types::PublishOutcome;
+pub use types::RejectedRetirement;
+pub use types::RetiredFact;
+pub use types::RewriteFact;
+pub use types::SlugOccupant;
+pub use types::StoredRewrite;
+pub use types::TranscriptMessage;
+pub use types::TypeBrief;
+pub use types::older_than_mark;
+
+#[cfg(test)]
+use chrono::DateTime;
+#[cfg(test)]
+use chrono::NaiveDate;
+#[cfg(test)]
+use chrono::Utc;
+#[cfg(test)]
+use uuid::Uuid;
+
+#[cfg(test)]
+#[path = "tests/entity_pass_tests.rs"]
+mod tests;

@@ -42,6 +42,7 @@ pub struct SessionOriginLabel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummaryRow {
+    pub owner: Option<String>,
     pub id: SessionKey,
     pub title: String,
     pub harness: Option<HarnessId>,
@@ -57,6 +58,8 @@ pub struct SessionSummaryRow {
     pub gist: Option<String>,
     pub parent_id: Option<SessionId>,
     pub child_count: Option<u64>,
+    #[serde(default)]
+    pub conversation_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -99,4 +102,29 @@ pub struct SessionTag {
     pub key: String,
     pub value: String,
     pub state: String,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMessage {
+    pub id: uuid::Uuid,
+    pub role: crate::message::Role,
+    pub agent: String,
+    pub content: String,
+    pub tool_name: Option<String>,
+    pub tool_args: Option<crate::JsonObject>,
+    pub tool_result: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMessagesPage {
+    pub session: SessionKey,
+    pub items: Vec<SessionMessage>,
+    pub total: u64,
+    pub next: Option<String>,
+    pub quoted_from: Option<crate::memory::Provenance>,
 }
