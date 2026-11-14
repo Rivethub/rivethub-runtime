@@ -47,10 +47,25 @@ CREATE TABLE `session_message` (
   `time_created` integer NOT NULL, `time_updated` integer NOT NULL, `data` text NOT NULL
 );
 CREATE UNIQUE INDEX `session_message_session_seq_idx` ON `session_message` (`session_id`,`seq`);
-CREATE TABLE `session_part` (`id` text PRIMARY KEY, `message_id` text NOT NULL, `session_id` text NOT NULL, `ordinal` integer NOT NULL, `data` text NOT NULL);";
+CREATE TABLE `session_part` (
+  `message_id` text NOT NULL, `session_id` text NOT NULL, `ordinal` integer NOT NULL,
+  `type` text NOT NULL, `call_id` text, `time_created` integer NOT NULL,
+  `time_updated` integer NOT NULL, `data` text NOT NULL,
+  CONSTRAINT `session_part_pk` PRIMARY KEY(`message_id`, `ordinal`)
+);";
 
 const SESSION_INSERT: &str = "INSERT INTO session_v2 (id, parent_id, project_id, slug, directory, title, version, agent, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
 const MESSAGE_INSERT: &str = "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+const PART_INSERT: &str = "INSERT INTO session_part (message_id, session_id, ordinal, type, call_id, time_created, time_updated, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+const SUBAGENT_FIXTURE: &str = "capture/stores/opencode-v2-subagent.jsonl";
+const PART_ROWS_FIXTURE: &str = "capture/stores/opencode-v2-part-rows.jsonl";
+const PART_ROWS_SESSION: &str = "ses_e249b94edffeT8KcrgxiLPPm7c";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    AsRecorded,
+    PartRows,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "table")]
@@ -79,6 +94,18 @@ enum StoreRow {
         time_updated: i64,
         data: String,
     },
+    #[serde(rename = "session_part")]
+    Part {
+        message_id: String,
+        session_id: String,
+        ordinal: i64,
+        #[serde(rename = "type")]
+        kind: String,
+        call_id: Option<String>,
+        time_created: i64,
+        time_updated: i64,
+        data: String,
+    },
 }
 
 #[derive(Clone, Default)]
@@ -100,13 +127,52 @@ impl CaptureTransport for FakeTransport {
 }
 
 fn opencode_2_3_store(home: &Path) -> TestResult {
+    opencode_2_3_store_from(home, SUBAGENT_FIXTURE, Layout::AsRecorded)
+}
+
+fn into_part_rows(
+    connection: &Connection,
+    id: &str,
+    session_id: &str,
+    time_created: i64,
+    data: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut message: Json = serde_json::from_str(data)?;
+    let items = message
+        .get_mut("content")
+        .and_then(Json::as_array_mut)
+        .map(std::mem::take)
+        .ok_or("assistant content")?;
+    for (ordinal, item) in items.into_iter().enumerate() {
+        let kind = item
+            .get("type")
+            .and_then(Json::as_str)
+            .ok_or("item type")?
+            .to_owned();
+        let call_id = item.get("id").and_then(Json::as_str).map(str::to_owned);
+        connection.execute(
+            PART_INSERT,
+            (
+                id,
+                session_id,
+                i64::try_from(ordinal)?,
+                kind,
+                call_id,
+                time_created,
+                time_created,
+                item.to_string(),
+            ),
+        )?;
+    }
+    Ok(message.to_string())
+}
+
+fn opencode_2_3_store_from(home: &Path, fixture: &str, layout: Layout) -> TestResult {
     let data = home.join(".local/share/opencode");
     std::fs::create_dir_all(&data)?;
     let connection = Connection::open(data.join("opencode.db"))?;
     connection.execute_batch(SCHEMA)?;
-    let rows = std::fs::read_to_string(testkit::recording(
-        "capture/stores/opencode-v2-subagent.jsonl",
-    ))?;
+    let rows = std::fs::read_to_string(testkit::recording(fixture))?;
     for line in rows.lines() {
         match serde_json::from_str::<StoreRow>(line)? {
             StoreRow::Session {
@@ -143,9 +209,38 @@ fn opencode_2_3_store(home: &Path) -> TestResult {
                 time_created,
                 time_updated,
                 data,
+            } => {
+                let data = if layout == Layout::PartRows && kind == "assistant" {
+                    into_part_rows(&connection, &id, &session_id, time_created, &data)?
+                } else {
+                    data
+                };
+                connection.execute(
+                    MESSAGE_INSERT,
+                    (id, session_id, kind, seq, time_created, time_updated, data),
+                )?
+            }
+            StoreRow::Part {
+                message_id,
+                session_id,
+                ordinal,
+                kind,
+                call_id,
+                time_created,
+                time_updated,
+                data,
             } => connection.execute(
-                MESSAGE_INSERT,
-                (id, session_id, kind, seq, time_created, time_updated, data),
+                PART_INSERT,
+                (
+                    message_id,
+                    session_id,
+                    ordinal,
+                    kind,
+                    call_id,
+                    time_created,
+                    time_updated,
+                    data,
+                ),
             )?,
         };
     }
@@ -153,8 +248,16 @@ fn opencode_2_3_store(home: &Path) -> TestResult {
 }
 
 async fn idle_batch(session: &str) -> Result<Json, Box<dyn std::error::Error>> {
+    idle_batch_from(SUBAGENT_FIXTURE, Layout::AsRecorded, session).await
+}
+
+async fn idle_batch_from(
+    fixture: &str,
+    layout: Layout,
+    session: &str,
+) -> Result<Json, Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
-    opencode_2_3_store(home.path())?;
+    opencode_2_3_store_from(home.path(), fixture, layout)?;
     let env =
         config::Environment::from_vars([("HOME".to_owned(), home.path().display().to_string())]);
     let transport = FakeTransport::default();
@@ -336,5 +439,56 @@ async fn opencode_2_3_listing_names_the_subagent_parent() -> TestResult {
         .await?
         .ok_or("parent")?;
     assert_eq!(parent.parent_session_id, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_3_with_part_rows_stores_the_reply_from_session_part() -> TestResult {
+    let batch = idle_batch_from(PART_ROWS_FIXTURE, Layout::AsRecorded, PART_ROWS_SESSION).await?;
+    assert_eq!(
+        rows(&batch),
+        vec![
+            row(
+                "user",
+                "-",
+                "Run the shell command uname -sr, then reply with its output in one line."
+            ),
+            row(
+                "assistant",
+                "-",
+                "[thinking] I need to run a shell command to get the system information."
+            ),
+            row("tool", "shell", "Linux 6.8.0-acme\n"),
+            row(
+                "assistant",
+                "-",
+                "[thinking] The command printed the kernel version, so I reply with it."
+            ),
+            row("assistant", "-", "Linux 6.8.0-acme"),
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_3_part_rows_keep_the_same_rows_and_subagent_link() -> TestResult {
+    for session in [PARENT, CHILD] {
+        let inline = idle_batch_from(SUBAGENT_FIXTURE, Layout::AsRecorded, session).await?;
+        let parts = idle_batch_from(SUBAGENT_FIXTURE, Layout::PartRows, session).await?;
+        assert_eq!(rows(&parts), rows(&inline), "{session}");
+        assert_eq!(
+            at(&parts, "/settings/parent_session_id"),
+            at(&inline, "/settings/parent_session_id")
+        );
+        assert_eq!(
+            at(&parts, "/settings/tool_use_id"),
+            at(&inline, "/settings/tool_use_id")
+        );
+    }
+    let child = idle_batch_from(SUBAGENT_FIXTURE, Layout::PartRows, CHILD).await?;
+    assert_eq!(
+        at(&child, "/settings/tool_use_id"),
+        "call_5d7c0668d51048c8aa5d86e4"
+    );
     Ok(())
 }
