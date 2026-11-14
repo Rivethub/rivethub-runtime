@@ -3366,6 +3366,8 @@ Adding the hook changes Codex's hooks file, and Codex runs a hook only after the
 
 (214) The default update source falls back to GitHub (2026-11-14). A node whose install is signed in to rivethub.cloud takes updates from the cloud by default. When the cloud has no release for the channel and platform, 0.8.4 stopped with "rivethub.cloud has no <channel> release for this platform", so a signed-in machine could not update without `--source github`. Now, when no `--source` was given, `rh update` says the cloud has none and takes the GitHub release instead, and `--version <tag>` goes to GitHub directly, since the cloud only serves its latest release. `--source rivethub-cloud` given by name keeps both errors.
 
+(215) OpenCode lines (Phil, 2026-11-14: "I think we keep v1 where it is and stop investing in it and the future opencode work goes into v2"). OpenCode 2 (`@opencode/cli`, what opencode.ai installs) is the supported line: capture work, fixtures and checks go there. OpenCode 1.x capture stays as notes 204 and 208 leave it and gets no further work. One known loss follows and is not fixed: 1.x and 2.x share `opencode.db`, and once 2.x has migrated it rh reads the 2.x tables, so a 1.x session started afterwards is not captured.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
