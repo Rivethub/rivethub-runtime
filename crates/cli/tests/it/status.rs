@@ -337,3 +337,45 @@ async fn the_owner_sees_provider_causes_that_an_anonymous_probe_does_not() {
     );
     stub.close().await.expect("stub shuts down");
 }
+
+#[tokio::test]
+async fn a_unit_left_naming_a_replaced_binary_is_explained() {
+    if nix::unistd::geteuid().is_root() {
+        return;
+    }
+    let home = home();
+    let env = environment(&home);
+    config(&home, "gateway:\n  host: 127.0.0.1\n  port: 9\n");
+    let units = home.path().join(".config/systemd/user");
+    std::fs::create_dir_all(&units).expect("unit directory");
+    let unit = units.join("rivethub.service");
+    std::fs::write(
+        &unit,
+        "[Service]\nType=simple\nExecStart=\"/home/person/.local/bin/rh\" local\n",
+    )
+    .expect("unit");
+    let healthy = run(&["status"], &env).await;
+    assert!(
+        !healthy.stderr.contains("rh service restart"),
+        "{}",
+        healthy.stderr
+    );
+    std::fs::write(
+        &unit,
+        "[Service]\nType=simple\nExecStart=\"/home/person/.local/bin/rh (deleted)\" local\n",
+    )
+    .expect("unit");
+    let broken = run(&["status"], &env).await;
+    assert_eq!(broken.exit, Exit::Ok);
+    assert!(broken.stdout.contains("not running"), "{}", broken.stdout);
+    assert!(
+        broken
+            .stderr
+            .contains("names a binary that an update replaced")
+            && broken
+                .stderr
+                .contains("Run `rh service restart` to repair it."),
+        "{}",
+        broken.stderr
+    );
+}

@@ -5,7 +5,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cli::service::{NodeKind, Scope, ServiceCommand, ServiceError, Unit};
+use cli::service::{NodeKind, Scope, ServiceCommand, ServiceError, Unit, installed_path};
 use cli::{Cli, Dispatch, Exit};
 use config::Environment;
 use tempfile::TempDir;
@@ -976,4 +976,26 @@ async fn service_start_refuses_once_when_the_detached_node_stays_up() {
     );
     child.kill().expect("stop holder");
     child.wait().expect("reap");
+}
+
+#[test]
+fn a_binary_replaced_while_running_is_named_by_its_installed_path() {
+    let directory = tempfile::tempdir().expect("directory");
+    let installed = directory.path().join("rh");
+    std::fs::write(&installed, "new runtime").expect("binary");
+    let reported = directory.path().join("rh (deleted)");
+    assert_eq!(
+        installed_path(reported.clone()).expect("replaced"),
+        installed
+    );
+    assert_eq!(
+        installed_path(installed.clone()).expect("running"),
+        installed
+    );
+    std::fs::write(&reported, "a file that really has this name").expect("file");
+    assert_eq!(installed_path(reported.clone()).expect("real"), reported);
+    assert_eq!(
+        installed_path(PathBuf::from(" (deleted)")).expect("bare suffix"),
+        PathBuf::from(" (deleted)")
+    );
 }

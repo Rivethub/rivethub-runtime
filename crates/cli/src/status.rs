@@ -47,6 +47,10 @@ async fn health_report(env: &Environment) -> Report {
                 }
             };
             report.stderr = format!("{}Health unavailable: {error}\n", report.stderr);
+            let scope = crate::service::Scope::for_uid(nix::unistd::geteuid().as_raw());
+            if let Some(hint) = scope.replaced_binary_hint(env).await {
+                report.stderr.push_str(&hint);
+            }
             if matches!(&error, Error::Http(source) if source.status() == Some(reqwest::StatusCode::UNAUTHORIZED))
             {
                 report

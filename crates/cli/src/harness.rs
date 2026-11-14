@@ -58,7 +58,7 @@ impl ConnectArgs {
 
 pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Report, Error> {
     let backups = Paths::new(env)?.hub_home().join("backups");
-    let executable = tokio::task::spawn_blocking(std::env::current_exe).await??;
+    let executable = tokio::task::spawn_blocking(crate::service::executable).await??;
     let service = HarnessSetupService::new(env, executable, backups);
     match command {
         HarnessCommand::Status { json } => {

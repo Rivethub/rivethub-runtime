@@ -140,7 +140,7 @@ impl Scope {
     ) -> Result<Report, ServiceError> {
         let paths = Paths::new(env).map_err(|_| ServiceError::Home)?;
         let home = paths.home().to_path_buf();
-        let executable = tokio::task::spawn_blocking(std::env::current_exe).await??;
+        let executable = tokio::task::spawn_blocking(executable).await??;
         let owned = env.clone();
         let kind =
             tokio::task::spawn_blocking(move || crate::configuration::node_kind(&owned)).await??;
@@ -193,6 +193,38 @@ impl Scope {
     pub(crate) async fn repair_preface(self, env: &Environment) -> Result<String, ServiceError> {
         let env = env.clone();
         tokio::task::spawn_blocking(move || repair_unit(self, &env)).await?
+    }
+
+    pub(crate) async fn replaced_binary_hint(self, env: &Environment) -> Option<String> {
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "PATTERNS FALLBACK: a status that cannot resolve its home gives no service hint and still reports health"
+            )
+        )]
+        let Ok(paths) = Paths::new(env) else {
+            return None;
+        };
+        let path = self.unit_path(paths.home());
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "PATTERNS FALLBACK: a unit that is missing or unreadable gives no service hint and status still reports health"
+            )
+        )]
+        let Ok(text) = tokio::fs::read_to_string(&path).await else {
+            return None;
+        };
+        text.lines()
+            .any(|line| line.starts_with("ExecStart=") && line.contains(REPLACED))
+            .then(|| {
+                format!(
+                    "The service file {} names a binary that an update replaced, so the service cannot start. Run `rh service restart` to repair it.\n",
+                    path.display()
+                )
+            })
     }
 
     pub(crate) async fn reload(
@@ -301,6 +333,24 @@ fn zombie(pid: i32) -> bool {
         .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
 }
 
+const REPLACED: &str = " (deleted)";
+
+pub fn installed_path(reported: PathBuf) -> std::io::Result<PathBuf> {
+    if reported.try_exists()? {
+        return Ok(reported);
+    }
+    let installed = reported
+        .to_str()
+        .and_then(|text| text.strip_suffix(REPLACED))
+        .filter(|text| !text.is_empty())
+        .map(PathBuf::from);
+    Ok(installed.unwrap_or(reported))
+}
+
+pub(crate) fn executable() -> std::io::Result<PathBuf> {
+    std::env::current_exe().and_then(installed_path)
+}
+
 fn repair_unit(scope: Scope, env: &Environment) -> Result<String, ServiceError> {
     #[cfg_attr(
         dylint_lib = "rr_lints",
@@ -335,7 +385,7 @@ fn repair_unit(scope: Scope, env: &Environment) -> Result<String, ServiceError> 
     let Ok(kind) = crate::configuration::node_kind(env) else {
         return Ok(String::new());
     };
-    let executable = std::env::current_exe()?;
+    let executable = executable()?;
     let unit = Unit::new(&executable, &paths.env_file(), scope, kind)?;
     match unit.place(&home)? {
         unit::Placement::Created(_) | unit::Placement::Current(_) => Ok(String::new()),
