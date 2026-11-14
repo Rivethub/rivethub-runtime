@@ -65,7 +65,7 @@ use super::sql::LEAF;
 use super::sql::REMEMBER;
 use super::sql::STALE;
 use super::transcript::load_transcript;
-use super::types::match_type;
+use super::types::ensure_type;
 use super::types::type_paths;
 use super::types::type_rows;
 use super::view::load_view;
@@ -171,12 +171,12 @@ impl EntityStore for PostgresMemory {
         let started = leaves.first().map_or(now, |leaf| leaf.start);
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         lock_names(&mut tx, prepared).await?;
-        let types = type_rows(&mut tx).await?;
-        let Some(kind) = match_type(&prepared.type_name, &types) else {
+        let mut types = type_rows(&mut tx).await?;
+        let Some(kind) = ensure_type(&mut tx, &prepared.type_name, &mut types, &owner, now).await?
+        else {
             tracing::info!(
-                "extract-entities: skipped {} with unknown type {}",
-                prepared.name,
-                prepared.type_name
+                "extract-entities: skipped {} with no type name",
+                prepared.name
             );
             return Ok(None);
         };
@@ -185,7 +185,7 @@ impl EntityStore for PostgresMemory {
             &mut tx,
             prepared,
             ResolveAt {
-                kind,
+                kind: &kind,
                 types: &types,
                 owner: &owner,
                 summary,

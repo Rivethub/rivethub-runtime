@@ -270,6 +270,9 @@ fn observe_prompt_uses_message_time_and_the_job_key_stays_the_leaf() {
     let schema = serde_json::to_string(&kernel::wiki::entity_pass::identify_schema()).unwrap();
     assert!(schema.contains("mention"));
     assert!(!ENTITY_OBSERVE_SYSTEM_PROMPT.contains("period_start"));
+    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("those are the preferred choices"));
+    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("type is a new short name for the kind"));
+    assert!(!ENTITY_OBSERVE_SYSTEM_PROMPT.contains("exactly one of the provided type paths"));
     assert!(
         ENTITY_REWRITE_SYSTEM_PROMPT
             .contains("Tool results are the strongest evidence of current state")

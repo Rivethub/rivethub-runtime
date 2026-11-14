@@ -20,13 +20,13 @@ use wire::gateway::entities::ChangeKind;
 use wire::gateway::entities::ConnectedEntity;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
-use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Freshness;
 use wire::gateway::entities::TimelineEntry;
 use wire::gateway::session_catalog::SessionMemoryState;
 use wire::gateway::session_catalog::SessionSummaryRow;
 use wire::session_id::SessionId;
 
+use super::Filed;
 use super::Known;
 use super::map;
 use super::map::Titles;
@@ -39,7 +39,7 @@ pub(super) async fn build(
     gateway: &Gateway,
     known: &Known,
     entity: &Topic,
-    kind: EntityType,
+    kind: &Filed,
     viewer: &Viewer,
     as_of: Option<DateTime<Utc>>,
 ) -> Result<EntityArticle, ApiError> {
@@ -89,7 +89,8 @@ pub(super) async fn build(
         summary: EntitySummary {
             id: entity.id.to_string(),
             title: entity.name.as_str().to_owned(),
-            entity_type: kind,
+            entity_type: kind.key.clone(),
+            type_name: kind.name.clone(),
             session_count: own.len(),
         },
         aliases: entity

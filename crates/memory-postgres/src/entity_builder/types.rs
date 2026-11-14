@@ -14,7 +14,7 @@ use super::error::query_error;
 use super::sql::RECENT_TYPES;
 use super::sql::REMEMBER_TYPE;
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct TypeRow {
     pub(super) id: Uuid,
     pub(super) parent_id: Option<Uuid>,
@@ -55,6 +55,98 @@ pub(super) fn type_path(row: &TypeRow, rows: &[TypeRow]) -> String {
     }
     names.reverse();
     names.join(" › ")
+}
+
+pub(super) async fn ensure_type(
+    tx: &mut Transaction<'_, Postgres>,
+    wanted: &str,
+    rows: &mut Vec<TypeRow>,
+    owner: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<TypeRow>, EntityStoreError> {
+    if let Some(found) = match_type(wanted, rows) {
+        return Ok(Some(found.clone()));
+    }
+    let spelled = spelled_like(wanted, rows);
+    if let [only] = spelled.as_slice() {
+        return Ok(Some((*only).clone()));
+    }
+    let name = wanted.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Ok(None);
+    }
+    let Some(slug) = kernel::topics::Slug::of_heading(name) else {
+        return Ok(None);
+    };
+    let slug = slug.as_str().to_owned();
+    if let Some(found) = rows.iter().find(|row| row.slug == slug) {
+        return Ok(Some(found.clone()));
+    }
+    let id = Uuid::new_v4();
+    let inserted = sqlx::query(
+        "INSERT INTO rh_topics (id, kind, slug, name, created_at, updated_at, owner_user_id)
+         VALUES ($1, 'type', $2, $3, $4, $4, $5)",
+    )
+    .bind(id)
+    .bind(&slug)
+    .bind(name)
+    .bind(now)
+    .bind(owner)
+    .execute(&mut **tx)
+    .await;
+    match inserted {
+        Ok(_) => {
+            let row = TypeRow {
+                id,
+                parent_id: None,
+                name: name.to_owned(),
+                slug,
+            };
+            rows.push(row.clone());
+            Ok(Some(row))
+        }
+        Err(error) => {
+            let wrapped = query_error(error);
+            if !unique_violation(&wrapped) {
+                return Err(wrapped);
+            }
+            *rows = type_rows(tx).await?;
+            Ok(rows.iter().find(|row| row.slug == slug).cloned())
+        }
+    }
+}
+
+fn spelled_like<'a>(wanted: &str, rows: &'a [TypeRow]) -> Vec<&'a TypeRow> {
+    let key = compact_key(wanted);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    rows.iter()
+        .filter(|row| {
+            plural_of(&key, &compact_key(&row.name)) || plural_of(&key, &compact_key(&row.slug))
+        })
+        .collect()
+}
+
+fn plural_of(left: &str, right: &str) -> bool {
+    let (short, long) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    long.strip_prefix(short)
+        .is_some_and(|rest| rest == "s" || rest == "es")
+}
+
+fn unique_violation(error: &EntityStoreError) -> bool {
+    let EntityStoreError::Query(source) = error else {
+        return false;
+    };
+    source.downcast_ref::<sqlx::Error>().is_some_and(|error| {
+        error
+            .as_database_error()
+            .is_some_and(|db| db.code().as_deref() == Some("23505"))
+    })
 }
 
 pub(super) fn match_type<'a>(wanted: &str, rows: &'a [TypeRow]) -> Option<&'a TypeRow> {

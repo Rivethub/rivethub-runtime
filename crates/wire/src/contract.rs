@@ -191,7 +191,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::memory_models::ModelRole>,
     SchemaGenerator::subschema_for::<crate::gateway::memory_models::ModelHealth>,
     SchemaGenerator::subschema_for::<crate::gateway::memory_models::ModelJob>,
-    SchemaGenerator::subschema_for::<crate::gateway::entities::EntityType>,
+    SchemaGenerator::subschema_for::<crate::gateway::entities::EntityTypeInfo>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::SessionMention>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::FactSource>,
     SchemaGenerator::subschema_for::<crate::gateway::entities::FactConflict>,
