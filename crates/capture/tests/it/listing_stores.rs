@@ -356,6 +356,31 @@ async fn codex_titles_skip_environment_context_and_ignore_bad_date_dirs() -> Tes
     Ok(())
 }
 
+#[tokio::test]
+async fn a_codex_title_skips_the_agents_instructions_block() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    write(
+        dir.path(),
+        &format!("sessions/2026/10/01/rollout-2026-10-01T00-00-00-{U1}.jsonl"),
+        &[
+            r#"{"type":"session_meta","payload":{}}"#.to_owned(),
+            codex_line(r"# AGENTS.md instructions for /home/user/app\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>"),
+            codex_line("fix the flaky cache test"),
+        ]
+        .join("\n"),
+    )?;
+    let lister = lister(StoreRoots {
+        codex: Some(dir.path().to_path_buf()),
+        ..StoreRoots::default()
+    });
+    let rows = only(&lister, HarnessId::Codex).await;
+    assert_eq!(
+        rows.first().map(|row| row.title.as_str()),
+        Some("fix the flaky cache test")
+    );
+    Ok(())
+}
+
 fn omp_lister(root: &Path) -> StoreSessionLister {
     lister(StoreRoots {
         omp: Some(root.to_path_buf()),

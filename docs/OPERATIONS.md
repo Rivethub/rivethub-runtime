@@ -194,7 +194,8 @@ receive routes apply the same rules to sanitized bundles.
 - **Sign in to share again.** 0.8.0 signed in to rivethub.cloud with its own `/api/cli` endpoints, which the cloud no
   longer serves. `rh share login` now uses OAuth device sign-in found through the server's RFC 8414 metadata, and asks
   for `offline_access` so the login can refresh. Run `rh share login` once on each machine. A team server offers no
-  device sign-in: members use the users-file token.
+  device sign-in: members sign in with their users-file token, `rh share login <server> --token-file <path>` (or `-` to
+  read it from stdin).
 - **`cloud.disabled`.** New and off by default. See "Keeping data on your network" below to keep a hub off
   rivethub.cloud, and `rh local --no-cloud` to write it into a new standalone config.
 

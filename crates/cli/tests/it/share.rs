@@ -1734,3 +1734,105 @@ async fn a_flagged_bundle_is_held_then_imported_by_decision(pool: PgPool) {
     drop(tokio::time::timeout(Duration::from_secs(5), gateway.task).await);
     served.stop.cancel();
 }
+
+async fn team_server() -> (String, Arc<Mutex<usize>>, CancellationToken) {
+    let revokes = Arc::new(Mutex::new(0_usize));
+    let counted = Arc::clone(&revokes);
+    let app = Router::new()
+        .route(
+            "/api/me",
+            axum::routing::get(|headers: HeaderMap| async move {
+                let bearer = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok());
+                if bearer == Some("Bearer team-secret") {
+                    json(StatusCode::OK, r#"{"user":"phil"}"#)
+                } else {
+                    json(StatusCode::UNAUTHORIZED, r#"{"error":"unauthorized"}"#)
+                }
+            }),
+        )
+        .route(
+            "/api/auth/oauth2/revoke",
+            axum::routing::post(move || {
+                let counted = Arc::clone(&counted);
+                async move {
+                    *counted.lock() += 1;
+                    StatusCode::OK
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("listener");
+    let url = format!("http://{}/", listener.local_addr().expect("address"));
+    let stop = CancellationToken::new();
+    let token = stop.clone();
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { token.cancelled().await })
+            .await
+    });
+    (url, revokes, stop)
+}
+
+#[tokio::test]
+async fn a_team_token_signs_in_from_a_file_and_logout_leaves_other_machines_signed_in() {
+    let (url, revokes, stop) = team_server().await;
+    let host = host_of(&url);
+    let first = Node::new("phil", &url, None);
+    let second = Node::new("phil", &url, None);
+    for node in [&first, &second] {
+        let file = node.home.path().join("team.token");
+        std::fs::write(&file, "team-secret\n").expect("token file");
+        let signed_in = node
+            .run(&[
+                "share",
+                "login",
+                &host,
+                "--token-file",
+                &file.display().to_string(),
+            ])
+            .await;
+        assert_eq!(signed_in.exit, Exit::Ok, "{}", signed_in.stderr);
+        assert!(
+            signed_in
+                .stdout
+                .starts_with(&format!("signed in to {host} as phil with a team token")),
+            "{}",
+            signed_in.stdout
+        );
+        assert!(
+            !signed_in.stdout.contains("team-secret") && !signed_in.stderr.contains("team-secret")
+        );
+    }
+    let bad = first.home.path().join("bad.token");
+    std::fs::write(&bad, "\n").expect("empty token file");
+    let refused = first
+        .run(&[
+            "share",
+            "login",
+            &host,
+            "--token-file",
+            &bad.display().to_string(),
+        ])
+        .await;
+    assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
+
+    let signed_out = first.run(&["share", "logout", &host]).await;
+    assert_eq!(signed_out.exit, Exit::Ok, "{}", signed_out.stderr);
+    assert!(
+        signed_out.stdout.contains("stays valid on the server"),
+        "{}",
+        signed_out.stdout
+    );
+    assert_eq!(
+        *revokes.lock(),
+        0,
+        "a team-token logout never calls the server"
+    );
+    assert!(!logins(&first).contains("team"), "{}", logins(&first));
+    let status = second.run(&["share", "status"]).await;
+    assert!(status.stdout.contains("signed in to"), "{}", status.stdout);
+    stop.cancel();
+}

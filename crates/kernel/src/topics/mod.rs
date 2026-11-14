@@ -31,6 +31,7 @@ pub use decision::render_decisions;
 pub use decision::topic_decision;
 pub use page::PageChange;
 pub use page::PageSection;
+pub use page::SweepOwners;
 pub use page::TopicPage;
 pub use page::TopicPageError;
 pub use page::TopicPageStore;

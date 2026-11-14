@@ -31,6 +31,7 @@ pub enum ModelHealth {
     Healthy,
     Slow,
     Failing,
+    Unconfigured,
 }
 
 #[serde_with::skip_serializing_none]

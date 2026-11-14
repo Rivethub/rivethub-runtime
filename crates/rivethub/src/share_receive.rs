@@ -475,6 +475,7 @@ fn server(error: &ServerError) -> ReceiveError {
         | ServerError::Keyring(_)
         | ServerError::Finished
         | ServerError::NoDeviceFlow(_)
+        | ServerError::TokenFile(_)
         | ServerError::Store(_)
         | ServerError::Ca { .. }
         | ServerError::File(_)

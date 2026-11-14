@@ -44,7 +44,7 @@ fn team() -> TestResult<Space> {
 
 async fn seed(pool: &PgPool) -> TestResult {
     let tenancy = PostgresTenancy::new(pool.clone());
-    tenancy.sync_spaces(&[team()?]).await?;
+    tenancy.sync_spaces("node-a", &[team()?]).await?;
     let writer = PostgresMemory::new(pool.clone());
     for (owner, key) in [("phil", SHARED), ("alex", OWN), ("tom", PRIVATE)] {
         writer.capture_batch(&CaptureBatchRequest {
@@ -105,7 +105,8 @@ async fn pinned_mcp_introduces_its_database_person_without_a_spaces_users_file()
 async fn unpinned_mcp_uses_the_users_owner_and_store_memberships() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     seed(&db).await?;
-    let instructions = introduction(db.connect_options().as_ref().clone(), "alex").await?;
+    let served: sqlx::postgres::PgConnectOptions = db.served_url().await?.parse()?;
+    let instructions = introduction(served, "alex").await?;
     assert!(instructions.starts_with("You are working with alex on a shared hub with phil, tom."));
     Ok(())
 }
@@ -249,7 +250,6 @@ async fn non_owner_gateway_memory_rows_name_teammates_and_omit_the_viewer_owner(
 }
 
 #[tokio::test]
-#[ignore = "requires fix/team-hub-sessions: catalog must use the scoped store instead of the gateway owners file"]
 async fn non_owner_gateway_owner_fields_cover_search_browse_and_session_catalog() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let api = Api::new(&db).await?;

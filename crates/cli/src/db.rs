@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use config::{Config, ConfigLocation, Environment, Profile};
+use config::{Config, ConfigLocation, Environment};
 use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Report, configuration};
@@ -65,7 +65,7 @@ pub(crate) async fn load(
             Some(path) => ConfigLocation::Current(path),
             None => config::resolve_config_path(&env)?.ok_or(Error::NoConfig)?,
         };
-        Ok(Config::load(&env, &location, Profile::Standalone)?)
+        Ok(Config::load(&env, &location)?)
     })
     .await?
 }

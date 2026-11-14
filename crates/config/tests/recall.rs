@@ -11,10 +11,7 @@ fn recall_weight_is_bounded_and_defaults_to_a_mild_preference() {
     }
     for value in [0.0, 0.99, 2.01, -1.0] {
         let yaml = format!("memory:\n  recall: {{own_weight: {value}}}\n");
-        let result = config::validate_document(
-            &serde_yaml_ng::from_str(&yaml).expect("yaml"),
-            config::Profile::Standalone,
-        );
+        let result = config::validate_document(&serde_yaml_ng::from_str(&yaml).expect("yaml"));
         assert!(
             result
                 .errors

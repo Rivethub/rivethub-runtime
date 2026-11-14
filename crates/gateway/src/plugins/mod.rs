@@ -7,6 +7,7 @@ mod launch;
 mod logs;
 mod manage;
 mod manifest;
+mod output;
 mod registry;
 mod rules;
 mod sandbox;

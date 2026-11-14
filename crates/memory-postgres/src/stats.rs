@@ -70,8 +70,28 @@ struct RecentRow {
     messages: i64,
 }
 
-fn count(value: i64) -> Result<u64, Error> {
-    u64::try_from(value).map_err(|source| Error::protocol(source.to_string()))
+fn count(value: i64) -> u64 {
+    stored_count(value, "memory stats")
+}
+
+pub(crate) fn stored_count(value: i64, field: &'static str) -> u64 {
+    let counted = u64::try_from(value);
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "CONTRACT B1: a stored counter below zero is reported as 0 and logged, never failing the whole answer (note 186)"
+        )
+    )]
+    let shown = counted.unwrap_or_else(|_| {
+        tracing::warn!(
+            field,
+            value,
+            "a stored message counter is below zero; reporting 0"
+        );
+        0
+    });
+    shown
 }
 
 impl crate::PostgresMemory {
@@ -126,7 +146,7 @@ impl crate::PostgresMemory {
             if let Some(tool) = group.tool_name {
                 top_tools.push(TopTool {
                     tool,
-                    count: count(group.total)?,
+                    count: count(group.total),
                 });
             }
         }
@@ -140,18 +160,18 @@ impl crate::PostgresMemory {
                     title: row.title,
                     agent: row.agent,
                     last_active: row.updated_at,
-                    messages: count(row.messages)?,
+                    messages: count(row.messages),
                 })
             })
             .collect::<Result<_, _>>()?;
         Ok(MemoryStatsResponse {
-            conversations: count(others.conversations)?,
-            messages: count(messages.total)?,
-            tool_calls: count(messages.tool_calls)?,
-            summaries: count(others.summaries)?,
-            embed_queue_depth: count(messages.queued + others.queued)?,
-            embedded_messages: count(messages.embedded)?,
-            failed_embeddings: count(messages.failed + others.failed)?,
+            conversations: count(others.conversations),
+            messages: count(messages.total),
+            tool_calls: count(messages.tool_calls),
+            summaries: count(others.summaries),
+            embed_queue_depth: count(messages.queued + others.queued),
+            embedded_messages: count(messages.embedded),
+            failed_embeddings: count(messages.failed + others.failed),
             top_tools,
             recent_sessions,
         })

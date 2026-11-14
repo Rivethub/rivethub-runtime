@@ -15,7 +15,7 @@ fn url(pool: &PgPool) -> String {
 
 #[sqlx::test(migrations = false)]
 async fn a_fresh_database_is_not_adopted_and_left_untouched(pool: PgPool) -> TestResult {
-    assert_eq!(SCHEMA_VERSION, 69);
+    assert_eq!(SCHEMA_VERSION, 75);
     match PostgresMemory::connect(&url(&pool)).await {
         Err(error @ Error::NotAdopted) => assert_eq!(
             error.to_string(),
@@ -79,7 +79,7 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
     };
     assert!(
         line.contains(
-            "the memory schema reports version 9999, this build requires 69 — rolling updates migrate first; continuing"
+            "the memory schema reports version 9999, this build requires 75 — rolling updates migrate first; continuing"
         ),
         "the warning must name the rolling update: {line}"
     );
@@ -128,6 +128,59 @@ async fn a_failed_newer_row_is_not_a_schema_version(pool: PgPool) -> TestResult 
     )
     .execute(&pool)
     .await?;
+    PostgresMemory::connect(&url(&pool)).await?;
+    Ok(())
+}
+
+fn as_role(pool: &PgPool, role: &str) -> String {
+    pool.connect_options()
+        .as_ref()
+        .clone()
+        .username(role)
+        .password(role)
+        .to_url_lossy()
+        .to_string()
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> TestResult {
+    for (role, attributes) in [
+        ("rh_serving_plain", "NOSUPERUSER NOBYPASSRLS"),
+        ("rh_serving_bypass", "NOSUPERUSER BYPASSRLS"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DO $$ BEGIN CREATE ROLE {role} LOGIN {attributes} PASSWORD '{role}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "GRANT SELECT ON _sqlx_migrations TO {role}"
+        )))
+        .execute(&pool)
+        .await?;
+    }
+    let pooling = memory_postgres::Pooling::OnDemand;
+    for (url, refused) in [
+        (url(&pool), true),
+        (as_role(&pool, "rh_serving_bypass"), true),
+        (as_role(&pool, "rh_serving_plain"), false),
+    ] {
+        match PostgresMemory::connect_deferred(&url, pooling).await {
+            Err(error @ Error::BypassingLogin { .. }) => {
+                assert!(refused, "{error}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("serve memory with an ordinary login"),
+                    "{error}"
+                );
+                assert!(!error.to_string().contains("password"), "{error}");
+            }
+            Ok(_) => assert!(!refused, "a bypassing login was accepted"),
+            Err(other) => return Err(other.into()),
+        }
+    }
     PostgresMemory::connect(&url(&pool)).await?;
     Ok(())
 }

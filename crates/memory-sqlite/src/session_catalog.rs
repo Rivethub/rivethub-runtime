@@ -27,6 +27,8 @@ use wire::harness::HarnessId;
 use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
+use rusqlite::OptionalExtension as _;
+
 use crate::error::SqliteError;
 use crate::time;
 
@@ -116,7 +118,10 @@ SELECT g.key,
        (SELECT substr(m.content, 1, 600) FROM ros_messages m
          WHERE m.conversation_id IN (SELECT value FROM json_each(g.conversations)) AND m.role = 'user' AND trim(m.content) <> ''
          ORDER BY julianday(m.created_at), m.rowid LIMIT 1),
-       g.native
+       g.native,
+       (SELECT c.id FROM ros_conversations c
+         WHERE c.id IN (SELECT value FROM json_each(g.conversations))
+         ORDER BY julianday(c.created_at), c.id LIMIT 1)
   FROM page g
  ORDER BY g.started DESC, g.key DESC";
 
@@ -138,6 +143,7 @@ struct Row {
     cwd: Option<String>,
     import_settings: Option<String>,
     first_user: Option<String>,
+    conversation: Option<String>,
     native: String,
 }
 
@@ -184,6 +190,7 @@ impl Row {
             import_settings: row.get(15)?,
             first_user: row.get(16)?,
             native: row.get(17)?,
+            conversation: row.get(18)?,
         })
     }
 
@@ -224,6 +231,15 @@ impl Row {
             gist: self.summary.as_deref().and_then(snippet),
             cwd: self.cwd,
             origin,
+            conversation: self
+                .conversation
+                .map(|id| {
+                    uuid::Uuid::parse_str(&id).map_err(|_| SqliteError::StoredValue {
+                        column: "ros_conversations.id",
+                        value: id,
+                    })
+                })
+                .transpose()?,
         })
     }
 }
@@ -386,5 +402,38 @@ impl SessionCatalog for SqliteStore {
         })
         .await
         .map_err(Into::into)
+    }
+
+    async fn conversation_session(
+        &self,
+        conversation: uuid::Uuid,
+    ) -> Result<Option<SessionKey>, MemoryStoreError> {
+        let id = conversation.to_string();
+        let key: Option<String> = self
+            .with_conn(move |conn| {
+                conn.query_row(
+                    "SELECT rh_session_key(channel, session_key) FROM ros_conversations WHERE id = ?1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|source| SqliteError::Query {
+                    operation: "conversation session",
+                    source,
+                })
+            })
+            .await?;
+        key.map(|key| {
+            SessionKey::from_str(&key).map_err(|_| SqliteError::StoredSession { value: key })
+        })
+        .transpose()
+        .map_err(Into::into)
+    }
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &kernel::memory::MessagesQuery,
+    ) -> Result<kernel::memory::SessionMessages, MemoryStoreError> {
+        Ok(self.session_messages(key, query).await?)
     }
 }

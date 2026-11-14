@@ -136,7 +136,7 @@ async fn status_and_doctor_still_report_broken_agents_and_providers() {
 }
 
 #[tokio::test]
-async fn validate_holds_a_postgres_config_to_what_rh_start_requires() {
+async fn validate_accepts_a_postgres_hub_without_a_model_quietly() {
     let home = home();
     let state = home.path().join(".rivethub");
     std::fs::create_dir_all(&state).expect("state directory");
@@ -146,16 +146,13 @@ async fn validate_holds_a_postgres_config_to_what_rh_start_requires() {
     )
     .expect("config");
     let validate = run(&["config", "validate"], &environment(&home)).await;
-    assert_eq!(validate.exit, Exit::Failure, "{}", validate.stdout);
-    for section in ["runtime", "agents", "providers"] {
-        assert!(
-            validate
-                .stdout
-                .contains(&format!("Missing required section \"{section}\"")),
-            "{}",
-            validate.stdout
-        );
-    }
+    assert_eq!(validate.exit, Exit::Ok, "{}", validate.stdout);
+    assert!(
+        !format!("{}{}", validate.stdout, validate.stderr).contains(config::NO_MODEL_NOTE),
+        "{} {}",
+        validate.stdout,
+        validate.stderr
+    );
 }
 
 #[tokio::test]

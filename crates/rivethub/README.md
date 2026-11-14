@@ -32,8 +32,8 @@ Under the `gateway` configuration section (`den` is its deprecated alias):
 
 - `tls_cert` and `tls_key` select the server identity. The listener asks for no
   client certificate.
-- `users_file` (overridden by `RIVETHUB_USERS_FILE`, with the deprecated
-  `RIVETOS_USERS_FILE` alias) selects the B11 JSON registry: `ownerUserId`, `unmappedIsOwner`,
+- `users_file` (used before `RIVETHUB_USERS_FILE`, which is used before the deprecated
+  `RIVETOS_USERS_FILE` alias; CONTRACT note 182) selects the B11 JSON registry: `ownerUserId`, `unmappedIsOwner`,
   and `users`, a map of user IDs to records with optional `tokens` (hex SHA-256
   digests of bearer tokens), `admin`, `pgUrl`, `envFile` and `persona`. An
   explicit missing or invalid file, or a token digest that is not hex SHA-256 or

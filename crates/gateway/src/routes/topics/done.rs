@@ -11,7 +11,6 @@ use wire::gateway::topics::SessionHistoryList;
 use wire::gateway::topics::SessionHistoryMark;
 use wire::gateway::topics::TopicRecord;
 
-use super::canonical;
 use super::map;
 use super::resolve_id;
 use crate::Gateway;
@@ -57,7 +56,7 @@ pub(super) async fn mark(
     State(gateway): State<Arc<Gateway>>,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionHistoryMark>, ApiError> {
-    let session = canonical(&segment)?;
+    let session = crate::session_address::resolve_captured(&gateway, &segment).await?;
     let kept = gateway
         .topics()?
         .mark_history(HistoryMark {
@@ -73,7 +72,7 @@ pub(super) async fn unmark(
     State(gateway): State<Arc<Gateway>>,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let session = canonical(&segment)?;
+    let session = crate::session_address::resolve_captured(&gateway, &segment).await?;
     gateway
         .topics()?
         .unmark_history(&session)

@@ -66,6 +66,9 @@ impl crate::PostgresMemory {
     ) -> Result<CaptureResult, Error> {
         let channel = batch.channel.as_deref().ok_or(Error::MissingChannel)?;
         let mut writer = CaptureWriter::begin(&self.pool, &batch.session_key).await?;
+        if self.missing.embeddings {
+            writer.defer_embeddings().await?;
+        }
         if write == Write::Append
             && writer
                 .carries_receipt(&batch.session_key, options.owner.as_str())

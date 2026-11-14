@@ -23,8 +23,8 @@ Reference material that survives from the first attempt (read-only; `/rivet-shar
 | B7 | MCP sidecar: RivetHub's own tools only: eight recall tools on every transport (`memory_search`, `memory_browse`, `memory_team`, `memory_get_full`, `memory_stats`, `memory_tags`, `wiki_search`, `wiki_read`; `delegate_task` and `list_agents` were removed by note 132), plus `session_find`, `session_sanitize` and `session_import` on stdio only (note 139); `echo`, `skill_list`, `skill_manage`, `internet_search` and `web_fetch` are removed (Phil, 2026-10-13). Their schemas, transports (stdio, streamable HTTP, unix socket) | Claude Code, codex, every MCP client | mcp-tools-providers.md §2–§3 | `golden/mcp/` (`tools-list.json`, `calls.json`) | `tools/list` for the seven recorded recall tools equals the recording after the RivetOS→RivetHub name translation, compared as parsed values; `memory_team` is additive (note 156); recorded calls give the same results |
 | B8 | Provider wire traffic: the OpenAI-compatible chat (streamed) and embeddings API as spoken to vLLM, SGLang and hosted OpenAI-compatible endpoints through one client (no Ollama, no llama-server type) | the model servers | mcp-tools-providers.md §5.4–§5.5 | the vllm scenarios in `golden/providers/` (request+response) | byte-equal request bodies (headers filtered) except the intentional wire deltas of one typed table (testkit `B8_OMITTED_REQUEST_FIELDS`): the runtime sends NO sampling fields where the TypeScript sent hard-coded `temperature: 0.7`/`top_p: 0.95`, never sends `tool_choice` (the server's own `auto` default applies when `tools` are present), and sends `max_tokens` only when the provider config sets it (the TypeScript's 4096 default is gone); same parsed responses and stream chunks |
 | B9 | CLI: command tree, flags, output text, exit codes, prompts (`rh agent` is gone, note 74; `rh mesh`, `rh ca`, `rh cert` and `rh update --mesh` are gone, note 132) | operators, systemd units, scripts | cli.md §0–§19 | `tests` listed in cli.md §21; (recording to add: CLI golden transcripts) | same stdout/stderr/exit for the same argv on the same state |
-| B10 | `config.yaml` keys, defaults, validation messages (`rh config`, `rh status` and `rh doctor` validate the way `rh start` boots, which requires `runtime`, `agents` and `providers`; a config that selects SQLite and passes the way `rh local` validates is accepted too, so the config `rh local` writes is valid); environment variables (`tasks.pricing`, `tasks.eval` and `runtime.heartbeats` are retired, note 74; `memory.models` assigns a model to each memory job, note 126; `memory.sanitize.mapping` names the sanitize mapping file, note 136; `memory.sanitize.decide` configures the decision-model review, note 137; the keys and variables note 132 retires load with one warning each and are ignored) | operators, deploy tooling | config-and-boot.md §1–§2 | `golden/diff/config/` (realistic cases) | same accept/reject and same messages for the same file |
-| B11 | On-disk state: `~/.rivethub/` layout, pid and lock files, the session owners file, the account folder, the capture spool, wiki pages (markdown + frontmatter), skills `_meta.json`, `codex-threads.json` (`mesh.json`, agent presets, device and pairing files and uploads are no longer read or written, note 132) | other nodes, backups, humans, TypeScript during cutover | config-and-boot.md §3.9; core-domain.md §1.11; gateway-api.md §8 | fixtures under `golden/` and the inventories' documented formats | files written by Rust are read by TypeScript and vice versa |
+| B10 | `config.yaml` keys, defaults, validation messages (`rh config`, `rh status`, `rh doctor`, `rh gateway --check`, `rh start` and `rh local` validate with one rule; `runtime`, `agents` and `providers` are optional and a node without them has no model, note 181); environment variables (`tasks.pricing`, `tasks.eval` and `runtime.heartbeats` are retired, note 74; `memory.models` assigns a model to each memory job, note 126; `memory.sanitize.mapping` names the sanitize mapping file, note 136; `memory.sanitize.decide` configures the decision-model review, note 137; the keys and variables note 132 retires load with one warning each and are ignored) | operators, deploy tooling | config-and-boot.md §1–§2 | `golden/diff/config/` (realistic cases) | same accept/reject and same messages for the same file |
+| B11 | On-disk state: `~/.rivethub/` layout, pid and lock files, the account folder, the capture spool, wiki pages (markdown + frontmatter), skills `_meta.json`, `codex-threads.json` (`mesh.json`, agent presets, device and pairing files and uploads are no longer read or written, note 132) | other nodes, backups, humans, TypeScript during cutover | config-and-boot.md §3.9; core-domain.md §1.11; gateway-api.md §8 | fixtures under `golden/` and the inventories' documented formats | files written by Rust are read by TypeScript and vice versa |
 | B12 | Harness protocol: ACP (`session/*`) natively or through the codex-acp and claude-code-acp adapter binaries, used only to start the CLI model providers (note 132; herdr control and the terminal WS framing were removed) | the harness binaries, herdr, RivetHub clients terminal | harness-control-plane.md §1–§2; standardize/SESSION-MODEL.md | `golden/term/` (PTY, WS, roster) ; ACP conformance via the `agent-client-protocol` crate's schema | real binaries: new/resume/prompt/cancel work on every installed harness; term replays pass |
 | B13 | Workers: graphile job names, payloads, keys, priorities (sweeps ahead of work, recent conversations ahead of old backlog, note 78), cron entries (no `run-task` job is written any more, note 132); worker role split (the summarizer also claims `sync-topic-page` and runs its hourly `topic-page-sweep`, note 22; `extract-wiki` writes a placed session's summary into its topic page and files people, hosts and tools under category topics, note 23) | the shared Postgres queue, other nodes' workers | data-layer.md §2.3–§2.6 | `golden/capture/pg/` job rows | same jobs enqueued; same job handled with the same result rows |
 | B14 | **Removed (note 132).** The mesh registry, heartbeat and agent channel, `/ca/v1/*`, SPIFFE device and node identity and the step-ca client | none | PKI-DESIGN addenda 2026-10-15/15b; mesh inventory unchanged | `crates/testkit/tests/fixtures/stepca/` and `crates/pki/tests` | recorded sign refusals, step-ca chain and CRL through the port, shared `rh ca token` minting, `CaError::Unavailable` when step-ca is unreachable; holder mTLS renew/revoke and local SAN-policy cases listed with reasons |
@@ -2161,6 +2161,8 @@ and origin and skips event ids it has (note 135).
 
 (125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else `stale` when the hook, plug-in or store is in place, else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when `$DSH_HOME/cordis.patch.yml` inserts a file that runs `rh capture hook --harness dsh` (note 185); `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML, and dsh's `$DSH_HOME/cordis.patch.yml` (note 185)), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is embedded in rh (`capture::harnesses::opencode_plugin::TEMPLATE`, a Rust string constant vendored from `integrations/opencode/src/capture.ts` of the rivethub-app repo, a template whose `'__COMMAND__'` literal becomes rh's hook command), and `RIVETHUB_OPENCODE_PLUGIN`, when set, names a file installed in its place (an unreadable file is refused with its path, one without the placeholder is refused as a config error), copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files and from this node's store (note 174). `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for, and then naming the skipped part on stderr and closing with `connected <part> only.` instead of `connected.`), and prints the diff and the backup path; when the only part asked for, or every part, cannot be written it exits 1. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
 
+(125) Harness status and connect (Phil, 2026-11-06): the web app shows, for each harness on the machine, whether it is found, how it captures and whether recall is wired, and wires it. The capture crate holds one typed table, `capture::harnesses::REGISTRY`, with a row per harness: `claude-code`, `codex`, `grok-build`, `opencode`, `cursor`, `dsh`, `cowork`, `kimi`, `omp`, `hermes`, `antigravity` and `kiro`. A row names the binaries searched on `PATH`, the data directories (the store roots of note 84 and the listing modules, plus `~/.gemini/antigravity` and `~/.kiro`), the capture methods ranked best first (`hook` for `claude-code`, `codex`, `grok-build` and `dsh`, `plugin` for `opencode`, `store-scan` for `cursor`, `cowork`, `kimi`, `omp` and `hermes`, `client-push` for `antigravity` and `kiro`; a hook or plug-in harness falls back to `store-scan`), where rh's hook or plug-in entry lives, and the recall MCP file with its format. `GET /api/capture/status` answers an array of `HarnessStatus`, in `id`, `name`, `found`, `path?`, `version?`, `capture` (`method`, `state`, `lastCaptureAt?`, `detail`), `recall` (`state` `connected`, `not-connected` or `elsewhere`, `detail`) and `canConnect` camelCase, as `packages/contracts/src/domain.ts` types it; `version` is not read, so it is absent. `lastCaptureAt` is the newest `updated_at` of the conversations whose session key starts with the harness's prefix (`MemoryStore::capture_activity`; the id `kimi` reads the prefix `kimi-code`). `capture.state` is `receiving` when that is within three days, whatever the install check says, else, when the hook, plug-in or store is in place, `idle` if nothing was ever captured under its prefix and `stale` if something was but not lately (note 184), else `not-connected`. A `hook` entry counts as installed when every event rh wants (Claude Code `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd`; Codex `Stop`, `SessionEnd`; Grok Build `Stop`, `PreCompact`, `SessionEnd`) has a command that runs `rh capture hook` for that harness, in `~/.claude/settings.json`, `~/.codex/hooks.json` or any `~/.grok/hooks/*.json`; an `opencode` plug-in counts when a file in `~/.config/opencode/plugins/` runs `rh capture hook --harness opencode`, a `dsh` plug-in when a profile plug-in under `~/.dsh/plugins/` does; `store-scan` counts when the store directory exists; `client-push` never counts, because the client pushes on its own. Recall is `connected` when an MCP entry runs `rh mcp` directly or through a shell wrapper (`~/.claude.json` and Cursor, Cowork, Kimi, Omp, Antigravity and Kiro `mcpServers` JSON, OpenCode's `mcp` JSON, the `mcp_servers` tables of Codex's and Grok's `config.toml`, Hermes's `mcp_servers` YAML), and `elsewhere` when an entry named `rivethub` or `rivetos` runs something else. `POST /api/harnesses/{id}/connect` takes `{part: "capture" | "recall", dryRun?: bool}` and answers `{diff, backupPath}`: the unified diff of every file it would change (empty when the entry is already there), and the backup it wrote (empty on a dry run or when nothing changed). Connecting is idempotent: it adds a missing hook event, the `rivethub` MCP entry (command the node's own `rh` binary, args `mcp`) or the OpenCode plug-in only when absent, edits a JSON file by parsing it, changing only rh's entries and writing it back as 2-space pretty JSON with a trailing newline, so every other key and its order survive but comments are refused and the indentation is normalized (through a symlink when the file is one); the OpenCode plug-in is embedded in rh (`capture::harnesses::opencode_plugin::TEMPLATE`, a Rust string constant vendored from `integrations/opencode/src/capture.ts` of the rivethub-app repo, a template whose `'__COMMAND__'` literal becomes rh's hook command), and `RIVETHUB_OPENCODE_PLUGIN`, when set, names a file installed in its place (an unreadable file is refused with its path, one without the placeholder is refused as a config error), copies the file first to `~/.rivethub/backups/<harness>-<file>-<UTC timestamp>`, and a second run changes nothing. A file the editor cannot place text in (JSON with comments, invalid TOML) is refused untouched. Both routes read or write this machine's files, so they answer 403 off loopback, and 403 `owner_required` to a loopback caller who is not the node's owner; 404 names an unknown harness, and 422 a part rh cannot write (a `store-scan` or `client-push` harness has nothing to install, `dsh` loads capture and recall through profile files rh does not edit, and Hermes's recall is YAML rh does not edit yet) or a config it cannot parse, 503 a node with no setup wired. The routes are on every surface, the memory service included. `rh harness status [--json]` prints the same table from this machine's files alone, with no gateway or store, so `lastCaptureAt` is absent and `capture.state` is `stale` for an installed entry and `not-connected` otherwise. `rh harness connect <id> [--capture | --recall] [--dry-run]` does what the route does, for both parts when neither flag is given (skipping a part rh cannot write unless it is the only one asked for, and then naming the skipped part on stderr and closing with `connected <part> only.` instead of `connected.`), and prints the diff and the backup path; when the only part asked for, or every part, cannot be written it exits 1. `rh harness disconnect <id> [--capture | --recall] [--dry-run]` backs the file up the same way and removes only rh's entries: hook groups whose every command is `rh capture hook` for that harness, MCP entries that run `rh mcp`, the OpenCode `rivethub-capture.ts` plug-in, and Grok's `rivethub-capture.json` once it holds no hook; it never restores a whole backup over later edits.
+
 (126) Models per memory job (Phil, 2026-11-06): `memory.models` names the model each memory job runs on. `default` is `{provider, model, effort?}` and is required when the section is present. `summarizer`, `categorizer` and `wiki_writer` take the same shape, and a role without an entry inherits `default`. `embedder` is `{provider, model?}` or `{endpoint, model}`, never both. `provider` names an entry under `providers`. `model` may be left out only when that provider names one. `effort` (low, medium or high) sets the reasoning effort of a CLI provider for that role, and on a server provider it is a validation warning. An embedder `provider` must be an openai-compatible or vllm provider: its `base_url` is the embeddings endpoint and its `api_key` or `token_command` authenticate. An embedder `endpoint` is a base URL, and the memory backend's `embed_api_key`, `embed_expected_dims`, `embed_timeout_ms` and `embed_query_instruction` still apply to it. A bad reference, a missing model, `provider` together with `endpoint`, and a `default` that is missing are validation errors; an unknown key under `memory.models` is a warning. The TypeScript runtime accepted any `memory.models` value as an unknown key, so one recorded case (`validate_config_memory.jsonl:747`, `models: ":memory:"`) is now rejected and sits in the deviations table.
 
 Without `memory.models`, nothing about a running node changes. `default` is the default agent's provider and model, every other role inherits it, and the embedder is derived from `memory.<backend>.embed_provider`, `embed_endpoint` and `embed_model` and from `RIVETHUB_EMBED_URL` and `RIVETHUB_EMBED_MODEL`. Loading a config that has a `memory` section and no `memory.models` does not log a notice (note 173). It is not a validation finding and `rh config validate` still passes. With `memory.models` present, `runtime.default_agent` is not read for memory jobs.
@@ -2374,7 +2376,7 @@ is still this node's name; `gateway.certificate_authority`, `gateway.devices`, `
 variables (`RIVETHUB_TERM_*`, `RIVETHUB_UPLOAD_*`, `RIVETHUB_VOICE_*` and their RivetOS names) and `RIVETHUB_HOST` warn and
 are ignored. `tasks.harnesses` stays: it names the binary and folder each harness starts from. `agents` and
 `runtime.default_agent` stay: without `memory.models` they pick the memory jobs' default model (note 126).
-`RIVETHUB_TLS_CA` (or `RIVET_CA_CHAIN`, or the shared `rivet-ca/intermediate/chain.pem`) is still read, as the extra trust
+`gateway.trust_root` (else `RIVETHUB_TLS_CA`, or `RIVET_CA_CHAIN`, or the shared `rivet-ca/intermediate/chain.pem`, note 183) is still read, as the extra trust
 root for hub probes and for `rh status` reaching a gateway with a private certificate.
 
 Removed crates and modules: `agent-loop`, `terminal`, `pki` and `stepca`; the gateway's mesh, task engine, terminal
@@ -3077,6 +3079,244 @@ Golden wire account-device-login.json and generated accepted/sent schemas descri
 
 (177) An upgrade repairs a unit `rh` generated (new-user run, 2026-11-14). `rh update` (including `--no-restart`) and `rh service init`, `rh service start` and `rh service restart` compare the unit on disk with the unit this `rh` would write for the same configuration. A unit that matches the shape `rh` writes — the fixed lines, an `ExecStart=` of a quoted absolute path plus `start` or `local`, and an `EnvironmentFile=-` of a quoted or unquoted absolute path, with or without `RestartPreventExitStatus=11` — and differs from that text is replaced. The previous file is kept beside it as `rivethub.service.bak` (or `.bak.1` and on when that name is taken), systemd is reloaded, and one line says what changed. A unit that does not match that shape is left unchanged. `rh service init` then exits 1 and names the differing lines and `rh service init` as the way to regenerate it. `rh service start` and `rh service restart` print that and still start the unit. `rh doctor` warns, and still exits 0, when a unit's `EnvironmentFile=` is not an absolute path, which systemd ignores.
 (185) DeepSeek Harness connect (Phil, 2026-11-14): `rh harness connect dsh` writes capture and recall into `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`). DeepSeek Harness 0.2.2 applies that home-level patch to every profile after the profile's own `cordis.patch.yml`, so a profile created later is covered without another connect. rh does not edit a profile's `package.json`, `cordis.yml` or `cordis.patch.yml`, and it does not run `dsh plugin`. The capture file is `$DSH_HOME/plugins/rivethub-capture.mjs`, embedded in rh (`capture::harnesses::dsh_plugin::TEMPLATE`). It injects `sessions`, listens for `session/event`, and on `turn/end` spawns a detached process that runs `rh capture hook --harness dsh` with `{session_id, hook_event_name, cwd}` on stdin. It never throws and never waits, so a capture failure cannot fail or stall the session. The patch names that file as `./plugins/rivethub-capture.mjs`. The recall row inserts `@deepseek-ai/dsh-mcp-client` by the absolute path of its `lib/index.js` beside the `dsh` binary (a bare package name would resolve from the profile directory and fail boot), with `serverName: rivethub`, `transport: stdio`, command this `rh`, args `mcp`, and `failOnStartupError: false`. When `dsh` is not on `PATH`, or that package is not beside it, capture is still written and recall is skipped with that reason, unless `--recall` was asked on its own, which exits 1 and writes nothing. The block is marked `# rivethub-dsh-begin` and `# rivethub-dsh-end`. A missing home patch is created and removed on disconnect. A home patch whose only value is `[]`, comments included, is marked so disconnect puts `[]` back. Other block-style items are kept and the block is appended; disconnect removes only the block. A flow-style array, a file that is not a YAML array, unbalanced markers, or an insert whose id is `rivethub-recall` or whose `serverName` is `rivethub` or `rivetos` when that insert does not run `rh mcp`, is refused and left untouched. Connecting again changes nothing once the home patch points at a file that contains `capture hook --harness dsh` and a row already runs `rh mcp`. Disconnect deletes `plugins/rivethub-capture.mjs` only when that file still contains the marker, and it does not remove a recall row outside the marked block. `rh harness status` reports capture installed only when the home patch covers every profile. A plug-in linked into some profiles only is not installed: the detail names the profiles that are wired and the ones that are not, and says when later profiles would be missed. Recall is `connected` only when the home patch's row runs `rh mcp`.
+
+(178) One answer to who may read or change a session (Phil, 2026-11-13, team hub; replaces the session owners file).
+The gateway asks the store, through `TenancyStore::session_visibility` (keyed by `SessionKey`, so harness sessions and
+imports alike), for each session's owner and effective visibility, and decides from that alone
+(`gateway::session_access`): the owner may read and change it; a member of the space it is shared with may read it;
+anyone else does not see it. A session the store has no owner for (a harness file on this machine that was never
+captured) belongs to the node's own person. On a store without row-level security (SQLite, one person) every session
+is the node person's. `GET /api/sessions`, its detail, `GET /api/today`, the harness-session routes and the model-calls
+route answer every authenticated person this way, and the session list is the store's page as it is: a Postgres store
+scopes the catalog query to the viewer, so nothing is filtered out after the limit and a page is never short. Only the
+owner keeps, unkeeps, trashes, restores, deletes, marks, places, unplaces, renames or tags a session: anyone who can
+read it but does not own it gets `403 {"error":"only the person who owns this session can change it"}` (deletion:
+`… can delete it`), and in `POST /api/sessions/delete` a per-session `{"ok":false,"error":"not owner"}` (an additive
+`SessionDeleteError` value); a session they cannot read is `404` as before. Trash is the session's state: Postgres
+migration 0070 lets everyone who can read a conversation of the session read its `rh_session_trash` row (writes stay
+the owner's), so a trashed session leaves search, browse, recall, the catalog and Today for everyone it was shared
+with, `rh mcp` on a pinned login included, and returns for everyone on restore. Migration 0070 also attaches the
+session claim trigger (note 121) to `rh_session_marks`, so a mark on someone else's session is refused in the database
+(`PATCH …/visibility` answers `403` for a reader and `404` for a session the caller cannot read, and stores nothing),
+deletes marks left by people who do not own the session, and the visibility answer reports the owner's mark, never
+another person's. The session owners file (`<state>/den/session-owners.json`) is no longer read or written; an existing
+file is left where it is and ignored. `memory_postgres::SCHEMA_VERSION` is 70.
+
+(179) One way to name a session (Phil, 2026-11-13, team hub). Every route that takes a session in its path
+(`/api/sessions/{session}` and its `keep`, `trash`, `restore`, `visibility`, `placement`, `history` and `model-calls`
+routes, `/api/memory/summaries/{session}…` and `/api/harness-sessions/{session}…`) resolves it through
+`gateway::session_address::resolve`, which accepts the same session in four forms: the canonical harness id
+(`claude-code:<native>`) as unpadded base64url, the canonical id or an import key (`import:<64 hex>`) as text, either
+percent-encoded, and the conversation UUID that `POST /api/share/find`, `rh memory sanitize --session` and the new
+`conversationId` field name. A UUID is looked up as a conversation first (`SessionCatalog::conversation_session`, under
+the caller's visibility), then as a bare harness id, as before; one that is neither answers `404`, and text that is no
+session address answers `400`. Every form accepted before keeps working. A received session can be read, kept, trashed,
+restored, deleted and shared with a space (`PATCH …/visibility` takes import keys; `TenancyStore::mark_session` and
+`SessionVisibilityRecord.sessionId` are keyed by `SessionKey`); filing it under a topic or marking it as history answers
+`422 {"error":"a received session cannot be filed under a topic or marked as history; only sessions captured here can"}`,
+and the harness-session routes answer `400` with code `bad_request` and the route of its stored messages, since a
+received session has no harness transcript on this node. `/api/memory/summaries/{session}` still reads a legacy key
+that is no session address as given. Session rows and details carry `conversationId` (additive, optional; the session's
+earliest conversation), and each `POST /api/share/find` result carries `session`, its stored session key (additive,
+optional), so a client goes from one to the other without searching. `POST /api/sessions/delete` still takes session
+keys only.
+
+(180) One session's messages (Phil, 2026-11-13, team hub). `GET /api/sessions/{session}/messages?limit=&cursor=`
+takes any form of note 179 and answers `wire::gateway::session_catalog::SessionMessagesPage`: `{session, items, total,
+next?, quotedFrom?}`. `items` are the session's stored rows in the order they were said (`createdAt`, then id), user,
+assistant and tool rows alike, each `{id, role, agent, content, toolName?, toolArgs?, toolResult?, createdAt}` with the
+stored content. `limit` is 1 to 1000 (default 200), `next` is an opaque cursor to pass back as `cursor` (`400` for one
+this server did not issue), and `total` is the number of stored rows of the session, the same count the catalog
+reports as `messageCount`, so a row there is what this route returns (trashed sessions included, for the views that
+show them). Who may read it is note 178's rule (`404` otherwise). For a received session the content is the original
+text, never wrapped: `quotedFrom` (`wire::memory::Provenance`: author, origin date, verification) says it is quoted data
+from another person, so a client needs no regex to strip the recall note that search and browse prepend. `rh mcp`
+has no per-session read: `memory_get_full` reads one message and `memory_browse` filters by conversation, and neither
+changed.
+
+(181) A hub with no model (Phil, 2026-11-13, team hub). `runtime`, `agents` and `providers` are optional on every
+node: `Config::load` has one validation rule (the `Profile` split between node and standalone configs is gone), each
+section is checked when present and cross-references still catch an agent whose provider is missing, so `rh config
+validate`, `rh gateway --check`, `rh start`, `rh gateway`, `rh local` and `rh doctor` agree. A config without those
+sections and without `memory.models` has no model. Commands and the service log stay quiet about it and `rh doctor`
+says it once, as note 173 describes (`config::NO_MODEL_NOTE`, `Config::memory_models_available`); `GET
+/api/memory/models`
+answers one row per role with `health: "unconfigured"` (an additive `ModelHealth` value), a `detail` naming what is
+off (summaries and titles, entities, tags and filing, wiki pages, embeddings) and `queued`, the jobs already waiting
+for that role. On Postgres the node's `PostgresMemory` carries `MissingModels { language, embeddings }` from
+`rivethub::service::missing_models`: without embeddings (no model and no `memory.postgres.embed_endpoint`) capture defers
+the embedding trigger, and without a language model no daily digest or topic-page job is queued, so a hub that only
+captures, stores and serves recall adds nothing to the queue that no worker can run. Jobs already queued are kept, not
+deleted: they wait for a worker with a model (a remote worker on the same database may still run them) and are
+counted in `queued`; work skipped while no model is configured is rebuilt by the workers' sweeps when one is (unembedded
+messages, unsummarized conversations, missing wiki pages; a digest is requested again the next time Today is read).
+
+(182) One precedence for settings read from the config file and the environment (Phil, 2026-11-13). The config
+file's own value comes first, then the `RIVETHUB_*` variable, then the legacy `RIVETOS_*` name, which is read only when
+neither is set and logs its deprecation notice. The Postgres URL, the embedding endpoint and model, the wiki directory
+and the node name already did this; the users file did not: the gateway and `rh memory bundle` read
+`RIVETHUB_USERS_FILE`, else `RIVETOS_USERS_FILE`, before `gateway.users_file`, so a legacy variable left in a service
+environment replaced the file the config named (the team hub needed a wrapper that unset it). Both now call
+`Config::users_file`, and the environment's own reader is private to the config crate, so no caller can put a variable
+ahead of the file again. A setting that exists only as a variable (`RIVETHUB_HOME`, `RIVETHUB_LOG_LEVEL`,
+`RIVETHUB_INSTALL_ROOT`) is unchanged.
+
+(183) The trust root has a config key (Phil, 2026-11-13). `gateway.trust_root` names the CA file that verifies the
+node's own certificate. The gateway and every CLI command that reaches its own node (`rh status`, `rh doctor`, `rh
+open`, `rh auth`, capture hooks, `rh memory ingest-bundle` and the import step of `rh memory receive`) read it through
+the one `gateway::private_ca`, before `RIVETHUB_TLS_CA` (legacy `RIVETOS_DEN_TLS_CA`), `RIVET_CA_CHAIN` and the shared
+`rivet-ca/intermediate/chain.pem`, as note 182 orders. The service unit loads `~/.rivethub/.env` and a shell does not,
+so before this a CLI command behind a private CA could not verify its own gateway unless the shell exported the
+variable; with the key in `config.yaml` both read the same file. The address, port and certificate already came from
+`gateway.host`, `gateway.port` and `gateway.tls_cert`, and the owner token from the state directory, so nothing else
+the CLI needs lives only in the unit's environment. Downloads from a share server keep their own trusted CAs
+(`memory.share.trusted_cas`).
+
+(184) An installed harness that has captured nothing is `idle` (Phil, 2026-11-13). `GET /api/capture/status` answered
+`stale` both for a tool that stopped sending and for one that is set up and has never sent anything. `capture.state`
+now has the additive value `idle` for the second, read from a known, empty capture history; `stale` keeps meaning
+"captured before, not in the last three days", and an unreadable history (`rh harness status`, which reads no store)
+still reports `stale` for an installed entry. Clients that treated "stale with no `lastCaptureAt`" as idle can read the
+state directly.
+
+(185) `degraded` on search is always the object (Phil, 2026-11-13). `GET /api/memory/search` and
+`POST /api/memory/tool/memory_search` already wrote `degraded` only as `{reason, effect}` or left it out; no path writes
+a boolean, and the string form exists only in recordings of the TypeScript memory service. `/healthz`'s `degraded` is a
+different field (node health) and stays a string. What changed is the reader: `wire::gateway::memory::MemorySearchResponse`
+now also reads the older string form as the reason, with the effect "Search ran with reduced ranking." (`null` or a
+missing field read as not degraded), and always writes the object, so a client built on `wire` reads every node it may
+talk to.
+
+(186) A message counter never takes a route down (Phil, 2026-11-13). `rh_message_counts` is kept by statement
+triggers that add signed deltas (note 98, migration 0050). Rows written while those triggers were off (a bulk
+load or restore) are never counted, so deleting them later drove the counter below zero, and `FactStore::fact_sessions`
+then failed `GET /api/entities/{id}` with `503` for every entity, as `MemoryStore::stats` would have failed
+`/api/memory/stats`. Migration 0071 makes the counter self-healing: `rh_message_count_add` recounts any conversation
+whose counter would go below zero from the rows that remain (`rh_message_count_recount`, not executable by `PUBLIC`),
+and the migration recounts every conversation that already has a negative counter. The readers degrade one field
+instead of the answer: a counter below zero is reported as `0` and logged (`a stored message counter is below zero`).
+`memory_postgres::SCHEMA_VERSION` is 71.
+
+(187) A placeholder title is what the person typed (Phil, 2026-11-13). Codex sessions were listed as
+"# AGENTS.md instructions for …" because two places took the first line of the first user message as it was: the
+catalog's fallback title (`kernel::memory::session_title`, used when a session has no stored title) and the Codex
+harness listing (`capture::listing::codex`, whose own filter knew only three injected prefixes). Both now read it
+through `kernel::memory::spoken_title`, the rule capture and the title backfills already used: a leading
+`# AGENTS.md instructions` block, `<…_instructions>`, `<system-reminder>`, `<environment_context>` and any other
+leading tag block are skipped, and a message that holds nothing else gives no title, so the next message (or the native
+id) is used. Stored titles are unchanged.
+
+(188) Signing in to a team server from the CLI, and what logout ends (Phil, 2026-11-13). `rh share login <server>
+--token-file <path>` signs this machine in with a team token, as `POST /api/share/servers/login` already could: it reads
+the token from the file (`-` reads stdin), refuses a file that holds no single token, checks it with `GET /api/me` and
+keeps it as a team login. The token is never accepted on the command line, so it does not reach shell history or the
+process list. `rh share logout` was described as revoking the login on the server, which is true only of a browser
+(device-grant) login, and then only of this machine's own refresh token. A team-token login has never been revoked:
+logout forgets it on this machine and says so ("the token stays valid on the server and on any other machine signed in
+with it"). Two machines signed in with the same team token therefore stay independent: one logging out does not end
+the other's sign-in.
+
+(189) The store-backed ports come as one bundle (Phil, 2026-11-13, architecture review R2). Sixteen gateway ports are
+backed by the memory store (topics, filing, visibility, decisions, facts, review, topic pages, tidy, upkeep, flagged
+jobs, summary watch, deletion, the session catalog, changes, digests and model calls). Both store roots built them as
+fifteen separate optional fields and attached each with its own call, so a missed one was a `503` that only the other
+root's tests would have caught. Now `gateway::StorePorts::of(store, tenancy)` builds all of them, and its trait bounds
+make the compiler refuse a store that lacks one; `Composition::on_postgres` and `Composition::on_sqlite` (which `rh
+local` uses) both pass it to `Gateway::with_store_ports`, the only way production code attaches them. The thin
+`service::compose` (a third root used only by one test, without most ports) is gone; `service::connect` returns the
+serving `PostgresMemory`. A test drives every store-backed route on both roots and fails on any `503`. The gateway
+still keeps each port as an `Option` so unit-test fixtures can attach one fake at a time; that `503` now arises only
+in such a fixture, never from a composed node. Ports a node can truly run without keep their `Option` and `503`:
+harness setup, the share and receive desks, the cloud account, memory export and the session listers.
+
+(190) A SQLite node serves one person, and says so at start (Phil, 2026-11-13, audit F1). Note 89 keeps SQLite
+single-person and unfiltered on purpose, but startup accepted a users file that gave other people tokens, so a second
+person could authenticate and search the owner's private memory. Now loading the identities on a node whose memory is
+SQLite (`identities::load`, which `rh gateway --check`, `rh start`, `rh gateway`, `rh local`, the workers and `rh mcp`
+all call) refuses a users file in which anyone but `ownerUserId` has a token or a device, or in which a configured space
+names another member, with "this node keeps memory in SQLite, which serves one person (<owner>) and does not separate
+anyone's sessions, but <who>; use a Postgres memory store for several people". The owner may hold any number of tokens
+and devices under any name it is filed under. SQLite does not gain multi-person isolation.
+
+(191) A serving login may not bypass row-level security (Phil, 2026-11-13, audit F2). Per-person privacy on Postgres
+is the row policies, which a superuser or a `BYPASSRLS` role ignores; OPERATIONS already required an ordinary login,
+but nothing checked it, so an admin URL in a service config showed every person's rows to everyone while
+authentication looked healthy. `PostgresMemory::connect_deferred`, through which the gateway, the workers and `rh mcp`
+connect, now runs `prepare_serving`: the schema check, then `rolsuper OR rolbypassrls` of `current_user`; either refuses
+the start with `Error::BypassingLogin` ("the memory database login <role> is a superuser or bypasses row-level
+security, …; serve memory with an ordinary login and keep this one for rh db migrate and administration"). The check
+also runs in the deferred reconnect (note 192). `rh db migrate` and the `rh memory` administration commands, which use
+`PostgresMemory::connect`, keep working with an admin login. Upgrade note: a hub whose service URL is a superuser must
+switch to its ordinary owning role first, or it will not start.
+
+(192) After an offline start nothing is served until the database passes its checks (Phil, 2026-11-13, audit F3). When
+the memory database was unreachable at start, `connect_deferred` returned a live lazy pool and a background check that
+only logged an incompatible schema and gave up, so once the network returned the gateway served an older or unadopted
+schema and `/healthz` reported it healthy (the probe was `SELECT 1`). The offline pool is now gated in `after_connect`:
+every connection fails with "the memory database has not passed its schema and login checks yet" until a separate
+verifier connection has passed `prepare_serving` (the schema version and note 191's login check). The verifier keeps
+trying every five seconds, logging a refusal once per distinct reason, so an `rh db migrate` run later opens the gate
+without a restart. `/healthz` goes through that pool, so it reports readiness: `503` while the database is away or
+refused, `200` once it serves. An online start is unchanged: the checks run before the pool is returned. No DDL runs
+at serving start.
+
+(193) One node keeps the space catalog (Phil, 2026-11-13, audit F7). Every unpinned gateway published its own users
+file's spaces into the store at start, deleting anything it did not list, so a second node with a stale users file
+silently changed memberships, and with them who reads whose sessions, for the first. Migration 0074 adds
+`rh_membership_authority`, one row naming the node that keeps the catalog (readable by everyone, written only under
+maintenance). `TenancyStore::sync_spaces(node, spaces)`: the first node to publish claims the catalog; the node that
+keeps it replaces it as before; any other node writes nothing, and when its users file lists other spaces or members
+the store answers `CatalogConflict` ("the store's spaces and members are kept by node <keeper>, and this node's users
+file (<node>) lists different ones; …"). The gateway treats that as fatal: the composition's task fails, the service
+logs it and stops, and the supervisor's restarts keep it visible, instead of a node serving with a catalog that is
+not the store's. So every running node holds the store's catalog, and gateways and workers agree. The keeper is moved
+by the store's admin (`UPDATE rh_membership_authority SET node = …`). Pinned logins never sync (note 121, unchanged),
+and SQLite, one node and one person, ignores the node. `memory_postgres::SCHEMA_VERSION` is 74 (0072 and 0073 are
+other branches' numbers).
+
+(194) Topic pages and tidy run as the owner of what they touch (Phil, 2026-11-13, audit F6). The worker ran every
+`sync-topic-page` job and every tidy pass as the configured primary person, so another person's private topic read
+as missing, the job succeeded, and no page was ever made; a sweep never saw those topics at all. Now a job naming a
+topic looks up its owner under maintenance and syncs as that owner (type topics, which have no owner, as the primary
+person). A sweep lists the owners of all topics under maintenance and runs one pass per owner over that owner's
+topics, each as that owner, so pages are written from that person's sources only and stay theirs. Tidy, whose
+batches are per owner (0048), runs once for each person who owns a topic and for the primary person, over that
+person's topics and the type topics. A node without tenancy (SQLite) runs as before. Making the first page for a
+person or space failed on a login that keeps row security: `rh_wiki_scopes` took writes only under maintenance (0049),
+so `scope_for` could not record a new person's wiki scope, and its check for a free root directory read under the
+viewer's rows. Migration 0075 adds an insert policy on `rh_wiki_scopes`: a person may record the private scope in
+their own name, or the scope of a space they belong to, and nothing else. No elevating function is added, so pinned
+logins still call none (note 0055's rule). `scope_for` asks for the root directory first when the scope may take it,
+and falls back to the person's own directory when another scope already holds the root. `memory_postgres::SCHEMA_VERSION` is 75.
+
+(195) A held Claude prompt is kept until its batch is on disk (Phil, 2026-11-14, audit F4). The Claude hook holds a
+`UserPromptSubmit` prompt in `<state>/claude-pending/<session>.jsonl` until the turn's transcript carries it. At a
+turn end it read and deleted that file before building the batch, so a batch that failed to build (a transcript row
+with a bad timestamp) or to reach the spool lost the prompt while capture reported the failure. Now the hook claims
+the file under a per-session lock (`<session>.lock`) by renaming it to `<session>.claimed-<id>.jsonl`, reads every
+claim present (a claim left by an earlier failed or interrupted run included), and deletes the claims only once the
+writer has saved the batch: delivered, or spooled for replay, or moved to the dead-letter folder. Any earlier failure
+leaves them for the next turn end. A prompt held while a capture runs goes to a new pending file under the same lock.
+Event ids are unchanged (`<session>:hook:<key>`), so a prompt sent twice is stored once, and pending files written
+by earlier builds read as before.
+
+(196) A plug-in's output is bounded before it reaches the gateway (Phil, 2026-11-14, audit F5). The gateway read a
+plug-in's stdout and stderr a line at a time with no length cap, stopped reading at the first byte that was not UTF-8
+(after which a chatty plug-in blocks on its full pipe), and queued every line for the log writer without bound, so a
+plug-in that wrote without a newline, or faster than the log could be saved, grew the gateway's memory without limit.
+Now a line keeps its first 16 KiB and ends `… [<n> more bytes of this line dropped]`; bytes that are not UTF-8 read as
+U+FFFD and reading goes on; the log queue holds 1024 lines, and a line that finds it full is dropped and counted per
+plug-in, never blocking the plug-in. The writer records `<n> lines dropped: the plug-in wrote faster than its log
+could be saved` as a `host` line once its queue is empty, or after every 256 lines while it stays busy, and logs a
+warning. Rotation at 5 MB is unchanged, and shutdown drains at most the queued lines.
+
+(197) The gateway starts no model harness (Phil, 2026-11-14, architecture review R3). Composing the gateway (`rh
+start`, `rh gateway`, `rh local`) started the ACP harness of every CLI provider named by an `agents` entry before it
+served, although the gateway makes no model call and used those harnesses only to report their health; `rh local`
+ran two per provider, because each in-process worker starts its own for its roles. The gateway now composes with
+`ModelFactory::without_harnesses`; a worker starts only the providers its roles use (`ModelFactory::for_providers`),
+as before. The gateway's provider health on `/healthz` and `/api/memory/models` therefore lists no CLI harness: it
+described a process no job used. `kernel::agent`, which nothing used, is removed.
 
 ## 4. Gaps to close before building the affected slice
 

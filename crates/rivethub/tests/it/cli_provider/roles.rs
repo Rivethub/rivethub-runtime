@@ -40,11 +40,7 @@ fn configured_at(
     let env = config::Environment::from_vars([(OsStr::new("HOME"), home.as_os_str())]);
     let path = home.join("config.yaml");
     std::fs::write(&path, text)?;
-    let loaded = config::Config::load(
-        &env,
-        &config::ConfigLocation::Current(path),
-        config::Profile::Node,
-    )?;
+    let loaded = config::Config::load(&env, &config::ConfigLocation::Current(path))?;
     Ok((loaded.config, env))
 }
 
@@ -75,7 +71,8 @@ async fn every_role_gets_its_own_provider_and_model() -> TestResult {
     );
     let (config, env) = configured_at(home.path(), &text)?;
     let cancel = CancellationToken::new();
-    let factory = ModelFactory::from_config(&config, &env, &cancel).await?;
+    let providers = std::collections::BTreeSet::from(["big", "small"]);
+    let factory = ModelFactory::for_providers(&config, &env, providers, &cancel).await?;
     let bindings = role_bindings(&config, &factory, &cancel)?;
 
     assert_eq!(bindings.summarizer.model, "small-summarizer");
@@ -114,7 +111,8 @@ async fn absent_models_give_every_role_the_default_agent() -> TestResult {
     );
     let (config, env) = configured_at(home.path(), &text)?;
     let cancel = CancellationToken::new();
-    let factory = ModelFactory::from_config(&config, &env, &cancel).await?;
+    let providers = std::collections::BTreeSet::from(["big"]);
+    let factory = ModelFactory::for_providers(&config, &env, providers, &cancel).await?;
     let bindings = role_bindings(&config, &factory, &cancel)?;
     for model in [
         &bindings.summarizer.model,

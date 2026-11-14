@@ -9,7 +9,6 @@ pub(crate) fn user(name: &str) -> UserId {
 
 pub(crate) struct Fixture {
     pub(crate) gateway: Arc<gateway::Gateway>,
-    pub(crate) registry: Arc<gateway::sessions::SessionRegistry>,
 }
 
 impl Fixture {
@@ -88,9 +87,9 @@ impl Fixture {
         )
         .with_local_owner(crate::common::local_owner())
         .with_tenancy(tenancy)
-        .with_sessions(registry.clone());
+        .with_sessions(registry);
         let gateway = Arc::new(ports.wire(gateway));
-        Self { gateway, registry }
+        Self { gateway }
     }
 }
 

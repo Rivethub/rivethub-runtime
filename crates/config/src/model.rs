@@ -336,6 +336,7 @@ pub struct GatewaySection {
     pub token: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub trust_root: Option<PathBuf>,
     pub users_file: Option<PathBuf>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
@@ -474,6 +475,14 @@ pub struct DeploymentSection {
 
 impl Config {
     #[must_use]
+    pub fn users_file(&self, env: &Environment) -> Option<std::path::PathBuf> {
+        self.gateway
+            .as_ref()
+            .and_then(|gateway| gateway.users_file.clone())
+            .or_else(|| env.users_file().map(std::path::PathBuf::from))
+    }
+
+    #[must_use]
     pub fn memory_postgres_url(&self, env: &Environment) -> Option<String> {
         self.memory
             .as_ref()
@@ -537,6 +546,11 @@ impl Config {
     #[must_use]
     pub fn postgres_selected(&self, env: &Environment) -> bool {
         !self.sqlite_selected() && self.memory_postgres_url(env).is_some()
+    }
+
+    #[must_use]
+    pub fn has_model_sections(&self) -> bool {
+        self.runtime.is_some() || self.agents.is_some() || self.providers.is_some()
     }
 
     #[must_use]

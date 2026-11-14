@@ -57,7 +57,7 @@ fn prepare_blocking(
         Some(location) => location,
         None => write_generated(env, &state, port, no_lan, no_cloud)?,
     };
-    let mut loaded = config::Config::load(env, &location, config::Profile::Standalone)?;
+    let mut loaded = config::Config::load(env, &location)?;
     refuse_cloud_left_on(&loaded.config, no_cloud, location.path())?;
     refuse_model_jobs(&loaded.config)?;
     for finding in &loaded.warnings {

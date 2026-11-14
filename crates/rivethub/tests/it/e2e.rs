@@ -16,7 +16,6 @@ use config::Environment;
 use config::RedactionSettings;
 use serde::Deserialize;
 use serde::Serialize;
-use sqlx::ConnectOptions as _;
 use tempfile::tempdir;
 use testkit::Json;
 use tokio::io::AsyncBufReadExt;
@@ -192,8 +191,8 @@ async fn post_recorded_batches(
 async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
-    let url = pool.connect_options().to_url_lossy().to_string();
     migrate::postgres_pool(&pool).await?;
+    let url = db.served_url().await?;
     let home = tempdir()?;
     let env = Environment::from_vars([
         (OsStr::new(config::POSTGRES_URL_VARIABLE), OsStr::new(&url)),
@@ -201,12 +200,21 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestRes
         (OsStr::new("RIVETHUB_SHARED_DIR"), home.path().as_os_str()),
     ]);
     let config: Config = serde_yaml_ng::from_str("gateway:\n  host: 127.0.0.1\n  port: 0\n")?;
-    let store = rivethub::service::connect(&config, &env).await?;
-    let gateway = rivethub::service::compose(&config, &env, store).await?;
+    let shutdown = CancellationToken::new();
+    let activities = kernel::shutdown::Activities::new();
+    let memory = rivethub::service::connect(&config, &env, &shutdown, &activities).await?;
+    let composition = rivethub::composition::Composition::on_postgres(
+        &config,
+        &env,
+        &memory,
+        &shutdown,
+        &activities,
+    )
+    .await?;
+    let gateway = std::sync::Arc::clone(composition.gateway());
     let (listener, tls) = rivethub::service::listen(&config, &env).await?;
     assert!(tls.is_none(), "loopback binds resolve without tls");
     let port = listener.local_addr()?.port();
-    let shutdown = CancellationToken::new();
     let server = tokio::spawn(rivethub::service::serve(
         listener,
         tls,
@@ -341,6 +349,7 @@ async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestRes
     shutdown.cancel();
     let outcome = tokio::time::timeout(Duration::from_secs(10), server).await??;
     outcome?;
+    composition.close().await?;
     Ok(())
 }
 
@@ -367,8 +376,8 @@ async fn get_full_text(
 async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
-    let url = pool.connect_options().to_url_lossy();
     migrate::postgres_pool(&pool).await?;
+    let url = db.served_url().await?;
     let home = tempdir()?;
     let hub_home = home.path().join(".rivethub");
     std::fs::create_dir_all(&hub_home)?;

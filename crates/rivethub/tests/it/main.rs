@@ -23,6 +23,8 @@ mod share_desk;
 mod share_receive;
 mod startup;
 mod store_roots;
+mod store_routes;
+mod team;
 mod team_recall;
 mod tls_fallback;
 mod topics;

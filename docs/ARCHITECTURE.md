@@ -9,7 +9,7 @@ Design artifact (visual, authoritative): https://claude.ai/artifact/L7cAvh16cYEZ
 | foundation | `values` (the value types kernel and wire share: `SessionId`, `HarnessId`, the free-form JSON holders `Extra` and `JsonObject`, the `Millis` time format, a conversation's `Message`, `Role`, `ThinkingLevel` and `LlmUsage`, and the plug-in names `PluginId`, `ToolName` and `RouteName`), `wire` (serde types for every boundary payload; re-exports the `values` types at its own paths), `config` (config.yaml + env → `Config`) | external crates only; `wire` also uses `values`, and `config` uses `wire` for the shared closed sets (`HarnessId`, `ThinkingLevel`, effort) |
 | kernel | `kernel` (ports = traits, domain types; no I/O), `testkit` (dev-only: replayers, fakes, stubs) | values, config — NEVER wire: the kernel owns its domain types, the gateway and adapters translate to and from `wire`, and the cargo-deny ban on `wire` leaves the kernel out (PATTERNS `KERNELWIRE`) |
 | adapters | `memory-postgres`, `memory-sqlite`, `providers`, `harness-acp`, `mcp`, `capture` | kernel, wire, config, externals — NEVER another adapter or a service |
-| services | `gateway` (with the session owners, the notice channel and the plug-in host), `workers` | kernel, wire, config — NEVER an adapter |
+| services | `gateway` (with the notice channel and the plug-in host), `workers` | kernel, wire, config — NEVER an adapter |
 | operations | `migrate` (every Postgres and SQLite schema change; `cli` owns the `rivethub-migrate` operator binary) | wire, config, externals (sqlx, rusqlite); depended on only by `cli` as a normal dependency and by tests as a dev-dependency — NEVER directly by a runtime crate (`rivethub` is checked transitively by the xtask MANIFEST rule, except for the direct `cli` → `migrate` edge used for schema verification) |
 | composition | `cli`, `rivethub` (binary; one composition root per service process) | everything |
 
@@ -40,7 +40,7 @@ The gate (`cargo xtask check`) fails any Cargo.toml that breaks this.
 | `PluginTools` | tools() → the running plug-ins' tools and a version · call(plugin, tool, call) · changed(seen version) → the next version | gateway's plug-in host in-process (`rh local`); mcp's `SocketTools` over the node's `<state>/plugins/tools.sock` (`rh mcp`) | mcp server (lists plug-in tools after its own and sends `tools/list_changed`) |
 
 A port exists only where several implementations exist or where it is the boundary to an external system. Dropped:
-`SessionRegistry` (one implementer, one in-process caller — the session owners and the notice channel are a `gateway`
+`SessionRegistry` (one implementer, one in-process caller — the notice channel and session task tracking are a `gateway`
 module), `Env` (config owns the environment), `Fs` (direct I/O; tests use temp directories),
 `Clock` (functions take `now: DateTime<Utc>` as an argument where time is data; timers use `tokio::time`, paused in tests).
 
@@ -100,7 +100,7 @@ it is the survivor of its identity group.
 ## Process shape (Phil 2026-10-12; `rh agent` retired by CONTRACT note 74; the memory service cut, note 132)
 
 One process per service, each with one tokio multi-thread runtime built in its own composition root:
-`rh gateway` (the gateway with its session owners, notice channel and plug-in host), `rh worker --role
+`rh gateway` (the gateway with its notice channel and plug-in host), `rh worker --role
 <embedder|summarizer|categorizer|wiki-builder|all>`, and `rh mcp` (sidecar). `rh start` supervises those roots as
 children of the same binary and stays hidden from help; `rh stop` signals that supervisor. `rh local` composes the
 gateway, the SQLite worker roles and network MCP in one process on one SQLite store.
@@ -112,7 +112,8 @@ Postgres queue B4/B13). Inside a process: supervised tasks under one `Cancellati
 
 rh runs no live sessions (CONTRACT note 132); T3 Code does. One `SessionId` (serialized exactly as today's session-id
 strings) names a captured session. The gateway reads stored sessions through capture's `SessionLister` and
-`TranscriptReader` for every harness id, and keeps which user owns each session in the session owners file. ACP is used
+`TranscriptReader` for every harness id. Who may read or change a session is the store's answer alone (CONTRACT
+note 178): the gateway keeps no owner map of its own. ACP is used
 only by the CLI model providers: `harness_acp::HeadlessLaunch` starts a harness, natively or through the codex-acp and
 claude-agent-acp adapter binaries, and the provider runs one headless turn on it.
 
