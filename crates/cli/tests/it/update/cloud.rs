@@ -17,7 +17,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 use wire::gateway::account::UpdateSource;
 
-use super::update_support::{BINARY, Fixture, Published, Result, archive, args};
+use super::update_support::{BINARY, Fixture, Published, Result, archive, args, server};
 
 const TOKEN: &str = "rht_cli-test-token";
 
@@ -239,5 +239,68 @@ async fn a_disabled_cloud_updates_from_github_even_when_signed_in() -> Result {
     assert!(state.asked.lock().is_empty());
     assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
     stub.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cloud_without_a_release_falls_back_to_github_unless_the_cloud_was_asked_for() -> Result {
+    let key = STANDARD.encode(Ed25519KeyPair::generate()?.public_key().as_ref());
+    for (source, falls_back) in [(None, true), (Some(UpdateSource::RivethubCloud), false)] {
+        let fixture = Fixture::new()?;
+        let empty = testkit::stub_server(
+            axum::Router::new()
+                .route(
+                    "/v1/updates/latest",
+                    get(|| async { axum::http::StatusCode::NO_CONTENT }),
+                )
+                .route(
+                    "/v1/account",
+                    get(|| async {
+                        axum::Json(crate::account_fixture::CloudAccount {
+                            email: "you@example.com",
+                        })
+                    }),
+                ),
+        )
+        .await?;
+        configure(&fixture, &empty, &key)?;
+        sign_in(&fixture)?;
+        let github = server(Published::Good).await?;
+        let mut args = args();
+        args.source = source;
+        let updater = Updater::new(
+            fixture.binary.clone(),
+            format!("http://{}/releases/", github.addr).parse()?,
+            Scope::User,
+        );
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            updater.run(&args, &fixture.env(), &CancellationToken::new()),
+        )
+        .await?;
+        if falls_back {
+            assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+            assert!(
+                report.stdout.contains(
+                    "rivethub.cloud has no stable release for this platform; using the GitHub release instead."
+                ),
+                "{}",
+                report.stdout
+            );
+            assert_eq!(std::fs::read(&fixture.binary)?, BINARY);
+        } else {
+            assert_eq!(report.exit, Exit::Failure);
+            assert!(
+                report
+                    .stderr
+                    .contains("rivethub.cloud has no stable release for this platform"),
+                "{}",
+                report.stderr
+            );
+            assert_eq!(std::fs::read(&fixture.binary)?, b"old runtime");
+        }
+        github.close().await?;
+        empty.close().await?;
+    }
     Ok(())
 }

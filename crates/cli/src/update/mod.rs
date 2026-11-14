@@ -134,6 +134,9 @@ impl Updater {
         if let Some(source) = args.source {
             return Ok(source);
         }
+        if args.version.is_some() {
+            return Ok(UpdateSource::Github);
+        }
         let files = gateway::account::AccountFiles::new(&gateway::state_dir(env)?);
         let state = tokio::task::spawn_blocking(move || files.read()).await??;
         let settings = gateway::account::CloudSettings::from_config(config)?;
@@ -152,6 +155,23 @@ impl Updater {
                 UpdateSource::Github
             },
         )
+    }
+
+    async fn stage_github(
+        &self,
+        args: &UpdateArgs,
+        directory: &std::path::Path,
+        shutdown: &CancellationToken,
+    ) -> Result<Staged, UpdateError> {
+        release::stage(
+            &self.releases,
+            args.version.as_deref(),
+            args.channel == Channel::Beta,
+            &self.running,
+            directory,
+            shutdown,
+        )
+        .await
     }
 
     async fn restart(
@@ -194,18 +214,21 @@ impl Updater {
                     report
                         .stdout
                         .push_str("Fetching the signed release from rivethub.cloud...\n");
-                    Staged::Ready(cloud::stage(&config, env, args, directory, shutdown).await?)
+                    match cloud::stage(&config, env, args, directory, shutdown).await {
+                        Ok(version) => Staged::Ready(version),
+                        Err(UpdateError::NoCloudRelease(channel)) if args.source.is_none() => {
+                            report.stdout.extend([
+                                "rivethub.cloud has no ",
+                                &channel.to_string(),
+                                " release for this platform; using the GitHub release instead.\n",
+                            ]);
+                            self.stage_github(args, directory, shutdown).await?
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 (Channel::Stable | Channel::Beta, UpdateSource::Github) => {
-                    release::stage(
-                        &self.releases,
-                        args.version.as_deref(),
-                        args.channel == Channel::Beta,
-                        &self.running,
-                        directory,
-                        shutdown,
-                    )
-                    .await?
+                    self.stage_github(args, directory, shutdown).await?
                 }
                 (Channel::Nightly, _) => {
                     Staged::Ready(source::stage(args, env, directory, shutdown).await?)
