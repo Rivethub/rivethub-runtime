@@ -49,10 +49,23 @@ const OPENCODE_EVENT_SESSIONS: &str =
     "SELECT DISTINCT session_id FROM session_message ORDER BY session_id";
 
 const OPENCODE_EVENT_MESSAGES: &str = "\
-SELECT seq, type, time_created, data \
+SELECT seq, type, time_created, data, NULL AS parts \
 FROM session_message \
 WHERE session_id = ?1 AND seq >= ?2 \
 ORDER BY seq ASC";
+
+const OPENCODE_EVENT_MESSAGES_WITH_PARTS: &str = "\
+SELECT seq, type, time_created, data, \
+       (SELECT json_group_array(json(ordered.data)) \
+        FROM (SELECT data FROM session_part \
+              WHERE session_part.message_id = session_message.id \
+              ORDER BY session_part.ordinal) AS ordered) AS parts \
+FROM session_message \
+WHERE session_id = ?1 AND seq >= ?2 \
+ORDER BY seq ASC";
+
+const OPENCODE_PART_ROWS: &str =
+    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_part'";
 
 const OPENCODE_LAYOUT: &str =
     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'";
@@ -158,6 +171,7 @@ pub(crate) struct OpencodeEvent {
     pub(crate) record_type: String,
     pub(crate) time_created: i64,
     pub(crate) data: String,
+    pub(crate) parts: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,7 +517,7 @@ fn read_opencode(
             .collect::<Result<Vec<_>, _>>()
             .map(OpencodeTranscript::Parts),
         OpencodeLayout::Events => connection
-            .prepare(OPENCODE_EVENT_MESSAGES)?
+            .prepare(event_messages(&connection)?)?
             .query_map(rusqlite::params![session_id, cursor.from_seq], event_row)?
             .collect::<Result<Vec<_>, _>>()
             .map(OpencodeTranscript::Events),
@@ -517,6 +531,16 @@ fn event_row(row: &Row<'_>) -> rusqlite::Result<OpencodeEvent> {
         record_type: row.get("type")?,
         time_created: row.get("time_created")?,
         data: row.get("data")?,
+        parts: row.get("parts")?,
+    })
+}
+
+fn event_messages(connection: &Connection) -> rusqlite::Result<&'static str> {
+    let tables: i64 = connection.query_row(OPENCODE_PART_ROWS, [], |row| row.get(0))?;
+    Ok(if tables > 0 {
+        OPENCODE_EVENT_MESSAGES_WITH_PARTS
+    } else {
+        OPENCODE_EVENT_MESSAGES
     })
 }
 

@@ -171,7 +171,7 @@ fn record(base: u64, row: &OpencodeEvent) -> Record {
         MessageType::System | MessageType::Synthetic => {
             parse_json(position, &row.data).map(|data| Record::Text(Role::System, data))
         }
-        MessageType::Assistant => parse_json(position, &row.data).map(Record::Assistant),
+        MessageType::Assistant => assistant_data(position, row).map(Record::Assistant),
         MessageType::Idle
         | MessageType::AgentSwitched
         | MessageType::ModelSwitched
@@ -181,6 +181,16 @@ fn record(base: u64, row: &OpencodeEvent) -> Record {
         Ok(record) => record,
         Err(skipped) => Record::Skip(skipped),
     }
+}
+
+fn assistant_data(position: u64, row: &OpencodeEvent) -> Result<AssistantData, SkippedRecord> {
+    let mut data: AssistantData = parse_json(position, &row.data)?;
+    if let Some(parts) = row.parts.as_deref() {
+        let mut content: Vec<Content> = parse_json(position, parts)?;
+        content.append(&mut data.content);
+        data.content = content;
+    }
+    Ok(data)
 }
 
 fn streaming(record: &Record) -> bool {
