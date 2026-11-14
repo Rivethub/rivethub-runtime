@@ -204,7 +204,7 @@ fn session_visibility(
 
 #[async_trait]
 impl TenancyStore for SqliteStore {
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    async fn sync_spaces(&self, _node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let spaces = spaces.to_vec();
         self.with_conn(move |conn| {
             let tx = conn.transaction().map_err(query("space sync"))?;

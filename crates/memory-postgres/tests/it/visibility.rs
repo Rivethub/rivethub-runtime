@@ -97,12 +97,15 @@ pub(crate) async fn seed(
     }
     let tenancy = PostgresTenancy::new(pool.clone());
     tenancy
-        .sync_spaces(&[Space {
-            id: household()?,
-            kind: SpaceKind::Household,
-            name: "Household".to_owned(),
-            members: vec![alice, Owner::new("bob".to_owned())?],
-        }])
+        .sync_spaces(
+            "node-a",
+            &[Space {
+                id: household()?,
+                kind: SpaceKind::Household,
+                name: "Household".to_owned(),
+                members: vec![alice, Owner::new("bob".to_owned())?],
+            }],
+        )
         .await?;
     Ok((store, tenancy))
 }
@@ -725,7 +728,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
             .await;
     assert!(remapped.is_err(), "a pinned login wrote the role mapping");
     Scope::Maintenance
-        .run(PostgresTenancy::new(pinned).sync_spaces(&[]))
+        .run(PostgresTenancy::new(pinned).sync_spaces("node-a", &[]))
         .await?;
     assert_eq!(
         visible(&pool, Scope::Maintenance, "rh_space_members").await?,

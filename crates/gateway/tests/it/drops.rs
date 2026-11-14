@@ -107,7 +107,7 @@ fn no_visibility() -> TenancyStoreError {
 
 #[async_trait::async_trait]
 impl TenancyStore for DefaultVisibility {
-    async fn sync_spaces(&self, _spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    async fn sync_spaces(&self, _node: &str, _spaces: &[Space]) -> Result<(), TenancyStoreError> {
         Ok(())
     }
 

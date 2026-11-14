@@ -7,6 +7,7 @@ use kernel::tenancy::Space;
 use kernel::tenancy::SpaceId;
 use kernel::tenancy::SpaceKind;
 use kernel::tenancy::TenancyStore;
+use kernel::tenancy::TenancyStoreError;
 use tokio_util::sync::CancellationToken;
 use wire::gateway::users::UsersRegistry;
 
@@ -141,26 +142,43 @@ fn registry(users: UsersRegistry) -> Result<Identity, ComposeError> {
 }
 
 pub(super) fn keep_spaces(
-    tracker: &tokio_util::task::TaskTracker,
+    tasks: &mut tokio::task::JoinSet<Result<(), ComposeError>>,
     store: Option<Arc<dyn TenancyStore>>,
     identity: &Identity,
+    node: String,
     shutdown: &CancellationToken,
 ) {
     if let Some(store) = store {
         let spaces = identity.tenancy.spaces().to_vec();
-        tracker.spawn(Scope::Maintenance.run(sync_spaces(store, spaces, shutdown.child_token())));
+        tasks.spawn(Scope::Maintenance.run(sync_spaces(
+            store,
+            node,
+            spaces,
+            shutdown.child_token(),
+        )));
     }
 }
 
-async fn sync_spaces(store: Arc<dyn TenancyStore>, spaces: Vec<Space>, stop: CancellationToken) {
+async fn sync_spaces(
+    store: Arc<dyn TenancyStore>,
+    node: String,
+    spaces: Vec<Space>,
+    stop: CancellationToken,
+) -> Result<(), ComposeError> {
     loop {
-        match store.sync_spaces(&spaces).await {
-            Ok(()) => return,
+        match store.sync_spaces(&node, &spaces).await {
+            Ok(()) => break,
+            Err(error @ TenancyStoreError::CatalogConflict(_)) => {
+                tracing::error!("{error}");
+                return Err(ComposeError::Invalid(error.to_string()));
+            }
             Err(error) => tracing::warn!("spaces not saved yet, retrying: {error}"),
         }
         tokio::select! {
-            () = stop.cancelled() => return,
+            () = stop.cancelled() => return Ok(()),
             () = tokio::time::sleep(SPACE_SYNC_RETRY) => {}
         }
     }
+    stop.cancelled().await;
+    Ok(())
 }

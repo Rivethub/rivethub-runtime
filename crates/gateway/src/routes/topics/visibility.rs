@@ -60,6 +60,7 @@ pub(crate) fn error(error: TenancyStoreError) -> ApiError {
         TenancyStoreError::Invalid(_) => ApiError::BadRequest(error.to_string()),
         TenancyStoreError::NotOwner(_) => ApiError::Forbidden(error.to_string()),
         TenancyStoreError::NotFound(_) => ApiError::NotFound("not found"),
+        TenancyStoreError::CatalogConflict(_) => ApiError::Conflict(error.to_string()),
         TenancyStoreError::Unavailable(source) => {
             tracing::warn!("visibility store failed: {source}");
             ApiError::Unavailable("visibility store unavailable".into())

@@ -218,13 +218,15 @@ pub enum TenancyStoreError {
     NotOwner(String),
     #[error("{0} was not found")]
     NotFound(String),
+    #[error("{0}")]
+    CatalogConflict(String),
     #[error("tenancy store is unavailable")]
     Unavailable(#[source] BoxError),
 }
 
 #[async_trait]
 pub trait TenancyStore: Send + Sync {
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError>;
+    async fn sync_spaces(&self, node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError>;
 
     async fn default_visibility(
         &self,
