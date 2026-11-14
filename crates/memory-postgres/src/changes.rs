@@ -33,7 +33,7 @@ const CLAIMS_SQL: &str = "SELECT (SELECT g.id FROM rh_entity_facts g
                    WHERE g.topic_id = f.topic_id AND g.key = f.key
                    ORDER BY g.created_at, g.id LIMIT 1) AS fact,
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id, t.id AS entity, t.name AS title
+            c.at, c.recorded_at, c.owner_user_id, c.settled, t.id AS entity, t.name AS title
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
        JOIN rh_topics t ON t.id = f.topic_id
