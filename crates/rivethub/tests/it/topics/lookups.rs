@@ -61,4 +61,11 @@ impl SessionCatalog for Lookups {
     ) -> Result<Option<SessionKey>, MemoryStoreError> {
         self.inner.conversation_session(conversation).await
     }
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &kernel::memory::MessagesQuery,
+    ) -> Result<kernel::memory::SessionMessages, MemoryStoreError> {
+        self.inner.messages(key, query).await
+    }
 }

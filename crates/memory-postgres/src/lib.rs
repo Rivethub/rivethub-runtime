@@ -37,6 +37,7 @@ mod search_vector;
 mod session_activity;
 mod session_catalog;
 mod session_marks;
+mod session_messages;
 mod stats;
 mod team;
 pub use search_complete::SearchSynthesis;

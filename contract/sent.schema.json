@@ -10537,12 +10537,100 @@
       ],
       "type": "object"
     },
+    "SessionMessage": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "toolArgs": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "toolName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolResult": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "agent",
+        "content",
+        "createdAt"
+      ],
+      "type": "object"
+    },
     "SessionMessageRole": {
       "enum": [
         "user",
         "assistant"
       ],
       "type": "string"
+    },
+    "SessionMessagesPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SessionMessage"
+          },
+          "type": "array"
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quotedFrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/SessionKey"
+        },
+        "total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "items",
+        "total"
+      ],
+      "type": "object"
     },
     "SessionModelCalls": {
       "properties": {

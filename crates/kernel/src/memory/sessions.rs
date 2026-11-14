@@ -210,6 +210,12 @@ pub trait SessionCatalog: Send + Sync {
         &self,
         conversation: uuid::Uuid,
     ) -> Result<Option<SessionKey>, MemoryStoreError>;
+
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &super::MessagesQuery,
+    ) -> Result<super::SessionMessages, MemoryStoreError>;
 }
 
 #[must_use]

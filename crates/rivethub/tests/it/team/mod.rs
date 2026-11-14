@@ -1,4 +1,5 @@
 mod addresses;
+mod messages;
 mod sessions;
 
 use std::collections::BTreeMap;
@@ -247,21 +248,24 @@ impl Hub {
         let messages = texts
             .iter()
             .enumerate()
-            .map(|(index, text)| CaptureMessage {
-                event_id: format!("{session}-{index}"),
-                role: if index % 2 == 0 {
+            .map(|(index, text)| {
+                let role = if index % 2 == 0 {
                     Role::User
                 } else {
                     Role::Assistant
-                },
-                content: (*text).to_owned(),
-                tool_name: None,
-                tool_args: None,
-                tool_result: None,
-                metadata: None,
-                created_at: None,
+                };
+                message(session, index, role, text)
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
+        self.capture_messages(person, session, messages).await
+    }
+
+    pub(crate) async fn capture_messages(
+        &self,
+        person: &str,
+        session: &str,
+        messages: Vec<CaptureMessage>,
+    ) -> TestResult {
         let batch = CaptureBatchRequest {
             session_key: session.to_owned(),
             agent: "rivet-claude".to_owned(),
@@ -298,6 +302,26 @@ impl Hub {
         }
         Ok(())
     }
+}
+
+pub(crate) fn message(
+    session: &str,
+    index: usize,
+    role: Role,
+    text: &str,
+) -> Result<CaptureMessage, std::num::TryFromIntError> {
+    Ok(CaptureMessage {
+        event_id: format!("{session}-{index}"),
+        role,
+        content: text.to_owned(),
+        tool_name: None,
+        tool_args: None,
+        tool_result: None,
+        metadata: None,
+        created_at: Some(
+            chrono::Utc::now() + chrono::TimeDelta::milliseconds(i64::try_from(index)?),
+        ),
+    })
 }
 
 pub(crate) fn body<T: serde::Serialize>(value: &T) -> Result<Value, serde_json::Error> {
