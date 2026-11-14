@@ -1,3 +1,4 @@
+mod codex_trust;
 mod dsh;
 mod dsh_plugin;
 mod entries;
@@ -5,11 +6,13 @@ mod install;
 mod json_edit;
 mod locate;
 mod opencode_plugin;
+mod opencode_version;
 mod plan;
 mod recall;
 mod registry;
 mod service;
 mod toml_text;
+mod version;
 
 pub use locate::Locator;
 pub use registry::HarnessSpec;

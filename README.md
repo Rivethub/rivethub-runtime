@@ -163,8 +163,8 @@ what the node could not take under `~/.rivethub/capture-spool/` for the next run
 |---|---|---|---|
 | `claude-code` (default) | `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd` | the payload's `transcript_path` | the session id |
 | `grok-build` | `Stop`, `PreCompact`, `SessionEnd` | `$GROK_HOME` (`~/.grok`) | `grok-build:<session>` |
-| `codex` | `Stop`, `SessionEnd` | `$CODEX_HOME/sessions` (`~/.codex/sessions`) | `codex:<session>` |
-| `opencode` | `session.idle`, `session.error` from an opencode plug-in | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
+| `codex` | `Stop`, `SessionEnd`, once the person has trusted the hooks in Codex (0.129.0 and later skip untrusted hooks, `codex exec` included) | `$CODEX_HOME/sessions` (`~/.codex/sessions`) | `codex:<session>` |
+| `opencode` | the end of each turn, from the plug-in `rh harness connect opencode` writes: `session.idle` on OpenCode 1.x from 1.3.4, `session.execution.*` on 2.x; checked on 1.3.4, 1.19.5, 2.0.0, 2.2.5 and 2.3.0 | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
 | `dsh` | `turn/end` from `$DSH_HOME/plugins/rivethub-capture.mjs` | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
 
 `rh harness connect dsh` writes that plug-in and a recall MCP entry into `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`). DeepSeek Harness applies the home patch to every profile, including profiles created later. `rh harness disconnect dsh` removes both.
