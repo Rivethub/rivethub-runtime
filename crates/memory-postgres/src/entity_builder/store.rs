@@ -6,7 +6,6 @@ use kernel::queue::JobId;
 use kernel::queue::JobName;
 use kernel::wiki::builder::BackfillBudget;
 use kernel::wiki::entity_match::identity_keys;
-use kernel::wiki::entity_match::names_same_entity;
 use kernel::wiki::entity_pass::CandidateQuery;
 use kernel::wiki::entity_pass::ENTITY_LOCK_CLASS;
 use kernel::wiki::entity_pass::ENTITY_PIPELINE_VERSION;
@@ -21,6 +20,7 @@ use kernel::wiki::entity_pass::EntityWork;
 use kernel::wiki::entity_pass::ExtractEntities;
 use kernel::wiki::entity_pass::FollowingLeaf;
 use kernel::wiki::entity_pass::MatchCandidate;
+use kernel::wiki::entity_pass::MatchDecision;
 use kernel::wiki::entity_pass::ObserveContext;
 use kernel::wiki::entity_pass::PreparedEntity;
 use kernel::wiki::entity_pass::PublishOutcome;
@@ -37,14 +37,7 @@ use crate::graphile::GraphileQueue;
 
 use super::error::query_error;
 
-use super::candidates::combine;
-use super::candidates::compatible_ids;
-use super::candidates::decorate;
-use super::candidates::embedding_arm;
-use super::candidates::name_arm;
-use super::candidates::nonempty;
-use super::candidates::push_score;
-use super::candidates::trigram_arm;
+use super::candidates::gather;
 use super::error::store_error;
 use super::identity::ResolveAt;
 use super::identity::resolve;
@@ -62,6 +55,7 @@ use super::sql::FINISH;
 use super::sql::FOLLOWING;
 use super::sql::HOLD;
 use super::sql::LEAF;
+use super::sql::RECORD_DECISION;
 use super::sql::REMEMBER;
 use super::sql::STALE;
 use super::transcript::load_transcript;
@@ -318,38 +312,42 @@ impl EntityStore for PostgresMemory {
         &self,
         query: &CandidateQuery,
     ) -> Result<Vec<MatchCandidate>, EntityStoreError> {
-        let types = {
-            let mut conn = self.pool.acquire().await.map_err(query_error)?;
-            type_rows(&mut conn).await?
-        };
-        let parents = compatible_ids(&query.type_name, &types);
-        let names = nonempty(&query.names);
-        let trigram = if parents.is_empty() || names.is_empty() {
-            Vec::new()
-        } else {
-            trigram_arm(&self.pool, &names, &parents).await?
-        };
-        let embedded = match query
-            .embedding
-            .as_deref()
-            .filter(|vector| vector.len() == 1024 && !parents.is_empty())
-        {
-            Some(vector) => embedding_arm(&self.pool, vector, &parents).await?,
-            None => Vec::new(),
-        };
-        let mut rows = combine(trigram, embedded);
-        if let Some(name) = names.first() {
-            let keys = identity_keys(name);
-            if !keys.is_empty() {
-                for row in name_arm(&self.pool, &keys).await? {
-                    if names_same_entity(&query.type_name, &row.type_name) {
-                        push_score(&mut rows, row, true);
-                    }
-                }
-            }
+        gather(&self.pool, query).await
+    }
+
+    async fn type_names(&self) -> Result<Vec<String>, EntityStoreError> {
+        type_paths(&self.pool).await
+    }
+
+    async fn record_decision(
+        &self,
+        summary: Uuid,
+        decision: &MatchDecision,
+        now: DateTime<Utc>,
+    ) -> Result<(), EntityStoreError> {
+        let payload = serde_json::to_string(&decision.candidates)
+            .map_err(|error| EntityStoreError::Query(Box::new(error)))?;
+        let choice = (!decision.choice.is_empty()).then(|| decision.choice.clone());
+        let inserted = sqlx::query(RECORD_DECISION)
+            .bind(Uuid::new_v4())
+            .bind(summary)
+            .bind(&decision.kind)
+            .bind(&decision.proposed_name)
+            .bind(&decision.proposed_type)
+            .bind(payload)
+            .bind(&decision.verdict)
+            .bind(choice)
+            .bind(decision.confidence)
+            .bind(&decision.model)
+            .bind(decision.entity_id)
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(query_error)?;
+        if inserted.rows_affected() == 0 {
+            return Err(EntityStoreError::Missing(summary));
         }
-        decorate(&self.pool, &mut rows).await?;
-        Ok(rows)
+        Ok(())
     }
 
     async fn remember_embedding(

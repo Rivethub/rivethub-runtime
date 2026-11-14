@@ -30,17 +30,19 @@ fn candidate(id: u128, name: &str, type_name: &str) -> MatchCandidate {
 #[test]
 fn a_low_confidence_choice_holds_and_a_sure_new_is_created() {
     let ranked = vec![candidate(4, "gpubox", "Hosts")];
-    let held = interpret(
+    let held = apply_asked(
         &prepared("gpu server", "Hosts"),
         &ranked,
-        Ok(RawDecision {
+        Asked::Answer(RawDecision {
             choice: "0".to_owned(),
             confidence: 0.4,
         }),
         0.72,
-    );
+    )
+    .expect("a low confidence answer is a hold");
     assert!(matches!(held, MatchStep::Held { reason, .. } if reason == "low-confidence"));
-    let created = interpret(&prepared("phil", "People"), &[], Err(()), 0.72);
+    let created =
+        apply_asked(&prepared("phil", "People"), &[], Asked::Skip, 0.72).expect("no candidates");
     assert!(matches!(created, MatchStep::Ready(item) if item.entity_ref.is_none()));
 }
 
@@ -49,32 +51,49 @@ fn an_exact_alias_binds_and_a_person_stays_a_second_page() {
     let id = Uuid::from_u128(9);
     let mut host = candidate(9, "gpubox", "Hosts");
     host.aliases = vec!["tvrt".to_owned()];
-    let bound = interpret(&prepared("tvrt", "Hosts"), &[host], Err(()), 0.72);
+    let bound = apply_asked(
+        &prepared("tvrt", "Hosts"),
+        std::slice::from_ref(&host),
+        Asked::Skip,
+        0.72,
+    )
+    .expect("exact alias");
     assert!(matches!(bound, MatchStep::Ready(item) if item.entity_ref == Some(id)));
-    let crossed = interpret(
+    let crossed = apply_asked(
         &prepared("rivet", "Hosts"),
         &[candidate(2, "rivet", "Projects")],
-        Ok(RawDecision {
+        Asked::Answer(RawDecision {
             choice: "new".to_owned(),
             confidence: 0.95,
         }),
         0.72,
-    );
+    )
+    .expect("exact name");
     assert!(
         matches!(crossed, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(2)))
     );
     let person = candidate(3, "phil", "People");
     let shown = offered(&prepared("phil", "Projects"), std::slice::from_ref(&person));
     assert_eq!(shown.len(), 0);
-    let created = interpret(&prepared("phil", "Projects"), &shown, Err(()), 0.72);
+    let created = apply_asked(&prepared("phil", "Projects"), &shown, Asked::Skip, 0.72)
+        .expect("person stays apart");
     assert!(matches!(created, MatchStep::Ready(item) if item.entity_ref.is_none()));
-    let failed = interpret(
+    let failed = apply_asked(
         &prepared("box", "Hosts"),
         &[candidate(5, "gpubox", "Hosts")],
-        Err(()),
+        Asked::Unreachable(WorkerError::Llm {
+            message: "down".to_owned(),
+        }),
         0.72,
     );
-    assert!(matches!(failed, MatchStep::Held { reason, .. } if reason == "decide-error"));
+    let Err(error) = failed else {
+        panic!("an unreachable decider created the entity");
+    };
+    assert!(
+        undecided(&error)
+            .to_string()
+            .contains("entity match undecided")
+    );
 }
 
 struct Scripted {
@@ -86,11 +105,13 @@ struct Scripted {
 impl EntityDecider for Scripted {
     async fn decide(&self, request: &DecideRequest) -> Result<RawDecision, WorkerError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        assert!(
-            request.options.iter().all(|line| line.contains('(')),
-            "{}",
-            request.observation
-        );
+        if request.observation.starts_with("name:") {
+            assert!(
+                request.options.iter().all(|line| line.contains('(')),
+                "{}",
+                request.observation
+            );
+        }
         Ok(RawDecision {
             choice: self.choice.to_owned(),
             confidence: 0.93,
@@ -116,8 +137,8 @@ async fn judged(
 ) -> (usize, MatchStep) {
     let shown = offered(prepared, ranked);
     let decider = scripted(choice);
-    let decision = decision_for(&decider, prepared, &shown).await;
-    let step = interpret(prepared, &shown, decision, 0.72);
+    let asked = decision_for(&decider, prepared, &shown).await;
+    let step = apply_asked(prepared, &shown, asked, 0.72).expect("the stub answered");
     (decider.calls.load(Ordering::SeqCst), step)
 }
 
@@ -160,7 +181,7 @@ async fn a_stub_decider_binds_each_compatible_pair_and_skips_the_rest() {
     assert!(matches!(kept, MatchStep::Ready(item) if item.entity_ref == Some(repo.id)));
     let long = candidate(4, "bottlecapai/ThinkingCap-Qwen3.8-Flash-Next", "Repos");
     let model = prepared("ThinkingCap", "Models");
-    assert_eq!(offered(&model, std::slice::from_ref(&long)).len(), 0);
+    assert_eq!(offered(&model, std::slice::from_ref(&long)).len(), 1);
 
     let same_type = candidate(8, "gpubox", "Hosts");
     let fuzzy = prepared("gpu server", "Hosts");
@@ -191,19 +212,29 @@ async fn checked_name_pairs() {
             "{observed_type} vs {kept_type} did not bind"
         );
     }
-    let apart = [
-        ("People", "Projects", "phil", "phil"),
+    let person = prepared("phil", "Projects");
+    let people = [candidate(9, "phil", "People")];
+    let (calls, step) = judged("0", &person, &people).await;
+    assert_eq!(calls, 0, "a person and a project were offered");
+    assert!(matches!(step, MatchStep::Ready(item) if item.entity_ref.is_none()));
+    let crossed = [
         ("Services", "Hosts", "datahub", "datahub-extra"),
         ("Services", "Repos", "web", "acme/web"),
     ];
-    for (observed_type, kept_type, observed_name, kept_name) in apart {
+    for (observed_type, kept_type, observed_name, kept_name) in crossed {
         let prepared = prepared(observed_name, observed_type);
         let ranked = [candidate(9, kept_name, kept_type)];
-        let (calls, step) = judged("0", &prepared, &ranked).await;
-        assert_eq!(calls, 0, "{observed_type} vs {kept_type} was offered");
+        let (calls, same) = judged("0", &prepared, &ranked).await;
+        assert_eq!(calls, 1, "{observed_name} was not checked");
         assert!(
-            matches!(step, MatchStep::Ready(item) if item.entity_ref.is_none()),
-            "{observed_type} vs {kept_type} bound"
+            matches!(same, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(9))),
+            "{observed_name} was not bound"
+        );
+        let (calls, different) = judged("new", &prepared, &ranked).await;
+        assert_eq!(calls, 1, "{observed_name} was checked twice");
+        assert!(
+            matches!(different, MatchStep::Ready(item) if item.entity_ref.is_none()),
+            "{observed_name} was created as the same entity"
         );
     }
 
@@ -607,6 +638,134 @@ async fn an_ip_alias_not_tied_in_the_mention_is_rejected() {
     .await;
     assert_eq!(kept.kept, Vec::<String>::new());
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
+}
+
+struct Down {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl EntityDecider for Down {
+    async fn decide(&self, _request: &DecideRequest) -> Result<RawDecision, WorkerError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(WorkerError::Llm {
+            message: "connection refused".to_owned(),
+        })
+    }
+
+    async fn alias_probability(&self, _question: &str) -> Result<f32, WorkerError> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn a_near_duplicate_is_created_only_when_the_decider_says_different() {
+    let ranked = [candidate(4, "gerty", "Hosts")];
+    let prepared = prepared("box9", "Hosts");
+    let (calls, same) = judged("0", &prepared, &ranked).await;
+    assert_eq!(calls, 1);
+    assert!(matches!(same, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(4))));
+    let (calls, different) = judged("new", &prepared, &ranked).await;
+    assert_eq!(calls, 1);
+    assert!(matches!(different, MatchStep::Ready(item) if item.entity_ref.is_none()));
+}
+
+#[tokio::test]
+async fn an_unreachable_decider_is_asked_twice_and_creates_nothing() {
+    let ranked = [candidate(4, "gerty", "Hosts")];
+    let prepared = prepared("box9", "Hosts");
+    let down = Down {
+        calls: AtomicUsize::new(0),
+    };
+    let asked = decision_for(&down, &prepared, &ranked).await;
+    assert_eq!(down.calls.load(Ordering::SeqCst), 2);
+    match apply_asked(&prepared, &ranked, asked, 0.72) {
+        Err(error) => assert!(
+            undecided(&error)
+                .to_string()
+                .contains("entity match undecided")
+        ),
+        Ok(_) => panic!("created"),
+    }
+}
+
+#[tokio::test]
+async fn a_service_and_a_host_are_one_entity_when_the_decider_says_same() {
+    let ranked = [candidate(8, "gerty", "Hosts")];
+    let prepared = prepared("box9", "Services");
+    let (calls, same) = judged("0", &prepared, &ranked).await;
+    assert_eq!(calls, 1);
+    assert!(matches!(same, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(8))));
+    let (calls, different) = judged("new", &prepared, &ranked).await;
+    assert_eq!(calls, 1);
+    assert!(matches!(different, MatchStep::Ready(item) if item.entity_ref.is_none()));
+}
+
+#[tokio::test]
+async fn a_new_type_follows_the_decider_once() {
+    let existing = vec!["Hosts".to_owned(), "Services".to_owned()];
+    let same = scripted("0");
+    let settled = settle_type(&same, "machine", &existing).await;
+    assert_eq!(same.calls.load(Ordering::SeqCst), 1);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("machine was not folded");
+    };
+    assert_eq!(name, "Hosts");
+    assert_eq!(decision.verdict, "same");
+    assert_eq!(decision.model, "decider");
+    assert_eq!(decision.kind, "type");
+    let different = scripted("new");
+    let settled = settle_type(&different, "machine", &existing).await;
+    assert_eq!(different.calls.load(Ordering::SeqCst), 1);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("a different type was not kept");
+    };
+    assert_eq!(name, "machine");
+    assert_eq!(decision.verdict, "different");
+    let folded = scripted("0");
+    let settled = settle_type(&folded, "host", &existing).await;
+    assert_eq!(folded.calls.load(Ordering::SeqCst), 0);
+    let TypeOutcome::Use { name, .. } = settled else {
+        panic!("host was asked");
+    };
+    assert_eq!(name, "Hosts");
+    let down = Down {
+        calls: AtomicUsize::new(0),
+    };
+    let settled = settle_type(&down, "machine", &existing).await;
+    assert_eq!(down.calls.load(Ordering::SeqCst), 2);
+    assert!(matches!(settled, TypeOutcome::Unreachable { .. }));
+}
+
+#[test]
+fn a_decision_records_the_name_the_candidates_and_the_model() {
+    let ranked = [candidate(4, "gerty", "Hosts")];
+    let prepared = prepared("box9", "Services");
+    let decision = entity_decision(
+        &prepared,
+        &ranked,
+        &Ruling {
+            verdict: "same",
+            choice: "0",
+            confidence: 0.93,
+            model: "thinkingcap-flash-next",
+            entity_id: Some(Uuid::from_u128(4)),
+        },
+    );
+    assert_eq!(
+        decision,
+        MatchDecision {
+            kind: "entity".to_owned(),
+            proposed_name: "box9".to_owned(),
+            proposed_type: "Services".to_owned(),
+            candidates: vec![format!("gerty (Hosts) {}", Uuid::from_u128(4))],
+            verdict: "same".to_owned(),
+            choice: "0".to_owned(),
+            confidence: 0.93,
+            model: "thinkingcap-flash-next".to_owned(),
+            entity_id: Some(Uuid::from_u128(4)),
+        }
+    );
 }
 
 #[tokio::test]

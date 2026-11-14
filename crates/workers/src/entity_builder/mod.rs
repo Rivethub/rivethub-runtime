@@ -219,20 +219,22 @@ async fn commit_identities(
     known: &[KnownEntity],
 ) -> Result<Vec<rewrite::TouchedEntity>, WorkerError> {
     let decider = decide::build_decider(env);
+    let catalogue = env.store.type_names().await?;
     let mut touched = Vec::new();
     for item in prepared {
         if env.cancel.is_cancelled() {
             return Err(WorkerError::Cancelled);
         }
-        let Some(kept) = resolve::resolve_kept(
-            env,
-            summary,
-            &item.prepared,
-            &item.mention,
-            known,
-            decider.as_ref(),
-        )
-        .await?
+        let mut filed = item.prepared.clone();
+        let allowed =
+            resolve::settle_prepared_type(env, summary, decider.as_ref(), &mut filed, &catalogue)
+                .await?;
+        if !allowed {
+            continue;
+        }
+        let Some(kept) =
+            resolve::resolve_kept(env, summary, &filed, &item.mention, known, decider.as_ref())
+                .await?
         else {
             continue;
         };

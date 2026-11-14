@@ -16,6 +16,7 @@ use super::types::EntityWork;
 use super::types::ExtractEntities;
 use super::types::FollowingLeaf;
 use super::types::MatchCandidate;
+use super::types::MatchDecision;
 use super::types::MentionNote;
 use super::types::ObserveContext;
 use super::types::PreparedEntity;
@@ -101,6 +102,19 @@ pub trait EntityStore: Send + Sync {
         reason: &str,
         now: DateTime<Utc>,
     ) -> Result<(), EntityStoreError>;
+
+    async fn type_names(&self) -> Result<Vec<String>, EntityStoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn record_decision(
+        &self,
+        _summary: Uuid,
+        _decision: &MatchDecision,
+        _now: DateTime<Utc>,
+    ) -> Result<(), EntityStoreError> {
+        Ok(())
+    }
 
     async fn merge_entities(
         &self,

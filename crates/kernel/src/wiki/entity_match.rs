@@ -395,6 +395,158 @@ pub fn embed_line(name: &str, aliases: &[String], summary: &str) -> String {
     lines.join("\n")
 }
 
+const MARKER_MIN: usize = 3;
+const MARKER_MAX: usize = 200;
+pub const TYPE_ASK_LIMIT: usize = 24;
+
+#[must_use]
+pub fn same_type_name<'a>(wanted: &str, existing: &'a [String]) -> Option<&'a str> {
+    let trimmed = wanted.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let folded = compact_key(trimmed);
+    if let Some(found) = existing.iter().find(|name| {
+        name.eq_ignore_ascii_case(trimmed) || (!folded.is_empty() && compact_key(name) == folded)
+    }) {
+        return Some(found.as_str());
+    }
+    let spelled: Vec<&str> = existing
+        .iter()
+        .filter(|name| plural_of(&folded, &compact_key(name)))
+        .map(String::as_str)
+        .collect();
+    match spelled.as_slice() {
+        [only] => Some(only),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub fn type_options<'a>(wanted: &str, existing: &'a [String]) -> Vec<&'a str> {
+    if existing.len() <= TYPE_ASK_LIMIT {
+        return existing.iter().map(String::as_str).collect();
+    }
+    let folded = compact_key(wanted);
+    let mut ranked: Vec<&str> = existing.iter().map(String::as_str).collect();
+    ranked.sort_by(|left, right| {
+        shared_prefix(&folded, &compact_key(right))
+            .cmp(&shared_prefix(&folded, &compact_key(left)))
+            .then(left.cmp(right))
+    });
+    ranked.truncate(TYPE_ASK_LIMIT);
+    ranked
+}
+
+fn shared_prefix(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+fn plural_of(left: &str, right: &str) -> bool {
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    let (short, long) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    long.strip_prefix(short)
+        .is_some_and(|rest| rest == "s" || rest == "es")
+}
+
+#[must_use]
+pub fn surface_markers(texts: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for text in texts {
+        for token in marker_tokens(text) {
+            let Some(marker) = marker_of(token) else {
+                continue;
+            };
+            if !keys.iter().any(|kept: &String| kept == &marker) {
+                keys.push(marker);
+            }
+        }
+    }
+    keys
+}
+
+fn marker_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| {
+        c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '"' | '\'' | '`' | '<' | '>')
+    })
+    .map(|token| token.trim_matches(|c: char| matches!(c, '.' | ':' | '/')))
+    .filter(|token| !token.is_empty())
+}
+
+fn marker_of(token: &str) -> Option<String> {
+    if token.chars().count() < MARKER_MIN || token.chars().count() > MARKER_MAX {
+        return None;
+    }
+    if ipv4(token) {
+        return Some(token.to_owned());
+    }
+    if let Some(host) = url_host(token)
+        && host.chars().count() >= MARKER_MIN
+    {
+        return Some(host);
+    }
+    if repo_marker(token) || hostname_marker(token) {
+        return Some(token.to_owned());
+    }
+    None
+}
+
+fn ipv4(token: &str) -> bool {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    parts.iter().all(|part| {
+        !part.is_empty()
+            && part.bytes().all(|byte| byte.is_ascii_digit())
+            && part.parse::<u8>().is_ok()
+    })
+}
+
+fn url_host(token: &str) -> Option<String> {
+    let rest = token
+        .strip_prefix("https://")
+        .or_else(|| token.strip_prefix("http://"))?;
+    let host = rest.split(['/', ':', '?', '#']).next()?.trim();
+    (!host.is_empty()).then(|| host.to_owned())
+}
+
+fn repo_marker(token: &str) -> bool {
+    let Some((_, tail)) = token.split_once('/') else {
+        return false;
+    };
+    let tail = tail.trim();
+    tail.chars().count() >= REPO_PART_MIN
+        && tail
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn hostname_marker(token: &str) -> bool {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() < MARKER_MIN || chars.len() > 63 {
+        return false;
+    }
+    let letter = chars.iter().any(char::is_ascii_alphabetic);
+    let marked = chars
+        .iter()
+        .any(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '_'));
+    letter
+        && marked
+        && chars
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
 #[cfg(test)]
 #[path = "tests/entity_match_tests.rs"]
 mod tests;

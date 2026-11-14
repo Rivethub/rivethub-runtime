@@ -156,3 +156,40 @@ fn weak_scores_are_not_candidates() {
     assert_eq!(ranked.len(), 1);
     assert_eq!(ranked.first().map(|item| item.id), Some(strong.id));
 }
+
+#[test]
+fn a_type_spelling_matches_only_the_same_word() {
+    let existing = vec![
+        "Hosts".to_owned(),
+        "Services".to_owned(),
+        "People".to_owned(),
+    ];
+    assert_eq!(same_type_name("host", &existing), Some("Hosts"));
+    assert_eq!(same_type_name("Hosts", &existing), Some("Hosts"));
+    assert_eq!(same_type_name("machine", &existing), None);
+    assert_eq!(same_type_name("person", &existing), None);
+    assert_eq!(same_type_name("people", &existing), Some("People"));
+}
+
+#[test]
+fn markers_keep_identifiers_and_skip_plain_words() {
+    let texts = vec![
+        "box9".to_owned(),
+        "G9".to_owned(),
+        "gerty".to_owned(),
+        "at 11.22.33.44".to_owned(),
+        "https://gpubox.local/status".to_owned(),
+        "acme/datahub".to_owned(),
+        "web".to_owned(),
+    ];
+    let markers = surface_markers(&texts);
+    assert!(markers.iter().any(|item| item == "box9"));
+    assert!(markers.iter().any(|item| item == "11.22.33.44"));
+    assert!(markers.iter().any(|item| item == "gpubox.local"));
+    assert!(markers.iter().any(|item| item == "acme/datahub"));
+    assert!(
+        markers
+            .iter()
+            .all(|item| item != "G9" && item != "gerty" && item != "web")
+    );
+}

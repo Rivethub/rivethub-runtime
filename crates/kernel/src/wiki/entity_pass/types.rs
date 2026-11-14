@@ -397,6 +397,20 @@ pub struct CandidateQuery {
     pub names: Vec<String>,
     pub type_name: String,
     pub embedding: Option<Vec<f32>>,
+    pub markers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchDecision {
+    pub kind: String,
+    pub proposed_name: String,
+    pub proposed_type: String,
+    pub candidates: Vec<String>,
+    pub verdict: String,
+    pub choice: String,
+    pub confidence: f32,
+    pub model: String,
+    pub entity_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

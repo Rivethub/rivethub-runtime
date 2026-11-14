@@ -1,15 +1,17 @@
 use kernel::wiki::entity_match::MatchAct;
+use kernel::wiki::entity_match::canonical_key;
 use kernel::wiki::entity_match::chosen_id;
 use kernel::wiki::entity_match::exact_id;
 use kernel::wiki::entity_match::gate;
-use kernel::wiki::entity_match::name_identifies;
 use kernel::wiki::entity_match::names_same_entity;
 use kernel::wiki::entity_match::rank_candidates;
+use kernel::wiki::entity_match::surface_markers;
 use kernel::wiki::entity_match::types_compatible;
 use kernel::wiki::entity_pass::CandidateQuery;
 use kernel::wiki::entity_pass::EntityView;
 use kernel::wiki::entity_pass::KnownEntity;
 use kernel::wiki::entity_pass::MatchCandidate;
+use kernel::wiki::entity_pass::MatchDecision;
 use kernel::wiki::entity_pass::PreparedEntity;
 use uuid::Uuid;
 
@@ -74,33 +76,168 @@ pub(in crate::entity_builder) async fn resolve_kept(
     let mut ranked = candidates(env, &prepared, embedding.as_deref()).await?;
     inject_suggested(&mut ranked, suggested);
     let ranked = offered(&prepared, &ranked);
-    let decision = decision_for(decider, &prepared, &ranked).await;
-    match interpret(&prepared, &ranked, decision, env.settings.threshold) {
-        MatchStep::Ready(mut bound) => {
-            let merges = if let Some(id) = bound.entity_ref
-                && let Some(subject) = subject_for(id, &ranked, known)
-            {
-                let (next, merges) =
-                    accept_existing(decider, bound, mention, known, &subject).await;
-                bound = next;
-                merges
-            } else {
-                bound.aliases = new_entity_aliases(&bound.name, &bound.aliases, mention, known);
-                Vec::new()
-            };
-            let prepared = apply_merges(env, bound, merges).await?;
-            Ok(Some(Kept {
-                prepared,
-                embedding,
-            }))
+    let asked = decision_for(decider, &prepared, &ranked).await;
+    let (choice, confidence) = asked_fields(&asked);
+    let forced = forces_alias(&choice, confidence, &ranked, env.settings.threshold);
+    let backend = decider.backend_name().to_owned();
+    let observed_name = prepared.name.clone();
+    match apply_asked(&prepared, &ranked, asked, env.settings.threshold) {
+        Err(error) => fail_undecided(env, summary, &prepared, &ranked, &backend, error).await,
+        Ok(MatchStep::Held {
+            confidence: held_confidence,
+            reason,
+        }) => {
+            park_held(
+                env,
+                summary,
+                &prepared,
+                &ranked,
+                &reason,
+                Ruling {
+                    verdict: "hold",
+                    choice: &choice,
+                    confidence: held_confidence,
+                    model: &backend,
+                    entity_id: None,
+                },
+            )
+            .await
         }
-        MatchStep::Held { confidence, reason } => {
-            env.store
-                .hold_candidate(summary, &prepared, confidence, &reason, env.now)
-                .await?;
-            Ok(None)
+        Ok(MatchStep::Ready(bound)) => {
+            keep_ready(
+                env,
+                summary,
+                decider,
+                known,
+                mention,
+                Ready {
+                    bound,
+                    ranked: &ranked,
+                    choice: &choice,
+                    confidence,
+                    forced,
+                    backend: &backend,
+                    observed_name: &observed_name,
+                    embedding,
+                },
+            )
+            .await
         }
     }
+}
+
+pub(super) struct Ruling<'a> {
+    pub(super) verdict: &'a str,
+    pub(super) choice: &'a str,
+    pub(super) confidence: f32,
+    pub(super) model: &'a str,
+    pub(super) entity_id: Option<Uuid>,
+}
+
+struct Ready<'a> {
+    bound: PreparedEntity,
+    ranked: &'a [MatchCandidate],
+    choice: &'a str,
+    confidence: f32,
+    forced: bool,
+    backend: &'a str,
+    observed_name: &'a str,
+    embedding: Option<Vec<f32>>,
+}
+
+async fn fail_undecided(
+    env: &EntityBuilderEnv<'_>,
+    summary: Uuid,
+    prepared: &PreparedEntity,
+    ranked: &[MatchCandidate],
+    backend: &str,
+    error: WorkerError,
+) -> Result<Option<Kept>, WorkerError> {
+    note_entity(
+        env,
+        summary,
+        prepared,
+        ranked,
+        &Ruling {
+            verdict: "unreachable",
+            choice: "",
+            confidence: 0.0,
+            model: backend,
+            entity_id: None,
+        },
+    )
+    .await?;
+    Err(undecided(&error))
+}
+
+async fn park_held(
+    env: &EntityBuilderEnv<'_>,
+    summary: Uuid,
+    prepared: &PreparedEntity,
+    ranked: &[MatchCandidate],
+    reason: &str,
+    verdict: Ruling<'_>,
+) -> Result<Option<Kept>, WorkerError> {
+    let confidence = verdict.confidence;
+    note_entity(env, summary, prepared, ranked, &verdict).await?;
+    env.store
+        .hold_candidate(summary, prepared, confidence, reason, env.now)
+        .await?;
+    Ok(None)
+}
+
+async fn keep_ready(
+    env: &EntityBuilderEnv<'_>,
+    summary: Uuid,
+    decider: &dyn EntityDecider,
+    known: &[KnownEntity],
+    mention: &str,
+    mut ready: Ready<'_>,
+) -> Result<Option<Kept>, WorkerError> {
+    let (verdict, model) = recorded(
+        ready.bound.entity_ref.is_some(),
+        ready.ranked.is_empty(),
+        ready.forced,
+        ready.backend,
+    );
+    let kept_confidence = if verdict == "same" && !ready.forced {
+        1.0
+    } else {
+        ready.confidence
+    };
+    note_entity(
+        env,
+        summary,
+        &ready.bound,
+        ready.ranked,
+        &Ruling {
+            verdict: &verdict,
+            choice: ready.choice,
+            confidence: kept_confidence,
+            model: &model,
+            entity_id: ready.bound.entity_ref,
+        },
+    )
+    .await?;
+    let merges = if let Some(id) = ready.bound.entity_ref
+        && let Some(subject) = subject_for(id, ready.ranked, known)
+    {
+        let (next, merges) = accept_existing(decider, ready.bound, mention, known, &subject).await;
+        ready.bound = next;
+        if ready.forced {
+            keep_observed_name(&mut ready.bound, ready.observed_name);
+        }
+        merges
+    } else {
+        ready.bound.aliases =
+            new_entity_aliases(&ready.bound.name, &ready.bound.aliases, mention, known);
+        Vec::new()
+    };
+    let prepared = apply_merges(env, ready.bound, merges).await?;
+    Ok(Some(Kept {
+        prepared,
+        embedding: ready.embedding,
+    }))
 }
 
 async fn candidates(
@@ -114,16 +251,23 @@ async fn candidates(
             names: query_names(prepared),
             type_name: prepared.type_name.clone(),
             embedding: embedding.map(<[f32]>::to_vec),
+            markers: query_markers(prepared),
         })
         .await?;
     Ok(rank_candidates(found))
+}
+
+pub(super) enum Asked {
+    Skip,
+    Answer(RawDecision),
+    Unreachable(WorkerError),
 }
 
 pub(super) async fn decision_for(
     decider: &dyn EntityDecider,
     prepared: &PreparedEntity,
     ranked: &[MatchCandidate],
-) -> Result<RawDecision, ()> {
+) -> Asked {
     if ranked.is_empty()
         || exact_id(
             &prepared.type_name,
@@ -133,13 +277,35 @@ pub(super) async fn decision_for(
         )
         .is_some()
     {
-        return Err(());
+        return Asked::Skip;
     }
-    ask(decider, &request_for(prepared, ranked))
-        .await
-        .map_err(|error| {
+    match ask(decider, &request_for(prepared, ranked)).await {
+        Ok(decision) => Asked::Answer(decision),
+        Err(error) => {
             tracing::warn!(%error, "entity match stayed undecided");
-        })
+            Asked::Unreachable(error)
+        }
+    }
+}
+
+pub(super) fn apply_asked(
+    prepared: &PreparedEntity,
+    ranked: &[MatchCandidate],
+    asked: Asked,
+    threshold: f32,
+) -> Result<MatchStep, WorkerError> {
+    let decision = match asked {
+        Asked::Unreachable(error) => return Err(error),
+        Asked::Skip => Err(()),
+        Asked::Answer(decision) => Ok(decision),
+    };
+    Ok(interpret(prepared, ranked, decision, threshold))
+}
+
+pub(super) fn undecided(error: &WorkerError) -> WorkerError {
+    WorkerError::Llm {
+        message: format!("entity match undecided: {error}"),
+    }
 }
 
 pub(super) async fn ask(
@@ -219,9 +385,7 @@ fn bind_cross(
             reason: "cross-type".to_owned(),
         };
     };
-    if !names_same_entity(&prepared.type_name, &candidate.type_name)
-        || !name_identifies(&prepared.name, &candidate.name, &candidate.aliases)
-    {
+    if !names_same_entity(&prepared.type_name, &candidate.type_name) {
         return MatchStep::Held {
             confidence,
             reason: "cross-type".to_owned(),
@@ -257,11 +421,7 @@ fn note_new_cross(prepared: &PreparedEntity, ranked: &[MatchCandidate]) {
 pub(super) fn offered(prepared: &PreparedEntity, ranked: &[MatchCandidate]) -> Vec<MatchCandidate> {
     ranked
         .iter()
-        .filter(|candidate| {
-            types_compatible(&prepared.type_name, &candidate.type_name)
-                || (names_same_entity(&prepared.type_name, &candidate.type_name)
-                    && name_identifies(&prepared.name, &candidate.name, &candidate.aliases))
-        })
+        .filter(|candidate| names_same_entity(&prepared.type_name, &candidate.type_name))
         .cloned()
         .collect()
 }
@@ -310,6 +470,92 @@ fn query_names(prepared: &PreparedEntity) -> Vec<String> {
     names.extend(prepared.aliases.iter().cloned());
     names.retain(|name| !name.trim().is_empty());
     names
+}
+
+fn query_markers(prepared: &PreparedEntity) -> Vec<String> {
+    let mut texts = query_names(prepared);
+    texts.extend(prepared.facts.iter().map(|fact| fact.value.clone()));
+    surface_markers(&texts)
+}
+
+fn asked_fields(asked: &Asked) -> (String, f32) {
+    match asked {
+        Asked::Answer(decision) => (decision.choice.clone(), decision.confidence),
+        Asked::Skip | Asked::Unreachable(_) => (String::new(), 0.0),
+    }
+}
+
+fn forces_alias(choice: &str, confidence: f32, ranked: &[MatchCandidate], threshold: f32) -> bool {
+    matches!(
+        gate(choice, confidence, threshold, ranked.len()),
+        MatchAct::Existing(_)
+    )
+}
+
+fn recorded(bound: bool, ranked_empty: bool, forced: bool, backend: &str) -> (String, String) {
+    if ranked_empty {
+        ("none".to_owned(), "none".to_owned())
+    } else if bound && !forced {
+        ("same".to_owned(), "exact".to_owned())
+    } else if bound {
+        ("same".to_owned(), backend.to_owned())
+    } else {
+        ("different".to_owned(), backend.to_owned())
+    }
+}
+
+pub(super) fn entity_decision(
+    prepared: &PreparedEntity,
+    ranked: &[MatchCandidate],
+    verdict: &Ruling<'_>,
+) -> MatchDecision {
+    MatchDecision {
+        kind: "entity".to_owned(),
+        proposed_name: prepared.name.clone(),
+        proposed_type: prepared.type_name.clone(),
+        candidates: ranked.iter().map(candidate_label).collect(),
+        verdict: verdict.verdict.to_owned(),
+        choice: verdict.choice.to_owned(),
+        confidence: verdict.confidence,
+        model: verdict.model.to_owned(),
+        entity_id: verdict.entity_id,
+    }
+}
+
+fn candidate_label(candidate: &MatchCandidate) -> String {
+    format!(
+        "{} ({}) {}",
+        candidate.name, candidate.type_name, candidate.id
+    )
+}
+
+async fn note_entity(
+    env: &EntityBuilderEnv<'_>,
+    summary: Uuid,
+    prepared: &PreparedEntity,
+    ranked: &[MatchCandidate],
+    verdict: &Ruling<'_>,
+) -> Result<(), WorkerError> {
+    let decision = entity_decision(prepared, ranked, verdict);
+    env.store
+        .record_decision(summary, &decision, env.now)
+        .await?;
+    Ok(())
+}
+
+fn keep_observed_name(bound: &mut PreparedEntity, observed: &str) {
+    let key = canonical_key(observed);
+    if key.is_empty() || key == canonical_key(&bound.name) {
+        return;
+    }
+    if bound
+        .aliases
+        .iter()
+        .any(|alias| canonical_key(alias) == key)
+    {
+        return;
+    }
+    bound.aliases.push(observed.to_owned());
 }
 
 pub(super) fn prepared_facts(prepared: &PreparedEntity) -> String {

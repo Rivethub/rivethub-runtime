@@ -162,6 +162,14 @@ pub(super) struct RawDecision {
 
 #[async_trait]
 pub(super) trait EntityDecider: Send + Sync {
+    #[expect(
+        clippy::unnecessary_literal_bound,
+        reason = "ThinkingCap borrows the configured model name, so this return is not 'static"
+    )]
+    fn backend_name(&self) -> &str {
+        "decider"
+    }
+
     async fn decide(&self, request: &DecideRequest) -> Result<RawDecision, WorkerError>;
 
     async fn alias_probability(&self, question: &str) -> Result<f32, WorkerError>;
@@ -173,6 +181,10 @@ pub(super) struct ThinkingCapDecider<'a> {
 
 #[async_trait]
 impl EntityDecider for ThinkingCapDecider<'_> {
+    fn backend_name(&self) -> &str {
+        self.env.model
+    }
+
     async fn decide(&self, request: &DecideRequest) -> Result<RawDecision, WorkerError> {
         thinkingcap_decide(self.env, request).await
     }
@@ -194,6 +206,14 @@ pub(super) struct JevDecider {
 
 #[async_trait]
 impl EntityDecider for JevDecider {
+    #[expect(
+        clippy::unnecessary_literal_bound,
+        reason = "ThinkingCap borrows the configured model name, so this return is not 'static"
+    )]
+    fn backend_name(&self) -> &str {
+        "jev"
+    }
+
     async fn decide(&self, request: &DecideRequest) -> Result<RawDecision, WorkerError> {
         let mut options = request.options.clone();
         options.push("new".to_owned());
