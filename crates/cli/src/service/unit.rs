@@ -23,7 +23,7 @@ impl Unit {
     ) -> Result<Self, ServiceError> {
         Ok(Self {
             executable: quote_path(executable)?.replace('$', "$$"),
-            environment_file: quote_path(environment_file)?,
+            environment_file: environment_assignment(environment_file)?,
             scope,
             kind,
         })
@@ -112,6 +112,22 @@ fn validate_path(path: &Path) -> Result<(), ServiceError> {
         return Err(ServiceError::Path(path.to_path_buf()));
     }
     Ok(())
+}
+
+fn environment_assignment(path: &Path) -> Result<String, ServiceError> {
+    validate_path(path)?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| ServiceError::Path(path.to_path_buf()))?;
+    if text
+        .chars()
+        .any(|character| character.is_ascii_control() || character == '"')
+    {
+        return Err(ServiceError::EnvironmentFile {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(text.replace('%', "%%"))
 }
 
 fn quote_path(path: &Path) -> Result<String, ServiceError> {

@@ -315,7 +315,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     .expect("unit");
     assert_eq!(
         unit.to_string(),
-        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-\"/home/user/.rivethub/.env\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-/home/user/.rivethub/.env\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n\n[Install]\nWantedBy=multi-user.target\n"
     );
     let unit = Unit::new(
         Path::new("/opt/é'\"\\%/$HOME/$(touch nope)/rh"),
@@ -330,7 +330,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/a%%u/$HOME/.env\"\n")
+            .contains("EnvironmentFile=-/home/a%%u/$HOME/.env\n")
     );
     assert_eq!(Scope::for_uid(0), Scope::System);
     assert_eq!(Scope::for_uid(1000), Scope::User);
@@ -629,7 +629,7 @@ async fn concurrent_initializers_publish_exactly_one_complete_unit() {
 fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     let unit = Unit::new(
         Path::new("/opt/\u{85}/rh"),
-        Path::new("/home/user/\nRestart=always\t.env"),
+        Path::new("/home/user/.env"),
         Scope::User,
         NodeKind::Node,
     )
@@ -640,9 +640,25 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/user/\\x0aRestart=always\\x09.env\"\n")
+            .contains("EnvironmentFile=-/home/user/.env\n")
     );
-    assert!(!unit.to_string().contains("\nRestart=always"));
+    for path in [
+        "/home/user/\nRestart=always.env",
+        "/home/user/\t.env",
+        "/home/user/\"quoted\".env",
+    ] {
+        let error = Unit::new(
+            Path::new("/opt/rh"),
+            Path::new(path),
+            Scope::User,
+            NodeKind::Node,
+        )
+        .expect_err(path);
+        assert!(
+            error.to_string().contains("systemd cannot represent"),
+            "{path}: {error}"
+        );
+    }
     assert!(
         Unit::new(
             Path::new("/opt/rh\0"),
@@ -651,6 +667,56 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
             NodeKind::Node
         )
         .is_err()
+    );
+}
+
+#[test]
+fn systemd_analyze_accepts_the_generated_unit() {
+    let mut version = std::process::Command::new("systemd-analyze");
+    version.arg("--version");
+    match version.output() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: systemd-analyze is not installed");
+            return;
+        }
+        Err(error) => panic!("systemd-analyze: {error}"),
+        Ok(output) if !output.status.success() => {
+            panic!(
+                "systemd-analyze --version failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(_) => {}
+    }
+    let root = tempfile::tempdir().expect("unit directory");
+    let executable_dir = root.path().join("Rivet Hub");
+    std::fs::create_dir(&executable_dir).expect("executable directory");
+    let executable = executable_dir.join("rh");
+    std::fs::copy("/bin/sleep", &executable).expect("copy sleep");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let environment = root.path().join("a%u Hub.env");
+    let unit =
+        Unit::new(&executable, &environment, Scope::User, NodeKind::Standalone).expect("unit");
+    let text = unit.to_string();
+    assert!(text.contains("EnvironmentFile=-") && !text.contains("EnvironmentFile=-\""));
+    assert!(text.contains("a%%u Hub.env"));
+    assert!(text.contains("ExecStart=\"") && text.contains("Rivet Hub/rh\" local\n"));
+    let file = root.path().join("rivethub.service");
+    std::fs::write(&file, &text).expect("unit file");
+    let output = std::process::Command::new("systemd-analyze")
+        .arg("verify")
+        .arg(&file)
+        .output()
+        .expect("verify");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "systemd-analyze verify rejected the unit: {stderr}\n{text}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("not absolute")
+            && !stderr.to_lowercase().contains("ignoring"),
+        "{stderr}"
     );
 }
 

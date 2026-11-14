@@ -278,6 +278,11 @@ pub enum ServiceError {
     Exists(PathBuf),
     #[error("invalid service path: {}", .0.display())]
     Path(PathBuf),
+    #[error(
+        "cannot load {} from the service: systemd cannot represent this path in EnvironmentFile",
+        path.display()
+    )]
+    EnvironmentFile { path: PathBuf },
     #[error("cannot tell which node the service should run from the config: {0}")]
     Config(#[from] config::ConfigError),
     #[error("HOME is required for service initialization")]
