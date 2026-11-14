@@ -205,7 +205,18 @@ async fn the_cloud_source_needs_a_sign_in() -> Result {
     configure(&fixture, &stub, &key)?;
     let report = update(&fixture, Some(UpdateSource::RivethubCloud)).await?;
     assert_eq!(report.exit, Exit::Failure);
-    assert!(report.stderr.contains("not signed in"), "{}", report.stderr);
+    assert!(
+        report
+            .stderr
+            .contains("not signed in to rivethub.cloud, so it cannot take updates from there"),
+        "{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("rh update without --source"),
+        "{}",
+        report.stderr
+    );
     assert!(state.asked.lock().is_empty());
     stub.close().await?;
     Ok(())

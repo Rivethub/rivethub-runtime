@@ -76,4 +76,8 @@ pub enum UpdateError {
     CloudVersion,
     #[error("rivethub.cloud has no {0} release for this platform")]
     NoCloudRelease(wire::gateway::account::ReleaseChannel),
+    #[error(
+        "this install is not signed in to rivethub.cloud, so it cannot take updates from there. Sign in from the app (Settings > Account), or run rh update without --source to take the release from GitHub, which needs no account"
+    )]
+    NotSignedIn,
 }

@@ -30,7 +30,7 @@ pub(super) async fn stage(
         .identity()
         .await
         .map_err(AccountError::from)?
-        .ok_or(AccountError::NotSignedIn)?;
+        .ok_or(UpdateError::NotSignedIn)?;
     let cloud = Cloud::new(settings.base.clone())?;
     let (manifest, digest) = latest(&cloud, &settings, &token, channel)
         .await?
