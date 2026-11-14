@@ -95,9 +95,10 @@ pub(super) fn build(
                 .push(source.text_row(message, event_id, Role::Assistant)?);
         }
         for tool in &message.tools {
-            batch
-                .messages
-                .push(source.tool_row(message, tool, &results)?);
+            let row = source.tool_row(message, tool, &results)?;
+            if row.tool_result.is_some() || finalize {
+                batch.messages.push(row);
+            }
         }
         if message.prompt() {
             let event_id = source.id(message, OccurrenceKind::User);
@@ -186,10 +187,13 @@ fn block_content(blocks: &[Block]) -> (String, Vec<String>) {
     for block in blocks {
         match block {
             Block::Text { text } => texts.push(text.as_str()),
-            Block::Thinking { thinking, text } => match thinking.as_deref().or(text.as_deref()) {
-                Some(thought) => thoughts.push(thought),
-                None => thoughts.push(""),
-            },
+            Block::Thinking { thinking, text } => {
+                if let Some(thought) = thinking.as_deref().or(text.as_deref())
+                    && !thought.trim().is_empty()
+                {
+                    thoughts.push(thought);
+                }
+            }
             Block::ToolResult { content, .. } => results.push(result_text(content)),
             Block::ToolUse { .. } | Block::Other => {}
         }

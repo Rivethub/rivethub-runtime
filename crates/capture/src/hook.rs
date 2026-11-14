@@ -154,7 +154,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         let Some(session) = payload.session_id.clone() else {
             return HookRun::done();
         };
-        if !payload.claude_transcript() {
+        if !payload.claude_transcript() || payload.subagent_tool_call() {
             return HookRun::done();
         }
         if event == HookEvent::UserPromptSubmit {

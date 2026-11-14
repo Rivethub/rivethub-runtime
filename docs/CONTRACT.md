@@ -3350,6 +3350,11 @@ defaults `http://127.0.0.1:9402` and `qwen3-embedding-0.6b`.
 - DeepSeek Harness: the session header's `parentSession`, only when the header also says `origin: "subagent"` (dsh writes `parentSession` on some ordinary forks too); `agent_id` is the child's session id, and dsh records no agent type, description or call id on the child (read from dsh 0.2.2-rc.1's session format; not checked with a live run).
 The session listing for OpenCode now gives a child's `parentSessionId` from `parent_id`, as the listing already does for Claude Code and Grok Build, so the sessions API groups an OpenCode subagent under its parent; an OpenCode `session` table without `parent_id` or `model` is still listed, without that field. The dsh listing names no parent, because it does not read session headers.
 
+(209) Claude Code subagent details (2026-11-14, checked on Claude Code 2.1.323). Three defects in what a session with a subagent stored:
+- The parent's `Agent` row had no result, though the subagent's answer is in the parent transcript. `SubagentStop` fires while the parent's `Agent` call is still open, so the transcript pass wrote the call with no result, and the stores keep the first row for an event id (note 148's `:tool:<tool_use id>`), so the result that `PostToolUse` and `Stop` carried later was dropped. A transcript pass now writes a tool call only once its result is in the transcript; `SessionEnd` still writes a call whose result never came, without a result, so the call itself is never lost.
+- A tool call the subagent made was written into the parent conversation as well as the subagent's. Claude Code runs `PostToolUse` for a subagent's calls with the parent's `session_id` and adds `agent_id` and `agent_type`; such a `PostToolUse` now writes nothing, and the subagent's own transcript capture (note 148) stores the call with its result.
+- A thinking block whose text Claude Code omitted (it asks the API to omit thinking text in `-p` runs and for non-interactive subagents) was stored as an empty `[thinking] ` row. An empty or blank thought is no longer stored.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
