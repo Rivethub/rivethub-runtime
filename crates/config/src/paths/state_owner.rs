@@ -91,6 +91,13 @@ pub(super) fn claim(directory: &Path, pid: u32) -> Result<NodeClaim, StateError>
 }
 
 fn node_already_running(path: &Path) -> StateError {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the pid file is already locked; when it cannot be opened there is no pid to name, so the error stays the held lock"
+        )
+    )]
     let Ok(mut file) = OpenOptions::new()
         .read(true)
         .custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits())
@@ -100,6 +107,13 @@ fn node_already_running(path: &Path) -> StateError {
             path: path.to_owned(),
         };
     };
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the pid file is already locked; when its text cannot be read there is no pid to name, so the error stays the held lock"
+        )
+    )]
     let Ok(text) = read_text(&mut file, path) else {
         return StateError::Locked {
             path: path.to_owned(),

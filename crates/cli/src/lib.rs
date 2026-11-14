@@ -116,9 +116,10 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
     match result {
         Ok(dispatch) => dispatch,
         Err(error) => {
-            let exit = match &error {
-                Error::State(config::StateError::AlreadyRunning { .. }) => Exit::AlreadyRunning,
-                _ => Exit::Failure,
+            let exit = if let Error::State(config::StateError::AlreadyRunning { .. }) = &error {
+                Exit::AlreadyRunning
+            } else {
+                Exit::Failure
             };
             Dispatch::Complete(Report::error(&error, exit))
         }

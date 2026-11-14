@@ -213,7 +213,14 @@ impl Updater {
                 "; previous binaries saved with .previous suffix.\n",
             ]);
             match restart {
-                Restart::Skipped => report.stdout.push_str("Restart skipped (--no-restart).\n"),
+                Restart::Skipped => {
+                    let note = self.scope.repair_preface(env).await?;
+                    if note.starts_with("Updated ") {
+                        self.scope.reload(env, shutdown).await?;
+                    }
+                    report.stdout.push_str(&note);
+                    report.stdout.push_str("Restart skipped (--no-restart).\n");
+                }
                 Restart::Service => self.restart(env, shutdown, report).await?,
                 Restart::Standalone => {
                     node::restart_standalone(&self.binary, env, shutdown, report).await?;

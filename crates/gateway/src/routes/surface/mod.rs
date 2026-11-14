@@ -57,13 +57,20 @@ fn no_app_page(method: &Method) -> Response {
     } else {
         axum::body::Body::from(NO_APP_PAGE)
     };
-    Response::builder()
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the page headers are static ASCII, so building this response does not fail"
+        )
+    )]
+    return Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .header(header::CONTENT_LENGTH, NO_APP_PAGE.len())
         .header(header::CACHE_CONTROL, "no-cache")
         .body(body)
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
 }
 
 fn redirect(target: &str) -> Result<Response, ApiError> {

@@ -81,9 +81,8 @@ impl CaptureHistory {
             return None;
         }
         match self {
-            Self::Unknown => None,
             Self::Known(None) if capture_installed => Some("nothing captured yet".to_owned()),
-            Self::Known(None) => None,
+            Self::Unknown | Self::Known(None) => None,
             Self::Known(Some(at)) => Some(format!(
                 "last capture {}",
                 at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)

@@ -204,6 +204,43 @@ async fn status_and_doctor_state_the_hub_policy() {
 }
 
 #[tokio::test]
+async fn doctor_warns_when_systemd_would_ignore_the_environment_file() {
+    let home = home();
+    let env = local_config(&home, 1, "");
+    let unit_dir = home.path().join(".config/systemd/user");
+    std::fs::create_dir_all(&unit_dir).expect("unit dir");
+    let unit = unit_dir.join("rivethub.service");
+    let env_file = home.path().join(".rivethub/.env");
+    std::fs::write(
+        &unit,
+        format!("EnvironmentFile=-\"{}\"\n", env_file.display()),
+    )
+    .expect("quoted unit");
+    let doctor = run(&["doctor"], &env).await;
+    assert_eq!(doctor.exit, Exit::Ok, "{}", doctor.stdout);
+    assert!(doctor.stdout.contains("warn: service"), "{}", doctor.stdout);
+    assert!(
+        doctor.stdout.contains("systemd ignores"),
+        "{}",
+        doctor.stdout
+    );
+    std::fs::write(&unit, format!("EnvironmentFile=-{}\n", env_file.display()))
+        .expect("absolute unit");
+    let doctor = run(&["doctor"], &env).await;
+    assert_eq!(doctor.exit, Exit::Ok, "{}", doctor.stdout);
+    assert!(
+        !doctor.stdout.contains("systemd ignores"),
+        "{}",
+        doctor.stdout
+    );
+    assert!(
+        !doctor.stdout.contains("warn: service"),
+        "{}",
+        doctor.stdout
+    );
+}
+
+#[tokio::test]
 async fn doctor_fails_a_share_server_list_entry_that_is_not_a_host() {
     let home = home();
     let env = local_config(&home, 1, "");

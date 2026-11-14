@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Exit, Report};
 pub use unit::Unit;
+pub(crate) use unit::ignored_environment_files;
 
 #[derive(Debug, Subcommand, Clone, Copy, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -95,6 +96,7 @@ impl Scope {
                 .await
             }
             ServiceCommand::Start | ServiceCommand::Restart => {
+                let repair = self.repair_preface(env).await?;
                 let preface = self.take_over_detached(env, shutdown).await?;
                 self.systemctl(&["daemon-reload"], env, shutdown)
                     .await
@@ -106,6 +108,7 @@ impl Scope {
                     .systemctl(&["status", "rivethub", "--no-pager"], env, shutdown)
                     .await?;
                 report.stdout.insert_str(0, &preface);
+                report.stdout.insert_str(0, &repair);
                 Ok(report)
             }
             ServiceCommand::Stop => self
@@ -142,11 +145,19 @@ impl Scope {
         let kind =
             tokio::task::spawn_blocking(move || crate::configuration::node_kind(&owned)).await??;
         let unit = Unit::new(&executable, &paths.env_file(), self, kind)?;
-        let path = unit.install(home).await?;
-        let mut message = format!(
-            "Created service file: {}\nIt runs: rh {kind}\n",
-            path.display()
-        );
+        let placement = tokio::task::spawn_blocking(move || unit.place(&home)).await??;
+        let mut message = match placement {
+            unit::Placement::Created(path) => format!(
+                "Created service file: {}\nIt runs: rh {kind}\n",
+                path.display()
+            ),
+            unit::Placement::Current(path) => format!(
+                "Service file is already current: {}\nIt runs: rh {kind}\n",
+                path.display()
+            ),
+            unit::Placement::Updated { note } => format!("{note}It runs: rh {kind}\n"),
+            unit::Placement::Foreign { message } => return Err(ServiceError::Edited(message)),
+        };
         self.systemctl(&["daemon-reload"], env, shutdown)
             .await
             .and_then(command::require_success)?;
@@ -179,6 +190,22 @@ impl Scope {
         Ok(Report::success(message))
     }
 
+    pub(crate) async fn repair_preface(self, env: &Environment) -> Result<String, ServiceError> {
+        let env = env.clone();
+        tokio::task::spawn_blocking(move || repair_unit(self, &env)).await?
+    }
+
+    pub(crate) async fn reload(
+        self,
+        env: &Environment,
+        shutdown: &CancellationToken,
+    ) -> Result<(), ServiceError> {
+        self.systemctl(&["daemon-reload"], env, shutdown)
+            .await
+            .and_then(command::require_success)
+            .map(|_| ())
+    }
+
     async fn take_over_detached(
         self,
         env: &Environment,
@@ -195,6 +222,13 @@ impl Scope {
             )
             .await
             .and_then(command::require_success)?;
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "PATTERNS FALLBACK: a MainPID that is not a number is not the detached node, so the service still stops that node"
+            )
+        )]
         if main.stdout.trim().parse::<u32>().ok() == Some(pid) {
             return Ok(String::new());
         }
@@ -253,6 +287,13 @@ fn process_gone(pid: i32) -> Result<bool, nix::errno::Errno> {
 }
 
 fn zombie(pid: i32) -> bool {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: a missing /proc stat is not a zombie, so the service keeps waiting until the process is gone"
+        )
+    )]
     let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };
@@ -260,6 +301,61 @@ fn zombie(pid: i32) -> bool {
         .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
 }
 
+fn repair_unit(scope: Scope, env: &Environment) -> Result<String, ServiceError> {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: a service start that cannot resolve its home leaves the unit unchanged and still starts"
+        )
+    )]
+    let Ok(paths) = Paths::new(env) else {
+        return Ok(String::new());
+    };
+    let home = paths.home().to_path_buf();
+    let path = scope.unit_path(&home);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(error.into()),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Ok(format!(
+                "The service file {} is not a regular file, so it was left unchanged.\n",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+    }
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: a service start that cannot read its config leaves the unit unchanged and still starts"
+        )
+    )]
+    let Ok(kind) = crate::configuration::node_kind(env) else {
+        return Ok(String::new());
+    };
+    let executable = std::env::current_exe()?;
+    let unit = Unit::new(&executable, &paths.env_file(), scope, kind)?;
+    match unit.place(&home)? {
+        unit::Placement::Created(_) | unit::Placement::Current(_) => Ok(String::new()),
+        unit::Placement::Updated { note } => Ok(note),
+        unit::Placement::Foreign { message } => Ok(finish_line(message)),
+    }
+}
+
+fn finish_line(message: String) -> String {
+    if message.ends_with('\n') {
+        message
+    } else {
+        format!("{message}\n")
+    }
+}
+
+#[expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "every other CLI error is reported as text from the service command"
+)]
 fn process_error(error: crate::Error) -> ServiceError {
     match error {
         crate::Error::Config(error) => ServiceError::Config(error),
@@ -276,6 +372,8 @@ pub enum ServiceError {
     Pid(#[from] std::num::TryFromIntError),
     #[error("Service file already exists: {}\nDelete it first if you want to regenerate.", .0.display())]
     Exists(PathBuf),
+    #[error("{0}")]
+    Edited(String),
     #[error("invalid service path: {}", .0.display())]
     Path(PathBuf),
     #[error(
