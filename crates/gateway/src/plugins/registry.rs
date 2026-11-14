@@ -3,14 +3,16 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use wire::plugin::PluginId;
+use wire::JsonObject;
 use wire::plugin::manifest::{Permission, PluginManifest};
 use wire::plugin::view::ViewValue;
+use wire::plugin::{PluginId, PluginNameError};
 
 use super::HostError;
 
 pub(super) const MANIFEST_FILE: &str = "rivethub-plugin.json";
 const REGISTRY_FILE: &str = "registry.json";
+const UNREADABLE_FILE: &str = "registry.unreadable.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,17 +26,61 @@ pub(super) struct Stored {
     pub(super) settings: BTreeMap<String, ViewValue>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 struct RegistryFile {
     plugins: BTreeMap<PluginId, Stored>,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RawRegistry {
+    #[serde(default)]
+    plugins: BTreeMap<String, JsonObject>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Unreadable {
+    #[error(transparent)]
+    Id(#[from] PluginNameError),
+    #[error(transparent)]
+    Entry(#[from] serde_json::Error),
+}
+
 pub(super) async fn load(root: &Path) -> Result<BTreeMap<PluginId, Stored>, HostError> {
-    match tokio::fs::read(root.join(REGISTRY_FILE)).await {
-        Ok(bytes) => Ok(serde_json::from_slice::<RegistryFile>(&bytes)?.plugins),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
-        Err(error) => Err(error.into()),
+    let bytes = match tokio::fs::read(root.join(REGISTRY_FILE)).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut plugins = BTreeMap::new();
+    let mut unreadable = RawRegistry::default();
+    for (name, entry) in serde_json::from_slice::<RawRegistry>(&bytes)?.plugins {
+        match stored(&name, &entry) {
+            Ok((id, stored)) => {
+                plugins.insert(id, stored);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    plugin = %name,
+                    %error,
+                    "a plug-in in the registry cannot be read by this rh; it is left out and kept in registry.unreadable.json"
+                );
+                unreadable.plugins.insert(name, entry);
+            }
+        }
     }
+    if !unreadable.plugins.is_empty() {
+        write_private(
+            &root.join(UNREADABLE_FILE),
+            &serde_json::to_vec_pretty(&unreadable)?,
+        )
+        .await?;
+    }
+    Ok(plugins)
+}
+
+fn stored(name: &str, entry: &JsonObject) -> Result<(PluginId, Stored), Unreadable> {
+    let id = PluginId::try_from(name.to_owned())?;
+    Ok((id, entry.deserialize::<Stored>()?))
 }
 
 pub(super) async fn save(
