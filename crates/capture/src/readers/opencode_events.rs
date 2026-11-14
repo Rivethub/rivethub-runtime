@@ -21,6 +21,7 @@ use super::message::row_position;
 use super::message::text_turn;
 use super::message::tool_turn;
 use super::message::unknown;
+use super::opencode::Mode;
 
 pub(crate) const FORMAT: &str = "opencode-session-message";
 const SLOTS: u64 = 1 << 16;
@@ -60,7 +61,9 @@ enum Content {
     Text {
         text: String,
     },
-    Reasoning {},
+    Reasoning {
+        text: String,
+    },
     Tool {
         name: String,
         state: ToolState,
@@ -114,6 +117,7 @@ struct Row<'a> {
     session: &'a SessionId,
     base: u64,
     at: &'a str,
+    mode: Mode,
 }
 
 pub(crate) fn first_seq(offset: u64) -> Result<i64, TranscriptReaderError> {
@@ -124,6 +128,7 @@ pub(crate) fn map_events(
     session: &SessionId,
     rows: &[OpencodeEvent],
     offset: u64,
+    mode: Mode,
 ) -> Result<TranscriptSlice, TranscriptReaderError> {
     let mut drafts = Vec::new();
     let mut skipped = Vec::new();
@@ -135,7 +140,7 @@ pub(crate) fn map_events(
             break;
         }
         last = last.max(base.saturating_add(SLOTS - 1));
-        for mapped in map_record(session, base, row.time_created, record)? {
+        for mapped in map_record(session, base, row.time_created, record, mode)? {
             push_mapped(mapped, &mut drafts, &mut skipped);
         }
     }
@@ -187,6 +192,7 @@ fn map_record(
     base: u64,
     time_created: i64,
     record: Record,
+    mode: Mode,
 ) -> Result<Vec<Mapped>, TranscriptReaderError> {
     let position = base + 1;
     let Some(at) = DateTime::from_timestamp_millis(time_created) else {
@@ -201,6 +207,7 @@ fn map_record(
         session,
         base,
         at: &at,
+        mode,
     };
     match record {
         Record::Text(role, data) => Ok(vec![text_turn(&turn(row, position, role, &data.text))?]),
@@ -215,13 +222,38 @@ fn assistant(row: Row<'_>, content: Vec<Content>) -> Result<Vec<Mapped>, Transcr
     for (index, item) in content.into_iter().enumerate() {
         let position = item_position(row.base, index)?;
         mapped.push(match item {
-            Content::Text { text } => text_turn(&turn(row, position, Role::Assistant, &text))?,
+            Content::Text { text } => text_turn(&turn(
+                row,
+                position,
+                Role::Assistant,
+                reply_text(row.mode, &text),
+            ))?,
             Content::Tool { name, state } => tool(row, position, name, state)?,
-            Content::Reasoning {} => Mapped::None,
+            Content::Reasoning { text } => thinking(row, position, &text)?,
             Content::Other => Mapped::Skip(unknown(position, "unknown opencode content")),
         });
     }
     Ok(mapped)
+}
+
+fn reply_text(mode: Mode, text: &str) -> &str {
+    match mode {
+        Mode::Capture => text.trim(),
+        Mode::Transcript => text,
+    }
+}
+
+fn thinking(row: Row<'_>, position: u64, text: &str) -> Result<Mapped, TranscriptReaderError> {
+    let text = text.trim();
+    if row.mode == Mode::Transcript || text.is_empty() {
+        return Ok(Mapped::None);
+    }
+    text_turn(&turn(
+        row,
+        position,
+        Role::Assistant,
+        &format!("[thinking] {text}"),
+    ))
 }
 
 fn tool(
