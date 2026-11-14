@@ -33,7 +33,7 @@ const CLAIMS_SQL: &str = "SELECT (SELECT g.id FROM rh_entity_facts g
                    WHERE g.topic_id = f.topic_id AND g.key = f.key
                    ORDER BY g.created_at, g.id LIMIT 1) AS fact,
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id
+            c.at, c.recorded_at, c.owner_user_id, c.settled
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
       WHERE f.topic_id = $1
@@ -78,13 +78,14 @@ const FACT_SQL: &str = "WITH found AS (
 
 const CLAIM_SQL: &str = "INSERT INTO rh_entity_fact_claims
             (id, fact_id, value, actor, pinned, session_id, summary_id, evidence, at, recorded_at,
-             owner_user_id)
+             owner_user_id, settled)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
              coalesce($11, (SELECT s.owner_user_id FROM rh_summaries s WHERE s.id = $7),
-                      rh_scope_principal()))
+                      rh_scope_principal()),
+             $12)
      ON CONFLICT (fact_id, summary_id) WHERE summary_id IS NOT NULL DO UPDATE
         SET value = EXCLUDED.value, evidence = EXCLUDED.evidence, at = EXCLUDED.at,
-            recorded_at = EXCLUDED.recorded_at";
+            recorded_at = EXCLUDED.recorded_at, settled = EXCLUDED.settled";
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct ClaimRow {
@@ -99,6 +100,7 @@ pub(crate) struct ClaimRow {
     at: DateTime<Utc>,
     recorded_at: DateTime<Utc>,
     owner_user_id: String,
+    settled: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -142,6 +144,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
             session: SessionId::from_str(session).map_err(|error| stored("fact session", error))?,
             summary,
             evidence: row.evidence.as_deref().and_then(Evidence::quote),
+            settled: row.settled,
         }),
         _ => Err(FactError::Unavailable(Box::new(Error::StoredValue {
             field: "fact actor",
@@ -169,7 +172,7 @@ const TOPIC_CLAIMS_SQL: &str = "SELECT f.topic_id,
               WHERE g.topic_id = f.topic_id AND g.key = f.key
               ORDER BY g.created_at, g.id LIMIT 1) AS fact,
             f.key, c.value, c.actor, c.pinned, c.session_id, c.summary_id, c.evidence,
-            c.at, c.recorded_at, c.owner_user_id
+            c.at, c.recorded_at, c.owner_user_id, c.settled
        FROM rh_entity_fact_claims c
        JOIN rh_entity_facts f ON f.id = c.fact_id
       WHERE f.topic_id = ANY($1)
@@ -226,12 +229,13 @@ pub(crate) async fn insert_claim(
         .fetch_one(&mut *conn)
         .await
         .map_err(failed("fact create"))?;
-    let (actor, pinned, session, summary, evidence, by) = match &claim.said {
-        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str())),
+    let (actor, pinned, session, summary, evidence, by, settled) = match &claim.said {
+        Said::You { by, pinned } => ("you", *pinned, None, None, None, Some(by.as_str()), false),
         Said::Writer {
             session,
             summary,
             evidence,
+            settled,
         } => (
             "wiki-writer",
             false,
@@ -239,6 +243,7 @@ pub(crate) async fn insert_claim(
             Some(*summary),
             evidence.as_ref().map(Evidence::as_str),
             None,
+            *settled,
         ),
     };
     sqlx::query(CLAIM_SQL)
@@ -253,6 +258,7 @@ pub(crate) async fn insert_claim(
         .bind(claim.at)
         .bind(now)
         .bind(by.or_else(|| claim.owner.as_ref().map(Owner::as_str)))
+        .bind(settled)
         .execute(&mut *conn)
         .await
         .map_err(failed("fact claim"))?;

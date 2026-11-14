@@ -76,6 +76,7 @@ fn said(
             session: session.parse::<SessionId>()?,
             summary: Uuid::new_v4(),
             evidence: Evidence::quote(value),
+            settled: false,
         },
         owner: Some(Owner::new("owner".to_owned())?),
         at: hour(at),

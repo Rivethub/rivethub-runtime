@@ -88,7 +88,6 @@ pub(super) async fn assert_snapshot(
     if snapshot.is_empty() {
         return Ok(());
     }
-    let pinned = pinned_values(tx, entity).await?;
     let quote = Evidence::quote(evidence);
     #[cfg_attr(
         dylint_lib = "rr_lints",
@@ -101,17 +100,6 @@ pub(super) async fn assert_snapshot(
     let now = Utc::now();
     let mut sessions: HashMap<Uuid, SessionId> = HashMap::new();
     for fact in snapshot {
-        if pinned
-            .get(fact.attribute.as_str())
-            .is_some_and(|held| held != &fact.value)
-        {
-            tracing::info!(
-                %entity,
-                attribute = %fact.attribute,
-                "skipped a writer claim that would contradict a pinned value"
-            );
-            continue;
-        }
         #[cfg_attr(
             dylint_lib = "rr_lints",
             expect(
@@ -144,6 +132,7 @@ pub(super) async fn assert_snapshot(
                 session,
                 summary: fact.summary_id,
                 evidence: quote.clone(),
+                settled: true,
             },
             owner: by.clone(),
             at: fact.as_of,
@@ -172,23 +161,6 @@ fn from_claims(claims: &[kernel::facts::Claim]) -> CurrentFacts {
         })
         .collect();
     CurrentFacts { facts, fixed }
-}
-
-async fn pinned_values(
-    conn: &mut PgConnection,
-    entity: Uuid,
-) -> Result<HashMap<String, String>, EntityStoreError> {
-    let claims = facts::claims_on(conn, entity).await.map_err(fact_error)?;
-    let mut pinned = HashMap::new();
-    for state in facts_as_of(&claims, None) {
-        if state.pinned {
-            pinned.insert(
-                state.key.as_str().to_owned(),
-                state.value.as_str().to_owned(),
-            );
-        }
-    }
-    Ok(pinned)
 }
 
 async fn same_claim(

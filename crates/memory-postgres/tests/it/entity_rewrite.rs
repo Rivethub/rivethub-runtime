@@ -2,7 +2,11 @@
 
 use chrono::DateTime;
 use chrono::Utc;
+use kernel::facts::FactStore;
+use kernel::review::ReviewKey;
+use kernel::review::fact_reviews;
 use kernel::tenancy::Scope;
+use kernel::topics::TopicId;
 use kernel::wiki::builder::BackfillBudget;
 use kernel::wiki::entity_pass::EntityRewrite;
 use kernel::wiki::entity_pass::EntityStore;
@@ -496,7 +500,7 @@ async fn restated_case(pool: PgPool) -> TestResult {
         claim_count(&pool, entity, "ram", "152 GB available").await?,
         1
     );
-    assert_eq!(claim_count(&pool, entity, "role", "other").await?, 0);
+    assert_eq!(claim_count(&pool, entity, "role", "other").await?, 1);
     assert_eq!(claim_count(&pool, entity, "role", "compute").await?, 1);
     let second = session_rewrite(
         again,
@@ -540,6 +544,10 @@ async fn restated_case(pool: PgPool) -> TestResult {
     assert_eq!(
         latest(&facts, "role").ok_or("pinned role")?.value,
         "compute"
+    );
+    assert_eq!(
+        review_items(&memory, entity).await?.as_slice(),
+        ["conflict:role"]
     );
     Ok(())
 }
@@ -1042,4 +1050,24 @@ async fn deferred(
 
 fn at(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+}
+
+async fn review_items(
+    memory: &PostgresMemory,
+    entity: Uuid,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let claims = memory.claims(TopicId::from_uuid(entity)).await?;
+    let mut items: Vec<String> = fact_reviews(&claims, Utc::now())
+        .into_iter()
+        .map(|review| {
+            let group = match review.key {
+                ReviewKey::Conflict { .. } => "conflict",
+                ReviewKey::Fact { .. } => "fact",
+                ReviewKey::Filing { .. } | ReviewKey::Tag(_) | ReviewKey::Tidy(_) => "other",
+            };
+            format!("{group}:{}", review.state.key.as_str())
+        })
+        .collect();
+    items.sort();
+    Ok(items)
 }

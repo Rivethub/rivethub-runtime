@@ -49,6 +49,7 @@ pub enum Said {
         session: SessionId,
         summary: Uuid,
         evidence: Option<Evidence>,
+        settled: bool,
     },
 }
 
@@ -56,6 +57,11 @@ impl Said {
     #[must_use]
     pub const fn pinned(&self) -> bool {
         matches!(self, Self::You { pinned: true, .. })
+    }
+
+    #[must_use]
+    pub const fn settled(&self) -> bool {
+        matches!(self, Self::Writer { settled: true, .. })
     }
 
     #[must_use]

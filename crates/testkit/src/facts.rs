@@ -71,6 +71,7 @@ fn writer(
             session: from.clone(),
             summary,
             evidence: Evidence::quote(&format!("the {key} is {value}")),
+            settled: false,
         },
         owner: Some(crate::owner()?),
         at: at(minute),
