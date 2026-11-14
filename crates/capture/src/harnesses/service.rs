@@ -14,6 +14,7 @@ use kernel::harness_setup::RecallState;
 use kernel::harness_setup::RecallStatus;
 use kernel::harness_setup::SetupError;
 
+use super::dsh;
 use super::install;
 use super::locate::Locator;
 use super::plan;
@@ -103,6 +104,14 @@ impl HarnessSetupService {
                 part: parts.first().copied().unwrap_or(ConnectPart::Capture),
                 reason: NOT_FOUND,
             });
+        }
+        if spec.id == "dsh" {
+            return dsh::plan(
+                &self.locator,
+                &self.rh,
+                &parts,
+                direction == Direction::Connect,
+            );
         }
         let mut edits = Vec::new();
         let mut planned = false;

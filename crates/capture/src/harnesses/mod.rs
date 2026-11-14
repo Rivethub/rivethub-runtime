@@ -1,3 +1,5 @@
+mod dsh;
+mod dsh_plugin;
 mod entries;
 mod install;
 mod json_edit;

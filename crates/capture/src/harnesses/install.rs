@@ -3,6 +3,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::SetupError;
 use serde::Serialize;
 
@@ -20,7 +21,6 @@ use super::registry::HookFileSpec;
 use super::registry::Location;
 
 const OPENCODE_MARKER: &str = "capture hook --harness opencode";
-const DSH_MARKER: &str = "capture hook --harness dsh";
 const OPENCODE_PLUGIN: &str = "rivethub-capture.ts";
 const OPENCODE_PLACEHOLDER: &str = "'__COMMAND__'";
 
@@ -54,8 +54,9 @@ pub(super) fn detect(locator: &Locator, install: &CaptureInstall, id: &str) -> I
         CaptureInstall::OpencodePlugin { directory } => {
             detect_plugin(locator, *directory, PluginKind::Opencode)
         }
-        CaptureInstall::DshPlugin { directory } => {
-            detect_plugin(locator, *directory, PluginKind::Dsh)
+        CaptureInstall::DshPlugin { .. } => {
+            let status = super::dsh::capture_status(locator);
+            view(status.installed, status.detail)
         }
     }
 }
@@ -158,25 +159,18 @@ fn detect_hooks(locator: &Locator, hooks: &HookFileSpec, id: &str) -> InstallVie
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PluginKind {
     Opencode,
-    Dsh,
 }
 
 fn plugin_files(directory: &Path, kind: PluginKind) -> Result<Vec<PathBuf>, SetupError> {
     let paths = list_dir(directory)?;
     Ok(match kind {
         PluginKind::Opencode => paths.into_iter().filter(|path| path.is_file()).collect(),
-        PluginKind::Dsh => paths
-            .into_iter()
-            .map(|path| path.join("index.mjs"))
-            .filter(|path| path.is_file())
-            .collect(),
     })
 }
 
 fn marker(kind: PluginKind) -> &'static str {
     match kind {
         PluginKind::Opencode => OPENCODE_MARKER,
-        PluginKind::Dsh => DSH_MARKER,
     }
 }
 
@@ -259,11 +253,13 @@ pub(super) fn plan_connect(
     match install {
         CaptureInstall::HookFile(hooks) => connect_hooks(locator, id, hooks, rh),
         CaptureInstall::OpencodePlugin { directory } => connect_opencode(locator, *directory, rh),
-        CaptureInstall::DshPlugin { .. } => Err(SetupError::Unsupported {
-            id: id.to_owned(),
-            part: kernel::harness_setup::ConnectPart::Capture,
-            reason: "dsh loads capture through a plug-in linked into each profile's package.json, which rh does not edit",
-        }),
+        CaptureInstall::DshPlugin { .. } => {
+            let (edits, skipped) = super::dsh::plan(locator, rh, &[ConnectPart::Capture], true)?;
+            if let Some(error) = skipped {
+                return Err(error);
+            }
+            Ok(edits)
+        }
     }
 }
 
@@ -368,11 +364,10 @@ pub(super) fn plan_disconnect(
                 after: None,
             }])
         }
-        CaptureInstall::DshPlugin { .. } => Err(SetupError::Unsupported {
-            id: id.to_owned(),
-            part: kernel::harness_setup::ConnectPart::Capture,
-            reason: "dsh loads capture through a plug-in linked into each profile's package.json, which rh does not edit",
-        }),
+        CaptureInstall::DshPlugin { .. } => {
+            super::dsh::plan(locator, Path::new(""), &[ConnectPart::Capture], false)
+                .map(|(edits, _)| edits)
+        }
     }
 }
 

@@ -65,7 +65,9 @@ pub enum CaptureInstall {
 impl CaptureInstall {
     #[must_use]
     pub const fn writable(&self) -> bool {
-        !matches!(self, Self::DshPlugin { .. })
+        match self {
+            Self::HookFile(_) | Self::OpencodePlugin { .. } | Self::DshPlugin { .. } => true,
+        }
     }
 }
 
@@ -87,6 +89,9 @@ pub enum Recall {
         file: Location,
     },
     Yaml {
+        file: Location,
+    },
+    Dsh {
         file: Location,
     },
     Unwritable(&'static str),
@@ -227,9 +232,9 @@ pub const REGISTRY: [HarnessSpec; 12] = [
         install: Some(CaptureInstall::DshPlugin {
             directory: at(Base::Dsh, "plugins"),
         }),
-        recall: Recall::Unwritable(
-            "dsh loads MCP servers through each profile's cordis.patch.yml, which rh does not edit",
-        ),
+        recall: Recall::Dsh {
+            file: at(Base::Dsh, "cordis.patch.yml"),
+        },
     },
     HarnessSpec {
         id: "cowork",
