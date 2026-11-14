@@ -2,6 +2,7 @@ mod argument_order;
 mod batch_validation;
 mod bundle;
 mod claude_capture_details;
+mod codex_transcript;
 mod codex_trust;
 mod cowork_reader;
 mod event_id;
