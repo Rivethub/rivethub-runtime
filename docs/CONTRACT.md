@@ -3228,6 +3228,15 @@ still keeps each port as an `Option` so unit-test fixtures can attach one fake a
 in such a fixture, never from a composed node. Ports a node can truly run without keep their `Option` and `503`:
 harness setup, the share and receive desks, the cloud account, memory export and the session listers.
 
+(190) A SQLite node serves one person, and says so at start (Phil, 2026-11-13, audit F1). Note 89 keeps SQLite
+single-person and unfiltered on purpose, but startup accepted a users file that gave other people tokens, so a second
+person could authenticate and search the owner's private memory. Now loading the identities on a node whose memory is
+SQLite (`identities::load`, which `rh gateway --check`, `rh start`, `rh gateway`, `rh local`, the workers and `rh mcp`
+all call) refuses a users file in which anyone but `ownerUserId` has a token or a device, or in which a configured space
+names another member, with "this node keeps memory in SQLite, which serves one person (<owner>) and does not separate
+anyone's sessions, but <who>; use a Postgres memory store for several people". The owner may hold any number of tokens
+and devices under any name it is filed under. SQLite does not gain multi-person isolation.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
