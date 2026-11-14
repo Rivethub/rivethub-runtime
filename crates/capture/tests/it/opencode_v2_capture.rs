@@ -20,6 +20,12 @@ use capture::writer::CaptureTransport;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
 use kernel::transcript::SessionLister;
+use kernel::transcript::SessionMessageRole;
+use kernel::transcript::ToolOutputRead;
+use kernel::transcript::TranscriptBlock;
+use kernel::transcript::TranscriptRead;
+use kernel::transcript::TranscriptToolStatus;
+use kernel::transcript::TranscriptWindow;
 use wire::harness::HarnessId;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -490,5 +496,62 @@ async fn opencode_2_3_part_rows_keep_the_same_rows_and_subagent_link() -> TestRe
         at(&child, "/settings/tool_use_id"),
         "call_5d7c0668d51048c8aa5d86e4"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_3_transcript_has_the_thinking_and_the_tool_calls() -> TestResult {
+    let home = tempfile::tempdir()?;
+    opencode_2_3_store(home.path())?;
+    let lister = StoreSessionLister::new(StoreRoots {
+        opencode: Some(home.path().join(".local/share/opencode")),
+        ..StoreRoots::default()
+    });
+    let TranscriptRead::Read(read) = lister
+        .transcript(HarnessId::Opencode, PARENT, TranscriptWindow::Latest)
+        .await?
+    else {
+        return Err("opencode has a transcript source".into());
+    };
+    let [prompt, work, progress, reply] = read.turns.as_slice() else {
+        return Err(format!("expected four turns, got {:?}", read.turns).into());
+    };
+    assert_eq!(prompt.role, SessionMessageRole::User);
+    assert!(prompt.text.starts_with("Do these steps in order."));
+
+    assert!(
+        work.thinking
+            .as_deref()
+            .is_some_and(|thinking| thinking.starts_with("The user wants me to execute"))
+    );
+    assert_eq!(work.text, "");
+    let tools = work.tools.as_deref().unwrap_or_default();
+    assert_eq!(
+        tools
+            .iter()
+            .map(|tool| (tool.name.as_str(), tool.status))
+            .collect::<Vec<_>>(),
+        vec![
+            ("shell", TranscriptToolStatus::Done),
+            ("read", TranscriptToolStatus::Done),
+            ("subagent", TranscriptToolStatus::Done),
+        ]
+    );
+    let shell = tools.first().ok_or("the shell call")?;
+    let call = shell.id.as_deref().ok_or("the shell call has an id")?;
+    let ToolOutputRead::Found(output) = lister
+        .tool_output(HarnessId::Opencode, PARENT, call)
+        .await?
+    else {
+        return Err("the shell call has an output".into());
+    };
+    assert_eq!(output.text, "Linux 6.8.0-acme\n");
+    assert!(!output.is_error);
+
+    assert!(progress.text.starts_with("Steps 1 and 2 are done"));
+    assert!(progress.thinking.is_some());
+    assert_eq!(progress.tools, None);
+    assert_eq!(reply.text, "Linux 6.8.0-acme | PELICAN-42 | 196");
+    assert_eq!(reply.last_block, Some(TranscriptBlock::Text));
     Ok(())
 }
