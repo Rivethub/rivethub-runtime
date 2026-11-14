@@ -138,6 +138,8 @@ publishes that release. Published archives are never rebuilt or replaced, so a p
 Stable and beta come from one of two sources. Without `--source`, the updater uses the install's update source:
 `rivethub-cloud` once this install is signed in to rivethub.cloud (Settings, Account, updates and privacy), unless
 the owner chose `github` there, and `github` while it is signed out. `--source` overrides that choice for one run.
+When the cloud has no release for the channel and platform, a run without `--source` says so and takes the GitHub
+release instead, and `--version <tag>` without `--source` goes to GitHub directly (CONTRACT note 211).
 The `github` source is the release flow above. The `rivethub-cloud` source asks
 `GET <cloud.url>/v1/updates/latest?channel=<channel>&os=<os>` with the install token from
 `<state>/account/install.json`, where `<os>` is `linux-x86_64`, `linux-aarch64`, `macos-x86_64` or `macos-aarch64`.

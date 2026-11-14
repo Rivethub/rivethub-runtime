@@ -307,6 +307,10 @@ impl ShareServers {
     fn status(&self) -> Result<Report, ServerError> {
         let listed = self.logins.list()?;
         let kept = match self.logins.kind() {
+            TokenStore::Keyring if self.logins.holds_file_logins()? => format!(
+                "tokens are kept in the OS keyring; logins the keyring does not hold are in {} (mode 0600)\n",
+                self.logins.file().display()
+            ),
             TokenStore::Keyring => "tokens are kept in the OS keyring\n".to_owned(),
             TokenStore::File => format!(
                 "tokens are kept in {} (mode 0600)\n",
