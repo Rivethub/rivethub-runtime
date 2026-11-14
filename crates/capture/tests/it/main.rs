@@ -5,6 +5,7 @@ mod claude_capture_details;
 mod codex_trust;
 mod cowork_reader;
 mod event_id;
+mod grok_capture_rows;
 mod grok_transcript;
 mod grok_updates;
 mod harness_setup;
