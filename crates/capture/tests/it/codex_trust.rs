@@ -18,6 +18,9 @@ const RH: &str = "/opt/rh/bin/rh";
 const STOP_HASH: &str = "sha256:55bf93377473d62205c771b08faf86810bc0095a455546f01f0dbdb63861b0e3";
 const SESSION_END_HASH: &str =
     "sha256:16a43a02836bcd17972221e7a98efc19cc30ba0a6547a4ed538e56369f77d875";
+const SUBAGENT_STOP_HASH: &str =
+    "sha256:4d071ddce35f002f10ce81e18e3c2e1f2e5637193e62766e4a39e6b969f2ed82";
+const ADDED: &str = "with a hook rh added since you trusted the others in Codex";
 const WAITING: &str = "waiting for you to trust it in Codex: the next time you open `codex` it shows \"Hooks need review\"; choose \"Trust all and continue\"";
 
 struct Machine {
@@ -127,6 +130,7 @@ fn hooks_trusted_with_codexs_own_hashes_read_as_trusted() -> TestResult {
     machine.write_config(&[
         ("session_end", &trusted(SESSION_END_HASH)),
         ("stop", &trusted(STOP_HASH)),
+        ("subagent_stop", &trusted(SUBAGENT_STOP_HASH)),
     ])?;
     let probe = machine.probe()?;
     assert!(probe.capture_installed);
@@ -170,10 +174,39 @@ fn one_hook_trusted_and_the_other_new_still_waits() -> TestResult {
     let probe = machine.probe()?;
     assert!(!probe.capture_installed);
     assert!(
-        probe.install_detail.contains(WAITING),
+        probe.install_detail.contains(ADDED),
         "{}",
         probe.install_detail
     );
+    Ok(())
+}
+
+#[test]
+fn hooks_trusted_before_rh_added_subagent_stop_ask_for_trust_again() -> TestResult {
+    let (machine, _) = connected_codex("codex-cli 0.169.0")?;
+    machine.write_config(&[
+        ("session_end", &trusted(SESSION_END_HASH)),
+        ("stop", &trusted(STOP_HASH)),
+    ])?;
+    let probe = machine.probe()?;
+    assert!(!probe.capture_installed);
+    assert!(
+        probe.install_detail.contains(ADDED),
+        "{}",
+        probe.install_detail
+    );
+    let again = machine.connect()?;
+    assert_eq!(again.outcome.diff, "");
+    let note = again.notes.first().ok_or("connect gave no note")?;
+    assert!(
+        note.starts_with("rh now also registers Codex's SubagentStop hook"),
+        "{note}"
+    );
+    assert!(
+        note.ends_with("sub-agent threads reach rh only through `rh capture backfill`."),
+        "{note}"
+    );
+    assert!(note.contains("\"Trust all and continue\""), "{note}");
     Ok(())
 }
 
@@ -234,6 +267,7 @@ fn a_trusted_hook_from_an_older_codex_with_the_same_hash_still_reads_as_trusted(
     machine.write_config(&[
         ("session_end", &trusted(SESSION_END_HASH)),
         ("stop", &trusted(STOP_HASH)),
+        ("subagent_stop", &trusted(SUBAGENT_STOP_HASH)),
     ])?;
     let probe = machine.probe()?;
     assert!(probe.install_detail.ends_with("trusted in Codex"));

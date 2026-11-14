@@ -144,6 +144,11 @@ fn opencode_row(row: &OpencodeSessionRow) -> Option<StoreSession> {
     }
     session.created_at = Some(created).filter(|ms| *ms != 0);
     session.model = model_label(&row.model);
+    if let SqlValue::Text(parent) = &row.parent_id
+        && !parent.is_empty()
+    {
+        session.parent_session_id = Some(parent.clone());
+    }
     Some(session)
 }
 

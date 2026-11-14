@@ -68,6 +68,11 @@ struct HookPayloadWire {
 
 impl HookPayload {
     #[must_use]
+    pub fn subagent_tool_call(&self) -> bool {
+        self.hook_event_name == Some(HookEvent::PostToolUse) && self.agent_id.is_some()
+    }
+
+    #[must_use]
     pub fn claude_transcript(&self) -> bool {
         match (&self.session_id, &self.transcript_path) {
             (Some(session), Some(path)) => path

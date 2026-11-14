@@ -199,7 +199,7 @@ pub(crate) fn assemble(
 }
 
 pub(crate) fn text_turn(turn: &TextTurn<'_>) -> Result<Mapped, TranscriptReaderError> {
-    if turn.content.is_empty() {
+    if turn.content.trim().is_empty() {
         return Ok(Mapped::None);
     }
     match DateTime::parse_from_rfc3339(turn.at) {

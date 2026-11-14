@@ -1,0 +1,23 @@
+{
+  "info": {
+    "id": "01a1db35-3246-7211-8e3b-57f76df009c0",
+    "cwd": "/home/user/acmekit"
+  },
+  "agent_id": "ag1.e9662d4e5f044590b04c09365ac6748d",
+  "attempt_id": "at1.1d9d8957e3e14fb7a34afa34d679bafc",
+  "session_summary": "Do these steps in order. 1) Run the shell command:",
+  "created_at": "2026-11-14T17:57:39.016791170Z",
+  "updated_at": "2026-11-14T17:59:36.944511129Z",
+  "num_messages": 18,
+  "num_chat_messages": 10,
+  "current_model_id": "acme-reasoner",
+  "next_trace_turn": 1,
+  "chat_format_version": 1,
+  "session_kind": "headless",
+  "request_id": "3dd3d6bb-71de-4931-ade8-34e29035e8fe",
+  "grok_home": "/home/user/.grok",
+  "last_active_at": "2026-11-14T17:59:36.944511129Z",
+  "generated_title": "Do these steps in order. 1) Run the shell command:",
+  "agent_name": "grok-build-plan",
+  "sandbox_profile": "off"
+}

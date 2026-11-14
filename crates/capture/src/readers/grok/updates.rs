@@ -113,10 +113,13 @@ impl Reading<'_> {
             SessionUpdate::AgentMessageChunk { content } => {
                 self.text(position, at, Role::Assistant, content.text())
             }
-            SessionUpdate::AgentThoughtChunk { content } => {
-                let thought = content.text().map(|text| format!("[thinking] {text}"));
-                self.text(position, at, Role::Assistant, thought.as_deref())
-            }
+            SessionUpdate::AgentThoughtChunk { content } => match content.text() {
+                Some(text) if text.trim().is_empty() => Ok(Mapped::None),
+                text => {
+                    let thought = text.map(|text| format!("[thinking] {text}"));
+                    self.text(position, at, Role::Assistant, thought.as_deref())
+                }
+            },
             SessionUpdate::ToolCall(call) => {
                 self.opened.insert(
                     call.tool_call_id,
