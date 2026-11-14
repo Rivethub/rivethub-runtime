@@ -473,6 +473,14 @@ pub struct DeploymentSection {
 
 impl Config {
     #[must_use]
+    pub fn users_file(&self, env: &Environment) -> Option<std::path::PathBuf> {
+        self.gateway
+            .as_ref()
+            .and_then(|gateway| gateway.users_file.clone())
+            .or_else(|| env.users_file().map(std::path::PathBuf::from))
+    }
+
+    #[must_use]
     pub fn memory_postgres_url(&self, env: &Environment) -> Option<String> {
         self.memory
             .as_ref()

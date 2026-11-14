@@ -3073,6 +3073,16 @@ deleted: they wait for a worker with a model (a remote worker on the same databa
 counted in `queued`; work skipped while no model is configured is rebuilt by the workers' sweeps when one is (unembedded
 messages, unsummarized conversations, missing wiki pages; a digest is requested again the next time Today is read).
 
+(164) One precedence for settings read from the config file and the environment (Phil, 2026-11-13). The config
+file's own value comes first, then the `RIVETHUB_*` variable, then the legacy `RIVETOS_*` name, which is read only when
+neither is set and logs its deprecation notice. The Postgres URL, the embedding endpoint and model, the wiki directory
+and the node name already did this; the users file did not: the gateway and `rh memory bundle` read
+`RIVETHUB_USERS_FILE`, else `RIVETOS_USERS_FILE`, before `gateway.users_file`, so a legacy variable left in a service
+environment replaced the file the config named (the team hub needed a wrapper that unset it). Both now call
+`Config::users_file`, and the environment's own reader is private to the config crate, so no caller can put a variable
+ahead of the file again. A setting that exists only as a variable (`RIVETHUB_HOME`, `RIVETHUB_LOG_LEVEL`,
+`RIVETHUB_INSTALL_ROOT`) is unchanged.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

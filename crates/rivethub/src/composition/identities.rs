@@ -36,12 +36,7 @@ pub(crate) async fn load(
     config: &config::Config,
     env: &config::Environment,
 ) -> Result<Identity, ComposeError> {
-    let path = env.users_file().map(std::path::Path::new).or_else(|| {
-        config
-            .gateway
-            .as_ref()
-            .and_then(|gateway| gateway.users_file.as_deref())
-    });
+    let path = config.users_file(env);
     let Some(path) = path else {
         return registry(UsersRegistry {
             unmapped_is_owner: true,
