@@ -296,7 +296,7 @@ pub fn session_title(
     if let Some(title) = named {
         return title.to_owned();
     }
-    let derived = [summary, first_user]
+    let derived = [summary, first_user.and_then(super::spoken_title)]
         .into_iter()
         .flatten()
         .filter_map(first_line)

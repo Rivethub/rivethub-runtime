@@ -202,7 +202,10 @@ fn user_message(line: &str) -> Option<String> {
             .collect(),
     };
     let trimmed = text.trim();
-    (!trimmed.is_empty() && !injected(trimmed)).then(|| clip(trimmed, TITLE_CHARS))
+    if injected(trimmed) {
+        return None;
+    }
+    kernel::memory::spoken_title(trimmed).map(|spoken| clip(spoken, TITLE_CHARS))
 }
 
 pub(crate) fn injected(text: &str) -> bool {

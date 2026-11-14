@@ -47,3 +47,28 @@ fn a_bare_path_never_becomes_a_title() {
     );
     assert_eq!(session_title(None, None, Some("   "), NATIVE), NATIVE);
 }
+
+#[test]
+fn the_fallback_title_is_what_the_person_typed_after_injected_blocks() {
+    for prompt in [
+        "# AGENTS.md instructions for /home/user/app\n\n<INSTRUCTIONS>\nkeep it short\n</INSTRUCTIONS>\nfix the flaky cache test",
+        "<user_instructions>be brief</user_instructions>\n<environment_context>\n  <cwd>/home/user/app</cwd>\n</environment_context>\nfix the flaky cache test",
+        "<system-reminder>\nthe date is today\n</system-reminder>\nfix the flaky cache test",
+    ] {
+        assert_eq!(
+            session_title(None, None, Some(prompt), NATIVE),
+            "fix the flaky cache test",
+            "{prompt}"
+        );
+    }
+    assert_eq!(
+        session_title(
+            None,
+            None,
+            Some("# AGENTS.md instructions for /home/user/app"),
+            NATIVE
+        ),
+        NATIVE,
+        "nothing typed yet leaves the native id"
+    );
+}
