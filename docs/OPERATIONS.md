@@ -475,8 +475,9 @@ initialize introduction; per-person users files need no spaces or duplicate team
 unpinned node falls back to its users-file owner for the person, while still reading memberships
 from the store. SQLite and a person with no co-members produce no instructions.
 Person labels use the stable user id, such as `alex`, rather than a token or imported author.
-Migrate before upgrading this build: migration 0069 raises the Postgres schema requirement to
-69 and allows members to read co-memberships only within their own spaces. Its no-argument
+Migrate before upgrading this build. Migration 0069 allows members to read co-memberships
+only within their own spaces. Migrations 0072 and 0073 record settled entity-worker claims and
+each duplicate decision, and the schema requirement is 75. Its no-argument
 `rh_member_spaces()` helper is the sole public definer read helper: it captures the actual
 principal, reads that person's memberships under a fixed search path, restores maintenance
 state, and returns only space IDs. It grants no capture, queue or maintenance authority.
