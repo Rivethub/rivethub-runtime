@@ -19,7 +19,6 @@ use super::tools::kept_object;
 
 const THINKING: &str = "[thinking] ";
 const CALL: &str = "[tool] ";
-const RESULT: &str = "[tool-result]";
 const FAILURE: &str = "[tool-failure]";
 const OUTPUT_BYTES: usize = 64 * 1024;
 
@@ -106,13 +105,11 @@ impl Folder {
                 let Some(name) = message.tool_name else {
                     return Ok(());
                 };
+                let failed = message.content.starts_with(FAILURE);
                 if message.content.starts_with(CALL) {
                     self.draft(at)
                         .open(message.event_id, name, message.tool_args.as_ref())?;
-                } else if message.content.starts_with(RESULT)
-                    || message.content.starts_with(FAILURE)
-                {
-                    let failed = message.content.starts_with(FAILURE);
+                } else if message.tool_args.is_none() && self.waiting(&name) {
                     self.answer(&name, message.tool_result.unwrap_or_default(), failed, at);
                 } else {
                     self.draft(at).open(
@@ -121,7 +118,7 @@ impl Folder {
                         message.tool_args.as_ref(),
                     )?;
                     let result = message.tool_result.unwrap_or(message.content);
-                    self.answer(&name, result, false, at);
+                    self.answer(&name, result, failed, at);
                 }
             }
             Role::System => {}
@@ -163,6 +160,22 @@ impl Folder {
         let draft = self.pending.get_or_insert_with(Draft::default);
         draft.stamp(at);
         draft
+    }
+
+    fn waiting(&self, name: &str) -> bool {
+        let open = |tool: &HarnessTranscriptTool| {
+            tool.status == TranscriptToolStatus::Running && tool.name == name
+        };
+        self.pending
+            .iter()
+            .flat_map(|draft| draft.tools.iter())
+            .chain(
+                self.turns
+                    .iter()
+                    .filter_map(|turn| turn.tools.as_ref())
+                    .flatten(),
+            )
+            .any(open)
     }
 
     fn answer(&mut self, name: &str, result: String, failed: bool, at: Option<i64>) {
