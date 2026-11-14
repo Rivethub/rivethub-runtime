@@ -1,6 +1,7 @@
 mod parse;
 mod prompt;
 
+use kernel::topics::SweepOwners;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
@@ -54,6 +55,7 @@ pub struct TidyEnv<'a> {
     pub tidy: &'a dyn TidyStore,
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
+    pub owners: SweepOwners<'a>,
     pub now: DateTime<Utc>,
     pub cancel: &'a CancellationToken,
 }
@@ -86,7 +88,8 @@ pub async fn handle_tidy(env: &TidyEnv<'_>) -> Result<TidyRun, WorkerError> {
     {
         return Ok(TidyRun::NotDue { last });
     }
-    let listings = env.topics.store.list().await?;
+    let mut listings = env.topics.store.list().await?;
+    listings.retain(|listing| listing.topic.owner.is_none() || env.owners.includes(&listing.topic));
     let known = env.tidy.known().await?;
     let inputs = env.tidy.inputs(env.now - WEEK).await?;
     let corrections = env.topics.filing.corrections(CORRECTION_EXAMPLES).await?;

@@ -13,7 +13,10 @@ use crate::wiki_builder::{
 use chrono::Utc;
 use kernel::memory::{EmbeddingStore, SummaryStore};
 use kernel::model::ModelProvider;
+use kernel::owner::Owner;
 use kernel::queue::{ClaimedJob, FixedJob, JobName, JobQueue};
+use kernel::topics::SweepOwners;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -185,18 +188,35 @@ async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), W
             role: ProcessRole::Categorizer,
         });
     };
-    let run = crate::tidy::TidyEnv {
+    let run = |owners| crate::tidy::TidyEnv {
         topics,
         tidy: tidy.as_ref(),
         provider: env.categorizer.provider.as_ref(),
         model: &env.categorizer.model,
+        owners,
         now: Utc::now(),
         cancel,
     };
-    let scope = crate::scopes::primary_scope(env.scopes.as_ref()).await?;
-    crate::scopes::within(scope, crate::tidy::handle_tidy(&run))
-        .await
-        .map(|_| ())
+    let Some(scopes) = env.scopes.as_ref() else {
+        return crate::tidy::handle_tidy(&run(SweepOwners::All))
+            .await
+            .map(|_| ());
+    };
+    let mut people: BTreeSet<Owner> = crate::topic_page::topic_owners(topics.store.as_ref())
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
+    people.insert(scopes.primary.clone());
+    for person in &people {
+        let scope = scopes.of_owner(person).await?;
+        scope
+            .run(crate::tidy::handle_tidy(&run(SweepOwners::Only(Some(
+                person,
+            )))))
+            .await?;
+    }
+    Ok(())
 }
 
 async fn dispatch_topic_page(
@@ -210,12 +230,7 @@ async fn dispatch_topic_page(
         .ok_or(WorkerError::MissingDependencies {
             role: ProcessRole::Summarizer,
         })?;
-    let scope = crate::scopes::primary_scope(env.scopes.as_ref()).await?;
-    crate::scopes::within(
-        scope,
-        crate::topic_page::handle_sync_topic_page(deps, &job.payload, cancel),
-    )
-    .await
+    crate::topic_page::handle_sync_topic_page(deps, env.scopes.as_ref(), &job.payload, cancel).await
 }
 
 async fn dispatch_wiki<Q: JobQueue>(

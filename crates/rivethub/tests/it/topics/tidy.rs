@@ -56,6 +56,7 @@ async fn tidy(api: &Api, answer: &str, now: DateTime<Utc>) -> TestResult<TidyRun
     };
     let cancel = CancellationToken::new();
     let env = TidyEnv {
+        owners: kernel::topics::SweepOwners::All,
         topics: &topics,
         tidy: api.store.as_ref(),
         provider: &provider,

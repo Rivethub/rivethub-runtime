@@ -207,11 +207,28 @@ pub(crate) async fn root_page(
     PageSync { topics, pages, now }.ensure(root).await
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweepOwners<'a> {
+    All,
+    Only(Option<&'a crate::owner::Owner>),
+}
+
+impl SweepOwners<'_> {
+    #[must_use]
+    pub fn includes(self, topic: &Topic) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(owner) => topic.owner.as_ref() == owner,
+        }
+    }
+}
+
 pub async fn sync_topic_page(
     topics: &dyn TopicStore,
     pages: &dyn TopicPageStore,
     decisions: &dyn DecisionStore,
     job: &SyncTopicPage,
+    owners: SweepOwners<'_>,
     now: DateTime<Utc>,
 ) -> Result<(), TopicPageError> {
     let sync = PageSync { topics, pages, now };
@@ -220,6 +237,9 @@ pub async fn sync_topic_page(
     }
     for listing in topics.list().await? {
         let topic = listing.topic;
+        if !owners.includes(&topic) {
+            continue;
+        }
         let owns_page = match topic.kind {
             TopicKind::Type => false,
             TopicKind::Entity => true,
