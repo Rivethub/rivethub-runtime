@@ -23,6 +23,7 @@ use super::types::PreparedEntity;
 use super::types::PublishOutcome;
 use super::types::StoredRewrite;
 use super::types::TranscriptMessage;
+use super::types::TypeBrief;
 
 #[async_trait]
 pub trait EntityStore: Send + Sync {
@@ -112,6 +113,18 @@ pub trait EntityStore: Send + Sync {
         _summary: Uuid,
         _decision: &MatchDecision,
         _now: DateTime<Utc>,
+    ) -> Result<(), EntityStoreError> {
+        Ok(())
+    }
+
+    async fn type_briefs(&self) -> Result<Vec<TypeBrief>, EntityStoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn remember_type_alias(
+        &self,
+        _type_name: &str,
+        _alias: &str,
     ) -> Result<(), EntityStoreError> {
         Ok(())
     }

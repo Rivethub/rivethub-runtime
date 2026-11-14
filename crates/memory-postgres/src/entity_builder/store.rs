@@ -25,6 +25,7 @@ use kernel::wiki::entity_pass::ObserveContext;
 use kernel::wiki::entity_pass::PreparedEntity;
 use kernel::wiki::entity_pass::PublishOutcome;
 use kernel::wiki::entity_pass::TranscriptMessage;
+use kernel::wiki::entity_pass::TypeBrief;
 use kernel::wiki::entity_pass::compact_key;
 use pgvector::HalfVector;
 use sqlx::Connection;
@@ -313,6 +314,18 @@ impl EntityStore for PostgresMemory {
         query: &CandidateQuery,
     ) -> Result<Vec<MatchCandidate>, EntityStoreError> {
         gather(&self.pool, query).await
+    }
+
+    async fn type_briefs(&self) -> Result<Vec<TypeBrief>, EntityStoreError> {
+        super::types::type_briefs(&self.pool).await
+    }
+
+    async fn remember_type_alias(
+        &self,
+        type_name: &str,
+        alias: &str,
+    ) -> Result<(), EntityStoreError> {
+        super::types::remember_type_alias(&self.pool, type_name, alias).await
     }
 
     async fn type_names(&self) -> Result<Vec<String>, EntityStoreError> {

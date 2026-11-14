@@ -400,6 +400,14 @@ pub struct CandidateQuery {
     pub markers: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeBrief {
+    pub name: String,
+    pub slug: String,
+    pub aliases: Vec<String>,
+    pub examples: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchDecision {
     pub kind: String,

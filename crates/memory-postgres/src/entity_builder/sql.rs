@@ -311,6 +311,23 @@ SELECT $1, s.id, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, s.owner_user_
   FROM rh_summaries s
  WHERE s.id = $2";
 
+pub(super) const TYPE_ALIASES: &str = "\
+SELECT topic_id, alias
+  FROM rh_topic_aliases
+ WHERE kind = 'type' AND topic_id = ANY($1)
+ ORDER BY topic_id, alias_key";
+
+pub(super) const TYPE_EXAMPLES: &str = "\
+SELECT parent_id, name
+  FROM (
+    SELECT e.parent_id, e.name,
+           row_number() OVER (PARTITION BY e.parent_id ORDER BY e.updated_at DESC, e.id) AS n
+      FROM rh_topics e
+     WHERE e.kind = 'entity' AND e.parent_id = ANY($1)
+  ) ranked
+ WHERE n <= 3
+ ORDER BY parent_id, n";
+
 pub(super) const ALIAS_LINKS: &str = "\
 SELECT topic_id, alias
   FROM rh_topic_aliases

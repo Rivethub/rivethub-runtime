@@ -640,22 +640,21 @@ async fn an_ip_alias_not_tied_in_the_mention_is_rejected() {
     assert_eq!(stub.calls.load(Ordering::SeqCst), 0);
 }
 
-struct Down {
-    calls: AtomicUsize,
-}
-
-#[async_trait]
-impl EntityDecider for Down {
-    async fn decide(&self, _request: &DecideRequest) -> Result<RawDecision, WorkerError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Err(WorkerError::Llm {
-            message: "connection refused".to_owned(),
-        })
-    }
-
-    async fn alias_probability(&self, _question: &str) -> Result<f32, WorkerError> {
-        Ok(0.0)
-    }
+#[tokio::test]
+async fn a_decide_error_is_retried_once() {
+    let decision = ask(
+        &Flaky {
+            calls: AtomicUsize::new(0),
+        },
+        &DecideRequest {
+            observation: "name: phil".to_owned(),
+            options: vec!["Phil (People)".to_owned()],
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(decision.choice, "new");
+    assert_eq!(decision.confidence, 0.95);
 }
 
 #[tokio::test]
@@ -701,42 +700,6 @@ async fn a_service_and_a_host_are_one_entity_when_the_decider_says_same() {
     assert!(matches!(different, MatchStep::Ready(item) if item.entity_ref.is_none()));
 }
 
-#[tokio::test]
-async fn a_new_type_follows_the_decider_once() {
-    let existing = vec!["Hosts".to_owned(), "Services".to_owned()];
-    let same = scripted("0");
-    let settled = settle_type(&same, "machine", &existing).await;
-    assert_eq!(same.calls.load(Ordering::SeqCst), 1);
-    let TypeOutcome::Use { name, decision } = settled else {
-        panic!("machine was not folded");
-    };
-    assert_eq!(name, "Hosts");
-    assert_eq!(decision.verdict, "same");
-    assert_eq!(decision.model, "decider");
-    assert_eq!(decision.kind, "type");
-    let different = scripted("new");
-    let settled = settle_type(&different, "machine", &existing).await;
-    assert_eq!(different.calls.load(Ordering::SeqCst), 1);
-    let TypeOutcome::Use { name, decision } = settled else {
-        panic!("a different type was not kept");
-    };
-    assert_eq!(name, "machine");
-    assert_eq!(decision.verdict, "different");
-    let folded = scripted("0");
-    let settled = settle_type(&folded, "host", &existing).await;
-    assert_eq!(folded.calls.load(Ordering::SeqCst), 0);
-    let TypeOutcome::Use { name, .. } = settled else {
-        panic!("host was asked");
-    };
-    assert_eq!(name, "Hosts");
-    let down = Down {
-        calls: AtomicUsize::new(0),
-    };
-    let settled = settle_type(&down, "machine", &existing).await;
-    assert_eq!(down.calls.load(Ordering::SeqCst), 2);
-    assert!(matches!(settled, TypeOutcome::Unreachable { .. }));
-}
-
 #[test]
 fn a_decision_records_the_name_the_candidates_and_the_model() {
     let ranked = [candidate(4, "gerty", "Hosts")];
@@ -768,19 +731,173 @@ fn a_decision_records_the_name_the_candidates_and_the_model() {
     );
 }
 
+struct TypeStub {
+    calls: AtomicUsize,
+    choice: &'static str,
+    confidence: f32,
+}
+
+#[async_trait]
+impl EntityDecider for TypeStub {
+    async fn decide(&self, request: &DecideRequest) -> Result<RawDecision, WorkerError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(
+            request.observation.starts_with("proposed type:"),
+            "{}",
+            request.observation
+        );
+        Ok(RawDecision {
+            choice: self.choice.to_owned(),
+            confidence: self.confidence,
+        })
+    }
+
+    async fn alias_probability(&self, _question: &str) -> Result<f32, WorkerError> {
+        Ok(0.0)
+    }
+}
+
+fn type_stub(choice: &'static str) -> TypeStub {
+    TypeStub {
+        calls: AtomicUsize::new(0),
+        choice,
+        confidence: 0.93,
+    }
+}
+
+fn brief(name: &str, aliases: &[&str], examples: &[&str]) -> TypeBrief {
+    TypeBrief {
+        name: name.to_owned(),
+        slug: name.to_ascii_lowercase(),
+        aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
+        examples: examples
+            .iter()
+            .map(|example| (*example).to_owned())
+            .collect(),
+    }
+}
+
 #[tokio::test]
-async fn a_decide_error_is_retried_once() {
-    let decision = ask(
-        &Flaky {
-            calls: AtomicUsize::new(0),
-        },
-        &DecideRequest {
-            observation: "name: phil".to_owned(),
-            options: vec!["Phil (People)".to_owned()],
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(decision.choice, "new");
-    assert_eq!(decision.confidence, 0.95);
+async fn a_new_type_follows_the_decider_once() {
+    let existing = vec![brief("Hosts", &[], &["gerty"]), brief("Services", &[], &[])];
+    let same = type_stub("0");
+    let settled = settle_type(&same, "machine", &existing).await;
+    assert_eq!(same.calls.load(Ordering::SeqCst), 1);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("machine was not filed under the existing type");
+    };
+    assert_eq!(name, "Hosts");
+    assert_eq!(decision.verdict, "same");
+    assert_eq!(decision.model, "decider");
+    assert_eq!(decision.kind, "type");
+    assert!(
+        decision
+            .candidates
+            .iter()
+            .any(|line| line.contains("examples: gerty"))
+    );
+    assert_eq!(alias_to_keep("machine", &name).as_deref(), Some("machine"));
+
+    let different = type_stub("new");
+    let settled = settle_type(&different, "machine", &existing).await;
+    assert_eq!(different.calls.load(Ordering::SeqCst), 1);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("a different type was not kept");
+    };
+    assert_eq!(name, "machine");
+    assert_eq!(decision.verdict, "different");
+    assert_eq!(alias_to_keep("machine", &name), None);
+
+    let folded = type_stub("0");
+    let settled = settle_type(&folded, "host", &existing).await;
+    assert_eq!(folded.calls.load(Ordering::SeqCst), 0);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("host was asked");
+    };
+    assert_eq!(name, "Hosts");
+    assert_eq!(decision.model, "exact");
+    assert_eq!(alias_to_keep("host", &name).as_deref(), Some("host"));
+    assert_eq!(alias_to_keep("Hosts", &name), None);
+
+    let people = vec![brief("People", &[], &[])];
+    let person = type_stub("new");
+    let settled = settle_type(&person, "person", &people).await;
+    assert_eq!(person.calls.load(Ordering::SeqCst), 1);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("person was folded into People");
+    };
+    assert_eq!(name, "person");
+    assert_eq!(decision.verdict, "different");
+
+    let aliased = vec![brief("Hosts", &["machine"], &["gerty"])];
+    let again = type_stub("0");
+    let settled = settle_type(&again, "machine", &aliased).await;
+    assert_eq!(again.calls.load(Ordering::SeqCst), 0);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("a stored alias was asked");
+    };
+    assert_eq!(name, "Hosts");
+    assert_eq!(decision.verdict, "same");
+    assert_eq!(decision.model, "exact");
+
+    let empty = type_stub("0");
+    let settled = settle_type(&empty, "machine", &[]).await;
+    assert_eq!(empty.calls.load(Ordering::SeqCst), 0);
+    let TypeOutcome::Use { name, decision } = settled else {
+        panic!("an empty catalogue asked");
+    };
+    assert_eq!(name, "machine");
+    assert_eq!(decision.verdict, "none");
+    assert_eq!(decision.model, "none");
+
+    let unsure = TypeStub {
+        calls: AtomicUsize::new(0),
+        choice: "0",
+        confidence: 0.4,
+    };
+    let settled = settle_type(&unsure, "machine", &existing).await;
+    assert_eq!(unsure.calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        settled,
+        TypeOutcome::Unsure { decision } if decision.verdict == "hold"
+    ));
+}
+
+struct Down {
+    calls: AtomicUsize,
+}
+
+#[async_trait]
+impl EntityDecider for Down {
+    async fn decide(&self, _request: &DecideRequest) -> Result<RawDecision, WorkerError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(WorkerError::Llm {
+            message: "connection refused".to_owned(),
+        })
+    }
+
+    async fn alias_probability(&self, _question: &str) -> Result<f32, WorkerError> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn an_unreachable_type_decider_is_asked_twice_and_creates_nothing() {
+    let existing = vec![brief("Hosts", &[], &[])];
+    let down = Down {
+        calls: AtomicUsize::new(0),
+    };
+    let settled = settle_type(&down, "machine", &existing).await;
+    assert_eq!(down.calls.load(Ordering::SeqCst), 2);
+    match settled {
+        TypeOutcome::Unreachable { decision, error } => {
+            assert_eq!(decision.verdict, "unreachable");
+            assert_eq!(decision.model, "decider");
+            assert!(decision.candidates.iter().any(|line| line == "Hosts"));
+            assert!(error.to_string().contains("type match undecided"));
+        }
+        TypeOutcome::Use { .. } | TypeOutcome::Unsure { .. } => {
+            panic!("an unreachable decider created the type");
+        }
+    }
 }

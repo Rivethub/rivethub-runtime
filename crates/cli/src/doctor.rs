@@ -345,7 +345,7 @@ async fn parked_counts(url: &str) -> Result<(i64, i64), sqlx::Error> {
     let row = sqlx::query(
         "SELECT
             (SELECT count(*) FROM rh_entity_extractions
-              WHERE status = 'failed' AND error ILIKE '%entity match undecided%') AS failed,
+              WHERE status = 'failed' AND error ILIKE '%match undecided%') AS failed,
             (SELECT count(*) FROM rh_entity_candidates) AS held",
     )
     .fetch_one(&pool)
