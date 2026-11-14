@@ -21,12 +21,15 @@ const TRUST_SINCE: Version = Version::new(0, 129, 0);
 const HASH_CHECKED_FROM: Version = Version::new(0, 169, 0);
 const HASH_CHECKED_BEFORE: Version = Version::new(0, 170, 0);
 
-pub(super) const TRUST_STEP: &str = "the next time you open `codex` it shows \"Hooks need review\"; choose \"Trust all and continue\" (or review rh's two hooks and trust them). Until then Codex skips them, and `codex exec` runs are not captured";
+const TRUST_HOW: &str = "the next time you open `codex` it shows \"Hooks need review\"; choose \"Trust all and continue\" (or review rh's hooks and trust them)";
+pub(super) const TRUST_STEP: &str = "the next time you open `codex` it shows \"Hooks need review\"; choose \"Trust all and continue\" (or review rh's hooks and trust them). Until then Codex skips them, and `codex exec` runs are not captured";
+const ADDED_UNTIL: &str = "Until then sessions are still captured, and sub-agent threads reach rh only through `rh capture backfill`";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Trust {
     Trusted,
     Unknown,
+    Added,
     Waiting,
     Changed,
     TurnedOff,
@@ -79,6 +82,7 @@ struct CodexHandler {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Event {
     Stop,
+    SubagentStop,
     SessionEnd,
 }
 
@@ -86,6 +90,7 @@ impl Event {
     fn of(name: &str) -> Option<Self> {
         match name {
             "Stop" => Some(Self::Stop),
+            "SubagentStop" => Some(Self::SubagentStop),
             "SessionEnd" => Some(Self::SessionEnd),
             _ => None,
         }
@@ -94,13 +99,14 @@ impl Event {
     const fn label(self) -> &'static str {
         match self {
             Self::Stop => "stop",
+            Self::SubagentStop => "subagent_stop",
             Self::SessionEnd => "session_end",
         }
     }
 
     fn timeout(self, written: Option<u64>) -> u64 {
         match self {
-            Self::Stop => written.unwrap_or(600).max(1),
+            Self::Stop | Self::SubagentStop => written.unwrap_or(600).max(1),
             Self::SessionEnd => written.unwrap_or(1).clamp(1, 3),
         }
     }
@@ -139,7 +145,7 @@ fn hash(
     };
     let matcher = match event {
         Event::Stop => None,
-        Event::SessionEnd => group.matcher.clone(),
+        Event::SubagentStop | Event::SessionEnd => group.matcher.clone(),
     };
     let identity = Identity {
         event_name: event.label(),
@@ -246,9 +252,12 @@ fn assess(
             }
         }
     }
-    let Some(worst) = verdicts.into_iter().max() else {
+    let Some(mut worst) = verdicts.iter().copied().max() else {
         return Ok(Trust::Unknown);
     };
+    if worst == Trust::Waiting && verdicts.contains(&Trust::Trusted) {
+        worst = Trust::Added;
+    }
     Ok(match (worst, version) {
         (Trust::Trusted, _) => Trust::Trusted,
         (_, None) => Trust::Unknown,
@@ -301,6 +310,9 @@ pub(super) fn overlay(found: InstallView, trust: Trust) -> InstallView {
         Trust::Waiting => waiting(format!(
             "{detail}, waiting for you to trust it in Codex: {TRUST_STEP}"
         )),
+        Trust::Added => waiting(format!(
+            "{detail}, with a hook rh added since you trusted the others in Codex: {TRUST_HOW}. {ADDED_UNTIL}"
+        )),
         Trust::Changed => waiting(format!(
             "{detail}, changed since you trusted it in Codex: {TRUST_STEP}"
         )),
@@ -315,6 +327,9 @@ pub(super) fn connect_note(trust: Trust) -> Option<String> {
         Trust::Trusted => None,
         Trust::Waiting | Trust::Changed => Some(format!(
             "Codex runs these hooks only after you trust them: {TRUST_STEP}."
+        )),
+        Trust::Added => Some(format!(
+            "rh now also registers Codex's SubagentStop hook, so sub-agent threads are captured as they finish; Codex runs it only after you trust it: {TRUST_HOW}. {ADDED_UNTIL}."
         )),
         Trust::TurnedOff => Some(
             "Codex has rh's hooks turned off; turn them back on with /hooks in `codex`, or nothing is captured.".to_owned(),

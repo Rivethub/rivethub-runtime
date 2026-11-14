@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -363,5 +364,68 @@ async fn a_dsh_fork_whose_header_has_no_subagent_origin_is_not_linked() -> TestR
     let payload = format!(r#"{{"hook_event_name":"turn/end","session_id":"{DSH_CHILD}"}}"#);
     let fork = batch(home.path(), StoreHarness::Dsh, &payload).await?;
     assert_eq!(link(&fork), expected([None; 5]));
+    Ok(())
+}
+
+const CODEX_PARENT: &str = "01a1db52-8c87-71c2-b621-2632ea20b469";
+const CODEX_CHILD: &str = "01a1db52-9d10-7a31-8c55-3b6f2e0c4d71";
+
+fn codex_store(home: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+    let day = home.join(".codex/sessions/2026/11/14");
+    std::fs::create_dir_all(&day)?;
+    let parent = day.join(format!("rollout-2026-11-14T13-29-42-{CODEX_PARENT}.jsonl"));
+    let child = day.join(format!("rollout-2026-11-14T13-29-50-{CODEX_CHILD}.jsonl"));
+    for (name, target) in [
+        ("parent-rollout.jsonl", &parent),
+        ("child-rollout.jsonl", &child),
+    ] {
+        std::fs::copy(
+            testkit::recording(&format!("capture/stores/codex-subagent/{name}")),
+            target,
+        )?;
+    }
+    Ok((parent, child))
+}
+
+#[tokio::test]
+async fn a_codex_subagent_stop_captures_the_child_thread_linked_to_its_parent() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let (parent, child) = codex_store(home.path())?;
+    let payload = format!(
+        r#"{{"session_id":"{CODEX_PARENT}","turn_id":"turn-1","transcript_path":"{}","agent_transcript_path":"{}","cwd":"/home/user/acmekit","hook_event_name":"SubagentStop","model":"acme-reasoner","permission_mode":"bypassPermissions","stop_hook_active":false,"agent_id":"{CODEX_CHILD}","agent_type":"default","last_assistant_message":"196"}}"#,
+        parent.display(),
+        child.display()
+    );
+    let captured = batch(home.path(), StoreHarness::Codex, &payload).await?;
+    assert_eq!(
+        captured.pointer("/session_key").and_then(Json::as_str),
+        Some(format!("codex:{CODEX_CHILD}").as_str())
+    );
+    assert_eq!(
+        link(&captured),
+        expected([
+            Some(CODEX_PARENT),
+            Some(CODEX_CHILD),
+            Some("default"),
+            None,
+            None
+        ])
+    );
+    let last = captured
+        .pointer("/messages")
+        .and_then(Json::as_array)
+        .and_then(|messages| messages.last())
+        .and_then(|message| message.pointer("/content"))
+        .and_then(Json::as_str);
+    assert_eq!(last, Some("196"));
+    let stop = format!(
+        r#"{{"session_id":"{CODEX_PARENT}","hook_event_name":"Stop","cwd":"/home/user/acmekit"}}"#
+    );
+    let root = batch(home.path(), StoreHarness::Codex, &stop).await?;
+    assert_eq!(
+        root.pointer("/session_key").and_then(Json::as_str),
+        Some(format!("codex:{CODEX_PARENT}").as_str())
+    );
+    assert_eq!(link(&root), expected([None; 5]));
     Ok(())
 }

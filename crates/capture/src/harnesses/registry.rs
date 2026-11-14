@@ -135,7 +135,7 @@ const CLAUDE_EVENTS: &[HookEvent] = &[
     event("SubagentStop"),
     event("SessionEnd"),
 ];
-const CODEX_EVENTS: &[HookEvent] = &[event("Stop"), event("SessionEnd")];
+const CODEX_EVENTS: &[HookEvent] = &[event("Stop"), event("SubagentStop"), event("SessionEnd")];
 const GROK_EVENTS: &[HookEvent] = &[event("Stop"), event("PreCompact"), event("SessionEnd")];
 
 pub const REGISTRY: [HarnessSpec; 12] = [
