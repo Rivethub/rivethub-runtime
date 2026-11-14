@@ -3109,6 +3109,16 @@ now also reads the older string form as the reason, with the effect "Search ran 
 missing field read as not degraded), and always writes the object, so a client built on `wire` reads every node it may
 talk to.
 
+(168) A message counter never takes a route down (Phil, 2026-11-13). `rh_message_counts` is kept by statement
+triggers that add signed deltas (note 98, migration 0050). Rows written while those triggers were off (a bulk
+load or restore) are never counted, so deleting them later drove the counter below zero, and `FactStore::fact_sessions`
+then failed `GET /api/entities/{id}` with `503` for every entity, as `MemoryStore::stats` would have failed
+`/api/memory/stats`. Migration 0071 makes the counter self-healing: `rh_message_count_add` recounts any conversation
+whose counter would go below zero from the rows that remain (`rh_message_count_recount`, not executable by `PUBLIC`),
+and the migration recounts every conversation that already has a negative counter. The readers degrade one field
+instead of the answer: a counter below zero is reported as `0` and logged (`a stored message counter is below zero`).
+`memory_postgres::SCHEMA_VERSION` is 71.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
