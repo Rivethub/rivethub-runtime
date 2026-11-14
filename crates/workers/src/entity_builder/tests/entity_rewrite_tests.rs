@@ -192,6 +192,13 @@ fn the_rewrite_prompt_keeps_facts_the_session_does_not_mention() {
     assert!(prompt.contains(
         "New facts come from what this session's tool output shows or what the user states as fact now"
     ));
+    assert!(prompt.contains(
+        "summary is one or two sentences in the present tense that say what the entity is"
+    ));
+    assert!(prompt.contains("summary does not report what this session did"));
+    assert!(prompt.contains(
+        "When this session's passages state a different value, current_facts records that observed value under the same attribute"
+    ));
 }
 
 #[test]
