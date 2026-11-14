@@ -133,6 +133,9 @@ pub(super) async fn assert_snapshot(
             sessions.insert(fact.summary_id, session.clone());
             session
         };
+        if same_claim(tx, entity, key.as_str(), session.as_str(), value.as_str()).await? {
+            continue;
+        }
         let claim = NewClaim {
             entity: TopicId::from_uuid(entity),
             key,
@@ -186,6 +189,33 @@ async fn pinned_values(
         }
     }
     Ok(pinned)
+}
+
+async fn same_claim(
+    conn: &mut PgConnection,
+    entity: Uuid,
+    key: &str,
+    session: &str,
+    value: &str,
+) -> Result<bool, EntityStoreError> {
+    let found: Option<i32> = sqlx::query_scalar(
+        "SELECT 1
+           FROM rh_entity_fact_claims c
+           JOIN rh_entity_facts f ON f.id = c.fact_id
+          WHERE f.topic_id = $1
+            AND f.key = $2
+            AND c.session_id = $3
+            AND c.value = $4
+          LIMIT 1",
+    )
+    .bind(entity)
+    .bind(key)
+    .bind(session)
+    .bind(value)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(query_error)?;
+    Ok(found.is_some())
 }
 
 async fn session_for(

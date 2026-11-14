@@ -3,6 +3,7 @@ use std::str::FromStr as _;
 use async_trait::async_trait;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
 use kernel::facts::FactError;
 use kernel::facts::FactId;
@@ -327,5 +328,9 @@ impl FactStore for SqliteStore {
             Ok(found)
         })
         .await
+    }
+
+    async fn entity_history(&self, _entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        Ok(Vec::new())
     }
 }

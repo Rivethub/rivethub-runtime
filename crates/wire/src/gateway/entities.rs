@@ -34,6 +34,9 @@ pub enum EntityType {
     Repository,
     Domain,
     Database,
+    Organization,
+    Project,
+    Place,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -103,6 +106,7 @@ pub enum ChangeKind {
     Conflict,
     Tag,
     Merge,
+    History,
 }
 
 #[serde_with::skip_serializing_none]

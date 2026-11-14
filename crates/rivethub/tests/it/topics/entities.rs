@@ -6,6 +6,7 @@ use chrono::DateTime;
 use chrono::TimeDelta;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
 use kernel::facts::FactError;
 use kernel::facts::FactKey;
@@ -390,6 +391,10 @@ impl FactStore for ImportedFrom {
             }
         }
         Ok(found)
+    }
+
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        self.inner.entity_history(entity).await
     }
 }
 

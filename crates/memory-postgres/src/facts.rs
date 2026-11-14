@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
 use kernel::facts::FactError;
 use kernel::facts::FactId;
@@ -56,6 +57,15 @@ const SESSION_SQL: &str = "WITH conv AS (
             (SELECT coalesce(settings, '{}'::jsonb) FROM conv WHERE starts_with(session_key, $2)
               ORDER BY updated_at DESC LIMIT 1) AS import_settings";
 
+const HISTORY_SQL: &str = "SELECT h.sentence,
+            coalesce(s.latest_at, (h.session_on::timestamp AT TIME ZONE 'UTC')) AS at,
+            c.session_key
+       FROM rh_entity_history h
+       LEFT JOIN rh_summaries s ON s.id = h.summary_id
+       LEFT JOIN rh_conversations c ON c.id = coalesce(h.conversation_id, s.conversation_id)
+      WHERE h.entity_id = $1
+      ORDER BY 2 DESC, h.summary_id DESC";
+
 const FACT_SQL: &str = "WITH found AS (
          SELECT id FROM rh_entity_facts WHERE topic_id = $1 AND key = $2
           ORDER BY created_at, id LIMIT 1
@@ -89,6 +99,13 @@ pub(crate) struct ClaimRow {
     at: DateTime<Utc>,
     recorded_at: DateTime<Utc>,
     owner_user_id: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct HistoryRow {
+    sentence: String,
+    at: DateTime<Utc>,
+    session_key: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -305,4 +322,27 @@ impl FactStore for PostgresMemory {
         }
         Ok(found)
     }
+
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        let rows = sqlx::query_as::<_, HistoryRow>(HISTORY_SQL)
+            .bind(entity.uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(failed("entity history"))?;
+        rows.into_iter().map(history_line).collect()
+    }
+}
+
+fn history_line(row: HistoryRow) -> Result<EntityHistory, FactError> {
+    let session = match row.session_key.filter(|key| !key.is_empty()) {
+        Some(key) => Some(
+            SessionId::from_str(&key).map_err(|error| stored("entity history session", error))?,
+        ),
+        None => None,
+    };
+    Ok(EntityHistory {
+        at: row.at,
+        sentence: row.sentence,
+        session,
+    })
 }
