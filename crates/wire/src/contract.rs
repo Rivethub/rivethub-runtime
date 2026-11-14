@@ -22,6 +22,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemorySearchHit>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryFallback>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryDegraded>,
+    SchemaGenerator::subschema_for::<crate::gateway::memory::DegradedObject>,
+    SchemaGenerator::subschema_for::<crate::gateway::memory::DegradedForm>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemorySearchResponse>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryToolName>,
     SchemaGenerator::subschema_for::<crate::gateway::memory::MemoryBrowseOrder>,

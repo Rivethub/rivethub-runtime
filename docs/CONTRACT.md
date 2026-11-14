@@ -3178,6 +3178,14 @@ now has the additive value `idle` for the second, read from a known, empty captu
 still reports `stale` for an installed entry. Clients that treated "stale with no `lastCaptureAt`" as idle can read the
 state directly.
 
+(185) `degraded` on search is always the object (Phil, 2026-11-13). `GET /api/memory/search` and
+`POST /api/memory/tool/memory_search` already wrote `degraded` only as `{reason, effect}` or left it out; no path writes
+a boolean, and the string form exists only in recordings of the TypeScript memory service. `/healthz`'s `degraded` is a
+different field (node health) and stays a string. What changed is the reader: `wire::gateway::memory::MemorySearchResponse`
+now also reads the older string form as the reason, with the effect "Search ran with reduced ranking." (`null` or a
+missing field read as not degraded), and always writes the object, so a client built on `wire` reads every node it may
+talk to.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
