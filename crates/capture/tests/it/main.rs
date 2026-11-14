@@ -1,6 +1,7 @@
 mod argument_order;
 mod batch_validation;
 mod bundle;
+mod codex_trust;
 mod cowork_reader;
 mod event_id;
 mod grok_transcript;
@@ -10,6 +11,7 @@ mod held_prompts;
 mod hook_replay;
 mod listing_claude_grok;
 mod listing_stores;
+mod opencode_setup;
 mod opencode_v2_store;
 mod receive_checks;
 mod redaction;

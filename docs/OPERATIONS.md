@@ -83,6 +83,16 @@ It rewrites the unit and starts the node; `rh status` says so when the unit is i
 node is down: hooks spool and deliver once it is back. A node without the service (macOS, `--no-service`) is not
 affected, and neither is an update from 0.8.3.
 
+## Upgrading from 0.8.4: OpenCode and Codex capture
+
+- OpenCode capture: the plug-in 0.8.3 wrote loads only on OpenCode 2.x. OpenCode 1.x, which `npm install opencode-ai`
+  installs, refused it, and nothing was captured. Run `rh harness connect opencode` again after updating `rh`: it
+  replaces the old file (backing it up) with one that loads on OpenCode 1.3.4 and later and on 2.x. `rh harness status`
+  says `out of date` until you do. Re-running it after you upgrade OpenCode is safe and changes nothing.
+- Codex capture: Codex runs rh's hooks only after you trust them in its "Hooks need review" prompt. `rh harness status`
+  now says whether Codex trusts them, and `rh harness connect codex` says what to answer. Until you trust them once,
+  `codex exec` runs are not captured.
+
 ## Upgrading from 0.8.2 to 0.8.3
 
 0.8.3 needs no schema migration. It fixes what a new user on a standalone SQLite node (the one `local.sh` installs and

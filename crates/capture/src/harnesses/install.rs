@@ -7,11 +7,15 @@ use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::SetupError;
 use serde::Serialize;
 
+use super::codex_trust;
 use super::entries::HookFile;
 use super::entries::HookGroup;
 use super::json_edit;
 use super::locate::Locator;
 use super::opencode_plugin;
+use super::opencode_version::CHECKED;
+use super::opencode_version::FIRST_LOADING;
+use super::opencode_version::Fit;
 use super::plan::FileEdit;
 use super::plan::read_optional;
 use super::registry::CaptureInstall;
@@ -19,19 +23,26 @@ use super::registry::CommandStyle;
 use super::registry::HookEvent;
 use super::registry::HookFileSpec;
 use super::registry::Location;
+use super::version::Version;
 
 const OPENCODE_MARKER: &str = "capture hook --harness opencode";
 const OPENCODE_PLUGIN: &str = "rivethub-capture.ts";
 const OPENCODE_PLACEHOLDER: &str = "'__COMMAND__'";
+const OPENCODE_TOO_OLD: &str = "the OpenCode on this machine is older than 1.3.4, which cannot load rh's capture plug-in; update OpenCode and connect again";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct InstallView {
     pub(super) installed: bool,
+    pub(super) connectable: bool,
     pub(super) detail: String,
 }
 
-fn view(installed: bool, detail: String) -> InstallView {
-    InstallView { installed, detail }
+pub(super) fn view(installed: bool, detail: String) -> InstallView {
+    InstallView {
+        installed,
+        connectable: !installed,
+        detail,
+    }
 }
 
 fn io_error(path: &Path, source: io::Error) -> SetupError {
@@ -48,11 +59,21 @@ fn config(path: &Path, message: impl Into<String>) -> SetupError {
     }
 }
 
-pub(super) fn detect(locator: &Locator, install: &CaptureInstall, id: &str) -> InstallView {
+pub(super) fn detect(
+    locator: &Locator,
+    install: &CaptureInstall,
+    id: &str,
+    rh: &Path,
+    version: Option<Version>,
+) -> InstallView {
     match install {
+        CaptureInstall::HookFile(hooks) if id == "codex" => codex_trust::overlay(
+            detect_hooks(locator, hooks, id),
+            codex_trust::read(locator, hooks, version),
+        ),
         CaptureInstall::HookFile(hooks) => detect_hooks(locator, hooks, id),
         CaptureInstall::OpencodePlugin { directory } => {
-            detect_plugin(locator, *directory, PluginKind::Opencode)
+            detect_opencode(locator, *directory, rh, Fit::of(version))
         }
         CaptureInstall::DshPlugin { .. } => {
             let status = super::dsh::capture_status(locator);
@@ -184,14 +205,71 @@ fn plugin_with_marker(directory: &Path, kind: PluginKind) -> Result<Option<PathB
     Ok(None)
 }
 
-fn detect_plugin(locator: &Locator, directory: Location, kind: PluginKind) -> InstallView {
+fn detect_opencode(locator: &Locator, directory: Location, rh: &Path, fit: Fit) -> InstallView {
     let Some(target) = locator.target(directory) else {
         return view(false, "no home directory to look in".to_owned());
     };
-    match plugin_with_marker(&target, kind) {
-        Err(error) => view(false, format!("cannot read plug-ins: {error}")),
-        Ok(Some(path)) => view(true, format!("plug-in installed at {}", path.display())),
-        Ok(None) => view(false, format!("no rh plug-in in {}", target.display())),
+    if let Fit::TooOld(version) = fit {
+        return InstallView {
+            installed: false,
+            connectable: false,
+            detail: format!(
+                "OpenCode {version} cannot load rh's capture plug-in; update OpenCode to {FIRST_LOADING} or later and run `rh harness connect opencode`"
+            ),
+        };
+    }
+    let found = match plugin_with_marker(&target, PluginKind::Opencode) {
+        Err(error) => return view(false, format!("cannot read plug-ins: {error}")),
+        Ok(None) => return view(false, format!("no rh plug-in in {}", target.display())),
+        Ok(Some(path)) => path,
+    };
+    let ours = target.join(OPENCODE_PLUGIN);
+    if found == ours {
+        let current = match plugin_is_current(locator, rh, &ours) {
+            Err(error) => return view(false, format!("cannot read plug-ins: {error}")),
+            Ok(current) => current,
+        };
+        if !current {
+            return view(
+                false,
+                format!(
+                    "plug-in at {} is out of date and may not load; run `rh harness connect opencode` to replace it",
+                    ours.display()
+                ),
+            );
+        }
+    }
+    view(
+        true,
+        format!("plug-in installed at {}{}", found.display(), fit_note(fit)),
+    )
+}
+
+fn plugin_is_current(locator: &Locator, rh: &Path, path: &Path) -> Result<bool, SetupError> {
+    Ok(read_optional(path)? == Some(opencode_text(locator, rh)?))
+}
+
+fn fit_note(fit: Fit) -> String {
+    match fit {
+        Fit::Loads(version) => format!(" for OpenCode {version}"),
+        Fit::Newer(version) => {
+            format!(" for OpenCode {version}, newer than the versions rh has checked ({CHECKED})")
+        }
+        Fit::TooOld(_) | Fit::Unknown => String::new(),
+    }
+}
+
+pub(super) fn connect_note(fit: Fit) -> String {
+    match fit {
+        Fit::Loads(version) => format!(
+            "OpenCode {version} loads this plug-in when it starts; rh has checked capture on OpenCode {CHECKED}."
+        ),
+        Fit::Newer(version) => format!(
+            "OpenCode {version} is newer than the versions rh has checked ({CHECKED}); after a session, `rh harness status` shows whether it captured."
+        ),
+        Fit::TooOld(_) | Fit::Unknown => format!(
+            "rh could not read the OpenCode version; this plug-in loads on OpenCode {FIRST_LOADING} and later (checked on {CHECKED})."
+        ),
     }
 }
 
@@ -249,10 +327,13 @@ pub(super) fn plan_connect(
     id: &str,
     install: &CaptureInstall,
     rh: &Path,
+    version: Option<Version>,
 ) -> Result<Vec<FileEdit>, SetupError> {
     match install {
         CaptureInstall::HookFile(hooks) => connect_hooks(locator, id, hooks, rh),
-        CaptureInstall::OpencodePlugin { directory } => connect_opencode(locator, *directory, rh),
+        CaptureInstall::OpencodePlugin { directory } => {
+            connect_opencode(locator, *directory, rh, Fit::of(version))
+        }
         CaptureInstall::DshPlugin { .. } => {
             let (edits, skipped) = super::dsh::plan(locator, rh, &[ConnectPart::Capture], true)?;
             if let Some(error) = skipped {
@@ -315,27 +396,44 @@ fn opencode_template(locator: &Locator) -> Result<String, SetupError> {
     }
 }
 
-fn connect_opencode(
-    locator: &Locator,
-    directory: Location,
-    rh: &Path,
-) -> Result<Vec<FileEdit>, SetupError> {
-    let target = locator
-        .target(directory)
-        .ok_or_else(|| config(Path::new(""), "no home directory to write to"))?;
-    if plugin_with_marker(&target, PluginKind::Opencode)?.is_some() {
-        return Ok(Vec::new());
-    }
+fn opencode_text(locator: &Locator, rh: &Path) -> Result<String, SetupError> {
     let template = opencode_template(locator)?;
     let quoted = shlex::try_quote(&rh.to_string_lossy())
         .map_err(|error| config(rh, error.to_string()))?
         .into_owned();
     let command = format!("printf \"%s\" \"$1\" | exec {quoted} {OPENCODE_MARKER}");
     let literal = serde_json::to_string(&command).map_err(|error| config(rh, error.to_string()))?;
+    Ok(template.replace(OPENCODE_PLACEHOLDER, &literal))
+}
+
+fn connect_opencode(
+    locator: &Locator,
+    directory: Location,
+    rh: &Path,
+    fit: Fit,
+) -> Result<Vec<FileEdit>, SetupError> {
+    if let Fit::TooOld(_) = fit {
+        return Err(SetupError::Unsupported {
+            id: "opencode".to_owned(),
+            part: kernel::harness_setup::ConnectPart::Capture,
+            reason: OPENCODE_TOO_OLD,
+        });
+    }
+    let target = locator
+        .target(directory)
+        .ok_or_else(|| config(Path::new(""), "no home directory to write to"))?;
     let path = target.join(OPENCODE_PLUGIN);
+    let before = read_optional(&path)?;
+    if before.is_none() && plugin_with_marker(&target, PluginKind::Opencode)?.is_some() {
+        return Ok(Vec::new());
+    }
+    let after = opencode_text(locator, rh)?;
+    if before.as_deref() == Some(after.as_str()) {
+        return Ok(Vec::new());
+    }
     Ok(vec![FileEdit {
-        before: read_optional(&path)?,
-        after: Some(template.replace(OPENCODE_PLACEHOLDER, &literal)),
+        before,
+        after: Some(after),
         path,
     }])
 }
