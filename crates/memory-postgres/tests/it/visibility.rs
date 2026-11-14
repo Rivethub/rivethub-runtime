@@ -1841,7 +1841,6 @@ async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-#[ignore = "requires fix/team-hub-sessions: owner trash is session state visible to every allowed reader"]
 async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -> TestResult {
     use kernel::memory::MemoryStore as _;
     let (_, tenancy) = seed(&pool).await?;

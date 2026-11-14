@@ -250,7 +250,6 @@ async fn non_owner_gateway_memory_rows_name_teammates_and_omit_the_viewer_owner(
 }
 
 #[tokio::test]
-#[ignore = "requires fix/team-hub-sessions: catalog must use the scoped store instead of the gateway owners file"]
 async fn non_owner_gateway_owner_fields_cover_search_browse_and_session_catalog() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let api = Api::new(&db).await?;
