@@ -31,6 +31,7 @@ pub(super) fn search_hit(
         .as_deref()
         .and_then(|session| origins.get(session));
     MemorySearchHit {
+        owner: origin.and_then(|origin| origin.team_owner.clone()),
         chunk: result
             .chunk
             .map(|chunk| memory_body::memory_chunk_match_body(chunk, origin)),
@@ -71,6 +72,7 @@ pub(super) fn browse_message(
 ) -> MemoryBrowseMessage {
     let origin = origins.get(&entry.session_id);
     MemoryBrowseMessage {
+        owner: origin.and_then(|origin| origin.team_owner.clone()),
         id: entry.id.unwrap_or_default(),
         role: entry.role,
         agent: Some(entry.agent),

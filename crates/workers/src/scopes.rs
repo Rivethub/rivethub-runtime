@@ -29,6 +29,13 @@ impl OwnerScopes {
         Ok(Scope::Viewer(self.store.viewer_of(owner).await?))
     }
 
+    pub(crate) async fn of_topic_owner(&self, owner: Option<&Owner>) -> Result<Scope, WorkerError> {
+        match owner {
+            Some(owner) => self.of_owner(owner).await,
+            None => self.primary().await,
+        }
+    }
+
     pub(crate) async fn primary(&self) -> Result<Scope, WorkerError> {
         Ok(Scope::Viewer(self.store.viewer_of(&self.primary).await?))
     }
@@ -50,15 +57,6 @@ pub(crate) async fn owner_scope(
 ) -> Result<Option<Scope>, WorkerError> {
     match scopes {
         Some(scopes) => scopes.of_owner(owner).await.map(Some),
-        None => Ok(None),
-    }
-}
-
-pub(crate) async fn primary_scope(
-    scopes: Option<&OwnerScopes>,
-) -> Result<Option<Scope>, WorkerError> {
-    match scopes {
-        Some(scopes) => scopes.primary().await.map(Some),
         None => Ok(None),
     }
 }

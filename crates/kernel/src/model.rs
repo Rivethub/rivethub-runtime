@@ -134,6 +134,8 @@ pub struct ModelOptions {
     pub temperature: Option<f64>,
     pub enable_thinking: Option<bool>,
     pub json_schema: Option<schemars::Schema>,
+
+    pub disable_any_whitespace: bool,
 }
 
 #[derive(Debug, Error)]

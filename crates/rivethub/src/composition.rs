@@ -12,16 +12,10 @@ use std::sync::Arc;
 use cli::memory::MemoryExporter;
 use cli::memory::SessionStore;
 use config::{Config, Environment};
-use gateway::Gateway;
 use gateway::sessions::SessionRegistry;
-use kernel::filing::FilingStore;
+use gateway::{Gateway, StorePorts};
 use kernel::memory::MemoryExport;
 use kernel::memory::MemoryStore;
-use kernel::tidy::TidyStore;
-use kernel::tidy::UpkeepStore;
-use kernel::topics::DecisionStore;
-use kernel::topics::TopicPageStore;
-use kernel::topics::TopicStore;
 use memory_postgres::PostgresMemory;
 use memory_sqlite::SqliteStore;
 use thiserror::Error;
@@ -101,22 +95,7 @@ fn gateway_settings(config: &Config, env: &Environment) -> Result<gateway::Setti
 #[derive(Default)]
 struct Backing {
     export: Option<Arc<dyn MemoryExport>>,
-    topics: Option<(Arc<dyn TopicStore>, Arc<dyn FilingStore>)>,
-    decisions: Option<Arc<dyn DecisionStore>>,
-    facts: Option<Arc<dyn kernel::facts::FactStore>>,
-    review: Option<Arc<dyn kernel::review::ReviewStore>>,
-    pages: Option<Arc<dyn TopicPageStore>>,
-    tidy: Option<(Arc<dyn TidyStore>, Arc<dyn UpkeepStore>)>,
-    flagged: Option<Arc<dyn kernel::flagged::FlaggedJobs>>,
-    summaries: Option<Arc<dyn kernel::memory::SummaryWatch>>,
-    deletions: Option<Arc<dyn kernel::memory::SessionDeletion>>,
-    catalog: Option<Arc<dyn kernel::memory::SessionCatalog>>,
-    changes: Option<(
-        Arc<dyn kernel::changes::ChangeFeed>,
-        Arc<dyn kernel::changes::DigestStore>,
-    )>,
-    model_calls: Option<Arc<dyn kernel::model_calls::ModelCallStore>>,
-    tenancy: Option<Arc<dyn kernel::tenancy::TenancyStore>>,
+    ports: Option<StorePorts>,
     sessions: Option<SessionStore>,
 }
 
@@ -125,56 +104,8 @@ fn with_backing(gateway: Gateway, backing: &Backing) -> Gateway {
         Some(export) => gateway.with_memory_export(export),
         None => gateway,
     };
-    let gateway = match backing.topics.clone() {
-        Some((topics, filing)) => gateway.with_topics(topics, filing),
-        None => gateway,
-    };
-    let gateway = match backing.decisions.clone() {
-        Some(decisions) => gateway.with_decisions(decisions),
-        None => gateway,
-    };
-    let gateway = match backing.facts.clone() {
-        Some(facts) => gateway.with_facts(facts),
-        None => gateway,
-    };
-    let gateway = match backing.review.clone() {
-        Some(review) => gateway.with_review(review),
-        None => gateway,
-    };
-    let gateway = match backing.tidy.clone() {
-        Some((tidy, upkeep)) => gateway.with_tidy(tidy, upkeep),
-        None => gateway,
-    };
-    let gateway = match backing.flagged.clone() {
-        Some(flagged) => gateway.with_flagged(flagged),
-        None => gateway,
-    };
-    let gateway = match backing.summaries.clone() {
-        Some(watch) => gateway.with_summary_watch(watch),
-        None => gateway,
-    };
-    let gateway = match backing.deletions.clone() {
-        Some(deletions) => gateway.with_session_deletion(deletions),
-        None => gateway,
-    };
-    let gateway = match backing.catalog.clone() {
-        Some(catalog) => gateway.with_session_catalog(catalog),
-        None => gateway,
-    };
-    let gateway = match backing.changes.clone() {
-        Some((changes, digests)) => gateway.with_changes(changes, digests),
-        None => gateway,
-    };
-    let gateway = match backing.model_calls.clone() {
-        Some(model_calls) => gateway.with_model_calls(model_calls),
-        None => gateway,
-    };
-    let gateway = match backing.tenancy.clone() {
-        Some(store) => gateway.with_tenancy_store(store),
-        None => gateway,
-    };
-    match backing.pages.clone() {
-        Some(pages) => gateway.with_topic_pages(pages),
+    match backing.ports.clone() {
+        Some(ports) => gateway.with_store_ports(ports),
         None => gateway,
     }
 }
@@ -239,19 +170,6 @@ fn harness_setup(
     ))
 }
 
-async fn session_registry(
-    owners: std::path::PathBuf,
-    node_owner: Option<gateway::tenancy::UserId>,
-) -> Result<SessionRegistry, ComposeError> {
-    let registry =
-        tokio::task::spawn_blocking(move || SessionRegistry::default().with_owners_file(owners))
-            .await?;
-    Ok(match node_owner {
-        Some(owner) => registry.with_node_owner(owner),
-        None => registry,
-    })
-}
-
 impl Composition {
     pub async fn validate_users(config: &Config, env: &Environment) -> Result<(), ComposeError> {
         identities::load(config, env).await?;
@@ -277,9 +195,8 @@ impl Composition {
         shutdown: &CancellationToken,
         activities: &kernel::shutdown::Activities,
     ) -> Result<Self, ComposeError> {
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         Self::with_models(config, env, store, shutdown, &factory).await
     }
 
@@ -293,28 +210,14 @@ impl Composition {
         let url = config.memory_postgres_url(env).ok_or_else(|| {
             ComposeError::Invalid("no Postgres URL for the memory database".into())
         })?;
+        let tenancy = Arc::new(memory_postgres::PostgresTenancy::new(memory.pool().clone()));
         let backing = Backing {
             export: Some(Arc::new(MemoryExporter::postgres(Arc::clone(memory), url))),
-            topics: Some((memory.clone(), memory.clone())),
-            decisions: Some(memory.clone()),
-            facts: Some(memory.clone()),
-            review: Some(memory.clone()),
-            pages: Some(memory.clone()),
-            tidy: Some((memory.clone(), memory.clone())),
-            flagged: Some(memory.clone()),
-            deletions: Some(memory.clone()),
-            catalog: Some(memory.clone()),
-            changes: Some((memory.clone(), memory.clone())),
-            model_calls: Some(memory.clone()),
-            summaries: Some(memory.clone()),
-            tenancy: Some(Arc::new(memory_postgres::PostgresTenancy::new(
-                memory.pool().clone(),
-            ))),
+            ports: Some(StorePorts::of(memory, tenancy)),
             sessions: Some(SessionStore::Postgres(Arc::clone(memory))),
         };
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         let store: Arc<dyn MemoryStore> = memory.clone();
         let summaries = memory.spawn_summary_watch(shutdown.child_token()).await?;
         let mut composition =
@@ -334,24 +237,11 @@ impl Composition {
     ) -> Result<Self, ComposeError> {
         let backing = Backing {
             export: Some(Arc::new(MemoryExporter::sqlite(Arc::clone(store)))),
-            topics: Some((store.clone(), store.clone())),
-            decisions: Some(store.clone()),
-            facts: Some(store.clone()),
-            review: Some(store.clone()),
-            pages: Some(store.clone()),
-            tidy: Some((store.clone(), store.clone())),
-            flagged: Some(store.clone()),
-            deletions: Some(store.clone()),
-            catalog: Some(store.clone()),
-            changes: Some((store.clone(), store.clone())),
-            model_calls: Some(store.clone()),
-            summaries: Some(store.clone()),
-            tenancy: Some(store.clone()),
+            ports: Some(StorePorts::of(store, store.clone())),
             sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
         };
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         let memory: Arc<dyn MemoryStore> = store.clone();
         Self::compose(config, env, memory, backing, shutdown, &factory).await
     }
@@ -378,6 +268,7 @@ impl Composition {
         let settings = gateway_settings(config, env)?;
         let node_name = settings.node.clone();
         let receiver_node = settings.node.clone();
+        let catalog_node = settings.node.clone();
         let section = config.gateway.clone();
         let tls_env = env.clone();
         let shared = config::shared_dir(env);
@@ -393,14 +284,7 @@ impl Composition {
         .await?;
         let identity = identities::load(config, env).await?;
         let owner_scope = identity.owner_scope();
-        let sessions = Arc::new(
-            session_registry(
-                gateway::sessions::owners_file(&settings.state_dir),
-                identity.tenancy.local_user().cloned(),
-            )
-            .await?
-            .with_shutdown(shutdown.child_token()),
-        );
+        let sessions = Arc::new(SessionRegistry::default().with_shutdown(shutdown.child_token()));
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
             .with_local_owner(local_owner)
@@ -429,13 +313,23 @@ impl Composition {
             tracker.spawn(Arc::clone(&desk).sweep_until(shutdown.child_token()));
             gateway = gateway.with_share_desk(desk);
         }
-        identities::keep_spaces(&tracker, backing.tenancy.clone(), &identity, shutdown);
+        let mut tasks = JoinSet::new();
+        identities::keep_spaces(
+            &mut tasks,
+            backing
+                .ports
+                .as_ref()
+                .map(|ports| Arc::clone(ports.tenancy())),
+            &identity,
+            catalog_node,
+            shutdown,
+        );
         spool::replay_captures(&tracker, env, shutdown);
         let started = plugins::started(gateway, env, vec![bind.port]);
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;
         Ok(Self {
             gateway,
-            tasks: JoinSet::new(),
+            tasks,
             background: tracker,
             model_tasks: factory.tasks(),
             cancel: shutdown.clone(),

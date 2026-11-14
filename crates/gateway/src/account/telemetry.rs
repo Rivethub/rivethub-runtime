@@ -23,6 +23,7 @@ pub enum CrashJob {
     Summarizer,
     Categorizer,
     WikiWriter,
+    EntityBuilder,
     Mcp,
     Cli,
 }

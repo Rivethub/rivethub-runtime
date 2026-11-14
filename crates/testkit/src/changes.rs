@@ -123,6 +123,7 @@ where
                 session: filed.clone(),
                 summary: Uuid::new_v4(),
                 evidence: Evidence::quote("raised retention to 14 days"),
+                settled: false,
             },
             owner: Some(crate::owner()?),
             at: at(5),

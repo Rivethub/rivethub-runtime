@@ -36,6 +36,7 @@ use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 use wire::message::Role;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -48,7 +49,7 @@ const PERSON: &str = "rh_rls_person";
 const OWNER: &str = "rh_rls_owner";
 const GROUP: &str = "rh_rls_group";
 
-fn batch(session: &str, text: &str) -> CaptureBatchRequest {
+pub(crate) fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     CaptureBatchRequest {
         session_key: session.to_owned(),
         agent: "rivet".to_owned(),
@@ -72,18 +73,18 @@ fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     }
 }
 
-fn household() -> Result<SpaceId, Box<dyn std::error::Error>> {
+pub(crate) fn household() -> Result<SpaceId, Box<dyn std::error::Error>> {
     Ok(SpaceId::new("household".to_owned())?)
 }
 
-fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
+pub(crate) fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
     Ok(Viewer::new(
         Owner::new(name.to_owned())?,
         vec![household()?],
     ))
 }
 
-async fn seed(
+pub(crate) async fn seed(
     pool: &PgPool,
 ) -> Result<(PostgresMemory, PostgresTenancy), Box<dyn std::error::Error>> {
     common::install_graphile(pool).await?;
@@ -96,12 +97,15 @@ async fn seed(
     }
     let tenancy = PostgresTenancy::new(pool.clone());
     tenancy
-        .sync_spaces(&[Space {
-            id: household()?,
-            kind: SpaceKind::Household,
-            name: "Household".to_owned(),
-            members: vec![alice, Owner::new("bob".to_owned())?],
-        }])
+        .sync_spaces(
+            "node-a",
+            &[Space {
+                id: household()?,
+                kind: SpaceKind::Household,
+                name: "Household".to_owned(),
+                members: vec![alice, Owner::new("bob".to_owned())?],
+            }],
+        )
         .await?;
     Ok((store, tenancy))
 }
@@ -156,7 +160,12 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
     let shared = Visibility::Space(household()?);
     let marked = owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(marked.effective, shared);
     assert_eq!(
@@ -165,9 +174,43 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
     );
     assert_eq!(visible(&probe, members.clone(), "rh_messages").await?, 1);
 
+    {
+        use kernel::memory::MemoryStore as _;
+        let memory = PostgresMemory::new(probe.clone());
+        let records = members
+            .clone()
+            .run(memory.team_sessions(None, None, 5))
+            .await?;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records.first().expect("record").session_id, SECOND);
+        assert_eq!(records.first().expect("record").owner, "alice");
+        assert_eq!(
+            records.first().expect("record").excerpt.as_deref(),
+            Some("the second session")
+        );
+        let owners = members
+            .clone()
+            .run(memory.recall_owners(vec![FIRST.into(), SECOND.into()]))
+            .await?;
+        assert!(!owners.contains_key(FIRST));
+        assert_eq!(owners.get(SECOND).map(String::as_str), Some("alice"));
+        assert!(owners.clone().into_keys().all(|key| key != FIRST));
+        let future = members
+            .clone()
+            .run(memory.team_sessions(Some(Utc::now() + Duration::days(1)), None, 5))
+            .await?;
+        assert_eq!(future.len(), 0);
+        assert!(owners.len() <= 1);
+    }
+
     let refused = members
         .clone()
-        .run(tenancy.mark_session(&bob, &second, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &bob,
+            &SessionKey::from(&second),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await;
     assert!(refused.is_err(), "only the owner marks a session");
     let renamed = members
@@ -187,7 +230,12 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
 
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(visible(&probe, members, "rh_messages").await?, 0);
     Ok(())
@@ -249,7 +297,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
     let first = SessionId::try_from(FIRST.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &first, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&first),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), "rh_conversations").await?,
@@ -263,7 +316,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
     let second = SessionId::try_from(SECOND.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), "rh_topics WHERE kind = 'work'").await?,
@@ -294,10 +352,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
         .run(tenancy.mark_topic(&alice, topic.id, Some(&shared)))
         .await?;
     let found = owners
-        .run(tenancy.session_visibility(&alice, std::slice::from_ref(&uncaptured)))
+        .run(tenancy.session_visibility(&alice, &[SessionKey::from(&uncaptured)]))
         .await?;
     assert_eq!(
-        found.get(&uncaptured).map(|state| state.effective.clone()),
+        found
+            .get(&SessionKey::from(&uncaptured))
+            .map(|state| state.effective.clone()),
         Some(shared),
         "a session with no transcript yet follows its topic"
     );
@@ -406,7 +466,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
         .clone()
         .run(tenancy.mark_session(
             &alice,
-            &SessionId::try_from(FIRST.to_owned())?,
+            &SessionKey::try_from(FIRST.to_owned())?,
             Some(&Visibility::Private),
             now,
         ))
@@ -415,10 +475,10 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
     for viewer in [alice, viewer("bob")?] {
         let scope = Scope::Viewer(viewer.clone());
         let filed = scope.clone().run(listing.all_filed()).await?;
-        let keys: Vec<SessionId> = filed
+        let keys: Vec<SessionKey> = filed
             .sessions
             .iter()
-            .map(|session| session.placement.session.clone())
+            .map(|session| SessionKey::from(&session.placement.session))
             .collect();
         let expected = scope
             .run(tenancy.session_visibility(&viewer, &keys))
@@ -427,7 +487,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
         for session in filed.sessions {
             assert_eq!(
                 session.visibility.as_ref(),
-                expected.get(&session.placement.session),
+                expected.get(&SessionKey::from(&session.placement.session)),
                 "{:?} for {viewer:?}",
                 session.placement.session
             );
@@ -563,7 +623,10 @@ async fn queue_access(pool: &PgPool, role: &str) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::error::Error>> {
+pub(crate) async fn person(
+    pool: &PgPool,
+    principal: &str,
+) -> Result<PgPool, Box<dyn std::error::Error>> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE {PERSON} LOGIN PASSWORD '{PERSON}'; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
@@ -610,7 +673,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
     tenancy
         .mark_session(
             &alice,
-            &SessionId::try_from(FIRST.to_owned())?,
+            &SessionKey::try_from(FIRST.to_owned())?,
             Some(&Visibility::Space(household()?)),
             Utc::now(),
         )
@@ -654,6 +717,20 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
     assert_eq!(seen, 1, "SET ROLE into a group widened a pinned login");
     regrouped.rollback().await?;
     let as_person = PostgresMemory::new(pinned.clone());
+    {
+        use kernel::memory::MemoryStore as _;
+        for scope in [
+            Scope::Closed,
+            Scope::Maintenance,
+            Scope::Viewer(viewer("alice")?),
+        ] {
+            let records = scope.run(as_person.team_sessions(None, None, 5)).await?;
+            assert_eq!(records.len(), 1);
+            assert_eq!(records.first().expect("record").session_id, FIRST);
+            assert_eq!(records.first().expect("record").owner, "alice");
+        }
+    }
+
     let stolen = forged
         .clone()
         .run(as_person.capture_batch(
@@ -694,7 +771,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
             .await;
     assert!(remapped.is_err(), "a pinned login wrote the role mapping");
     Scope::Maintenance
-        .run(PostgresTenancy::new(pinned).sync_spaces(&[]))
+        .run(PostgresTenancy::new(pinned).sync_spaces("node-a", &[]))
         .await?;
     assert_eq!(
         visible(&pool, Scope::Maintenance, "rh_space_members").await?,
@@ -946,8 +1023,8 @@ async fn a_pinned_login_cannot_call_or_attach_an_elevating_function(pool: PgPool
     .await?;
     assert_eq!(
         callable,
-        Vec::<String>::new(),
-        "a pinned login may call these elevating functions"
+        vec!["rh_member_spaces()".to_owned()],
+        "only the no-argument membership read helper is public"
     );
     for call in [
         "SELECT rh_backfill_message_counts(10)",
@@ -1405,6 +1482,7 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
             session: SessionId::try_from(session.to_owned())?,
             summary: Uuid::new_v4(),
             evidence: None,
+            settled: false,
         })
     };
     store
@@ -1442,7 +1520,12 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     let second = SessionId::try_from(SECOND.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), claims).await?,
@@ -1581,5 +1664,208 @@ async fn capturing_into_another_persons_session_is_forbidden(pool: PgPool) -> Te
         ),
         "{refused:?}"
     );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    let (writer, tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    let bob = viewer("bob")?;
+    let carol = Owner::new("carol".into())?;
+    tenancy
+        .sync_spaces(
+            "node-a",
+            &[Space {
+                id: household()?,
+                kind: SpaceKind::Team,
+                name: "Team".into(),
+                members: vec![
+                    alice.principal().clone(),
+                    bob.principal().clone(),
+                    carol.clone(),
+                ],
+            }],
+        )
+        .await?;
+    writer
+        .capture_batch(
+            &batch(LATER, "a later shared session"),
+            &CaptureOptions::owned_by(alice.principal()),
+        )
+        .await?;
+    writer
+        .capture_batch(
+            &batch(THIRD, "another person's shared work"),
+            &CaptureOptions::owned_by(&carol),
+        )
+        .await?;
+    let space = Visibility::Space(household()?);
+    for (who, key) in [
+        (&alice, SECOND),
+        (&alice, LATER),
+        (&viewer("carol")?, THIRD),
+    ] {
+        tenancy
+            .mark_session(who, &key.parse()?, Some(&space), Utc::now())
+            .await?;
+    }
+    sqlx::query("UPDATE rh_conversations SET updated_at = CASE WHEN session_key = $1 THEN now() - interval '2 days' ELSE now() END")
+        .bind(SECOND).execute(&pool).await?;
+    let reader = PostgresMemory::new(probe(&pool).await?);
+    let scope = Scope::Viewer(bob);
+    let records = scope
+        .clone()
+        .run(reader.team_sessions(None, None, 1))
+        .await?;
+    assert_eq!(records.len(), 2);
+    assert_eq!(records.first().expect("record").owner, "alice");
+    assert_eq!(records.first().expect("record").session_id, LATER);
+    assert_eq!(records.get(1).expect("second record").owner, "carol");
+    let all = scope
+        .clone()
+        .run(reader.team_sessions(None, None, 5))
+        .await?;
+    assert_eq!(all.len(), 3);
+    assert!(!all.iter().any(|row| row.session_id == FIRST));
+    let recent = scope
+        .clone()
+        .run(reader.team_sessions(Some(Utc::now() - Duration::days(1)), None, 5))
+        .await?;
+    assert_eq!(recent.len(), 2);
+    let older = scope
+        .run(reader.team_sessions(None, Some(Utc::now() - Duration::days(1)), 5))
+        .await?;
+    assert_eq!(older.len(), 1);
+    assert_eq!(older.first().expect("older record").session_id, SECOND);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    let (_, tenancy) = seed(&pool).await?;
+    tenancy
+        .sync_spaces(
+            "node-a",
+            &[
+                Space {
+                    id: household()?,
+                    kind: SpaceKind::Team,
+                    name: "Team".into(),
+                    members: vec![Owner::new("alice".into())?, Owner::new("bob".into())?],
+                },
+                Space {
+                    id: SpaceId::new("other".into())?,
+                    kind: SpaceKind::Team,
+                    name: "Other".into(),
+                    members: vec![Owner::new("carol".into())?, Owner::new("dave".into())?],
+                },
+            ],
+        )
+        .await?;
+    owned_by_an_ordinary_role(&pool).await?;
+    let reader = probe(&pool).await?;
+    let members: Vec<(String, String)> = Scope::Viewer(viewer("bob")?)
+        .run(
+            sqlx::query_as("SELECT space_id, user_id FROM rh_space_members ORDER BY 1, 2")
+                .fetch_all(&reader),
+        )
+        .await?;
+    assert_eq!(
+        members,
+        vec![
+            ("household".into(), "alice".into()),
+            ("household".into(), "bob".into())
+        ]
+    );
+    let nobody = Viewer::new(Owner::new("nobody".into())?, vec![household()?]);
+    let count: i64 = Scope::Viewer(nobody)
+        .run(sqlx::query_scalar("SELECT count(*) FROM rh_space_members").fetch_one(&reader))
+        .await?;
+    assert_eq!(
+        count, 0,
+        "forged space settings must not grant membership metadata"
+    );
+    let pinned = person(&pool, "bob").await?;
+    for scope in [
+        Scope::Closed,
+        Scope::Maintenance,
+        Scope::Viewer(viewer("carol")?),
+    ] {
+        let store = PostgresMemory::new(pinned.clone());
+        let identity = scope
+            .clone()
+            .run(store.recall_identity())
+            .await?
+            .ok_or("identity")?;
+        assert_eq!(identity.principal.as_deref(), Some("bob"));
+        assert_eq!(identity.people, vec!["alice", "bob"]);
+        let count: i64 = scope
+            .run(sqlx::query_scalar("SELECT count(*) FROM rh_space_members").fetch_one(&pinned))
+            .await?;
+        assert_eq!(count, 2);
+    }
+    let mut conn = pinned.acquire().await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'off', false)")
+        .execute(&mut *conn)
+        .await?;
+    let spaces: Vec<String> = sqlx::query_scalar("SELECT rh_member_spaces()")
+        .fetch_one(&mut *conn)
+        .await?;
+    assert_eq!(spaces, vec!["household"]);
+    let maintenance: String = sqlx::query_scalar("SELECT current_setting('rh.maintenance')")
+        .fetch_one(&mut *conn)
+        .await?;
+    assert_eq!(maintenance, "off");
+    drop(conn);
+    sqlx::query("UPDATE rh_role_principals SET user_id = 'nobody' WHERE role_name = $1")
+        .bind(PERSON)
+        .execute(&pool)
+        .await?;
+    let store = PostgresMemory::new(pinned.clone());
+    let identity = Scope::Maintenance
+        .run(store.recall_identity())
+        .await?
+        .ok_or("identity")?;
+    assert_eq!(identity.principal.as_deref(), Some("nobody"));
+    assert_eq!(identity.people.len(), 0);
+    assert_eq!(
+        visible(&pinned, Scope::Maintenance, "rh_space_members").await?,
+        0
+    );
+
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    let (_, tenancy) = seed(&pool).await?;
+    let alice = viewer("alice")?;
+    tenancy
+        .mark_session(
+            &alice,
+            &SECOND.parse()?,
+            Some(&Visibility::Space(household()?)),
+            Utc::now(),
+        )
+        .await?;
+    let store = PostgresMemory::new(probe(&pool).await?);
+    let bob = Scope::Viewer(viewer("bob")?);
+    assert_eq!(
+        bob.clone()
+            .run(store.team_sessions(None, None, 5))
+            .await?
+            .len(),
+        1
+    );
+    Scope::Viewer(alice)
+        .run(store.trash_session(SECOND, Some("alice"), Utc::now()))
+        .await?;
+    assert_eq!(bob.run(store.team_sessions(None, None, 5)).await?.len(), 0);
     Ok(())
 }

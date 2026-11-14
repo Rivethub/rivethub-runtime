@@ -7,6 +7,7 @@ use kernel::tenancy::Space;
 use kernel::tenancy::SpaceId;
 use kernel::tenancy::SpaceKind;
 use kernel::tenancy::TenancyStore;
+use kernel::tenancy::TenancyStoreError;
 use tokio_util::sync::CancellationToken;
 use wire::gateway::users::UsersRegistry;
 
@@ -36,12 +37,7 @@ pub(crate) async fn load(
     config: &config::Config,
     env: &config::Environment,
 ) -> Result<Identity, ComposeError> {
-    let path = env.users_file().map(std::path::Path::new).or_else(|| {
-        config
-            .gateway
-            .as_ref()
-            .and_then(|gateway| gateway.users_file.as_deref())
-    });
+    let path = config.users_file(env);
     let Some(path) = path else {
         return registry(UsersRegistry {
             unmapped_is_owner: true,
@@ -49,7 +45,40 @@ pub(crate) async fn load(
         });
     };
     let users: UsersRegistry = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+    if config.sqlite_selected() {
+        one_person(&users)?;
+    }
     registry(users)
+}
+
+fn one_person(users: &UsersRegistry) -> Result<(), ComposeError> {
+    let owner = users.owner_user_id.as_str();
+    let credentialed = users.users.iter().find(|(id, record)| {
+        id.as_str() != owner
+            && (record
+                .tokens
+                .as_ref()
+                .is_some_and(|tokens| !tokens.is_empty())
+                || record
+                    .devices
+                    .as_ref()
+                    .is_some_and(|devices| !devices.is_empty()))
+    });
+    let member = users.spaces.iter().flatten().find_map(|(space, config)| {
+        config
+            .members
+            .iter()
+            .find(|member| member.as_str() != owner)
+            .map(|member| (space, member))
+    });
+    let other = match (credentialed, member) {
+        (Some((id, _)), _) => format!("{id} has a token or a device"),
+        (None, Some((space, member))) => format!("{member} is a member of space {space}"),
+        (None, None) => return Ok(()),
+    };
+    Err(ComposeError::Invalid(format!(
+        "users registry: this node keeps memory in SQLite, which serves one person ({owner}) and does not separate anyone's sessions, but {other}; use a Postgres memory store for several people (CONTRACT note 190), or remove them from the users file"
+    )))
 }
 
 const fn space_kind(kind: wire::gateway::tenancy::SpaceKind) -> SpaceKind {
@@ -113,26 +142,43 @@ fn registry(users: UsersRegistry) -> Result<Identity, ComposeError> {
 }
 
 pub(super) fn keep_spaces(
-    tracker: &tokio_util::task::TaskTracker,
+    tasks: &mut tokio::task::JoinSet<Result<(), ComposeError>>,
     store: Option<Arc<dyn TenancyStore>>,
     identity: &Identity,
+    node: String,
     shutdown: &CancellationToken,
 ) {
     if let Some(store) = store {
         let spaces = identity.tenancy.spaces().to_vec();
-        tracker.spawn(Scope::Maintenance.run(sync_spaces(store, spaces, shutdown.child_token())));
+        tasks.spawn(Scope::Maintenance.run(sync_spaces(
+            store,
+            node,
+            spaces,
+            shutdown.child_token(),
+        )));
     }
 }
 
-async fn sync_spaces(store: Arc<dyn TenancyStore>, spaces: Vec<Space>, stop: CancellationToken) {
+async fn sync_spaces(
+    store: Arc<dyn TenancyStore>,
+    node: String,
+    spaces: Vec<Space>,
+    stop: CancellationToken,
+) -> Result<(), ComposeError> {
     loop {
-        match store.sync_spaces(&spaces).await {
-            Ok(()) => return,
+        match store.sync_spaces(&node, &spaces).await {
+            Ok(()) => break,
+            Err(error @ TenancyStoreError::CatalogConflict(_)) => {
+                tracing::error!("{error}");
+                return Err(ComposeError::Invalid(error.to_string()));
+            }
             Err(error) => tracing::warn!("spaces not saved yet, retrying: {error}"),
         }
         tokio::select! {
-            () = stop.cancelled() => return,
+            () = stop.cancelled() => return Ok(()),
             () = tokio::time::sleep(SPACE_SYNC_RETRY) => {}
         }
     }
+    stop.cancelled().await;
+    Ok(())
 }

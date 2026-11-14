@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::FactSession;
 use kernel::facts::FactState;
 use kernel::facts::SessionLink;
@@ -19,13 +20,13 @@ use wire::gateway::entities::ChangeKind;
 use wire::gateway::entities::ConnectedEntity;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
-use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Freshness;
 use wire::gateway::entities::TimelineEntry;
 use wire::gateway::session_catalog::SessionMemoryState;
 use wire::gateway::session_catalog::SessionSummaryRow;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
+use super::Filed;
 use super::Known;
 use super::map;
 use super::map::Titles;
@@ -38,7 +39,7 @@ pub(super) async fn build(
     gateway: &Gateway,
     known: &Known,
     entity: &Topic,
-    kind: EntityType,
+    kind: &Filed,
     viewer: &Viewer,
     as_of: Option<DateTime<Utc>>,
 ) -> Result<EntityArticle, ApiError> {
@@ -50,9 +51,28 @@ pub(super) async fn build(
         .into_iter()
         .filter(|claim| as_of.is_none_or(|cut| claim.at <= cut))
         .collect();
+    let written: Vec<EntityHistory> = facts
+        .entity_history(entity.id)
+        .await
+        .map_err(map::error)?
+        .into_iter()
+        .filter(|line| as_of.is_none_or(|cut| line.at <= cut))
+        .collect();
     let own = sessions_of(&claims);
-    let found = facts.fact_sessions(&own).await.map_err(map::error)?;
-    let titles = Titles::of(&found);
+    let mut named = own.clone();
+    for line in &written {
+        if let Some(session) = &line.session
+            && !named.contains(session)
+        {
+            named.push(session.clone());
+        }
+    }
+    let resolved = facts.fact_sessions(&named).await.map_err(map::error)?;
+    let titles = Titles::of(&resolved);
+    let found: Vec<FactSession> = resolved
+        .into_iter()
+        .filter(|session| own.iter().any(|id| id == &session.session))
+        .collect();
     let links: Vec<SessionLink> = facts
         .session_links()
         .await
@@ -69,7 +89,8 @@ pub(super) async fn build(
         summary: EntitySummary {
             id: entity.id.to_string(),
             title: entity.name.as_str().to_owned(),
-            entity_type: kind,
+            entity_type: kind.key.clone(),
+            type_name: kind.name.clone(),
             session_count: own.len(),
         },
         aliases: entity
@@ -84,7 +105,7 @@ pub(super) async fn build(
             .iter()
             .map(|state| map::fact(state, &titles))
             .collect(),
-        timeline: history(entity, &claims, as_of, &titles),
+        timeline: history(entity, &claims, &written, as_of, &titles),
         connected: connected(entity.id, &links)
             .into_iter()
             .take(CONNECTED_SHOWN)
@@ -128,6 +149,7 @@ fn sessions_of(claims: &[Claim]) -> Vec<SessionId> {
 fn history(
     entity: &Topic,
     claims: &[Claim],
+    lines: &[EntityHistory],
     as_of: Option<DateTime<Utc>>,
     titles: &Titles,
 ) -> Vec<TimelineEntry> {
@@ -135,6 +157,17 @@ fn history(
         .iter()
         .map(|event| map::event(event, titles))
         .collect();
+    for line in lines {
+        entries.push(TimelineEntry {
+            at: line.at,
+            text: line.sentence.clone(),
+            kind: ChangeKind::History,
+            source: line
+                .session
+                .as_ref()
+                .map(|session| map::mention(session, titles)),
+        });
+    }
     if as_of.is_none_or(|cut| entity.created_at <= cut) {
         entries.push(TimelineEntry {
             at: entity.created_at,
@@ -173,9 +206,10 @@ async fn rows(
         .iter()
         .map(|session| session.session.clone())
         .collect();
+    let wanted: Vec<SessionKey> = keys.iter().map(SessionKey::from).collect();
     let visibility = gateway
         .tenancy_store()?
-        .session_visibility(viewer, &keys)
+        .session_visibility(viewer, &wanted)
         .await
         .map_err(super::super::topics::visibility_error)?;
     let kept: BTreeMap<String, DateTime<Utc>> = match gateway.session_deletion() {
@@ -193,6 +227,7 @@ async fn rows(
     let mut rows: Vec<SessionSummaryRow> = found
         .into_iter()
         .map(|session| SessionSummaryRow {
+            owner: None,
             title: session
                 .title
                 .unwrap_or_else(|| session.session.as_str().to_owned()),
@@ -204,11 +239,14 @@ async fn rows(
             topic: None,
             parent_id: None,
             child_count: None,
-            visibility: crate::tenancy::shared_with(effective(visibility.get(&session.session))),
+            visibility: crate::tenancy::shared_with(effective(
+                visibility.get(&SessionKey::from(&session.session)),
+            )),
             kept: kept.contains_key(session.session.as_str()),
             trashed: false,
             memory_state: SessionMemoryState::Summarized,
             gist: None,
+            conversation_id: None,
             id: session.session.into(),
         })
         .collect();

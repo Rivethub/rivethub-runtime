@@ -15,7 +15,6 @@ use kernel::queue::JobName;
 use kernel::queue::JobQueue;
 use kernel::tool::Tool;
 use memory_postgres::PostgresMemory;
-use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
 use tokio::io::BufReader;
 use tokio::process::Child;
@@ -81,8 +80,8 @@ async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn front(pool: &PgPool) -> TestResult<(Proxy, String)> {
-    let direct = pool.connect_options().to_url_lossy().to_string();
+async fn front(db: &crate::pgdb::TestDb) -> TestResult<(Proxy, String)> {
+    let direct = db.served_url().await?;
     let upstream = proxy::upstream(&direct).await?;
     let proxy = Proxy::start(upstream).await?;
     let rewritten = proxy::point_at(&direct, proxy.addr())?;
@@ -230,7 +229,7 @@ async fn gateway_stays_up_across_a_database_outage() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     write_state(
@@ -280,7 +279,7 @@ async fn gateway_starts_while_the_database_is_down() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     proxy.pause().await;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
@@ -314,12 +313,56 @@ async fn gateway_starts_while_the_database_is_down() -> TestResult {
 }
 
 #[tokio::test]
+async fn an_offline_start_serves_nothing_until_the_schema_passes() -> TestResult {
+    let db = crate::pgdb::TestDb::bare().await?;
+    let pool = db.pool();
+    migrate::postgres_pool(&pool).await?;
+    let (proxy, url) = front(&db).await?;
+    sqlx::query(
+        "DELETE FROM _sqlx_migrations WHERE version = (SELECT max(version) FROM _sqlx_migrations)",
+    )
+    .execute(&pool)
+    .await?;
+    proxy.pause().await;
+    let home = tempfile::tempdir()?;
+    let port = testkit::ports::claim()?;
+    write_state(
+        home.path(),
+        &provider_config(
+            home.path(),
+            &url,
+            &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+        ),
+    )?;
+    let mut running = spawn_rh(home.path(), &["gateway"], "gateway listening on ").await?;
+    let client = client(home.path())?;
+    let base = format!("http://127.0.0.1:{port}");
+    wait_http(&client, &format!("{base}/healthz"), 503).await?;
+    proxy.resume();
+    running.logs.wait_for("cannot serve this build").await?;
+    let (health, _) = get_text(&client, &format!("{base}/healthz")).await?;
+    assert_eq!(health, 503, "an older schema is not ready");
+    let (stats, _) = get_text(&client, &format!("{base}/api/memory/stats")).await?;
+    assert_eq!(
+        stats, 503,
+        "nothing is served from the pool before the checks pass"
+    );
+    migrate::postgres_pool(&pool).await?;
+    wait_http(&client, &format!("{base}/healthz"), 200).await?;
+    wait_http(&client, &format!("{base}/api/memory/stats"), 200).await?;
+    alive(&mut running.child)?;
+    stop(running, "gateway stopped").await?;
+    drop(proxy);
+    Ok(())
+}
+
+#[tokio::test]
 async fn worker_stays_up_and_claims_after_the_database_returns() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut running = spawn_rh(
@@ -346,7 +389,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))

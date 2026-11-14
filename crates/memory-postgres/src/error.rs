@@ -44,6 +44,10 @@ pub enum Error {
     SchemaBehind { found: i64, required: i64 },
     #[error("this database has no RivetHub migration history — run rh db migrate once to adopt it")]
     NotAdopted,
+    #[error(
+        "the memory database login {login} is a superuser or bypasses row-level security, so it would show every person's rows to everyone; serve memory with an ordinary login (docs/OPERATIONS.md) and keep this one for rh db migrate and administration"
+    )]
+    BypassingLogin { login: String },
     #[error("the graphile_worker schema is absent on this database")]
     QueueAbsent,
     #[error("Postgres dump line {line}: {detail}")]
@@ -121,6 +125,7 @@ impl From<Error> for MemoryStoreError {
                 Self::Unavailable(Box::new(Error::SchemaBehind { found, required }))
             }
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
+            error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::MissingChannel
             | Error::ReceivedSession
@@ -177,7 +182,7 @@ fn cancelled(error: &Error) -> bool {
         .is_some_and(|code| code == "57014"))
 }
 
-fn refused(source: &sqlx::Error) -> bool {
+pub(crate) fn refused(source: &sqlx::Error) -> bool {
     source
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
@@ -199,6 +204,7 @@ impl From<Error> for JobQueueError {
                 Self::Unavailable(Box::new(Error::SchemaBehind { found, required }))
             }
             Error::NotAdopted => Self::Unavailable(Box::new(Error::NotAdopted)),
+            error @ Error::BypassingLogin { .. } => Self::Unavailable(Box::new(error)),
             Error::QueueAbsent => Self::Unavailable(Box::new(Error::QueueAbsent)),
             Error::MissingChannel
             | Error::ReceivedSession

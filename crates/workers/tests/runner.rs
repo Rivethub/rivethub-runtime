@@ -110,7 +110,7 @@ fn unknown_roles_list_the_enum_and_zero_concurrency_is_rejected() {
     let error = ProcessRole::parse("wiki_builder").expect_err("unknown");
     assert_eq!(
         error.to_string(),
-        "unknown worker role: wiki_builder; expected embedder, summarizer, categorizer, wiki-builder, all"
+        "unknown worker role: wiki_builder; expected embedder, summarizer, categorizer, wiki-builder, entity-builder, all"
     );
     assert!(matches!(
         RunnerConfig::new(ProcessRole::Embedder, 0),
@@ -535,6 +535,160 @@ fn spawn(rig: &Rig) -> (CancellationToken, JoinHandle<Result<(), WorkerError>>) 
     (cancel, run)
 }
 
+struct IdleEntities;
+
+#[async_trait::async_trait]
+impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
+    async fn entity_work(
+        &self,
+        _job: &kernel::wiki::entity_pass::ExtractEntities,
+    ) -> Result<kernel::wiki::entity_pass::EntityWork, kernel::wiki::entity_pass::EntityStoreError>
+    {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn following(
+        &self,
+        _lead: &kernel::wiki::entity_pass::EntityLeaf,
+        _limit: u32,
+    ) -> Result<
+        Vec<kernel::wiki::entity_pass::FollowingLeaf>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn observe_context(
+        &self,
+        _leaves: &[kernel::wiki::entity_pass::EntityLeaf],
+    ) -> Result<
+        kernel::wiki::entity_pass::ObserveContext,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn transcript(
+        &self,
+        _leaves: &[kernel::wiki::entity_pass::EntityLeaf],
+    ) -> Result<
+        Vec<kernel::wiki::entity_pass::TranscriptMessage>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn commit(
+        &self,
+        _leaves: &[kernel::wiki::entity_pass::EntityLeaf],
+        _prepared: &kernel::wiki::entity_pass::PreparedEntity,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<
+        Option<kernel::wiki::entity_pass::EntityView>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn publish(
+        &self,
+        _view: &kernel::wiki::entity_pass::EntityView,
+        _prose: &kernel::wiki::entity_pass::EntityProse,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<
+        kernel::wiki::entity_pass::PublishOutcome,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn finish_entities(
+        &self,
+        _leaves: &[uuid::Uuid],
+        _slugs: &[String],
+        _git_sha: Option<&str>,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn fail_entity(
+        &self,
+        _summary_id: uuid::Uuid,
+        _error: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+
+    async fn entity_backfill(
+        &self,
+        _budget: kernel::wiki::builder::BackfillBudget,
+    ) -> Result<
+        Vec<kernel::wiki::entity_pass::ExtractEntities>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn stale_entities(
+        &self,
+        _limit: u32,
+    ) -> Result<
+        Vec<kernel::wiki::entity_pass::ExtractEntities>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn revive_dead_entities(
+        &self,
+        _limit: u32,
+    ) -> Result<u64, kernel::wiki::entity_pass::EntityStoreError> {
+        Ok(0)
+    }
+
+    async fn match_candidates(
+        &self,
+        _query: &kernel::wiki::entity_pass::CandidateQuery,
+    ) -> Result<
+        Vec<kernel::wiki::entity_pass::MatchCandidate>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Ok(Vec::new())
+    }
+
+    async fn remember_embedding(
+        &self,
+        _entity: uuid::Uuid,
+        _embedding: &[f32],
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
+        Ok(())
+    }
+
+    async fn hold_candidate(
+        &self,
+        _summary: uuid::Uuid,
+        _prepared: &kernel::wiki::entity_pass::PreparedEntity,
+        _confidence: f32,
+        _reason: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
+        Ok(())
+    }
+
+    async fn lease_entity(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<
+        Box<dyn kernel::wiki::entity_pass::EntityLease>,
+        kernel::wiki::entity_pass::EntityStoreError,
+    > {
+        Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
+    }
+}
+
 async fn finish(cancel: CancellationToken, run: JoinHandle<Result<(), WorkerError>>) {
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(5), run)
@@ -551,14 +705,21 @@ async fn all_claims_every_role_that_has_a_handler() {
         panic!("unstarted runner is owned");
     };
     rig.runner = Arc::new(
-        runner.with_wiki_builder(workers::wiki_builder::WikiBuilderDeps {
-            store: Arc::new(wiki::WikiStore::default()),
-            consolidate: None,
-            recompile: None,
-            provider: fnv_provider(),
-            model: "wiki-model".to_owned(),
-            load: None,
-        }),
+        runner
+            .with_wiki_builder(workers::wiki_builder::WikiBuilderDeps {
+                store: Arc::new(wiki::WikiStore::default()),
+                consolidate: None,
+                recompile: None,
+                provider: fnv_provider(),
+                model: "wiki-model".to_owned(),
+                load: None,
+            })
+            .with_entity_builder(workers::entity_builder::EntityBuilderDeps {
+                store: Arc::new(IdleEntities),
+                provider: fnv_provider(),
+                model: "entity-model".to_owned(),
+                settings: workers::entity_builder::MatcherSettings::default(),
+            }),
     );
     rig.store
         .insert(EmbedTable::Messages, "m", "hello", None)

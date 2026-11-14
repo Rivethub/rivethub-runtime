@@ -150,7 +150,15 @@ async fn recordings_over_stdio_framing() {
         let identity = info.server_info.as_ref().expect("server identity");
         assert_eq!(identity.name, "rivethub-mcp-server");
         assert_eq!(identity.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(client.list_all_tools().await.expect("catalog"), tools);
+        let actual = client.list_all_tools().await.expect("catalog");
+        assert!(actual.iter().any(|tool| tool.name == "memory_team"));
+        assert_eq!(
+            actual
+                .into_iter()
+                .filter(|tool| tool.name != "memory_team")
+                .collect::<Vec<_>>(),
+            tools
+        );
         for call in calls.calls {
             if SKIPPED.iter().any(|(name, _)| *name == call.request.name) {
                 continue;

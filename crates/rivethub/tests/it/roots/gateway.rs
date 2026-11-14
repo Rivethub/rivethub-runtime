@@ -2,7 +2,6 @@ use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
 use std::time::Duration;
 
-use sqlx::ConnectOptions as _;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -16,7 +15,7 @@ async fn a_retired_certificate_authority_section_only_warns_and_the_gateway_serv
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     write_state(
@@ -91,7 +90,7 @@ async fn gateway_with_a_partial_request_exits_within_the_grace_on_sigint() -> Te
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     write_state(

@@ -50,6 +50,61 @@
       ],
       "type": "object"
     },
+    "AccountDeleted": {
+      "properties": {
+        "accountUrl": {
+          "format": "uri",
+          "type": "string"
+        },
+        "autoDownload": {
+          "type": "boolean"
+        },
+        "channel": {
+          "$ref": "#/$defs/ReleaseChannel"
+        },
+        "cloudDisabled": {
+          "type": "boolean"
+        },
+        "crashReports": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pendingUpdate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updateSource": {
+          "$ref": "#/$defs/UpdateSource"
+        },
+        "usageCounts": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "updateSource",
+        "channel",
+        "autoDownload",
+        "version",
+        "crashReports",
+        "usageCounts",
+        "accountUrl"
+      ],
+      "type": "object"
+    },
     "AccountUpdate": {
       "additionalProperties": false,
       "properties": {
@@ -1537,7 +1592,8 @@
         "filed",
         "conflict",
         "tag",
-        "merge"
+        "merge",
+        "history"
       ],
       "type": "string"
     },
@@ -1855,6 +1911,31 @@
       ],
       "type": "object"
     },
+    "DegradedForm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DegradedObject"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "DegradedObject": {
+      "properties": {
+        "effect": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "effect"
+      ],
+      "type": "object"
+    },
     "DegradedProvider": {
       "properties": {
         "id": {
@@ -2141,7 +2222,10 @@
           ]
         },
         "type": {
-          "$ref": "#/$defs/EntityType"
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
         },
         "visibility": {
           "$ref": "#/$defs/SharedWith"
@@ -2151,6 +2235,7 @@
         "id",
         "title",
         "type",
+        "typeName",
         "sessionCount",
         "aliases",
         "visibility",
@@ -2178,31 +2263,20 @@
           "type": "string"
         },
         "type": {
-          "$ref": "#/$defs/EntityType"
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
         }
       },
       "required": [
         "id",
         "title",
         "type",
+        "typeName",
         "sessionCount"
       ],
       "type": "object"
-    },
-    "EntityType": {
-      "enum": [
-        "person",
-        "agent",
-        "machine",
-        "hardware",
-        "model",
-        "service",
-        "software",
-        "repository",
-        "domain",
-        "database"
-      ],
-      "type": "string"
     },
     "EntityTypeCount": {
       "properties": {
@@ -2222,6 +2296,27 @@
         "typeId",
         "name",
         "entities"
+      ],
+      "type": "object"
+    },
+    "EntityTypeInfo": {
+      "properties": {
+        "count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "typeName",
+        "count"
       ],
       "type": "object"
     },
@@ -2897,6 +2992,12 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "type": [
@@ -5845,6 +5946,12 @@
         "id": {
           "type": "string"
         },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "provenance": {
           "anyOf": [
             {
@@ -6029,19 +6136,14 @@
       "type": "object"
     },
     "MemoryDegraded": {
-      "properties": {
-        "effect": {
-          "type": "string"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DegradedObject"
         },
-        "reason": {
+        {
           "type": "string"
         }
-      },
-      "required": [
-        "reason",
-        "effect"
-      ],
-      "type": "object"
+      ]
     },
     "MemoryEntry": {
       "properties": {
@@ -6453,6 +6555,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "provenance": {
@@ -7415,7 +7523,8 @@
       "enum": [
         "healthy",
         "slow",
-        "failing"
+        "failing",
+        "unconfigured"
       ],
       "type": "string"
     },
@@ -10103,6 +10212,7 @@
     "SessionDeleteError": {
       "enum": [
         "not found",
+        "not owner",
         "delete failed"
       ],
       "type": "string"
@@ -10213,6 +10323,13 @@
             "null"
           ]
         },
+        "conversationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -10270,6 +10387,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "parentId": {
@@ -10424,12 +10547,100 @@
       ],
       "type": "object"
     },
+    "SessionMessage": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "toolArgs": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "toolName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolResult": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "agent",
+        "content",
+        "createdAt"
+      ],
+      "type": "object"
+    },
     "SessionMessageRole": {
       "enum": [
         "user",
         "assistant"
       ],
       "type": "string"
+    },
+    "SessionMessagesPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SessionMessage"
+          },
+          "type": "array"
+        },
+        "next": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quotedFrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/SessionKey"
+        },
+        "total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "items",
+        "total"
+      ],
+      "type": "object"
     },
     "SessionModelCalls": {
       "properties": {
@@ -10697,6 +10908,13 @@
             "null"
           ]
         },
+        "conversationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "endedAt": {
           "format": "date-time",
           "type": [
@@ -10742,6 +10960,12 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
           ]
         },
         "parentId": {
@@ -10921,7 +11145,7 @@
           ]
         },
         "sessionId": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         },
         "visibility": {
           "type": "string"
@@ -11005,6 +11229,30 @@
         },
         {
           "properties": {
+            "status": {
+              "const": "expired",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": "denied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
             "account": {
               "$ref": "#/$defs/Account"
             },
@@ -11023,24 +11271,32 @@
     },
     "SignInRequest": {
       "additionalProperties": false,
-      "properties": {
-        "email": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "email"
-      ],
       "type": "object"
     },
     "SignInStarted": {
       "properties": {
-        "requestId": {
+        "expiresIn": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pollIntervalMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "userCode": {
+          "type": "string"
+        },
+        "verificationUri": {
           "type": "string"
         }
       },
       "required": [
-        "requestId"
+        "userCode",
+        "verificationUri",
+        "expiresIn",
+        "pollIntervalMs"
       ],
       "type": "object"
     },

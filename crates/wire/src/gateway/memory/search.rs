@@ -136,6 +136,7 @@ pub enum MemoryHitSource {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySearchHit {
+    pub owner: Option<String>,
     pub chunk: Option<crate::memory::MemoryChunkMatch>,
     pub id: String,
     pub source: MemoryHitSource,
@@ -161,10 +162,41 @@ pub enum MemoryFallback {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "DegradedForm")]
 pub struct MemoryDegraded {
     pub reason: String,
     pub effect: String,
+}
+
+pub const LEGACY_DEGRADED_EFFECT: &str = "Search ran with reduced ranking.";
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DegradedObject {
+    pub reason: String,
+    pub effect: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum DegradedForm {
+    Object(DegradedObject),
+    Reason(String),
+}
+
+impl From<DegradedForm> for MemoryDegraded {
+    fn from(form: DegradedForm) -> Self {
+        match form {
+            DegradedForm::Object(object) => Self {
+                reason: object.reason,
+                effect: object.effect,
+            },
+            DegradedForm::Reason(reason) => Self {
+                reason,
+                effect: LEGACY_DEGRADED_EFFECT.to_owned(),
+            },
+        }
+    }
 }
 
 #[serde_with::skip_serializing_none]

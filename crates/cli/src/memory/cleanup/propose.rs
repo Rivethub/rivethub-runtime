@@ -25,7 +25,7 @@ pub(super) async fn refuse_live(
     target: &str,
     env: &Environment,
 ) -> Result<DatabaseIdentity, Error> {
-    let live = super::super::run::postgres_url(env).map_err(|_| Error::CleanupLiveUnknown)?;
+    let live = super::super::run::postgres_url(env)?;
     let live = identity_at(&live).await?;
     if identity_at(target).await? == live {
         return Err(Error::CleanupLive);

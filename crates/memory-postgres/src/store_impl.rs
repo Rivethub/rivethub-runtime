@@ -66,6 +66,9 @@ impl crate::PostgresMemory {
     ) -> Result<CaptureResult, Error> {
         let channel = batch.channel.as_deref().ok_or(Error::MissingChannel)?;
         let mut writer = CaptureWriter::begin(&self.pool, &batch.session_key).await?;
+        if self.missing.embeddings {
+            writer.defer_embeddings().await?;
+        }
         if write == Write::Append
             && writer
                 .carries_receipt(&batch.session_key, options.owner.as_str())
@@ -554,6 +557,28 @@ impl MemoryStore for crate::PostgresMemory {
         lookup: TagLookup,
     ) -> Result<BTreeMap<String, Vec<TagWire>>, MemoryStoreError> {
         self.tags_lookup(&lookup).await
+    }
+
+    async fn recall_owners(
+        &self,
+        session_keys: Vec<String>,
+    ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
+        Ok(self.team_owners(&session_keys).await?)
+    }
+
+    async fn recall_identity(
+        &self,
+    ) -> Result<Option<kernel::memory::RecallIdentity>, MemoryStoreError> {
+        Ok(Some(self.read_recall_identity().await?))
+    }
+
+    async fn team_sessions(
+        &self,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        before: Option<chrono::DateTime<chrono::Utc>>,
+        limit: u32,
+    ) -> Result<Vec<kernel::memory::TeamSession>, MemoryStoreError> {
+        self.read_team_sessions(since, before, limit).await
     }
 
     async fn lookup_origins(

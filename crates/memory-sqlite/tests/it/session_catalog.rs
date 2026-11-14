@@ -140,3 +140,12 @@ async fn an_import_is_a_finished_record_ended_when_its_origin_ended() -> TestRes
     session_imports::an_import_is_a_finished_record_ended_when_its_origin_ended(&store, &store)
         .await
 }
+
+#[tokio::test]
+async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::session_messages::messages_come_in_order_paged_and_counted_like_the_catalog(
+        &store, &store,
+    )
+    .await
+}

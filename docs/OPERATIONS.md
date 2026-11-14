@@ -98,6 +98,9 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
   printed `connected.` wired recall only; run it again to add capture.
 - `rh harness connect` (and `disconnect`) that only created new files printed `Dry run: nothing was written.` although
   it wrote them; it now prints that line only for `--dry-run`.
+- `rh harness connect dsh` writes the DeepSeek Harness capture plug-in and a recall row into
+  `$DSH_HOME/cordis.patch.yml`, which covers every profile including ones created later. A released 0.8.3 `rh`
+  refuses that command and writes nothing (CONTRACT note 198).
 
 ## Upgrading from 0.8.1 to 0.8.2
 
@@ -191,7 +194,8 @@ receive routes apply the same rules to sanitized bundles.
 - **Sign in to share again.** 0.8.0 signed in to rivethub.cloud with its own `/api/cli` endpoints, which the cloud no
   longer serves. `rh share login` now uses OAuth device sign-in found through the server's RFC 8414 metadata, and asks
   for `offline_access` so the login can refresh. Run `rh share login` once on each machine. A team server offers no
-  device sign-in: members use the users-file token.
+  device sign-in: members sign in with their users-file token, `rh share login <server> --token-file <path>` (or `-` to
+  read it from stdin).
 - **`cloud.disabled`.** New and off by default. See "Keeping data on your network" below to keep a hub off
   rivethub.cloud, and `rh local --no-cloud` to write it into a new standalone config.
 
@@ -428,6 +432,20 @@ report is not resent. This also works with `cloud: {disabled:
 true}`: the cloud stays off and only telemetry goes to your url. `telemetry: {disabled: true}` turns telemetry off
 everywhere and wins over the url. CONTRACT note 154 has the rules.
 
+The entity worker matches observations with the ThinkingCap matcher and the embedder at `http://127.0.0.1:9402`
+(`qwen3-embedding-0.6b`) unless config.yaml says otherwise:
+
+```yaml
+entities:
+  matcher: jev            # jev | thinkingcap (default thinkingcap)
+  matcher_url: http://host:8015
+```
+
+`matcher` must be `thinkingcap` or `jev`. `jev` needs `matcher_url`, and that url must be http or https. When
+`memory.postgres.embed_endpoint` or `memory.postgres.embed_model` is set, entity matching uses it; with SQLite selected,
+the same keys under `memory.sqlite` are used instead. An omitted `entities` section keeps the ThinkingCap matcher.
+CONTRACT note 202 has the rules.
+
 This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
 config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config
 of their own is not bound by it; to keep such users off the network, restrict their outbound traffic as well.
@@ -448,3 +466,28 @@ sharing is off. A list entry that is not a valid host makes every share command 
 At install time, `curl -fsSL https://get.rivethub.io/local.sh | bash -s -- --no-cloud`, `rh local --no-cloud`, or
 `RIVETHUB_CLOUD=off` writes `cloud: {disabled: true}` into the config `rh local` generates. When a config already
 exists without the key, `rh local` stops and names the file to add it to; it never edits your config.
+
+### Team-aware recall
+
+Start each person's `rh mcp` with their users file (`ownerUserId`) and pinned Postgres login
+as described under Person logins. The database's pinned principal and memberships supply the
+initialize introduction; per-person users files need no spaces or duplicate team list. An
+unpinned node falls back to its users-file owner for the person, while still reading memberships
+from the store. SQLite and a person with no co-members produce no instructions.
+Person labels use the stable user id, such as `alex`, rather than a token or imported author.
+Migrate before upgrading this build. Migration 0069 allows members to read co-memberships
+only within their own spaces. Migrations 0072 and 0073 record settled entity-worker claims and
+each duplicate decision, and the schema requirement is 75. Its no-argument
+`rh_member_spaces()` helper is the sole public definer read helper: it captures the actual
+principal, reads that person's memberships under a fixed search path, restores maintenance
+state, and returns only space IDs. It grants no capture, queue or maintenance authority.
+
+Set `memory: {recall: {own_weight: 1.25}}` to tune hybrid search. The finite range is 1.0–2.0;
+1.0 restores unweighted ordering. A personal SQLite store ignores this preference. The
+chronological `memory_browse` order is unchanged. `memory_team` is read-only on every MCP
+transport; add it to harness tool allow-lists alongside `memory_search` and `memory_browse`.
+It accepts `window` (default `last_7d`, same local-time windows as browse) and `limit` per person
+(1–20, default 5). It returns only sessions visible through the normal store read path.
+
+`memory_team` dates use relative age followed by local `YYYY-MM-DD HH:MM ZONE` time.
+A topic separator appears only when a filed topic is visible.

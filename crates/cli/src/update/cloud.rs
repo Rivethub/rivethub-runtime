@@ -1,3 +1,4 @@
+use gateway::account::AccountLogin as _;
 use std::path::Path;
 
 use config::Environment;
@@ -24,14 +25,14 @@ pub(super) async fn stage(
     };
     let settings = CloudSettings::from_config(config)?;
     let files = AccountFiles::new(&gateway::state_dir(env)?);
-    let reading = files.clone();
-    let state = tokio::task::spawn_blocking(move || reading.read()).await??;
-    let token = state
-        .as_ref()
-        .and_then(gateway::account::InstallState::token)
+    let login = crate::account_login::NodeAccountLogin::new(env.clone(), &settings.base);
+    let (token, _) = login
+        .identity()
+        .await
+        .map_err(AccountError::from)?
         .ok_or(AccountError::NotSignedIn)?;
     let cloud = Cloud::new(settings.base.clone())?;
-    let (manifest, digest) = latest(&cloud, &settings, token, channel)
+    let (manifest, digest) = latest(&cloud, &settings, &token, channel)
         .await?
         .ok_or(UpdateError::NoCloudRelease(channel))?;
     let verified = fetch(&cloud, &files, manifest, digest, shutdown).await?;

@@ -17,7 +17,19 @@ const SEGMENT: GeneralPurpose = GeneralPurpose::new(
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SessionRef {
     Canonical(SessionId),
+    Import(ImportKey),
     Bare(String),
+}
+
+impl SessionRef {
+    #[must_use]
+    pub fn key(&self) -> Option<SessionKey> {
+        match self {
+            Self::Canonical(session) => Some(SessionKey::Harness(session.clone())),
+            Self::Import(key) => Some(SessionKey::Import(key.clone())),
+            Self::Bare(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +69,15 @@ pub fn decode_segment(segment: &str) -> Result<DecodedSegment, SegmentError> {
         Ok(text) => text,
         Err(_) => segment,
     };
+    if let Ok(key) = text.parse::<SessionKey>() {
+        return Ok(DecodedSegment {
+            requested: text.to_owned(),
+            session: match key {
+                SessionKey::Harness(session) => SessionRef::Canonical(session),
+                SessionKey::Import(key) => SessionRef::Import(key),
+            },
+        });
+    }
     if let Some(canonical) = canonical_from_base64(text) {
         return Ok(DecodedSegment {
             session: SessionRef::Canonical(collapse_path_fallback(&canonical)),

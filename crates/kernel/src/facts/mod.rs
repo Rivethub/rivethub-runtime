@@ -49,6 +49,7 @@ pub enum Said {
         session: SessionId,
         summary: Uuid,
         evidence: Option<Evidence>,
+        settled: bool,
     },
 }
 
@@ -56,6 +57,11 @@ impl Said {
     #[must_use]
     pub const fn pinned(&self) -> bool {
         matches!(self, Self::You { pinned: true, .. })
+    }
+
+    #[must_use]
+    pub const fn settled(&self) -> bool {
+        matches!(self, Self::Writer { settled: true, .. })
     }
 
     #[must_use]
@@ -94,6 +100,13 @@ pub struct SessionLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityHistory {
+    pub at: DateTime<Utc>,
+    pub sentence: String,
+    pub session: Option<SessionId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactSession {
     pub session: SessionId,
     pub title: Option<String>,
@@ -112,4 +125,6 @@ pub trait FactStore: Send + Sync {
     async fn session_links(&self) -> Result<Vec<SessionLink>, FactError>;
 
     async fn fact_sessions(&self, sessions: &[SessionId]) -> Result<Vec<FactSession>, FactError>;
+
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError>;
 }

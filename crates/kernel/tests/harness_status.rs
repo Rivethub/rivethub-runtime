@@ -46,14 +46,19 @@ fn a_capture_inside_three_days_is_receiving_whatever_the_install_check_says() {
 }
 
 #[test]
-fn an_installed_entry_with_nothing_in_three_days_is_stale() {
+fn an_installed_entry_that_captured_before_but_not_in_three_days_is_stale() {
     let old = CaptureHistory::Known(Some(now() - Duration::days(4)));
     assert_eq!(state(true, old), CaptureState::Stale);
-    assert_eq!(
-        state(true, CaptureHistory::Known(None)),
-        CaptureState::Stale
-    );
     assert_eq!(state(true, CaptureHistory::Unknown), CaptureState::Stale);
+}
+
+#[test]
+fn an_installed_entry_that_has_never_captured_is_idle() {
+    assert_eq!(state(true, CaptureHistory::Known(None)), CaptureState::Idle);
+    assert_eq!(
+        serde_json::to_string(&CaptureState::Idle).ok().as_deref(),
+        Some("\"idle\"")
+    );
 }
 
 #[test]
@@ -104,4 +109,41 @@ fn the_status_carries_the_last_capture_time_and_both_details() {
         "hook installed; last capture 2026-11-06T11:00:00Z"
     );
     assert_eq!(status.recall.detail, "rivethub runs rh mcp");
+}
+
+#[test]
+fn history_is_mentioned_only_when_the_line_can_say_something_definite() {
+    let at = now() - Duration::hours(1);
+    let installed = probe(true);
+    assert_eq!(
+        installed
+            .clone()
+            .into_status(CaptureHistory::Known(None), now())
+            .capture
+            .detail,
+        "hook installed; nothing captured yet"
+    );
+    assert_eq!(
+        probe(false)
+            .into_status(CaptureHistory::Known(None), now())
+            .capture
+            .detail,
+        "hook installed"
+    );
+    assert_eq!(
+        installed
+            .into_status(CaptureHistory::Unknown, now())
+            .capture
+            .detail,
+        "hook installed"
+    );
+    let mut missing = probe(true);
+    missing.found = false;
+    assert_eq!(
+        missing
+            .into_status(CaptureHistory::Known(Some(at)), now())
+            .capture
+            .detail,
+        "hook installed"
+    );
 }

@@ -39,6 +39,7 @@ if [ "$1" = "$RIVETHUB_TEST_FAIL" ]; then
 fi
 case "$1" in
     status) printf 'service status\n'; printf 'status diagnostic\n' >&2; exit "${RIVETHUB_TEST_STATUS:-0}" ;;
+    show) printf '%s\n' "${RIVETHUB_TEST_MAIN_PID:-0}" ;;
     show-user) printf '%s\n' "${RIVETHUB_TEST_LINGER:-yes}" ;;
 esac
 "#);
@@ -213,32 +214,32 @@ async fn init_reports_lingering_and_never_overwrites() {
         assert!(contents.contains(" local\nEnvironmentFile="));
         assert!(
             contents.contains(
-                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n"
+                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n"
             )
         );
         assert!(contents.contains("WantedBy=default.target\n"));
-        let error = fixture
+        let again = fixture
             .run(Scope::User, ServiceCommand::Init, &[])
             .await
-            .expect_err("existing");
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "Service file already exists: {}\nDelete it first if you want to regenerate.",
+            .expect("already current");
+        assert!(
+            again.stdout.starts_with(&format!(
+                "Service file is already current: {}\n",
                 path.display()
-            )
+            )),
+            "{}",
+            again.stdout
         );
-        assert_eq!(std::fs::read_to_string(path).expect("unchanged"), contents);
-        assert_eq!(
-            fixture.calls(),
-            format!(
-                "systemctl|--user|daemon-reload\nsystemctl|--user|enable|rivethub\nloginctl|show-user|{}|--property=Linger|--value\n",
-                nix::unistd::User::from_uid(nix::unistd::geteuid())
-                    .expect("account")
-                    .expect("user")
-                    .name
-            )
+        assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), contents);
+        assert!(!backup_of(&path).exists());
+        let sequence = format!(
+            "systemctl|--user|daemon-reload\nsystemctl|--user|enable|rivethub\nloginctl|show-user|{}|--property=Linger|--value\n",
+            nix::unistd::User::from_uid(nix::unistd::geteuid())
+                .expect("account")
+                .expect("user")
+                .name
         );
+        assert_eq!(fixture.calls(), format!("{sequence}{sequence}"));
     }
 }
 
@@ -314,7 +315,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     .expect("unit");
     assert_eq!(
         unit.to_string(),
-        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-\"/home/user/.rivethub/.env\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-/home/user/.rivethub/.env\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n\n[Install]\nWantedBy=multi-user.target\n"
     );
     let unit = Unit::new(
         Path::new("/opt/é'\"\\%/$HOME/$(touch nope)/rh"),
@@ -329,7 +330,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/a%%u/$HOME/.env\"\n")
+            .contains("EnvironmentFile=-/home/a%%u/$HOME/.env\n")
     );
     assert_eq!(Scope::for_uid(0), Scope::System);
     assert_eq!(Scope::for_uid(1000), Scope::User);
@@ -628,7 +629,7 @@ async fn concurrent_initializers_publish_exactly_one_complete_unit() {
 fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     let unit = Unit::new(
         Path::new("/opt/\u{85}/rh"),
-        Path::new("/home/user/\nRestart=always\t.env"),
+        Path::new("/home/user/.env"),
         Scope::User,
         NodeKind::Node,
     )
@@ -639,9 +640,25 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/user/\\x0aRestart=always\\x09.env\"\n")
+            .contains("EnvironmentFile=-/home/user/.env\n")
     );
-    assert!(!unit.to_string().contains("\nRestart=always"));
+    for path in [
+        "/home/user/\nRestart=always.env",
+        "/home/user/\t.env",
+        "/home/user/\"quoted\".env",
+    ] {
+        let error = Unit::new(
+            Path::new("/opt/rh"),
+            Path::new(path),
+            Scope::User,
+            NodeKind::Node,
+        )
+        .expect_err(path);
+        assert!(
+            error.to_string().contains("systemd cannot represent"),
+            "{path}: {error}"
+        );
+    }
     assert!(
         Unit::new(
             Path::new("/opt/rh\0"),
@@ -651,4 +668,312 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn systemd_analyze_accepts_the_generated_unit() {
+    let mut version = std::process::Command::new("systemd-analyze");
+    version.arg("--version");
+    match version.output() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: systemd-analyze is not installed");
+            return;
+        }
+        Err(error) => panic!("systemd-analyze: {error}"),
+        Ok(output) if !output.status.success() => {
+            panic!(
+                "systemd-analyze --version failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(_) => {}
+    }
+    let root = tempfile::tempdir().expect("unit directory");
+    let executable_dir = root.path().join("Rivet Hub");
+    std::fs::create_dir(&executable_dir).expect("executable directory");
+    let executable = executable_dir.join("rh");
+    std::fs::copy("/bin/sleep", &executable).expect("copy sleep");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let environment = root.path().join("a%u Hub.env");
+    let unit =
+        Unit::new(&executable, &environment, Scope::User, NodeKind::Standalone).expect("unit");
+    let text = unit.to_string();
+    assert!(text.contains("EnvironmentFile=-") && !text.contains("EnvironmentFile=-\""));
+    assert!(text.contains("a%%u Hub.env"));
+    assert!(text.contains("ExecStart=\"") && text.contains("Rivet Hub/rh\" local\n"));
+    let file = root.path().join("rivethub.service");
+    std::fs::write(&file, &text).expect("unit file");
+    let output = std::process::Command::new("systemd-analyze")
+        .arg("verify")
+        .arg(&file)
+        .output()
+        .expect("verify");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "systemd-analyze verify rejected the unit: {stderr}\n{text}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("not absolute")
+            && !stderr.to_lowercase().contains("ignoring"),
+        "{stderr}"
+    );
+}
+
+fn backup_of(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("name");
+    path.with_file_name(format!("{name}.bak"))
+}
+
+fn legacy_quoted(current: &str) -> String {
+    let mut out = String::new();
+    for line in current
+        .replacen("RestartPreventExitStatus=11\n", "", 1)
+        .lines()
+    {
+        if let Some(path) = line.strip_prefix("EnvironmentFile=-") {
+            out.push_str("EnvironmentFile=-\"");
+            out.push_str(path);
+            out.push_str("\"\n");
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn init_updates_a_generated_unit_and_keeps_the_previous_file() {
+    let fixture = Fixture::new();
+    fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect("init");
+    let path = Scope::User.unit_path(fixture.home.path());
+    let current = std::fs::read_to_string(&path).expect("unit");
+    let legacy = legacy_quoted(&current);
+    assert_ne!(legacy, current);
+    std::fs::write(&path, &legacy).expect("legacy unit");
+    std::fs::write(backup_of(&path), "kept\n").expect("occupied backup");
+    std::fs::remove_file(&fixture.calls).expect("clear calls");
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect("repair");
+    let kept = path.with_file_name("rivethub.service.bak.1");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "Updated {} (previous unit kept at {}): EnvironmentFile is no longer quoted; added RestartPreventExitStatus=11.\nIt runs: rh local\nEnabled: it starts when you log in, and at boot when lingering is on.\nLingering is enabled.\n",
+            path.display(),
+            kept.display()
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&path).expect("repaired"), current);
+    assert_eq!(std::fs::read_to_string(&kept).expect("backup"), legacy);
+    assert_eq!(
+        std::fs::read_to_string(backup_of(&path)).expect("old bak"),
+        "kept\n"
+    );
+    assert!(
+        fixture
+            .calls()
+            .starts_with("systemctl|--user|daemon-reload\n")
+    );
+}
+
+#[tokio::test]
+async fn init_leaves_a_hand_edited_unit_and_names_the_difference() {
+    let fixture = Fixture::new();
+    fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect("init");
+    let path = Scope::User.unit_path(fixture.home.path());
+    let edited = std::fs::read_to_string(&path)
+        .expect("unit")
+        .replace("RestartSec=5\n", "RestartSec=10\n");
+    std::fs::write(&path, &edited).expect("edited unit");
+    std::fs::remove_file(&fixture.calls).expect("clear calls");
+    let error = fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect_err("hand edited");
+    let message = error.to_string();
+    assert!(message.contains("edited by hand"), "{message}");
+    assert!(message.contains("  unit: RestartSec=10"), "{message}");
+    assert!(message.contains("  rh:   RestartSec=5"), "{message}");
+    assert!(message.contains("`rh service init`"), "{message}");
+    assert_eq!(std::fs::read_to_string(&path).expect("untouched"), edited);
+    assert!(!backup_of(&path).exists());
+    assert!(!fixture.calls.exists());
+}
+
+#[tokio::test]
+async fn start_updates_a_generated_unit_before_it_reloads() {
+    let fixture = Fixture::new();
+    fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect("init");
+    let path = Scope::User.unit_path(fixture.home.path());
+    let current = std::fs::read_to_string(&path).expect("unit");
+    let legacy = legacy_quoted(&current);
+    std::fs::write(&path, &legacy).expect("legacy unit");
+    std::fs::remove_file(&fixture.calls).expect("clear calls");
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect("start");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "Updated {} (previous unit kept at {}): EnvironmentFile is no longer quoted; added RestartPreventExitStatus=11.\nservice status\n",
+            path.display(),
+            backup_of(&path).display()
+        )
+    );
+    assert_eq!(std::fs::read_to_string(&path).expect("repaired"), current);
+    assert_eq!(
+        std::fs::read_to_string(backup_of(&path)).expect("backup"),
+        legacy
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|daemon-reload\nsystemctl|--user|start|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
+    );
+}
+
+#[tokio::test]
+async fn start_names_a_hand_edited_unit_and_still_starts_it() {
+    let fixture = Fixture::new();
+    fixture
+        .run(Scope::User, ServiceCommand::Init, &[])
+        .await
+        .expect("init");
+    let path = Scope::User.unit_path(fixture.home.path());
+    let edited = std::fs::read_to_string(&path)
+        .expect("unit")
+        .replace("RestartSec=5\n", "RestartSec=10\n");
+    std::fs::write(&path, &edited).expect("edited unit");
+    std::fs::remove_file(&fixture.calls).expect("clear calls");
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Restart, &[])
+        .await
+        .expect("restart");
+    assert!(
+        report.stdout.contains("edited by hand"),
+        "{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.contains("  unit: RestartSec=10"),
+        "{}",
+        report.stdout
+    );
+    assert!(
+        report.stdout.ends_with("service status\n"),
+        "{}",
+        report.stdout
+    );
+    assert_eq!(std::fs::read_to_string(&path).expect("untouched"), edited);
+    assert!(!backup_of(&path).exists());
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|daemon-reload\nsystemctl|--user|restart|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
+    );
+}
+
+fn hold_pid(home: &Path, program: &str) -> std::process::Child {
+    let state = home.join(".rivethub");
+    std::fs::create_dir_all(&state).expect("state");
+    let ready = state.join("holder.ready");
+    let child = std::process::Command::new("/usr/bin/python3")
+        .arg("-c")
+        .arg(program)
+        .env("READY", &ready)
+        .spawn()
+        .expect("holder");
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "holder did not become ready"
+        );
+        std::thread::park_timeout(std::time::Duration::from_millis(20));
+    }
+    std::fs::write(state.join("rivethub.pid"), format!("{}\n", child.id())).expect("pid");
+    child
+}
+
+const SLEEPING_HOLDER: &str = "import os, signal\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_DFL)\nopen(os.environ['READY'], 'w').close()\nos.execv('/bin/sleep', ['sleep', '60'])\n";
+
+const STUBBORN_HOLDER: &str = "import os, signal, time\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen(os.environ['READY'], 'w').close()\nwhile True:\n    time.sleep(1)\n";
+
+#[tokio::test]
+async fn service_start_stops_a_detached_node_before_the_unit() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id();
+    let reaper = std::thread::spawn(move || child.wait());
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect("start");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "Stopped the running RivetHub node (pid {pid}) so the service can take its place.\nservice status\n"
+        )
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\nsystemctl|--user|daemon-reload\nsystemctl|--user|start|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
+    );
+    let finished = reaper.join().expect("reaper").expect("wait");
+    assert!(!finished.success());
+}
+
+#[tokio::test]
+async fn service_start_leaves_the_units_own_process_running() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id().to_string();
+    let report = fixture
+        .run(
+            Scope::User,
+            ServiceCommand::Restart,
+            &[("RIVETHUB_TEST_MAIN_PID", &pid)],
+        )
+        .await
+        .expect("restart");
+    assert_eq!(report.stdout, "service status\n");
+    assert!(child.try_wait().expect("poll").is_none());
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
+}
+
+#[tokio::test]
+async fn service_start_refuses_once_when_the_detached_node_stays_up() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), STUBBORN_HOLDER);
+    let pid = child.id();
+    let error = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect_err("still running");
+    assert!(
+        matches!(error, ServiceError::Running { pid: found } if found == pid),
+        "{error}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\n"
+    );
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
 }

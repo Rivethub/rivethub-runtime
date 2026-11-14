@@ -413,6 +413,11 @@ fn removed_by_decision(input: &serde_yaml_ng::Value) -> RemovedDeltas {
     deltas
 }
 
+fn optional_section(finding: &Finding) -> bool {
+    matches!(finding.path.as_str(), "runtime" | "agents" | "providers")
+        && finding.message.starts_with("Missing required section")
+}
+
 fn under(path: &str, removed: &str) -> bool {
     path.strip_prefix(removed)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.') || rest.starts_with('['))
@@ -547,7 +552,7 @@ fn replay_well_typed(
 }
 
 fn replay_case(case: &Replay) -> Result<(), String> {
-    let actual = config::validate_document(&case.input, config::Profile::Node);
+    let actual = config::validate_document(&case.input);
     if config::type_document(&case.input).is_err() {
         return replay_type_confused(case, &actual);
     }
@@ -583,7 +588,7 @@ fn replay_case(case: &Replay) -> Result<(), String> {
             .iter()
             .any(|removed| under(&finding.path, removed));
         let exposed = terminal_retired && finding.message.contains(EXPOSED_TERMINAL);
-        !(retired || exposed)
+        !(retired || exposed || optional_section(finding))
     });
     expected_findings.extend(
         case.removed

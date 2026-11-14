@@ -205,6 +205,7 @@ pub struct MemoryToolResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryBrowseMessage {
+    pub owner: Option<String>,
     pub id: String,
     pub role: Role,
     pub agent: Option<String>,

@@ -233,7 +233,25 @@ pub(crate) async fn local_gateway(
     ),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let gateway = gateway::Gateway::new(Arc::clone(store) as _, settings(home))
+    local_gateway_with(store, home, owner, None).await
+}
+
+pub(crate) async fn local_gateway_with(
+    store: &Arc<FakeMemoryStore>,
+    home: &Path,
+    owner: Arc<gateway::local_owner::LocalOwner>,
+    static_dir: Option<std::path::PathBuf>,
+) -> Result<
+    (
+        u16,
+        CancellationToken,
+        tokio::task::JoinHandle<Result<(), gateway::server::ServeError>>,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let mut settings = settings(home);
+    settings.static_dir = static_dir;
+    let gateway = gateway::Gateway::new(Arc::clone(store) as _, settings)
         .with_local_owner(owner)
         .with_tenancy(Tenancy::local(UserId::new("owner".to_owned())?));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;

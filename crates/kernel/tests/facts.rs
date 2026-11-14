@@ -51,6 +51,7 @@ impl Key {
                 session: session(from),
                 summary: Uuid::new_v4(),
                 evidence: None,
+                settled: false,
             },
             at,
         )

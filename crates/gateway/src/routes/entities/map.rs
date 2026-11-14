@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use kernel::cleanup::EntityType as SeededType;
 use kernel::facts::FactChange;
 use kernel::facts::FactError;
 use kernel::facts::FactEvent;
@@ -8,8 +7,6 @@ use kernel::facts::FactSession;
 use kernel::facts::FactState;
 use kernel::facts::Support;
 use kernel::memory::Provenance;
-use strum::IntoEnumIterator as _;
-use wire::gateway::entities::EntityType;
 use wire::gateway::entities::Fact;
 use wire::gateway::entities::FactConflict;
 use wire::gateway::entities::FactPrevious;
@@ -56,27 +53,6 @@ impl Titles {
             None => title,
         }
     }
-}
-
-pub(super) fn entity_type(root: &str) -> Option<EntityType> {
-    let seeded = SeededType::iter().find(|seeded| seeded.to_string() == root)?;
-    Some(match seeded {
-        SeededType::People => EntityType::Person,
-        SeededType::Agents => EntityType::Agent,
-        SeededType::Hosts => EntityType::Machine,
-        SeededType::Hardware => EntityType::Hardware,
-        SeededType::Models => EntityType::Model,
-        SeededType::Services => EntityType::Service,
-        SeededType::Software
-        | SeededType::ClisAndTools
-        | SeededType::Apps
-        | SeededType::LibrariesAndFrameworks
-        | SeededType::OsAndPlatforms
-        | SeededType::PluginsAndSkills => EntityType::Software,
-        SeededType::Repos => EntityType::Repository,
-        SeededType::Domains => EntityType::Domain,
-        SeededType::Databases => EntityType::Database,
-    })
 }
 
 pub(crate) fn error(error: FactError) -> ApiError {

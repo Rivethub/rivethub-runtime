@@ -22,6 +22,9 @@ pub(crate) async fn resolve<'a>(
 }
 
 pub(crate) fn tag(provenance: &Provenance, zone: chrono_tz::Tz, dated: bool) -> String {
+    if provenance.team_owner.is_some() {
+        return provenance.tag();
+    }
     let date = provenance
         .origin_date
         .filter(|_| dated)

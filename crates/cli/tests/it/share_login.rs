@@ -157,6 +157,8 @@ async fn serve() -> Served {
             axum::routing::get(metadata),
         )
         .route("/api/me", axum::routing::get(me))
+        .route("/v1/account", axum::routing::get(me))
+        .route("/v1/updates/latest", axum::routing::get(me))
         .fallback(axum::routing::post(post))
         .with_state(auth.clone());
     let stub = testkit::stub_server(app).await.expect("fake server");
@@ -494,3 +496,5 @@ async fn a_verification_url_must_open_in_a_browser() {
         }
     }
 }
+
+mod account;

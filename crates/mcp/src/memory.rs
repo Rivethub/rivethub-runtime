@@ -378,7 +378,7 @@ const fn scope_of(scope: MemoryScope) -> kernel::memory::MemoryScope {
     }
 }
 
-const fn window(window: BrowseWindow) -> kernel::memory::BrowseWindow {
+pub(crate) const fn window(window: BrowseWindow) -> kernel::memory::BrowseWindow {
     match window {
         BrowseWindow::Today => kernel::memory::BrowseWindow::Today,
         BrowseWindow::Yesterday => kernel::memory::BrowseWindow::Yesterday,

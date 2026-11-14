@@ -53,7 +53,16 @@ pub(super) fn claim(directory: &Path, pid: u32) -> Result<NodeClaim, StateError>
         return Err(StateError::InvalidOwner { path: pid_path });
     }
     ensure_directory(directory)?;
-    let locks = check(directory)?;
+    let locks = match check(directory) {
+        Ok(locks) => locks,
+        Err(StateError::Locked { path }) if path == pid_path => {
+            return Err(node_already_running(&pid_path));
+        }
+        Err(StateError::LiveOwner { path, pid }) if path == pid_path => {
+            return Err(StateError::AlreadyRunning { pid });
+        }
+        Err(error) => return Err(error),
+    };
     let mut held = None;
     for (path, file) in locks {
         if path == pid_path {
@@ -64,10 +73,58 @@ pub(super) fn claim(directory: &Path, pid: u32) -> Result<NodeClaim, StateError>
     }
     let mut file = match held {
         Some(file) => file,
-        None => open_pid(&pid_path)?,
+        None => match open_pid(&pid_path) {
+            Ok(file) => file,
+            Err(StateError::Locked { path }) if path == pid_path => {
+                return Err(node_already_running(&pid_path));
+            }
+            Err(error) => return Err(error),
+        },
     };
-    rewrite(&mut file, &pid_path, pid)?;
-    Ok(NodeClaim::hold(file, pid_path))
+    match rewrite(&mut file, &pid_path, pid) {
+        Ok(()) => Ok(NodeClaim::hold(file, pid_path)),
+        Err(StateError::LiveOwner { path, pid }) if path == pid_path => {
+            Err(StateError::AlreadyRunning { pid })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn node_already_running(path: &Path) -> StateError {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the pid file is already locked; when it cannot be opened there is no pid to name, so the error stays the held lock"
+        )
+    )]
+    let Ok(mut file) = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits())
+        .open(path)
+    else {
+        return StateError::Locked {
+            path: path.to_owned(),
+        };
+    };
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: the pid file is already locked; when its text cannot be read there is no pid to name, so the error stays the held lock"
+        )
+    )]
+    let Ok(text) = read_text(&mut file, path) else {
+        return StateError::Locked {
+            path: path.to_owned(),
+        };
+    };
+    match owner_state(path, &text) {
+        Ok(OwnerState::Live(pid)) => StateError::AlreadyRunning { pid },
+        _ => StateError::Locked {
+            path: path.to_owned(),
+        },
+    }
 }
 
 pub(super) fn check(directory: &Path) -> Result<Vec<(PathBuf, File)>, StateError> {

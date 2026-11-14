@@ -1,6 +1,6 @@
 use std::net::IpAddr;
 
-use config::{Profile, type_document, validate_document};
+use config::{type_document, validate_document};
 
 type Outcome = Result<(), Box<dyn std::error::Error>>;
 
@@ -28,7 +28,7 @@ fn no_proxy_is_trusted_by_default() -> Outcome {
 #[test]
 fn a_trusted_proxy_is_an_address_or_a_cidr_block() -> Outcome {
     let yaml = proxies(r#"["127.0.0.1/32", "198.51.100.0/24", "::1", "2001:db8::/32"]"#)?;
-    let result = validate_document(&yaml, Profile::Standalone);
+    let result = validate_document(&yaml);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     let trusted = type_document(&yaml)?
         .config
@@ -61,7 +61,7 @@ fn a_bad_trusted_proxy_is_refused_at_load() -> Outcome {
     ] {
         let yaml = proxies(bad)?;
         assert!(type_document(&yaml).is_err(), "{bad} typed");
-        let result = validate_document(&yaml, Profile::Standalone);
+        let result = validate_document(&yaml);
         assert!(
             result
                 .errors

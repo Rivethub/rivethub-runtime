@@ -12,12 +12,12 @@ use wire::gateway::sessions::{
     HarnessToolOutput,
 };
 use wire::harness::{HarnessCode, HarnessId, HarnessSessionList, HarnessSessionSummary};
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Body;
-use crate::history::{Resolved, authorize, store_summary};
+use crate::history::{Need, Resolved, authorize, store_summary};
 use crate::tenancy::UserId;
 
 pub(crate) fn router() -> Router<Arc<Gateway>> {
@@ -83,22 +83,25 @@ async fn listed(gateway: &Gateway, harnesses: &[HarnessId], limit: ListLimit) ->
         .collect()
 }
 
-fn row_id(row: &StoreSession) -> &str {
-    &row.id
-}
-
-fn row_parent(row: &StoreSession) -> Option<&str> {
-    row.parent_session_id.as_deref()
-}
-
-pub(super) fn visible_rows(
+pub(super) async fn visible_rows(
     gateway: &Gateway,
     user: &UserId,
     rows: Vec<StoreSession>,
-) -> Vec<StoreSession> {
-    let registry = gateway.sessions();
-    registry.stamp_nested(&rows, row_id, row_parent);
-    registry.filter(user, rows, row_id, row_parent)
+) -> Result<Vec<StoreSession>, ApiError> {
+    let keys: Vec<SessionKey> = rows
+        .iter()
+        .map(|row| SessionKey::from(SessionId::new(row.harness, &row.id)))
+        .collect();
+    let seen = crate::session_access::seen(gateway, user, &keys).await?;
+    Ok(rows
+        .into_iter()
+        .zip(keys)
+        .filter(|(_, key)| {
+            seen.get(key)
+                .is_some_and(crate::session_access::Seen::readable)
+        })
+        .map(|(row, _)| row)
+        .collect())
 }
 
 async fn plane(
@@ -116,7 +119,7 @@ async fn plane(
         ));
     }
     let rows = listed(&gateway, &[harness], ListLimit::per_harness_route()).await;
-    let rows = visible_rows(&gateway, &user, rows);
+    let rows = visible_rows(&gateway, &user, rows).await?;
     let mut sessions = Vec::with_capacity(rows.len());
     for row in &rows {
         sessions.push(store_summary(&gateway, row).await);
@@ -130,7 +133,7 @@ async fn summary(
     Path(segment): Path<String>,
 ) -> Result<Json<HarnessSessionResponse>, ApiError> {
     let resolved = gateway.history().resolve(&gateway, &segment).await?;
-    authorize(&gateway, &user, &resolved).await?;
+    authorize(&gateway, &user, &resolved, Need::Read).await?;
     let summary = described(&gateway, &resolved).await?;
     Ok(Json(HarnessSessionResponse {
         summary,
@@ -169,7 +172,7 @@ async fn transcript(
 ) -> Result<Json<HarnessSessionTranscriptResponse>, ApiError> {
     let window = transcript_window(query.as_deref())?;
     let resolved = gateway.history().resolve(&gateway, &segment).await?;
-    authorize(&gateway, &user, &resolved).await?;
+    authorize(&gateway, &user, &resolved, Need::Read).await?;
     let read = gateway
         .history()
         .transcript(&gateway, &resolved, window)
@@ -221,7 +224,7 @@ async fn rename(
         ));
     }
     let resolved = gateway.history().resolve(&gateway, &segment).await?;
-    authorize(&gateway, &user, &resolved).await?;
+    authorize(&gateway, &user, &resolved, Need::Change).await?;
     let lister = gateway
         .session_lister()
         .ok_or_else(|| ApiError::Unavailable("harness session stores unavailable".to_owned()))?;
@@ -257,7 +260,7 @@ async fn tool_output(
         .history()
         .resolve_canonical(&gateway, &segment)
         .await?;
-    authorize(&gateway, &user, &resolved).await?;
+    authorize(&gateway, &user, &resolved, Need::Read).await?;
     Ok(Json(
         gateway
             .history()

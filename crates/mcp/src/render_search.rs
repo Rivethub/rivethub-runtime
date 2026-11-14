@@ -43,7 +43,7 @@ pub(crate) fn search(
     let Clock { now, zone } = clock;
     let mut text = String::new();
     if let Some(degraded) = &outcome.degraded {
-        write!(text, "⚠ {}\n{}\n\n", degraded.reason, degraded.effect)?;
+        writeln!(text, "{}\n", banner(degraded))?;
     }
     if let Some(synthesis) = &outcome.synthesis {
         text.push_str(synthesis);
@@ -181,6 +181,17 @@ fn attributed(
             kernel::memory::quote(provenance, content)
         ),
         None => format!("{lead} {content}"),
+    }
+}
+
+const UNCONFIGURED: &str = "embedding endpoint not configured";
+const KEYWORD_NOTE: &str = "Keyword search. Meaning-based search needs an embedding endpoint.";
+
+fn banner(degraded: &kernel::memory::MemoryDegraded) -> String {
+    if degraded.reason == UNCONFIGURED {
+        KEYWORD_NOTE.to_owned()
+    } else {
+        format!("⚠ {}\n{}", degraded.reason, degraded.effect)
     }
 }
 

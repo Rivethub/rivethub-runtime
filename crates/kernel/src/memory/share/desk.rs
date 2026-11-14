@@ -115,6 +115,7 @@ pub struct FoundSession {
     pub hits: usize,
     pub excerpts: Vec<String>,
     pub imported_from: Option<String>,
+    pub session: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

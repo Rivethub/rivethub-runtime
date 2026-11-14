@@ -69,6 +69,36 @@ pub(crate) async fn apply(conn: &mut PgConnection) -> Result<(), sqlx::Error> {
     .map(drop)
 }
 
+const NOT_VERIFIED: &str = "the memory database has not passed its schema and login checks yet";
+
+#[derive(Debug, Default)]
+pub(crate) struct Gate(std::sync::atomic::AtomicBool);
+
+impl Gate {
+    pub(crate) fn open(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn is_open(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+#[must_use]
+pub(crate) fn gated(options: PgPoolOptions, gate: std::sync::Arc<Gate>) -> PgPoolOptions {
+    options
+        .after_connect(move |conn, _| {
+            let open = gate.is_open();
+            Box::pin(async move {
+                if !open {
+                    return Err(sqlx::Error::Protocol(NOT_VERIFIED.to_owned()));
+                }
+                apply(conn).await
+            })
+        })
+        .before_acquire(|conn, _| Box::pin(async move { apply(conn).await.map(|()| true) }))
+}
+
 #[must_use]
 pub fn scoped(options: PgPoolOptions) -> PgPoolOptions {
     options

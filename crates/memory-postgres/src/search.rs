@@ -130,7 +130,13 @@ struct FusedEntry {
     arm_count: u32,
 }
 
-fn fuse(fts: &[ArmRow], vector: Option<&[ArmRow]>, trigram: Option<&[ArmRow]>) -> Vec<FusedEntry> {
+fn fuse(
+    fts: &[ArmRow],
+    vector: Option<&[ArmRow]>,
+    trigram: Option<&[ArmRow]>,
+    own: &std::collections::BTreeSet<String>,
+    own_weight: f64,
+) -> Vec<FusedEntry> {
     let mut arms: Vec<&[ArmRow]> = Vec::with_capacity(3);
     arms.push(fts);
     if let Some(rows) = vector {
@@ -156,7 +162,12 @@ fn fuse(fts: &[ArmRow], vector: Option<&[ArmRow]>, trigram: Option<&[ArmRow]>) -
                     tool_name: row.tool_name.clone(),
                     conversation_id: row.conversation_id.clone(),
                     created_at: row.created_at,
-                    score: fusion_score(ranked.rrf, row),
+                    score: fusion_score(ranked.rrf, row)
+                        * if row.session_id.as_ref().is_some_and(|key| own.contains(key)) {
+                            own_weight
+                        } else {
+                            1.0
+                        },
                     fallback: None,
                     session_id: row.session_id.clone(),
                     tags: None,
@@ -467,7 +478,9 @@ impl crate::PostgresMemory {
             None
         };
 
-        let fused = fuse(&fts_rows, vector_rows.as_deref(), trigram_rows.as_deref());
+        let fused = self
+            .fuse_owned(&fts_rows, vector_rows.as_deref(), trigram_rows.as_deref())
+            .await?;
         let top = fused.first().map(|entry| entry.hit.score);
         let hits: Vec<MemorySearchHit> = fused
             .into_iter()
@@ -485,6 +498,27 @@ impl crate::PostgresMemory {
             fallback,
             literal_skipped,
         })
+    }
+
+    async fn fuse_owned(
+        &self,
+        fts: &[ArmRow],
+        vector: Option<&[ArmRow]>,
+        trigram: Option<&[ArmRow]>,
+    ) -> Result<Vec<FusedEntry>, Error> {
+        let keys = fts
+            .iter()
+            .chain(vector.into_iter().flatten())
+            .chain(trigram.into_iter().flatten())
+            .filter_map(|row| row.session_id.clone())
+            .collect::<Vec<_>>();
+        let owners = self.team_owners(&keys).await?;
+        let own = if owners.is_empty() {
+            std::collections::BTreeSet::new()
+        } else {
+            self.own_sessions(&keys).await?
+        };
+        Ok(fuse(fts, vector, trigram, &own, self.own_weight))
     }
 
     fn record_access(&self, hits: &[MemorySearchHit]) -> Result<(), Error> {
@@ -527,3 +561,7 @@ pub(crate) async fn tune_hnsw(tx: &mut sqlx::PgConnection, ef_search: u64) -> Re
         .map_err(|source| Error::operation("vector search", source))?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/recall_rank.rs"]
+mod recall_rank;

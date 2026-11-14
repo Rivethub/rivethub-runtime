@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use config::provider::ProviderBody;
-use config::{Config, ConfigLocation, Environment, Loaded, Profile, ValidationResult};
+use config::{Config, ConfigLocation, Environment, Loaded, ValidationResult};
 
 use crate::service::NodeKind;
 use crate::tree::ConfigCommand;
@@ -32,16 +32,13 @@ fn load_kind(
     env: &Environment,
     location: &ConfigLocation,
 ) -> Result<(NodeKind, Loaded), config::ConfigError> {
-    let node_error = match Config::load(env, location, Profile::Node) {
-        Ok(loaded) => return Ok((NodeKind::Node, loaded)),
-        Err(error) => error,
+    let loaded = Config::load(env, location)?;
+    let kind = if loaded.config.sqlite_selected() && !loaded.config.has_model_sections() {
+        NodeKind::Standalone
+    } else {
+        NodeKind::Node
     };
-    match Config::load(env, location, Profile::Standalone) {
-        Ok(standalone) if standalone.config.sqlite_selected() => {
-            Ok((NodeKind::Standalone, standalone))
-        }
-        Ok(_) | Err(_) => Err(node_error),
-    }
+    Ok((kind, loaded))
 }
 
 pub(crate) async fn run(command: ConfigCommand, env: &Environment) -> Result<Report, Error> {

@@ -74,20 +74,28 @@ fn port_of(section: Option<&config::model::GatewaySection>) -> u16 {
 }
 
 #[must_use]
-pub fn private_ca(env: &config::Environment, shared_dir: &Path) -> Option<PathBuf> {
-    let path = env_path(
-        env,
-        "RIVETHUB_TLS_CA",
-        "RIVETOS_DEN_TLS_CA",
-        &mut Vec::new(),
-    )
-    .or_else(|| trimmed(env.text("RIVET_CA_CHAIN")).map(PathBuf::from))
-    .unwrap_or_else(|| {
-        shared_dir
-            .join("rivet-ca")
-            .join("intermediate")
-            .join("chain.pem")
-    });
+pub fn private_ca(
+    section: Option<&config::model::GatewaySection>,
+    env: &config::Environment,
+    shared_dir: &Path,
+) -> Option<PathBuf> {
+    let path = section
+        .and_then(|section| section.trust_root.clone())
+        .or_else(|| {
+            env_path(
+                env,
+                "RIVETHUB_TLS_CA",
+                "RIVETOS_DEN_TLS_CA",
+                &mut Vec::new(),
+            )
+        })
+        .or_else(|| trimmed(env.text("RIVET_CA_CHAIN")).map(PathBuf::from))
+        .unwrap_or_else(|| {
+            shared_dir
+                .join("rivet-ca")
+                .join("intermediate")
+                .join("chain.pem")
+        });
     path.is_file().then_some(path)
 }
 

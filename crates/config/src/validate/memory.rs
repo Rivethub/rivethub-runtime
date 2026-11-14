@@ -19,6 +19,16 @@ static NESTED_QUANTIFIERS: LazyLock<Result<Regex, regress::Error>> =
     LazyLock::new(|| Regex::new(NESTED_QUANTIFIER_PATTERN));
 
 pub(super) fn validate(out: &mut ValidationResult, memory: &MemorySection) {
+    if memory
+        .recall
+        .own_weight
+        .is_some_and(|weight| !weight.is_finite() || !(1.0..=2.0).contains(&weight))
+    {
+        out.error(
+            "memory.recall.own_weight",
+            "must be finite and between 1.0 and 2.0",
+        );
+    }
     if memory.postgres.is_some() && memory.sqlite.is_some() {
         out.error(
             "memory",

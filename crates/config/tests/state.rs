@@ -229,7 +229,7 @@ fn claim_round_trip(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(matches!(
         config::claim_node(&directory, std::process::id()),
-        Err(config::StateError::Locked { .. })
+        Err(config::StateError::AlreadyRunning { pid }) if pid == std::process::id()
     ));
     first.release()?;
     assert!(!pid_path.exists());
@@ -246,7 +246,7 @@ fn a_live_pid_file_refuses_the_claim() -> Result<(), Box<dyn std::error::Error>>
     let result = config::claim_node(&directory, pid.wrapping_add(1).max(2));
     assert!(matches!(
         result,
-        Err(config::StateError::LiveOwner { pid: found, .. }) if found == pid
+        Err(config::StateError::AlreadyRunning { pid: found }) if found == pid
     ));
     fs::remove_dir_all(home)?;
     Ok(())

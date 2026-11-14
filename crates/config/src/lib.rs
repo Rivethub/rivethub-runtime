@@ -6,6 +6,7 @@ pub mod model;
 mod node_name;
 pub mod paths;
 pub mod provider;
+pub mod recall;
 pub mod report;
 mod resolve;
 mod services;
@@ -25,11 +26,12 @@ pub use load::{
     validate_document,
 };
 pub use memory_models::{
-    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
+    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, NO_MODEL_NOTE,
+    ResolvedModels,
 };
 pub use model::{
-    CloudSection, Config, DecideSection, HarnessSlot, HubEntry, MappingFile, RedactionSettings,
-    TelemetrySection,
+    CloudSection, Config, DecideSection, EntitiesSection, HarnessSlot, HubEntry, MappingFile,
+    RedactionSettings, TelemetrySection,
 };
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{
@@ -40,4 +42,4 @@ pub use provider::{ProviderType, RemovedProviderType};
 pub use report::{Finding, Severity, ValidationResult};
 pub use resolve::resolve_env_vars_with;
 pub use services::ServiceSwitch;
-pub use validate::{IgnoredPath, PLUGINS_IGNORED, Profile, WORKFLOWS_IGNORED};
+pub use validate::{IgnoredPath, PLUGINS_IGNORED, WORKFLOWS_IGNORED};

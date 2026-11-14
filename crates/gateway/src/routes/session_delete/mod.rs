@@ -1,4 +1,5 @@
 pub(crate) mod catalog;
+mod messages;
 mod trash;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,12 +14,13 @@ use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteRefused, SessionDeleteRequest, SessionDeleteResult,
     SessionDeleteResults, SessionDeleted,
 };
-use wire::session_id::{SessionId, SessionKey, SessionKeyError, SessionRef, decode_segment};
+use wire::session_id::{SessionId, SessionKey};
 
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Body;
-use crate::history::{Resolved, authorize};
+use crate::history::Resolved;
+use crate::session_access::{self, Seen};
 use crate::tenancy::UserId;
 
 const MAX_BATCH: usize = 200;
@@ -57,6 +59,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/sessions/{session}/restore",
             post(catalog::restore).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/messages",
+            get(messages::messages).fallback(super::method_not_allowed),
         )
 }
 
@@ -114,52 +120,13 @@ pub(super) fn hidden(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Refusal {
     NotFound,
+    NotOwner,
 }
 
 fn deletions(gateway: &Gateway) -> Result<&dyn SessionDeletion, ApiError> {
     gateway
         .session_deletion()
         .ok_or_else(|| ApiError::Unavailable("session deletion unavailable".to_owned()))
-}
-
-pub(in crate::routes) fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
-    match segment.parse::<SessionKey>() {
-        Ok(key) => Ok(key),
-        Err(error @ SessionKeyError::Import(_)) => Err(ApiError::BadRequest(error.to_string())),
-        Err(SessionKeyError::Harness(_)) => encoded_session(segment).map(SessionKey::Harness),
-    }
-}
-
-fn encoded_session(segment: &str) -> Result<SessionId, ApiError> {
-    let decoded =
-        decode_segment(segment).map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    match decoded.session {
-        SessionRef::Canonical(session) => Ok(session),
-        SessionRef::Bare(_) => Err(ApiError::BadRequest(
-            "canonical session required".to_owned(),
-        )),
-    }
-}
-
-fn resolved(session: &SessionId) -> Resolved {
-    Resolved {
-        session: session.clone(),
-        harness: session.harness(),
-        native: session.native().to_owned(),
-        redirected_to: None,
-    }
-}
-
-pub(in crate::routes) async fn visible(
-    gateway: &Gateway,
-    user: &UserId,
-    session: &SessionId,
-) -> Result<bool, ApiError> {
-    match authorize(gateway, user, &resolved(session)).await {
-        Ok(()) => Ok(true),
-        Err(ApiError::SessionForbidden) => Ok(false),
-        Err(error) => Err(error),
-    }
 }
 
 async fn known(
@@ -184,30 +151,37 @@ async fn recorded(deletions: &dyn SessionDeletion, key: &str) -> Result<bool, Ap
     Ok(activity.get(key).is_some_and(SessionActivity::recorded))
 }
 
-async fn reachable(
+async fn reached(
     gateway: &Gateway,
     user: &UserId,
     deletions: &dyn SessionDeletion,
     key: &SessionKey,
-) -> Result<bool, ApiError> {
-    match key {
-        SessionKey::Harness(session) => Ok(
-            visible(gateway, user, session).await? && known(gateway, deletions, session).await?
-        ),
-        SessionKey::Import(_) => recorded(deletions, key.as_str()).await,
+) -> Result<Option<Seen>, ApiError> {
+    let seen = session_access::seen_one(gateway, user, key).await?;
+    if !seen.readable() {
+        return Ok(None);
+    }
+    let stored = match key {
+        SessionKey::Harness(session) => known(gateway, deletions, session).await?,
+        SessionKey::Import(_) => recorded(deletions, key.as_str()).await?,
+    };
+    Ok(stored.then_some(seen))
+}
+
+fn resolved(session: &SessionId) -> Resolved {
+    Resolved {
+        session: session.clone(),
+        harness: session.harness(),
+        native: session.native().to_owned(),
+        redirected_to: None,
     }
 }
 
-async fn ensure_reachable(
-    gateway: &Gateway,
-    user: &UserId,
-    key: &SessionKey,
-) -> Result<(), ApiError> {
-    if reachable(gateway, user, deletions(gateway)?, key).await? {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound(NOT_FOUND))
-    }
+async fn ensure_owned(gateway: &Gateway, user: &UserId, key: &SessionKey) -> Result<(), ApiError> {
+    reached(gateway, user, deletions(gateway)?, key)
+        .await?
+        .ok_or(ApiError::NotFound(NOT_FOUND))?
+        .change()
 }
 
 async fn erase(
@@ -216,8 +190,10 @@ async fn erase(
     session: &SessionKey,
 ) -> Result<Result<DeletedSession, Refusal>, ApiError> {
     let deletions = deletions(gateway)?;
-    if !reachable(gateway, user, deletions, session).await? {
-        return Ok(Err(Refusal::NotFound));
+    match reached(gateway, user, deletions, session).await? {
+        None => return Ok(Err(Refusal::NotFound)),
+        Some(seen) if seen.change().is_err() => return Ok(Err(Refusal::NotOwner)),
+        Some(_) => {}
     }
     let deleted = deletions
         .delete_session(session.as_str(), Some(user.as_str()), Utc::now())
@@ -247,10 +223,13 @@ async fn delete_one(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDeleted>, ApiError> {
-    let session = segment_key(&segment)?;
+    let session = crate::session_address::resolve(&gateway, &segment).await?;
     match erase(&gateway, &user, &session).await? {
         Ok(deleted) => Ok(Json(deleted_reply(session, deleted))),
         Err(Refusal::NotFound) => Err(ApiError::NotFound(NOT_FOUND)),
+        Err(Refusal::NotOwner) => Err(ApiError::Forbidden(
+            "only the person who owns this session can delete it".to_owned(),
+        )),
     }
 }
 
@@ -287,6 +266,7 @@ async fn delete_many(
             Ok(Err(Refusal::NotFound)) | Err(ApiError::BadRequest(_)) => {
                 refused(session, SessionDeleteError::NotFound)
             }
+            Ok(Err(Refusal::NotOwner)) => refused(session, SessionDeleteError::NotOwner),
             Err(error) => {
                 tracing::warn!(session = %session, %error, "session delete failed");
                 refused(session, SessionDeleteError::Failed)

@@ -9,31 +9,13 @@ use crate::gateway::session_catalog::TopicPath;
 use crate::memory::Provenance;
 use crate::session_id::SessionId;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-    strum::Display,
-    strum::EnumString,
-)]
-#[serde(rename_all = "kebab-case")]
-#[strum(serialize_all = "kebab-case")]
-pub enum EntityType {
-    Person,
-    Agent,
-    Machine,
-    Hardware,
-    Model,
-    Service,
-    Software,
-    Repository,
-    Domain,
-    Database,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityTypeInfo {
+    #[serde(rename = "type")]
+    pub key: String,
+    pub type_name: String,
+    pub count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -89,7 +71,8 @@ pub struct EntitySummary {
     pub id: String,
     pub title: String,
     #[serde(rename = "type")]
-    pub entity_type: EntityType,
+    pub entity_type: String,
+    pub type_name: String,
     pub session_count: usize,
 }
 
@@ -103,6 +86,7 @@ pub enum ChangeKind {
     Conflict,
     Tag,
     Merge,
+    History,
 }
 
 #[serde_with::skip_serializing_none]

@@ -116,6 +116,7 @@ impl DecisionStore for PostgresMemory {
         enqueue_syncs(
             &mut tx,
             topics.into_iter().map(SyncTopicPage::topic).collect(),
+            self.missing,
         )
         .await?;
         tx.commit().await.map_err(failed("decision write"))

@@ -27,6 +27,7 @@ mod review;
 mod search;
 mod session_catalog;
 mod session_marks;
+mod session_messages;
 pub use search::embed::QueryEmbed;
 mod stats;
 mod summary_dag;

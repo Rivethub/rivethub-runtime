@@ -347,12 +347,7 @@ pub(super) async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
 }
 
 async fn node_owner(config: &Config, env: &Environment) -> Result<String, Error> {
-    let path = env.users_file().map(PathBuf::from).or_else(|| {
-        config
-            .gateway
-            .as_ref()
-            .and_then(|gateway| gateway.users_file.clone())
-    });
+    let path = config.users_file(env);
     let Some(path) = path else {
         return Ok(DEFAULT_OWNER_ID.to_owned());
     };

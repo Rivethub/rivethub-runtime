@@ -166,6 +166,14 @@ impl<'a> CaptureWriter<'a> {
         Ok(Self { tx, undated_from })
     }
 
+    pub(crate) async fn defer_embeddings(&mut self) -> Result<(), Error> {
+        sqlx::query("select set_config('rivet.defer_embed_enqueue', 'on', true)")
+            .execute(&mut *self.tx)
+            .await
+            .map_err(|source| Error::operation("embed defer", source))?;
+        Ok(())
+    }
+
     pub(crate) async fn carries_receipt(
         &mut self,
         session_key: &str,

@@ -3,6 +3,7 @@ use std::str::FromStr as _;
 use async_trait::async_trait;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
 use kernel::facts::FactError;
 use kernel::facts::FactId;
@@ -115,6 +116,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
                 .map_err(|error| invalid("fact session", error))?,
             summary: Uuid::parse_str(summary).map_err(|error| invalid("fact summary", error))?,
             evidence: row.evidence.as_deref().and_then(Evidence::quote),
+            settled: false,
         }),
         (actor, _, _) => Err(invalid("fact actor", actor)),
     }
@@ -162,6 +164,7 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
             session,
             summary,
             evidence,
+            settled: _,
         } => (
             "wiki-writer",
             false,
@@ -327,5 +330,9 @@ impl FactStore for SqliteStore {
             Ok(found)
         })
         .await
+    }
+
+    async fn entity_history(&self, _entity: TopicId) -> Result<Vec<EntityHistory>, FactError> {
+        Ok(Vec::new())
     }
 }

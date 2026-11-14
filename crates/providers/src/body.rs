@@ -10,6 +10,7 @@ use wire::stream::openai::JsonSchemaFormat;
 use wire::stream::openai::MessageToolCall;
 use wire::stream::openai::ResponseFormat;
 use wire::stream::openai::StreamOptions;
+use wire::stream::openai::StructuredOutputs;
 use wire::stream::openai::Tool;
 
 use crate::Variant;
@@ -121,6 +122,21 @@ pub fn chat_body(
         wire_messages.push(wire_message(&message)?);
     }
     let tools = tools(&request.tools)?;
+    let response_format = request
+        .options
+        .json_schema
+        .as_ref()
+        .map(response_format)
+        .transpose()?;
+    let structured_outputs = response_format.as_ref().and_then(|format| {
+        request
+            .options
+            .disable_any_whitespace
+            .then(|| StructuredOutputs {
+                json: Some(format.json_schema.schema.clone()),
+                disable_any_whitespace: Some(true),
+            })
+    });
     Ok(ChatCompletionRequest {
         model: request.model.clone(),
         max_tokens: request.max_tokens.or(configured_max_tokens).map(u64::from),
@@ -146,12 +162,9 @@ pub fn chat_body(
                 _ => None,
             }),
         think: None,
-        response_format: request
-            .options
-            .json_schema
-            .as_ref()
-            .map(response_format)
-            .transpose()?,
+        reasoning: None,
+        response_format,
+        structured_outputs,
     })
 }
 
@@ -268,5 +281,45 @@ mod url_tests {
             chat_url("http://host:8000/v1", &normalize_api_prefix(Some(""))),
             "http://host:8000/chat/completions"
         );
+    }
+
+    #[derive(schemars::JsonSchema)]
+    struct Probe {
+        #[expect(dead_code, reason = "the field exists so the schema is an object")]
+        ok: bool,
+    }
+
+    #[test]
+    fn thinking_off_and_compact_json_are_sent_only_when_the_caller_asks() {
+        let request = kernel::model::ModelRequest {
+            options: kernel::model::ModelOptions {
+                enable_thinking: Some(false),
+                json_schema: Some(schemars::schema_for!(Probe)),
+                disable_any_whitespace: true,
+                ..kernel::model::ModelOptions::default()
+            },
+            model: "thinkingcap-flash-next".to_owned(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            thinking: None,
+            max_tokens: Some(4_000),
+        };
+        let body = super::chat_body(crate::Variant::Vllm, &request, None).expect("body");
+        assert_eq!(
+            body.chat_template_kwargs,
+            Some(wire::stream::openai::ChatTemplateKwargs {
+                enable_thinking: false
+            })
+        );
+        let compact = body.structured_outputs.expect("compact json");
+        assert_eq!(compact.disable_any_whitespace, Some(true));
+        assert!(compact.json.is_some());
+        let plain = kernel::model::ModelRequest {
+            options: kernel::model::ModelOptions::default(),
+            ..request
+        };
+        let plain = super::chat_body(crate::Variant::OpenaiCompatible, &plain, None).expect("body");
+        assert_eq!(plain.chat_template_kwargs, None);
+        assert_eq!(plain.structured_outputs, None);
     }
 }

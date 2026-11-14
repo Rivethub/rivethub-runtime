@@ -1,3 +1,4 @@
+pub mod account_login;
 mod argv;
 mod auth;
 pub mod capture_hook;
@@ -49,10 +50,14 @@ impl Report {
     }
 
     pub fn failure(error: &impl std::fmt::Display) -> Self {
+        Self::error(error, Exit::Failure)
+    }
+
+    pub fn error(error: &impl std::fmt::Display, exit: Exit) -> Self {
         Self {
             stdout: String::new(),
             stderr: format!("Error: {error}\n"),
-            exit: Exit::Failure,
+            exit,
             stdout_raw: Vec::new(),
         }
     }
@@ -111,7 +116,14 @@ pub async fn dispatch(cli: Cli, env: &Environment, shutdown: &CancellationToken)
     };
     match result {
         Ok(dispatch) => dispatch,
-        Err(error) => Dispatch::Complete(Report::failure(&error)),
+        Err(error) => {
+            let exit = if let Error::State(config::StateError::AlreadyRunning { .. }) = &error {
+                Exit::AlreadyRunning
+            } else {
+                Exit::Failure
+            };
+            Dispatch::Complete(Report::error(&error, exit))
+        }
     }
 }
 

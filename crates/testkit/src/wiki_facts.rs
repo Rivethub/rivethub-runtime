@@ -18,7 +18,6 @@ use crate::topics::at;
 use crate::topics::same;
 use crate::wiki_routes::HOST;
 use crate::wiki_routes::RouteStores;
-use crate::wiki_routes::SESSION_KEY;
 use crate::wiki_routes::host;
 
 type Found<T> = Result<T, Box<dyn std::error::Error>>;
@@ -119,24 +118,15 @@ pub async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin(
         )
         .await?;
     same(
-        "the pin holds, the writer's value is a candidate, and a nameless fact is dropped",
+        "the topic router leaves the pin and writes no entity claim",
         shown_facts(&stores.facts.claims(entity.id).await?),
-        vec![
-            (
-                "os".to_owned(),
-                "Debian 12".to_owned(),
-                true,
-                Vec::new(),
-                vec![format!("{SESSION_KEY} Ubuntu 24.04")],
-            ),
-            (
-                "role".to_owned(),
-                "build box".to_owned(),
-                false,
-                vec![SESSION_KEY.to_owned()],
-                Vec::new(),
-            ),
-        ],
+        vec![(
+            "os".to_owned(),
+            "Debian 12".to_owned(),
+            true,
+            Vec::new(),
+            Vec::new(),
+        )],
     )?;
     Ok(())
 }
@@ -152,29 +142,10 @@ pub async fn a_held_candidate_keeps_its_own_session_for_its_facts(
     stores
         .route(job, vec![host_with(text, &[("address", "192.0.2.7")])?])
         .await?;
-    let entity = stores
-        .named(TopicKind::Entity, HOST)
-        .await?
-        .ok_or("the second mention creates the entity")?;
     same(
-        "each fact cites the session that said it",
-        shown_facts(&stores.facts.claims(entity.id).await?),
-        vec![
-            (
-                "address".to_owned(),
-                "192.0.2.7".to_owned(),
-                false,
-                vec![SESSION_KEY.to_owned()],
-                Vec::new(),
-            ),
-            (
-                "os".to_owned(),
-                "Ubuntu 22.04".to_owned(),
-                false,
-                vec!["claude-code:00000000-0000-4000-8000-000000000099".to_owned()],
-                Vec::new(),
-            ),
-        ],
+        "the topic router does not create the entity",
+        stores.named(TopicKind::Entity, HOST).await?,
+        None,
     )?;
     Ok(())
 }

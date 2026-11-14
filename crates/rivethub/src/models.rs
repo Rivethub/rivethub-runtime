@@ -187,29 +187,9 @@ impl ModelFactory {
         self.health.values().cloned().collect()
     }
 
-    pub async fn from_config(
-        config: &Config,
-        env: &Environment,
-        shutdown: &CancellationToken,
-    ) -> Result<Self, ModelError> {
+    #[must_use]
+    pub fn without_harnesses(env: &Environment) -> Self {
         Self::with_embedding(env)
-            .with_agent_providers(config, env, shutdown)
-            .await
-    }
-
-    pub async fn with_agent_providers(
-        self,
-        config: &Config,
-        env: &Environment,
-        shutdown: &CancellationToken,
-    ) -> Result<Self, ModelError> {
-        let ids = config
-            .agents
-            .iter()
-            .flat_map(|agents| agents.values())
-            .filter_map(|agent| agent.provider.as_deref())
-            .collect();
-        self.install(config, env, ids, shutdown).await
     }
 
     pub async fn for_providers(
@@ -219,7 +199,7 @@ impl ModelFactory {
         shutdown: &CancellationToken,
     ) -> Result<Self, ModelError> {
         Self::with_embedding(env)
-            .install(config, env, ids, shutdown)
+            .with_providers(config, env, ids, shutdown)
             .await
     }
 
@@ -235,7 +215,7 @@ impl ModelFactory {
         self
     }
 
-    async fn install(
+    pub async fn with_providers(
         mut self,
         config: &Config,
         env: &Environment,

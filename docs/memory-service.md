@@ -41,7 +41,8 @@ memory:
 `default` is required. `summarizer`, `categorizer` and `wiki_writer` inherit
 it when they have no entry. `embedder` takes either a `provider` or an
 `endpoint` with a `model`. Without `memory.models` every job uses the default
-agent's provider and model, as before, and the node logs one notice.
+agent's provider and model, as before. The node does not log that on startup.
+`rh doctor` says so when no model can be resolved (CONTRACT note 173).
 
 `GET /api/memory/models` lists the five roles with the assigned provider and
 model, whether the role inherits `default`, a health of `healthy`, `slow` or

@@ -32,7 +32,7 @@ user unit `~/.config/systemd/user/rivethub.service`.
 
 | Command | Behaviour | Exit |
 |---|---|---|
-| `rh service init` | writes the unit: `Type=simple`, `ExecStart=<absolute path of this rh binary> start`, `EnvironmentFile=-<state dir>/.env`, `Environment=RIVETHUB_LOG_LEVEL=info`, `Restart=on-failure`, `RestartSec=5`. It refuses to overwrite an existing unit (`Service file already exists: <path>` and `Delete it first if you want to regenerate.`, exit 1). In user mode it reports whether lingering is enabled for the user (`loginctl show-user`), and prints `sudo loginctl enable-linger <user>` when it is not | 0 written; 1 exists or write error |
+| `rh service init` | writes the unit: `Type=simple`, `ExecStart=<absolute path of this rh binary> start`, `EnvironmentFile=-<state dir>/.env` (unquoted), `Environment=RIVETHUB_LOG_LEVEL=info`, `Restart=on-failure`, `RestartSec=5`, `RestartPreventExitStatus=11`. A unit that matches the shape `rh` writes and differs is replaced, the previous file kept as `rivethub.service.bak`, and one line says what changed. A unit edited by hand is left unchanged and the differing lines are named (exit 1). A symlink at the path is still `Service file already exists`. In user mode it reports whether lingering is enabled for the user (`loginctl show-user`), and prints `sudo loginctl enable-linger <user>` when it is not | 0 written, already current, or updated; 1 hand-edited or write error |
 | `rh service start` / `restart` | `systemctl [--user] daemon-reload`, then the verb, then prints `systemctl [--user] status rivethub --no-pager` | the `systemctl` verb's failure is exit 1 with its stderr; it is never swallowed |
 | `rh service stop` | `systemctl [--user] stop rivethub` | 0 / 1 as above |
 | `rh service status` | `systemctl [--user] status rivethub --no-pager`, passed through | `systemctl`'s own exit code |
@@ -40,7 +40,7 @@ user unit `~/.config/systemd/user/rivethub.service`.
 | `rh service <other>` | `Unknown action: <name>` and the usage | 1 |
 
 The unit body is generated from one typed struct and serialised in systemd's format. Tests check the generated unit,
-the root/user path choice and the refusal to overwrite, and use a fake `systemctl`/`journalctl` on PATH for the verbs.
+the root/user path choice, the repair of a unit `rh` generated and the refusal to overwrite a hand-edited unit, and use a fake `systemctl`/`journalctl` on PATH for the verbs.
 They never touch the real systemd.
 
 ## `rh start` and `rh stop` (third slice)

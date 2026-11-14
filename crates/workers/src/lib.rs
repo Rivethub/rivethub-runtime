@@ -4,6 +4,7 @@ pub mod digest;
 mod dispatch;
 mod embed;
 pub mod embedding_sweep;
+pub mod entity_builder;
 mod error;
 mod filing;
 mod job_settings;

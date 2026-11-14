@@ -14,14 +14,14 @@ pub(super) async fn list(
 ) -> Result<Json<Vec<ModelJob>>, ApiError> {
     gateway.tenancy.owner(&user)?;
     let assignments = gateway.model_assignments();
-    if assignments.is_empty() {
-        return Ok(Json(Vec::new()));
-    }
     let tasks = gateway
         .upkeep()?
         .tasks()
         .await
         .map_err(super::tidy::error)?;
+    if assignments.is_empty() {
+        return Ok(Json(crate::models::unconfigured(&tasks)));
+    }
     Ok(Json(crate::models::report(
         assignments,
         gateway.provider_health(),

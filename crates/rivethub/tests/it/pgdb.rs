@@ -66,7 +66,59 @@ impl TestDb {
     pub(crate) fn pool(&self) -> PgPool {
         self.pool.clone()
     }
+
+    pub(crate) async fn served_url(&self) -> Result<String, Error> {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DO $$ BEGIN CREATE ROLE {SERVICE} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{SERVICE}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        )))
+        .execute(&self.pool)
+        .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER DATABASE \"{name}\" OWNER TO {SERVICE};
+             DO $$ DECLARE item record; BEGIN
+                FOR item IN SELECT n.nspname FROM pg_namespace n
+                             WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema' LOOP
+                    EXECUTE format('ALTER SCHEMA %I OWNER TO {SERVICE}', item.nspname);
+                END LOOP;
+                FOR item IN SELECT c.oid::regclass AS name FROM pg_class c
+                              JOIN pg_namespace n ON n.oid = c.relnamespace
+                             WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+                               AND c.relkind IN ('r', 'v', 'm', 'S', 'p')
+                               AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                                WHERE d.objid = c.oid AND d.deptype IN ('e', 'a', 'i')) LOOP
+                    EXECUTE format('ALTER TABLE %s OWNER TO {SERVICE}', item.name);
+                END LOOP;
+                FOR item IN SELECT p.oid::regprocedure AS name FROM pg_proc p
+                              JOIN pg_namespace n ON n.oid = p.pronamespace
+                             WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+                               AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') LOOP
+                    EXECUTE format('ALTER ROUTINE %s OWNER TO {SERVICE}', item.name);
+                END LOOP;
+                FOR item IN SELECT t.oid::regtype AS name FROM pg_type t
+                              JOIN pg_namespace n ON n.oid = t.typnamespace
+                             WHERE n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema'
+                               AND t.typtype IN ('c', 'e', 'd') AND t.typrelid = 0
+                               AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e') LOOP
+                    EXECUTE format('ALTER TYPE %s OWNER TO {SERVICE}', item.name);
+                END LOOP;
+             END $$",
+            name = self.name
+        )))
+        .execute(&self.pool)
+        .await?;
+        let options = self
+            .pool
+            .connect_options()
+            .as_ref()
+            .clone()
+            .username(SERVICE)
+            .password(SERVICE);
+        Ok(options.to_url_lossy().to_string())
+    }
 }
+
+pub(crate) const SERVICE: &str = "rh_test_service";
 
 impl Deref for TestDb {
     type Target = PgPool;

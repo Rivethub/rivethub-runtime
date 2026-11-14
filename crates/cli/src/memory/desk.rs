@@ -571,6 +571,7 @@ fn server_error(error: ServerError) -> DeskError {
         | ServerError::Refused(_)
         | ServerError::Protocol(_)
         | ServerError::NoDeviceFlow(_)
+        | ServerError::TokenFile(_)
         | ServerError::Cancelled) => DeskError::Failed(other.to_string()),
     }
 }

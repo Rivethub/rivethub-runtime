@@ -45,6 +45,7 @@ pub struct Config {
     pub hubs: Option<Vec<HubEntry>>,
     pub telemetry: Option<TelemetrySection>,
     pub cloud: Option<CloudSection>,
+    pub entities: Option<EntitiesSection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -68,6 +69,13 @@ pub struct CloudSection {
     pub url: Option<url::Url>,
     pub update_key: Option<String>,
     pub disabled: bool,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct EntitiesSection {
+    pub matcher: Option<String>,
+    pub matcher_url: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -174,6 +182,7 @@ pub struct ChannelTls {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct MemorySection {
+    pub recall: crate::recall::RecallSection,
     pub import_pg_dump: Option<PathBuf>,
     pub backend: Option<MemoryBackend>,
     pub postgres: Option<PostgresSection>,
@@ -335,6 +344,7 @@ pub struct GatewaySection {
     pub token: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub trust_root: Option<PathBuf>,
     pub users_file: Option<PathBuf>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
@@ -473,6 +483,14 @@ pub struct DeploymentSection {
 
 impl Config {
     #[must_use]
+    pub fn users_file(&self, env: &Environment) -> Option<std::path::PathBuf> {
+        self.gateway
+            .as_ref()
+            .and_then(|gateway| gateway.users_file.clone())
+            .or_else(|| env.users_file().map(std::path::PathBuf::from))
+    }
+
+    #[must_use]
     pub fn memory_postgres_url(&self, env: &Environment) -> Option<String> {
         self.memory
             .as_ref()
@@ -536,6 +554,11 @@ impl Config {
     #[must_use]
     pub fn postgres_selected(&self, env: &Environment) -> bool {
         !self.sqlite_selected() && self.memory_postgres_url(env).is_some()
+    }
+
+    #[must_use]
+    pub fn has_model_sections(&self) -> bool {
+        self.runtime.is_some() || self.agents.is_some() || self.providers.is_some()
     }
 
     #[must_use]
