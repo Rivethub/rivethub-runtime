@@ -3211,6 +3211,17 @@ their own name, or the scope of a space they belong to, and nothing else. No ele
 logins still call none (note 0055's rule). `scope_for` asks for the root directory first when the scope may take it,
 and falls back to the person's own directory when another scope already holds the root. `memory_postgres::SCHEMA_VERSION` is 75.
 
+(177) A held Claude prompt is kept until its batch is on disk (Phil, 2026-11-14, audit F4). The Claude hook holds a
+`UserPromptSubmit` prompt in `<state>/claude-pending/<session>.jsonl` until the turn's transcript carries it. At a
+turn end it read and deleted that file before building the batch, so a batch that failed to build (a transcript row
+with a bad timestamp) or to reach the spool lost the prompt while capture reported the failure. Now the hook claims
+the file under a per-session lock (`<session>.lock`) by renaming it to `<session>.claimed-<id>.jsonl`, reads every
+claim present (a claim left by an earlier failed or interrupted run included), and deletes the claims only once the
+writer has saved the batch: delivered, or spooled for replay, or moved to the dead-letter folder. Any earlier failure
+leaves them for the next turn end. A prompt held while a capture runs goes to a new pending file under the same lock.
+Event ids are unchanged (`<session>:hook:<key>`), so a prompt sent twice is stored once, and pending files written
+by earlier builds read as before.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

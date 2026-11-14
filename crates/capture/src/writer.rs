@@ -82,6 +82,11 @@ impl WriteError {
     pub fn spooled(&self) -> bool {
         matches!(self, Self::Post(error) if !matches!(error, PostError::Client { .. }))
     }
+
+    #[must_use]
+    pub fn saved(&self) -> bool {
+        matches!(self, Self::Post(_))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
