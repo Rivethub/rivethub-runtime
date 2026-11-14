@@ -40,7 +40,10 @@ fn config(path: &Path, message: impl Into<String>) -> SetupError {
 }
 
 pub(super) fn writable(recall: &Recall) -> bool {
-    matches!(recall, Recall::Json { .. } | Recall::Toml { .. })
+    matches!(
+        recall,
+        Recall::Json { .. } | Recall::Toml { .. } | Recall::Dsh { .. }
+    )
 }
 
 fn servers(
@@ -66,18 +69,25 @@ fn servers(
         Recall::Yaml { .. } => serde_yaml_ng::from_str::<TomlServers>(text)
             .map(|doc| doc.mcp_servers)
             .map_err(|error| config(path, error.to_string())),
-        Recall::Unwritable(_) => Ok(BTreeMap::new()),
+        Recall::Dsh { .. } | Recall::Unwritable(_) => Ok(BTreeMap::new()),
     }
 }
 
 fn file_of(recall: &Recall) -> Option<Location> {
     match recall {
-        Recall::Json { file, .. } | Recall::Toml { file } | Recall::Yaml { file } => Some(*file),
+        Recall::Json { file, .. }
+        | Recall::Toml { file }
+        | Recall::Yaml { file }
+        | Recall::Dsh { file } => Some(*file),
         Recall::Unwritable(_) => None,
     }
 }
 
 pub(super) fn detect(locator: &Locator, recall: &Recall) -> RecallView {
+    if let Recall::Dsh { .. } = recall {
+        let (state, detail) = super::dsh::recall_status(locator);
+        return RecallView { state, detail };
+    }
     if let Recall::Unwritable(reason) = recall {
         return RecallView {
             state: RecallState::NotConnected,
@@ -194,6 +204,13 @@ pub(super) fn plan_connect(
                 "its MCP servers live in a YAML file rh does not edit yet",
             ));
         }
+        Recall::Dsh { .. } => {
+            let (edits, skipped) = super::dsh::plan(locator, rh, &[ConnectPart::Recall], true)?;
+            return match skipped {
+                Some(error) => Err(error),
+                None => Ok(edits),
+            };
+        }
         Recall::Json { file, .. } | Recall::Toml { file } => locator
             .target(*file)
             .ok_or_else(|| config(Path::new(""), "no home directory to write to"))?,
@@ -229,7 +246,7 @@ pub(super) fn plan_connect(
             .map_err(|error| config(&target, error.to_string()))?;
             toml_text::append_block(&current, &format!("[mcp_servers.{ENTRY_NAME}]\n{body}"))
         }
-        Recall::Yaml { .. } | Recall::Unwritable(_) => current,
+        Recall::Yaml { .. } | Recall::Dsh { .. } | Recall::Unwritable(_) => current,
     };
     if !text.ends_with('\n') {
         text.push('\n');
@@ -261,6 +278,10 @@ pub(super) fn plan_disconnect(
                 reason: "its MCP servers live in a YAML file rh does not edit yet",
             });
         }
+        Recall::Dsh { .. } => {
+            return super::dsh::plan(locator, Path::new(""), &[ConnectPart::Recall], false)
+                .map(|(edits, _)| edits);
+        }
         Recall::Json { file, .. } | Recall::Toml { file } => match locator.target(*file) {
             Some(target) => target,
             None => return Ok(Vec::new()),
@@ -286,7 +307,7 @@ pub(super) fn plan_disconnect(
         Recall::Toml { .. } => ours.iter().fold(before.clone(), |text, name| {
             toml_text::remove_tables(&text, "mcp_servers", name)
         }),
-        Recall::Yaml { .. } | Recall::Unwritable(_) => before.clone(),
+        Recall::Yaml { .. } | Recall::Dsh { .. } | Recall::Unwritable(_) => before.clone(),
     };
     Ok(vec![FileEdit {
         path: target,

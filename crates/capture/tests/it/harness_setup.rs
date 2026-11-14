@@ -552,12 +552,9 @@ fn disconnecting_removes_only_rhs_entries_and_leaves_the_rest_as_it_was() -> Tes
 #[test]
 fn what_rh_cannot_write_is_refused_with_a_reason() -> TestResult {
     let machine = machine()?;
-    machine.write(".dsh/.keep", "")?;
     machine.write(".hermes/config.yaml", "mcp_servers: {}\n")?;
     machine.write(".cursor/.keep", "")?;
     for (id, part) in [
-        ("dsh", ConnectPart::Capture),
-        ("dsh", ConnectPart::Recall),
         ("hermes", ConnectPart::Recall),
         ("cursor", ConnectPart::Capture),
     ] {
@@ -623,5 +620,391 @@ fn a_symlinked_config_keeps_its_link() -> TestResult {
             .is_symlink()
     );
     assert!(machine.read("dotfiles/mcp.json")?.contains("rivethub"));
+    Ok(())
+}
+
+fn fake_dsh(machine: &Machine) -> TestResult {
+    let lib = machine.path("bin/node_modules/@deepseek-ai/dsh-mcp-client/lib");
+    fs::create_dir_all(&lib)?;
+    fs::write(machine.path("bin/dsh"), "")?;
+    fs::write(lib.join("index.js"), "")?;
+    Ok(())
+}
+
+fn dsh_patch(machine: &Machine) -> PathBuf {
+    machine.path(".dsh/cordis.patch.yml")
+}
+
+#[test]
+fn dsh_without_a_binary_connects_capture_and_skips_recall() -> TestResult {
+    let machine = machine()?;
+    machine.write(".dsh/.keep", "")?;
+    let change = machine.change("dsh", None, false)?;
+    assert!(matches!(
+        change.skipped,
+        Some(SetupError::Unsupported {
+            part: ConnectPart::Recall,
+            ..
+        })
+    ));
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains("rivethub-capture"), "{patch}");
+    assert!(!patch.contains("rivethub-recall"), "{patch}");
+    assert!(machine.path(".dsh/plugins/rivethub-capture.mjs").is_file());
+    assert!(
+        !machine
+            .probe("dsh")?
+            .recall
+            .detail
+            .contains("every profile")
+    );
+    Ok(())
+}
+
+#[test]
+fn dsh_connect_wires_capture_and_recall_for_every_profile() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    machine.write(".dsh/.keep", "")?;
+    let outcome = machine.connect("dsh", None, false)?;
+    assert!(
+        outcome.diff.contains("rivethub-capture.mjs"),
+        "{}",
+        outcome.diff
+    );
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    let client = fs::canonicalize(
+        machine.path("bin/node_modules/@deepseek-ai/dsh-mcp-client/lib/index.js"),
+    )?;
+    assert!(patch.contains(&client.display().to_string()), "{patch}");
+    assert!(patch.contains("serverName: rivethub"), "{patch}");
+    assert!(patch.contains("failOnStartupError: false"), "{patch}");
+    assert!(patch.contains(RH), "{patch}");
+    let plugin = machine.read(".dsh/plugins/rivethub-capture.mjs")?;
+    assert!(plugin.contains("turn/end"), "{plugin}");
+    assert!(plugin.contains("inject = ['sessions']"), "{plugin}");
+    assert!(plugin.contains("capture hook --harness dsh"), "{plugin}");
+    assert!(plugin.contains(RH), "{plugin}");
+    assert!(!plugin.contains("__COMMAND__"), "{plugin}");
+    let probe = machine.probe("dsh")?;
+    assert!(probe.capture_installed);
+    assert_eq!(probe.recall.state, RecallState::Connected);
+    assert!(!probe.can_connect);
+    assert_eq!(
+        probe.install_detail,
+        format!(
+            "home patch {} covers every profile, including profiles created later",
+            dsh_patch(&machine).display()
+        )
+    );
+    machine.write(".dsh/profiles/headless/package.json", "{}\n")?;
+    assert!(machine.probe("dsh")?.install_detail.contains("(headless)"));
+    Ok(())
+}
+
+#[test]
+fn dsh_dry_run_writes_nothing() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    machine.write(".dsh/.keep", "")?;
+    let outcome = machine.connect("dsh", None, true)?;
+    assert!(
+        outcome.diff.contains("cordis.patch.yml"),
+        "{}",
+        outcome.diff
+    );
+    assert_eq!(outcome.backup_path, "");
+    assert!(!dsh_patch(&machine).exists());
+    assert!(!machine.path(".dsh/plugins/rivethub-capture.mjs").exists());
+    assert_eq!(machine.backups(), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn dsh_connect_twice_changes_nothing_the_second_time() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    machine.write(".dsh/cordis.patch.yml", "[]\n")?;
+    let first = machine.connect("dsh", None, false)?;
+    assert!(!first.backup_path.is_empty(), "{}", first.backup_path);
+    let backups = machine.backups();
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    let plugin = machine.read(".dsh/plugins/rivethub-capture.mjs")?;
+    let second = machine.connect("dsh", None, false)?;
+    assert!(second.diff.is_empty(), "{}", second.diff);
+    assert_eq!(machine.backups(), backups);
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, patch);
+    assert_eq!(machine.read(".dsh/plugins/rivethub-capture.mjs")?, plugin);
+    Ok(())
+}
+
+#[test]
+fn dsh_disconnect_restores_an_empty_patch_and_profile_files() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let package = "{\n  \"name\": \"headless\"\n}\n";
+    let profile = "# keep\n[]\n";
+    let generated = "services: {}\n";
+    machine.write(".dsh/profiles/headless/package.json", package)?;
+    machine.write(".dsh/profiles/headless/cordis.patch.yml", profile)?;
+    machine.write(".dsh/profiles/headless/cordis.yml", generated)?;
+    machine.write(".dsh/cordis.patch.yml", "[]\n")?;
+    machine.connect("dsh", None, false)?;
+    let now = Utc
+        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
+        .single()
+        .unwrap_or_default();
+    machine.service.disconnect_now("dsh", None, false, now)?;
+    assert_eq!(
+        machine.read(".dsh/profiles/headless/package.json")?,
+        package
+    );
+    assert_eq!(
+        machine.read(".dsh/profiles/headless/cordis.patch.yml")?,
+        profile
+    );
+    assert_eq!(
+        machine.read(".dsh/profiles/headless/cordis.yml")?,
+        generated
+    );
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, "[]\n");
+    assert!(!machine.path(".dsh/plugins/rivethub-capture.mjs").exists());
+    assert!(!machine.probe("dsh")?.capture_installed);
+    Ok(())
+}
+
+#[test]
+fn dsh_disconnect_restores_comments_around_an_empty_patch() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "# c\n[]\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    machine.connect("dsh", None, false)?;
+    let now = Utc
+        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
+        .single()
+        .unwrap_or_default();
+    machine.service.disconnect_now("dsh", None, false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    Ok(())
+}
+
+#[test]
+fn dsh_connect_keeps_existing_patch_items() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "- insert:\n    - id: mine\n      name: ./mine.mjs\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    machine.connect("dsh", None, false)?;
+    let patched = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patched.starts_with(original), "{patched}");
+    assert!(patched.contains("rivethub-capture"), "{patched}");
+    let now = Utc
+        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
+        .single()
+        .unwrap_or_default();
+    machine.service.disconnect_now("dsh", None, false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    Ok(())
+}
+
+#[test]
+fn dsh_leaves_a_patch_it_cannot_parse_untouched() -> TestResult {
+    let machine = machine()?;
+    machine.write(".dsh/cordis.patch.yml", "name: mine\n")?;
+    assert!(
+        machine
+            .connect("dsh", Some(ConnectPart::Capture), false)
+            .is_err()
+    );
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, "name: mine\n");
+    assert_eq!(machine.backups(), Vec::<String>::new());
+    machine.write(".dsh/cordis.patch.yml", "[ ]\n")?;
+    let error = machine
+        .connect("dsh", Some(ConnectPart::Capture), false)
+        .err()
+        .ok_or("flow-style patch should be refused")?;
+    assert!(error.to_string().contains("flow-style"), "{error}");
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, "[ ]\n");
+    Ok(())
+}
+
+#[test]
+fn dsh_capture_only_does_not_add_recall() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    machine.write(".dsh/.keep", "")?;
+    machine.connect("dsh", Some(ConnectPart::Capture), false)?;
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains("rivethub-capture"), "{patch}");
+    assert!(!patch.contains("rivethub-recall"), "{patch}");
+    machine.connect("dsh", Some(ConnectPart::Recall), false)?;
+    let both = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(both.contains("rivethub-recall"), "{both}");
+    assert!(both.contains("rivethub-capture"), "{both}");
+    let third = machine.connect("dsh", None, false)?;
+    assert!(third.diff.is_empty(), "{}", third.diff);
+    Ok(())
+}
+
+#[test]
+fn dsh_recall_only_does_not_write_the_plug_in() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    machine.write(".dsh/.keep", "")?;
+    machine.connect("dsh", Some(ConnectPart::Recall), false)?;
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains("rivethub-recall"), "{patch}");
+    assert!(!patch.contains("rivethub-capture"), "{patch}");
+    assert!(!machine.path(".dsh/plugins/rivethub-capture.mjs").exists());
+    Ok(())
+}
+
+#[test]
+fn dsh_recall_alone_is_an_error_when_rh_cannot_find_the_client() -> TestResult {
+    let machine = machine()?;
+    machine.write(".dsh/.keep", "")?;
+    let missing = machine
+        .connect("dsh", Some(ConnectPart::Recall), false)
+        .err()
+        .ok_or("recall should fail closed")?;
+    assert!(
+        missing.to_string().contains("cannot find the dsh binary"),
+        "{missing}"
+    );
+    assert!(!dsh_patch(&machine).exists());
+    fs::write(machine.path("bin/dsh"), "")?;
+    let unpackaged = machine
+        .connect("dsh", Some(ConnectPart::Recall), false)
+        .err()
+        .ok_or("recall should name the missing package")?;
+    assert!(
+        unpackaged
+            .to_string()
+            .contains("no @deepseek-ai/dsh-mcp-client"),
+        "{unpackaged}"
+    );
+    assert!(!dsh_patch(&machine).exists());
+    Ok(())
+}
+
+#[test]
+fn dsh_status_names_profiles_the_home_patch_does_not_cover() -> TestResult {
+    let machine = machine()?;
+    machine.write(
+        ".dsh/profiles/headless/plugin/index.mjs",
+        "capture hook --harness dsh\n",
+    )?;
+    machine.write(
+        ".dsh/profiles/headless/package.json",
+        "{\n  \"dependencies\": {\n    \"cap\": \"link:./plugin\"\n  }\n}\n",
+    )?;
+    machine.write(".dsh/profiles/web/package.json", "{}\n")?;
+    let probe = machine.probe("dsh")?;
+    assert!(!probe.capture_installed);
+    assert_eq!(
+        probe.install_detail,
+        "plug-in linked in headless; not wired: web"
+    );
+    assert!(probe.can_connect);
+    let patch = dsh_patch(&machine);
+    machine.write(".dsh/profiles/headless/package.json", "{}\n")?;
+    machine.write(".dsh/profiles/web/package.json", "{}\n")?;
+    let bare = machine.probe("dsh")?;
+    assert_eq!(
+        bare.install_detail,
+        format!(
+            "no rh plug-in in {}; not wired: headless, web",
+            patch.display()
+        )
+    );
+    assert_eq!(
+        bare.recall.detail,
+        format!(
+            "no rh mcp entry in {}; not wired: headless, web",
+            patch.display()
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn dsh_status_names_a_missing_plug_in_and_connect_writes_it() -> TestResult {
+    let machine = machine()?;
+    machine.write(
+        ".dsh/cordis.patch.yml",
+        "- insert:\n    - id: rivethub-capture\n      name: ./plugins/rivethub-capture.mjs\n",
+    )?;
+    let probe = machine.probe("dsh")?;
+    assert!(!probe.capture_installed);
+    assert!(
+        probe
+            .install_detail
+            .contains("home patch names a missing plug-in"),
+        "{}",
+        probe.install_detail
+    );
+    machine.connect("dsh", Some(ConnectPart::Capture), false)?;
+    assert!(machine.path(".dsh/plugins/rivethub-capture.mjs").is_file());
+    assert!(machine.probe("dsh")?.capture_installed);
+    Ok(())
+}
+
+#[test]
+fn dsh_disconnect_leaves_a_recall_row_rh_did_not_write() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = format!(
+        "- insert:\n    - id: mine\n      name: ./mcp.js\n      config:\n        serverName: mine\n        command: {RH}\n        args:\n          - mcp\n"
+    );
+    machine.write(".dsh/cordis.patch.yml", &original)?;
+    machine.connect("dsh", None, false)?;
+    let patched = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patched.contains("id: mine"), "{patched}");
+    assert!(patched.contains("rivethub-capture"), "{patched}");
+    assert!(!patched.contains("rivethub-recall"), "{patched}");
+    let now = Utc
+        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
+        .single()
+        .unwrap_or_default();
+    machine
+        .service
+        .disconnect_now("dsh", Some(ConnectPart::Recall), false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, patched);
+    machine.service.disconnect_now("dsh", None, false, now)?;
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    Ok(())
+}
+
+#[test]
+fn dsh_refuses_a_recall_name_that_already_runs_something_else() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "- insert:\n    - id: rivethub-recall\n      name: ./other.js\n      config:\n        serverName: rivethub\n        command: /bin/true\n        args:\n          - stop\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    let error = machine
+        .connect("dsh", Some(ConnectPart::Recall), false)
+        .err()
+        .ok_or("a taken recall name should be refused")?;
+    assert!(
+        error.to_string().contains("already runs something else"),
+        "{error}"
+    );
+    assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
+    assert_eq!(machine.backups(), Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn dsh_connect_keeps_an_unrelated_mcp_row_without_a_server_name() -> TestResult {
+    let machine = machine()?;
+    fake_dsh(&machine)?;
+    let original = "- insert:\n    - id: other\n      name: ./other.js\n      config:\n        command: /bin/true\n        args:\n          - stop\n";
+    machine.write(".dsh/cordis.patch.yml", original)?;
+    machine.connect("dsh", Some(ConnectPart::Recall), false)?;
+    let patch = machine.read(".dsh/cordis.patch.yml")?;
+    assert!(patch.contains("id: other"), "{patch}");
+    assert!(patch.contains("id: rivethub-recall"), "{patch}");
+    assert!(patch.contains("serverName: rivethub"), "{patch}");
     Ok(())
 }

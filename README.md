@@ -165,7 +165,9 @@ what the node could not take under `~/.rivethub/capture-spool/` for the next run
 | `grok-build` | `Stop`, `PreCompact`, `SessionEnd` | `$GROK_HOME` (`~/.grok`) | `grok-build:<session>` |
 | `codex` | `Stop`, `SessionEnd` | `$CODEX_HOME/sessions` (`~/.codex/sessions`) | `codex:<session>` |
 | `opencode` | `session.idle`, `session.error` from an opencode plug-in | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
-| `dsh` | `turn/end` from a dsh plug-in | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
+| `dsh` | `turn/end` from `$DSH_HOME/plugins/rivethub-capture.mjs` | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
+
+`rh harness connect dsh` writes that plug-in and a recall MCP entry into `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`). DeepSeek Harness applies the home patch to every profile, including profiles created later. `rh harness disconnect dsh` removes both.
 
 For Claude Code, each of its events gets the same entry in `settings.json`:
 
