@@ -1870,5 +1870,13 @@
   {
     "id": "plain-main/files-bare-path",
     "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/nostatic-root",
+    "reason": "CONTRACT note 172: with no web app, GET / answers a page saying the web app is not installed, which the recording predates; replay.rs checks that page (no-app-page)."
+  },
+  {
+    "id": "plain-nostatic/nostatic-root-html",
+    "reason": "CONTRACT note 172: with no web app, GET / answers a page saying the web app is not installed, which the recording predates; replay.rs checks that page (no-app-page)."
   }
 ]
