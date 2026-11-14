@@ -199,6 +199,8 @@ pub enum StateError {
     Symlink { path: PathBuf },
     #[error("refusing to move legacy state: live process {pid} owns {path}")]
     LiveOwner { path: PathBuf, pid: u32 },
+    #[error("a RivetHub node is already running (pid {pid})")]
+    AlreadyRunning { pid: u32 },
     #[error("refusing to move legacy state: owner lock is held at {path}")]
     Locked { path: PathBuf },
     #[error("refusing to move legacy state: invalid owner PID in {path}")]

@@ -57,6 +57,57 @@ async fn status_and_doctor_accept_the_config_rh_local_writes() {
     assert!(doctor.stdout.contains("pass: config"), "{}", doctor.stdout);
     assert!(doctor.stdout.contains("pass: memory"), "{}", doctor.stdout);
     assert!(!doctor.stdout.contains("fail:"), "{}", doctor.stdout);
+    assert!(
+        !status.stderr.contains("memory.models"),
+        "{}",
+        status.stderr
+    );
+    assert!(
+        !status.stdout.contains("memory.models"),
+        "{}",
+        status.stdout
+    );
+}
+
+#[tokio::test]
+async fn doctor_says_once_that_no_model_is_configured() {
+    let home = home();
+    let env = local_config(&home, 1, "");
+    let status = run(&["status"], &env).await;
+    let validate = run(&["config", "validate"], &env).await;
+    let doctor = run(&["doctor"], &env).await;
+    let quiet = format!("{}{}", status.stderr, validate.stderr);
+    assert!(!quiet.contains("memory.models"), "{quiet}");
+    assert!(!quiet.contains("No model is configured"), "{quiet}");
+    assert_eq!(validate.exit, Exit::Ok, "{}", validate.stdout);
+    assert_eq!(doctor.exit, Exit::Ok, "{}", doctor.stdout);
+    assert!(
+        doctor
+            .stdout
+            .contains(&format!("pass: models — {}", config::NO_MODEL_NOTE)),
+        "{}",
+        doctor.stdout
+    );
+    assert!(
+        !doctor.stderr.contains("memory.models"),
+        "{}",
+        doctor.stderr
+    );
+
+    let configured = support::home();
+    let with_agent = local_config(
+        &configured,
+        1,
+        "runtime:\n  workspace: /tmp/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1/v1\n    model: m\n",
+    );
+    let doctor = run(&["doctor"], &with_agent).await;
+    assert_eq!(doctor.exit, Exit::Ok, "{}", doctor.stdout);
+    assert!(!doctor.stdout.contains("pass: models"), "{}", doctor.stdout);
+    assert!(
+        !doctor.stdout.contains("No model is configured"),
+        "{}",
+        doctor.stdout
+    );
 }
 
 #[tokio::test]

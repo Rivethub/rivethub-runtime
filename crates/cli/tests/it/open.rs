@@ -6,7 +6,7 @@ use gateway::local_owner::OwnerToken;
 use testkit::FakeMemoryStore;
 use wire::gateway::auth::{SessionRequest, SessionResponse};
 
-use crate::capture_hook::local_gateway;
+use crate::capture_hook::{local_gateway, local_gateway_with};
 use crate::support::{self, config, environment, home, install_owner_token, run};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -46,7 +46,15 @@ async fn open_prints_a_fragment_url_whose_code_logs_in_once_and_leaks_nowhere() 
     let env = environment(&home);
     let owner = support::local_owner(home.path());
     let store = Arc::new(FakeMemoryStore::default());
-    let (port, stop, server) = local_gateway(&store, home.path(), Arc::clone(&owner)).await?;
+    let static_dir = tempfile::tempdir()?;
+    std::fs::write(static_dir.path().join("index.html"), "<!doctype html>app")?;
+    let (port, stop, server) = local_gateway_with(
+        &store,
+        home.path(),
+        Arc::clone(&owner),
+        Some(static_dir.path().to_path_buf()),
+    )
+    .await?;
     config(
         &home,
         &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
@@ -104,6 +112,37 @@ async fn open_prints_a_fragment_url_whose_code_logs_in_once_and_leaks_nowhere() 
         !report.stdout.contains(owner.current().expose()),
         "token printed"
     );
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(5), server).await???;
+    Ok(())
+}
+
+#[tokio::test]
+async fn open_on_a_node_with_no_web_app_says_so_and_prints_no_link() -> TestResult {
+    let home = home();
+    let env = environment(&home);
+    let owner = support::local_owner(home.path());
+    let store = Arc::new(FakeMemoryStore::default());
+    let (port, stop, server) = local_gateway(&store, home.path(), owner).await?;
+    config(
+        &home,
+        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
+    );
+    let report = run(&["open", "--no-browser"], &env).await;
+    assert_eq!(report.exit, Exit::Failure, "{}", report.stderr);
+    assert_eq!(report.stdout, "");
+    assert!(
+        !report.stdout.contains("http") && !report.stderr.contains("http"),
+        "{}",
+        report.stderr
+    );
+    assert!(
+        report.stderr.contains("no web app installed"),
+        "{}",
+        report.stderr
+    );
+    assert!(report.stderr.contains("MCP"), "{}", report.stderr);
+    assert!(report.stderr.contains("preview"), "{}", report.stderr);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(5), server).await???;
     Ok(())

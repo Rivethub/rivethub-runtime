@@ -55,6 +55,33 @@ fn memory(report: &DoctorReport) -> &Check {
 }
 
 #[tokio::test]
+async fn doctor_passes_a_standalone_node_that_has_no_model() {
+    let home = tempfile::tempdir().expect("home");
+    let state = home.path().join(".rivethub");
+    std::fs::create_dir(&state).expect("state");
+    let path = state.join("memory.sqlite");
+    migrate::sqlite(&path).expect("schema");
+    std::fs::write(
+        state.join("config.yaml"),
+        format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\ngateway:\n  host: 127.0.0.1\n  port: 1\n",
+            path.display()
+        ),
+    )
+    .expect("config");
+    let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+    let (exit, report) = doctor(&env).await;
+    assert_eq!(exit, Exit::Ok, "{report:?}");
+    let models = report
+        .checks
+        .iter()
+        .find(|check| check.name == CheckName::Models)
+        .expect("models check");
+    assert_eq!(models.status, CheckStatus::Pass);
+    assert_eq!(models.message, config::NO_MODEL_NOTE);
+}
+
+#[tokio::test]
 async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     let db = tempfile::tempdir().expect("database directory");
     let path = db.path().join("memory.sqlite");
@@ -76,6 +103,13 @@ async fn sqlite_doctor_checks_current_and_behind_without_migrating() {
     assert_eq!(exit, Exit::Ok, "{report:?}");
     assert_eq!(memory(&report).status, CheckStatus::Pass);
     assert_eq!(memory(&report).message, "Schema 35 is current.");
+    assert!(
+        report
+            .checks
+            .iter()
+            .all(|check| check.name != CheckName::Models),
+        "{report:?}"
+    );
     assert_eq!(std::fs::read(&path).expect("after"), before);
     let connection = rusqlite::Connection::open(&path).expect("fixture database");
     connection

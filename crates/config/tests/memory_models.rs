@@ -19,16 +19,18 @@ fn rejected(models: &str) -> Result<String, String> {
 }
 
 #[test]
-fn absent_models_derive_from_the_default_agent_with_one_notice()
+fn absent_models_derive_from_the_default_agent_without_a_notice()
 -> Result<(), Box<dyn std::error::Error>> {
     let env = Environment::default();
     let loaded = load("")?;
-    let notices = loaded
-        .notices
-        .iter()
-        .filter(|notice| notice.contains("memory.models"))
-        .count();
-    assert_eq!(notices, 1, "{:?}", loaded.notices);
+    assert!(
+        loaded
+            .notices
+            .iter()
+            .all(|notice| !notice.contains("memory.models")),
+        "{:?}",
+        loaded.notices
+    );
     let resolved = loaded.config.memory_models(&env)?;
     assert!(resolved.derived);
     assert_eq!(resolved.default.provider, "chat");

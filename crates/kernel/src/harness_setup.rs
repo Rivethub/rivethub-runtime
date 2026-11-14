@@ -76,15 +76,31 @@ impl CaptureHistory {
         }
     }
 
-    fn describe(self) -> String {
+    fn phrase(self, found: bool, capture_installed: bool) -> Option<String> {
+        if !found {
+            return None;
+        }
         match self {
-            Self::Unknown => "capture history unavailable".to_owned(),
-            Self::Known(None) => "nothing captured yet".to_owned(),
-            Self::Known(Some(at)) => format!(
+            Self::Unknown => None,
+            Self::Known(None) if capture_installed => Some("nothing captured yet".to_owned()),
+            Self::Known(None) => None,
+            Self::Known(Some(at)) => Some(format!(
                 "last capture {}",
                 at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-            ),
+            )),
         }
+    }
+}
+
+fn detail_with_history(
+    install_detail: &str,
+    found: bool,
+    capture_installed: bool,
+    history: CaptureHistory,
+) -> String {
+    match history.phrase(found, capture_installed) {
+        Some(phrase) => format!("{install_detail}; {phrase}"),
+        None => install_detail.to_owned(),
     }
 }
 
@@ -161,7 +177,12 @@ impl HarnessProbe {
                 method: self.method,
                 state,
                 last_capture_at: last,
-                detail: format!("{}; {}", self.install_detail, history.describe()),
+                detail: detail_with_history(
+                    &self.install_detail,
+                    self.found,
+                    self.capture_installed,
+                    history,
+                ),
             },
             recall: self.recall,
             can_connect: self.can_connect,

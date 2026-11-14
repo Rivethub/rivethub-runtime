@@ -71,8 +71,6 @@ const CLAIMS: &[&str] = &[
     "plain-redirect/redirect-same-origin",
     "plain-redirect/redirect-index",
     "plain-redirect/redirect-remote-unauthorized",
-    "plain-nostatic/nostatic-root",
-    "plain-nostatic/nostatic-root-html",
     "plain-nostatic/nostatic-spa",
 ];
 
@@ -147,6 +145,8 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
         "nostatic-ws-get",
         "the session route owns GET /ws",
     ),
+    ("plain-nostatic", "nostatic-root", "no-app-page"),
+    ("plain-nostatic", "nostatic-root-html", "no-app-page"),
     ("plain-main", "event-invalid-json", "2"),
     ("plain-main", "event-empty-body", "2"),
     ("plain-main", "event-json-string", "2"),
@@ -358,6 +358,10 @@ const SKIP_REASONS: &[(&str, &str)] = &[
     (
         "the session route owns GET /ws",
         "the session route owns GET /ws",
+    ),
+    (
+        "no-app-page",
+        "B1: a node with no web app answers GET / with a page, not the recording's JSON 404 (CONTRACT note 172)",
     ),
     (
         "the session route owns the rewritten /ws path",

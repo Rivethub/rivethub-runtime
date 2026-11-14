@@ -39,6 +39,7 @@ if [ "$1" = "$RIVETHUB_TEST_FAIL" ]; then
 fi
 case "$1" in
     status) printf 'service status\n'; printf 'status diagnostic\n' >&2; exit "${RIVETHUB_TEST_STATUS:-0}" ;;
+    show) printf '%s\n' "${RIVETHUB_TEST_MAIN_PID:-0}" ;;
     show-user) printf '%s\n' "${RIVETHUB_TEST_LINGER:-yes}" ;;
 esac
 "#);
@@ -213,7 +214,7 @@ async fn init_reports_lingering_and_never_overwrites() {
         assert!(contents.contains(" local\nEnvironmentFile="));
         assert!(
             contents.contains(
-                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n"
+                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n"
             )
         );
         assert!(contents.contains("WantedBy=default.target\n"));
@@ -314,7 +315,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     .expect("unit");
     assert_eq!(
         unit.to_string(),
-        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-\"/home/user/.rivethub/.env\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-/home/user/.rivethub/.env\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n\n[Install]\nWantedBy=multi-user.target\n"
     );
     let unit = Unit::new(
         Path::new("/opt/é'\"\\%/$HOME/$(touch nope)/rh"),
@@ -329,7 +330,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/a%%u/$HOME/.env\"\n")
+            .contains("EnvironmentFile=-/home/a%%u/$HOME/.env\n")
     );
     assert_eq!(Scope::for_uid(0), Scope::System);
     assert_eq!(Scope::for_uid(1000), Scope::User);
@@ -628,7 +629,7 @@ async fn concurrent_initializers_publish_exactly_one_complete_unit() {
 fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     let unit = Unit::new(
         Path::new("/opt/\u{85}/rh"),
-        Path::new("/home/user/\nRestart=always\t.env"),
+        Path::new("/home/user/.env"),
         Scope::User,
         NodeKind::Node,
     )
@@ -639,9 +640,25 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
     );
     assert!(
         unit.to_string()
-            .contains("EnvironmentFile=-\"/home/user/\\x0aRestart=always\\x09.env\"\n")
+            .contains("EnvironmentFile=-/home/user/.env\n")
     );
-    assert!(!unit.to_string().contains("\nRestart=always"));
+    for path in [
+        "/home/user/\nRestart=always.env",
+        "/home/user/\t.env",
+        "/home/user/\"quoted\".env",
+    ] {
+        let error = Unit::new(
+            Path::new("/opt/rh"),
+            Path::new(path),
+            Scope::User,
+            NodeKind::Node,
+        )
+        .expect_err(path);
+        assert!(
+            error.to_string().contains("systemd cannot represent"),
+            "{path}: {error}"
+        );
+    }
     assert!(
         Unit::new(
             Path::new("/opt/rh\0"),
@@ -651,4 +668,145 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn systemd_analyze_accepts_the_generated_unit() {
+    let mut version = std::process::Command::new("systemd-analyze");
+    version.arg("--version");
+    match version.output() {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("skipped: systemd-analyze is not installed");
+            return;
+        }
+        Err(error) => panic!("systemd-analyze: {error}"),
+        Ok(output) if !output.status.success() => {
+            panic!(
+                "systemd-analyze --version failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(_) => {}
+    }
+    let root = tempfile::tempdir().expect("unit directory");
+    let executable_dir = root.path().join("Rivet Hub");
+    std::fs::create_dir(&executable_dir).expect("executable directory");
+    let executable = executable_dir.join("rh");
+    std::fs::copy("/bin/sleep", &executable).expect("copy sleep");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    let environment = root.path().join("a%u Hub.env");
+    let unit =
+        Unit::new(&executable, &environment, Scope::User, NodeKind::Standalone).expect("unit");
+    let text = unit.to_string();
+    assert!(text.contains("EnvironmentFile=-") && !text.contains("EnvironmentFile=-\""));
+    assert!(text.contains("a%%u Hub.env"));
+    assert!(text.contains("ExecStart=\"") && text.contains("Rivet Hub/rh\" local\n"));
+    let file = root.path().join("rivethub.service");
+    std::fs::write(&file, &text).expect("unit file");
+    let output = std::process::Command::new("systemd-analyze")
+        .arg("verify")
+        .arg(&file)
+        .output()
+        .expect("verify");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "systemd-analyze verify rejected the unit: {stderr}\n{text}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("not absolute")
+            && !stderr.to_lowercase().contains("ignoring"),
+        "{stderr}"
+    );
+}
+
+fn hold_pid(home: &Path, program: &str) -> std::process::Child {
+    let state = home.join(".rivethub");
+    std::fs::create_dir_all(&state).expect("state");
+    let ready = state.join("holder.ready");
+    let child = std::process::Command::new("/usr/bin/python3")
+        .arg("-c")
+        .arg(program)
+        .env("READY", &ready)
+        .spawn()
+        .expect("holder");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !ready.exists() {
+        if std::time::Instant::now() >= deadline {
+            panic!("holder did not become ready");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::fs::write(state.join("rivethub.pid"), format!("{}\n", child.id())).expect("pid");
+    child
+}
+
+const SLEEPING_HOLDER: &str = "import os, signal\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_DFL)\nopen(os.environ['READY'], 'w').close()\nos.execv('/bin/sleep', ['sleep', '60'])\n";
+
+const STUBBORN_HOLDER: &str = "import os, signal, time\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen(os.environ['READY'], 'w').close()\nwhile True:\n    time.sleep(1)\n";
+
+#[tokio::test]
+async fn service_start_stops_a_detached_node_before_the_unit() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id();
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect("start");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "Stopped the running RivetHub node (pid {pid}) so the service can take its place.\nservice status\n"
+        )
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\nsystemctl|--user|daemon-reload\nsystemctl|--user|start|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
+    );
+    let finished = tokio::time::timeout(Duration::from_secs(5), async { child.wait() })
+        .await
+        .expect("holder exit")
+        .expect("wait");
+    assert!(!finished.success());
+}
+
+#[tokio::test]
+async fn service_start_leaves_the_units_own_process_running() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id().to_string();
+    let report = fixture
+        .run(
+            Scope::User,
+            ServiceCommand::Restart,
+            &[("RIVETHUB_TEST_MAIN_PID", &pid)],
+        )
+        .await
+        .expect("restart");
+    assert_eq!(report.stdout, "service status\n");
+    assert!(child.try_wait().expect("poll").is_none());
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
+}
+
+#[tokio::test]
+async fn service_start_refuses_once_when_the_detached_node_stays_up() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), STUBBORN_HOLDER);
+    let pid = child.id();
+    let error = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect_err("still running");
+    assert!(
+        matches!(error, ServiceError::Running { pid: found } if found == pid),
+        "{error}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\n"
+    );
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
 }

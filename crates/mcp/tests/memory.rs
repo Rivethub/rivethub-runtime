@@ -307,10 +307,9 @@ async fn search_forwards_every_argument_and_preserves_the_outcome() {
         .first()
         .and_then(|block| block.as_text())
         .expect("text");
-    assert!(text.text.contains("http 503"));
     assert!(
         text.text
-            .contains("Keyword / FTS ranking only — not meaning-based.")
+            .starts_with("⚠ http 503\nKeyword / FTS ranking only — not meaning-based.\n\n")
     );
     assert!(text.text.contains("The release is ready."));
     assert_eq!(
@@ -331,6 +330,39 @@ async fn search_forwards_every_argument_and_preserves_the_outcome() {
             expand: Some(true),
             synthesize: Some(true),
         })]
+    );
+}
+
+#[tokio::test]
+async fn search_without_an_embedding_endpoint_is_one_calm_line() {
+    let (server, store) = setup(false);
+    store
+        .set_search_outcome(kernel::memory::SearchOutcome {
+            degraded: Some(kernel::memory::MemoryDegraded {
+                reason: "embedding endpoint not configured".into(),
+                effect: "Keyword / FTS ranking only — not meaning-based.".into(),
+            }),
+            ..Default::default()
+        })
+        .await;
+    let reply = support::call(&server, "memory_search", r#"{"query":"deploy"}"#).await;
+    assert_ne!(reply.is_error, Some(true));
+    let text = reply
+        .content
+        .first()
+        .and_then(|block| block.as_text())
+        .expect("text");
+    assert!(
+        text.text
+            .starts_with("Keyword search. Meaning-based search needs an embedding endpoint.\n\n"),
+        "{}",
+        text.text
+    );
+    assert!(!text.text.contains('⚠'), "{}", text.text);
+    assert!(
+        !text.text.contains("embedding endpoint not configured"),
+        "{}",
+        text.text
     );
 }
 
