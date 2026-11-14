@@ -60,7 +60,9 @@ async fn connect_opencode_installs_the_embedded_capture_plugin() {
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
     assert_eq!(report.stderr, "");
     assert!(
-        report.stdout.ends_with("\nconnected.\n"),
+        report.stdout.ends_with(
+            "\nconnected.\nrh could not read the OpenCode version; this plug-in loads on OpenCode 1.3.4 and later (checked on 1.3.4, 1.19.5, 2.0.0, 2.2.5 and 2.3.0).\n"
+        ),
         "{}",
         report.stdout
     );
