@@ -2373,7 +2373,7 @@ is still this node's name; `gateway.certificate_authority`, `gateway.devices`, `
 variables (`RIVETHUB_TERM_*`, `RIVETHUB_UPLOAD_*`, `RIVETHUB_VOICE_*` and their RivetOS names) and `RIVETHUB_HOST` warn and
 are ignored. `tasks.harnesses` stays: it names the binary and folder each harness starts from. `agents` and
 `runtime.default_agent` stay: without `memory.models` they pick the memory jobs' default model (note 126).
-`RIVETHUB_TLS_CA` (or `RIVET_CA_CHAIN`, or the shared `rivet-ca/intermediate/chain.pem`) is still read, as the extra trust
+`gateway.trust_root` (else `RIVETHUB_TLS_CA`, or `RIVET_CA_CHAIN`, or the shared `rivet-ca/intermediate/chain.pem`, note 165) is still read, as the extra trust
 root for hub probes and for `rh status` reaching a gateway with a private certificate.
 
 Removed crates and modules: `agent-loop`, `terminal`, `pki` and `stepca`; the gateway's mesh, task engine, terminal
@@ -3082,6 +3082,17 @@ environment replaced the file the config named (the team hub needed a wrapper th
 `Config::users_file`, and the environment's own reader is private to the config crate, so no caller can put a variable
 ahead of the file again. A setting that exists only as a variable (`RIVETHUB_HOME`, `RIVETHUB_LOG_LEVEL`,
 `RIVETHUB_INSTALL_ROOT`) is unchanged.
+
+(165) The trust root has a config key (Phil, 2026-11-13). `gateway.trust_root` names the CA file that verifies the
+node's own certificate. The gateway and every CLI command that reaches its own node (`rh status`, `rh doctor`, `rh
+open`, `rh auth`, capture hooks, `rh memory ingest-bundle` and the import step of `rh memory receive`) read it through
+the one `gateway::private_ca`, before `RIVETHUB_TLS_CA` (legacy `RIVETOS_DEN_TLS_CA`), `RIVET_CA_CHAIN` and the shared
+`rivet-ca/intermediate/chain.pem`, as note 164 orders. The service unit loads `~/.rivethub/.env` and a shell does not,
+so before this a CLI command behind a private CA could not verify its own gateway unless the shell exported the
+variable; with the key in `config.yaml` both read the same file. The address, port and certificate already came from
+`gateway.host`, `gateway.port` and `gateway.tls_cert`, and the owner token from the state directory, so nothing else
+the CLI needs lives only in the unit's environment. Downloads from a share server keep their own trusted CAs
+(`memory.share.trusted_cas`).
 
 ## 4. Gaps to close before building the affected slice
 

@@ -44,7 +44,7 @@ impl Settings {
         let section = config.gateway.clone().unwrap_or_default();
         let state_dir = state_dir(env)?;
         let shared_dir = canonical_dir(config::shared_dir(env));
-        let private_ca = crate::tls_resolve::private_ca(env, &shared_dir);
+        let private_ca = crate::tls_resolve::private_ca(Some(&section), env, &shared_dir);
         Ok(Self {
             hostname,
             node,

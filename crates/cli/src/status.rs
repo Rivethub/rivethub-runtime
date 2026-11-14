@@ -247,7 +247,7 @@ async fn gateway_with(
         .no_proxy()
         .redirect(policy)
         .timeout(timeout);
-    let ca = gateway::private_ca(env, &config::shared_dir(env));
+    let ca = gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env));
     let verified_tls = source.tls_cert.is_some() && ca.is_some();
     let token = match owner_uid {
         Some(_) => gateway::local_owner::read_token(&gateway::state_dir(env)?)?,
