@@ -87,20 +87,30 @@ pub struct AccountUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SignInRequest {
-    pub email: String,
-}
+#[cfg_attr(
+    dylint_lib = "rr_lints",
+    expect(
+        opaque,
+        reason = "CONTRACT note 155: device sign-in has no input fields; deny_unknown_fields rejects rather than discards contents"
+    )
+)]
+pub struct SignInRequest {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SignInStarted {
-    pub request_id: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: u64,
+    pub poll_interval_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum SignInProgress {
     Pending,
+    Expired,
+    Denied,
     SignedIn { account: Account },
 }
 
@@ -134,4 +144,12 @@ pub struct Hub {
     pub online: bool,
     pub detail: String,
     pub current: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountDeleted {
+    #[serde(flatten)]
+    pub account: Account,
+    pub account_url: Url,
 }

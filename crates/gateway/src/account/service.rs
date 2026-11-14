@@ -9,7 +9,7 @@ use wire::gateway::account::{
     Account, AccountUpdate, Hub, PendingUpdate, SignInProgress, SignInStarted, UpdateSource,
 };
 
-use super::cloud::{Cloud, Delivery, Poll};
+use super::cloud::{Cloud, Delivery};
 use super::hubs::Hubs;
 use super::install::{AccountFiles, InstallState, Membership, UsageDay};
 use super::telemetry::{CrashReport, UsageCounts, UsageReport, queued};
@@ -19,7 +19,6 @@ use super::{AccountError, CloudSettings};
 const FIRST_TICK: Duration = Duration::from_secs(20);
 const TICK_EVERY: Duration = Duration::from_secs(600);
 const CHECK_EVERY: Duration = Duration::from_hours(6);
-const EMAIL_LIMIT: usize = 254;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsageEvent {
@@ -36,6 +35,7 @@ struct Counters {
 #[derive(Debug)]
 pub struct AccountService {
     files: AccountFiles,
+    login: Option<Arc<dyn super::AccountLogin>>,
     settings: CloudSettings,
     cloud: Cloud,
     telemetry: Cloud,
@@ -53,11 +53,20 @@ impl AccountService {
     ) -> Result<Self, AccountError> {
         let files = AccountFiles::new(state_dir);
         let opening = files.clone();
-        let state = tokio::task::spawn_blocking(move || opening.open()).await??;
+        let state = tokio::task::spawn_blocking(move || {
+            let mut state = opening.open()?;
+            if !matches!(&state.membership, Membership::SignedOut) {
+                state.membership = Membership::SignedOut;
+                opening.save(&state)?;
+            }
+            Ok::<_, AccountError>(state)
+        })
+        .await??;
         Ok(Self {
             cloud: Cloud::new(settings.base.clone())?,
             telemetry: Cloud::new(settings.telemetry.clone())?,
             files,
+            login: None,
             settings,
             state: tokio::sync::Mutex::new(state),
             counters: Counters::default(),
@@ -83,15 +92,46 @@ impl AccountService {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[must_use]
+    pub fn with_login(mut self, login: Arc<dyn super::AccountLogin>) -> Self {
+        self.login = Some(login);
+        self
+    }
+
+    async fn identity(&self) -> Option<(String, String)> {
+        if !self.settings.access.cloud() {
+            return None;
+        }
+        #[cfg_attr(
+            dylint_lib = "rr_lints",
+            expect(
+                fallback,
+                reason = "CONTRACT B1 note 155: a cloud failure must show a signed-out account rather than preserve a cached claim of sign-in"
+            )
+        )]
+        let identity = self.login.as_ref()?.identity().await.ok().flatten();
+        identity
+    }
+
     pub async fn account(&self) -> Account {
-        self.view(&*self.state.lock().await)
+        let identity = self.identity().await;
+        let state = self.state.lock().await;
+        let mut account = self.view(&state);
+        account.email = identity.map(|(_, email)| email);
+        account.update_source = if account.email.is_some() {
+            state.update_source.unwrap_or(UpdateSource::RivethubCloud)
+        } else {
+            UpdateSource::Github
+        };
+        drop(state);
+        account
     }
 
     fn view(&self, state: &InstallState) -> Account {
         let allowed = self.settings.access.telemetry();
         let cloud = self.settings.access.cloud();
         Account {
-            email: state.email().map(str::to_owned),
+            email: None,
             update_source: if cloud {
                 state.update_source()
             } else {
@@ -145,7 +185,7 @@ impl AccountService {
         if !account.crash_reports {
             self.forget_crashes().await?;
         }
-        Ok(account)
+        Ok(self.account().await)
     }
 
     fn cloud_allowed(&self) -> Result<(), AccountError> {
@@ -156,87 +196,59 @@ impl AccountService {
         }
     }
 
-    pub async fn sign_in(&self, email: &str) -> Result<SignInStarted, AccountError> {
+    pub async fn sign_in(&self) -> Result<SignInStarted, AccountError> {
         self.cloud_allowed()?;
-        let email = email.trim();
-        if email.is_empty() || email.len() > EMAIL_LIMIT || !email.contains('@') {
-            return Err(AccountError::Email);
-        }
-        let mut state = self.state.lock().await;
-        if state.token().is_some() {
-            return Err(AccountError::SignedIn);
-        }
-        let started = self.cloud.start(email, state.install_id).await?;
-        let mut next = state.clone();
-        next.membership = Membership::Pending {
-            request_id: started.request_id.clone(),
-        };
-        self.save(&next).await?;
-        *state = next;
-        drop(state);
+        let started = self
+            .login
+            .as_ref()
+            .ok_or(AccountError::CloudReply)?
+            .start()
+            .await?;
         Ok(SignInStarted {
-            request_id: started.request_id,
+            user_code: started.user_code,
+            verification_uri: started.verification_uri,
+            expires_in: started.expires_in,
+            poll_interval_ms: started.poll_interval_ms,
         })
     }
 
     pub async fn poll(&self) -> Result<SignInProgress, AccountError> {
         self.cloud_allowed()?;
-        let mut state = self.state.lock().await;
-        let request_id = match &state.membership {
-            Membership::Pending { request_id } => request_id.clone(),
-            Membership::SignedIn { .. } => {
-                return Ok(SignInProgress::SignedIn {
-                    account: self.view(&state),
-                });
-            }
-            Membership::SignedOut => return Err(AccountError::NoSignIn),
-        };
-        let mut next = state.clone();
-        let outcome = self.cloud.poll(&request_id).await?;
-        next.membership = match outcome {
-            Poll::Pending => return Ok(SignInProgress::Pending),
-            Poll::Expired => Membership::SignedOut,
-            Poll::SignedIn { token, email } => Membership::SignedIn { email, token },
-        };
-        self.save(&next).await?;
-        *state = next;
-        match state.membership {
-            Membership::SignedIn { .. } => {
+        let progress = self
+            .login
+            .as_ref()
+            .ok_or(AccountError::CloudReply)?
+            .poll()
+            .await?;
+        Ok(match progress {
+            super::LoginProgress::Pending => SignInProgress::Pending,
+            super::LoginProgress::Expired => SignInProgress::Expired,
+            super::LoginProgress::Denied => SignInProgress::Denied,
+            super::LoginProgress::SignedIn => {
                 *self.checked.lock() = None;
-                Ok(SignInProgress::SignedIn {
-                    account: self.view(&state),
-                })
+                let account = self.account().await;
+                if account.email.is_none() {
+                    return Err(AccountError::CloudReply);
+                }
+                SignInProgress::SignedIn { account }
             }
-            Membership::SignedOut | Membership::Pending { .. } => Err(AccountError::Expired),
-        }
+        })
     }
 
     pub async fn sign_out(&self) -> Result<Account, AccountError> {
-        let mut state = self.state.lock().await;
-        if let Some(token) = state.token().filter(|_| self.settings.access.cloud()) {
-            match self.cloud.sign_out(token).await {
-                Ok(()) | Err(AccountError::SignedOutElsewhere) => {}
-                Err(error) => {
-                    tracing::warn!(%error, "rivethub.cloud did not revoke the install token; it is deleted here");
-                }
-            }
+        if let Some(login) = &self.login {
+            login.sign_out(self.settings.access.cloud()).await?;
         }
-        let left = self.leave(&mut state).await;
-        drop(state);
-        left
+        let mut state = self.state.lock().await;
+        self.leave(&mut state).await
     }
 
-    pub async fn delete(&self) -> Result<Account, AccountError> {
+    pub async fn delete(&self) -> Result<wire::gateway::account::AccountDeleted, AccountError> {
         self.cloud_allowed()?;
-        let mut state = self.state.lock().await;
-        let token = state.token().ok_or(AccountError::NotSignedIn)?;
-        match self.cloud.delete(token).await {
-            Ok(()) | Err(AccountError::SignedOutElsewhere) => {}
-            Err(error) => return Err(error),
-        }
-        let left = self.leave(&mut state).await;
-        drop(state);
-        left
+        Ok(wire::gateway::account::AccountDeleted {
+            account: self.sign_out().await?,
+            account_url: self.settings.base.join("account")?,
+        })
     }
 
     async fn leave(&self, state: &mut InstallState) -> Result<Account, AccountError> {
@@ -363,25 +375,18 @@ impl AccountService {
 
     pub async fn check_update(&self, shutdown: &CancellationToken) -> Result<(), AccountError> {
         let snapshot = self.state.lock().await.clone();
-        let pending = match snapshot.token() {
-            Some(token)
-                if self.settings.access.cloud()
-                    && snapshot.update_source() == UpdateSource::RivethubCloud =>
-            {
-                match self.newer(token, &snapshot, shutdown).await {
-                    Ok(pending) => pending,
-                    Err(AccountError::SignedOutElsewhere) => {
-                        let mut state = self.state.lock().await;
-                        if state.token() == Some(token) {
-                            self.leave(&mut state).await?;
-                        }
-                        drop(state);
-                        return Err(AccountError::SignedOutElsewhere);
-                    }
-                    Err(error) => return Err(error),
+        let pending = if snapshot.update_source == Some(UpdateSource::Github) {
+            None
+        } else if let Some((token, _)) = self.identity().await {
+            match self.newer(&token, &snapshot, shutdown).await {
+                Err(AccountError::SignedOutElsewhere) => {
+                    self.sign_out().await?;
+                    return Err(AccountError::SignedOutElsewhere);
                 }
+                result => result?,
             }
-            Some(_) | None => None,
+        } else {
+            None
         };
         let mut state = self.state.lock().await;
         if state.pending_update != pending {

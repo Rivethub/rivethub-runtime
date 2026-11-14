@@ -179,6 +179,7 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::account::Account>,
     SchemaGenerator::subschema_for::<crate::gateway::account::AccountUpdate>,
     SchemaGenerator::subschema_for::<crate::gateway::account::SignInRequest>,
+    SchemaGenerator::subschema_for::<crate::gateway::account::AccountDeleted>,
     SchemaGenerator::subschema_for::<crate::gateway::account::SignInStarted>,
     SchemaGenerator::subschema_for::<crate::gateway::account::SignInProgress>,
     SchemaGenerator::subschema_for::<crate::gateway::account::HubKind>,

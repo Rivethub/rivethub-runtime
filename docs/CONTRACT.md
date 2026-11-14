@@ -2296,7 +2296,7 @@ capture spool as any capture does (note 84).
 
 `GET /api/today?date=YYYY-MM-DD` (B1, new) answers `wire::gateway::today::TodayDigest` (the web contract's `TodayDigest`) for that date in the node's local time zone, default today. `entries` are the day's top-level sessions from the session catalog (started that day, plus any session that caused a change that day; a child session's changes go to its parent; trashed sessions are left out), newest activity first, each with the day's changes whose source it is. `headline` counts the day's `fact`, `decision` and `new` changes: `Your agents learned <n> thing(s) today` (`yesterday`, or `on <Weekday>, <Month> <day>`), or `A quiet day` at 0. `summary` is the day's digest: one paragraph the summarizer model role (note 126) writes from the day's changes, kept per day and user in `rh_daily_digests` (`owner_user_id`, `day`, `summary`, `changes`, `written_at`; Postgres migration 0060 with an owner-only row policy, SQLite schema v34). When the day has changes and no digest, or the digest was written over a different number of changes, the route queues `digest-day` (payload `{day, from, to, owner}`, key `digest-day:<owner>:<day>`, replacing a queued or dead one) for the summarizer role, which reads the window's changes in the owner's scope, sends them with their `[label](/topics/<id>)` and `[label](/entities/<id>)` links, and keeps the answer flattened to one paragraph of at most 900 characters, cut at a sentence. A kept digest is answered even while a newer one is queued; with none, `summary` is built from the day's changes: `Most of the work was on <up to three busiest topics or entities as links>. The day brought <counts by kind>.`, or a sentence saying nothing was captured, or that the day's sessions taught nothing yet. `activityByDay` has one entry per day of the date's month with `level` 0 to 4: 0 for no changes, else the day's change count over the month's busiest day, rounded up in quarters. `recentlyUpdated` is the last four topics or entities changed before the day ends, looking back to the month's start or 30 days, whichever is earlier. `needsYou` is up to three items of the caller's review queue (note 129, `ReviewItem`): its conflicts first, then the rest in the queue's own order, newest first; `reviewCount` is the length of that queue. A gateway composed without the review store answers `[]` and 0. `freshness` is `live`.
 
-(131) Account, updates, privacy and hubs (proposed 2026-11-07): the standalone app's Settings page, Welcome
+(131) Account sign-in and install-token storage superseded by note 155; telemetry and hubs still apply. Account, updates, privacy and hubs (proposed 2026-11-07): the standalone app's Settings page, Welcome
 screen and hub switcher read the node's account and hubs. Routes (B1, new, no TypeScript recording; bodies are the
 `wire::gateway::account` types, which match the RivetHub web contracts `Account` and `Hub`): `GET /api/account` answers
 `Account` (`email` only when signed in, `updateSource`, `channel` `stable` or `beta`, `autoDownload`, `version`,
@@ -3001,6 +3001,22 @@ in config.yaml, so it is an install-time choice like note 145's policy. With `cl
 `telemetry.url`, the cloud stays off (sign-in, the cloud update source and cloud sharing are refused as note 145 says)
 while telemetry goes to that url; the gateway's access is `CloudAccess::TelemetryOnly`. `telemetry.disabled: true`
 always wins and sends nothing anywhere. Each install's own crash-report and usage-count switches still apply.
+
+(155) Node account device login (2026-11-14). Supersedes note 131's email sign-in, install token,
+and account deletion protocol. POST /api/account/signin takes {} and answers
+{userCode, verificationUri, expiresIn (seconds), pollIntervalMs}. Only the public user code and approval
+URL leave the node. POST /api/account/signin/poll answers {status: pending|expired|denied} or
+{status: signed-in, account}; no pending attempt is 409. The node owns cloud polling and slow_down timing.
+GET /api/account verifies the current bearer with GET /v1/account and answers an email only on success;
+a cloud failure shows signed out. PATCH retains the settings contract. POST /api/account/signout revokes
+and forgets the shared login; DELETE /api/account does the same, and the person deletes their account
+in their browser at <cloud.url>/account. DELETE returns the signed-out Account fields plus accountUrl, the configured cloud account page. It never calls DELETE /v1/account.
+The app and rh share login use one share-logins.json / OS keyring entry per cloud origin and the same
+refresh file lock. The composition root injects CLI's implementation through kernel::account::AccountLogin (re-exported by gateway);
+the gateway never depends on cli. Device grant, discovery, refresh and revoke are not duplicated.
+Legacy install membership is cleared on open, without importing the retired token. No database migration.
+Existing loopback-owner, fresh-login, cloud.disabled and --no-cloud policy checks remain.
+Golden wire account-device-login.json and generated accepted/sent schemas describe the changed messages.
 
 ## 4. Gaps to close before building the affected slice
 

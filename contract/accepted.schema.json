@@ -50,6 +50,61 @@
       ],
       "type": "object"
     },
+    "AccountDeleted": {
+      "properties": {
+        "accountUrl": {
+          "format": "uri",
+          "type": "string"
+        },
+        "autoDownload": {
+          "type": "boolean"
+        },
+        "channel": {
+          "$ref": "#/$defs/ReleaseChannel"
+        },
+        "cloudDisabled": {
+          "type": "boolean"
+        },
+        "crashReports": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pendingUpdate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updateSource": {
+          "$ref": "#/$defs/UpdateSource"
+        },
+        "usageCounts": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "updateSource",
+        "channel",
+        "autoDownload",
+        "version",
+        "crashReports",
+        "usageCounts",
+        "accountUrl"
+      ],
+      "type": "object"
+    },
     "AccountUpdate": {
       "additionalProperties": false,
       "properties": {
@@ -11005,6 +11060,30 @@
         },
         {
           "properties": {
+            "status": {
+              "const": "expired",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "status": {
+              "const": "denied",
+              "type": "string"
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
             "account": {
               "$ref": "#/$defs/Account"
             },
@@ -11023,24 +11102,32 @@
     },
     "SignInRequest": {
       "additionalProperties": false,
-      "properties": {
-        "email": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "email"
-      ],
       "type": "object"
     },
     "SignInStarted": {
       "properties": {
-        "requestId": {
+        "expiresIn": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pollIntervalMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "userCode": {
+          "type": "string"
+        },
+        "verificationUri": {
           "type": "string"
         }
       },
       "required": [
-        "requestId"
+        "userCode",
+        "verificationUri",
+        "expiresIn",
+        "pollIntervalMs"
       ],
       "type": "object"
     },

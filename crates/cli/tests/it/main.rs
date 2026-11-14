@@ -1,3 +1,4 @@
+mod account_fixture;
 mod support;
 #[cfg(test)]
 mod wiki_support;

@@ -1,3 +1,4 @@
+use gateway::account::AccountLogin as _;
 mod cloud;
 mod error;
 mod files;
@@ -135,7 +136,22 @@ impl Updater {
         }
         let files = gateway::account::AccountFiles::new(&gateway::state_dir(env)?);
         let state = tokio::task::spawn_blocking(move || files.read()).await??;
-        Ok(state.map_or(UpdateSource::Github, |state| state.update_source()))
+        let settings = gateway::account::CloudSettings::from_config(config)?;
+        let login = crate::account_login::NodeAccountLogin::new(env.clone(), &settings.base);
+        Ok(
+            if login
+                .identity()
+                .await
+                .map_err(gateway::account::AccountError::from)?
+                .is_some()
+            {
+                state
+                    .and_then(|state| state.update_source)
+                    .unwrap_or(UpdateSource::RivethubCloud)
+            } else {
+                UpdateSource::Github
+            },
+        )
     }
 
     async fn restart(
