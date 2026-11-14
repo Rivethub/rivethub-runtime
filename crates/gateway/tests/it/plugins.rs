@@ -385,3 +385,33 @@ async fn an_invalid_manifest_is_refused_with_its_field_path() -> TestResult {
     host.gateway.close().await;
     Ok(())
 }
+
+const RETIRED_PERMISSION: &str = r#"{"plugins":{"workflows":{"path":"/home/person/.rivethub/workshop/workflows","manifest":{"manifest":1,"id":"workflows","name":"Workflows","version":"0.1.0","description":"Runs agent steps in order.","icon":"account_tree","run":{"command":["node","plugin.js"]},"permissions":["tasks.delegate","tasks.read"],"contributes":{"pages":[{"id":"workflows","title":"Workflows","icon":"account_tree","view":"main"}]}},"enabled":false,"granted":[],"installedAt":"2026-10-30T21:01:38.397068247Z"}}}"#;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_plugin_this_rh_cannot_read_is_left_out_and_the_host_still_opens() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let plugins = root.path().join("state").join("plugins");
+    std::fs::create_dir_all(&plugins)?;
+    std::fs::write(plugins.join("registry.json"), RETIRED_PERMISSION)?;
+    let host = harness(root.path()).await?;
+    let (status, listed) = host.call(Method::GET, "/api/plugins", None, false).await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&listed)
+    );
+    assert!(
+        !String::from_utf8_lossy(&listed).contains("workflows"),
+        "{}",
+        String::from_utf8_lossy(&listed)
+    );
+    let kept = std::fs::read_to_string(plugins.join("registry.unreadable.json"))?;
+    assert!(kept.contains("tasks.delegate"), "{kept}");
+    assert_eq!(
+        std::fs::read_to_string(plugins.join("registry.json"))?,
+        RETIRED_PERMISSION
+    );
+    Ok(())
+}

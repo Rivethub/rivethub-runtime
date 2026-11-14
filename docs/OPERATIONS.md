@@ -242,7 +242,9 @@ under `users/<user>/` and per space under `spaces/<space>/`, which the root repo
 example with `git -C <repo> bundle create <file>.bundle --all`.
 
 **Node state.** `~/.rivethub/` on each node: `config.yaml`, the users file, `plugins/registry.json` (installed
-plug-ins, their grants and settings) and and `plugins/<id>/data/`.
+plug-ins, their grants and settings) and `plugins/<id>/data/`. After an upgrade, a stored plug-in the new `rh` cannot
+read (for example one that asks for a permission that no longer exists) is left out with a warning in the gateway log,
+and its entry is kept in `plugins/registry.unreadable.json`; correct the plug-in's manifest and install it again.
 
 ## Workers
 
