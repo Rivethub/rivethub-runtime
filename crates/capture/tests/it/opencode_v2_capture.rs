@@ -12,11 +12,15 @@ use wire::capture::CaptureResult;
 
 use capture::hook::store::StoreHarness;
 use capture::hook::store::StoreHook;
+use capture::listing::StoreRoots;
+use capture::listing::StoreSessionLister;
 use capture::listing::store_roots;
 use capture::spool::CaptureSpool;
 use capture::writer::CaptureTransport;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
+use kernel::transcript::SessionLister;
+use wire::harness::HarnessId;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -286,5 +290,51 @@ async fn opencode_2_3_subagent_stores_no_blank_assistant_row() -> TestResult {
             row("assistant", "-", "196"),
         ]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_3_subagent_settings_name_the_parent_like_claude_code() -> TestResult {
+    let child = idle_batch(CHILD).await?;
+    assert_eq!(at(&child, "/settings/parent_session_id"), PARENT);
+    assert_eq!(at(&child, "/settings/agent_id"), CHILD);
+    assert_eq!(at(&child, "/settings/agent_type"), "explore");
+    assert_eq!(at(&child, "/settings/description"), "Count entries in /etc");
+    assert_eq!(
+        at(&child, "/settings/tool_use_id"),
+        "call_5d7c0668d51048c8aa5d86e4"
+    );
+    let parent = idle_batch(PARENT).await?;
+    let settings = at(&parent, "/settings").as_object().ok_or("settings")?;
+    for key in [
+        "parent_session_id",
+        "agent_id",
+        "agent_type",
+        "description",
+        "tool_use_id",
+    ] {
+        assert!(!settings.contains_key(key), "{key} in {settings:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_3_listing_names_the_subagent_parent() -> TestResult {
+    let home = tempfile::tempdir()?;
+    opencode_2_3_store(home.path())?;
+    let lister = StoreSessionLister::new(StoreRoots {
+        opencode: Some(home.path().join(".local/share/opencode")),
+        ..StoreRoots::default()
+    });
+    let child = lister
+        .describe(HarnessId::Opencode, CHILD, None)
+        .await?
+        .ok_or("child")?;
+    assert_eq!(child.parent_session_id.as_deref(), Some(PARENT));
+    let parent = lister
+        .describe(HarnessId::Opencode, PARENT, None)
+        .await?
+        .ok_or("parent")?;
+    assert_eq!(parent.parent_session_id, None);
     Ok(())
 }

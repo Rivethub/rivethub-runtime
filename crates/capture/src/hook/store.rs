@@ -22,6 +22,7 @@ use crate::readers::codex::CodexTranscriptReader;
 use crate::readers::dsh::DshTranscriptReader;
 use crate::readers::grok::GrokTranscriptReader;
 use crate::readers::opencode::OpencodeTranscriptReader;
+use crate::records::SubagentLink;
 use crate::writer::CaptureTransport;
 use crate::writer::CaptureWriter;
 use crate::writer::Totals;
@@ -141,6 +142,8 @@ struct HookSettings<'a> {
     cwd: Option<String>,
     last_event: &'a str,
     last_ingest_at: String,
+    #[serde(flatten)]
+    subagent: Option<SubagentLink>,
 }
 
 #[derive(Debug)]
@@ -193,6 +196,7 @@ impl StoreCapture {
             cwd,
             last_event: event,
             last_ingest_at: iso_at(now),
+            subagent: self.link(native).await,
         })
         .map_err(|error| error.to_string())?;
         Ok(Some(CaptureBatchRequest {
@@ -207,6 +211,28 @@ impl StoreCapture {
             updated_at: None,
             messages: slice.messages,
         }))
+    }
+
+    async fn link(&self, native: &str) -> Option<SubagentLink> {
+        let found = match self.harness {
+            StoreHarness::GrokBuild => {
+                crate::readers::grok::subagent_link(self.store.clone(), native.to_owned()).await
+            }
+            StoreHarness::Opencode => {
+                crate::readers::opencode::subagent_link(self.store.clone(), native.to_owned()).await
+            }
+            StoreHarness::Dsh => {
+                crate::readers::dsh::subagent_link(self.store.clone(), native.to_owned()).await
+            }
+            StoreHarness::Codex => Ok(None),
+        };
+        match found {
+            Ok(link) => link,
+            Err(error) => {
+                tracing::debug!("session {native} has no subagent link: {error}");
+                None
+            }
+        }
     }
 
     async fn title(&self, native: &str) -> Option<String> {

@@ -1,5 +1,6 @@
 mod ordinal;
 mod output;
+mod subagent;
 mod turns;
 pub(crate) mod updates;
 
@@ -112,6 +113,13 @@ impl TranscriptReader for GrokTranscriptReader {
             .filter(|turn| turn.at > since)
             .collect())
     }
+}
+
+pub(crate) async fn subagent_link(
+    store: PathBuf,
+    native_id: String,
+) -> Result<Option<crate::records::SubagentLink>, TranscriptReaderError> {
+    blocking(move || subagent::link(&store, &native_id)).await
 }
 
 fn list_sessions(store: &Path) -> Result<Vec<SessionId>, TranscriptReaderError> {

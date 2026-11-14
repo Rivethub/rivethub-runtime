@@ -21,6 +21,8 @@ use super::model::Content;
 use super::model::Data;
 use super::model::EventKind;
 use super::model::Line;
+use super::model::Origin;
+use crate::records::SubagentLink;
 
 const SOURCE: &str = "dsh-session";
 
@@ -101,6 +103,26 @@ pub(super) fn session_title(text: &str) -> Result<Option<String>, TranscriptRead
         .filter(|(_, line)| line.kind == Some(EventKind::SessionTitle))
         .filter_map(|(_, line)| line.data.and_then(|data| data.title))
         .rfind(|title| !title.is_empty()))
+}
+
+pub(super) fn session_link(
+    native_id: &str,
+    text: &str,
+) -> Result<Option<SubagentLink>, TranscriptReaderError> {
+    Ok(parse(text)?
+        .lines
+        .into_iter()
+        .find(|(_, line)| line.kind == Some(EventKind::Session))
+        .and_then(|(_, header)| {
+            let parent = header.parent_session.filter(|parent| !parent.is_empty())?;
+            (header.origin == Some(Origin::Subagent) && parent != native_id).then(|| SubagentLink {
+                parent_session_id: parent,
+                agent_id: native_id.to_owned(),
+                agent_type: None,
+                description: None,
+                tool_use_id: None,
+            })
+        }))
 }
 
 fn parse(text: &str) -> Result<Parsed, TranscriptReaderError> {

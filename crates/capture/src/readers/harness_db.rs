@@ -33,10 +33,7 @@ ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ?1";
 const ONE_HERMES: &str =
     " WHERE s.id = ?1 ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT 1";
 
-const OPENCODE_SESSION_ROWS: &str =
-    "SELECT id, title, model, time_created, time_updated FROM session";
-const OPENCODE_SESSION_ROWS_WITHOUT_MODEL: &str =
-    "SELECT id, title, NULL AS model, time_created, time_updated FROM session";
+const OPENCODE_SESSION_COLUMNS: &str = "SELECT name FROM pragma_table_info('session')";
 const RECENT_OPENCODE: &str = " WHERE EXISTS (SELECT 1 FROM message WHERE message.session_id = session.id) \
 ORDER BY time_updated DESC LIMIT ?1";
 const RECENT_OPENCODE_EVENTS: &str = " WHERE EXISTS (SELECT 1 FROM session_message WHERE session_message.session_id = session_v2.id) \
@@ -46,7 +43,7 @@ const ONE_OPENCODE: &str = " WHERE id = ?1 ORDER BY time_updated DESC LIMIT 1";
 const OPENCODE_SESSIONS: &str = "SELECT DISTINCT session_id FROM message ORDER BY session_id";
 
 const OPENCODE_EVENT_SESSION_ROWS: &str =
-    "SELECT id, title, model, time_created, time_updated FROM session_v2";
+    "SELECT id, title, model, parent_id, time_created, time_updated FROM session_v2";
 
 const OPENCODE_EVENT_SESSIONS: &str =
     "SELECT DISTINCT session_id FROM session_message ORDER BY session_id";
@@ -177,7 +174,7 @@ pub(crate) struct OpencodeCursor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OpencodeLayout {
+pub(crate) enum OpencodeLayout {
     Parts,
     JsonParts,
     Events,
@@ -202,6 +199,7 @@ pub(crate) struct OpencodeSessionRow {
     pub(crate) id: SqlValue,
     pub(crate) title: SqlValue,
     pub(crate) model: SqlValue,
+    pub(crate) parent_id: SqlValue,
     pub(crate) time_created: SqlValue,
     pub(crate) time_updated: SqlValue,
 }
@@ -244,6 +242,7 @@ pub(crate) fn opencode_session_rows(
             id: row.get("id")?,
             title: row.get("title")?,
             model: row.get("model")?,
+            parent_id: row.get("parent_id")?,
             time_created: row.get("time_created")?,
             time_updated: row.get("time_updated")?,
         })
@@ -270,30 +269,33 @@ fn part_session_rows(
     query: SessionQuery<'_>,
     read: impl Fn(&Row<'_>) -> rusqlite::Result<OpencodeSessionRow>,
 ) -> rusqlite::Result<Vec<OpencodeSessionRow>> {
-    match session_rows(
+    let columns: Vec<String> = connection
+        .prepare(OPENCODE_SESSION_COLUMNS)?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let optional = |name: &str| {
+        if columns.iter().any(|column| column == name) {
+            name.to_owned()
+        } else {
+            format!("NULL AS {name}")
+        }
+    };
+    let select = format!(
+        "SELECT id, title, {}, {}, time_created, time_updated FROM session",
+        optional("model"),
+        optional("parent_id")
+    );
+    session_rows(
         connection,
-        OPENCODE_SESSION_ROWS,
+        &select,
         RECENT_OPENCODE,
         ONE_OPENCODE,
         query,
-        &read,
-    ) {
-        Ok(rows) => Ok(rows),
-        Err(error) => {
-            tracing::debug!(%error, "opencode session table read failed, retrying without the model column");
-            session_rows(
-                connection,
-                OPENCODE_SESSION_ROWS_WITHOUT_MODEL,
-                RECENT_OPENCODE,
-                ONE_OPENCODE,
-                query,
-                read,
-            )
-        }
-    }
+        read,
+    )
 }
 
-fn opencode_layout(connection: &Connection) -> rusqlite::Result<OpencodeLayout> {
+pub(crate) fn opencode_layout(connection: &Connection) -> rusqlite::Result<OpencodeLayout> {
     let tables: i64 = connection.query_row(OPENCODE_LAYOUT, [], |row| row.get(0))?;
     if tables > 0 {
         return Ok(OpencodeLayout::Events);
@@ -374,7 +376,7 @@ pub(crate) fn read_error(error: HarnessDbError) -> TranscriptReaderError {
     }
 }
 
-enum Opened {
+pub(crate) enum Opened {
     Ready(Connection),
     Unreadable,
 }
@@ -383,7 +385,7 @@ fn read_only() -> OpenFlags {
     OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
 }
 
-fn open_read(path: &Path) -> Opened {
+pub(crate) fn open_read(path: &Path) -> Opened {
     match Connection::open_with_flags(path, read_only()) {
         Ok(connection) => Opened::Ready(connection),
         Err(error) => {
@@ -592,7 +594,7 @@ fn not_a_database(error: &rusqlite::Error) -> bool {
     )
 }
 
-fn query_error(message: &str, source: kernel::BoxError) -> HarnessDbError {
+pub(crate) fn query_error(message: &str, source: kernel::BoxError) -> HarnessDbError {
     HarnessDbError::Query {
         message: message.to_owned(),
         source,

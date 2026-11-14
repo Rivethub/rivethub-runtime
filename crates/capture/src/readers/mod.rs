@@ -11,6 +11,7 @@ mod message;
 pub(crate) mod omp;
 pub(crate) mod opencode;
 mod opencode_events;
+mod opencode_link;
 mod scan;
 pub(crate) mod sqlite;
 
