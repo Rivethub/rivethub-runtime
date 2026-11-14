@@ -36,5 +36,6 @@ mod store_paths;
 mod store_readers;
 mod store_transcripts;
 mod subagent_capture;
+mod subagent_links;
 mod transcript_reader;
 mod writer_replay;

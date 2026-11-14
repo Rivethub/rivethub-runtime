@@ -39,8 +39,10 @@ use super::message::text_turn;
 use super::message::tool_turn;
 use super::message::unknown;
 use super::opencode_events;
+use super::opencode_link::opencode_link;
 use super::sqlite::database_file;
 use super::sqlite::require_component;
+use crate::records::SubagentLink;
 
 const FORMAT: &str = "opencode-part";
 const FILE: &str = "opencode.db";
@@ -145,6 +147,17 @@ impl TranscriptReader for OpencodeTranscriptReader {
             .filter(|turn| turn.at > since)
             .collect())
     }
+}
+
+pub(crate) async fn subagent_link(
+    root: PathBuf,
+    native_id: String,
+) -> Result<Option<SubagentLink>, TranscriptReaderError> {
+    blocking(move || match located(&root, &native_id)? {
+        Some(path) => opencode_link(&path, &native_id).map_err(read_error),
+        None => Ok(None),
+    })
+    .await
 }
 
 fn located(store: &Path, native_id: &str) -> Result<Option<PathBuf>, TranscriptReaderError> {

@@ -62,6 +62,17 @@ pub(crate) async fn title(
     .await
 }
 
+pub(crate) async fn subagent_link(
+    root: PathBuf,
+    id: String,
+) -> Result<Option<crate::records::SubagentLink>, TranscriptReaderError> {
+    blocking(move || match transcript(&root, &id)? {
+        Some((_, text)) => capture::session_link(&id, &text),
+        None => Ok(None),
+    })
+    .await
+}
+
 pub(crate) fn sessions(root: &Path) -> Result<Vec<(String, PathBuf)>, TranscriptReaderError> {
     let Some((root, workspaces)) = workspaces(root)? else {
         return Ok(Vec::new());
