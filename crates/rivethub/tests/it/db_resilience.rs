@@ -15,7 +15,6 @@ use kernel::queue::JobName;
 use kernel::queue::JobQueue;
 use kernel::tool::Tool;
 use memory_postgres::PostgresMemory;
-use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
 use tokio::io::BufReader;
 use tokio::process::Child;
@@ -81,8 +80,8 @@ async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn front(pool: &PgPool) -> TestResult<(Proxy, String)> {
-    let direct = pool.connect_options().to_url_lossy().to_string();
+async fn front(db: &crate::pgdb::TestDb) -> TestResult<(Proxy, String)> {
+    let direct = db.served_url().await?;
     let upstream = proxy::upstream(&direct).await?;
     let proxy = Proxy::start(upstream).await?;
     let rewritten = proxy::point_at(&direct, proxy.addr())?;
@@ -230,7 +229,7 @@ async fn gateway_stays_up_across_a_database_outage() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
     write_state(
@@ -280,7 +279,7 @@ async fn gateway_starts_while_the_database_is_down() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     proxy.pause().await;
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
@@ -319,7 +318,7 @@ async fn worker_stays_up_and_claims_after_the_database_returns() -> TestResult {
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut running = spawn_rh(
@@ -346,7 +345,7 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let (proxy, url) = front(&pool).await?;
+    let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))

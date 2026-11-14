@@ -105,7 +105,8 @@ async fn pinned_mcp_introduces_its_database_person_without_a_spaces_users_file()
 async fn unpinned_mcp_uses_the_users_owner_and_store_memberships() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     seed(&db).await?;
-    let instructions = introduction(db.connect_options().as_ref().clone(), "alex").await?;
+    let served: sqlx::postgres::PgConnectOptions = db.served_url().await?.parse()?;
+    let instructions = introduction(served, "alex").await?;
     assert!(instructions.starts_with("You are working with alex on a shared hub with phil, tom."));
     Ok(())
 }

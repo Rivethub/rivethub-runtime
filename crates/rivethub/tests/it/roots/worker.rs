@@ -8,7 +8,6 @@ use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue as _;
 use memory_postgres::PostgresMemory;
-use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -91,7 +90,7 @@ async fn worker_claims_a_reap_job_and_stops_on_sigterm() -> TestResult {
     let queue = memory.queue().await?;
 
     queue.enqueue(reap_job()).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
@@ -236,7 +235,7 @@ async fn worker_blocked_on_a_provider_releases_the_job_on_sigint() -> TestResult
     install_queue(&pool).await?;
     let sink = super::blackhole().await?;
     let before = seed_embed(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     write_state(
         home.path(),

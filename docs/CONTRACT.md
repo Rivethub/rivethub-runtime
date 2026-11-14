@@ -3237,6 +3237,17 @@ names another member, with "this node keeps memory in SQLite, which serves one p
 anyone's sessions, but <who>; use a Postgres memory store for several people". The owner may hold any number of tokens
 and devices under any name it is filed under. SQLite does not gain multi-person isolation.
 
+(191) A serving login may not bypass row-level security (Phil, 2026-11-13, audit F2). Per-person privacy on Postgres
+is the row policies, which a superuser or a `BYPASSRLS` role ignores; OPERATIONS already required an ordinary login,
+but nothing checked it, so an admin URL in a service config showed every person's rows to everyone while
+authentication looked healthy. `PostgresMemory::connect_deferred`, through which the gateway, the workers and `rh mcp`
+connect, now runs `prepare_serving`: the schema check, then `rolsuper OR rolbypassrls` of `current_user`; either refuses
+the start with `Error::BypassingLogin` ("the memory database login <role> is a superuser or bypasses row-level
+security, …; serve memory with an ordinary login and keep this one for rh db migrate and administration"). The check
+also runs in the deferred reconnect (note 192). `rh db migrate` and the `rh memory` administration commands, which use
+`PostgresMemory::connect`, keep working with an admin login. Upgrade note: a hub whose service URL is a superuser must
+switch to its ordinary owning role first, or it will not start.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

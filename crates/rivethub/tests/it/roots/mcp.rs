@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
-use sqlx::ConnectOptions as _;
-use sqlx::PgPool;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -56,20 +54,19 @@ fn served_names(tools: &[Arc<dyn kernel::tool::Tool>]) -> BTreeSet<String> {
 #[tokio::test]
 async fn mcp_lists_recorded_tools_over_stdio_and_stops_on_sigterm() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
-    let pool = db.pool();
-    stop_mcp(pool, false).await
+    stop_mcp(&db, false).await
 }
 
 #[tokio::test]
 async fn mcp_with_a_stdio_client_exits_within_the_grace_on_sigint() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
-    let pool = db.pool();
-    stop_mcp(pool, true).await
+    stop_mcp(&db, true).await
 }
 
-async fn stop_mcp(pool: PgPool, interrupt_process: bool) -> TestResult {
+async fn stop_mcp(db: &crate::pgdb::TestDb, interrupt_process: bool) -> TestResult {
+    let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    let url = pool.connect_options().to_url_lossy();
+    let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
