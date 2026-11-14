@@ -50,8 +50,8 @@ async fn a_hostname_on_the_page_finds_the_other_name(pool: PgPool) -> TestResult
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_duplicate_decision_is_stored(pool: PgPool) -> TestResult {
-    Scope::Maintenance.run(stored_decision(pool)).await
+async fn a_type_alias_and_its_decision_are_stored(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(stored_type(pool)).await
 }
 
 async fn new_kind(pool: PgPool) -> TestResult {
@@ -269,14 +269,32 @@ async fn hostname_match(pool: PgPool) -> TestResult {
     Ok(())
 }
 
-async fn stored_decision(pool: PgPool) -> TestResult {
+async fn stored_type(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
+    let leaf = leaf();
+    let host = commit(&memory, &leaf, "gerty", "Hosts", &[], None).await?;
+    assert_eq!(host.type_name, "Hosts");
+    memory.remember_type_alias("Hosts", "machine").await?;
+    memory.remember_type_alias("Hosts", "machine").await?;
+    let briefs = memory.type_briefs().await?;
+    let hosts = briefs
+        .iter()
+        .find(|brief| brief.name == "Hosts")
+        .expect("Hosts");
+    assert!(hosts.aliases.iter().any(|alias| alias == "machine"));
+    assert!(hosts.examples.iter().any(|example| example == "gerty"));
+    let aliases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_topic_aliases WHERE kind = 'type' AND alias = 'machine'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(aliases, 1);
     let summary = seed_summary(&pool).await?;
     let decision = MatchDecision {
-        kind: "entity".to_owned(),
-        proposed_name: "box9".to_owned(),
-        proposed_type: "Hosts".to_owned(),
-        candidates: vec!["gerty (Hosts)".to_owned()],
+        kind: "type".to_owned(),
+        proposed_name: "machine".to_owned(),
+        proposed_type: "type".to_owned(),
+        candidates: vec!["Hosts (examples: gerty)".to_owned()],
         verdict: "same".to_owned(),
         choice: "0".to_owned(),
         confidence: 0.93,
@@ -287,20 +305,22 @@ async fn stored_decision(pool: PgPool) -> TestResult {
         .record_decision(summary, &decision, at("2026-11-13T03:00:00Z"))
         .await?;
     let row = sqlx::query(
-        "SELECT proposed_name, verdict, model, candidates::text AS candidates
+        "SELECT kind, proposed_name, verdict, model, candidates::text AS candidates
            FROM rh_entity_decisions WHERE summary_id = $1",
     )
     .bind(summary)
     .fetch_one(&pool)
     .await?;
+    let kind: String = row.try_get("kind")?;
     let name: String = row.try_get("proposed_name")?;
     let verdict: String = row.try_get("verdict")?;
     let model: String = row.try_get("model")?;
     let candidates: String = row.try_get("candidates")?;
-    assert_eq!(name, "box9");
+    assert_eq!(kind, "type");
+    assert_eq!(name, "machine");
     assert_eq!(verdict, "same");
     assert_eq!(model, "stub");
-    assert!(candidates.contains("gerty"));
+    assert!(candidates.contains("Hosts"));
     Ok(())
 }
 

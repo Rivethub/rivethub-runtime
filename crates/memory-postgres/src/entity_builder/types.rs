@@ -3,6 +3,8 @@ use chrono::Utc;
 use kernel::wiki::entity_match::TYPE_OBSERVATION_WINDOW;
 use kernel::wiki::entity_match::dominant_type;
 use kernel::wiki::entity_pass::EntityStoreError;
+use kernel::wiki::entity_pass::TypeBrief;
+use kernel::wiki::entity_pass::attribute_key;
 use kernel::wiki::entity_pass::compact_key;
 use sqlx::PgConnection;
 use sqlx::Postgres;
@@ -13,6 +15,8 @@ use super::error::query_error;
 
 use super::sql::RECENT_TYPES;
 use super::sql::REMEMBER_TYPE;
+use super::sql::TYPE_ALIASES;
+use super::sql::TYPE_EXAMPLES;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct TypeRow {
@@ -205,6 +209,87 @@ pub(super) async fn remember_type(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AliasRow {
+    topic_id: Uuid,
+    alias: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct ExampleRow {
+    parent_id: Uuid,
+    name: String,
+}
+
+pub(super) async fn type_briefs(pool: &sqlx::PgPool) -> Result<Vec<TypeBrief>, EntityStoreError> {
+    let mut conn = pool.acquire().await.map_err(query_error)?;
+    let rows = type_rows(&mut conn).await?;
+    let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
+    let aliases = sqlx::query_as::<_, AliasRow>(TYPE_ALIASES)
+        .bind(&ids)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(query_error)?;
+    let examples = sqlx::query_as::<_, ExampleRow>(TYPE_EXAMPLES)
+        .bind(&ids)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(query_error)?;
+    let mut briefs = Vec::new();
+    for row in &rows {
+        briefs.push(TypeBrief {
+            name: type_path(row, &rows),
+            slug: row.slug.clone(),
+            aliases: aliases
+                .iter()
+                .filter(|alias| alias.topic_id == row.id)
+                .map(|alias| alias.alias.clone())
+                .collect(),
+            examples: examples
+                .iter()
+                .filter(|example| example.parent_id == row.id)
+                .map(|example| example.name.clone())
+                .collect(),
+        });
+    }
+    briefs.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(briefs)
+}
+
+pub(super) async fn remember_type_alias(
+    pool: &sqlx::PgPool,
+    type_name: &str,
+    alias: &str,
+) -> Result<(), EntityStoreError> {
+    let alias = alias.trim();
+    let Some(key) = attribute_key(alias) else {
+        return Ok(());
+    };
+    let mut conn = pool.acquire().await.map_err(query_error)?;
+    let rows = type_rows(&mut conn).await?;
+    let Some(row) = rows.iter().find(|row| {
+        type_path(row, &rows) == type_name || row.name == type_name || row.slug == type_name
+    }) else {
+        return Ok(());
+    };
+    if compact_key(alias) == compact_key(&row.name) || compact_key(alias) == compact_key(&row.slug)
+    {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO rh_topic_aliases (topic_id, alias, alias_key, kind)
+         VALUES ($1, $2, $3, 'type')
+         ON CONFLICT (kind, alias_key) DO NOTHING",
+    )
+    .bind(row.id)
+    .bind(alias)
+    .bind(key)
+    .execute(&mut *conn)
+    .await
+    .map_err(query_error)?;
     Ok(())
 }
 

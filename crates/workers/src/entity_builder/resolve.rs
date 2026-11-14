@@ -57,7 +57,11 @@ use kernel::wiki::entity_pass::MatchDecision;
 #[cfg(test)]
 use kernel::wiki::entity_pass::PreparedEntity;
 #[cfg(test)]
+use kernel::wiki::entity_pass::TypeBrief;
+#[cfg(test)]
 use types::TypeOutcome;
+#[cfg(test)]
+use types::alias_to_keep;
 #[cfg(test)]
 use types::settle_type;
 #[cfg(test)]

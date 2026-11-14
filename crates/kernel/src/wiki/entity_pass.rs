@@ -83,6 +83,7 @@ pub use types::RewriteFact;
 pub use types::SlugOccupant;
 pub use types::StoredRewrite;
 pub use types::TranscriptMessage;
+pub use types::TypeBrief;
 pub use types::older_than_mark;
 
 #[cfg(test)]

@@ -219,7 +219,7 @@ async fn commit_identities(
     known: &[KnownEntity],
 ) -> Result<Vec<rewrite::TouchedEntity>, WorkerError> {
     let decider = decide::build_decider(env);
-    let catalogue = env.store.type_names().await?;
+    let catalogue = env.store.type_briefs().await?;
     let mut touched = Vec::new();
     for item in prepared {
         if env.cancel.is_cancelled() {
