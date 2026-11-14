@@ -78,4 +78,111 @@ async fn connect_opencode_installs_the_embedded_capture_plugin() {
         "{}",
         status.stdout
     );
+    assert!(
+        !status.stdout.contains("capture history unavailable"),
+        "{}",
+        status.stdout
+    );
+}
+
+#[tokio::test]
+async fn status_reads_the_sqlite_store_and_skips_history_for_a_missing_tool() {
+    let home = tempfile::tempdir().expect("home");
+    let state = home.path().join(".rivethub");
+    std::fs::create_dir_all(&state).expect("state");
+    std::fs::create_dir_all(home.path().join(".cursor")).expect("cursor store");
+    let database = state.join("memory.sqlite");
+    migrate::sqlite(&database).expect("schema");
+    std::fs::write(
+        state.join("config.yaml"),
+        format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n",
+            database.display()
+        ),
+    )
+    .expect("config");
+    let env = Environment::from_vars([
+        (OsStr::new("HOME"), home.path().as_os_str()),
+        (OsStr::new("PATH"), OsStr::new("/nonexistent")),
+        (
+            OsStr::new(config::POSTGRES_URL_VARIABLE),
+            OsStr::new("postgres://not-a-host:1/nope"),
+        ),
+    ]);
+    let empty = dispatch(&env, &["harness", "status"]).await;
+    assert_eq!(empty.exit, Exit::Ok, "{}", empty.stderr);
+    assert!(
+        !empty.stdout.contains("capture history unavailable"),
+        "{}",
+        empty.stdout
+    );
+    assert!(
+        empty.stdout.contains("nothing captured yet"),
+        "{}\nexpected the installed cursor store to say nothing was captured",
+        empty.stdout
+    );
+    assert!(
+        !section(&empty.stdout, "Claude Code").contains("nothing captured yet"),
+        "{}",
+        empty.stdout
+    );
+    let connection = rusqlite::Connection::open(&database).expect("database");
+    connection
+        .execute(
+            "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
+             VALUES (?1, 'cursor:one', 'rivet', ?2, ?2)",
+            (
+                "0199e2a0-7b3c-7a00-8000-0000000000c1",
+                "2026-11-14T15:04:05.000Z",
+            ),
+        )
+        .expect("conversation");
+    drop(connection);
+    let captured = dispatch(&env, &["harness", "status"]).await;
+    assert!(
+        captured
+            .stdout
+            .contains("last capture 2026-11-14T15:04:05Z"),
+        "{}",
+        captured.stdout
+    );
+    assert!(
+        !section(&captured.stdout, "Claude Code").contains("last capture"),
+        "{}",
+        captured.stdout
+    );
+    assert!(
+        !captured.stdout.contains("capture history unavailable"),
+        "{}",
+        captured.stdout
+    );
+}
+
+fn section(stdout: &str, name: &str) -> String {
+    let mut taking = false;
+    let mut out = String::new();
+    for line in stdout.lines() {
+        if !line.starts_with(' ') {
+            taking = line.starts_with(name);
+        }
+        if taking {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+async fn dispatch(env: &Environment, args: &[&str]) -> Report {
+    let cli = Cli::parse_args(
+        std::iter::once("rh")
+            .chain(args.iter().copied())
+            .map(Into::into),
+    )
+    .expect("parse");
+    let Dispatch::Complete(report) = cli::dispatch(cli, env, &CancellationToken::new()).await
+    else {
+        panic!("harness commands complete in place");
+    };
+    report
 }

@@ -105,3 +105,40 @@ fn the_status_carries_the_last_capture_time_and_both_details() {
     );
     assert_eq!(status.recall.detail, "rivethub runs rh mcp");
 }
+
+#[test]
+fn history_is_mentioned_only_when_the_line_can_say_something_definite() {
+    let at = now() - Duration::hours(1);
+    let installed = probe(true);
+    assert_eq!(
+        installed
+            .clone()
+            .into_status(CaptureHistory::Known(None), now())
+            .capture
+            .detail,
+        "hook installed; nothing captured yet"
+    );
+    assert_eq!(
+        probe(false)
+            .into_status(CaptureHistory::Known(None), now())
+            .capture
+            .detail,
+        "hook installed"
+    );
+    assert_eq!(
+        installed
+            .into_status(CaptureHistory::Unknown, now())
+            .capture
+            .detail,
+        "hook installed"
+    );
+    let mut missing = probe(true);
+    missing.found = false;
+    assert_eq!(
+        missing
+            .into_status(CaptureHistory::Known(Some(at)), now())
+            .capture
+            .detail,
+        "hook installed"
+    );
+}
