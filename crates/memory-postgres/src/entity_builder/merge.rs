@@ -303,6 +303,7 @@ async fn redirect_wiki(
     absorbed: &TopicSide,
     now: DateTime<Utc>,
 ) -> Result<Option<PageFile>, sqlx::Error> {
+    super::bind::bind_page(tx, survivor.id, &survivor.slug).await?;
     if survivor.slug == absorbed.slug {
         return Ok(None);
     }

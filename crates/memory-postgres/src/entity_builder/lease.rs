@@ -247,6 +247,9 @@ pub(super) async fn commit_page(
         crate::wiki_builder::store_wiki_page(&mut tx, &page, &view.slug, None, &folded, now)
             .await
             .map_err(store_error)?;
+        super::bind::bind_page(&mut tx, view.id, &view.slug)
+            .await
+            .map_err(query_error)?;
         tx.commit().await.map_err(query_error)?;
         (folded, repository.release().await)
     };
