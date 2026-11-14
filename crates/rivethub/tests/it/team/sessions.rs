@@ -7,10 +7,10 @@ use wire::gateway::topics::PlacementRequest;
 
 use super::{ALEX, Hub, PHIL, SPACE, TOM, TestResult, body, listed, segment};
 
-const PHILS: &str = "claude-code:00000000-0000-4000-8000-00000000a001";
+pub(super) const PHILS: &str = "claude-code:00000000-0000-4000-8000-00000000a001";
 const ALEXS: &str = "claude-code:00000000-0000-4000-8000-00000000a002";
-const TOMS: &str = "claude-code:00000000-0000-4000-8000-00000000a003";
-const MARKER: &str = "quartzlantern";
+pub(super) const TOMS: &str = "claude-code:00000000-0000-4000-8000-00000000a003";
+pub(super) const MARKER: &str = "quartzlantern";
 
 fn private_mark() -> VisibilityUpdate {
     VisibilityUpdate {
@@ -33,7 +33,7 @@ fn tag_request() -> MemoryTagsAddRequest {
     }
 }
 
-async fn seeded() -> Result<Hub, Box<dyn std::error::Error>> {
+pub(super) async fn seeded() -> Result<Hub, Box<dyn std::error::Error>> {
     let hub = Hub::start().await?;
     hub.share_by_default(PHIL).await?;
     hub.share_by_default(ALEX).await?;

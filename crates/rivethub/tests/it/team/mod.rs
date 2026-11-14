@@ -1,5 +1,6 @@
 mod addresses;
 mod catalog;
+mod mcp;
 mod messages;
 mod no_model;
 mod sessions;
