@@ -404,7 +404,7 @@ async fn sessions_are_placed_moved_unplaced_and_follow_merges() -> TestResult {
 }
 
 #[tokio::test]
-async fn placements_need_a_canonical_session_id() -> TestResult {
+async fn a_placement_of_an_unknown_session_is_not_found() -> TestResult {
     let api = Api::new(true)?;
     assert_eq!(
         api.error(
@@ -413,10 +413,7 @@ async fn placements_need_a_canonical_session_id() -> TestResult {
             r#"{"topicId":"clients"}"#
         )
         .await?,
-        (
-            StatusCode::BAD_REQUEST,
-            "canonical session required".to_owned()
-        )
+        (StatusCode::NOT_FOUND, "not found".to_owned())
     );
     Ok(())
 }

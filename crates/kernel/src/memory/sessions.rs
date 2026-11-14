@@ -122,6 +122,7 @@ pub struct SessionRecord<K = SessionId> {
     pub gist: Option<String>,
     pub cwd: Option<String>,
     pub origin: Option<ImportOrigin>,
+    pub conversation: Option<uuid::Uuid>,
 }
 
 impl SessionRecord<SessionKey> {
@@ -144,6 +145,7 @@ impl SessionRecord<SessionKey> {
             cwd: self.cwd,
             origin: self.origin,
             owner: self.owner,
+            conversation: self.conversation,
         })
     }
 }
@@ -164,6 +166,7 @@ impl From<SessionRecord> for SessionRecord<SessionKey> {
             cwd: record.cwd,
             origin: record.origin,
             owner: record.owner,
+            conversation: record.conversation,
         }
     }
 }
@@ -202,6 +205,11 @@ pub trait SessionCatalog: Send + Sync {
     ) -> Result<Option<SessionRecord<SessionKey>>, MemoryStoreError> {
         Ok(self.entries(std::slice::from_ref(key)).await?.pop())
     }
+
+    async fn conversation_session(
+        &self,
+        conversation: uuid::Uuid,
+    ) -> Result<Option<SessionKey>, MemoryStoreError>;
 }
 
 #[must_use]

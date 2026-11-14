@@ -1,3 +1,4 @@
+mod addresses;
 mod sessions;
 
 use std::collections::BTreeMap;

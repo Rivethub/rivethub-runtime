@@ -17,7 +17,7 @@ use wire::session_id::SessionId;
 
 use futures::StreamExt as _;
 
-use super::{deletions, ensure_owned, hidden, resolved, segment_key};
+use super::{deletions, ensure_owned, hidden, resolved};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -140,7 +140,7 @@ pub(super) async fn keep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let key = segment_key(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
         .keep_session(key.as_str(), Some(user.as_str()), Utc::now())

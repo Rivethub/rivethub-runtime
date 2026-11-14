@@ -157,7 +157,12 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
     let shared = Visibility::Space(household()?);
     let marked = owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(marked.effective, shared);
     assert_eq!(
@@ -197,7 +202,12 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
 
     let refused = members
         .clone()
-        .run(tenancy.mark_session(&bob, &second, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &bob,
+            &SessionKey::from(&second),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await;
     assert!(refused.is_err(), "only the owner marks a session");
     let renamed = members
@@ -217,7 +227,12 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
 
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(visible(&probe, members, "rh_messages").await?, 0);
     Ok(())
@@ -279,7 +294,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
     let first = SessionId::try_from(FIRST.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &first, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&first),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), "rh_conversations").await?,
@@ -293,7 +313,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
     let second = SessionId::try_from(SECOND.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), "rh_topics WHERE kind = 'work'").await?,
@@ -438,7 +463,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
         .clone()
         .run(tenancy.mark_session(
             &alice,
-            &SessionId::try_from(FIRST.to_owned())?,
+            &SessionKey::try_from(FIRST.to_owned())?,
             Some(&Visibility::Private),
             now,
         ))
@@ -645,7 +670,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
     tenancy
         .mark_session(
             &alice,
-            &SessionId::try_from(FIRST.to_owned())?,
+            &SessionKey::try_from(FIRST.to_owned())?,
             Some(&Visibility::Space(household()?)),
             Utc::now(),
         )
@@ -1491,7 +1516,12 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     let second = SessionId::try_from(SECOND.to_owned())?;
     owners
         .clone()
-        .run(tenancy.mark_session(&alice, &second, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(
+            &alice,
+            &SessionKey::from(&second),
+            Some(&shared),
+            Utc::now(),
+        ))
         .await?;
     assert_eq!(
         visible(&probe, members.clone(), claims).await?,

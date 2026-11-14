@@ -96,6 +96,7 @@ fn record(key: &str, title: &str, started: &str) -> SessionRecord {
         gist: None,
         cwd: None,
         origin: None,
+        conversation: None,
     }
 }
 

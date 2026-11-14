@@ -38,7 +38,6 @@ use wire::gateway::topics::TopicRecord;
 use wire::gateway::topics::TopicUpdate;
 use wire::session_id::SessionId;
 use wire::session_id::SessionKey;
-use wire::session_id::SessionRef;
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -136,15 +135,6 @@ pub(super) async fn resolve(store: &dyn TopicStore, key: &str) -> Result<Topic, 
 
 pub(super) async fn resolve_id(store: &dyn TopicStore, key: &str) -> Result<TopicId, ApiError> {
     Ok(resolve(store, key).await?.id)
-}
-
-pub(super) fn canonical(segment: &str) -> Result<SessionId, ApiError> {
-    let decoded = wire::session_id::decode_segment(segment)
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    match decoded.session {
-        SessionRef::Canonical(session) => Ok(session),
-        SessionRef::Bare(_) => Err(ApiError::BadRequest("canonical session required".into())),
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -315,7 +305,7 @@ async fn placement(
     State(gateway): State<Arc<Gateway>>,
     Path(segment): Path<String>,
 ) -> Result<Json<PlacementReply>, ApiError> {
-    let session = canonical(&segment)?;
+    let session = crate::session_address::resolve_captured(&gateway, &segment).await?;
     let store = gateway.topics()?;
     let current = store.placement(&session).await.map_err(map::error)?;
     let suggestion = match current {
@@ -334,7 +324,7 @@ async fn place(
     Path(segment): Path<String>,
     Body(request): Body<PlacementRequest>,
 ) -> Result<Json<PlacementReply>, ApiError> {
-    let session = canonical(&segment)?;
+    let session = crate::session_address::resolve_captured(&gateway, &segment).await?;
     crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
     let topic = resolve_id(gateway.topics()?.as_ref(), &request.topic_id).await?;
     let placement = place_session(&gateway, &user, session, topic).await?;
@@ -381,7 +371,7 @@ async fn unplace(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<PlacementReply>, ApiError> {
-    let session = canonical(&segment)?;
+    let session = crate::session_address::resolve_captured(&gateway, &segment).await?;
     crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
     let removed = gateway
         .topics()?

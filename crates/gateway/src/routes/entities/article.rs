@@ -213,6 +213,7 @@ async fn rows(
             trashed: false,
             memory_state: SessionMemoryState::Summarized,
             gist: None,
+            conversation_id: None,
             id: session.session.into(),
         })
         .collect();

@@ -92,7 +92,7 @@ async fn a_trashed_session_leaves_every_reader_s_recall_on_a_pinned_login(
         .clone()
         .run(tenancy.mark_session(
             &alice,
-            &shared,
+            &SessionKey::from(&shared),
             Some(&Visibility::Space(household()?)),
             Utc::now(),
         ))
@@ -141,7 +141,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
     Scope::Viewer(alice.clone())
         .run(tenancy.mark_session(
             &alice,
-            &shared,
+            &SessionKey::from(&shared),
             Some(&Visibility::Space(household()?)),
             Utc::now(),
         ))
@@ -149,7 +149,12 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
     let as_bob = Scope::Viewer(bob.clone());
     let read = as_bob
         .clone()
-        .run(tenancy.mark_session(&bob, &shared, Some(&Visibility::Private), Utc::now()))
+        .run(tenancy.mark_session(
+            &bob,
+            &SessionKey::from(&shared),
+            Some(&Visibility::Private),
+            Utc::now(),
+        ))
         .await;
     assert!(
         matches!(read, Err(TenancyStoreError::NotOwner(_))),
@@ -160,7 +165,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
         .clone()
         .run(PostgresTenancy::new(pinned.clone()).mark_session(
             &bob,
-            &private,
+            &SessionKey::from(&private),
             Some(&Visibility::Private),
             Utc::now(),
         ))
@@ -181,7 +186,8 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
         "the claim trigger refuses a pinned login too"
     );
     let marks: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM rh_session_marks WHERE owner_user_id = 'bob'")
+        sqlx::query_scalar("SELECT count(*) FROM rh_session_marks WHERE owner_user_id = $1")
+            .bind(bob.principal().as_str())
             .fetch_one(&pool)
             .await?;
     assert_eq!(marks, 0, "nothing was stored for bob");

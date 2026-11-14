@@ -3099,6 +3099,25 @@ deletes marks left by people who do not own the session, and the visibility answ
 another person's. The session owners file (`<state>/den/session-owners.json`) is no longer read or written; an existing
 file is left where it is and ignored. `memory_postgres::SCHEMA_VERSION` is 70.
 
+(179) One way to name a session (Phil, 2026-11-13, team hub). Every route that takes a session in its path
+(`/api/sessions/{session}` and its `keep`, `trash`, `restore`, `visibility`, `placement`, `history` and `model-calls`
+routes, `/api/memory/summaries/{session}…` and `/api/harness-sessions/{session}…`) resolves it through
+`gateway::session_address::resolve`, which accepts the same session in four forms: the canonical harness id
+(`claude-code:<native>`) as unpadded base64url, the canonical id or an import key (`import:<64 hex>`) as text, either
+percent-encoded, and the conversation UUID that `POST /api/share/find`, `rh memory sanitize --session` and the new
+`conversationId` field name. A UUID is looked up as a conversation first (`SessionCatalog::conversation_session`, under
+the caller's visibility), then as a bare harness id, as before; one that is neither answers `404`, and text that is no
+session address answers `400`. Every form accepted before keeps working. A received session can be read, kept, trashed,
+restored, deleted and shared with a space (`PATCH …/visibility` takes import keys; `TenancyStore::mark_session` and
+`SessionVisibilityRecord.sessionId` are keyed by `SessionKey`); filing it under a topic or marking it as history answers
+`422 {"error":"a received session cannot be filed under a topic or marked as history; only sessions captured here can"}`,
+and the harness-session routes answer `400` with code `bad_request` and the route of its stored messages, since a
+received session has no harness transcript on this node. `/api/memory/summaries/{session}` still reads a legacy key
+that is no session address as given. Session rows and details carry `conversationId` (additive, optional; the session's
+earliest conversation), and each `POST /api/share/find` result carries `session`, its stored session key (additive,
+optional), so a client goes from one to the other without searching. `POST /api/sessions/delete` still takes session
+keys only.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

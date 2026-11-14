@@ -16,6 +16,7 @@ pub mod routes;
 mod scope;
 pub mod server;
 mod session_access;
+mod session_address;
 pub mod sessions;
 mod settings;
 pub mod tenancy;

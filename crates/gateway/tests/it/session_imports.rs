@@ -21,6 +21,7 @@ use wire::session_id::{SessionId, SessionKey};
 
 const PERSON: Option<&str> = None;
 const DIGEST: &str = "9f2c0000000000000000000000000000000000000000000000000000000000e1";
+const IMPORT_CONVERSATION: uuid::Uuid = uuid::uuid!("00000000-0000-4000-8000-0000000000c9");
 const UNKNOWN_DIGEST: &str = "ab00000000000000000000000000000000000000000000000000000000000012";
 
 struct Setup {
@@ -66,6 +67,7 @@ fn imported() -> SessionRecord<SessionKey> {
                 verification: Verification::Verified,
             }),
         }),
+        conversation: Some(IMPORT_CONVERSATION),
     }
 }
 
@@ -84,6 +86,7 @@ fn native() -> SessionRecord {
         gist: None,
         cwd: None,
         origin: None,
+        conversation: None,
     }
 }
 
@@ -314,5 +317,48 @@ async fn an_import_detail_has_its_label_and_no_resume_command() {
             .and_then(|origin| origin.author)
             .as_deref(),
         Some("alex")
+    );
+}
+
+#[tokio::test]
+async fn a_received_session_answers_to_its_key_and_its_conversation_and_says_what_it_cannot_do() {
+    let setup = setup();
+    let key = import_key(DIGEST);
+    for form in [
+        key.to_string(),
+        encoded(&key),
+        IMPORT_CONVERSATION.to_string(),
+    ] {
+        let (status, body) = call(&setup, "GET", &format!("/api/sessions/{form}"), "").await;
+        assert_eq!(status, 200, "{form}: {}", String::from_utf8_lossy(&body));
+        let detail: SessionDetail = serde_json::from_slice(&body).expect("detail");
+        assert_eq!(detail.row.id, key, "{form}");
+        assert_eq!(detail.row.conversation_id, Some(IMPORT_CONVERSATION));
+    }
+    let (status, body) = call(
+        &setup,
+        "PUT",
+        &format!("/api/sessions/{}/placement", encoded(&key)),
+        r#"{"topicId":"project/anything"}"#,
+    )
+    .await;
+    assert_eq!(status, 422, "{}", String::from_utf8_lossy(&body));
+    assert!(
+        String::from_utf8_lossy(&body).contains("a received session cannot be filed"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    let (status, body) = call(
+        &setup,
+        "GET",
+        &format!("/api/harness-sessions/{}/transcript", encoded(&key)),
+        "",
+    )
+    .await;
+    assert_eq!(status, 400, "{}", String::from_utf8_lossy(&body));
+    assert!(
+        String::from_utf8_lossy(&body).contains("/api/sessions/{session}/messages"),
+        "{}",
+        String::from_utf8_lossy(&body)
     );
 }

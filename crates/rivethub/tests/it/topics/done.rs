@@ -61,10 +61,7 @@ async fn topics_close_and_reopen_and_sessions_are_marked_as_history() -> TestRes
             ""
         )
         .await?,
-        (
-            StatusCode::BAD_REQUEST,
-            "canonical session required".to_owned()
-        )
+        (StatusCode::NOT_FOUND, "not found".to_owned())
     );
     Ok(())
 }

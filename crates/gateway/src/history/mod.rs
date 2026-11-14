@@ -13,7 +13,7 @@ use kernel::transcript::{
 use parking_lot::RwLock;
 use strum::IntoEnumIterator as _;
 use wire::harness::{HarnessCode, HarnessId, HarnessSessionSummary};
-use wire::session_id::{SessionId, SessionRef, decode_segment};
+use wire::session_id::{SessionId, SessionKey, SessionRef, decode_segment};
 
 pub(crate) use context::ContextStamp;
 use context::Stamps;
@@ -47,6 +47,13 @@ fn invalid(message: String) -> ApiError {
     ApiError::Code(HarnessCode::InvalidSessionId, message)
 }
 
+fn received() -> ApiError {
+    ApiError::Code(
+        HarnessCode::BadRequest,
+        "a received session has no harness transcript on this node; its stored messages are at GET /api/sessions/{session}/messages".to_owned(),
+    )
+}
+
 pub(crate) fn no_source(harness: HarnessId) -> ApiError {
     ApiError::Code(
         HarnessCode::CapabilityUnsupported,
@@ -65,19 +72,20 @@ impl History {
         segment: &str,
     ) -> Result<Resolved, ApiError> {
         let decoded = decode_segment(segment).map_err(|error| invalid(error.to_string()))?;
-        let registry = registered();
-        let session = match &decoded.session {
-            SessionRef::Canonical(session) => {
-                let harness = session.harness();
-                if !registry.contains(&harness) {
-                    return Err(invalid(format!("no driver registered for {harness}")));
-                }
-                session.clone()
-            }
-            SessionRef::Bare(native) => SessionId::new(
-                self.owner_of_bare(gateway, &registry, native).await?,
-                native,
-            ),
+        let key = match &decoded.session {
+            SessionRef::Canonical(session) => SessionKey::Harness(session.clone()),
+            SessionRef::Import(key) => SessionKey::Import(key.clone()),
+            SessionRef::Bare(native) => crate::session_address::bare(gateway, native)
+                .await?
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "no registered harness owns bare session id {native}"
+                    ))
+                })?,
+        };
+        let session = match key {
+            SessionKey::Harness(session) => session,
+            SessionKey::Import(_) => return Err(received()),
         };
         Ok(Resolved {
             redirected_to: decoded.redirected_to(&session),
@@ -99,27 +107,25 @@ impl History {
         self.resolve(gateway, segment).await
     }
 
-    async fn owner_of_bare(
+    pub(crate) async fn bare_harness(
         &self,
         gateway: &Gateway,
-        registry: &[HarnessId],
         native: &str,
-    ) -> Result<HarnessId, ApiError> {
+    ) -> Result<Option<HarnessId>, ApiError> {
+        let registry = registered();
         let known = self.bare.read().get(native).copied();
         if let Some(harness) = known.filter(|harness| registry.contains(harness)) {
-            return Ok(harness);
+            return Ok(Some(harness));
         }
         if let Some(lister) = gateway.session_lister() {
             for harness in registry {
-                if lister.describe(*harness, native, None).await?.is_some() {
-                    self.bare.write().insert(native.to_owned(), *harness);
-                    return Ok(*harness);
+                if lister.describe(harness, native, None).await?.is_some() {
+                    self.bare.write().insert(native.to_owned(), harness);
+                    return Ok(Some(harness));
                 }
             }
         }
-        Err(invalid(format!(
-            "no registered harness owns bare session id {native}"
-        )))
+        Ok(None)
     }
 
     pub(crate) async fn transcript(

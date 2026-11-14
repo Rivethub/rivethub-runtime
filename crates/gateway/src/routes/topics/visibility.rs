@@ -21,9 +21,8 @@ use wire::gateway::tenancy::UserSettings;
 use wire::gateway::tenancy::UserSettingsUpdate;
 use wire::gateway::tenancy::VisibilityUpdate;
 use wire::gateway::topics::TopicSession;
-use wire::session_id::{SessionId, SessionKey};
+use wire::session_id::SessionKey;
 
-use super::canonical;
 use super::resolve_id;
 use crate::Gateway;
 use crate::error::ApiError;
@@ -106,7 +105,7 @@ fn user_settings(found: Option<VisibilityDefault>) -> UserSettings {
 }
 
 fn session_record(
-    session: SessionId,
+    session: SessionKey,
     state: kernel::tenancy::SessionVisibility,
 ) -> SessionVisibilityRecord {
     SessionVisibilityRecord {
@@ -177,9 +176,8 @@ async fn session_visibility(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionVisibilityRecord>, ApiError> {
-    let session = canonical(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     let viewer = gateway.tenancy.viewer(&user);
-    let key = SessionKey::from(&session);
     let mut found = gateway
         .tenancy_store()?
         .session_visibility(&viewer, std::slice::from_ref(&key))
@@ -188,7 +186,7 @@ async fn session_visibility(
     let state = found
         .remove(&key)
         .ok_or(ApiError::NotFound("session not found"))?;
-    Ok(Json(session_record(session, state)))
+    Ok(Json(session_record(key, state)))
 }
 
 async fn mark_session(
@@ -197,16 +195,16 @@ async fn mark_session(
     Path(segment): Path<String>,
     Json(update): Json<VisibilityUpdate>,
 ) -> Result<Json<SessionVisibilityRecord>, ApiError> {
-    let session = canonical(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     let mark = wanted(update.visibility.as_deref())?;
-    crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
+    crate::session_access::change_key(&gateway, &user, &key).await?;
     let viewer = gateway.tenancy.viewer(&user);
     let state = gateway
         .tenancy_store()?
-        .mark_session(&viewer, &session, mark.as_ref(), Utc::now())
+        .mark_session(&viewer, &key, mark.as_ref(), Utc::now())
         .await
         .map_err(error)?;
-    Ok(Json(session_record(session, state)))
+    Ok(Json(session_record(key, state)))
 }
 
 async fn mark_topic(
