@@ -3299,6 +3299,16 @@ leaves them for the next turn end. A prompt held while a capture runs goes to a 
 Event ids are unchanged (`<session>:hook:<key>`), so a prompt sent twice is stored once, and pending files written
 by earlier builds read as before.
 
+(196) A plug-in's output is bounded before it reaches the gateway (Phil, 2026-11-14, audit F5). The gateway read a
+plug-in's stdout and stderr a line at a time with no length cap, stopped reading at the first byte that was not UTF-8
+(after which a chatty plug-in blocks on its full pipe), and queued every line for the log writer without bound, so a
+plug-in that wrote without a newline, or faster than the log could be saved, grew the gateway's memory without limit.
+Now a line keeps its first 16 KiB and ends `… [<n> more bytes of this line dropped]`; bytes that are not UTF-8 read as
+U+FFFD and reading goes on; the log queue holds 1024 lines, and a line that finds it full is dropped and counted per
+plug-in, never blocking the plug-in. The writer records `<n> lines dropped: the plug-in wrote faster than its log
+could be saved` as a `host` line once its queue is empty, or after every 256 lines while it stays busy, and logs a
+warning. Rotation at 5 MB is unchanged, and shutdown drains at most the queued lines.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
