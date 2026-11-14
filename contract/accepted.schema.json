@@ -1855,6 +1855,31 @@
       ],
       "type": "object"
     },
+    "DegradedForm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DegradedObject"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "DegradedObject": {
+      "properties": {
+        "effect": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "effect"
+      ],
+      "type": "object"
+    },
     "DegradedProvider": {
       "properties": {
         "id": {
@@ -6035,19 +6060,14 @@
       "type": "object"
     },
     "MemoryDegraded": {
-      "properties": {
-        "effect": {
-          "type": "string"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DegradedObject"
         },
-        "reason": {
+        {
           "type": "string"
         }
-      },
-      "required": [
-        "reason",
-        "effect"
-      ],
-      "type": "object"
+      ]
     },
     "MemoryEntry": {
       "properties": {
