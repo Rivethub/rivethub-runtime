@@ -97,7 +97,7 @@ impl OpencodeTranscriptReader {
             OpencodeTranscript::Parts(rows) => (FORMAT, map_parts(session, &rows, offset, mode)?),
             OpencodeTranscript::Events(rows) => (
                 opencode_events::FORMAT,
-                opencode_events::map_events(session, &rows, offset)?,
+                opencode_events::map_events(session, &rows, offset, mode)?,
             ),
         };
         report(format, &slice.skipped);
@@ -153,7 +153,7 @@ fn located(store: &Path, native_id: &str) -> Result<Option<PathBuf>, TranscriptR
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub(super) enum Mode {
     Transcript,
     Capture,
 }
