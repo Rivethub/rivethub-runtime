@@ -336,6 +336,7 @@ pub struct GatewaySection {
     pub token: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub trust_root: Option<PathBuf>,
     pub users_file: Option<PathBuf>,
     pub static_dir: Option<PathBuf>,
     pub root_redirect: Option<String>,
