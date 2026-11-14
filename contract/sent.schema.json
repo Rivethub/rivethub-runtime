@@ -2235,7 +2235,10 @@
           ]
         },
         "type": {
-          "$ref": "#/$defs/EntityType"
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
         },
         "visibility": {
           "$ref": "#/$defs/SharedWith"
@@ -2245,6 +2248,7 @@
         "id",
         "title",
         "type",
+        "typeName",
         "sessionCount",
         "aliases",
         "visibility",
@@ -2272,34 +2276,20 @@
           "type": "string"
         },
         "type": {
-          "$ref": "#/$defs/EntityType"
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
         }
       },
       "required": [
         "id",
         "title",
         "type",
+        "typeName",
         "sessionCount"
       ],
       "type": "object"
-    },
-    "EntityType": {
-      "enum": [
-        "person",
-        "agent",
-        "machine",
-        "hardware",
-        "model",
-        "service",
-        "software",
-        "repository",
-        "domain",
-        "database",
-        "organization",
-        "project",
-        "place"
-      ],
-      "type": "string"
     },
     "EntityTypeCount": {
       "properties": {
@@ -2319,6 +2309,27 @@
         "typeId",
         "name",
         "entities"
+      ],
+      "type": "object"
+    },
+    "EntityTypeInfo": {
+      "properties": {
+        "count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "type": "string"
+        },
+        "typeName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "typeName",
+        "count"
       ],
       "type": "object"
     },

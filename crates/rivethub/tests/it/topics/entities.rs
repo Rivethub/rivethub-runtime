@@ -23,7 +23,7 @@ use memory_sqlite::SqliteStore;
 use uuid::Uuid;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
-use wire::gateway::entities::EntityType;
+use wire::gateway::entities::EntityTypeInfo;
 use wire::gateway::entities::Fact;
 use wire::gateway::topics::TopicList;
 use wire::gateway::topics::TopicRecord;
@@ -120,12 +120,13 @@ async fn entities_list_by_type_with_their_session_counts() -> TestResult {
     let api = Api::new(true)?;
     seeded(&api).await?;
     let all: Vec<EntitySummary> = api.json("GET", "/api/entities", "", StatusCode::OK).await?;
-    let listed: Vec<(&str, EntityType, usize)> = all
+    let listed: Vec<(&str, &str, &str, usize)> = all
         .iter()
         .map(|summary| {
             (
                 summary.title.as_str(),
-                summary.entity_type,
+                summary.entity_type.as_str(),
+                summary.type_name.as_str(),
                 summary.session_count,
             )
         })
@@ -133,14 +134,62 @@ async fn entities_list_by_type_with_their_session_counts() -> TestResult {
     assert_eq!(
         listed,
         [
-            ("Ana", EntityType::Person, 1),
-            ("web01", EntityType::Machine, 2)
+            ("Ana", "people", "People", 1),
+            ("web01", "hosts", "Hosts", 2)
         ]
     );
-    let machines: Vec<EntitySummary> = api
+    let hosts: Vec<EntitySummary> = api
+        .json("GET", "/api/entities?type=hosts", "", StatusCode::OK)
+        .await?;
+    assert_eq!(hosts.len(), 1);
+    let old_token: Vec<EntitySummary> = api
         .json("GET", "/api/entities?type=machine", "", StatusCode::OK)
         .await?;
-    assert_eq!(machines.len(), 1);
+    assert_eq!(old_token, Vec::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_new_type_topic_is_listed_with_its_name_and_count() -> TestResult {
+    let api = Api::new(true)?;
+    let created: TopicRecord = api
+        .json(
+            "POST",
+            "/api/topics",
+            r#"{"kind":"type","name":"Fleets"}"#,
+            StatusCode::CREATED,
+        )
+        .await?;
+    let _north: TopicRecord = api
+        .json(
+            "POST",
+            "/api/topics",
+            &format!(
+                r#"{{"kind":"entity","name":"North","parent":"{}"}}"#,
+                created.id
+            ),
+            StatusCode::CREATED,
+        )
+        .await?;
+    let listed: Vec<EntitySummary> = api
+        .json("GET", "/api/entities?type=fleets", "", StatusCode::OK)
+        .await?;
+    assert_eq!(listed.len(), 1);
+    let north = listed.first().ok_or("north")?;
+    assert_eq!(north.title, "North");
+    assert_eq!(north.entity_type, "fleets");
+    assert_eq!(north.type_name, "Fleets");
+    let types: Vec<EntityTypeInfo> = api
+        .json("GET", "/api/entities/types", "", StatusCode::OK)
+        .await?;
+    let fleets = types
+        .iter()
+        .find(|row| row.key == "fleets")
+        .ok_or("fleets")?;
+    assert_eq!(fleets.type_name, "Fleets");
+    assert_eq!(fleets.count, 1);
+    let hosts = types.iter().find(|row| row.key == "hosts").ok_or("hosts")?;
+    assert_eq!(hosts.count, 0);
     Ok(())
 }
 

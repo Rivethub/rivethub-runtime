@@ -37,6 +37,28 @@ async fn an_alias_that_is_another_entity_name_is_rejected(pool: PgPool) -> TestR
     Scope::Maintenance.run(rejected_alias(pool)).await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_new_kind_is_a_type_and_a_plural_uses_the_existing_one(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(new_kind(pool)).await
+}
+
+async fn new_kind(pool: PgPool) -> TestResult {
+    let memory = memory(&pool).await?;
+    let leaf = leaf();
+    let fleet = commit(&memory, &leaf, "north", "Fleets", &[], None).await?;
+    assert_eq!(fleet.type_name, "Fleets");
+    assert_eq!(fleet.type_slug, "fleets");
+    let host = commit(&memory, &leaf, "box", "host", &[], None).await?;
+    assert_eq!(host.type_name, "Hosts");
+    assert_eq!(host.type_slug, "hosts");
+    let extra: Option<String> =
+        sqlx::query_scalar("SELECT slug FROM rh_topics WHERE kind = 'type' AND slug = 'host'")
+            .fetch_optional(&pool)
+            .await?;
+    assert!(extra.is_none());
+    Ok(())
+}
+
 async fn name_pairs(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
     let leaf = leaf();

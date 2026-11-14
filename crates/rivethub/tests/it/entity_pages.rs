@@ -8,7 +8,9 @@ use kernel::tenancy::Scope;
 use kernel::topics::TopicId;
 use kernel::topics::TopicStore;
 use kernel::topics::bound_page;
-use kernel::wiki::entity_pass::EntityStore as _;
+use kernel::wiki::entity_pass::EntityLeaf;
+use kernel::wiki::entity_pass::EntityStore;
+use kernel::wiki::entity_pass::PreparedEntity;
 use kernel::wiki::entity_pass::PreparedFact;
 use kernel::wiki::entity_pass::PreparedHistory;
 use kernel::wiki::entity_pass::StoredRewrite;
@@ -19,7 +21,7 @@ use uuid::Uuid;
 use wire::gateway::entities::ChangeKind;
 use wire::gateway::entities::EntityArticle;
 use wire::gateway::entities::EntitySummary;
-use wire::gateway::entities::EntityType;
+use wire::gateway::entities::EntityTypeInfo;
 use wire::gateway::topics::TopicPage;
 use wire::session_id::SessionId;
 
@@ -41,6 +43,7 @@ async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestRe
     let home = tempfile::tempdir()?;
     let memory = PostgresMemory::new(pool.clone()).with_wiki_directory(home.path().to_path_buf());
     Scope::Maintenance.run(apply(&memory, entity)).await?;
+    Scope::Maintenance.run(file_fleet(&memory)).await?;
     let topic = TopicStore::list(&memory)
         .await?
         .into_iter()
@@ -112,7 +115,8 @@ async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestRe
         .json()
         .await?;
     assert_eq!(article.lead, "GPU host.");
-    assert_eq!(article.summary.entity_type, EntityType::Machine);
+    assert_eq!(article.summary.entity_type, "hosts");
+    assert_eq!(article.summary.type_name, "Hosts");
     let history = article
         .timeline
         .iter()
@@ -134,19 +138,66 @@ async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestRe
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(kind_of(&listed, "Acme"), Some(EntityType::Organization));
-    assert_eq!(kind_of(&listed, "RivetHub"), Some(EntityType::Project));
-    assert_eq!(kind_of(&listed, "Office"), Some(EntityType::Place));
-    assert_eq!(kind_of(&listed, "gpubox"), Some(EntityType::Machine));
+    assert_eq!(kind_of(&listed, "Acme").as_deref(), Some("organizations"));
+    assert_eq!(kind_of(&listed, "RivetHub").as_deref(), Some("projects"));
+    assert_eq!(kind_of(&listed, "Office").as_deref(), Some("places"));
+    assert_eq!(kind_of(&listed, "gpubox").as_deref(), Some("hosts"));
+    assert_eq!(kind_of(&listed, "north").as_deref(), Some("fleets"));
+    let north = listed
+        .iter()
+        .find(|entity| entity.title == "north")
+        .ok_or("north")?;
+    assert_eq!(north.type_name, "Fleets");
+    let types: Vec<EntityTypeInfo> = client
+        .get(format!("{base}/api/entities/types"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let fleets = types
+        .iter()
+        .find(|row| row.key == "fleets")
+        .ok_or("fleets type")?;
+    assert_eq!(fleets.type_name, "Fleets");
+    assert_eq!(fleets.count, 1);
     drop(shutdown_guard);
     Ok(())
 }
 
-fn kind_of(listed: &[EntitySummary], title: &str) -> Option<EntityType> {
+fn kind_of(listed: &[EntitySummary], title: &str) -> Option<String> {
     listed
         .iter()
         .find(|entity| entity.title == title)
-        .map(|entity| entity.entity_type)
+        .map(|entity| entity.entity_type.clone())
+}
+
+async fn file_fleet(memory: &PostgresMemory) -> TestResult {
+    let prepared = PreparedEntity {
+        entity_ref: None,
+        name: "north".to_owned(),
+        type_name: "Fleets".to_owned(),
+        aliases: Vec::new(),
+        facts: Vec::new(),
+        history: Vec::new(),
+    };
+    let leaf = EntityLeaf {
+        id: Uuid::new_v4(),
+        conversation_id: None,
+        content: "The north fleet is based at the yard.".to_owned(),
+        start: at("2026-11-07T00:00:00Z"),
+        end: at("2026-11-07T01:00:00Z"),
+        owner: Some("owner".to_owned()),
+    };
+    memory
+        .commit(
+            std::slice::from_ref(&leaf),
+            &prepared,
+            at("2026-11-07T02:00:00Z"),
+        )
+        .await?
+        .ok_or("fleet was not filed")?;
+    Ok(())
 }
 
 async fn apply(memory: &PostgresMemory, entity: Uuid) -> TestResult {
