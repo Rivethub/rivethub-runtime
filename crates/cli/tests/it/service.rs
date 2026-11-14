@@ -919,6 +919,7 @@ async fn service_start_stops_a_detached_node_before_the_unit() {
     let fixture = Fixture::new();
     let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
     let pid = child.id();
+    let reaper = std::thread::spawn(move || child.wait());
     let report = fixture
         .run(Scope::User, ServiceCommand::Start, &[])
         .await
@@ -933,10 +934,7 @@ async fn service_start_stops_a_detached_node_before_the_unit() {
         fixture.calls(),
         "systemctl|--user|show|-p|MainPID|--value|rivethub\nsystemctl|--user|daemon-reload\nsystemctl|--user|start|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
     );
-    let finished = tokio::time::timeout(Duration::from_secs(5), async { child.wait() })
-        .await
-        .expect("holder exit")
-        .expect("wait");
+    let finished = reaper.join().expect("reaper").expect("wait");
     assert!(!finished.success());
 }
 
