@@ -1,4 +1,5 @@
 mod claude;
+mod codex;
 mod display;
 mod grok;
 mod tools;
@@ -49,6 +50,11 @@ pub(super) async fn transcript(
             .await
             .map(TranscriptRead::Read);
     }
+    if harness == HarnessId::Codex {
+        return codex::transcript(root, &native)
+            .await
+            .map(TranscriptRead::Read);
+    }
     text_turns(harness, root, &native).await
 }
 
@@ -58,7 +64,7 @@ pub(super) async fn tool_output(
     native: &str,
     call: &str,
 ) -> Result<ToolOutputRead, TranscriptReaderError> {
-    if harness != HarnessId::ClaudeCode {
+    if !matches!(harness, HarnessId::ClaudeCode | HarnessId::Codex) {
         return Ok(ToolOutputRead::NoSource);
     }
     let Some(root) = roots.single(harness).map(Path::to_path_buf) else {
@@ -66,9 +72,12 @@ pub(super) async fn tool_output(
     };
     let native = native.to_owned();
     let call = call.to_owned();
-    blocking(move || claude::tool_output(&root, &native, &call))
-        .await
-        .map(|found| found.map_or(ToolOutputRead::Missing, ToolOutputRead::Found))
+    let found = if harness == HarnessId::Codex {
+        codex::tool_output(root, &native, &call).await
+    } else {
+        blocking(move || claude::tool_output(&root, &native, &call)).await
+    };
+    found.map(|found| found.map_or(ToolOutputRead::Missing, ToolOutputRead::Found))
 }
 
 async fn text_turns(
