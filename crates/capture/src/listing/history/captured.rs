@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use kernel::transcript::HarnessToolOutput;
 use kernel::transcript::HarnessTranscriptTool;
 use kernel::transcript::HarnessTranscriptTurn;
@@ -10,9 +8,7 @@ use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::TranscriptToolStatus;
 use wire::JsonObject;
 use wire::capture::CaptureMessage;
-use wire::harness::HarnessId;
 use wire::message::Role;
-use wire::session_id::SessionId;
 
 use super::display::tail_chars;
 use super::tools::RESULT_CHARS;
@@ -20,31 +16,28 @@ use super::tools::args_summary;
 use super::tools::is_prompt_tool;
 use super::tools::keeps_input;
 use super::tools::kept_object;
-use crate::readers::codex::CodexTranscriptReader;
 
 const THINKING: &str = "[thinking] ";
 const CALL: &str = "[tool] ";
+const RESULT: &str = "[tool-result]";
 const FAILURE: &str = "[tool-failure]";
 const OUTPUT_BYTES: usize = 64 * 1024;
 
-pub(super) async fn transcript(
-    root: PathBuf,
-    native: &str,
+pub(super) fn transcript(
+    messages: Vec<CaptureMessage>,
 ) -> Result<StoreTranscript, TranscriptReaderError> {
     Ok(StoreTranscript {
-        turns: fold(root, native).await?.turns,
+        turns: fold(messages)?.turns,
         earlier: None,
         context: None,
     })
 }
 
-pub(super) async fn tool_output(
-    root: PathBuf,
-    native: &str,
+pub(super) fn tool_output(
+    messages: Vec<CaptureMessage>,
     call: &str,
 ) -> Result<Option<HarnessToolOutput>, TranscriptReaderError> {
-    let found = fold(root, native)
-        .await?
+    let found = fold(messages)?
         .outputs
         .into_iter()
         .find(|output| output.call == call);
@@ -62,11 +55,9 @@ pub(super) async fn tool_output(
     }))
 }
 
-async fn fold(root: PathBuf, native: &str) -> Result<Folder, TranscriptReaderError> {
-    let session = SessionId::new(HarnessId::Codex, native);
-    let slice = CodexTranscriptReader::new(root).capture(&session).await?;
+fn fold(messages: Vec<CaptureMessage>) -> Result<Folder, TranscriptReaderError> {
     let mut folder = Folder::default();
-    for message in slice.messages {
+    for message in messages {
         folder.message(message)?;
     }
     folder.flush();
@@ -118,9 +109,19 @@ impl Folder {
                 if message.content.starts_with(CALL) {
                     self.draft(at)
                         .open(message.event_id, name, message.tool_args.as_ref())?;
-                } else {
+                } else if message.content.starts_with(RESULT)
+                    || message.content.starts_with(FAILURE)
+                {
                     let failed = message.content.starts_with(FAILURE);
                     self.answer(&name, message.tool_result.unwrap_or_default(), failed, at);
+                } else {
+                    self.draft(at).open(
+                        message.event_id,
+                        name.clone(),
+                        message.tool_args.as_ref(),
+                    )?;
+                    let result = message.tool_result.unwrap_or(message.content);
+                    self.answer(&name, result, false, at);
                 }
             }
             Role::System => {}
@@ -250,7 +251,7 @@ impl Draft {
     ) -> Result<(), TranscriptReaderError> {
         let kept = match input.filter(|_| keeps_input(&name)) {
             Some(input) => kept_object(input).map_err(|error| TranscriptReaderError::Read {
-                message: format!("codex tool call {id} input did not serialize"),
+                message: format!("tool call {id} input did not serialize"),
                 source: Box::new(error),
             })?,
             None => None,
