@@ -424,7 +424,7 @@ async fn cowork_has_no_transcript_source() -> TestResult {
 }
 
 #[tokio::test]
-async fn other_harnesses_read_text_turns_from_their_stores() -> TestResult {
+async fn other_harnesses_read_their_turns_and_tool_calls_from_their_stores() -> TestResult {
     let dir = tempfile::tempdir()?;
     let session = dir.path().join(format!(
         "sessions/-work-demo/2026-10-14T12-00-00-000Z_{OMP}.jsonl"
@@ -438,7 +438,7 @@ async fn other_harnesses_read_text_turns_from_their_stores() -> TestResult {
     let read = read(&lister, HarnessId::Omp, OMP).await;
     assert_eq!(
         serde_json::to_string(&read.turns)?,
-        r#"[{"role":"user","text":"list the files","startedAtMs":1791979200000,"endedAtMs":1791979200000},{"role":"assistant","text":"Running ls.","startedAtMs":1791979201000,"endedAtMs":1791979201000}]"#
+        r#"[{"role":"user","text":"list the files","startedAtMs":1791979200000,"endedAtMs":1791979200000},{"role":"assistant","text":"Running ls.","tools":[{"name":"bash","status":"done","id":"omp:33333333-3333-3333-3333-333333333333:l9"}],"lastBlock":"tool_result","startedAtMs":1791979201000,"endedAtMs":1791979202000}]"#
     );
     Ok(())
 }
