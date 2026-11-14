@@ -3014,6 +3014,8 @@ always wins and sends nothing anywhere. Each install's own crash-report and usag
 
 (175) A standalone node is not told to set a database variable (Phil, 2026-11-14). `rh memory` commands that only a datahub can run (`queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store` without `--into`, and `backfill-titles --model`) exit 1 with `This command needs a datahub (Postgres).` on a SQLite node, including when `RIVETHUB_PG_URL` is set in the environment. Export, import, bundle, reembed and `backfill-titles` without `--model` use the SQLite file. A URL that was set and is invalid still says `invalid RIVETHUB_PG_URL` on a node that is not SQLite.
 
+(176) A search with no embedding endpoint is information, not a warning (Phil, 2026-11-14). `memory_search` text for the reason `embedding endpoint not configured` is one line, `Keyword search. Meaning-based search needs an embedding endpoint.`, with no warning mark. A configured endpoint that fails (unreachable, an HTTP error, an exact-token scan that ran out of time) still starts with `⚠` and the effect line. The JSON `degraded` object is unchanged.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
