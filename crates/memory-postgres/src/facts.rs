@@ -243,8 +243,7 @@ impl FactStore for PostgresMemory {
                     title: row.title,
                     started_at,
                     last_at,
-                    messages: u64::try_from(row.messages)
-                        .map_err(|error| stored("fact session messages", error))?,
+                    messages: crate::stats::stored_count(row.messages, "fact session messages"),
                     provenance: row
                         .import_settings
                         .map(|settings| Provenance::from_settings(&settings.0)),
