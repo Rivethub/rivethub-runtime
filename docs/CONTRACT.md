@@ -3171,6 +3171,17 @@ also runs in the deferred reconnect (note 174). `rh db migrate` and the `rh memo
 `PostgresMemory::connect`, keep working with an admin login. Upgrade note: a hub whose service URL is a superuser must
 switch to its ordinary owning role first, or it will not start.
 
+(174) After an offline start nothing is served until the database passes its checks (Phil, 2026-11-13, audit F3). When
+the memory database was unreachable at start, `connect_deferred` returned a live lazy pool and a background check that
+only logged an incompatible schema and gave up, so once the network returned the gateway served an older or unadopted
+schema and `/healthz` reported it healthy (the probe was `SELECT 1`). The offline pool is now gated in `after_connect`:
+every connection fails with "the memory database has not passed its schema and login checks yet" until a separate
+verifier connection has passed `prepare_serving` (the schema version and note 173's login check). The verifier keeps
+trying every five seconds, logging a refusal once per distinct reason, so an `rh db migrate` run later opens the gate
+without a restart. `/healthz` goes through that pool, so it reports readiness: `503` while the database is away or
+refused, `200` once it serves. An online start is unchanged: the checks run before the pool is returned. No DDL runs
+at serving start.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

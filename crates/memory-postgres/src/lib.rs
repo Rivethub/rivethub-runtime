@@ -176,11 +176,16 @@ impl PostgresMemory {
             Err(error) if loss::unreachable(&error) => {
                 tracing::warn!(
                     %error,
-                    "the memory database is unreachable; memory stays unavailable until it answers"
+                    "the memory database is unreachable; memory stays unavailable until it answers and passes its schema and login checks"
                 );
-                let pool = lazy_pool(url, POOL_CONNECTIONS, Some(pooling.idle()))
-                    .map_err(Error::Connection)?;
-                tokio::spawn(check_when_reachable(pool.clone()));
+                let gate = std::sync::Arc::new(scope::Gate::default());
+                let pool = scope::gated(
+                    bare_options(POOL_CONNECTIONS, Some(pooling.idle())),
+                    std::sync::Arc::clone(&gate),
+                )
+                .connect_lazy(url)
+                .map_err(Error::Connection)?;
+                tokio::spawn(check_when_reachable(url.to_owned(), gate));
                 Ok(Self::new(pool))
             }
             Err(error) => Err(Error::Connection(error)),
@@ -258,46 +263,49 @@ impl Pooling {
     }
 }
 
-async fn check_when_reachable(pool: PgPool) {
+async fn check_when_reachable(url: String, gate: std::sync::Arc<scope::Gate>) {
+    let mut refused: Option<String> = None;
     loop {
         tokio::time::sleep(RECHECK).await;
-        match PostgresMemory::prepare_serving(&pool).await {
+        let probe = match pool_options(1, None).connect(&url).await {
+            Ok(probe) => probe,
+            Err(error) => {
+                tracing::debug!(%error, "the memory database is still unreachable");
+                continue;
+            }
+        };
+        let verdict = PostgresMemory::prepare_serving(&probe).await;
+        probe.close().await;
+        match verdict {
             Ok(()) => {
+                gate.open();
                 tracing::info!("the memory database answered; memory is available");
                 return;
             }
-            Err(
-                error @ (Error::SchemaBehind { .. }
-                | Error::NotAdopted
-                | Error::BypassingLogin { .. }),
-            ) => {
-                tracing::error!(%error, "the memory database answered but cannot serve this build");
-                return;
+            Err(error) => {
+                let reason = error.to_string();
+                if refused.as_deref() != Some(reason.as_str()) {
+                    tracing::error!(%error, "the memory database answered but cannot serve this build; memory stays unavailable and is checked again");
+                    refused = Some(reason);
+                }
             }
-            Err(error) => tracing::debug!(%error, "the memory database is still unreachable"),
         }
     }
 }
 
-fn pool_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
-    let options = scoped(
-        PgPoolOptions::new()
-            .max_connections(max_connections)
-            .acquire_timeout(ACQUIRE_TIMEOUT)
-            .test_before_acquire(false),
-    );
+fn bare_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
+    let options = PgPoolOptions::new()
+        .max_connections(max_connections)
+        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .test_before_acquire(false);
     match idle_timeout {
         Some(idle) => options.idle_timeout(idle),
         None => options,
     }
 }
 
-pub(crate) fn lazy_pool(
-    url: &str,
-    max_connections: u32,
-    idle_timeout: Option<Duration>,
-) -> Result<PgPool, sqlx::Error> {
-    pool_options(max_connections, idle_timeout).connect_lazy(url)
+fn pool_options(max_connections: u32, idle_timeout: Option<Duration>) -> PgPoolOptions {
+    scoped(bare_options(max_connections, idle_timeout))
 }
 
 pub(crate) async fn open_pool(
