@@ -62,7 +62,7 @@ fn review(claims: &[Claim], state: FactState, now: DateTime<Utc>) -> Option<Fact
         .iter()
         .any(|claim| matches!(claim.said, Said::You { .. }) && claim.value == state.value);
     let fresh = now.signed_duration_since(newest.recorded_at) < FACT_NEW_FOR;
-    if state.pinned || yours || !fresh || newest.said.session().is_none() {
+    if state.pinned || yours || !fresh || newest.said.session().is_none() || newest.said.settled() {
         return None;
     }
     let quotes = quotes(&history, &state.sources);

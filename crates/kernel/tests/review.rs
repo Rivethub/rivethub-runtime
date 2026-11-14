@@ -57,9 +57,18 @@ impl Key {
                 session: session(from),
                 summary: Uuid::new_v4(),
                 evidence: Evidence::quote(&format!("we moved it to {value} today")),
+                settled: false,
             },
             at,
         )
+    }
+
+    fn settled(&self, value: &str, from: u8, at: i64) -> TestResult<Claim> {
+        let mut claim = self.writer(value, from, at)?;
+        if let Said::Writer { settled, .. } = &mut claim.said {
+            *settled = true;
+        }
+        Ok(claim)
     }
 
     fn you(&self, value: &str, pinned: bool, at: i64) -> TestResult<Claim> {
@@ -228,6 +237,44 @@ fn a_pinned_value_disputed_by_a_writer_is_a_conflict() -> TestResult {
     let reviews = fact_reviews(&claims, hours(11));
     let [review] = reviews.as_slice() else {
         return Err(format!("one review expected, got {reviews:?}").into());
+    };
+    assert!(matches!(review.key, ReviewKey::Conflict { .. }));
+    assert_eq!(review.state.value.as_str(), "192.0.2.4");
+    assert!(review.state.pinned);
+    Ok(())
+}
+
+#[test]
+fn settled_writer_facts_are_not_reviewed_unless_they_conflict() -> TestResult {
+    let os = Key::new("os")?;
+    let ordinary = vec![
+        os.settled("Ubuntu 22.04", 1, 0)?,
+        os.settled("Ubuntu 24.04", 2, 48)?,
+    ];
+    assert!(
+        fact_reviews(&ordinary, hours(50)).is_empty(),
+        "ordinary settled facts are not review items"
+    );
+
+    let backup = Key::new("backup time")?;
+    let split = vec![
+        backup.settled("02:30", 1, 0)?,
+        backup.settled("03:00", 2, 2)?,
+    ];
+    let reviews = fact_reviews(&split, hours(3));
+    let [review] = reviews.as_slice() else {
+        return Err(format!("one conflict expected, got {reviews:?}").into());
+    };
+    assert!(matches!(review.key, ReviewKey::Conflict { .. }));
+
+    let address = Key::new("address")?;
+    let disputed = vec![
+        address.you("192.0.2.4", true, 0)?,
+        address.settled("192.0.2.9", 1, 10)?,
+    ];
+    let reviews = fact_reviews(&disputed, hours(11));
+    let [review] = reviews.as_slice() else {
+        return Err(format!("one conflict expected, got {reviews:?}").into());
     };
     assert!(matches!(review.key, ReviewKey::Conflict { .. }));
     assert_eq!(review.state.value.as_str(), "192.0.2.4");

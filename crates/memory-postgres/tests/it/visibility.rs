@@ -1405,6 +1405,7 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
             session: SessionId::try_from(session.to_owned())?,
             summary: Uuid::new_v4(),
             evidence: None,
+            settled: false,
         })
     };
     store

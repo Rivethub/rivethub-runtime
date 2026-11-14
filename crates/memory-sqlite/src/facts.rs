@@ -116,6 +116,7 @@ fn said(row: &ClaimRow) -> Result<Said, FactError> {
                 .map_err(|error| invalid("fact session", error))?,
             summary: Uuid::parse_str(summary).map_err(|error| invalid("fact summary", error))?,
             evidence: row.evidence.as_deref().and_then(Evidence::quote),
+            settled: false,
         }),
         (actor, _, _) => Err(invalid("fact actor", actor)),
     }
@@ -163,6 +164,7 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
             session,
             summary,
             evidence,
+            settled: _,
         } => (
             "wiki-writer",
             false,
