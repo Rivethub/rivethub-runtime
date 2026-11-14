@@ -195,9 +195,8 @@ impl Composition {
         shutdown: &CancellationToken,
         activities: &kernel::shutdown::Activities,
     ) -> Result<Self, ComposeError> {
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         Self::with_models(config, env, store, shutdown, &factory).await
     }
 
@@ -217,9 +216,8 @@ impl Composition {
             ports: Some(StorePorts::of(memory, tenancy)),
             sessions: Some(SessionStore::Postgres(Arc::clone(memory))),
         };
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         let store: Arc<dyn MemoryStore> = memory.clone();
         let summaries = memory.spawn_summary_watch(shutdown.child_token()).await?;
         let mut composition =
@@ -242,9 +240,8 @@ impl Composition {
             ports: Some(StorePorts::of(store, store.clone())),
             sessions: Some(SessionStore::Sqlite(SqliteStore::clone(store))),
         };
-        let factory = crate::models::ModelFactory::from_config(config, env, shutdown)
-            .await?
-            .with_activities(activities.clone());
+        let factory =
+            crate::models::ModelFactory::without_harnesses(env).with_activities(activities.clone());
         let memory: Arc<dyn MemoryStore> = store.clone();
         Self::compose(config, env, memory, backing, shutdown, &factory).await
     }

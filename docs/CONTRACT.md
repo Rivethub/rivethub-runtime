@@ -3309,6 +3309,14 @@ plug-in, never blocking the plug-in. The writer records `<n> lines dropped: the 
 could be saved` as a `host` line once its queue is empty, or after every 256 lines while it stays busy, and logs a
 warning. Rotation at 5 MB is unchanged, and shutdown drains at most the queued lines.
 
+(197) The gateway starts no model harness (Phil, 2026-11-14, architecture review R3). Composing the gateway (`rh
+start`, `rh gateway`, `rh local`) started the ACP harness of every CLI provider named by an `agents` entry before it
+served, although the gateway makes no model call and used those harnesses only to report their health; `rh local`
+ran two per provider, because each in-process worker starts its own for its roles. The gateway now composes with
+`ModelFactory::without_harnesses`; a worker starts only the providers its roles use (`ModelFactory::for_providers`),
+as before. The gateway's provider health on `/healthz` and `/api/memory/models` therefore lists no CLI harness: it
+described a process no job used. `kernel::agent`, which nothing used, is removed.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
