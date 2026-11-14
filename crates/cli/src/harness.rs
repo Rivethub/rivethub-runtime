@@ -170,6 +170,15 @@ async fn postgres_activity(config: &Config, env: &Environment) -> Option<Vec<Cap
 }
 
 fn change_report(change: &SetupChange, dry_run: bool, done: &str) -> Report {
+    let mut report = skip_report(change, dry_run, done);
+    for note in &change.notes {
+        report.stdout.push_str(note);
+        report.stdout.push('\n');
+    }
+    report
+}
+
+fn skip_report(change: &SetupChange, dry_run: bool, done: &str) -> Report {
     let Some(skipped) = &change.skipped else {
         return Report::success(change_text(&change.outcome, dry_run, done));
     };
