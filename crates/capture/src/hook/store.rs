@@ -87,7 +87,7 @@ impl StoreHarness {
         match (self, event) {
             (Self::GrokBuild, "Stop" | "PreCompact")
             | (Self::Opencode, "session.idle" | "session.error")
-            | (Self::Codex, "Stop") => Some(Trigger::Capture),
+            | (Self::Codex, "Stop" | "SubagentStop") => Some(Trigger::Capture),
             (Self::GrokBuild | Self::Codex, "SessionEnd") | (Self::Dsh, "turn/end") => {
                 Some(Trigger::Finalize)
             }
@@ -132,6 +132,17 @@ struct HookPayload {
     session_id: Option<String>,
     hook_event_name: Option<String>,
     cwd: Option<PathBuf>,
+    agent_id: Option<String>,
+}
+
+impl HookPayload {
+    fn native(&self, harness: StoreHarness, event: &str) -> Option<&str> {
+        let id = match (harness, event) {
+            (StoreHarness::Codex, "SubagentStop") => self.agent_id.as_deref(),
+            _ => self.session_id.as_deref(),
+        };
+        id.filter(|id| !id.is_empty())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -224,7 +235,9 @@ impl StoreCapture {
             StoreHarness::Dsh => {
                 crate::readers::dsh::subagent_link(self.store.clone(), native.to_owned()).await
             }
-            StoreHarness::Codex => Ok(None),
+            StoreHarness::Codex => {
+                crate::readers::codex::subagent_link(self.store.clone(), native.to_owned()).await
+            }
         };
         match found {
             Ok(link) => link,
@@ -298,7 +311,7 @@ impl<T: CaptureTransport> StoreHook<T> {
         else {
             return HookRun::done();
         };
-        let Some(native) = payload.session_id.as_deref().filter(|id| !id.is_empty()) else {
+        let Some(native) = payload.native(self.harness, event) else {
             return HookRun::done();
         };
         let cwd = payload.cwd.as_ref().map(|path| path.display().to_string());

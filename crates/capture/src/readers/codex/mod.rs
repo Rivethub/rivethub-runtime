@@ -1,4 +1,5 @@
 mod capture;
+mod subagent;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -121,6 +122,13 @@ impl TranscriptReader for CodexTranscriptReader {
             .filter(|turn| turn.at > since)
             .collect())
     }
+}
+
+pub(crate) async fn subagent_link(
+    store: PathBuf,
+    native_id: String,
+) -> Result<Option<crate::records::SubagentLink>, TranscriptReaderError> {
+    blocking(move || subagent::link(&store, &native_id)).await
 }
 
 fn list_sessions(store: &Path) -> Result<Vec<SessionId>, TranscriptReaderError> {
