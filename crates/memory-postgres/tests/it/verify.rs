@@ -131,3 +131,56 @@ async fn a_failed_newer_row_is_not_a_schema_version(pool: PgPool) -> TestResult 
     PostgresMemory::connect(&url(&pool)).await?;
     Ok(())
 }
+
+fn as_role(pool: &PgPool, role: &str) -> String {
+    pool.connect_options()
+        .as_ref()
+        .clone()
+        .username(role)
+        .password(role)
+        .to_url_lossy()
+        .to_string()
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_serving_login_that_bypasses_row_security_is_refused(pool: PgPool) -> TestResult {
+    for (role, attributes) in [
+        ("rh_serving_plain", "NOSUPERUSER NOBYPASSRLS"),
+        ("rh_serving_bypass", "NOSUPERUSER BYPASSRLS"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DO $$ BEGIN CREATE ROLE {role} LOGIN {attributes} PASSWORD '{role}'; \
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "GRANT SELECT ON _sqlx_migrations TO {role}"
+        )))
+        .execute(&pool)
+        .await?;
+    }
+    let pooling = memory_postgres::Pooling::OnDemand;
+    for (url, refused) in [
+        (url(&pool), true),
+        (as_role(&pool, "rh_serving_bypass"), true),
+        (as_role(&pool, "rh_serving_plain"), false),
+    ] {
+        match PostgresMemory::connect_deferred(&url, pooling).await {
+            Err(error @ Error::BypassingLogin { .. }) => {
+                assert!(refused, "{error}");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("serve memory with an ordinary login"),
+                    "{error}"
+                );
+                assert!(!error.to_string().contains("password"), "{error}");
+            }
+            Ok(_) => assert!(!refused, "a bypassing login was accepted"),
+            Err(other) => return Err(other.into()),
+        }
+    }
+    PostgresMemory::connect(&url(&pool)).await?;
+    Ok(())
+}

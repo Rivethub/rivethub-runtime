@@ -170,7 +170,7 @@ impl PostgresMemory {
         let options = pool_options(POOL_CONNECTIONS, Some(pooling.idle()));
         match options.connect(url).await {
             Ok(pool) => {
-                Self::prepare(&pool).await?;
+                Self::prepare_serving(&pool).await?;
                 Ok(Self::new(pool))
             }
             Err(error) if loss::unreachable(&error) => {
@@ -185,6 +185,20 @@ impl PostgresMemory {
             }
             Err(error) => Err(Error::Connection(error)),
         }
+    }
+
+    pub async fn prepare_serving(pool: &PgPool) -> Result<(), Error> {
+        Self::prepare(pool).await?;
+        let (login, bypasses): (String, bool) = sqlx::query_as(
+            "SELECT current_user::text, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|source| Error::operation("serving login check", source))?;
+        if bypasses {
+            return Err(Error::BypassingLogin { login });
+        }
+        Ok(())
     }
 
     pub async fn prepare(pool: &PgPool) -> Result<(), Error> {
@@ -247,12 +261,16 @@ impl Pooling {
 async fn check_when_reachable(pool: PgPool) {
     loop {
         tokio::time::sleep(RECHECK).await;
-        match PostgresMemory::prepare(&pool).await {
+        match PostgresMemory::prepare_serving(&pool).await {
             Ok(()) => {
                 tracing::info!("the memory database answered; memory is available");
                 return;
             }
-            Err(error @ (Error::SchemaBehind { .. } | Error::NotAdopted)) => {
+            Err(
+                error @ (Error::SchemaBehind { .. }
+                | Error::NotAdopted
+                | Error::BypassingLogin { .. }),
+            ) => {
                 tracing::error!(%error, "the memory database answered but cannot serve this build");
                 return;
             }

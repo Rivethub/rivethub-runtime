@@ -16,7 +16,6 @@ use config::Environment;
 use config::RedactionSettings;
 use serde::Deserialize;
 use serde::Serialize;
-use sqlx::ConnectOptions as _;
 use tempfile::tempdir;
 use testkit::Json;
 use tokio::io::AsyncBufReadExt;
@@ -192,8 +191,8 @@ async fn post_recorded_batches(
 async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
-    let url = pool.connect_options().to_url_lossy().to_string();
     migrate::postgres_pool(&pool).await?;
+    let url = db.served_url().await?;
     let home = tempdir()?;
     let env = Environment::from_vars([
         (OsStr::new(config::POSTGRES_URL_VARIABLE), OsStr::new(&url)),
@@ -377,8 +376,8 @@ async fn get_full_text(
 async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
-    let url = pool.connect_options().to_url_lossy();
     migrate::postgres_pool(&pool).await?;
+    let url = db.served_url().await?;
     let home = tempdir()?;
     let hub_home = home.path().join(".rivethub");
     std::fs::create_dir_all(&hub_home)?;
