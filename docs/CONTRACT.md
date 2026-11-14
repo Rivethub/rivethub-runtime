@@ -3002,6 +3002,8 @@ in config.yaml, so it is an install-time choice like note 145's policy. With `cl
 while telemetry goes to that url; the gateway's access is `CloudAccess::TelemetryOnly`. `telemetry.disabled: true`
 always wins and sends nothing anywhere. Each install's own crash-report and usage-count switches still apply.
 
+(170) A second node names the one already running (Phil, 2026-11-14). `rh local` and `rh start` exit 11 with `a RivetHub node is already running (pid N)` when another live process holds this state directory's `rivethub.pid` lock, or when that file names a live process. The generated unit sets `RestartPreventExitStatus=11`, so systemd does not restart a start that cannot succeed until that process exits. A legacy `~/.rivetos` directory that a live process still owns keeps the `refusing to move legacy state` errors. `rh service start` and `rh service restart` stop a detached node that is not the unit's `MainPID`, print `Stopped the running RivetHub node (pid N) so the service can take its place.`, then start the unit. If that process does not exit, they print the same sentence plus "Stop it with rh stop, then run rh service start again." and do not start the unit. `rh service init` still only writes and enables the unit.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

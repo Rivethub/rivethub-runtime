@@ -94,8 +94,11 @@ impl Display for Unit {
         };
         write!(
             f,
-            "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} {}\nEnvironmentFile=-{}\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy={target}\n",
-            self.executable, self.kind, self.environment_file
+            "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={} {}\nEnvironmentFile=-{}\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus={}\n\n[Install]\nWantedBy={target}\n",
+            self.executable,
+            self.kind,
+            self.environment_file,
+            crate::exit::ALREADY_RUNNING
         )
     }
 }

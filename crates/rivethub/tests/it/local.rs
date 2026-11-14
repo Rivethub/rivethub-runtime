@@ -133,6 +133,40 @@ fn write_config(home: &std::path::Path, body: &str) -> TestResult {
 }
 
 #[tokio::test]
+async fn a_second_local_start_names_the_running_node_and_exits_once() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let port = testkit::ports::claim()?;
+    let port_text = port.to_string();
+    let started = start(
+        home.path(),
+        &["local", "--no-lan", "--port", &port_text],
+        &["gateway listening on "],
+    )
+    .await?;
+    let pid = started.child.id().ok_or("the node already stopped")?;
+    let second = Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["local", "--no-lan", "--port", &port_text])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("TOKIO_WORKER_THREADS", "2")
+        .output()
+        .await?;
+    let stderr = String::from_utf8(second.stderr)?;
+    assert_eq!(second.status.code(), Some(11), "{stderr}");
+    assert_eq!(
+        stderr,
+        format!("Error: a RivetHub node is already running (pid {pid})\n")
+    );
+    assert!(
+        second.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+    stop(started).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestResult {
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;

@@ -39,6 +39,7 @@ if [ "$1" = "$RIVETHUB_TEST_FAIL" ]; then
 fi
 case "$1" in
     status) printf 'service status\n'; printf 'status diagnostic\n' >&2; exit "${RIVETHUB_TEST_STATUS:-0}" ;;
+    show) printf '%s\n' "${RIVETHUB_TEST_MAIN_PID:-0}" ;;
     show-user) printf '%s\n' "${RIVETHUB_TEST_LINGER:-yes}" ;;
 esac
 "#);
@@ -213,7 +214,7 @@ async fn init_reports_lingering_and_never_overwrites() {
         assert!(contents.contains(" local\nEnvironmentFile="));
         assert!(
             contents.contains(
-                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n"
+                "Environment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n"
             )
         );
         assert!(contents.contains("WantedBy=default.target\n"));
@@ -314,7 +315,7 @@ fn typed_unit_has_one_format_and_escapes_systemd_expansions() {
     .expect("unit");
     assert_eq!(
         unit.to_string(),
-        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-\"/home/user/.rivethub/.env\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=RivetHub\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=\"/opt/Rivet Hub/rh\" start\nEnvironmentFile=-\"/home/user/.rivethub/.env\"\nEnvironment=RIVETHUB_LOG_LEVEL=info\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=11\n\n[Install]\nWantedBy=multi-user.target\n"
     );
     let unit = Unit::new(
         Path::new("/opt/é'\"\\%/$HOME/$(touch nope)/rh"),
@@ -651,4 +652,95 @@ fn unit_paths_preserve_unicode_and_cannot_inject_directives() {
         )
         .is_err()
     );
+}
+
+fn hold_pid(home: &Path, program: &str) -> std::process::Child {
+    let state = home.join(".rivethub");
+    std::fs::create_dir_all(&state).expect("state");
+    let ready = state.join("holder.ready");
+    let child = std::process::Command::new("/usr/bin/python3")
+        .arg("-c")
+        .arg(program)
+        .env("READY", &ready)
+        .spawn()
+        .expect("holder");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !ready.exists() {
+        if std::time::Instant::now() >= deadline {
+            panic!("holder did not become ready");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::fs::write(state.join("rivethub.pid"), format!("{}\n", child.id())).expect("pid");
+    child
+}
+
+const SLEEPING_HOLDER: &str = "import os, signal\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_DFL)\nopen(os.environ['READY'], 'w').close()\nos.execv('/bin/sleep', ['sleep', '60'])\n";
+
+const STUBBORN_HOLDER: &str = "import os, signal, time\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen(os.environ['READY'], 'w').close()\nwhile True:\n    time.sleep(1)\n";
+
+#[tokio::test]
+async fn service_start_stops_a_detached_node_before_the_unit() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id();
+    let report = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect("start");
+    assert_eq!(
+        report.stdout,
+        format!(
+            "Stopped the running RivetHub node (pid {pid}) so the service can take its place.\nservice status\n"
+        )
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\nsystemctl|--user|daemon-reload\nsystemctl|--user|start|rivethub\nsystemctl|--user|status|rivethub|--no-pager\n"
+    );
+    let finished = tokio::time::timeout(Duration::from_secs(5), async { child.wait() })
+        .await
+        .expect("holder exit")
+        .expect("wait");
+    assert!(!finished.success());
+}
+
+#[tokio::test]
+async fn service_start_leaves_the_units_own_process_running() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), SLEEPING_HOLDER);
+    let pid = child.id().to_string();
+    let report = fixture
+        .run(
+            Scope::User,
+            ServiceCommand::Restart,
+            &[("RIVETHUB_TEST_MAIN_PID", &pid)],
+        )
+        .await
+        .expect("restart");
+    assert_eq!(report.stdout, "service status\n");
+    assert!(child.try_wait().expect("poll").is_none());
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
+}
+
+#[tokio::test]
+async fn service_start_refuses_once_when_the_detached_node_stays_up() {
+    let fixture = Fixture::new();
+    let mut child = hold_pid(fixture.home.path(), STUBBORN_HOLDER);
+    let pid = child.id();
+    let error = fixture
+        .run(Scope::User, ServiceCommand::Start, &[])
+        .await
+        .expect_err("still running");
+    assert!(
+        matches!(error, ServiceError::Running { pid: found } if found == pid),
+        "{error}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        "systemctl|--user|show|-p|MainPID|--value|rivethub\n"
+    );
+    child.kill().expect("stop holder");
+    child.wait().expect("reap");
 }
