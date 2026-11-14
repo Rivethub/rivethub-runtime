@@ -1,6 +1,6 @@
 # Operator CLI: B9, B10, B16
 
-`Config::load` with `Profile::Node` still requires `runtime`, `agents`, and `providers`; `rh config validate`, `rh status` and `rh doctor` also accept a SQLite config that passes with `Profile::Standalone`. `rh local` never invents an agent, a provider, or an endpoint. When no config resolves it writes only `memory.backend: sqlite`, the database path under the state directory, and the gateway bind, then loads that file with `Profile::Standalone`, which does not require those sections. `rh local` runs no task engine; delegation, `/api/tasks` and `/api/catalog/agents` were removed (CONTRACT note 132), and `rh agent` was retired earlier (CONTRACT note 74).
+`Config::load` validates every node with one rule: `runtime`, `agents` and `providers` are optional, and a node without them has no model (CONTRACT note 163). `rh local` never invents an agent, a provider, or an endpoint. When no config resolves it writes only `memory.backend: sqlite`, the database path under the state directory, and the gateway bind, then loads that file with `Profile::Standalone`, which does not require those sections. `rh local` runs no task engine; delegation, `/api/tasks` and `/api/catalog/agents` were removed (CONTRACT note 132), and `rh agent` was retired earlier (CONTRACT note 74).
 
 `rh` dispatches through the `cli` composition crate. Bare invocation, `rh help` and `rh --help` print the derived clap
 command list, and `rh <command> --help` prints one command's arguments. One typed `cli::Exit` owns exit codes, including

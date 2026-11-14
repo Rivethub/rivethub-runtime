@@ -114,11 +114,15 @@ async fn a_missing_config_is_written_without_operator_sections() {
     let loaded = config::Config::load(
         &env,
         &config::ConfigLocation::Current(home.path().join(".rivethub/config.yaml")),
-        config::Profile::Node,
     );
+    let loaded = loaded.expect("the written config is valid for every command");
     assert!(
-        loaded.is_err(),
-        "operator validation still requires sections"
+        loaded
+            .notices
+            .iter()
+            .any(|notice| notice == config::NO_MODEL),
+        "{:?}",
+        loaded.notices
     );
     prepared.release().expect("release");
     assert!(!home.path().join(".rivethub/rivethub.pid").exists());

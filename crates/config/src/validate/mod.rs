@@ -273,24 +273,13 @@ fn removed_key_finding(
 pub const PLUGINS_IGNORED: &str = "\"plugins\" is ignored — the Rust runtime loads no plugins.";
 pub const WORKFLOWS_IGNORED: &str = "\"workflows\" is ignored — workflows moved out of the runtime into the rivethub-workflows package.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    Node,
-    Standalone,
-}
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Presence {
     pub plugins: bool,
     pub workflows: bool,
 }
 
-pub fn validate(
-    config: &Config,
-    ignored: &[IgnoredPath],
-    presence: &Presence,
-    profile: Profile,
-) -> ValidationResult {
+pub fn validate(config: &Config, ignored: &[IgnoredPath], presence: &Presence) -> ValidationResult {
     let mut out = ValidationResult::default();
     let ignored = retired::findings(ignored, &mut out);
     ignored_findings(config, &ignored, &mut out);
@@ -300,37 +289,19 @@ pub fn validate(
     if presence.workflows {
         out.warning("workflows", WORKFLOWS_IGNORED);
     }
-    sections(config, &mut out, profile);
+    sections(config, &mut out);
     cross_references(config, &mut out);
     out
 }
 
-const fn operator_sections_required(profile: Profile) -> bool {
-    match profile {
-        Profile::Node => true,
-        Profile::Standalone => false,
-    }
-}
+pub const NO_MODEL: &str = "No model is configured: this node captures, stores and serves recall, and summaries, titles, embeddings, wiki pages and entities stay off until runtime, agents and providers are set.";
 
-fn sections(config: &Config, out: &mut ValidationResult, profile: Profile) {
+fn sections(config: &Config, out: &mut ValidationResult) {
     if let Some(section) = &config.runtime {
         runtime::validate(out, section);
-    } else if operator_sections_required(profile) {
-        out.error("runtime", "Missing required section \"runtime\"");
     }
     if let Some(agents) = &config.agents {
         agents::validate(out, agents);
-    } else if operator_sections_required(profile) {
-        out.error(
-            "agents",
-            "Missing required section \"agents\" — define at least one agent",
-        );
-    }
-    if config.providers.is_none() && operator_sections_required(profile) {
-        out.error(
-            "providers",
-            "Missing required section \"providers\" — define at least one provider",
-        );
     }
     providers::validate(out, config.providers.as_ref());
     if let Some(channels) = &config.channels {

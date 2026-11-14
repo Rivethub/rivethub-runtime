@@ -28,6 +28,11 @@ The `den` section is now named `gateway` (`den` is read as a deprecated alias).
 The replay renames recorded `den` paths and messages to `gateway` on the
 expected side only; fixture bytes remain unchanged.
 
+`runtime`, `agents` and `providers` are optional (CONTRACT note 163): a node
+without them has no model. The replay drops the recorded "Missing required
+section" errors at those three paths on the expected side only; fixture bytes
+remain unchanged.
+
 The replay in `tests/validate/` drives every recorded case in
 `tests/golden/fixtures/validate_config*.jsonl` through `config::validate_document`,
 one test per recording file (a failing file lists every failing case with its

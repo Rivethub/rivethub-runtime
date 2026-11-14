@@ -539,6 +539,20 @@ impl Config {
     }
 
     #[must_use]
+    pub fn has_model_sections(&self) -> bool {
+        self.runtime.is_some() || self.agents.is_some() || self.providers.is_some()
+    }
+
+    #[must_use]
+    pub fn model_configured(&self) -> bool {
+        self.has_model_sections()
+            || self
+                .memory
+                .as_ref()
+                .is_some_and(|memory| memory.models.is_some())
+    }
+
+    #[must_use]
     pub fn sqlite_selected(&self) -> bool {
         self.memory.as_ref().is_some_and(|memory| {
             memory.backend == Some(MemoryBackend::Sqlite)

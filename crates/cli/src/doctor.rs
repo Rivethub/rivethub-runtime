@@ -26,6 +26,7 @@ pub enum CheckName {
     DiskSpace,
     CaptureSpool,
     Memory,
+    Models,
     Policy,
 }
 
@@ -145,6 +146,7 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
             checks.extend(directories?);
             checks.push(spool_check(env).await);
             checks.push(schema_check(&loaded.config, env).await);
+            checks.push(models_check(&loaded.config));
             checks.push(policy_check(&loaded.config));
         }
         Err(error) => {
@@ -169,6 +171,14 @@ async fn spool_check(env: &Environment) -> Check {
             "The capture spool is within bounds.",
         ),
         Err(error) => Check::fail(CheckName::CaptureSpool, error),
+    }
+}
+
+fn models_check(config: &Config) -> Check {
+    if config.model_configured() {
+        Check::pass(CheckName::Models, "A model is configured for memory jobs.")
+    } else {
+        Check::pass(CheckName::Models, config::NO_MODEL)
     }
 }
 

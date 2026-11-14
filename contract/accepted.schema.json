@@ -7421,7 +7421,8 @@
       "enum": [
         "healthy",
         "slow",
-        "failing"
+        "failing",
+        "unconfigured"
       ],
       "type": "string"
     },

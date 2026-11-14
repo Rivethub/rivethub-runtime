@@ -6,7 +6,6 @@ use config::Config;
 use config::Environment;
 use config::Finding;
 use config::POSTGRES_URL_VARIABLE;
-use config::Profile;
 use gateway::Gateway;
 use gateway::Settings;
 use gateway::server::BindError;
@@ -89,11 +88,21 @@ pub(crate) async fn postgres(
     let memory = PostgresMemory::connect_deferred(&url, pooling)
         .await?
         .with_wiki_directory(config.wiki_directory(env))
-        .with_wiki_owner(owner);
+        .with_wiki_owner(owner)
+        .with_missing_models(missing_models(config, env));
     Ok(match embed {
         Some(embed) => memory.with_query_embed(embed),
         None => memory,
     })
+}
+
+#[must_use]
+pub fn missing_models(config: &Config, env: &Environment) -> memory_postgres::MissingModels {
+    let language = config.model_configured();
+    memory_postgres::MissingModels {
+        language: !language,
+        embeddings: !language && config.memory_embed_endpoint(env).is_none(),
+    }
 }
 
 fn query_embed(
@@ -270,7 +279,7 @@ pub async fn serve(
 
 pub fn load(env: &Environment) -> Result<Config, StartupError> {
     if let Some(location) = config::resolve_config_path(env)? {
-        return Ok(announce(Config::load(env, &location, Profile::Node)?));
+        return Ok(announce(Config::load(env, &location)?));
     }
     warn_environment(env);
     tracing::warn!("no config file found — running with the built-in defaults");

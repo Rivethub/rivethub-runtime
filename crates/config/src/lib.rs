@@ -40,4 +40,4 @@ pub use provider::{ProviderType, RemovedProviderType};
 pub use report::{Finding, Severity, ValidationResult};
 pub use resolve::resolve_env_vars_with;
 pub use services::ServiceSwitch;
-pub use validate::{IgnoredPath, PLUGINS_IGNORED, Profile, WORKFLOWS_IGNORED};
+pub use validate::{IgnoredPath, NO_MODEL, PLUGINS_IGNORED, WORKFLOWS_IGNORED};

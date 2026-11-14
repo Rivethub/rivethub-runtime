@@ -100,6 +100,13 @@ pub struct PostgresMemory {
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
+    missing: MissingModels,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MissingModels {
+    pub language: bool,
+    pub embeddings: bool,
 }
 
 const SUMMARY_WRITTEN_BUFFER: usize = 256;
@@ -117,12 +124,19 @@ impl PostgresMemory {
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
             summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
+            missing: MissingModels::default(),
         }
     }
 
     #[must_use]
     pub fn with_wiki_directory(mut self, directory: std::path::PathBuf) -> Self {
         self.wiki_directory = Some(directory);
+        self
+    }
+
+    #[must_use]
+    pub fn with_missing_models(mut self, missing: MissingModels) -> Self {
+        self.missing = missing;
         self
     }
 

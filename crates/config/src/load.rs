@@ -93,10 +93,7 @@ pub fn resolve_config_path(env: &Environment) -> Result<Option<ConfigLocation>, 
     Ok(None)
 }
 
-pub fn validate_document(
-    document: &serde_yaml_ng::Value,
-    profile: validate::Profile,
-) -> ValidationResult {
+pub fn validate_document(document: &serde_yaml_ng::Value) -> ValidationResult {
     let document = match gateway_section(document) {
         Ok(document) => document,
         Err((path, message)) => {
@@ -110,7 +107,7 @@ pub fn validate_document(
         workflows: has_key(&document, "workflows"),
     };
     match typed_document(&document) {
-        Ok(typed) => validate::validate(&typed.config, &typed.ignored, &presence, profile),
+        Ok(typed) => validate::validate(&typed.config, &typed.ignored, &presence),
         Err((path, message)) => {
             let mut out = ValidationResult::default();
             out.error(&path, format!("\"{path}\" has the wrong type: {message}"));
@@ -252,17 +249,13 @@ fn conflict_at<E: std::fmt::Display>(
 }
 
 impl Config {
-    pub fn load(
-        env: &Environment,
-        location: &ConfigLocation,
-        profile: validate::Profile,
-    ) -> Result<Loaded, ConfigError> {
+    pub fn load(env: &Environment, location: &ConfigLocation) -> Result<Loaded, ConfigError> {
         let path = location.path();
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-        let mut loaded = Self::parse(env, &text, profile)?;
+        let mut loaded = Self::parse(env, &text)?;
         if location.is_legacy() {
             loaded.notices.insert(
                 0,
@@ -277,21 +270,17 @@ impl Config {
     }
 
     pub fn from_str(env: &Environment, text: &str) -> Result<Loaded, ConfigError> {
-        Self::parse(env, text, validate::Profile::Node)
+        Self::parse(env, text)
     }
 
-    fn parse(
-        env: &Environment,
-        text: &str,
-        profile: validate::Profile,
-    ) -> Result<Loaded, ConfigError> {
+    fn parse(env: &Environment, text: &str) -> Result<Loaded, ConfigError> {
         let mut document: serde_yaml_ng::Value = serde_yaml_ng::from_str(text)?;
-        let result = validate_document(&document, profile);
+        let result = validate_document(&document);
         if !result.valid() {
             return Err(ConfigError::Validation { result });
         }
         resolve_env_vars_with(env, &mut document)?;
-        let resolved = validate_document(&document, profile);
+        let resolved = validate_document(&document);
         if !resolved.valid() {
             return Err(ConfigError::Validation {
                 result: ValidationResult {
@@ -333,7 +322,9 @@ fn notices(env: &Environment, document: &serde_yaml_ng::Value, config: &Config) 
     if config.pglite_import_pending() {
         out.push(PGLITE_IMPORT_NOTICE.to_owned());
     }
-    if config
+    if !config.model_configured() {
+        out.push(crate::NO_MODEL.to_owned());
+    } else if config
         .memory
         .as_ref()
         .is_some_and(|memory| memory.models.is_none())
