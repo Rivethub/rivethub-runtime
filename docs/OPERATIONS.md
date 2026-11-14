@@ -70,6 +70,19 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
     WHERE (metadata ->> 'event_id') IS NOT NULL;
 ```
 
+## Updating from 0.8.4 on Linux with the service
+
+`rh update` on 0.8.4 leaves a node that runs as `rivethub.service` down: it rewrites the unit's `ExecStart` to
+`<path>/rh (deleted)`, which systemd cannot start (CONTRACT note 206). After updating from 0.8.4, run:
+
+```sh
+rh service restart
+```
+
+It rewrites the unit and starts the node; `rh status` says so when the unit is in that state. Nothing is lost while the
+node is down: hooks spool and deliver once it is back. A node without the service (macOS, `--no-service`) is not
+affected, and neither is an update from 0.8.3.
+
 ## Upgrading from 0.8.2 to 0.8.3
 
 0.8.3 needs no schema migration. It fixes what a new user on a standalone SQLite node (the one `local.sh` installs and

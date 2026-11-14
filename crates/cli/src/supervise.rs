@@ -177,7 +177,7 @@ async fn program_path(program: Option<&Path>) -> Result<PathBuf, Error> {
     if let Some(program) = program {
         return Ok(program.to_path_buf());
     }
-    Ok(tokio::task::spawn_blocking(std::env::current_exe).await??)
+    Ok(tokio::task::spawn_blocking(crate::service::executable).await??)
 }
 
 struct PidGuard {

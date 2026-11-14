@@ -438,7 +438,7 @@ fn lock(run: &Path) -> Result<Option<Flock<File>>, Error> {
 }
 
 fn spawn(env: &Environment, request: Ensure, home: &Path, logs: &Path) -> Result<(), Error> {
-    let executable = std::env::current_exe()?;
+    let executable = crate::service::executable()?;
     DirBuilder::new().recursive(true).mode(0o700).create(logs)?;
     let output = OpenOptions::new()
         .create(true)
