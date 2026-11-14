@@ -7,9 +7,11 @@ use kernel::wiki::entity_pass::CandidateQuery;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStore;
 use kernel::wiki::entity_pass::EntityView;
+use kernel::wiki::entity_pass::MatchDecision;
 use kernel::wiki::entity_pass::PreparedEntity;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
+use sqlx::Row as _;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -40,6 +42,16 @@ async fn an_alias_that_is_another_entity_name_is_rejected(pool: PgPool) -> TestR
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_new_kind_is_a_type_and_a_plural_uses_the_existing_one(pool: PgPool) -> TestResult {
     Scope::Maintenance.run(new_kind(pool)).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_hostname_on_the_page_finds_the_other_name(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(hostname_match(pool)).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_duplicate_decision_is_stored(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(stored_decision(pool)).await
 }
 
 async fn new_kind(pool: PgPool) -> TestResult {
@@ -130,16 +142,20 @@ async fn repo_tails(pool: PgPool) -> TestResult {
     let long = "bottlecapai/ThinkingCap-Qwen3.8-Flash-Next";
     let model_repo = commit(&memory, &leaf, long, "Repos", &[], None).await?;
     assert!(
-        !contains(
+        contains(
             &memory,
             &["ThinkingCap".to_owned()],
             "Models",
             model_repo.id
         )
-        .await?
+        .await?,
+        "ThinkingCap is a fuzzy neighbour of the longer repo name"
     );
     let thinking = commit(&memory, &leaf, "ThinkingCap", "Models", &[], None).await?;
-    assert_ne!(thinking.id, model_repo.id);
+    assert_ne!(
+        thinking.id, model_repo.id,
+        "a short token is not the repo tail, so commit does not merge them"
+    );
 
     let web = commit(&memory, &leaf, "web", "Services", &[], None).await?;
     let owned = commit(&memory, &leaf, "acme/web", "Repos", &[], None).await?;
@@ -192,6 +208,120 @@ async fn rejected_alias(pool: PgPool) -> TestResult {
     Ok(())
 }
 
+async fn hostname_match(pool: PgPool) -> TestResult {
+    let memory = memory(&pool).await?;
+    let leaf = leaf();
+    let gerty = commit(&memory, &leaf, "gerty", "Hosts", &["G9".to_owned()], None).await?;
+    let summary = seed_summary(&pool).await?;
+    sqlx::query(
+        "WITH fact AS (
+            INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+            VALUES ($1, $2, 'hostname', $3)
+            RETURNING id
+         )
+         INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, pinned, session_id, summary_id, at, recorded_at,
+             owner_user_id, settled)
+         SELECT $4, fact.id, 'box9', 'wiki-writer', false, 'claude-code:entity-decide', $5,
+                $3, $3, 'owner', true
+           FROM fact",
+    )
+    .bind(Uuid::new_v4())
+    .bind(gerty.id)
+    .bind(at("2026-11-13T02:00:00Z"))
+    .bind(Uuid::new_v4())
+    .bind(summary)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, topic_id, current_state, article, owner_user_id)
+         VALUES ('gerty-page', 'gerty', $1, 'box9 is this machine', 'also called G9', 'owner')",
+    )
+    .bind(gerty.id)
+    .execute(&pool)
+    .await?;
+    let found = memory
+        .match_candidates(&CandidateQuery {
+            names: vec!["box9".to_owned()],
+            type_name: "Hosts".to_owned(),
+            embedding: None,
+            markers: vec!["box9".to_owned()],
+        })
+        .await?;
+    let page = found.iter().find(|item| item.id == gerty.id);
+    let Some(page) = page else {
+        panic!("box9 did not find gerty");
+    };
+    assert!(
+        page.summary.contains("box9 is this machine"),
+        "{}",
+        page.summary
+    );
+    let alias = memory
+        .match_candidates(&CandidateQuery {
+            names: vec!["box9".to_owned(), "G9".to_owned()],
+            type_name: "Hosts".to_owned(),
+            embedding: None,
+            markers: Vec::new(),
+        })
+        .await?;
+    assert!(alias.iter().any(|item| item.id == gerty.id));
+    Ok(())
+}
+
+async fn stored_decision(pool: PgPool) -> TestResult {
+    let memory = memory(&pool).await?;
+    let summary = seed_summary(&pool).await?;
+    let decision = MatchDecision {
+        kind: "entity".to_owned(),
+        proposed_name: "box9".to_owned(),
+        proposed_type: "Hosts".to_owned(),
+        candidates: vec!["gerty (Hosts)".to_owned()],
+        verdict: "same".to_owned(),
+        choice: "0".to_owned(),
+        confidence: 0.93,
+        model: "stub".to_owned(),
+        entity_id: None,
+    };
+    memory
+        .record_decision(summary, &decision, at("2026-11-13T03:00:00Z"))
+        .await?;
+    let row = sqlx::query(
+        "SELECT proposed_name, verdict, model, candidates::text AS candidates
+           FROM rh_entity_decisions WHERE summary_id = $1",
+    )
+    .bind(summary)
+    .fetch_one(&pool)
+    .await?;
+    let name: String = row.try_get("proposed_name")?;
+    let verdict: String = row.try_get("verdict")?;
+    let model: String = row.try_get("model")?;
+    let candidates: String = row.try_get("candidates")?;
+    assert_eq!(name, "box9");
+    assert_eq!(verdict, "same");
+    assert_eq!(model, "stub");
+    assert!(candidates.contains("gerty"));
+    Ok(())
+}
+
+async fn seed_summary(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
+    let conversation: Uuid = sqlx::query_scalar(
+        "INSERT INTO rh_conversations (session_key, agent, channel, title, owner_user_id)
+         VALUES ('claude-code:entity-decide', 'rivet', 'cli', 'decide', 'owner') RETURNING id",
+    )
+    .fetch_one(pool)
+    .await?;
+    sqlx::query_scalar(
+        "INSERT INTO rh_summaries (conversation_id, content, kind, earliest_at, latest_at, owner_user_id)
+         VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
+    )
+    .bind(conversation)
+    .bind(at("2026-11-13T00:00:00Z"))
+    .bind(at("2026-11-13T01:00:00Z"))
+    .fetch_one(pool)
+    .await
+}
+
 async fn contains(
     memory: &PostgresMemory,
     names: &[String],
@@ -203,6 +333,7 @@ async fn contains(
             names: names.to_vec(),
             type_name: type_name.to_owned(),
             embedding: None,
+            markers: Vec::new(),
         })
         .await?;
     Ok(found.iter().any(|item| item.id == id))

@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use config::{Config, Environment, Paths};
 use nix::sys::statvfs::{Statvfs, statvfs};
 use serde::{Deserialize, Serialize};
+use sqlx::Row as _;
 
 use crate::{Error, Exit, Report, configuration};
 
@@ -236,16 +237,15 @@ async fn schema_check(config: &Config, env: &Environment) -> Check {
     };
     match schema_status(config, env).await {
         Ok(status) if status.current == status.required && status.pending == 0 => {
-            if let Some(foreign) = foreign {
-                Check::warn(
+            match duplicate_note(config, env).await {
+                Ok(parked) => current_memory(status.current, foreign.as_deref(), parked.as_deref()),
+                Err(error) => Check::warn(
                     CheckName::Memory,
-                    format!("Schema {} is current. {foreign}", status.current),
-                )
-            } else {
-                Check::pass(
-                    CheckName::Memory,
-                    format!("Schema {} is current.", status.current),
-                )
+                    format!(
+                        "Schema {} is current. Duplicate checks could not be counted: {error}",
+                        status.current
+                    ),
+                ),
             }
         }
         Ok(status) => {
@@ -305,6 +305,86 @@ async fn schema_status(config: &Config, env: &Environment) -> Result<migrate::St
     }
 }
 
+fn current_memory(current: i64, foreign: Option<&str>, parked: Option<&str>) -> Check {
+    let mut message = format!("Schema {current} is current.");
+    if let Some(foreign) = foreign {
+        message.push(' ');
+        message.push_str(foreign);
+    }
+    if let Some(parked) = parked {
+        message.push(' ');
+        message.push_str(parked);
+    }
+    if foreign.is_some() || parked.is_some() {
+        Check::warn(CheckName::Memory, message)
+    } else {
+        Check::pass(CheckName::Memory, message)
+    }
+}
+
+async fn duplicate_note(config: &Config, env: &Environment) -> Result<Option<String>, sqlx::Error> {
+    if config.sqlite_selected() {
+        return Ok(None);
+    }
+    let Some(url) = config.memory_postgres_url(env) else {
+        return Ok(None);
+    };
+    let (failed, held) = parked_counts(&url).await?;
+    Ok(parked_sentence(failed, held))
+}
+
+async fn parked_counts(url: &str) -> Result<(i64, i64), sqlx::Error> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(url)
+        .await?;
+    sqlx::query("SELECT set_config('rh.maintenance', 'on', false)")
+        .execute(&pool)
+        .await?;
+    let row = sqlx::query(
+        "SELECT
+            (SELECT count(*) FROM rh_entity_extractions
+              WHERE status = 'failed' AND error ILIKE '%entity match undecided%') AS failed,
+            (SELECT count(*) FROM rh_entity_candidates) AS held",
+    )
+    .fetch_one(&pool)
+    .await?;
+    pool.close().await;
+    let failed: i64 = row.try_get("failed")?;
+    let held: i64 = row.try_get("held")?;
+    Ok((failed, held))
+}
+
+fn parked_sentence(failed: i64, held: i64) -> Option<String> {
+    let mut parts = Vec::new();
+    if failed > 0 {
+        parts.push(format!(
+            "{} failed because the duplicate check could not run",
+            count_phrase(failed, "entity extraction", "entity extractions")
+        ));
+    }
+    if held > 0 {
+        parts.push(format!(
+            "{} parked",
+            count_phrase(held, "entity match is", "entity matches are")
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("{}.", parts.join(" and ")))
+    }
+}
+
+fn count_phrase(count: i64, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CheckStatus, disk_check};
@@ -320,5 +400,25 @@ mod tests {
         ] {
             assert_eq!(disk_check(bytes).status, expected);
         }
+    }
+
+    #[test]
+    fn parked_duplicate_checks_are_a_warning() {
+        assert_eq!(super::parked_sentence(0, 0), None);
+        assert_eq!(
+            super::parked_sentence(1, 0).as_deref(),
+            Some("1 entity extraction failed because the duplicate check could not run.")
+        );
+        assert_eq!(
+            super::parked_sentence(2, 1).as_deref(),
+            Some(
+                "2 entity extractions failed because the duplicate check could not run and 1 entity match is parked."
+            )
+        );
+        let quiet = super::current_memory(71, None, None);
+        assert_eq!(quiet.status, CheckStatus::Pass);
+        assert_eq!(quiet.message, "Schema 71 is current.");
+        let parked = super::current_memory(71, None, Some("1 entity match is parked."));
+        assert_eq!(parked.status, CheckStatus::Warn);
     }
 }

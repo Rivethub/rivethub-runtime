@@ -255,7 +255,6 @@ SELECT e.id, e.name, ty.name AS type_name,
   CROSS JOIN unnest($1::text[]) AS q(term)
   LEFT JOIN rh_topic_aliases a ON a.topic_id = e.id AND a.kind = 'entity'
  WHERE e.kind = 'entity'
-   AND e.parent_id = ANY($2)
  GROUP BY e.id, e.name, ty.name
  ORDER BY score DESC
  LIMIT 20";
@@ -267,9 +266,50 @@ SELECT e.id, e.name, ty.name AS type_name,
   JOIN rh_topics e ON e.id = emb.entity_id
   JOIN rh_topics ty ON ty.id = e.parent_id
  WHERE e.kind = 'entity'
-   AND e.parent_id = ANY($2)
  ORDER BY emb.embedding <=> $1
  LIMIT 10";
+
+pub(super) const MARKER_ARM: &str = "\
+SELECT id, name, type_name, score FROM (
+    SELECT e.id, e.name, ty.name AS type_name, 1.0::float8 AS score
+      FROM rh_topics e
+      JOIN rh_topics ty ON ty.id = e.parent_id
+      JOIN rh_entity_facts f ON f.topic_id = e.id
+      JOIN rh_entity_fact_claims c ON c.fact_id = f.id
+      CROSS JOIN unnest($1::text[]) AS q(term)
+     WHERE e.kind = 'entity'
+       AND char_length(q.term) >= 3
+       AND position(lower(q.term) in lower(c.value)) > 0
+    UNION
+    SELECT e.id, e.name, ty.name AS type_name, 1.0::float8 AS score
+      FROM rh_topics e
+      JOIN rh_topics ty ON ty.id = e.parent_id
+      JOIN rh_wiki_topics w ON w.topic_id = e.id
+      CROSS JOIN unnest($1::text[]) AS q(term)
+     WHERE e.kind = 'entity'
+       AND char_length(q.term) >= 3
+       AND (
+            position(lower(q.term) in lower(coalesce(w.current_state, ''))) > 0
+            OR position(lower(q.term) in lower(left(coalesce(w.article, ''), 4000))) > 0
+       )
+) hits
+ LIMIT 48";
+
+pub(super) const PAGE_TEXT: &str = "\
+SELECT DISTINCT ON (topic_id)
+       topic_id, coalesce(current_state, '') AS current_state,
+       left(coalesce(article, ''), 400) AS article
+  FROM rh_wiki_topics
+ WHERE topic_id = ANY($1)
+ ORDER BY topic_id, updated_at DESC";
+
+pub(super) const RECORD_DECISION: &str = "\
+INSERT INTO rh_entity_decisions
+    (id, summary_id, kind, proposed_name, proposed_type, candidates, verdict, choice, confidence,
+     model, entity_id, created_at, owner_user_id)
+SELECT $1, s.id, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, s.owner_user_id
+  FROM rh_summaries s
+ WHERE s.id = $2";
 
 pub(super) const ALIAS_LINKS: &str = "\
 SELECT topic_id, alias

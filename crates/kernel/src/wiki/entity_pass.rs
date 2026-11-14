@@ -68,6 +68,7 @@ pub use types::KnownFact;
 pub use types::LeafClock;
 pub use types::LiveFact;
 pub use types::MatchCandidate;
+pub use types::MatchDecision;
 pub use types::MentionNote;
 pub use types::ObserveContext;
 pub use types::ObservedFact;

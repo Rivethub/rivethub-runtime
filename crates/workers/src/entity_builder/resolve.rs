@@ -1,8 +1,10 @@
 mod alias;
 mod bind;
+mod types;
 mod vectors;
 
 pub(in crate::entity_builder) use bind::resolve_kept;
+pub(in crate::entity_builder) use types::settle_prepared_type;
 pub(in crate::entity_builder) use vectors::refresh_embedding;
 pub(in crate::entity_builder) use vectors::store_vector;
 
@@ -29,21 +31,35 @@ use alias::new_entity_aliases;
 #[cfg(test)]
 use alias::ref_gate;
 #[cfg(test)]
+use bind::Asked;
+#[cfg(test)]
 use bind::MatchStep;
+#[cfg(test)]
+use bind::Ruling;
+#[cfg(test)]
+use bind::apply_asked;
 #[cfg(test)]
 use bind::ask;
 #[cfg(test)]
 use bind::decision_for;
 #[cfg(test)]
-use bind::interpret;
+use bind::entity_decision;
 #[cfg(test)]
 use bind::offered;
+#[cfg(test)]
+use bind::undecided;
 #[cfg(test)]
 use kernel::wiki::entity_pass::KnownEntity;
 #[cfg(test)]
 use kernel::wiki::entity_pass::MatchCandidate;
 #[cfg(test)]
+use kernel::wiki::entity_pass::MatchDecision;
+#[cfg(test)]
 use kernel::wiki::entity_pass::PreparedEntity;
+#[cfg(test)]
+use types::TypeOutcome;
+#[cfg(test)]
+use types::settle_type;
 #[cfg(test)]
 use uuid::Uuid;
 
