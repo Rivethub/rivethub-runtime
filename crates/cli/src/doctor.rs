@@ -28,6 +28,7 @@ pub enum CheckName {
     Memory,
     Policy,
     Models,
+    Service,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +161,9 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
             ));
         }
     }
+    if let Some(check) = service_check(env).await {
+        checks.push(check);
+    }
     let mut report = DoctorReport::new(checks).render(json)?;
     report.stderr = stderr;
     Ok(report)
@@ -174,6 +178,50 @@ async fn spool_check(env: &Environment) -> Check {
         ),
         Err(error) => Check::fail(CheckName::CaptureSpool, error),
     }
+}
+
+async fn service_check(env: &Environment) -> Option<Check> {
+    let env = env.clone();
+    let checked = tokio::task::spawn_blocking(move || service_unit_check(&env)).await;
+    let check = match checked {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+    match check {
+        Ok(check) => check,
+        Err(message) => Some(Check::warn(CheckName::Service, message)),
+    }
+}
+
+fn service_unit_check(env: &Environment) -> Result<Option<Check>, config::ConfigError> {
+    let paths = Paths::new(env)?;
+    let path =
+        crate::service::Scope::for_uid(nix::unistd::geteuid().as_raw()).unit_path(paths.home());
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Ok(Some(Check::warn(
+                CheckName::Service,
+                format!(
+                    "{path} could not be read ({error}), so its EnvironmentFile= was not checked.",
+                    path = path.display()
+                ),
+            )));
+        }
+    };
+    let ignored = crate::service::ignored_environment_files(&text);
+    if ignored.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Check::warn(
+        CheckName::Service,
+        format!(
+            "{path} has EnvironmentFile={values} which systemd ignores (the path is not absolute), so the environment file is not loaded. Run `rh service init` to update a unit rh generated.",
+            path = path.display(),
+            values = ignored.join(", ")
+        ),
+    )))
 }
 
 fn model_check(config: &Config) -> Option<Check> {

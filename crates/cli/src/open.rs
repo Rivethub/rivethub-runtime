@@ -39,6 +39,13 @@ pub(crate) async fn run(env: &Environment, no_browser: bool) -> Result<Report, E
 async fn serves_no_web_app(client: &reqwest::Client, url: &url::Url) -> Result<bool, Error> {
     let page = client.get(url.clone()).send().await?;
     let status = page.status();
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: a non-UTF-8 header is no header"
+        )
+    )]
     let html = page
         .headers()
         .get(reqwest::header::CONTENT_TYPE)

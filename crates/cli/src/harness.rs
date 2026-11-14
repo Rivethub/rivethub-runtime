@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use capture::harnesses::HarnessSetupService;
 use capture::harnesses::SetupChange;
 use chrono::Utc;
@@ -109,6 +107,13 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
 }
 
 async fn capture_activity(env: &Environment) -> Option<Vec<CaptureActivity>> {
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the node cannot be read"
+        )
+    )]
     let (_, loaded) = crate::configuration::load(env).await.ok()?;
     let config = loaded.config;
     if config.sqlite_selected() {
@@ -120,20 +125,48 @@ async fn capture_activity(env: &Environment) -> Option<Vec<CaptureActivity>> {
 
 async fn sqlite_activity(config: &Config) -> Option<Vec<CaptureActivity>> {
     let path = config.memory.as_ref()?.sqlite.as_ref()?.path.clone()?;
-    if path == PathBuf::from(":memory:") || !path.exists() {
+    if path.as_path() == std::path::Path::new(":memory:") || !path.exists() {
         return Some(Vec::new());
     }
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+        )
+    )]
     let store = tokio::task::spawn_blocking(move || memory_sqlite::SqliteStore::open(path))
         .await
         .ok()?
         .ok()?;
-    store.capture_activity_read().await.ok()
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+        )
+    )]
+    return store.capture_activity_read().await.ok();
 }
 
 async fn postgres_activity(config: &Config, env: &Environment) -> Option<Vec<CaptureActivity>> {
     let url = config.memory_postgres_url(env)?;
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+        )
+    )]
     let store = memory_postgres::PostgresMemory::connect(&url).await.ok()?;
-    store.read_capture_activity().await.ok()
+    #[cfg_attr(
+        dylint_lib = "rr_lints",
+        expect(
+            fallback,
+            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+        )
+    )]
+    return store.read_capture_activity().await.ok();
 }
 
 fn change_report(change: &SetupChange, dry_run: bool, done: &str) -> Report {

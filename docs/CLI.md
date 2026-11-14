@@ -12,7 +12,7 @@ the existing service startup codes. Every visible command:
 | `rh config path` | | Print the resolved configuration path |
 | `rh config show` | | Show a configuration summary without secrets |
 | `rh config validate` | `[PATH]` | Validate configuration and print findings |
-| `rh doctor` | `[--json]` | Check this node without applying migrations. When no model can be resolved, one passing line says so (CONTRACT note 173). Other commands stay quiet |
+| `rh doctor` | `[--json]` | Check this node without applying migrations. When no model can be resolved, one passing line says so (CONTRACT note 173). A unit whose `EnvironmentFile=` systemd would ignore is a warning (CONTRACT note 177). Other commands stay quiet |
 | `rh auth token-path` | `[--json]` | Print where the local owner token file lives |
 | `rh auth rotate` | | Replace the local owner token and end every browser session |
 | `rh open` | `[--no-browser]` | Open the web app in your browser, signed in with a one-time code. When this node serves no web app, it says so and exits 1 without a link (CONTRACT note 172) |
@@ -22,11 +22,11 @@ the existing service startup codes. Every visible command:
 | `rh worker` | `--role embedder\|summarizer\|categorizer\|wiki-builder\|all [--check] [-c, --config FILE]` | Run a memory worker for one role |
 | `rh mcp` | `[--check] [-c, --config FILE]` | Run the MCP sidecar |
 | `rh local` | `[--port N] [--no-lan] [--no-cloud] [--ensure [--wait SECONDS] [--json]]` | Run a standalone node on SQLite, or start one in the background with `--ensure` |
-| `rh update` | `[--channel stable\|beta\|nightly] [--source rivethub-cloud\|github] [--version TAG] [--no-restart]` | Update this node |
+| `rh update` | `[--channel stable\|beta\|nightly] [--source rivethub-cloud\|github] [--version TAG] [--no-restart]` | Update this node. A systemd unit `rh` generated is brought up to date, including with `--no-restart` (CONTRACT note 177) |
 | `rh db migrate` | `[-c, --config FILE] [--url URL \| --path FILE]` | Apply database migrations |
 | `rh db status` | `[-c, --config FILE] [--url URL \| --path FILE]` | Report schema status read-only |
-| `rh service init` | | Write and enable the systemd unit (system unit as root, user unit otherwise); it runs `rh start` for a node config and `rh local` for a standalone SQLite config or when no config exists yet |
-| `rh service start`, `rh service stop`, `rh service restart` | | Control the systemd unit |
+| `rh service init` | | Write and enable the systemd unit (system unit as root, user unit otherwise); it runs `rh start` for a node config and `rh local` for a standalone SQLite config or when no config exists yet. A unit `rh` generated that differs is updated and the previous file kept beside it; a unit edited by hand is left unchanged and the differences are named (CONTRACT note 177) |
+| `rh service start`, `rh service stop`, `rh service restart` | | Control the systemd unit. `start` and `restart` update a unit `rh` generated before they reload and start it (CONTRACT note 177) |
 | `rh service status` | | Show the systemd unit status |
 | `rh service logs` | | Print the unit's journal |
 | `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store`, `share`, `receive`, `key show`, `trust add\|list\|remove` | Administer memory; `rh memory --help` lists each command's flags. A command a standalone node cannot run says `This command needs a datahub (Postgres).` and exits 1 (CONTRACT note 175) |
@@ -107,6 +107,9 @@ shell expressions.
 
 After migrating and swapping the binaries the updater restarts the node unless `--no-restart` is given. With a systemd
 unit (`rh service init`) it runs `systemctl restart`. A directory or other non-file at the unit path is refused by name.
+Either way, a unit file that matches the shape `rh` writes and differs from the unit this `rh` would write is replaced,
+the previous file kept as `rivethub.service.bak`, and systemd reloaded, with one line naming the change (CONTRACT note
+177). A unit edited by hand is left in place and the difference is printed.
 Without a unit it reads the node's pid file: no node running means nothing to restart; a node whose command line is
 `rh local` gets SIGTERM, and once it has exited (within 30 seconds) the new binary runs `rh local --ensure --wait 30`
 with the node's own `--port`, `--no-lan` and `--no-cloud`, which starts it in the background and confirms its health; a

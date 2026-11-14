@@ -193,7 +193,7 @@ async fn local_refuses_workers_when_no_model_is_configured() -> TestResult {
         String::from_utf8_lossy(&started.stdout)
     );
     assert_eq!(stderr, format!("Error: {}\n", config::NO_MODEL_NOTE));
-    assert!(started.stdout.is_empty());
+    assert_eq!(started.stdout, b"");
     assert!(!home.path().join(".rivethub/rivethub.pid").exists());
     Ok(())
 }
