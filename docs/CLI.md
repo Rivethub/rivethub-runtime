@@ -15,7 +15,7 @@ the existing service startup codes. Every visible command:
 | `rh doctor` | `[--json]` | Check this node without applying migrations |
 | `rh auth token-path` | `[--json]` | Print where the local owner token file lives |
 | `rh auth rotate` | | Replace the local owner token and end every browser session |
-| `rh open` | `[--no-browser]` | Open the web app in your browser, signed in with a one-time code |
+| `rh open` | `[--no-browser]` | Open the web app in your browser, signed in with a one-time code. When this node serves no web app, it says so and exits 1 without a link (CONTRACT note 172) |
 | `rh status` | | Report gateway health |
 | `rh stop` | | Signal the running instance to stop |
 | `rh gateway` | `[--check] [-c, --config FILE]` | Run the composed gateway service |

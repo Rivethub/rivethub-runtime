@@ -62,6 +62,10 @@ pub enum Error {
         "the gateway refused to mint a login code with HTTP {status}; the token file may be stale, restart the gateway or run `rh auth rotate`"
     )]
     AuthOpen { status: u16 },
+    #[error(
+        "This node is running, and it has no web app installed.\nAgents read memory over MCP. The app is in preview."
+    )]
+    NoWebApp,
     #[error("invalid gateway URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]

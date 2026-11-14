@@ -3006,6 +3006,8 @@ always wins and sends nothing anywhere. Each install's own crash-report and usag
 
 (171) The service unit's `EnvironmentFile=` is an absolute path with no quotes (Phil, 2026-11-14). systemd ignores a quoted `EnvironmentFile=` as "path is not absolute", so `~/.rivethub/.env` was never loaded. The line is now `EnvironmentFile=-` plus the absolute path, with `%` written `%%`. A path that contains a double quote or an ASCII control character (a newline, a tab, a carriage return) is refused with `systemd cannot represent this path in EnvironmentFile`, because those characters cannot be written so that systemd reads them back as the path. `ExecStart=` stays quoted, so a space in the binary's path still runs that binary.
 
+(172) A node with no web app does not pretend to have one (Phil, 2026-11-14). When `gateway.static_dir` is unset and neither `RIVETHUB_STATIC_DIR` nor `RIVETOS_DEN_STATIC_DIR` is set, `GET /` and `HEAD /` answer `200` with `text/html; charset=utf-8` and a short page saying the node is running and the web app is not installed. That answer is not counted as an app open. Every other missing path, and every API path, still answers JSON. `rh open` reads `/` first. When that page says the app is not installed, or when `/` is a JSON `404` `not found` because the configured directory has no `index.html`, it exits 1 with `This node is running, and it has no web app installed.` and `Agents read memory over MCP. The app is in preview.` It prints no login link and mints no code. A node that serves `index.html` still prints the one-time login link.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

@@ -24,6 +24,58 @@ fn call(router: axum::Router, target: &str) -> Result<testkit::Response, String>
 }
 
 #[test]
+fn a_node_with_no_web_app_answers_the_root_with_a_page() {
+    let router = app(common::settings());
+    let page = call(router.clone(), "/").expect("root");
+    assert_eq!(page.status, 200);
+    let content_type = header(&page, "content-type");
+    assert_eq!(content_type, "text/html; charset=utf-8");
+    let text = String::from_utf8(page.body).expect("utf-8");
+    assert!(text.contains("This RivetHub node is running"), "{text}");
+    assert!(text.contains("The web app is not installed"), "{text}");
+    assert!(!text.contains("{\"error\""));
+    let head = call_method(router.clone(), "HEAD", "/").expect("head");
+    assert_eq!(head.status, 200);
+    assert_eq!(header(&head, "content-type"), "text/html; charset=utf-8");
+    assert!(head.body.is_empty(), "{:?}", head.body);
+    let missing = call(router.clone(), "/missing-page").expect("missing");
+    assert_eq!(missing.status, 404);
+    assert_eq!(missing.body, br#"{"error":"not found"}"#);
+    let api = call(router, "/api/does-not-exist").expect("api");
+    assert_eq!(api.status, 404);
+    assert_eq!(api.body, br#"{"error":"not found"}"#);
+}
+
+fn header(response: &testkit::Response, name: &str) -> String {
+    response
+        .headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default()
+}
+
+fn call_method(
+    router: axum::Router,
+    method: &str,
+    target: &str,
+) -> Result<testkit::Response, String> {
+    let request = testkit::Request {
+        method: method.to_owned(),
+        target: target.to_owned(),
+        headers: vec![("host".to_owned(), "127.0.0.1".to_owned())],
+        body: Vec::new(),
+        recipe: None,
+        via: None,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("runtime: {error}"))?;
+    runtime.block_on(common::answer(router, request))
+}
+
+#[test]
 fn symlink_and_sibling_prefix_stay_inside_the_static_root() {
     let scratch = tempfile::tempdir().expect("temp");
     let root = scratch.path().join("static");
