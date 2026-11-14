@@ -3128,6 +3128,16 @@ through `kernel::memory::spoken_title`, the rule capture and the title backfills
 leading tag block are skipped, and a message that holds nothing else gives no title, so the next message (or the native
 id) is used. Stored titles are unchanged.
 
+(170) Signing in to a team server from the CLI, and what logout ends (Phil, 2026-11-13). `rh share login <server>
+--token-file <path>` signs this machine in with a team token, as `POST /api/share/servers/login` already could: it reads
+the token from the file (`-` reads stdin), refuses a file that holds no single token, checks it with `GET /api/me` and
+keeps it as a team login. The token is never accepted on the command line, so it does not reach shell history or the
+process list. `rh share logout` was described as revoking the login on the server, which is true only of a browser
+(device-grant) login, and then only of this machine's own refresh token. A team-token login has never been revoked:
+logout forgets it on this machine and says so ("the token stays valid on the server and on any other machine signed in
+with it"). Two machines signed in with the same team token therefore stay independent: one logging out does not end
+the other's sign-in.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
