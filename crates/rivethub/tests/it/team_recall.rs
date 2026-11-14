@@ -44,7 +44,7 @@ fn team() -> TestResult<Space> {
 
 async fn seed(pool: &PgPool) -> TestResult {
     let tenancy = PostgresTenancy::new(pool.clone());
-    tenancy.sync_spaces(&[team()?]).await?;
+    tenancy.sync_spaces("node-a", &[team()?]).await?;
     let writer = PostgresMemory::new(pool.clone());
     for (owner, key) in [("phil", SHARED), ("alex", OWN), ("tom", PRIVATE)] {
         writer.capture_batch(&CaptureBatchRequest {

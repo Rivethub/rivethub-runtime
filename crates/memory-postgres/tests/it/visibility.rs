@@ -97,12 +97,15 @@ pub(crate) async fn seed(
     }
     let tenancy = PostgresTenancy::new(pool.clone());
     tenancy
-        .sync_spaces(&[Space {
-            id: household()?,
-            kind: SpaceKind::Household,
-            name: "Household".to_owned(),
-            members: vec![alice, Owner::new("bob".to_owned())?],
-        }])
+        .sync_spaces(
+            "node-a",
+            &[Space {
+                id: household()?,
+                kind: SpaceKind::Household,
+                name: "Household".to_owned(),
+                members: vec![alice, Owner::new("bob".to_owned())?],
+            }],
+        )
         .await?;
     Ok((store, tenancy))
 }
@@ -768,7 +771,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
             .await;
     assert!(remapped.is_err(), "a pinned login wrote the role mapping");
     Scope::Maintenance
-        .run(PostgresTenancy::new(pinned).sync_spaces(&[]))
+        .run(PostgresTenancy::new(pinned).sync_spaces("node-a", &[]))
         .await?;
     assert_eq!(
         visible(&pool, Scope::Maintenance, "rh_space_members").await?,
@@ -1671,16 +1674,19 @@ async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool
     let bob = viewer("bob")?;
     let carol = Owner::new("carol".into())?;
     tenancy
-        .sync_spaces(&[Space {
-            id: household()?,
-            kind: SpaceKind::Team,
-            name: "Team".into(),
-            members: vec![
-                alice.principal().clone(),
-                bob.principal().clone(),
-                carol.clone(),
-            ],
-        }])
+        .sync_spaces(
+            "node-a",
+            &[Space {
+                id: household()?,
+                kind: SpaceKind::Team,
+                name: "Team".into(),
+                members: vec![
+                    alice.principal().clone(),
+                    bob.principal().clone(),
+                    carol.clone(),
+                ],
+            }],
+        )
         .await?;
     writer
         .capture_batch(
@@ -1742,20 +1748,23 @@ async fn members_read_co_memberships_but_no_other_spaces_even_when_pinned(
     use kernel::memory::MemoryStore as _;
     let (_, tenancy) = seed(&pool).await?;
     tenancy
-        .sync_spaces(&[
-            Space {
-                id: household()?,
-                kind: SpaceKind::Team,
-                name: "Team".into(),
-                members: vec![Owner::new("alice".into())?, Owner::new("bob".into())?],
-            },
-            Space {
-                id: SpaceId::new("other".into())?,
-                kind: SpaceKind::Team,
-                name: "Other".into(),
-                members: vec![Owner::new("carol".into())?, Owner::new("dave".into())?],
-            },
-        ])
+        .sync_spaces(
+            "node-a",
+            &[
+                Space {
+                    id: household()?,
+                    kind: SpaceKind::Team,
+                    name: "Team".into(),
+                    members: vec![Owner::new("alice".into())?, Owner::new("bob".into())?],
+                },
+                Space {
+                    id: SpaceId::new("other".into())?,
+                    kind: SpaceKind::Team,
+                    name: "Other".into(),
+                    members: vec![Owner::new("carol".into())?, Owner::new("dave".into())?],
+                },
+            ],
+        )
         .await?;
     owned_by_an_ordinary_role(&pool).await?;
     let reader = probe(&pool).await?;

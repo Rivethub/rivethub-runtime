@@ -271,6 +271,7 @@ impl Composition {
         let settings = gateway_settings(config, env)?;
         let node_name = settings.node.clone();
         let receiver_node = settings.node.clone();
+        let catalog_node = settings.node.clone();
         let section = config.gateway.clone();
         let tls_env = env.clone();
         let shared = config::shared_dir(env);
@@ -315,13 +316,15 @@ impl Composition {
             tracker.spawn(Arc::clone(&desk).sweep_until(shutdown.child_token()));
             gateway = gateway.with_share_desk(desk);
         }
+        let mut tasks = JoinSet::new();
         identities::keep_spaces(
-            &tracker,
+            &mut tasks,
             backing
                 .ports
                 .as_ref()
                 .map(|ports| Arc::clone(ports.tenancy())),
             &identity,
+            catalog_node,
             shutdown,
         );
         spool::replay_captures(&tracker, env, shutdown);
@@ -329,7 +332,7 @@ impl Composition {
         let gateway = Box::pin(owner_scope.clone().run(started)).await?;
         Ok(Self {
             gateway,
-            tasks: JoinSet::new(),
+            tasks,
             background: tracker,
             model_tasks: factory.tasks(),
             cancel: shutdown.clone(),

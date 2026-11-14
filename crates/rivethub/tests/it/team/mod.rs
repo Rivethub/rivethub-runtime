@@ -1,4 +1,5 @@
 mod addresses;
+mod catalog;
 mod messages;
 mod no_model;
 mod sessions;
@@ -28,6 +29,7 @@ pub(crate) const SPACE: &str = "team";
 
 pub(crate) struct Hub {
     pub(crate) base: String,
+    pub(crate) url: String,
     pub(crate) db: crate::pgdb::TestDb,
     shutdown: CancellationToken,
     server: tokio::task::JoinHandle<Result<(), gateway::server::ServeError>>,
@@ -44,7 +46,7 @@ fn token(person: &str) -> String {
     format!("{person}-team-token")
 }
 
-fn users() -> UsersRegistry {
+pub(crate) fn users() -> UsersRegistry {
     let users = [PHIL, ALEX, TOM]
         .into_iter()
         .map(|person| {
@@ -172,6 +174,7 @@ impl Hub {
         ));
         let hub = Self {
             base: format!("http://127.0.0.1:{port}"),
+            url,
             db,
             shutdown,
             server,

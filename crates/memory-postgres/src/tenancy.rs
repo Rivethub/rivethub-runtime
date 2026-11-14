@@ -83,13 +83,41 @@ SELECT k.key AS session, c.owner_user_id AS owner, m.visibility AS mark,
   FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key AND m.owner_user_id = coalesce(c.owner_user_id, $2)
   LEFT JOIN placed p ON p.session_id = k.key LEFT JOIN topic_marks tm ON tm.topic_id = p.topic_id";
 
+type Catalog = std::collections::BTreeSet<(String, String, String, String)>;
+
+fn local_catalog(spaces: &[Space]) -> Catalog {
+    spaces
+        .iter()
+        .flat_map(|space| {
+            space.members.iter().map(|member| {
+                (
+                    space.id.as_str().to_owned(),
+                    space.kind.as_str().to_owned(),
+                    space.name.clone(),
+                    member.as_str().to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+async fn catalog(conn: &mut sqlx::PgConnection) -> Result<Catalog, TenancyStoreError> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT s.id, s.kind, s.name, m.user_id FROM rh_spaces s JOIN rh_space_members m ON m.space_id = s.id",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(failed("space sync"))?;
+    Ok(rows.into_iter().collect())
+}
+
 #[async_trait]
 impl TenancyStore for PostgresTenancy {
     fn row_secured(&self) -> bool {
         true
     }
 
-    async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
+    async fn sync_spaces(&self, node: &str, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let pinned: Option<String> = sqlx::query_scalar("SELECT rh_scope_pin()")
             .fetch_one(&self.pool)
             .await
@@ -101,6 +129,36 @@ impl TenancyStore for PostgresTenancy {
             return Ok(());
         }
         let mut tx = self.pool.begin().await.map_err(failed("space sync"))?;
+        sqlx::query("LOCK TABLE rh_membership_authority IN EXCLUSIVE MODE")
+            .execute(&mut *tx)
+            .await
+            .map_err(failed("space sync"))?;
+        let keeper: Option<String> =
+            sqlx::query_scalar("SELECT node FROM rh_membership_authority WHERE singleton")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(failed("space sync"))?;
+        match keeper {
+            None => {
+                sqlx::query(
+                    "INSERT INTO rh_membership_authority (singleton, node, claimed_at) VALUES (true, $1, now())",
+                )
+                .bind(node)
+                .execute(&mut *tx)
+                .await
+                .map_err(failed("space sync"))?;
+            }
+            Some(keeper) if keeper == node => {}
+            Some(keeper) => {
+                let stored = catalog(&mut tx).await?;
+                if stored == local_catalog(spaces) {
+                    return tx.commit().await.map_err(failed("space sync"));
+                }
+                return Err(TenancyStoreError::CatalogConflict(format!(
+                    "the store's spaces and members are kept by node {keeper}, and this node's users file ({node}) lists different ones; make the two users files agree, or move the authority with UPDATE rh_membership_authority SET node = '{node}' as the store's admin (CONTRACT note 193)"
+                )));
+            }
+        }
         let ids: Vec<&str> = spaces.iter().map(|space| space.id.as_str()).collect();
         sqlx::query("DELETE FROM rh_spaces WHERE NOT (id = ANY ($1::text[]))")
             .bind(&ids)

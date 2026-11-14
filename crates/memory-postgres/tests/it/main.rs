@@ -12,6 +12,7 @@ mod flagged;
 mod import;
 mod import_sessions;
 mod index_friendly;
+mod membership;
 mod memory_golden;
 mod merge;
 mod model_calls;

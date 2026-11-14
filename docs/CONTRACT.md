@@ -3259,6 +3259,20 @@ without a restart. `/healthz` goes through that pool, so it reports readiness: `
 refused, `200` once it serves. An online start is unchanged: the checks run before the pool is returned. No DDL runs
 at serving start.
 
+(193) One node keeps the space catalog (Phil, 2026-11-13, audit F7). Every unpinned gateway published its own users
+file's spaces into the store at start, deleting anything it did not list, so a second node with a stale users file
+silently changed memberships, and with them who reads whose sessions, for the first. Migration 0074 adds
+`rh_membership_authority`, one row naming the node that keeps the catalog (readable by everyone, written only under
+maintenance). `TenancyStore::sync_spaces(node, spaces)`: the first node to publish claims the catalog; the node that
+keeps it replaces it as before; any other node writes nothing, and when its users file lists other spaces or members
+the store answers `CatalogConflict` ("the store's spaces and members are kept by node <keeper>, and this node's users
+file (<node>) lists different ones; …"). The gateway treats that as fatal: the composition's task fails, the service
+logs it and stops, and the supervisor's restarts keep it visible, instead of a node serving with a catalog that is
+not the store's. So every running node holds the store's catalog, and gateways and workers agree. The keeper is moved
+by the store's admin (`UPDATE rh_membership_authority SET node = …`). Pinned logins never sync (note 121, unchanged),
+and SQLite, one node and one person, ignores the node. `memory_postgres::SCHEMA_VERSION` is 74 (0072 and 0073 are
+other branches' numbers).
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
