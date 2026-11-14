@@ -145,7 +145,7 @@ async fn delete(
     State(gateway): State<Arc<Gateway>>,
     _fresh: FreshLogin,
     _owner: LocalOwner,
-) -> Result<Json<Account>, Refused> {
+) -> Result<Json<wire::gateway::account::AccountDeleted>, Refused> {
     Ok(Json(gateway.account()?.delete().await?))
 }
 
@@ -153,9 +153,9 @@ async fn sign_in(
     State(gateway): State<Arc<Gateway>>,
     _fresh: FreshLogin,
     _owner: LocalOwner,
-    Body(body): Body<SignInRequest>,
+    Body(_body): Body<SignInRequest>,
 ) -> Result<Json<SignInStarted>, Refused> {
-    Ok(Json(gateway.account()?.sign_in(&body.email).await?))
+    Ok(Json(gateway.account()?.sign_in().await?))
 }
 
 async fn poll(

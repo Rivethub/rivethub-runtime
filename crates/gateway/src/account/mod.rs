@@ -1,4 +1,6 @@
+mod auth;
 mod cloud;
+pub use auth::{AccountLogin, LoginProgress};
 mod hubs;
 mod install;
 mod service;

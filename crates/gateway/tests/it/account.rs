@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use chrono::{DateTime, Utc};
@@ -42,9 +42,12 @@ const OWNER_DEVICE: &str = "desk";
 const ARCHIVE: &[u8] = b"signed release archive";
 const REVOKED: &str = "0.0.0-revoked";
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Seen {
     starts: Mutex<Vec<String>>,
+    signed: std::sync::atomic::AtomicBool,
+    unavailable: std::sync::atomic::AtomicBool,
+    auth_reads: AtomicU32,
     polls: AtomicU32,
     bearers: Mutex<Vec<(String, String)>>,
     crashes: Mutex<Vec<String>>,
@@ -56,13 +59,6 @@ struct Fake {
     seen: Arc<Seen>,
     stub: testkit::Stub,
     key: UpdateKey,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Started {
-    email: String,
-    install_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,10 +91,7 @@ async fn fake_cloud(release: Release) -> Result<Fake, Failure> {
     let version = release.version;
     let seen = Arc::new(Seen::default());
     let routes = Router::new()
-        .route("/v1/auth/start", post(start))
-        .route("/v1/auth/poll", post(poll))
-        .route("/v1/auth/signout", post(bearer))
-        .route("/v1/account", delete(bearer))
+        .route("/api/auth/oauth2/revoke", post(bearer))
         .route("/v1/telemetry/crash", post(crash))
         .route(
             "/v1/updates/latest",
@@ -187,16 +180,50 @@ fn json(body: String) -> Response {
     ([("content-type", "application/json")], body).into_response()
 }
 
-async fn start(State(seen): State<Arc<Seen>>, body: String) -> Response {
-    seen.starts.lock().push(body);
-    json(r#"{"requestId":"req-1","pollIntervalMs":2000}"#.to_owned())
-}
-
-async fn poll(State(seen): State<Arc<Seen>>) -> Response {
-    if seen.polls.fetch_add(1, Ordering::SeqCst) == 0 {
-        (StatusCode::ACCEPTED, r#"{"status":"pending"}"#).into_response()
-    } else {
-        json(format!(r#"{{"installToken":"{TOKEN}","email":"{EMAIL}"}}"#))
+#[derive(Debug)]
+struct FakeLogin(Arc<Seen>);
+#[async_trait::async_trait]
+impl gateway::account::AccountLogin for FakeLogin {
+    async fn start(&self) -> Result<kernel::account::DeviceLogin, kernel::account::LoginError> {
+        if self.0.signed.load(Ordering::SeqCst) {
+            return Err(kernel::account::LoginError::SignedIn);
+        }
+        self.0.starts.lock().push("{}".to_owned());
+        Ok(kernel::account::DeviceLogin {
+            user_code: "ABCD-EFGH".to_owned(),
+            verification_uri: "https://rivethub.cloud/device".to_owned(),
+            expires_in: 600,
+            poll_interval_ms: 1000,
+        })
+    }
+    async fn poll(&self) -> Result<gateway::account::LoginProgress, kernel::account::LoginError> {
+        if self.0.starts.lock().is_empty() {
+            return Err(kernel::account::LoginError::NoSignIn);
+        }
+        if self.0.polls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Ok(gateway::account::LoginProgress::Pending);
+        }
+        self.0.signed.store(true, Ordering::SeqCst);
+        Ok(gateway::account::LoginProgress::SignedIn)
+    }
+    async fn identity(&self) -> Result<Option<(String, String)>, kernel::account::LoginError> {
+        self.0.auth_reads.fetch_add(1, Ordering::SeqCst);
+        if self.0.unavailable.load(Ordering::SeqCst) {
+            return Err(kernel::account::LoginError::CloudReply);
+        }
+        Ok(self
+            .0
+            .signed
+            .load(Ordering::SeqCst)
+            .then(|| (TOKEN.to_owned(), EMAIL.to_owned())))
+    }
+    async fn sign_out(&self, _revoke: bool) -> Result<(), kernel::account::LoginError> {
+        self.0.signed.store(false, Ordering::SeqCst);
+        self.0.bearers.lock().push((
+            "POST /api/auth/oauth2/revoke".to_owned(),
+            format!("Bearer {TOKEN}"),
+        ));
+        Ok(())
     }
 }
 
@@ -254,7 +281,11 @@ async fn node_reporting_to(
         hubs,
         Vec::new(),
     )?;
-    let account = Arc::new(AccountService::open(&settings.state_dir, cloud, hubs).await?);
+    let account = Arc::new(
+        AccountService::open(&settings.state_dir, cloud, hubs)
+            .await?
+            .with_login(Arc::new(FakeLogin(Arc::clone(&fake.seen)))),
+    );
     let gateway = Gateway::new(Arc::new(testkit::FakeMemoryStore::default()), settings)
         .with_tenancy(tenancy)
         .with_account(Arc::clone(&account));
@@ -353,24 +384,11 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
     let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let (status, body) = local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    let (status, body) = local(
-        &node.app,
-        Method::POST,
-        "/api/account/signin",
-        &format!(r#"{{"email":" {EMAIL} "}}"#),
-    )
-    .await?;
+    let (status, body) = local(&node.app, Method::POST, "/api/account/signin", "{}").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let started: SignInStarted = serde_json::from_str(&body)?;
-    assert_eq!(started.request_id, "req-1");
-    let started_body = fake.seen.starts.lock().first().cloned().ok_or("no start")?;
-    let sent: Started = serde_json::from_str(&started_body)?;
-    assert_eq!(sent.email, EMAIL);
+    assert_eq!(started.user_code, "ABCD-EFGH");
     let files = AccountFiles::new(&root.path().join("state"));
-    assert_eq!(
-        Some(sent.install_id),
-        files.read()?.map(|state| state.install_id)
-    );
 
     let (_, body) = local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     assert_eq!(
@@ -392,7 +410,7 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
             .read()?
             .and_then(|state| state.token().map(str::to_owned))
             .as_deref(),
-        Some(TOKEN)
+        None
     );
 
     let (status, body) = local(
@@ -409,6 +427,11 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
         (UpdateSource::Github, ReleaseChannel::Beta)
     );
 
+    let reads = fake.seen.auth_reads.load(Ordering::SeqCst);
+    node.account
+        .tick(Utc::now(), &CancellationToken::new())
+        .await;
+    assert_eq!(fake.seen.auth_reads.load(Ordering::SeqCst), reads);
     let (status, body) = local(&node.app, Method::POST, "/api/account/signout", "").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     let signed_out: Account = serde_json::from_str(&body)?;
@@ -419,7 +442,7 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
     assert_eq!(
         fake.seen.bearers.lock().clone(),
         vec![(
-            "POST /v1/auth/signout".to_owned(),
+            "POST /api/auth/oauth2/revoke".to_owned(),
             format!("Bearer {TOKEN}")
         )]
     );
@@ -433,35 +456,46 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
 }
 
 #[tokio::test]
-async fn deleting_the_account_deletes_it_in_the_cloud_then_here() -> TestResult {
+async fn a_cloud_failure_hides_identity_and_a_saved_cloud_source_survives() -> TestResult {
+    let (_root, fake, node) = signed_in(release()).await?;
+    fake.seen.unavailable.store(true, Ordering::SeqCst);
+    assert!(self::account(&node.app).await?.email.is_none());
+    fake.seen.unavailable.store(false, Ordering::SeqCst);
+    let (_, selected) = local(
+        &node.app,
+        Method::PATCH,
+        "/api/account",
+        r#"{"updateSource":"rivethub-cloud"}"#,
+    )
+    .await?;
+    let selected: Account = serde_json::from_str(&selected)?;
+    assert_eq!(selected.update_source, UpdateSource::RivethubCloud);
+    assert_eq!(selected.email.as_deref(), Some(EMAIL));
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_the_account_signs_out_for_web_deletion() -> TestResult {
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release()).await?;
     let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
     let (status, _) = local(&node.app, Method::DELETE, "/api/account", "").await?;
-    assert_eq!(status, StatusCode::CONFLICT);
-    local(
-        &node.app,
-        Method::POST,
-        "/api/account/signin",
-        &format!(r#"{{"email":"{EMAIL}"}}"#),
-    )
-    .await?;
+    assert_eq!(status, StatusCode::OK);
+    fake.seen.bearers.lock().clear();
+    local(&node.app, Method::POST, "/api/account/signin", "{}").await?;
     local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
-    let (status, body) = local(
-        &node.app,
-        Method::POST,
-        "/api/account/signin",
-        &format!(r#"{{"email":"{EMAIL}"}}"#),
-    )
-    .await?;
+    let (status, body) = local(&node.app, Method::POST, "/api/account/signin", "{}").await?;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     let (status, body) = local(&node.app, Method::DELETE, "/api/account", "").await?;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(serde_json::from_str::<Account>(&body)?.email, None);
     assert_eq!(
         fake.seen.bearers.lock().clone(),
-        vec![("DELETE /v1/account".to_owned(), format!("Bearer {TOKEN}"))]
+        vec![(
+            "POST /api/auth/oauth2/revoke".to_owned(),
+            format!("Bearer {TOKEN}")
+        )]
     );
     Ok(())
 }
@@ -576,13 +610,7 @@ async fn telemetry_only_keeps_reports_on_but_refuses_cloud_routes() -> TestResul
     assert!(shown.cloud_disabled, "{shown:?}");
     assert_eq!(shown.update_source, UpdateSource::Github);
     assert_eq!((shown.crash_reports, shown.usage_counts), (true, true));
-    let (status, text) = local(
-        &node.app,
-        Method::POST,
-        "/api/account/signin",
-        r#"{"email":"user@example.com"}"#,
-    )
-    .await?;
+    let (status, text) = local(&node.app, Method::POST, "/api/account/signin", "{}").await?;
     assert_eq!(status, StatusCode::CONFLICT, "{text}");
     assert_eq!(cloud.seen.requests.load(Ordering::SeqCst), 0);
     Ok(())
@@ -616,13 +644,7 @@ async fn signed_in(release: Release) -> Result<(tempfile::TempDir, Fake, Node), 
     let root = tempfile::tempdir()?;
     let fake = fake_cloud(release).await?;
     let node = node(root.path(), &fake, CloudAccess::Open, Vec::new()).await?;
-    local(
-        &node.app,
-        Method::POST,
-        "/api/account/signin",
-        &format!(r#"{{"email":"{EMAIL}"}}"#),
-    )
-    .await?;
+    local(&node.app, Method::POST, "/api/account/signin", "{}").await?;
     local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     local(&node.app, Method::POST, "/api/account/signin/poll", "").await?;
     Ok((root, fake, node))
@@ -791,18 +813,13 @@ async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResu
     drop(node);
     let node = self::node(root.path(), &fake, CloudAccess::Disabled, Vec::new()).await?;
     let before = fake.seen.requests.load(Ordering::SeqCst);
-    assert!(before > 0, "the fake cloud counts requests");
 
     let shown = account(&node.app).await?;
     assert!(shown.cloud_disabled);
     assert_eq!(shown.update_source, UpdateSource::Github);
     assert_eq!((shown.crash_reports, shown.usage_counts), (false, false));
     for (method, path, body) in [
-        (
-            Method::POST,
-            "/api/account/signin",
-            r#"{"email":"user@example.com"}"#,
-        ),
+        (Method::POST, "/api/account/signin", "{}"),
         (Method::POST, "/api/account/signin/poll", ""),
         (
             Method::PATCH,
