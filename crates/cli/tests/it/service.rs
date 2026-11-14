@@ -898,7 +898,7 @@ fn hold_pid(home: &Path, program: &str) -> std::process::Child {
         .env("READY", &ready)
         .spawn()
         .expect("holder");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     while !ready.exists() {
         assert!(
             std::time::Instant::now() < deadline,

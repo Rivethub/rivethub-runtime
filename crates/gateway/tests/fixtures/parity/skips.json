@@ -1870,5 +1870,13 @@
   {
     "id": "plain-main/files-bare-path",
     "reason": "B1: note 132 cut this route; the recording keeps the den's answer."
+  },
+  {
+    "id": "plain-nostatic/nostatic-root",
+    "reason": "B1: a node with no web app answers GET / and HEAD / with a short page saying so, not the recording's JSON 404 (CONTRACT note 172); covered by gateway it surface tests"
+  },
+  {
+    "id": "plain-nostatic/nostatic-root-html",
+    "reason": "B1: a node with no web app answers GET / and HEAD / with a short page saying so, not the recording's JSON 404 (CONTRACT note 172); covered by gateway it surface tests"
   }
 ]
