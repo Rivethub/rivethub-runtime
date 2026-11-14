@@ -59,6 +59,7 @@ fn prepare_blocking(
     };
     let mut loaded = config::Config::load(env, &location, config::Profile::Standalone)?;
     refuse_cloud_left_on(&loaded.config, no_cloud, location.path())?;
+    refuse_model_jobs(&loaded.config)?;
     for finding in &loaded.warnings {
         tracing::warn!("[{}] {}", finding.path, finding.message);
     }
@@ -198,6 +199,21 @@ fn tls_ready(config: &Config, env: &Environment, host: &str) -> Result<bool, Err
         gateway::tls::resolve_tls(&source),
         Err(gateway::server::BindError::TlsRequired { .. })
     ))
+}
+
+fn refuse_model_jobs(config: &Config) -> Result<(), Error> {
+    let needs_model = config.service_switches().iter().any(|switch| {
+        matches!(
+            switch,
+            config::ServiceSwitch::Workers
+                | config::ServiceSwitch::Tagging
+                | config::ServiceSwitch::Wiki
+        )
+    });
+    if needs_model && !config.memory_models_available() {
+        return Err(Error::NoModel);
+    }
+    Ok(())
 }
 
 fn refuse_plain_lan(config: &Config, env: &Environment, path: &Path) -> Result<(), Error> {

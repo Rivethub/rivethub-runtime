@@ -27,8 +27,6 @@ const BOTH_GATEWAY_SECTIONS: &str = "den and gateway are both set — den is the
 
 const PGLITE_IMPORT_NOTICE: &str = "memory.postgres.embedded is set — the embedded Postgres (PGlite) option was removed; the memory backend resolves to SQLite and the one-time import runs at first start.";
 
-const MEMORY_MODELS_NOTICE: &str = "memory.models is not set — every memory job uses the default agent's provider and model, and embeddings use the memory embed settings; set memory.models.default (and optionally summarizer, categorizer, wiki_writer, embedder) to choose a model per job.";
-
 #[derive(Debug)]
 pub struct Loaded {
     pub config: Config,
@@ -332,13 +330,6 @@ fn notices(env: &Environment, document: &serde_yaml_ng::Value, config: &Config) 
     }
     if config.pglite_import_pending() {
         out.push(PGLITE_IMPORT_NOTICE.to_owned());
-    }
-    if config
-        .memory
-        .as_ref()
-        .is_some_and(|memory| memory.models.is_none())
-    {
-        out.push(MEMORY_MODELS_NOTICE.to_owned());
     }
     out
 }

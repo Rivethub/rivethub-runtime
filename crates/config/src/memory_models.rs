@@ -6,6 +6,8 @@ use crate::enums::{Effort, MemoryBackend};
 use crate::model::Config;
 use crate::provider::ProviderBody;
 
+pub const NO_MODEL_NOTE: &str = "No model is configured. This node captures, stores and serves recall. Summaries, titles, embeddings, wiki pages and entities stay off until a model is set.";
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ModelChoice {
     pub provider: String,

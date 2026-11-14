@@ -27,6 +27,7 @@ pub enum CheckName {
     CaptureSpool,
     Memory,
     Policy,
+    Models,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,6 +147,9 @@ pub(crate) async fn run(env: &Environment, json: bool) -> Result<Report, Error> 
             checks.push(spool_check(env).await);
             checks.push(schema_check(&loaded.config, env).await);
             checks.push(policy_check(&loaded.config));
+            if let Some(check) = model_check(&loaded.config) {
+                checks.push(check);
+            }
         }
         Err(error) => {
             checks.push(Check::fail(CheckName::Config, error));
@@ -169,6 +173,14 @@ async fn spool_check(env: &Environment) -> Check {
             "The capture spool is within bounds.",
         ),
         Err(error) => Check::fail(CheckName::CaptureSpool, error),
+    }
+}
+
+fn model_check(config: &Config) -> Option<Check> {
+    if config.memory_models_available() {
+        None
+    } else {
+        Some(Check::pass(CheckName::Models, config::NO_MODEL_NOTE))
     }
 }
 

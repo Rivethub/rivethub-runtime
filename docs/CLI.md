@@ -12,7 +12,7 @@ the existing service startup codes. Every visible command:
 | `rh config path` | | Print the resolved configuration path |
 | `rh config show` | | Show a configuration summary without secrets |
 | `rh config validate` | `[PATH]` | Validate configuration and print findings |
-| `rh doctor` | `[--json]` | Check this node without applying migrations |
+| `rh doctor` | `[--json]` | Check this node without applying migrations. When no model can be resolved, one passing line says so (CONTRACT note 173). Other commands stay quiet |
 | `rh auth token-path` | `[--json]` | Print where the local owner token file lives |
 | `rh auth rotate` | | Replace the local owner token and end every browser session |
 | `rh open` | `[--no-browser]` | Open the web app in your browser, signed in with a one-time code. When this node serves no web app, it says so and exits 1 without a link (CONTRACT note 172) |

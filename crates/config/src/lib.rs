@@ -25,7 +25,8 @@ pub use load::{
     validate_document,
 };
 pub use memory_models::{
-    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, ResolvedModels,
+    EmbedderChoice, Inherited, MemoryModels, ModelChoice, ModelsError, NO_MODEL_NOTE,
+    ResolvedModels,
 };
 pub use model::{
     CloudSection, Config, DecideSection, HarnessSlot, HubEntry, MappingFile, RedactionSettings,

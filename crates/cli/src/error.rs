@@ -1,3 +1,4 @@
+use config::NO_MODEL_NOTE;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -66,6 +67,8 @@ pub enum Error {
         "This node is running, and it has no web app installed.\nAgents read memory over MCP. The app is in preview."
     )]
     NoWebApp,
+    #[error("{NO_MODEL_NOTE}")]
+    NoModel,
     #[error("invalid gateway URL: {0}")]
     Url(#[from] url::ParseError),
     #[error("gateway host or port is invalid")]

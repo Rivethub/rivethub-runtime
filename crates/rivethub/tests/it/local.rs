@@ -167,6 +167,38 @@ async fn a_second_local_start_names_the_running_node_and_exits_once() -> TestRes
 }
 
 #[tokio::test]
+async fn local_refuses_workers_when_no_model_is_configured() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let port = testkit::ports::claim()?;
+    let database = home.path().join(".rivethub").join("memory.sqlite");
+    write_config(
+        home.path(),
+        &format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
+            database.display()
+        ),
+    )?;
+    let started = Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["local", "--no-lan"])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("TOKIO_WORKER_THREADS", "2")
+        .output()
+        .await?;
+    let stderr = String::from_utf8(started.stderr)?;
+    assert_eq!(
+        started.status.code(),
+        Some(1),
+        "{stderr}{}",
+        String::from_utf8_lossy(&started.stdout)
+    );
+    assert_eq!(stderr, format!("Error: {}\n", config::NO_MODEL_NOTE));
+    assert!(started.stdout.is_empty());
+    assert!(!home.path().join(".rivethub/rivethub.pid").exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestResult {
     let home = tempfile::tempdir()?;
     let port = testkit::ports::claim()?;
