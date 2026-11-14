@@ -18,6 +18,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
@@ -290,8 +291,8 @@ impl TenancyStore for SqliteStore {
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError> {
         let viewer = viewer.principal().as_str().to_owned();
         let sessions = sessions.to_vec();
         let now = self.now();

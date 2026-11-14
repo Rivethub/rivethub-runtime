@@ -17,7 +17,7 @@ use wire::session_id::SessionId;
 
 use futures::StreamExt as _;
 
-use super::{deletions, ensure_reachable, hidden, resolved, segment_key};
+use super::{deletions, ensure_owned, hidden, resolved, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::tenancy::UserId;
@@ -99,6 +99,7 @@ pub(super) async fn trash(
         .collect();
     rows.extend(described(&gateway, &roster, &shown, empty?).await?);
     let rows: Vec<Considered> = crate::routes::history::visible_rows(&gateway, &user, rows)
+        .await?
         .into_iter()
         .filter_map(|row| considered(row, now))
         .collect();
@@ -140,7 +141,7 @@ pub(super) async fn keep(
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let key = segment_key(&segment)?;
-    ensure_reachable(&gateway, &user, &key).await?;
+    ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
         .keep_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;

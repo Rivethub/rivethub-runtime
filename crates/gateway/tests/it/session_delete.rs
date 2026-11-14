@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{TimeDelta, Utc};
-use gateway::sessions::{SessionRegistry, owners_file};
+use gateway::sessions::SessionRegistry;
 use kernel::memory::SessionActivity;
 use kernel::transcript::{
     HarnessTranscriptTool, HarnessTranscriptTurn, SessionMessageRole, TranscriptToolStatus,
@@ -15,7 +15,7 @@ use kernel::transcript::{
     ListLimit, SessionLister, SessionRenameError, StoreSession, StoreTranscript, ToolOutputRead,
     TranscriptRead, TranscriptReaderError, TranscriptWindow,
 };
-use session_support::{Fixture, http, user};
+use session_support::{Fixture, http};
 use testkit::FakeSessionDeletion;
 use wire::gateway::GatewayError;
 use wire::gateway::session_delete::{
@@ -114,14 +114,9 @@ struct Setup {
     _state: tempfile::TempDir,
 }
 
-fn setup(owners: &str, stores: Stores, deletion: FakeSessionDeletion) -> Setup {
+fn setup(stores: Stores, deletion: FakeSessionDeletion) -> Setup {
     let state = tempfile::tempdir().expect("state");
-    let path = owners_file(state.path());
-    std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
-    std::fs::write(&path, owners).expect("owners");
-    let registry = SessionRegistry::default()
-        .with_owners_file(path)
-        .with_node_owner(user("owner"));
+    let registry = SessionRegistry::default();
     let deletion = Arc::new(deletion);
     let fixture = Fixture::with_deletion(registry, Some(Arc::new(stores)), deletion.clone());
     Setup {
@@ -232,7 +227,7 @@ async fn deleting_a_session_tombstones_it_and_hides_it_from_both_lists() {
     };
     let deletion =
         FakeSessionDeletion::default().with_activity(claude("s-gone"), remembered(2, Some("ok")));
-    let setup = setup("{}", stores, deletion);
+    let setup = setup(stores, deletion);
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -281,7 +276,7 @@ async fn a_percent_encoded_canonical_id_is_accepted() {
         rows: vec![row("s-plain", hours_ago(2))],
         ..Stores::default()
     };
-    let setup = setup("{}", stores, FakeSessionDeletion::default());
+    let setup = setup(stores, FakeSessionDeletion::default());
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -303,11 +298,7 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
         rows: vec![row("s-owned", hours_ago(2))],
         ..Stores::default()
     };
-    let setup = setup(
-        r#"{"s-owned":"owner"}"#,
-        stores,
-        FakeSessionDeletion::default(),
-    );
+    let setup = setup(stores, FakeSessionDeletion::default());
     let (status, body) = call(
         &setup,
         "DELETE",
@@ -334,20 +325,16 @@ async fn a_session_the_user_cannot_see_or_that_is_unknown_is_not_found() {
 #[tokio::test]
 async fn the_bulk_endpoint_answers_per_session() {
     let stores = Stores {
-        rows: vec![row("s-mine", hours_ago(2)), row("s-theirs", hours_ago(2))],
+        rows: vec![row("s-mine", hours_ago(2))],
         ..Stores::default()
     };
-    let setup = setup(
-        r#"{"s-mine":"alice","s-theirs":"owner"}"#,
-        stores,
-        FakeSessionDeletion::default(),
-    );
+    let setup = setup(stores, FakeSessionDeletion::default());
     let (status, body) = call(
         &setup,
         "POST",
         "/api/sessions/delete",
         r#"{"sessions":["claude-code:s-mine","claude-code:s-theirs","claude-code:s-mine"]}"#,
-        ALICE,
+        None,
     )
     .await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -439,7 +426,7 @@ fn junk_memory() -> FakeSessionDeletion {
 
 #[tokio::test]
 async fn trash_lists_only_obvious_junk() {
-    let setup = setup("{}", junk_stores(), junk_memory());
+    let setup = setup(junk_stores(), junk_memory());
     let (status, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let candidates = parsed::<SessionTrashList>(&body).candidates;
@@ -500,7 +487,7 @@ async fn trash_lists_a_remembered_session_the_list_hides_until_it_is_deleted() {
             ..SessionActivity::default()
         },
     );
-    let setup = setup("{}", stores, deletion);
+    let setup = setup(stores, deletion);
     let (status, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let found: Vec<(String, SessionTrashReason)> = parsed::<SessionTrashList>(&body)
@@ -527,10 +514,10 @@ async fn trash_skips_tombstoned_live_and_unseen_sessions() {
     };
     let deletion = FakeSessionDeletion::default();
     deletion.tombstone(&claude("t-gone"), Utc::now());
-    let setup = setup(r#"{"t-alice":"alice"}"#, stores, deletion);
-    let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
-    assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
+    let setup = setup(stores, deletion);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", ALICE).await;
+    assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
+    let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     let found: Vec<SessionId> = parsed::<SessionTrashList>(&body)
         .candidates
         .into_iter()
@@ -552,7 +539,7 @@ async fn memory_tool_rows_keep_a_session_out_of_the_trash() {
             ..remembered(1, None)
         },
     );
-    let setup = setup("{}", stores, deletion);
+    let setup = setup(stores, deletion);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", None).await;
     assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
 }
@@ -570,7 +557,7 @@ async fn a_deleted_session_resumed_in_its_harness_is_listed_again() {
     let deleted_at = Utc::now() - TimeDelta::hours(1);
     deletion.tombstone(&claude("s-resumed"), deleted_at);
     deletion.tombstone(&claude("s-gone"), deleted_at);
-    let setup = setup("{}", stores, deletion);
+    let setup = setup(stores, deletion);
     let (_, body) = call(
         &setup,
         "GET",
@@ -609,7 +596,7 @@ async fn a_kept_session_leaves_the_trash_until_it_is_used_again() {
     };
     let deletion = FakeSessionDeletion::default();
     deletion.keep(&claude("t-used-since"), Utc::now() - TimeDelta::hours(3));
-    let setup = setup("{}", stores, deletion);
+    let setup = setup(stores, deletion);
     let trash = |body: &[u8]| -> Vec<String> {
         parsed::<SessionTrashList>(body)
             .candidates

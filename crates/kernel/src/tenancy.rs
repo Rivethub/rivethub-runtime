@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use values::SessionId;
+use values::SessionKey;
 
 use crate::BoxError;
 use crate::owner::Owner;
@@ -238,11 +239,15 @@ pub trait TenancyStore: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<VisibilityDefault, TenancyStoreError>;
 
+    fn row_secured(&self) -> bool {
+        false
+    }
+
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError>;
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError>;
 
     async fn mark_session(
         &self,

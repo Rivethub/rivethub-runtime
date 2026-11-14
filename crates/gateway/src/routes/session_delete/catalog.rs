@@ -19,9 +19,10 @@ use wire::gateway::session_catalog::{
 use wire::harness::HarnessId;
 use wire::session_id::{SessionId, SessionKey};
 
-use super::{NOT_FOUND, deletions, ensure_reachable, segment_key};
+use super::{NOT_FOUND, deletions, ensure_owned, segment_key};
 use crate::Gateway;
 use crate::error::ApiError;
+use crate::session_access;
 use crate::tenancy::UserId;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -194,42 +195,6 @@ pub(crate) fn row<K: Into<SessionKey>>(
     }
 }
 
-pub(crate) async fn visibilities(
-    gateway: &Gateway,
-    user: &UserId,
-    sessions: &[SessionId],
-) -> Result<BTreeMap<SessionId, SharedWith>, ApiError> {
-    let Some(store) = gateway.tenancy_store.as_ref() else {
-        return Ok(BTreeMap::new());
-    };
-    if sessions.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let viewer = gateway.tenancy.viewer(user);
-    let found = store
-        .session_visibility(&viewer, sessions)
-        .await
-        .map_err(|error| ApiError::Unavailable(error.to_string()))?;
-    Ok(found
-        .into_iter()
-        .map(|(session, state)| (session, crate::tenancy::shared_with(&state.effective)))
-        .collect())
-}
-
-pub(crate) fn registered(gateway: &Gateway, user: &UserId, session: &SessionId) -> bool {
-    matches!(
-        gateway.sessions().visible(user, session.native(), None),
-        Ok(true)
-    )
-}
-
-fn shown(gateway: &Gateway, user: &UserId, key: &SessionKey) -> bool {
-    match key {
-        SessionKey::Harness(session) => registered(gateway, user, session),
-        SessionKey::Import(_) => true,
-    }
-}
-
 pub(super) async fn list(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
@@ -238,26 +203,16 @@ pub(super) async fn list(
     let lineage = lineage(&gateway).await;
     let query = query(&gateway, params, &lineage).await?;
     let page = catalog(&gateway)?.list(&query).await?;
-    let records: Vec<SessionRecord<SessionKey>> = page
+    let keys: Vec<SessionKey> = page.items.iter().map(|record| record.id.clone()).collect();
+    let mut seen = session_access::seen(&gateway, &user, &keys).await?;
+    let items = page
         .items
         .into_iter()
-        .filter(|record| shown(&gateway, &user, &record.id))
-        .collect();
-    let ids: Vec<SessionId> = records
-        .iter()
-        .filter_map(|record| record.id.session().cloned())
-        .collect();
-    let marks = visibilities(&gateway, &user, &ids).await?;
-    let items = records
-        .into_iter()
         .map(|record| {
-            let visibility = record
-                .id
-                .session()
-                .and_then(|session| marks.get(session))
-                .cloned()
-                .unwrap_or(SharedWith::Private);
-            row(record, visibility, &lineage)
+            let shared_with = seen
+                .remove(&record.id)
+                .map_or(SharedWith::Private, |seen| seen.shared_with);
+            row(record, shared_with, &lineage)
         })
         .collect();
     Ok(Json(SessionSummaryPage {
@@ -276,20 +231,17 @@ pub(super) async fn detail(
     let record = catalog(&gateway)?
         .get(&key)
         .await?
-        .filter(|record| shown(&gateway, &user, &record.id))
         .ok_or(ApiError::NotFound(NOT_FOUND))?;
+    let seen = session_access::seen_one(&gateway, &user, &key).await?;
+    if !seen.readable() {
+        return Err(ApiError::NotFound(NOT_FOUND));
+    }
     let session = key.session();
-    let wanted: Vec<SessionId> = session.cloned().into_iter().collect();
-    let marks = visibilities(&gateway, &user, &wanted).await?;
-    let visibility = session
-        .and_then(|session| marks.get(session))
-        .cloned()
-        .unwrap_or(SharedWith::Private);
     let cwd = record.cwd.clone();
     Ok(Json(SessionDetail {
         resume_command: session
             .and_then(|session| resume_command(session.harness(), session.native())),
-        row: row(record, visibility, &lineage),
+        row: row(record, seen.shared_with, &lineage),
         cwd,
         changed: Vec::new(),
         entities: Vec::new(),
@@ -303,7 +255,7 @@ pub(super) async fn trash(
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let key = segment_key(&segment)?;
-    ensure_reachable(&gateway, &user, &key).await?;
+    ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
         .trash_session(key.as_str(), Some(user.as_str()), Utc::now())
         .await?;
@@ -317,7 +269,7 @@ pub(super) async fn restore(
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let key = segment_key(&segment)?;
-    ensure_reachable(&gateway, &user, &key).await?;
+    ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?.restore_session(key.as_str()).await?;
     tracing::info!(session = %key, "session restored from the trash");
     Ok(StatusCode::NO_CONTENT)
@@ -329,7 +281,7 @@ pub(super) async fn unkeep(
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let key = segment_key(&segment)?;
-    ensure_reachable(&gateway, &user, &key).await?;
+    ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?.unkeep_session(key.as_str()).await?;
     tracing::info!(session = %key, "session no longer kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)

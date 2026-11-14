@@ -131,8 +131,8 @@ impl TenancyStore for DefaultVisibility {
     async fn session_visibility(
         &self,
         _viewer: &Viewer,
-        _sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
+        _sessions: &[wire::session_id::SessionKey],
+    ) -> Result<BTreeMap<wire::session_id::SessionKey, SessionVisibility>, TenancyStoreError> {
         Err(no_visibility())
     }
 

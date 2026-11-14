@@ -36,6 +36,7 @@ use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 use wire::message::Role;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -48,7 +49,7 @@ const PERSON: &str = "rh_rls_person";
 const OWNER: &str = "rh_rls_owner";
 const GROUP: &str = "rh_rls_group";
 
-fn batch(session: &str, text: &str) -> CaptureBatchRequest {
+pub(crate) fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     CaptureBatchRequest {
         session_key: session.to_owned(),
         agent: "rivet".to_owned(),
@@ -72,18 +73,18 @@ fn batch(session: &str, text: &str) -> CaptureBatchRequest {
     }
 }
 
-fn household() -> Result<SpaceId, Box<dyn std::error::Error>> {
+pub(crate) fn household() -> Result<SpaceId, Box<dyn std::error::Error>> {
     Ok(SpaceId::new("household".to_owned())?)
 }
 
-fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
+pub(crate) fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
     Ok(Viewer::new(
         Owner::new(name.to_owned())?,
         vec![household()?],
     ))
 }
 
-async fn seed(
+pub(crate) async fn seed(
     pool: &PgPool,
 ) -> Result<(PostgresMemory, PostgresTenancy), Box<dyn std::error::Error>> {
     common::install_graphile(pool).await?;
@@ -294,10 +295,12 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
         .run(tenancy.mark_topic(&alice, topic.id, Some(&shared)))
         .await?;
     let found = owners
-        .run(tenancy.session_visibility(&alice, std::slice::from_ref(&uncaptured)))
+        .run(tenancy.session_visibility(&alice, &[SessionKey::from(&uncaptured)]))
         .await?;
     assert_eq!(
-        found.get(&uncaptured).map(|state| state.effective.clone()),
+        found
+            .get(&SessionKey::from(&uncaptured))
+            .map(|state| state.effective.clone()),
         Some(shared),
         "a session with no transcript yet follows its topic"
     );
@@ -415,10 +418,10 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
     for viewer in [alice, viewer("bob")?] {
         let scope = Scope::Viewer(viewer.clone());
         let filed = scope.clone().run(listing.all_filed()).await?;
-        let keys: Vec<SessionId> = filed
+        let keys: Vec<SessionKey> = filed
             .sessions
             .iter()
-            .map(|session| session.placement.session.clone())
+            .map(|session| SessionKey::from(&session.placement.session))
             .collect();
         let expected = scope
             .run(tenancy.session_visibility(&viewer, &keys))
@@ -427,7 +430,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
         for session in filed.sessions {
             assert_eq!(
                 session.visibility.as_ref(),
-                expected.get(&session.placement.session),
+                expected.get(&SessionKey::from(&session.placement.session)),
                 "{:?} for {viewer:?}",
                 session.placement.session
             );
@@ -563,7 +566,10 @@ async fn queue_access(pool: &PgPool, role: &str) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-async fn person(pool: &PgPool, principal: &str) -> Result<PgPool, Box<dyn std::error::Error>> {
+pub(crate) async fn person(
+    pool: &PgPool,
+    principal: &str,
+) -> Result<PgPool, Box<dyn std::error::Error>> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE {PERSON} LOGIN PASSWORD '{PERSON}'; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"

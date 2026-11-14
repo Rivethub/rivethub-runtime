@@ -5,10 +5,10 @@ use crate::session_support;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use gateway::sessions::{SessionRegistry, owners_file};
+use gateway::sessions::SessionRegistry;
 use kernel::memory::{MemoryState, SessionRecord, SessionTopic};
 use kernel::topics::TopicId;
-use session_support::{Fixture, http, user};
+use session_support::{Fixture, http};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
 use wire::gateway::session_catalog::{SessionDetail, SessionSummaryPage, SharedWith};
 use wire::harness::HarnessId;
@@ -45,12 +45,7 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
 
 fn setup(stores: Stores, records: Vec<SessionRecord>) -> Setup {
     let state = tempfile::tempdir().expect("state");
-    let path = owners_file(state.path());
-    std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
-    std::fs::write(&path, "{}").expect("owners");
-    let registry = SessionRegistry::default()
-        .with_owners_file(path)
-        .with_node_owner(user("owner"));
+    let registry = SessionRegistry::default();
     let deletion = Arc::new(FakeSessionDeletion::default());
     let catalog = records.into_iter().fold(
         FakeSessionCatalog::new(deletion.clone()),

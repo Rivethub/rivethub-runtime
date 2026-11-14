@@ -24,6 +24,8 @@ pub struct SessionDeleteRequest {
 pub enum SessionDeleteError {
     #[serde(rename = "not found")]
     NotFound,
+    #[serde(rename = "not owner")]
+    NotOwner,
     #[serde(rename = "delete failed")]
     Failed,
 }

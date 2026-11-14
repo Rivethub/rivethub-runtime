@@ -21,7 +21,7 @@ use wire::gateway::tenancy::UserSettings;
 use wire::gateway::tenancy::UserSettingsUpdate;
 use wire::gateway::tenancy::VisibilityUpdate;
 use wire::gateway::topics::TopicSession;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 use super::canonical;
 use super::resolve_id;
@@ -179,13 +179,14 @@ async fn session_visibility(
 ) -> Result<Json<SessionVisibilityRecord>, ApiError> {
     let session = canonical(&segment)?;
     let viewer = gateway.tenancy.viewer(&user);
+    let key = SessionKey::from(&session);
     let mut found = gateway
         .tenancy_store()?
-        .session_visibility(&viewer, std::slice::from_ref(&session))
+        .session_visibility(&viewer, std::slice::from_ref(&key))
         .await
         .map_err(error)?;
     let state = found
-        .remove(&session)
+        .remove(&key)
         .ok_or(ApiError::NotFound("session not found"))?;
     Ok(Json(session_record(session, state)))
 }
@@ -198,6 +199,7 @@ async fn mark_session(
 ) -> Result<Json<SessionVisibilityRecord>, ApiError> {
     let session = canonical(&segment)?;
     let mark = wanted(update.visibility.as_deref())?;
+    crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
     let viewer = gateway.tenancy.viewer(&user);
     let state = gateway
         .tenancy_store()?
@@ -233,10 +235,10 @@ pub(super) async fn decorate(
     viewer: &Viewer,
     sessions: &mut [TopicSession],
 ) -> Result<(), ApiError> {
-    let keys: Vec<SessionId> = sessions
+    let keys: Vec<SessionKey> = sessions
         .iter()
         .filter(|session| session.visibility.is_none())
-        .map(|session| session.placement.session_id.clone())
+        .map(|session| SessionKey::from(&session.placement.session_id))
         .collect();
     if keys.is_empty() {
         return Ok(());
@@ -249,7 +251,7 @@ pub(super) async fn decorate(
         .await
         .map_err(error)?;
     for session in sessions {
-        if let Some(state) = found.get(&session.placement.session_id) {
+        if let Some(state) = found.get(&SessionKey::from(&session.placement.session_id)) {
             session.visibility = Some(state.effective.as_str().to_owned());
             session.visibility_mark = state.mark.as_ref().map(|mark| mark.as_str().to_owned());
         }

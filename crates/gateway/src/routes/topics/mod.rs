@@ -3,7 +3,7 @@ mod done;
 mod filing;
 mod map;
 mod page;
-mod visibility;
+pub(crate) mod visibility;
 
 use std::sync::Arc;
 
@@ -37,6 +37,7 @@ use wire::gateway::topics::TopicMergeRequest;
 use wire::gateway::topics::TopicRecord;
 use wire::gateway::topics::TopicUpdate;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 use wire::session_id::SessionRef;
 
 use crate::Gateway;
@@ -334,6 +335,7 @@ async fn place(
     Body(request): Body<PlacementRequest>,
 ) -> Result<Json<PlacementReply>, ApiError> {
     let session = canonical(&segment)?;
+    crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
     let topic = resolve_id(gateway.topics()?.as_ref(), &request.topic_id).await?;
     let placement = place_session(&gateway, &user, session, topic).await?;
     Ok(Json(PlacementReply {
@@ -376,9 +378,11 @@ pub(crate) async fn place_session(
 
 async fn unplace(
     State(gateway): State<Arc<Gateway>>,
+    user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<PlacementReply>, ApiError> {
     let session = canonical(&segment)?;
+    crate::session_access::change_key(&gateway, &user, &SessionKey::from(&session)).await?;
     let removed = gateway
         .topics()?
         .unplace(&session)

@@ -24,7 +24,7 @@ use wire::gateway::entities::Freshness;
 use wire::gateway::entities::TimelineEntry;
 use wire::gateway::session_catalog::SessionMemoryState;
 use wire::gateway::session_catalog::SessionSummaryRow;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 use super::Known;
 use super::map;
@@ -173,9 +173,10 @@ async fn rows(
         .iter()
         .map(|session| session.session.clone())
         .collect();
+    let wanted: Vec<SessionKey> = keys.iter().map(SessionKey::from).collect();
     let visibility = gateway
         .tenancy_store()?
-        .session_visibility(viewer, &keys)
+        .session_visibility(viewer, &wanted)
         .await
         .map_err(super::super::topics::visibility_error)?;
     let kept: BTreeMap<String, DateTime<Utc>> = match gateway.session_deletion() {
@@ -204,7 +205,9 @@ async fn rows(
             topic: None,
             parent_id: None,
             child_count: None,
-            visibility: crate::tenancy::shared_with(effective(visibility.get(&session.session))),
+            visibility: crate::tenancy::shared_with(effective(
+                visibility.get(&SessionKey::from(&session.session)),
+            )),
             kept: kept.contains_key(session.session.as_str()),
             trashed: false,
             memory_state: SessionMemoryState::Summarized,

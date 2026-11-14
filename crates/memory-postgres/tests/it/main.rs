@@ -23,6 +23,7 @@ mod search_filters;
 mod search_port;
 mod session_catalog;
 mod session_delete;
+mod shared_trash;
 mod store;
 mod summary_dag;
 mod summary_store;

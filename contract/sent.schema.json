@@ -10129,6 +10129,7 @@
     "SessionDeleteError": {
       "enum": [
         "not found",
+        "not owner",
         "delete failed"
       ],
       "type": "string"

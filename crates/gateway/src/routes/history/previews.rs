@@ -9,7 +9,7 @@ use wire::session_id::{SessionId, encode_segment};
 
 use crate::Gateway;
 use crate::error::ApiError;
-use crate::history::authorize;
+use crate::history::{Need, authorize};
 use crate::tenancy::UserId;
 
 const MOST: usize = 50;
@@ -63,7 +63,10 @@ async fn preview(gateway: &Gateway, user: &UserId, session: SessionId) -> Option
             .resolve_canonical(gateway, &encode_segment(&session))
             .await,
     )?;
-    kept(&session, authorize(gateway, user, &resolved).await)?;
+    kept(
+        &session,
+        authorize(gateway, user, &resolved, Need::Read).await,
+    )?;
     let shown = kept(&session, history.preview(gateway, &resolved).await)??;
     Some(SessionPreview {
         session_id: resolved.session,

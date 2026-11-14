@@ -135,10 +135,7 @@ fn app(digests: Arc<Digests>) -> axum::Router {
     let owner = gateway::tenancy::UserId::new("owner".to_owned()).unwrap();
     let gateway = Gateway::new(store, common::settings())
         .with_local_owner(crate::common::local_owner())
-        .with_tenancy(gateway::tenancy::Tenancy::local(owner.clone()))
-        .with_sessions(Arc::new(
-            gateway::sessions::SessionRegistry::default().with_node_owner(owner),
-        ))
+        .with_tenancy(gateway::tenancy::Tenancy::local(owner))
         .with_session_catalog(Arc::new(catalog))
         .with_changes(Arc::new(Feed(records())), digests);
     Arc::new(gateway).router(false)

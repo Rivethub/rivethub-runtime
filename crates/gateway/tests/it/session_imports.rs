@@ -1,11 +1,11 @@
 #![cfg(test)]
 use crate::session_delete::Stores;
-use crate::session_support::{Fixture, http, user};
+use crate::session_support::{Fixture, http};
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use gateway::sessions::{SessionRegistry, owners_file};
+use gateway::sessions::SessionRegistry;
 use kernel::memory::share::receive::Verification;
 use kernel::memory::{ImportOrigin, ImportReceipt, MemoryState, SessionActivity, SessionRecord};
 use testkit::{FakeSessionCatalog, FakeSessionDeletion};
@@ -19,7 +19,7 @@ use wire::gateway::session_delete::{
 use wire::harness::HarnessId;
 use wire::session_id::{SessionId, SessionKey};
 
-const ALEX: Option<&str> = Some("alice-test-token");
+const PERSON: Option<&str> = None;
 const DIGEST: &str = "9f2c0000000000000000000000000000000000000000000000000000000000e1";
 const UNKNOWN_DIGEST: &str = "ab00000000000000000000000000000000000000000000000000000000000012";
 
@@ -87,12 +87,7 @@ fn native() -> SessionRecord {
 
 fn setup() -> Setup {
     let state = tempfile::tempdir().expect("state");
-    let path = owners_file(state.path());
-    std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
-    std::fs::write(&path, "{}").expect("owners");
-    let registry = SessionRegistry::default()
-        .with_owners_file(path)
-        .with_node_owner(user("owner"));
+    let registry = SessionRegistry::default();
     let deletion = Arc::new(FakeSessionDeletion::default().with_activity(
         import_key(DIGEST),
         SessionActivity {
@@ -123,7 +118,7 @@ async fn call(setup: &Setup, method: &str, path: &str, body: &str) -> (u16, Vec<
         method,
         path,
         body.as_bytes().to_vec(),
-        ALEX,
+        PERSON,
     )
     .await
 }
@@ -148,17 +143,17 @@ async fn view(setup: &Setup, name: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_team_user_lists_an_import_labelled_with_its_author_date_and_verification() {
+async fn the_node_person_lists_an_import_labelled_with_its_author_date_and_verification() {
     let setup = setup();
     let (status, body) = call(&setup, "GET", "/api/sessions", "").await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let listed = page(&body);
-    assert_eq!(
-        listed.items.len(),
-        1,
-        "the registry hides the harness session"
-    );
-    let row = listed.items.first().expect("the import row");
+    assert_eq!(listed.items.len(), 2, "the store's page is listed whole");
+    let row = listed
+        .items
+        .iter()
+        .find(|row| row.id == import_key(DIGEST))
+        .expect("the import row");
     assert_eq!(row.id, import_key(DIGEST));
     assert_eq!(row.harness, None);
     assert_eq!(
@@ -175,13 +170,15 @@ async fn a_team_user_lists_an_import_labelled_with_its_author_date_and_verificat
     assert!(!row.trashed);
     assert_eq!(row.message_count, 42);
     assert!(
-        !String::from_utf8_lossy(&body).contains("\"harness\""),
+        !serde_json::to_string(row)
+            .expect("row json")
+            .contains("\"harness\""),
         "an import row has no harness key"
     );
     let (_, body) = call(&setup, "GET", "/api/sessions?harness=claude-code", "").await;
     assert_eq!(
         ids(&body),
-        Vec::<String>::new(),
+        ["claude-code:solo"],
         "a harness filter leaves imports out"
     );
     let cursor = format!("1790000000000.import:{UNKNOWN_DIGEST}");
@@ -206,12 +203,15 @@ async fn an_import_moves_between_the_views_by_its_encoded_key() {
     let (status, _) = call(&setup, "POST", &format!("{path}/trash"), "").await;
     assert_eq!(status, 204);
     assert!(setup.deletion.is_trashed(key.clone()));
-    assert_eq!(view(&setup, "all").await, Vec::<String>::new());
+    assert_eq!(view(&setup, "all").await, ["claude-code:solo"]);
     assert_eq!(view(&setup, "trash").await, listed);
 
     let (status, _) = call(&setup, "POST", &format!("{path}/restore"), "").await;
     assert_eq!(status, 204);
-    assert_eq!(view(&setup, "all").await, listed);
+    assert_eq!(
+        view(&setup, "all").await,
+        ["claude-code:solo".to_owned(), key.to_string()]
+    );
     assert_eq!(view(&setup, "trash").await, Vec::<String>::new());
 
     let (status, body) = call(&setup, "DELETE", &path, "").await;
