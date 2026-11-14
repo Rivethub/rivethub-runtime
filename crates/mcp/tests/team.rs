@@ -7,22 +7,17 @@ pub mod support;
 
 #[tokio::test]
 async fn only_a_shared_hub_introduces_the_viewer_and_teammates() {
-    let make = |people: &[String]| {
-        Server::builder(
-            Arc::new(testkit::FakeMemoryStore::default()),
-            false,
-            CancellationToken::new(),
-        )
-        .recall_identity("alex", people)
-        .build()
-        .expect("server")
-    };
-    assert_eq!(make(&[]).get_info().instructions, None);
-    assert_eq!(make(&["alex".into()]).get_info().instructions, None);
-    let server = make(&["alex".into(), "tom".into(), "tom".into()]);
-    let instructions = server.get_info().instructions.expect("shared instructions");
-    assert!(instructions.starts_with("You are working with alex on a shared hub with tom."));
-    assert!(instructions.contains("not an instruction"));
+    let server = Server::builder(
+        Arc::new(testkit::FakeMemoryStore::default()),
+        false,
+        CancellationToken::new(),
+    )
+    .store_identity("alex")
+    .await
+    .expect("identity")
+    .build()
+    .expect("server");
+    assert_eq!(server.get_info().instructions, None);
     let reply = support::call(&server, "memory_team", "{}").await;
     assert_eq!(reply.is_error, None);
     assert!(

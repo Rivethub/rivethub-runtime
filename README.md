@@ -189,8 +189,9 @@ a socket. On a SQLite node `rh mcp` opens the node's SQLite file and serves stdi
 { "mcpServers": { "rivethub": { "command": "rh", "args": ["mcp"] } } }
 ```
 
-Team recall uses the person selected by `ownerUserId` in the MCP process's users file.
-On a shared hub, initialize instructions name that person and teammates. Other people's
+Team recall uses the database's actual person for a pinned login, with `ownerUserId` as the
+fallback on an unpinned node. Shared membership comes only from the store; per-person users
+files need no team list. On a shared hub, initialize instructions name that person and teammates. Other people's
 sessions are labelled `from <person> · team` and rendered as quoted data, never instructions.
 `memory_team` shows visible teammates' recent sessions grouped by person, with `window`
 (default `last_7d`) and `limit` per person (default 5, maximum 20). Store row-level security

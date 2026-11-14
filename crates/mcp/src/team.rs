@@ -59,12 +59,13 @@ pub(crate) async fn call(
     let records = store
         .team_sessions(range.since, range.before, limit.get())
         .await?;
-    render(records, zone)
+    render(records, zone, Utc::now())
 }
 
 fn render(
     records: Vec<kernel::memory::TeamSession>,
     zone: chrono_tz::Tz,
+    now: chrono::DateTime<Utc>,
 ) -> Result<CallToolResult, Error> {
     let mut grouped = BTreeMap::<String, Vec<_>>::new();
     for record in records {
@@ -89,14 +90,16 @@ fn render(
         };
         writeln!(text, "## {}", kernel::memory::label(&owner, 64))?;
         for record in records {
-            let topic = record.topic.join(" / ");
-            let body = format!(
-                "{} · {} · {}\n{}",
+            let mut heading = format!(
+                "{} · {} · {}",
                 record.title,
-                record.when.with_timezone(&zone),
-                topic,
-                record.excerpt.unwrap_or_default()
+                crate::render_search::age(record.when, now),
+                record.when.with_timezone(&zone).format("%Y-%m-%d %H:%M %Z")
             );
+            if !record.topic.is_empty() {
+                write!(heading, " · {}", record.topic.join(" / "))?;
+            }
+            let body = format!("{heading}\n{}", record.excerpt.unwrap_or_default());
             writeln!(text, "{}", kernel::memory::quote(&origin, &body))?;
         }
     }

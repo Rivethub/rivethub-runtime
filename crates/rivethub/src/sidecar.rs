@@ -217,20 +217,9 @@ async fn run_server(
         mcp::plugins::SocketTools::new(folder.join("tools.sock"), folder.join("tools.token"))?;
     let identity = crate::composition::identities::load(config, env).await?;
     let viewer = identity.primary();
-    let people: Vec<String> = identity
-        .tenancy
-        .spaces()
-        .iter()
-        .filter(|space| space.members.contains(&viewer))
-        .flat_map(|space| {
-            space
-                .members
-                .iter()
-                .map(|person| person.as_str().to_owned())
-        })
-        .collect();
     let mut builder = mcp::Server::builder(memory, false, shutdown.child_token())
-        .recall_identity(viewer.as_str(), &people)
+        .store_identity(viewer.as_str())
+        .await?
         .display_zone(display_zone(env))
         .plugins(Arc::new(plugins));
     if let Some(sessions) = served.sessions {

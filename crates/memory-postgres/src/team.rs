@@ -3,6 +3,18 @@ use std::collections::BTreeMap;
 use crate::{Error, PostgresMemory};
 
 impl PostgresMemory {
+    pub(crate) async fn read_recall_identity(
+        &self,
+    ) -> Result<kernel::memory::RecallIdentity, Error> {
+        let principal = sqlx::query_scalar!("SELECT rh_scope_pin()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|source| Error::operation("recall principal", source))?;
+        let people = sqlx::query_scalar!("SELECT DISTINCT user_id FROM rh_space_members WHERE space_id = ANY (rh_member_spaces()) ORDER BY user_id")
+            .fetch_all(&self.pool).await.map_err(|source| Error::operation("recall teammates", source))?;
+        Ok(kernel::memory::RecallIdentity { principal, people })
+    }
+
     pub(crate) async fn own_sessions(
         &self,
         keys: &[String],

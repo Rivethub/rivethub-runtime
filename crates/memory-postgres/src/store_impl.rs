@@ -563,6 +563,12 @@ impl MemoryStore for crate::PostgresMemory {
         Ok(self.team_owners(&session_keys).await?)
     }
 
+    async fn recall_identity(
+        &self,
+    ) -> Result<Option<kernel::memory::RecallIdentity>, MemoryStoreError> {
+        Ok(Some(self.read_recall_identity().await?))
+    }
+
     async fn team_sessions(
         &self,
         since: Option<chrono::DateTime<chrono::Utc>>,

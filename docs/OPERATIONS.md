@@ -452,11 +452,16 @@ exists without the key, `rh local` stops and names the file to add it to; it nev
 ### Team-aware recall
 
 Start each person's `rh mcp` with their users file (`ownerUserId`) and pinned Postgres login
-as described under Person logins. Shared-space membership in that users file supplies the
-initialize introduction; the database's row-level security supplies all recalled sessions.
-Keep the users file's space membership synchronized with the hub's registry. Person labels
-use the stable user id, such as `alex`, rather than a token name or an imported author's name.
-No migration is required.
+as described under Person logins. The database's pinned principal and memberships supply the
+initialize introduction; per-person users files need no spaces or duplicate team list. An
+unpinned node falls back to its users-file owner for the person, while still reading memberships
+from the store. SQLite and a person with no co-members produce no instructions.
+Person labels use the stable user id, such as `alex`, rather than a token or imported author.
+Migrate before upgrading this build: migration 0069 raises the Postgres schema requirement to
+69 and allows members to read co-memberships only within their own spaces. Its no-argument
+`rh_member_spaces()` helper is the sole public definer read helper: it captures the actual
+principal, reads that person's memberships under a fixed search path, restores maintenance
+state, and returns only space IDs. It grants no capture, queue or maintenance authority.
 
 Set `memory: {recall: {own_weight: 1.25}}` to tune hybrid search. The finite range is 1.0–2.0;
 1.0 restores unweighted ordering. A personal SQLite store ignores this preference. The
@@ -464,3 +469,6 @@ chronological `memory_browse` order is unchanged. `memory_team` is read-only on 
 transport; add it to harness tool allow-lists alongside `memory_search` and `memory_browse`.
 It accepts `window` (default `last_7d`, same local-time windows as browse) and `limit` per person
 (1–20, default 5). It returns only sessions visible through the normal store read path.
+
+`memory_team` dates use relative age followed by local `YYYY-MM-DD HH:MM ZONE` time.
+A topic separator appears only when a filed topic is visible.

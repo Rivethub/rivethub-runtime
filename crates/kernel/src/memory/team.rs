@@ -9,3 +9,9 @@ pub struct TeamSession {
     pub topic: Vec<String>,
     pub excerpt: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecallIdentity {
+    pub principal: Option<String>,
+    pub people: Vec<String>,
+}

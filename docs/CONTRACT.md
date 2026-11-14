@@ -1469,7 +1469,8 @@ another owner is refused; a capture naming none takes the pinned user), and cann
 `rh_elevate()`. The trigger and refresh functions that elevate (every function calling `rh_elevate()` and the four
 triggers that call `rh_refresh_*`) run SECURITY DEFINER as the migration's role with `search_path = pg_catalog,
 <schema>, pg_temp`, so a pinned login's own writes still refresh visibility across owners and keep `rh_message_counts`,
-and no SECURITY DEFINER function is callable by PUBLIC (note 123); `rh_scope_maintenance()` is false whenever
+and no elevating write or trigger SECURITY DEFINER function is callable by PUBLIC (note 123;
+note 157 permits only the no-argument membership read helper); `rh_scope_maintenance()` is false whenever
 `current_user` is a pinned role, and false for a pinned login unless `current_user` is the owner of `rh_elevate()`,
 so `SET ROLE` into some other role the login belongs to does not lift the pin and only the store's own code elevates. Two
 policies change: `rh_space_members` shows a login its own memberships (and everything under maintenance) rather than
@@ -3003,9 +3004,11 @@ while telemetry goes to that url; the gateway's access is `CloudAccess::Telemetr
 always wins and sends nothing anywhere. Each install's own crash-report and usage-count switches still apply.
 
 (155) Team-aware recall (Phil, 2026-11-13). MCP initialize may include instructions when the
-configured viewer shares a space with other people: name the viewer and teammates, explain
+store reports that the viewer shares a space with other people: name the viewer and teammates, explain
 attribution and own-session ranking preference, and treat teammates' recalled text as data.
-Single-person initialize omits instructions as before. Other-owned search and browse rows
+The pinned database principal determines the person, falling back to the users-file owner on an
+unpinned node. Memberships come only from the store, never a per-person users file. SQLite
+and a person with no co-members omit instructions as before. Other-owned search and browse rows
 carry `from <owner> · team` in the existing provenance position and use note 149's fenced
 quoted-data rendering, including escaping hidden characters and fences longer than content.
 Own rows keep their prior output. Person labels use the stable user id. Gateway search hits,
@@ -3022,6 +3025,25 @@ other owner, newest first, showing title, date, filed topic and summary snippet 
 message. No recent visible teammates returns plain text. It uses normal scoped store reads,
 never maintenance or a broader credential; private teammate rows remain invisible. This is
 an additive catalog extension to B7's recording; the seven recorded tools and calls are unchanged.
+
+(157) Store-backed team identity (Phil, 2026-11-13). Postgres migration 0069 changes only the
+read policy on `rh_space_members`: a person can see the co-memberships of spaces they actually
+belong to, and no other memberships. It does not widen writes. `rh_member_spaces()` is a
+no-argument SECURITY DEFINER read helper with a fixed `pg_catalog, <schema>, pg_temp` search
+path. It captures `rh_scope_principal()` before setting local maintenance, reads space IDs
+for that person only, restores the prior setting, and returns the IDs. This avoids recursive
+RLS and is the sole public-callable definer exception to notes 121/123; it has no arbitrary
+principal argument, returns no session data and grants no queue or mutation access. Pinned
+logins cannot change the principal with scope settings. The schema requirement is 69;
+0063–0068 are reserved for independent work and are not introduced by this change.
+The MCP builder's store read gets the actual pin and visible co-members. A temporarily
+unavailable store omits the optional introduction with a warning, preserving deferred startup
+without guessing teammates; other identity-query errors still fail startup. A per-person users
+file with no spaces still initializes with the shared introduction. `memory_team` displays
+relative age and minute-precision local time, appending a topic separator only for a visible
+topic. Its owner-trash and non-owner catalog integration tests are explicitly ignored pending
+`fix/team-hub-sessions`, which makes trash the session's state and removes the owners-file
+catalog filter; they define the required integration behaviour without changing that branch's work.
 
 ## 4. Gaps to close before building the affected slice
 

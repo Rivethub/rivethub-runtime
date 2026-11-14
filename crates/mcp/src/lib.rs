@@ -245,10 +245,20 @@ impl Server {
 }
 
 impl Builder {
-    #[must_use]
-    pub fn recall_identity(mut self, viewer: &str, people: &[String]) -> Self {
-        self.instructions = crate::team::instructions(viewer, people);
-        self
+    pub async fn store_identity(mut self, fallback: &str) -> Result<Self, Error> {
+        self.instructions = match self.memory.recall_identity().await {
+            Ok(Some(identity)) => crate::team::instructions(
+                identity.principal.as_deref().unwrap_or(fallback),
+                &identity.people,
+            ),
+            Ok(None) => None,
+            Err(kernel::memory::MemoryStoreError::Unavailable(error)) => {
+                tracing::warn!(%error, "memory unavailable; MCP introduction omitted");
+                None
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(self)
     }
 
     #[must_use]

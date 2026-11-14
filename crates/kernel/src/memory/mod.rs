@@ -25,7 +25,7 @@ mod model_title;
 mod origin;
 mod provenance;
 mod team;
-pub use team::TeamSession;
+pub use team::{RecallIdentity, TeamSession};
 mod records;
 mod search;
 mod sessions;
@@ -587,6 +587,10 @@ pub trait MemoryStore: Send + Sync {
         _session_keys: Vec<String>,
     ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
         Ok(BTreeMap::new())
+    }
+
+    async fn recall_identity(&self) -> Result<Option<RecallIdentity>, MemoryStoreError> {
+        Ok(None)
     }
 
     async fn team_sessions(
