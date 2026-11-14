@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::facts::Claim;
+use kernel::facts::EntityHistory;
 use kernel::facts::FactSession;
 use kernel::facts::FactState;
 use kernel::facts::SessionLink;
@@ -50,9 +51,28 @@ pub(super) async fn build(
         .into_iter()
         .filter(|claim| as_of.is_none_or(|cut| claim.at <= cut))
         .collect();
+    let written: Vec<EntityHistory> = facts
+        .entity_history(entity.id)
+        .await
+        .map_err(map::error)?
+        .into_iter()
+        .filter(|line| as_of.is_none_or(|cut| line.at <= cut))
+        .collect();
     let own = sessions_of(&claims);
-    let found = facts.fact_sessions(&own).await.map_err(map::error)?;
-    let titles = Titles::of(&found);
+    let mut named = own.clone();
+    for line in &written {
+        if let Some(session) = &line.session
+            && !named.contains(session)
+        {
+            named.push(session.clone());
+        }
+    }
+    let resolved = facts.fact_sessions(&named).await.map_err(map::error)?;
+    let titles = Titles::of(&resolved);
+    let found: Vec<FactSession> = resolved
+        .into_iter()
+        .filter(|session| own.iter().any(|id| id == &session.session))
+        .collect();
     let links: Vec<SessionLink> = facts
         .session_links()
         .await
@@ -84,7 +104,7 @@ pub(super) async fn build(
             .iter()
             .map(|state| map::fact(state, &titles))
             .collect(),
-        timeline: history(entity, &claims, as_of, &titles),
+        timeline: history(entity, &claims, &written, as_of, &titles),
         connected: connected(entity.id, &links)
             .into_iter()
             .take(CONNECTED_SHOWN)
@@ -128,6 +148,7 @@ fn sessions_of(claims: &[Claim]) -> Vec<SessionId> {
 fn history(
     entity: &Topic,
     claims: &[Claim],
+    lines: &[EntityHistory],
     as_of: Option<DateTime<Utc>>,
     titles: &Titles,
 ) -> Vec<TimelineEntry> {
@@ -135,6 +156,17 @@ fn history(
         .iter()
         .map(|event| map::event(event, titles))
         .collect();
+    for line in lines {
+        entries.push(TimelineEntry {
+            at: line.at,
+            text: line.sentence.clone(),
+            kind: ChangeKind::History,
+            source: line
+                .session
+                .as_ref()
+                .map(|session| map::mention(session, titles)),
+        });
+    }
     if as_of.is_none_or(|cut| entity.created_at <= cut) {
         entries.push(TimelineEntry {
             at: entity.created_at,

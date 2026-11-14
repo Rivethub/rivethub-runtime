@@ -8,6 +8,7 @@ mod composed_bearer_auth;
 mod db_resilience;
 mod doctor;
 mod e2e;
+mod entity_pages;
 mod local;
 mod local_ensure;
 mod local_static;

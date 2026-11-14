@@ -94,6 +94,13 @@ pub struct SessionLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityHistory {
+    pub at: DateTime<Utc>,
+    pub sentence: String,
+    pub session: Option<SessionId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactSession {
     pub session: SessionId,
     pub title: Option<String>,
@@ -112,4 +119,6 @@ pub trait FactStore: Send + Sync {
     async fn session_links(&self) -> Result<Vec<SessionLink>, FactError>;
 
     async fn fact_sessions(&self, sessions: &[SessionId]) -> Result<Vec<FactSession>, FactError>;
+
+    async fn entity_history(&self, entity: TopicId) -> Result<Vec<EntityHistory>, FactError>;
 }

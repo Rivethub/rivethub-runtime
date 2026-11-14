@@ -1605,7 +1605,8 @@
         "filed",
         "conflict",
         "tag",
-        "merge"
+        "merge",
+        "history"
       ],
       "type": "string"
     },
@@ -2293,7 +2294,10 @@
         "software",
         "repository",
         "domain",
-        "database"
+        "database",
+        "organization",
+        "project",
+        "place"
       ],
       "type": "string"
     },

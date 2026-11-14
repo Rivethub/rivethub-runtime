@@ -73,6 +73,11 @@ async fn a_renamed_attribute_ends_with_only_the_new_key(pool: PgPool) -> TestRes
     Scope::Maintenance.run(renamed_case(pool)).await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_restated_fact_from_the_same_session_adds_no_claim(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(restated_case(pool)).await
+}
+
 async fn rewrite_case(pool: PgPool) -> TestResult {
     let conversation = seed_conversation(&pool).await?;
     let older = seed_leaf(&pool, conversation, at("2026-11-01T00:00:00Z")).await?;
@@ -460,6 +465,131 @@ async fn renamed_case(pool: PgPool) -> TestResult {
     assert_eq!(old.value, "8080");
     let history = history_of(&scene.pool, scene.entity).await?;
     assert!(history.iter().any(|line| line.contains("renamed to port")));
+    Ok(())
+}
+
+async fn restated_case(pool: PgPool) -> TestResult {
+    let conversation = seed_conversation(&pool).await?;
+    let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
+    let again = seed_leaf(&pool, conversation, at("2026-11-08T00:00:00Z")).await?;
+    let later = seed_leaf(&pool, conversation, at("2026-11-09T00:00:00Z")).await?;
+    let entity = Uuid::new_v4();
+    let slug = format!("restated-{entity}");
+    seed_entity(&pool, entity, &slug).await?;
+    seed_pinned(&pool, entity, "role", "compute").await?;
+    let directory = tempfile::tempdir()?;
+    let memory =
+        PostgresMemory::new(pool.clone()).with_wiki_directory(directory.path().to_path_buf());
+    let first = session_rewrite(
+        newer,
+        conversation,
+        at("2026-11-07T00:00:00Z"),
+        "Host.",
+        &[
+            ("ram", "152 GB available", "2026-11-07T00:30:00Z"),
+            ("role", "other", "2026-11-07T00:30:00Z"),
+        ],
+        "Recorded 152 GB available.",
+    );
+    apply_once(&memory, entity, &first).await?;
+    assert_eq!(
+        claim_count(&pool, entity, "ram", "152 GB available").await?,
+        1
+    );
+    assert_eq!(claim_count(&pool, entity, "role", "other").await?, 0);
+    assert_eq!(claim_count(&pool, entity, "role", "compute").await?, 1);
+    let second = session_rewrite(
+        again,
+        conversation,
+        at("2026-11-08T00:00:00Z"),
+        "Host.",
+        &[
+            ("ram", "152 GB available", "2026-11-08T00:30:00Z"),
+            ("role", "compute", "2026-11-08T00:30:00Z"),
+        ],
+        "Said it again.",
+    );
+    apply_once(&memory, entity, &second).await?;
+    assert_eq!(
+        claim_count(&pool, entity, "ram", "152 GB available").await?,
+        1_i64
+    );
+    assert_eq!(claim_count(&pool, entity, "role", "compute").await?, 2);
+    let third = session_rewrite(
+        later,
+        conversation,
+        at("2026-11-09T00:00:00Z"),
+        "Host.",
+        &[("ram", "160 GB available", "2026-11-09T00:30:00Z")],
+        "RAM is 160 GB.",
+    );
+    apply_once(&memory, entity, &third).await?;
+    assert_eq!(
+        claim_count(&pool, entity, "ram", "160 GB available").await?,
+        1
+    );
+    assert_eq!(
+        claim_count(&pool, entity, "ram", "152 GB available").await?,
+        1_i64
+    );
+    let facts = facts_of(&pool, entity).await?;
+    assert_eq!(
+        latest(&facts, "ram").ok_or("current ram")?.value,
+        "160 GB available"
+    );
+    assert_eq!(
+        latest(&facts, "role").ok_or("pinned role")?.value,
+        "compute"
+    );
+    Ok(())
+}
+
+async fn claim_count(
+    pool: &PgPool,
+    entity: Uuid,
+    key: &str,
+    value: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*)
+           FROM rh_entity_fact_claims c
+           JOIN rh_entity_facts f ON f.id = c.fact_id
+          WHERE f.topic_id = $1 AND f.key = $2 AND c.value = $3",
+    )
+    .bind(entity)
+    .bind(key)
+    .bind(value)
+    .fetch_one(pool)
+    .await
+}
+
+async fn seed_pinned(
+    pool: &PgPool,
+    entity: Uuid,
+    key: &str,
+    value: &str,
+) -> Result<(), sqlx::Error> {
+    let mut tx = deferred(pool).await?;
+    sqlx::query(
+        "WITH fact AS (
+            INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+         )
+         INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, pinned, at, recorded_at, owner_user_id)
+         SELECT $5, fact.id, $6, 'you', true, $4, $4, 'owner'
+           FROM fact",
+    )
+    .bind(Uuid::new_v4())
+    .bind(entity)
+    .bind(key)
+    .bind(at("2026-11-01T00:30:00Z"))
+    .bind(Uuid::new_v4())
+    .bind(value)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 

@@ -59,7 +59,14 @@ impl Titles {
 }
 
 pub(super) fn entity_type(root: &str) -> Option<EntityType> {
-    let seeded = SeededType::iter().find(|seeded| seeded.to_string() == root)?;
+    let Some(seeded) = SeededType::iter().find(|seeded| seeded.to_string() == root) else {
+        return match root {
+            "Organizations" => Some(EntityType::Organization),
+            "Projects" => Some(EntityType::Project),
+            "Places" => Some(EntityType::Place),
+            _ => None,
+        };
+    };
     Some(match seeded {
         SeededType::People => EntityType::Person,
         SeededType::Agents => EntityType::Agent,

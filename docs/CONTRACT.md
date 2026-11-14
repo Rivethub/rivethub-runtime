@@ -3328,6 +3328,8 @@ under `memory.sqlite` when SQLite is selected. A blank value is ignored. When ne
 defaults `http://127.0.0.1:9402` and `qwen3-embedding-0.6b`.
 
 
+(156) Entity pages, types and history on the entity routes (2026-11-13). `GET /api/entities` lists entities under Organizations, Projects and Places as `organization`, `project` and `place`. `GET /api/entities/{id}` adds timeline entries of kind `history`, one per `rh_entity_history` line, newest first, with the session the line came from. Fact timeline entries are unchanged. A page the entity worker commits is bound to that entity topic, so `GET /api/topics/{id}/page` returns it and the entity route's `lead` is the page summary. Additive: a client that rejects an unknown `type` or `kind` must accept `organization`, `project`, `place` and `history`.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
