@@ -150,33 +150,35 @@ async fn scope_for(
     if let Some(found) = named(conn, &holder, visibility).await? {
         return Ok(found);
     }
-    let root_free: bool =
-        sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM rh_wiki_scopes WHERE directory = '')")
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(failed)?;
-    let root_owner = primary.is_none_or(|primary| primary == holder);
-    let (prefix, directory) = if visibility == PRIVATE && root_free && root_owner {
-        (String::new(), String::new())
-    } else if visibility == PRIVATE {
+    let root = visibility == PRIVATE && primary.is_none_or(|primary| primary == holder);
+    let own = if visibility == PRIVATE {
         (format!("{holder}-"), format!("users/{holder}"))
     } else {
         (format!("{holder}-"), format!("spaces/{holder}"))
     };
-    sqlx::query(
-        "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
-         VALUES ($1, $1, $2, $3, $4) ON CONFLICT DO NOTHING",
-    )
-    .bind(&holder)
-    .bind(visibility)
-    .bind(&prefix)
-    .bind(&directory)
-    .execute(&mut *conn)
-    .await
-    .map_err(failed)?;
-    named(conn, &holder, visibility)
-        .await?
-        .ok_or_else(|| WikiStoreError::InvalidPatch(format!("no wiki scope for {holder}")))
+    let homes = root
+        .then(|| (String::new(), String::new()))
+        .into_iter()
+        .chain([own]);
+    for (prefix, directory) in homes {
+        sqlx::query(
+            "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
+             VALUES ($1, $1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        )
+        .bind(&holder)
+        .bind(visibility)
+        .bind(&prefix)
+        .bind(&directory)
+        .execute(&mut *conn)
+        .await
+        .map_err(failed)?;
+        if let Some(found) = named(conn, &holder, visibility).await? {
+            return Ok(found);
+        }
+    }
+    Err(WikiStoreError::InvalidPatch(format!(
+        "no wiki scope for {holder}"
+    )))
 }
 
 pub(crate) async fn scope_named(

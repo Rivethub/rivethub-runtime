@@ -3,6 +3,7 @@ mod catalog;
 mod messages;
 mod no_model;
 mod sessions;
+mod topic_pages;
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;

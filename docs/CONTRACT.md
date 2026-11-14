@@ -3196,6 +3196,21 @@ by the store's admin (`UPDATE rh_membership_authority SET node = …`). Pinned l
 and SQLite, one node and one person, ignores the node. `memory_postgres::SCHEMA_VERSION` is 74 (0072 and 0073 are
 other branches' numbers).
 
+(176) Topic pages and tidy run as the owner of what they touch (Phil, 2026-11-13, audit F6). The worker ran every
+`sync-topic-page` job and every tidy pass as the configured primary person, so another person's private topic read
+as missing, the job succeeded, and no page was ever made; a sweep never saw those topics at all. Now a job naming a
+topic looks up its owner under maintenance and syncs as that owner (type topics, which have no owner, as the primary
+person). A sweep lists the owners of all topics under maintenance and runs one pass per owner over that owner's
+topics, each as that owner, so pages are written from that person's sources only and stay theirs. Tidy, whose
+batches are per owner (0048), runs once for each person who owns a topic and for the primary person, over that
+person's topics and the type topics. A node without tenancy (SQLite) runs as before. Making the first page for a
+person or space failed on a login that keeps row security: `rh_wiki_scopes` took writes only under maintenance (0049),
+so `scope_for` could not record a new person's wiki scope, and its check for a free root directory read under the
+viewer's rows. Migration 0075 adds an insert policy on `rh_wiki_scopes`: a person may record the private scope in
+their own name, or the scope of a space they belong to, and nothing else. No elevating function is added, so pinned
+logins still call none (note 0055's rule). `scope_for` asks for the root directory first when the scope may take it,
+and falls back to the person's own directory when another scope already holds the root. `memory_postgres::SCHEMA_VERSION` is 75.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

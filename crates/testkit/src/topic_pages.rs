@@ -13,6 +13,7 @@ use kernel::topics::PageSection;
 use kernel::topics::Placement;
 use kernel::topics::PlacementSource;
 use kernel::topics::Slug;
+use kernel::topics::SweepOwners;
 use kernel::topics::SyncTopicPage;
 use kernel::topics::Topic;
 use kernel::topics::TopicChanges;
@@ -54,7 +55,15 @@ impl PageStores<'_> {
         let selector = ClaimSelector::matching(vec![JobName::Fixed(FixedJob::SyncTopicPage)]);
         while let Some(job) = self.queue.claim(&selector).await? {
             let sync = SyncTopicPage::from_payload(&job.payload)?;
-            sync_topic_page(self.topics, self.pages, self.decisions, &sync, at(30)).await?;
+            sync_topic_page(
+                self.topics,
+                self.pages,
+                self.decisions,
+                &sync,
+                SweepOwners::All,
+                at(30),
+            )
+            .await?;
             self.queue.complete(job.id).await?;
         }
         Ok(())
@@ -268,6 +277,7 @@ pub async fn syncing_twice_changes_nothing(stores: PageStores<'_>) -> Outcome {
         stores.pages,
         stores.decisions,
         &SyncTopicPage::every_topic(),
+        SweepOwners::All,
         at(40),
     )
     .await?;
