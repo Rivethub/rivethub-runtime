@@ -52,8 +52,16 @@ pub enum ShareCommand {
             help = "Share server host, such as team.example.com (default: memory.share.server.url, else rivethub.cloud)"
         )]
         server: Option<String>,
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Sign in with a team token read from this file, or - to read it from stdin, instead of the browser; the token is never taken on the command line"
+        )]
+        token_file: Option<std::path::PathBuf>,
     },
-    #[command(about = "Revoke this machine's login on a share server and forget it")]
+    #[command(
+        about = "Sign this machine out of a share server: a team token is forgotten here only, and a browser login also revokes this machine's own refresh token there"
+    )]
     Logout {
         #[arg(help = "Share server host (default: memory.share.server.url, else rivethub.cloud)")]
         server: Option<String>,
@@ -79,6 +87,8 @@ pub enum ServerError {
     },
     #[error("the browser approval was {0}; run rh share login to try again")]
     Denied(&'static str),
+    #[error("{} holds no single token", .0.display())]
+    TokenFile(std::path::PathBuf),
     #[error("{server} refused the team token (HTTP {status}); sign in again with a valid token")]
     TokenRefused { server: ShareServer, status: u16 },
     #[error("the share server could not be reached: {0}")]
@@ -497,7 +507,21 @@ pub async fn run(
 ) -> Result<Report, crate::Error> {
     let servers = ShareServers::from_env(env).await?;
     Ok(match command {
-        ShareCommand::Login { server } => login(env, server.as_deref(), shutdown).await?,
+        ShareCommand::Login {
+            server,
+            token_file: Some(path),
+        } => {
+            let host = servers.pick(server.as_deref())?;
+            let token = read_token(&path).await?;
+            let user = desk::login_team(env, &host.to_string(), token).await?;
+            Report::success(format!(
+                "signed in to {host} as {user} with a team token; rh share logout {host} forgets it on this machine only\n"
+            ))
+        }
+        ShareCommand::Login {
+            server,
+            token_file: None,
+        } => login(env, server.as_deref(), shutdown).await?,
         ShareCommand::Logout { server } => {
             let (host, outcome) = desk::logout(env, server.as_deref()).await?;
             Report::success(match outcome {
@@ -505,9 +529,9 @@ pub async fn run(
                 LoggedOut::Revoked => {
                     format!("signed out of {host} and revoked this machine's login there\n")
                 }
-                LoggedOut::Forgotten => {
-                    format!("signed out of {host} and forgot its team token on this machine\n")
-                }
+                LoggedOut::Forgotten => format!(
+                    "signed out of {host} and forgot its team token on this machine; the token stays valid on the server and on any other machine signed in with it\n"
+                ),
                 LoggedOut::Refused { refused, keyring } => {
                     let kept = keyring.map_or_else(String::new, |reason| {
                         format!("; its secret stays in the OS keyring because {reason}")
@@ -520,6 +544,21 @@ pub async fn run(
         }
         ShareCommand::Status => servers.status()?,
     })
+}
+
+async fn read_token(path: &std::path::Path) -> Result<String, crate::Error> {
+    let text = if path.as_os_str() == "-" {
+        let mut text = String::new();
+        tokio::io::AsyncReadExt::read_to_string(&mut tokio::io::stdin(), &mut text).await?;
+        text
+    } else {
+        tokio::fs::read_to_string(path).await?
+    };
+    let token = text.trim();
+    if token.is_empty() || token.contains(char::is_whitespace) {
+        return Err(ServerError::TokenFile(path.to_path_buf()).into());
+    }
+    Ok(token.to_owned())
 }
 
 async fn login(
