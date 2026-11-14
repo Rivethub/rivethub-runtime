@@ -2,7 +2,7 @@
     dylint_lib = "rr_lints",
     expect(
         jsmodel,
-        reason = "CONTRACT note 185: rh writes this plug-in into $DSH_HOME/plugins as file text; the string is the program dsh loads, not a model of values rh evaluates"
+        reason = "CONTRACT note 198: rh writes this plug-in into $DSH_HOME/plugins as file text; the string is the program dsh loads, not a model of values rh evaluates"
     )
 )]
 pub(super) const TEMPLATE: &str = r"import { spawn } from 'node:child_process'

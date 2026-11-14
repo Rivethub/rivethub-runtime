@@ -100,7 +100,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
   it wrote them; it now prints that line only for `--dry-run`.
 - `rh harness connect dsh` writes the DeepSeek Harness capture plug-in and a recall row into
   `$DSH_HOME/cordis.patch.yml`, which covers every profile including ones created later. A released 0.8.3 `rh`
-  refuses that command and writes nothing (CONTRACT note 185).
+  refuses that command and writes nothing (CONTRACT note 198).
 
 ## Upgrading from 0.8.1 to 0.8.2
 
