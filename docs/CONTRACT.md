@@ -3119,6 +3119,15 @@ and the migration recounts every conversation that already has a negative counte
 instead of the answer: a counter below zero is reported as `0` and logged (`a stored message counter is below zero`).
 `memory_postgres::SCHEMA_VERSION` is 71.
 
+(169) A placeholder title is what the person typed (Phil, 2026-11-13). Codex sessions were listed as
+"# AGENTS.md instructions for …" because two places took the first line of the first user message as it was: the
+catalog's fallback title (`kernel::memory::session_title`, used when a session has no stored title) and the Codex
+harness listing (`capture::listing::codex`, whose own filter knew only three injected prefixes). Both now read it
+through `kernel::memory::spoken_title`, the rule capture and the title backfills already used: a leading
+`# AGENTS.md instructions` block, `<…_instructions>`, `<system-reminder>`, `<environment_context>` and any other
+leading tag block are skipped, and a message that holds nothing else gives no title, so the next message (or the native
+id) is used. Stored titles are unchanged.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed
