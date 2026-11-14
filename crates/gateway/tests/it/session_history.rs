@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use gateway::sessions::{SessionRegistry, owners_file};
+use gateway::sessions::SessionRegistry;
 use kernel::transcript::{HarnessTranscriptTurn, MessageUsage, SessionMessageRole};
 use kernel::transcript::{
     ListLimit, SessionLister, SessionRenameError, StoreSession, StoreTranscript, ToolOutputRead,
     TranscriptRead, TranscriptReaderError, TranscriptWindow,
 };
 use parking_lot::Mutex;
-use session_support::{Fixture, http, user};
+use session_support::{Fixture, http};
 use strum::IntoEnumIterator as _;
 use wire::events::ContextSource;
 use wire::gateway::GatewayError;
@@ -171,14 +171,9 @@ struct Setup {
     _state: tempfile::TempDir,
 }
 
-fn setup(owners: &str, stores: Stores) -> Setup {
+fn setup(stores: Stores) -> Setup {
     let state = tempfile::tempdir().expect("state");
-    let path = owners_file(state.path());
-    std::fs::create_dir_all(path.parent().expect("owners directory")).expect("owners directory");
-    std::fs::write(&path, owners).expect("owners");
-    let registry = SessionRegistry::default()
-        .with_owners_file(path)
-        .with_node_owner(user("owner"));
+    let registry = SessionRegistry::default();
     let lister = Arc::new(stores);
     let fixture = Fixture::with_lister(registry, Some(lister.clone()));
     Setup {
@@ -227,7 +222,7 @@ async fn every_harness_is_listed_and_lists_sessions_only_with_a_store_reader() {
             .iter()
             .all(|row| !row.capabilities.list_sessions)
     );
-    let setup = setup("{}", Stores::default());
+    let setup = setup(Stores::default());
     let (_, body) = get(&setup, "/api/harnesses", None).await;
     let listed: StoreHarnessList = parsed(&body);
     assert!(
@@ -243,7 +238,7 @@ fn claude(native: &str) -> SessionId {
 }
 
 #[tokio::test]
-async fn listed_children_inherit_their_parent_owner() {
+async fn local_sessions_the_store_has_not_attributed_belong_to_the_node_person() {
     let stores = Stores {
         rows: vec![
             row(HarnessId::ClaudeCode, U1, 2),
@@ -251,15 +246,11 @@ async fn listed_children_inherit_their_parent_owner() {
         ],
         ..Stores::default()
     };
-    let setup = setup(&format!(r#"{{"{U1}":"alice"}}"#), stores);
-    let (_, body) = get(&setup, "/api/harnesses/claude-code/sessions", ALICE).await;
-    assert_eq!(plane_ids(&body), [U1, "agent-a1"]);
+    let setup = setup(stores);
     let (_, body) = get(&setup, "/api/harnesses/claude-code/sessions", None).await;
+    assert_eq!(plane_ids(&body), [U1, "agent-a1"]);
+    let (_, body) = get(&setup, "/api/harnesses/claude-code/sessions", ALICE).await;
     assert_eq!(plane_ids(&body), Vec::<String>::new());
-    assert_eq!(
-        setup.fixture.registry.owner("agent-a1").expect("key"),
-        Some(user("alice"))
-    );
 }
 
 #[tokio::test]
@@ -269,7 +260,7 @@ async fn b3_1_plane_rows_are_summaries_with_millisecond_iso_times() {
         cwd: BTreeMap::from([(U1.to_owned(), "/home/user/proj".to_owned())]),
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (status, body) = get(&setup, "/api/harnesses/claude-code/sessions", None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     assert_eq!(
@@ -290,7 +281,7 @@ async fn b3_2_a_title_equal_to_the_id_is_omitted() {
         ],
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (_, body) = get(&setup, "/api/harnesses/claude-code/sessions?limit=5", None).await;
     let sessions = parsed::<HarnessSessionList>(&body).sessions;
     assert_eq!(sessions.len(), 2);
@@ -301,7 +292,7 @@ async fn b3_2_a_title_equal_to_the_id_is_omitted() {
 
 #[tokio::test]
 async fn b3_3_an_unknown_harness_is_not_found() {
-    let setup = setup("{}", Stores::default());
+    let setup = setup(Stores::default());
     let (status, body) = get(&setup, "/api/harnesses/claude/sessions", None).await;
     assert_eq!(status, 404);
     assert_eq!(error(&body).error, "unknown harness: claude");
@@ -316,7 +307,7 @@ async fn b3_5_a_subagent_row_links_its_canonical_parent() {
         ],
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (_, body) = get(&setup, "/api/harnesses/claude-code/sessions", None).await;
     let sessions = parsed::<HarnessSessionList>(&body).sessions;
     assert_eq!(nth(&sessions, 1).parent_session_id, Some(claude(U1)));
@@ -334,7 +325,7 @@ fn one_claude_row() -> Stores {
 
 #[tokio::test]
 async fn b4_1_and_t0_9_a_bare_uuid_resolves_to_its_store_and_redirects() {
-    let setup = setup("{}", one_claude_row());
+    let setup = setup(one_claude_row());
     for _ in 0..2 {
         let (status, body) = get(&setup, &format!("/api/harness-sessions/{U1}"), None).await;
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -356,7 +347,7 @@ async fn b4_1_and_t0_9_a_bare_uuid_resolves_to_its_store_and_redirects() {
 
 #[tokio::test]
 async fn t0_6_a_path_fallback_id_redirects_to_the_collapsed_id() {
-    let setup = setup("{}", one_claude_row());
+    let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:-home-user/{U1}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), None).await;
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
@@ -369,7 +360,7 @@ async fn t0_6_a_path_fallback_id_redirects_to_the_collapsed_id() {
 
 #[tokio::test]
 async fn b4_2_an_unknown_session_without_a_live_chat_is_not_found() {
-    let setup = setup("{}", one_claude_row());
+    let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:{U2}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), None).await;
     assert_eq!(status, 404);
@@ -381,10 +372,7 @@ async fn b4_2_an_unknown_session_without_a_live_chat_is_not_found() {
 
 #[tokio::test]
 async fn b4_3_another_users_session_is_forbidden() {
-    let setup = setup(
-        &format!(r#"{{"claude-code:{U1}":"owner"}}"#),
-        one_claude_row(),
-    );
+    let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:{U1}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), ALICE).await;
     assert_eq!(status, 403);
@@ -400,7 +388,7 @@ async fn b4_3_another_users_session_is_forbidden() {
 
 #[tokio::test]
 async fn segments_that_do_not_decode_are_bad_requests() {
-    let setup = setup("{}", one_claude_row());
+    let setup = setup(one_claude_row());
     for segment in ["abc=", "IGNsYXVkZS1jb2RlOng", "task%3A123"] {
         let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), None).await;
         assert_eq!(status, 400, "{segment}");
@@ -441,7 +429,7 @@ async fn b5_the_transcript_is_store_scoped_and_carries_the_context_stamp() {
         ]),
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let segment = enc(&format!("claude-code:{U1}"));
     let (status, body) = get(
         &setup,
@@ -482,7 +470,7 @@ async fn observed_usage_promotes_the_window_and_learns_the_compact_point() {
         )]),
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (_, body) = get(
         &setup,
         &format!(
@@ -508,7 +496,7 @@ async fn a_prompt_past_a_million_promotes_the_window_to_the_next_million() {
         )]),
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (_, body) = get(
         &setup,
         &format!(
@@ -529,7 +517,7 @@ async fn a_harness_without_a_transcript_reader_is_unsupported() {
         rows: vec![row(HarnessId::Cowork, "c1", 1)],
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let (status, body) = get(
         &setup,
         &format!("/api/harness-sessions/{}/transcript", enc("cowork:c1")),
@@ -581,7 +569,7 @@ async fn previews_show_the_last_line_of_the_last_reply_and_refuse_bad_requests()
         )]),
         ..Stores::default()
     };
-    let setup = setup("{}", stores);
+    let setup = setup(stores);
     let path =
         format!("/api/harness-sessions/previews?session=claude-code:{U1}&session=claude-code:{U2}");
     let (status, body) = get(&setup, &path, None).await;

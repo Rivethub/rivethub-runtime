@@ -16,6 +16,7 @@ use kernel::tenancy::VisibilityDefault;
 use kernel::topics::TopicId;
 use sqlx::PgPool;
 use wire::session_id::SessionId;
+use wire::session_id::SessionKey;
 
 use crate::Error;
 
@@ -54,8 +55,8 @@ struct TopicRow {
     visibility_mark: Option<String>,
 }
 
-fn session_row(row: SessionRow) -> Result<(SessionId, SessionVisibility), TenancyStoreError> {
-    let session = SessionId::try_from(row.session)
+fn session_row(row: SessionRow) -> Result<(SessionKey, SessionVisibility), TenancyStoreError> {
+    let session = SessionKey::try_from(row.session)
         .map_err(|error| TenancyStoreError::Unavailable(Box::new(error)))?;
     Ok((
         session,
@@ -70,8 +71,8 @@ fn session_row(row: SessionRow) -> Result<(SessionId, SessionVisibility), Tenanc
 const SESSIONS: &str = "WITH keys AS (SELECT DISTINCT key FROM unnest($1::text[]) AS k(key)),
      convs AS (SELECT DISTINCT ON (session_key) session_key, owner_user_id, visibility
                  FROM rh_conversations WHERE session_key = ANY ($1::text[]) ORDER BY session_key, created_at),
-     marks AS (SELECT session_key, visibility FROM rh_session_marks
-                WHERE owner_user_id = $2 AND session_key = ANY ($1::text[])),
+     marks AS (SELECT session_key, owner_user_id, visibility FROM rh_session_marks
+                WHERE session_key = ANY ($1::text[])),
      placed AS (SELECT p.session_id, p.topic_id FROM rh_session_placements p
                  WHERE p.session_id = ANY ($1::text[])
                    AND NOT EXISTS (SELECT 1 FROM convs c WHERE c.session_key = p.session_id)),
@@ -80,11 +81,15 @@ const SESSIONS: &str = "WITH keys AS (SELECT DISTINCT key FROM unnest($1::text[]
 SELECT k.key AS session, c.owner_user_id AS owner, m.visibility AS mark,
        coalesce(c.visibility,
                 rh_member_visibility($2, coalesce(m.visibility, tm.mark, rh_owner_default($2, now())))) AS effective
-  FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key
+  FROM keys k LEFT JOIN convs c ON c.session_key = k.key LEFT JOIN marks m ON m.session_key = k.key AND m.owner_user_id = coalesce(c.owner_user_id, $2)
   LEFT JOIN placed p ON p.session_id = k.key LEFT JOIN topic_marks tm ON tm.topic_id = p.topic_id";
 
 #[async_trait]
 impl TenancyStore for PostgresTenancy {
+    fn row_secured(&self) -> bool {
+        true
+    }
+
     async fn sync_spaces(&self, spaces: &[Space]) -> Result<(), TenancyStoreError> {
         let pinned: Option<String> = sqlx::query_scalar("SELECT rh_scope_pin()")
             .fetch_one(&self.pool)
@@ -189,9 +194,9 @@ impl TenancyStore for PostgresTenancy {
     async fn session_visibility(
         &self,
         viewer: &Viewer,
-        sessions: &[SessionId],
-    ) -> Result<BTreeMap<SessionId, SessionVisibility>, TenancyStoreError> {
-        let keys: Vec<&str> = sessions.iter().map(SessionId::as_str).collect();
+        sessions: &[SessionKey],
+    ) -> Result<BTreeMap<SessionKey, SessionVisibility>, TenancyStoreError> {
+        let keys: Vec<&str> = sessions.iter().map(SessionKey::as_str).collect();
         sqlx::query_as::<_, SessionRow>(SESSIONS)
             .bind(&keys)
             .bind(viewer.principal().as_str())
@@ -224,7 +229,7 @@ impl TenancyStore for PostgresTenancy {
         if owner.is_some_and(|(owner,)| owner != viewer.principal().as_str()) {
             return Err(TenancyStoreError::NotOwner(session.as_str().to_owned()));
         }
-        match mark {
+        let written = match mark {
             Some(mark) => sqlx::query(
                 "INSERT INTO rh_session_marks (session_key, owner_user_id, visibility, marked_at)
                  VALUES ($1, $2, $3, $4)
@@ -242,8 +247,14 @@ impl TenancyStore for PostgresTenancy {
             .bind(viewer.principal().as_str()),
         }
         .execute(&mut *tx)
-        .await
-        .map_err(failed("session mark"))?;
+        .await;
+        match written {
+            Ok(_) => {}
+            Err(source) if crate::error::refused(&source) => {
+                return Err(TenancyStoreError::NotFound(session.as_str().to_owned()));
+            }
+            Err(source) => return Err(failed("session mark")(source)),
+        }
         let row = sqlx::query_as::<_, SessionRow>(SESSIONS)
             .bind(vec![session.as_str()])
             .bind(viewer.principal().as_str())

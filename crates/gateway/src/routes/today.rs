@@ -34,10 +34,10 @@ use wire::gateway::review::ReviewGroup;
 use wire::gateway::review::ReviewItem;
 use wire::gateway::session_catalog::SharedWith;
 use wire::gateway::today;
-use wire::session_id::SessionId;
+use wire::session_id::{SessionId, SessionKey};
 
 use super::session_delete::catalog::Lineage;
-use super::session_delete::catalog::{catalog, lineage, registered, row, visibilities};
+use super::session_delete::catalog::{catalog, lineage, row};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::extract::Query;
@@ -225,7 +225,6 @@ async fn changes(
 
 async fn day_sessions(
     gateway: &Gateway,
-    user: &UserId,
     lineage: &Lineage,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
@@ -246,8 +245,7 @@ async fn day_sessions(
             page.items
                 .into_iter()
                 .filter_map(SessionRecord::narrow)
-                .filter(|record| (start..end).contains(&record.started_at))
-                .filter(|record| registered(gateway, user, &record.id)),
+                .filter(|record| (start..end).contains(&record.started_at)),
         );
         match page.next {
             Some(next) if !reached_start => query.after = Some(next),
@@ -259,7 +257,6 @@ async fn day_sessions(
 
 async fn sources(
     gateway: &Gateway,
-    user: &UserId,
     have: &[SessionRecord],
     sessions: impl Iterator<Item = SessionId>,
 ) -> Result<Vec<SessionRecord>, ApiError> {
@@ -271,7 +268,7 @@ async fn sources(
         .records(&wanted)
         .await?
         .into_iter()
-        .filter(|record| !record.trashed && registered(gateway, user, &record.id))
+        .filter(|record| !record.trashed)
         .collect())
 }
 
@@ -313,19 +310,29 @@ impl DaySessions {
         day: &[Change],
     ) -> Result<Self, ApiError> {
         let lineage = lineage(gateway).await;
-        let mut records = day_sessions(gateway, user, &lineage, start, end).await?;
+        let mut records = day_sessions(gateway, &lineage, start, end).await?;
         let caused = day
             .iter()
             .filter_map(|change| change.source.as_ref())
             .map(|session| top(&lineage, session));
-        let more = sources(gateway, user, &records, caused).await?;
+        let more = sources(gateway, &records, caused).await?;
         records.extend(more);
         records.sort_by(|left, right| {
             let last = |record: &SessionRecord| record.ended_at.unwrap_or(record.started_at);
             last(right).cmp(&last(left)).then(right.id.cmp(&left.id))
         });
-        let ids: Vec<SessionId> = records.iter().map(|record| record.id.clone()).collect();
-        let marks = visibilities(gateway, user, &ids).await?;
+        let keys: Vec<SessionKey> = records
+            .iter()
+            .map(|record| record.id.clone().into())
+            .collect();
+        let seen = crate::session_access::seen(gateway, user, &keys).await?;
+        let marks = seen
+            .into_iter()
+            .filter_map(|(key, seen)| match key {
+                SessionKey::Harness(session) => Some((session, seen.shared_with)),
+                SessionKey::Import(_) => None,
+            })
+            .collect();
         Ok(Self {
             records,
             marks,

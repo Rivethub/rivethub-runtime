@@ -239,19 +239,6 @@ fn harness_setup(
     ))
 }
 
-async fn session_registry(
-    owners: std::path::PathBuf,
-    node_owner: Option<gateway::tenancy::UserId>,
-) -> Result<SessionRegistry, ComposeError> {
-    let registry =
-        tokio::task::spawn_blocking(move || SessionRegistry::default().with_owners_file(owners))
-            .await?;
-    Ok(match node_owner {
-        Some(owner) => registry.with_node_owner(owner),
-        None => registry,
-    })
-}
-
 impl Composition {
     pub async fn validate_users(config: &Config, env: &Environment) -> Result<(), ComposeError> {
         identities::load(config, env).await?;
@@ -393,14 +380,7 @@ impl Composition {
         .await?;
         let identity = identities::load(config, env).await?;
         let owner_scope = identity.owner_scope();
-        let sessions = Arc::new(
-            session_registry(
-                gateway::sessions::owners_file(&settings.state_dir),
-                identity.tenancy.local_user().cloned(),
-            )
-            .await?
-            .with_shutdown(shutdown.child_token()),
-        );
+        let sessions = Arc::new(SessionRegistry::default().with_shutdown(shutdown.child_token()));
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
             .with_local_owner(local_owner)

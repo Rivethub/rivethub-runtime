@@ -177,7 +177,7 @@ fn cancelled(error: &Error) -> bool {
         .is_some_and(|code| code == "57014"))
 }
 
-fn refused(source: &sqlx::Error) -> bool {
+pub(crate) fn refused(source: &sqlx::Error) -> bool {
     source
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)

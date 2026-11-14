@@ -4,7 +4,6 @@ use crate::session_support::user;
 use std::sync::Arc;
 
 use gateway::Gateway;
-use gateway::sessions::SessionRegistry;
 use gateway::tenancy::Tenancy;
 use testkit::FakeMemoryStore;
 use testkit::FakeModelCallStore;
@@ -61,9 +60,6 @@ fn served() -> Result<(Arc<Gateway>, Arc<FakeModelCallStore>), Box<dyn std::erro
     )
     .with_local_owner(crate::common::local_owner())
     .with_tenancy(tenancy)
-    .with_sessions(Arc::new(
-        SessionRegistry::default().with_node_owner(user("phil")),
-    ))
     .with_model_calls(Arc::clone(&calls) as _);
     Ok((Arc::new(gateway), calls))
 }
@@ -226,7 +222,6 @@ async fn a_malformed_batch_is_refused_with_its_position() -> TestResult {
 #[tokio::test]
 async fn a_session_owned_by_someone_else_is_not_found_and_the_route_needs_a_store() -> TestResult {
     let (gateway, _calls) = served()?;
-    gateway.sessions().claim(&user("phil"), CLAUDE_NATIVE)?;
     let app = gateway.router(false);
     let target = format!("/api/sessions/claude-code:{CLAUDE_NATIVE}/model-calls");
     let theirs = common::answer(app.clone(), request("GET", &target, "", Some(COCO))).await?;

@@ -171,54 +171,27 @@ impl History {
     }
 }
 
-fn nested_store(harness: HarnessId, native: &str) -> bool {
-    match harness {
-        HarnessId::ClaudeCode => !(native.len() == 36 && uuid::Uuid::try_parse(native).is_ok()),
-        HarnessId::GrokBuild => true,
-        HarnessId::KimiCode
-        | HarnessId::Hermes
-        | HarnessId::Codex
-        | HarnessId::Opencode
-        | HarnessId::Omp
-        | HarnessId::Dsh
-        | HarnessId::Cursor
-        | HarnessId::Cowork => false,
-    }
-}
-
-pub(crate) async fn ensure_nested_owner(
-    gateway: &Gateway,
-    resolved: &Resolved,
-) -> Result<(), ApiError> {
-    let registry = gateway.sessions();
-    if registry.owner(&resolved.native)?.is_some()
-        || !nested_store(resolved.harness, &resolved.native)
-    {
-        return Ok(());
-    }
-    let Some(lister) = gateway.session_lister() else {
-        return Ok(());
-    };
-    if let Some(row) = lister
-        .describe(resolved.harness, &resolved.native, None)
-        .await?
-        && let Some(parent) = row.parent_session_id.as_deref()
-    {
-        registry.inherit(&resolved.native, parent)?;
-    }
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Need {
+    Read,
+    Change,
 }
 
 pub(crate) async fn authorize(
     gateway: &Gateway,
     user: &UserId,
     resolved: &Resolved,
+    need: Need,
 ) -> Result<(), ApiError> {
-    ensure_nested_owner(gateway, resolved).await?;
-    gateway
-        .sessions()
-        .authorize_visible(user, &resolved.native)?;
-    Ok(())
+    let key = wire::session_id::SessionKey::from(&resolved.session);
+    let seen = crate::session_access::seen_one(gateway, user, &key).await?;
+    if !seen.readable() {
+        return Err(ApiError::SessionForbidden);
+    }
+    match need {
+        Need::Read => Ok(()),
+        Need::Change => seen.change(),
+    }
 }
 
 pub(crate) async fn store_summary(gateway: &Gateway, row: &StoreSession) -> HarnessSessionSummary {

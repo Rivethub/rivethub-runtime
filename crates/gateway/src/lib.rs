@@ -15,6 +15,7 @@ pub mod plugins;
 pub mod routes;
 mod scope;
 pub mod server;
+mod session_access;
 pub mod sessions;
 mod settings;
 pub mod tenancy;

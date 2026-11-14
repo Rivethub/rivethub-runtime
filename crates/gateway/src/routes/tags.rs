@@ -39,6 +39,7 @@ use wire::gateway::memory::TagTaxonomyMergeRequest;
 use wire::gateway::memory::TagTaxonomyMergeResult;
 use wire::gateway::memory::TagTaxonomyUpsertRequest;
 use wire::gateway::memory::TagTaxonomyUpsertResult;
+use wire::session_id::SessionKey;
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -50,6 +51,7 @@ use crate::extract::RawLimit;
 use crate::extract::StateFilter;
 use crate::extract::StateParam;
 use crate::memory_body;
+use crate::tenancy::UserId;
 
 const DECIDE_IDS_MAX: usize = 1000;
 const LOOKUP_KEYS_MAX: usize = 500;
@@ -277,6 +279,7 @@ async fn decide(
 
 async fn add(
     State(gateway): State<Arc<Gateway>>,
+    user: UserId,
     Body(body): Body<MemoryTagsAddRequest>,
 ) -> Result<Json<TagAddResult>, ApiError> {
     let entity_type = match &body.entity_type {
@@ -288,6 +291,9 @@ async fn add(
         }
     };
     let entity = entity_of(&body)?;
+    if entity_type == TagEntityType::Conversation {
+        owned(&gateway, &user, &entity).await?;
+    }
     let tag = literal_of(&body)?;
     let add = TagAdd {
         entity_type: memory_body::tag_entity_type(entity_type),
@@ -305,6 +311,29 @@ async fn add(
             tag: memory_body::tag_wire_body(tag),
         })),
         Err(error) => Err(error.into()),
+    }
+}
+
+async fn owned(gateway: &Gateway, user: &UserId, entity: &TagEntity) -> Result<(), ApiError> {
+    match entity {
+        TagEntity::Id(conversation) => {
+            crate::session_access::change_conversation(gateway, user, *conversation).await
+        }
+        TagEntity::SessionKey(key) => {
+            let parsed = key.parse::<SessionKey>();
+            #[cfg_attr(
+                dylint_lib = "rr_lints",
+                expect(
+                    fallback,
+                    reason = "CONTRACT B1: a legacy key that is not a session key names no session with an owner (note 178), so the store tags it as before"
+                )
+            )]
+            let checked = match parsed {
+                Ok(key) => crate::session_access::change_key(gateway, user, &key).await,
+                Err(_) => Ok(()),
+            };
+            checked
+        }
     }
 }
 
