@@ -96,7 +96,12 @@ async fn a_harness_that_fails_discovery_degrades_its_provider_not_the_gateway() 
         Duration::from_secs(10),
         ModelFactory::default()
             .with_harness("p".into(), Arc::new(harness::Harness::new(events)))
-            .with_agent_providers(&config, &env, &cancel),
+            .with_providers(
+                &config,
+                &env,
+                std::collections::BTreeSet::from(["p", "q", "r"]),
+                &cancel,
+            ),
     )
     .await??;
     refuses_a_turn_fast(&factory, &config, &cancel).await?;
