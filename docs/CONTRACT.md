@@ -3043,6 +3043,19 @@ earliest conversation), and each `POST /api/share/find` result carries `session`
 optional), so a client goes from one to the other without searching. `POST /api/sessions/delete` still takes session
 keys only.
 
+(162) One session's messages (Phil, 2026-11-13, team hub). `GET /api/sessions/{session}/messages?limit=&cursor=`
+takes any form of note 161 and answers `wire::gateway::session_catalog::SessionMessagesPage`: `{session, items, total,
+next?, quotedFrom?}`. `items` are the session's stored rows in the order they were said (`createdAt`, then id), user,
+assistant and tool rows alike, each `{id, role, agent, content, toolName?, toolArgs?, toolResult?, createdAt}` with the
+stored content. `limit` is 1 to 1000 (default 200), `next` is an opaque cursor to pass back as `cursor` (`400` for one
+this server did not issue), and `total` is the number of stored rows of the session, the same count the catalog
+reports as `messageCount`, so a row there is what this route returns (trashed sessions included, for the views that
+show them). Who may read it is note 160's rule (`404` otherwise). For a received session the content is the original
+text, never wrapped: `quotedFrom` (`wire::memory::Provenance`: author, origin date, verification) says it is quoted data
+from another person, so a client needs no regex to strip the recall note that search and browse prepend. `rh mcp`
+has no per-session read: `memory_get_full` reads one message and `memory_browse` filters by conversation, and neither
+changed.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

@@ -1,4 +1,5 @@
 pub(crate) mod catalog;
+mod messages;
 mod trash;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,6 +59,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         .route(
             "/api/sessions/{session}/restore",
             post(catalog::restore).fallback(super::method_not_allowed),
+        )
+        .route(
+            "/api/sessions/{session}/messages",
+            get(messages::messages).fallback(super::method_not_allowed),
         )
 }
 

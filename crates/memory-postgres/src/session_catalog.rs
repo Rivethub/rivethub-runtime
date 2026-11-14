@@ -337,4 +337,12 @@ impl SessionCatalog for PostgresMemory {
             })
             .transpose()?)
     }
+
+    async fn messages(
+        &self,
+        key: &SessionKey,
+        query: &kernel::memory::MessagesQuery,
+    ) -> Result<kernel::memory::SessionMessages, MemoryStoreError> {
+        Ok(self.session_messages(key, query).await?)
+    }
 }

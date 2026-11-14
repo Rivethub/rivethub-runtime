@@ -109,6 +109,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionEntity>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionTag>,
     SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionDetail>,
+    SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionMessage>,
+    SchemaGenerator::subschema_for::<crate::gateway::session_catalog::SessionMessagesPage>,
     SchemaGenerator::subschema_for::<crate::gateway::sessions::MessageUsage>,
     SchemaGenerator::subschema_for::<crate::gateway::sessions::SessionMessageRole>,
     SchemaGenerator::subschema_for::<crate::gateway::sessions::TranscriptBlock>,
