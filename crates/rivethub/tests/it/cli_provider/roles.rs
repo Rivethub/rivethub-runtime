@@ -40,11 +40,7 @@ fn configured_at(
     let env = config::Environment::from_vars([(OsStr::new("HOME"), home.as_os_str())]);
     let path = home.join("config.yaml");
     std::fs::write(&path, text)?;
-    let loaded = config::Config::load(
-        &env,
-        &config::ConfigLocation::Current(path),
-        config::Profile::Node,
-    )?;
+    let loaded = config::Config::load(&env, &config::ConfigLocation::Current(path))?;
     Ok((loaded.config, env))
 }
 

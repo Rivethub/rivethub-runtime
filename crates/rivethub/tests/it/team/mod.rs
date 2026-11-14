@@ -1,5 +1,6 @@
 mod addresses;
 mod messages;
+mod no_model;
 mod sessions;
 
 use std::collections::BTreeMap;
@@ -127,6 +128,12 @@ async fn served_by_an_ordinary_role(
 
 impl Hub {
     pub(crate) async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with(memory_postgres::MissingModels::default()).await
+    }
+
+    pub(crate) async fn start_with(
+        missing: memory_postgres::MissingModels,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let db = crate::pgdb::TestDb::bare().await?;
         let url = served_by_an_ordinary_role(&db).await?;
         let home = tempfile::tempdir()?;
@@ -141,7 +148,11 @@ impl Hub {
             "gateway:\n  host: 127.0.0.1\n  port: 0\n  users_file: {}\n",
             users_file.display()
         ))?;
-        let memory = Arc::new(memory_postgres::PostgresMemory::connect(&url).await?);
+        let memory = Arc::new(
+            memory_postgres::PostgresMemory::connect(&url)
+                .await?
+                .with_missing_models(missing),
+        );
         let shutdown = CancellationToken::new();
         let composition = Composition::on_postgres(
             &config,

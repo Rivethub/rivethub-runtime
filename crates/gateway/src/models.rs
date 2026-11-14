@@ -22,6 +22,48 @@ const fn worker_role(role: ModelRole) -> Option<WorkerRole> {
     }
 }
 
+const UNCONFIGURED: [(ModelRole, &str); 5] = [
+    (ModelRole::Default, "no memory job has a model"),
+    (
+        ModelRole::Summarizer,
+        "summaries and session titles are off",
+    ),
+    (
+        ModelRole::Categorizer,
+        "entities, tags and topic filing are off",
+    ),
+    (ModelRole::WikiWriter, "wiki pages are off"),
+    (
+        ModelRole::Embedder,
+        "embeddings are off and search ranks by keywords only",
+    ),
+];
+
+pub(crate) fn unconfigured(tasks: &[TaskActivity]) -> Vec<ModelJob> {
+    UNCONFIGURED
+        .iter()
+        .map(|&(role, off)| {
+            let activity = worker_role(role)
+                .map(|worker| RoleActivity::of(worker, tasks))
+                .unwrap_or_default();
+            let parked = if activity.queued > 0 {
+                format!("; {} queued jobs wait for a model", activity.queued)
+            } else {
+                String::new()
+            };
+            ModelJob {
+                role,
+                provider: None,
+                model: None,
+                inherits_default: false,
+                health: ModelHealth::Unconfigured,
+                detail: format!("no model is configured: {off}{parked}"),
+                queued: activity.queued,
+            }
+        })
+        .collect()
+}
+
 pub(crate) fn report(
     assignments: &[ModelAssignment],
     providers: &[ProviderHealth],

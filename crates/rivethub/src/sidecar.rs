@@ -257,7 +257,7 @@ pub(crate) fn memory_future(
 
 fn load_standalone_or_node(env: &Environment) -> Result<Config, StartupError> {
     if let Some(location) = config::resolve_config_path(env)? {
-        let standalone = Config::load(env, &location, config::Profile::Standalone)?;
+        let standalone = Config::load(env, &location)?;
         if standalone.config.sqlite_selected() {
             return Ok(announce(standalone));
         }

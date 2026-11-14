@@ -1,4 +1,4 @@
-use config::{Profile, type_document, validate_document};
+use config::{type_document, validate_document};
 use wire::gateway::account::HubKind;
 
 fn document(text: &str) -> Result<serde_yaml_ng::Value, serde_yaml_ng::Error> {
@@ -10,7 +10,7 @@ fn hubs_telemetry_and_cloud_are_typed_sections() -> Result<(), Box<dyn std::erro
     let yaml = document(
         "memory:\n  backend: sqlite\nhubs:\n  - name: household\n    url: https://team.example.com/\n  - name: desk\n    url: http://127.0.0.1:5174\n    kind: local\ntelemetry:\n  disabled: true\ncloud:\n  url: http://127.0.0.1:8080\n  update_key: AAAA\n",
     )?;
-    let result = validate_document(&yaml, Profile::Standalone);
+    let result = validate_document(&yaml);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert!(result.warnings.is_empty(), "{:?}", result.warnings);
     let typed = type_document(&yaml)?.config;
@@ -38,7 +38,7 @@ fn a_hub_listed_twice_or_off_the_web_is_an_error() -> Result<(), Box<dyn std::er
     let yaml = document(
         "memory:\n  backend: sqlite\nhubs:\n  - name: lab\n    url: https://lab.example.com\n  - name: Lab\n    url: ftp://lab.example.com\n",
     )?;
-    let result = validate_document(&yaml, Profile::Standalone);
+    let result = validate_document(&yaml);
     let paths: Vec<_> = result
         .errors
         .iter()
@@ -77,7 +77,7 @@ fn a_disabled_cloud_turns_telemetry_off_too() -> Result<(), Box<dyn std::error::
     ];
     for (policy, expected) in cases {
         let yaml = document(&format!("memory:\n  backend: sqlite\n{policy}"))?;
-        let result = validate_document(&yaml, Profile::Standalone);
+        let result = validate_document(&yaml);
         assert!(result.errors.is_empty(), "{policy}: {:?}", result.errors);
         assert!(
             result.warnings.is_empty(),
@@ -100,7 +100,7 @@ fn allowed_share_servers_read_in_either_spelling() -> Result<(), Box<dyn std::er
         let yaml = document(&format!(
             "memory:\n  backend: sqlite\n  share:\n    {key}:\n      - team.example.com\n      - drops.example.com:8443\n"
         ))?;
-        let result = validate_document(&yaml, Profile::Standalone);
+        let result = validate_document(&yaml);
         assert!(result.warnings.is_empty(), "{key}: {:?}", result.warnings);
         let typed = type_document(&yaml)?.config;
         assert_eq!(
@@ -118,7 +118,7 @@ fn a_disabled_cloud_still_refuses_a_cloud_url_that_is_not_http()
     let yaml = document(
         "memory:\n  backend: sqlite\ncloud:\n  disabled: true\n  url: ftp://cloud.example.com/\n",
     )?;
-    let result = validate_document(&yaml, Profile::Standalone);
+    let result = validate_document(&yaml);
     let paths: Vec<_> = result
         .errors
         .iter()
@@ -132,7 +132,7 @@ fn a_disabled_cloud_still_refuses_a_cloud_url_that_is_not_http()
 fn a_telemetry_url_must_be_http_or_https() -> Result<(), Box<dyn std::error::Error>> {
     let yaml =
         document("memory:\n  backend: sqlite\ntelemetry:\n  url: ftp://telemetry.example.com/\n")?;
-    let result = validate_document(&yaml, Profile::Standalone);
+    let result = validate_document(&yaml);
     let paths: Vec<_> = result
         .errors
         .iter()

@@ -2,8 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use config::{
-    Config, ConfigError, ConfigLocation, Environment, Profile, ValidationResult,
-    standalone_config_yaml,
+    Config, ConfigError, ConfigLocation, Environment, ValidationResult, standalone_config_yaml,
 };
 
 fn temp_home(label: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -45,28 +44,14 @@ fn standalone_round_trip(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
     assert!(!yaml.contains("agents"), "{yaml}");
     assert!(!yaml.contains("providers"), "{yaml}");
     assert!(!yaml.contains("base_url"), "{yaml}");
-    let loaded = load_text(home, "config.yaml", &yaml, Profile::Standalone)?;
+    let loaded = load_text(home, "config.yaml", &yaml)?;
     assert!(loaded.config.runtime.is_none());
     assert!(loaded.config.agents.is_none());
     assert!(loaded.config.providers.is_none());
     assert!(loaded.config.sqlite_selected());
-    let node = load_outcome(home, "node.yaml", &yaml, Profile::Node)?;
-    assert_eq!(
-        findings(&validation(node)?),
-        [
-            ("runtime", "Missing required section \"runtime\""),
-            (
-                "agents",
-                "Missing required section \"agents\" — define at least one agent",
-            ),
-            (
-                "providers",
-                "Missing required section \"providers\" — define at least one provider",
-            ),
-        ]
-    );
+    assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
     let broken = sqlite_document(&database, "gateway:\n  host: 127.0.0.1\n  port: 0\n");
-    let port = load_outcome(home, "port.yaml", &broken, Profile::Standalone)?;
+    let port = load_outcome(home, "port.yaml", &broken)?;
     assert_eq!(
         findings(&validation(port)?),
         [(
@@ -75,13 +60,13 @@ fn standalone_round_trip(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
         )]
     );
     let empty = sqlite_document(&database, "agents: {}\n");
-    let agents = load_outcome(home, "agents.yaml", &empty, Profile::Standalone)?;
+    let agents = load_outcome(home, "agents.yaml", &empty)?;
     assert_eq!(
         findings(&validation(agents)?),
         [("agents", "\"agents\" is empty — define at least one agent")]
     );
     let runtime = sqlite_document(&database, "runtime:\n  workspace: /tmp\n");
-    let partial = load_outcome(home, "runtime.yaml", &runtime, Profile::Standalone)?;
+    let partial = load_outcome(home, "runtime.yaml", &runtime)?;
     assert_eq!(
         findings(&validation(partial)?),
         [(
@@ -90,12 +75,7 @@ fn standalone_round_trip(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
         )]
     );
     let mistyped = "gateway:\n  port: \"no\"\n";
-    let typed = validation(load_outcome(
-        home,
-        "type.yaml",
-        mistyped,
-        Profile::Standalone,
-    )?)?;
+    let typed = validation(load_outcome(home, "type.yaml", mistyped)?)?;
     assert!(
         typed
             .errors
@@ -119,12 +99,7 @@ fn gateway_section_names(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
     let section = "  host: 127.0.0.1\n  port: 5180\n";
     let gateway = format!("gateway:\n{section}");
     let den = format!("den:\n{section}");
-    let current = load_text(
-        home,
-        "gateway.yaml",
-        &sqlite_document(&database, &gateway),
-        Profile::Standalone,
-    )?;
+    let current = load_text(home, "gateway.yaml", &sqlite_document(&database, &gateway))?;
     assert_eq!(
         current.config.gateway.as_ref().map(|section| section.port),
         Some(5180)
@@ -134,12 +109,7 @@ fn gateway_section_names(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
         "{:?}",
         current.notices
     );
-    let legacy = load_text(
-        home,
-        "den.yaml",
-        &sqlite_document(&database, &den),
-        Profile::Standalone,
-    )?;
+    let legacy = load_text(home, "den.yaml", &sqlite_document(&database, &den))?;
     assert_eq!(
         legacy.config.gateway.as_ref().map(|section| section.port),
         Some(5180)
@@ -158,8 +128,7 @@ fn gateway_section_names(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
         findings(&validation(load_outcome(
             home,
             "den-port.yaml",
-            &legacy_port,
-            Profile::Standalone,
+            &legacy_port
         )?)?),
         [(
             "gateway.port",
@@ -168,12 +137,7 @@ fn gateway_section_names(home: &Path) -> Result<(), Box<dyn std::error::Error>> 
     );
     let both = sqlite_document(&database, &format!("{den}{gateway}"));
     assert_eq!(
-        findings(&validation(load_outcome(
-            home,
-            "both.yaml",
-            &both,
-            Profile::Standalone,
-        )?)?),
+        findings(&validation(load_outcome(home, "both.yaml", &both)?)?),
         [(
             "den",
             "den and gateway are both set — den is the deprecated name of the gateway section; keep only gateway.",
@@ -193,9 +157,8 @@ fn load_text(
     home: &Path,
     name: &str,
     yaml: &str,
-    profile: Profile,
 ) -> Result<config::Loaded, Box<dyn std::error::Error>> {
-    match load_outcome(home, name, yaml, profile)? {
+    match load_outcome(home, name, yaml)? {
         Ok(loaded) => Ok(loaded),
         Err(error) => Err(error.into()),
     }
@@ -205,12 +168,11 @@ fn load_outcome(
     home: &Path,
     name: &str,
     yaml: &str,
-    profile: Profile,
 ) -> Result<Result<config::Loaded, ConfigError>, Box<dyn std::error::Error>> {
     let path = home.join(name);
     fs::write(&path, yaml)?;
     let env = env_for(home)?;
-    Ok(Config::load(&env, &ConfigLocation::Current(path), profile))
+    Ok(Config::load(&env, &ConfigLocation::Current(path)))
 }
 
 fn validation(

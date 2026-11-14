@@ -1,11 +1,11 @@
-use config::{Profile, type_document, validate_document};
+use config::{type_document, validate_document};
 
 fn findings(document: &serde_yaml_ng::Value) -> Vec<String> {
     let typed = type_document(document);
     if let Ok(typed) = &typed {
         assert!(!typed.ignored.is_empty() || document.get("providers").is_none());
     }
-    let result = validate_document(document, Profile::Node);
+    let result = validate_document(document);
     let mut lines: Vec<String> = result
         .errors
         .iter()

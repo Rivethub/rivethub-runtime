@@ -24,12 +24,7 @@ fn configured(home: &std::path::Path) -> TestResult<(config::Config, config::Env
     let path = home.join("config.yaml");
     std::fs::write(&path, text)?;
     Ok((
-        config::Config::load(
-            &env,
-            &config::ConfigLocation::Current(path),
-            config::Profile::Node,
-        )?
-        .config,
+        config::Config::load(&env, &config::ConfigLocation::Current(path))?.config,
         env,
     ))
 }

@@ -302,6 +302,9 @@ impl DigestStore for PostgresMemory {
     }
 
     async fn request_digest(&self, request: &DigestRequest) -> Result<(), ChangeError> {
+        if self.missing.language {
+            return Ok(());
+        }
         let job = request.job()?;
         let mut conn = self
             .pool

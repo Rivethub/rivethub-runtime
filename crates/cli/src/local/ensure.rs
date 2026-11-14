@@ -5,7 +5,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use config::model::GatewaySection;
-use config::{Config, Environment, Paths, Profile};
+use config::{Config, Environment, Paths};
 use nix::errno::Errno;
 use nix::fcntl::{Flock, FlockArg};
 use nix::unistd::Pid;
@@ -349,7 +349,7 @@ async fn bound_config(
         let adopted = config::adopt_legacy_state(&env)?;
         let mut config = match config::resolve_config_path(&env)? {
             Some(location) => {
-                let config = Config::load(&env, &location, Profile::Standalone)?.config;
+                let config = Config::load(&env, &location)?.config;
                 refuse_cloud_left_on(&config, request.no_cloud, location.path())?;
                 config
             }
