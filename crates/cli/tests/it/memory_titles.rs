@@ -111,7 +111,7 @@ async fn model_titles_need_a_model_url_and_postgres() {
     assert_eq!(sqlite.exit, Exit::Failure);
     assert_eq!(
         sqlite.stderr,
-        "Error: rh memory backfill-titles --model runs on Postgres memory only\n"
+        "Error: This command needs a datahub (Postgres).\n"
     );
 }
 

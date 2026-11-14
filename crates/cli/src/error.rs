@@ -118,7 +118,7 @@ pub enum Error {
     Cancelled,
     #[error("the operating-system hostname is not Unicode")]
     HostName,
-    #[error("RIVETHUB_PG_URL is required.")]
+    #[error("This command needs a datahub (Postgres).")]
     PostgresUrlRequired,
     #[error("Unknown option: {0}")]
     UnknownOption(String),
@@ -214,8 +214,7 @@ pub enum Error {
     CleanupDatabase,
     #[error("refusing to write cleanup proposals to the node's live memory database")]
     CleanupLive,
-    #[error("rh memory cleanup --propose needs RIVETHUB_PG_URL to know which database is live")]
-    CleanupLiveUnknown,
+
     #[error(transparent)]
     Lineage(#[from] kernel::transcript::TranscriptReaderError),
     #[error(transparent)]
@@ -228,7 +227,7 @@ pub enum Error {
         "rh memory backfill-titles names titles with both --model <name> and --model-url <url>"
     )]
     TitlesModel,
-    #[error("rh memory backfill-titles --model runs on Postgres memory only")]
+    #[error("This command needs a datahub (Postgres).")]
     TitlesSqlite,
     #[error("{0} requires a value")]
     CleanupValue(&'static str),

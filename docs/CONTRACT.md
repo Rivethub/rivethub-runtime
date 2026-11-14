@@ -3012,6 +3012,8 @@ always wins and sends nothing anywhere. Each install's own crash-report and usag
 
 (174) Harness status names a capture only when it knows one (Phil, 2026-11-14). `rh harness status` reads this node's store. A SQLite node is read from `memory.sqlite.path` even when `RIVETHUB_PG_URL` is set; a missing file is an empty history, and a store that cannot be read leaves history off the line. A Postgres node is read from its configured URL, and a connection that fails leaves history off the line. The capture detail adds `last capture <time>` when that harness is on the machine and the store has a conversation for it, or `nothing captured yet` when its capture is installed and the store has none. A harness that is not on the machine, or whose history is unknown, gets neither phrase, so the line no longer ends with `capture history unavailable`. `lastCaptureAt` and `capture.state` are unchanged.
 
+(175) A standalone node is not told to set a database variable (Phil, 2026-11-14). `rh memory` commands that only a datahub can run (`queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store` without `--into`, and `backfill-titles --model`) exit 1 with `This command needs a datahub (Postgres).` on a SQLite node, including when `RIVETHUB_PG_URL` is set in the environment. Export, import, bundle, reembed and `backfill-titles` without `--model` use the SQLite file. A URL that was set and is invalid still says `invalid RIVETHUB_PG_URL` on a node that is not SQLite.
+
 ## 4. Gaps to close before building the affected slice
 
 - MCP `tools/list` and sample-call recording (B7); CLI golden transcripts (B9); ACP conformance runs against installed

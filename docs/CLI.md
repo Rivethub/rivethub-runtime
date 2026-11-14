@@ -29,7 +29,7 @@ the existing service startup codes. Every visible command:
 | `rh service start`, `rh service stop`, `rh service restart` | | Control the systemd unit |
 | `rh service status` | | Show the systemd unit status |
 | `rh service logs` | | Print the unit's journal |
-| `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store`, `share`, `receive`, `key show`, `trust add\|list\|remove` | Administer memory; `rh memory --help` lists each command's flags |
+| `rh memory` | `queue-status`, `retry-failed`, `requeue`, `backfill-tool-synth`, `export`, `import`, `backfill-titles`, `reembed`, `consolidate-wiki`, `recompile-wiki`, `cleanup`, `merge-store`, `share`, `receive`, `key show`, `trust add\|list\|remove` | Administer memory; `rh memory --help` lists each command's flags. A command a standalone node cannot run says `This command needs a datahub (Postgres).` and exits 1 (CONTRACT note 175) |
 | `rh share login`, `rh share logout` | `[<server>]` | Sign this machine in to a share server (rivethub.cloud by default, or a team server) with a device code in the browser, or revoke and forget that login; `rh memory share` uploads with it. A hub policy (`cloud.disabled`, `memory.share.allowed_servers`) limits which servers these reach; `rh share logout` always forgets the login, and revokes it only at a server the policy admits (CONTRACT note 145) |
 | `rh share status` | | List the share servers this machine is signed in to |
 | `rh capture hook` | `[--harness claude-code\|grok-build\|opencode\|codex\|dsh]` | Capture one harness hook payload read from stdin |
