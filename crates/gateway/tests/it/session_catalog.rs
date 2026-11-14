@@ -40,6 +40,7 @@ fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
         gist: Some("gist".to_owned()),
         cwd: Some("/home/user/app".to_owned()),
         origin: None,
+        conversation: None,
     }
 }
 

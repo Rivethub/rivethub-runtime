@@ -19,6 +19,7 @@ mod named_queues;
 mod owners;
 mod queue;
 mod queue_notifications;
+mod received_marks;
 mod search_filters;
 mod search_port;
 mod session_catalog;

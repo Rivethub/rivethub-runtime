@@ -17,7 +17,6 @@ use kernel::topics::TopicId;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
-use wire::session_id::SessionId;
 use wire::session_id::SessionKey;
 
 use crate::SqliteStore;
@@ -321,7 +320,7 @@ impl TenancyStore for SqliteStore {
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {

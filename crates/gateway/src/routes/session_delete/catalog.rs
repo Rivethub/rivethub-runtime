@@ -19,7 +19,7 @@ use wire::gateway::session_catalog::{
 use wire::harness::HarnessId;
 use wire::session_id::{SessionId, SessionKey};
 
-use super::{NOT_FOUND, deletions, ensure_owned, segment_key};
+use super::{NOT_FOUND, deletions, ensure_owned};
 use crate::Gateway;
 use crate::error::ApiError;
 use crate::session_access;
@@ -192,6 +192,7 @@ pub(crate) fn row<K: Into<SessionKey>>(
         gist: record.gist,
         parent_id,
         child_count,
+        conversation_id: record.conversation,
     }
 }
 
@@ -226,7 +227,7 @@ pub(super) async fn detail(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDetail>, ApiError> {
-    let key = segment_key(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     let lineage = lineage(&gateway).await;
     let record = catalog(&gateway)?
         .get(&key)
@@ -254,7 +255,7 @@ pub(super) async fn trash(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let key = segment_key(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
         .trash_session(key.as_str(), Some(user.as_str()), Utc::now())
@@ -268,7 +269,7 @@ pub(super) async fn restore(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let key = segment_key(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?.restore_session(key.as_str()).await?;
     tracing::info!(session = %key, "session restored from the trash");
@@ -280,7 +281,7 @@ pub(super) async fn unkeep(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let key = segment_key(&segment)?;
+    let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?.unkeep_session(key.as_str()).await?;
     tracing::info!(session = %key, "session no longer kept out of the trash review");

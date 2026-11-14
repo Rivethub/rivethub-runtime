@@ -22,7 +22,6 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use wire::gateway::drops::{DropRefusal, Uploaded};
 use wire::gateway::users::{ScopedToken, TokenScope, UserToken};
-use wire::session_id::SessionId;
 
 use crate::common;
 
@@ -139,7 +138,7 @@ impl TenancyStore for DefaultVisibility {
     async fn mark_session(
         &self,
         _viewer: &Viewer,
-        _session: &SessionId,
+        _session: &wire::session_id::SessionKey,
         _mark: Option<&Visibility>,
         _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {

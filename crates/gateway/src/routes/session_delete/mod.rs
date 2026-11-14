@@ -13,7 +13,7 @@ use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteRefused, SessionDeleteRequest, SessionDeleteResult,
     SessionDeleteResults, SessionDeleted,
 };
-use wire::session_id::{SessionId, SessionKey, SessionKeyError, SessionRef, decode_segment};
+use wire::session_id::{SessionId, SessionKey};
 
 use crate::Gateway;
 use crate::error::ApiError;
@@ -124,25 +124,6 @@ fn deletions(gateway: &Gateway) -> Result<&dyn SessionDeletion, ApiError> {
         .ok_or_else(|| ApiError::Unavailable("session deletion unavailable".to_owned()))
 }
 
-pub(in crate::routes) fn segment_key(segment: &str) -> Result<SessionKey, ApiError> {
-    match segment.parse::<SessionKey>() {
-        Ok(key) => Ok(key),
-        Err(error @ SessionKeyError::Import(_)) => Err(ApiError::BadRequest(error.to_string())),
-        Err(SessionKeyError::Harness(_)) => encoded_session(segment).map(SessionKey::Harness),
-    }
-}
-
-fn encoded_session(segment: &str) -> Result<SessionId, ApiError> {
-    let decoded =
-        decode_segment(segment).map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    match decoded.session {
-        SessionRef::Canonical(session) => Ok(session),
-        SessionRef::Bare(_) => Err(ApiError::BadRequest(
-            "canonical session required".to_owned(),
-        )),
-    }
-}
-
 async fn known(
     gateway: &Gateway,
     deletions: &dyn SessionDeletion,
@@ -237,7 +218,7 @@ async fn delete_one(
     user: UserId,
     Path(segment): Path<String>,
 ) -> Result<Json<SessionDeleted>, ApiError> {
-    let session = segment_key(&segment)?;
+    let session = crate::session_address::resolve(&gateway, &segment).await?;
     match erase(&gateway, &user, &session).await? {
         Ok(deleted) => Ok(Json(deleted_reply(session, deleted))),
         Err(Refusal::NotFound) => Err(ApiError::NotFound(NOT_FOUND)),

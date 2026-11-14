@@ -15,7 +15,6 @@ use kernel::tenancy::Visibility;
 use kernel::tenancy::VisibilityDefault;
 use kernel::topics::TopicId;
 use sqlx::PgPool;
-use wire::session_id::SessionId;
 use wire::session_id::SessionKey;
 
 use crate::Error;
@@ -211,7 +210,7 @@ impl TenancyStore for PostgresTenancy {
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError> {

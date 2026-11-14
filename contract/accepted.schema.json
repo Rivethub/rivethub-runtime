@@ -2898,6 +2898,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "title": {
           "type": [
             "string",
@@ -10214,6 +10220,13 @@
             "null"
           ]
         },
+        "conversationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "cwd": {
           "type": [
             "string",
@@ -10698,6 +10711,13 @@
             "null"
           ]
         },
+        "conversationId": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "endedAt": {
           "format": "date-time",
           "type": [
@@ -10922,7 +10942,7 @@
           ]
         },
         "sessionId": {
-          "$ref": "#/$defs/SessionId"
+          "$ref": "#/$defs/SessionKey"
         },
         "visibility": {
           "type": "string"

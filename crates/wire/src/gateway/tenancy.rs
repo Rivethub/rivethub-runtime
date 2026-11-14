@@ -3,8 +3,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use crate::session_id::SessionId;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceKind {
@@ -69,7 +67,7 @@ pub struct VisibilityUpdate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionVisibilityRecord {
-    pub session_id: SessionId,
+    pub session_id: crate::session_id::SessionKey,
     pub visibility: String,
     #[serde(default)]
     pub mark: Option<String>,

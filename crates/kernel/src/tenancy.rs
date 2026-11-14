@@ -5,7 +5,6 @@ use std::future::Future;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use values::SessionId;
 use values::SessionKey;
 
 use crate::BoxError;
@@ -252,7 +251,7 @@ pub trait TenancyStore: Send + Sync {
     async fn mark_session(
         &self,
         viewer: &Viewer,
-        session: &SessionId,
+        session: &SessionKey,
         mark: Option<&Visibility>,
         now: DateTime<Utc>,
     ) -> Result<SessionVisibility, TenancyStoreError>;

@@ -57,6 +57,8 @@ pub struct SessionSummaryRow {
     pub gist: Option<String>,
     pub parent_id: Option<SessionId>,
     pub child_count: Option<u64>,
+    #[serde(default)]
+    pub conversation_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

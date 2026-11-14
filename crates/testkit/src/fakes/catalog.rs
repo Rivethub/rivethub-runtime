@@ -87,4 +87,15 @@ impl SessionCatalog for FakeSessionCatalog {
             .map(|record| self.marked(record))
             .collect())
     }
+
+    async fn conversation_session(
+        &self,
+        conversation: uuid::Uuid,
+    ) -> Result<Option<SessionKey>, MemoryStoreError> {
+        Ok(self
+            .records
+            .iter()
+            .find(|record| record.conversation == Some(conversation))
+            .map(|record| record.id.clone()))
+    }
 }
