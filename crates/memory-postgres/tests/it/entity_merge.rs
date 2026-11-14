@@ -22,6 +22,11 @@ async fn a_merge_removes_the_absorbed_page_file(pool: PgPool) -> TestResult {
     Scope::Maintenance.run(merge_files(pool)).await
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_merge_binds_an_unbound_survivor_page(pool: PgPool) -> TestResult {
+    Scope::Maintenance.run(bind_survivor(pool)).await
+}
+
 async fn merge_case(pool: PgPool) -> TestResult {
     let conversation = seed_conversation(&pool).await?;
     let older_summary = seed_leaf(&pool, conversation, at("2026-10-01T00:00:00Z")).await?;
@@ -77,6 +82,51 @@ async fn merge_case(pool: PgPool) -> TestResult {
         .ok_or("second merge returned nothing")?;
     assert!(!again.performed);
     assert_eq!(again.survivor, older);
+    Ok(())
+}
+
+async fn bind_survivor(pool: PgPool) -> TestResult {
+    let kind = seed_type(&pool).await?;
+    let older = Uuid::new_v4();
+    let younger = Uuid::new_v4();
+    seed_entity(
+        &pool,
+        older,
+        "box_a",
+        "box_a",
+        kind,
+        at("2026-10-01T00:00:00Z"),
+    )
+    .await?;
+    seed_entity(&pool, younger, "g9", "G9", kind, at("2026-11-01T00:00:00Z")).await?;
+    unbound_page(&pool, "box_a", "older host").await?;
+    unbound_page(&pool, "g9", "newer host").await?;
+    let memory = PostgresMemory::new(pool.clone());
+    let done = memory
+        .merge_entities(younger, older, at("2026-11-12T00:00:00Z"))
+        .await?
+        .ok_or("merge returned nothing")?;
+    assert!(done.performed);
+    assert_eq!(done.survivor, older);
+    let bound: Uuid =
+        sqlx::query_scalar("SELECT topic_id FROM rh_wiki_topics WHERE slug = 'box_a'")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(bound, older);
+    Ok(())
+}
+
+async fn unbound_page(pool: &PgPool, slug: &str, state: &str) -> Result<(), sqlx::Error> {
+    let mut tx = deferred(pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_topics (slug, title, current_state, owner_user_id)
+         VALUES ($1, $1, $2, 'owner')",
+    )
+    .bind(slug)
+    .bind(state)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 

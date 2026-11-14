@@ -1,3 +1,4 @@
+mod bind;
 mod candidates;
 mod claims;
 mod error;
