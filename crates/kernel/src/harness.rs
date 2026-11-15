@@ -28,13 +28,6 @@ pub enum ApprovalDecision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SteerOutcome {
-    Steered,
-    StartedNewTurn,
-    PromptRequired,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanStatus {
     Pending,
     InProgress,
@@ -45,8 +38,6 @@ pub enum PlanStatus {
 pub enum HarnessAdapterError {
     #[error("harness does not support releasing session ownership")]
     ReleaseUnsupported,
-    #[error("harness cannot steer a running turn")]
-    SteeringUnsupported,
     #[error("harness rejected the session id: {0}")]
     InvalidSession(SessionId),
     #[error("harness session is unknown: {0}")]
@@ -129,12 +120,6 @@ pub struct Command {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HarnessCommands {
-    pub harness: HarnessId,
-    pub commands: Vec<Command>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEvent {
     UserMessageChunk { text: String },
     AgentMessageChunk { text: String },
@@ -149,8 +134,6 @@ pub enum SessionEvent {
     TurnEnded,
     Exited { code: Option<i32> },
     Permission(PermissionRequest),
-    TerminalBytes { data: Vec<u8> },
-    TerminalResize { cols: u16, rows: u16 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,17 +152,6 @@ pub enum ContextUsageSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnInput {
     Text(String),
-    Attached {
-        text: String,
-        attachments: Vec<TurnAttachment>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnAttachment {
-    pub path: std::path::PathBuf,
-    pub media_type: String,
-    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,26 +159,6 @@ pub enum SessionOption {
     Mode(String),
     Model(String),
     Effort(ThinkingLevel),
-}
-
-impl SessionOption {
-    #[must_use]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Mode(_) => "mode",
-            Self::Model(_) => "model",
-            Self::Effort(_) => "effort",
-        }
-    }
-
-    #[must_use]
-    pub fn for_turn(model: Option<String>, effort: Option<ThinkingLevel>) -> Vec<Self> {
-        model
-            .map(Self::Model)
-            .into_iter()
-            .chain(effort.map(Self::Effort))
-            .collect()
-    }
 }
 
 #[async_trait]

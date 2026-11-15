@@ -12,10 +12,7 @@ pub const WIKI_MERGE_SYSTEM_PROMPT: &str = "You maintain one page of a personal 
 
 pub const WIKI_MERGE_MAX_TOKENS: u32 = 8_000;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel model ports are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct ModelMerger<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
@@ -51,7 +48,6 @@ impl ModelMerger<'_> {
                 ),
                 message(Role::User, user),
             ],
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(WIKI_MERGE_MAX_TOKENS),
         };

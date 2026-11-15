@@ -12,8 +12,7 @@ mod tests {
         #[cfg_attr(
             dylint_lib = "rr_lints",
             expect(
-                sleep,
-                reason = "the fixture holds the stream open past the client's recorded idle window; the wait is the fixture"
+                sleep
             )
         )]
         tokio::time::sleep(400);

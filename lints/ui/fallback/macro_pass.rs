@@ -1,7 +1,7 @@
-#[expect(typemacro, reason = "the fixture exercises expectations after expansion")]
+#[expect(typemacro)]
 macro_rules! documented {
     ($value:expr) => {{
-        #[expect(fallback, reason = "CONTRACT B10: this setting is optional")]
+        #[expect(fallback)]
         let number = $value.ok();
         number
     }};

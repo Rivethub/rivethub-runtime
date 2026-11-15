@@ -515,43 +515,12 @@ fn stored_kind(message: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use parking_lot::Mutex;
     use rusqlite::Connection;
 
     use super::pending_conversations;
 
     const HEALTHY: &str = "0199e2a0-7b3c-7a00-8000-0000000000a1";
     const UNREADABLE: &str = "not-a-conversation-id";
-
-    struct WarningRecorder(Arc<Mutex<Vec<String>>>);
-
-    struct MessageVisitor(Arc<Mutex<Vec<String>>>, tracing::Level);
-
-    impl tracing::field::Visit for MessageVisitor {
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "message" {
-                self.0.lock().push(format!("{} {value:?}", self.1));
-            }
-        }
-    }
-
-    impl<S> tracing_subscriber::Layer<S> for WarningRecorder
-    where
-        S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
-    {
-        fn on_event(
-            &self,
-            event: &tracing::Event<'_>,
-            _context: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            event.record(&mut MessageVisitor(
-                self.0.clone(),
-                *event.metadata().level(),
-            ));
-        }
-    }
 
     fn seed(conn: &Connection, conversation: &str, message: &str) {
         conn.execute(
@@ -570,17 +539,15 @@ mod tests {
 
     #[test]
     fn a_conversation_that_cannot_be_read_is_skipped_with_a_warning() {
-        use tracing_subscriber::layer::SubscriberExt as _;
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("memory.sqlite");
         migrate::sqlite(&path).unwrap();
         let conn = Connection::open(&path).unwrap();
         seed(&conn, HEALTHY, "0199e2a0-7b3c-7a00-8001-0000000000a1");
         seed(&conn, UNREADABLE, "0199e2a0-7b3c-7a00-8001-0000000000b2");
-        let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-        let subscriber = tracing_subscriber::registry().with(WarningRecorder(lines.clone()));
-        let pending =
-            tracing::subscriber::with_default(subscriber, || pending_conversations(&conn)).unwrap();
+        let (guard, lines) = testkit::logs::recorded();
+        let pending = pending_conversations(&conn).unwrap();
+        drop(guard);
         let ids: Vec<String> = pending
             .iter()
             .map(|conversation| conversation.id.to_string())

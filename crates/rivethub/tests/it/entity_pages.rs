@@ -30,15 +30,12 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const SESSION: &str = "claude-code:entity-serve";
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario covering the committed page, the topic page, the entity article and the list"
-)]
+#[expect(clippy::too_many_lines)]
 async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();
     let entity = Uuid::new_v4();
-    let slug = format!("gpubox-{entity}");
+    let slug = format!("tinbox-{entity}");
     seed(&pool, entity, &slug).await?;
     let home = tempfile::tempdir()?;
     let memory = PostgresMemory::new(pool.clone()).with_wiki_directory(home.path().to_path_buf());
@@ -141,7 +138,7 @@ async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestRe
     assert_eq!(kind_of(&listed, "Acme").as_deref(), Some("organizations"));
     assert_eq!(kind_of(&listed, "RivetHub").as_deref(), Some("projects"));
     assert_eq!(kind_of(&listed, "Office").as_deref(), Some("places"));
-    assert_eq!(kind_of(&listed, "gpubox").as_deref(), Some("hosts"));
+    assert_eq!(kind_of(&listed, "tinbox").as_deref(), Some("hosts"));
     assert_eq!(kind_of(&listed, "north").as_deref(), Some("fleets"));
     let north = listed
         .iter()
@@ -234,7 +231,7 @@ async fn apply(memory: &PostgresMemory, entity: Uuid) -> TestResult {
 async fn seed(pool: &sqlx::PgPool, entity: Uuid, slug: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO rh_topics (id, kind, slug, name, parent_id, created_at, updated_at, owner_user_id)
-         SELECT $1, 'entity', $2, 'gpubox', parent.id, $3, $3, 'owner'
+         SELECT $1, 'entity', $2, 'tinbox', parent.id, $3, $3, 'owner'
            FROM rh_topics parent
           WHERE parent.kind = 'type' AND parent.slug = 'hosts'",
     )

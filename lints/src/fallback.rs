@@ -9,7 +9,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) FALLBACK,
     Warn,
-    "an error or absence becomes a silent default → docs/PATTERNS.md#fallback",
+    "an error or absence becomes a silent default",
     Fallback
 );
 
@@ -114,7 +114,7 @@ fn emit(cx: &LateContext<'_>, expression: &Expr<'_>, text: &str) {
         FALLBACK,
         expression.hir_id,
         expression.span,
-        format!("FALLBACK {text} → docs/PATTERNS.md#fallback"),
+        format!("FALLBACK {text}"),
     );
 }
 
@@ -203,7 +203,7 @@ impl<'tcx> LateLintPass<'tcx> for Fallback {
                     FALLBACK,
                     local.hir_id,
                     local.span,
-                    "FALLBACK let Ok(..) = .. else → docs/PATTERNS.md#fallback".to_owned(),
+                    "FALLBACK let Ok(..) = .. else".to_owned(),
                 );
             }
         }

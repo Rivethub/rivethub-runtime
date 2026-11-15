@@ -144,7 +144,7 @@ pub async fn an_import_lists_with_its_origin(
     catalog: &dyn SessionCatalog,
 ) -> Outcome {
     let seeded = seed(memory).await?;
-    let known = bundle("alex", "desk", "7b0e7d1c-0000-4000-8000-000000000001", 50);
+    let known = bundle("ines", "desk", "7b0e7d1c-0000-4000-8000-000000000001", 50);
     let anonymous = bundle(UNKNOWN, UNKNOWN, UNKNOWN, 70);
     let receipt = wire::capture::Receipt {
         bundle_id: "drop-1".to_owned(),
@@ -166,7 +166,7 @@ pub async fn an_import_lists_with_its_origin(
         "the origin names the author and the author's dates",
         item.origin.clone(),
         Some(ImportOrigin {
-            author: Some("alex".to_owned()),
+            author: Some("ines".to_owned()),
             created_at: known.origin.created_at,
             updated_at: known.origin.updated_at,
             receipt: Some(ImportReceipt {
@@ -219,7 +219,7 @@ pub async fn a_harness_filter_and_the_session_lookup_leave_imports_to_their_own_
     catalog: &dyn SessionCatalog,
 ) -> Outcome {
     let seeded = seed(memory).await?;
-    let key = imported(memory, &bundle("alex", "desk", "conv-a", 50)).await?;
+    let key = imported(memory, &bundle("ines", "desk", "conv-a", 50)).await?;
 
     let mut claude = SessionQuery::new(SessionView::All);
     claude.harness = Some(HarnessId::ClaudeCode);
@@ -259,7 +259,7 @@ pub async fn an_import_moves_between_the_views_and_deletes(
     catalog: &dyn SessionCatalog,
     marks: &dyn SessionDeletion,
 ) -> Outcome {
-    let key = imported(memory, &bundle("alex", "desk", "conv-b", 50)).await?;
+    let key = imported(memory, &bundle("ines", "desk", "conv-b", 50)).await?;
     let text = key.as_str();
     let now = at(90);
     same(
@@ -308,7 +308,7 @@ pub async fn paging_walks_across_an_import(
     catalog: &dyn SessionCatalog,
 ) -> Outcome {
     let seeded = seed(memory).await?;
-    let key = imported(memory, &bundle("alex", "desk", "conv-c", 25)).await?;
+    let key = imported(memory, &bundle("ines", "desk", "conv-c", 25)).await?;
     let mut query = SessionQuery::new(SessionView::All);
     query.limit = 1;
     let mut walked = Vec::new();
@@ -338,8 +338,8 @@ pub async fn an_import_is_a_finished_record_ended_when_its_origin_ended(
     memory: &dyn MemoryStore,
     catalog: &dyn SessionCatalog,
 ) -> Outcome {
-    let dated = bundle("alex", "desk", "conv-d", 50);
-    let mut undated = bundle("alex", "desk", "conv-e", 70);
+    let dated = bundle("ines", "desk", "conv-d", 50);
+    let mut undated = bundle("ines", "desk", "conv-e", 70);
     undated.origin.updated_at = None;
     let dated_key = imported(memory, &dated).await?;
     let undated_key = imported(memory, &undated).await?;

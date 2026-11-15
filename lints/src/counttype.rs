@@ -8,7 +8,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) COUNTTYPE,
     Warn,
-    "JavaScript-number habits in integer fields (u16 ports; u32/u64/usize counts; unsigned settings) → docs/PATTERNS.md#counttype",
+    "JavaScript-number habits in integer fields (u16 ports; u32/u64/usize counts; unsigned settings)",
     Counttype::default()
 );
 
@@ -55,7 +55,7 @@ impl<'tcx> LateLintPass<'tcx> for Counttype {
                 COUNTTYPE,
                 field.hir_id,
                 field.span,
-                "signed or oversized integer for a port (u16) → docs/PATTERNS.md#counttype".to_owned(),
+                "signed or oversized integer for a port (u16)".to_owned(),
             );
             return;
         }
@@ -83,7 +83,7 @@ impl<'tcx> LateLintPass<'tcx> for Counttype {
                     COUNTTYPE,
                     field.hir_id,
                     field.span,
-                    "signed integer for a count (u32/u64/usize) → docs/PATTERNS.md#counttype".to_owned(),
+                    "signed integer for a count (u32/u64/usize)".to_owned(),
                 );
             }
             return;
@@ -94,7 +94,7 @@ impl<'tcx> LateLintPass<'tcx> for Counttype {
                 COUNTTYPE,
                 field.hir_id,
                 field.span,
-                "signed pid (use u32) → docs/PATTERNS.md#counttype".to_owned(),
+                "signed pid (use u32)".to_owned(),
             );
             return;
         }
@@ -107,7 +107,7 @@ impl<'tcx> LateLintPass<'tcx> for Counttype {
                 COUNTTYPE,
                 field.hir_id,
                 field.span,
-                "float for a duration, count or size setting (use u64/u32/u16/u8) → docs/PATTERNS.md#counttype"
+                "float for a duration, count or size setting (use u64/u32/u16/u8)"
                     .to_owned(),
             );
         }

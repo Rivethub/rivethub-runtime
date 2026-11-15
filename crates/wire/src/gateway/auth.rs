@@ -9,13 +9,7 @@ pub const REAUTH_REQUIRED: &str = "reauth_required";
 )]
 pub struct Secret(String);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "SS-15a: a login code or CSRF token is a credential; deriving Debug would print it into logs"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Secret {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("Secret(..)")

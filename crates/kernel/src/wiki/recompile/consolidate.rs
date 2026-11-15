@@ -182,16 +182,14 @@ async fn ask(
     input: &MergeInput,
     report: &mut RecompileReport,
 ) -> Option<Merged> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: the rule of contract note 100: a merge that fails leaves the text to the writer's budget trim, so recompiling never fails for size"
-        )
-    )]
-    let merged = pages.merge(input).await.ok();
-    let merged = merged
-        .filter(|merged| !merged.summary.trim().is_empty() || !merged.article.trim().is_empty());
+    let merged = match pages.merge(input).await {
+        Ok(merged) => Some(merged),
+        Err(error) => {
+            tracing::warn!("page merge failed: {error}");
+            None
+        }
+    }
+    .filter(|merged| !merged.summary.trim().is_empty() || !merged.article.trim().is_empty());
     if merged.is_some() {
         report.merges = report.merges.saturating_add(1);
     } else {

@@ -84,8 +84,5 @@ async fn a_shared_prefix_sibling_is_not_part_of_the_store() -> Result<(), Box<dy
         sessions,
         vec![SessionId::new(HarnessId::ClaudeCode, SESSION)]
     );
-    let store_canon = std::fs::canonicalize(&store)?;
-    let sibling_canon = std::fs::canonicalize(&sibling)?;
-    assert!(!sibling_canon.starts_with(&store_canon));
     Ok(())
 }

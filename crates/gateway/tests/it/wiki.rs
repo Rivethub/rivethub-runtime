@@ -24,10 +24,7 @@ fn request(method: &str, target: &str) -> Request {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "request failures must fail the test helper immediately, never produce fallback responses"
-)]
+#[expect(clippy::expect_used)]
 async fn answer(app: &axum::Router, request: Request) -> Response {
     tokio::time::timeout(Duration::from_secs(3), common::answer(app.clone(), request))
         .await
@@ -35,18 +32,12 @@ async fn answer(app: &axum::Router, request: Request) -> Response {
         .expect("request succeeds")
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the fixture page is the contract's shape, which the kernel's page record shares"
-)]
+#[expect(clippy::expect_used)]
 fn stored(page: WikiPageResponse) -> kernel::wiki::WikiPageResponse {
     serde_json::from_value(serde_json::to_value(page).expect("page")).expect("kernel page")
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the page fixture uses a constant calendar date and instant"
-)]
+#[expect(clippy::expect_used)]
 fn page() -> WikiPageResponse {
     WikiPageResponse {
         slug: "release".to_owned(),
@@ -135,7 +126,7 @@ async fn api_page_names_the_author_of_an_imported_citation() {
     let mut imported = stored(page());
     let provenance = kernel::memory::Provenance {
         team_owner: None,
-        author: Some("phil".to_owned()),
+        author: Some("dana".to_owned()),
         origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
         verification: kernel::memory::Verification::Unreceived,
         checks: None,
@@ -153,7 +144,7 @@ async fn api_page_names_the_author_of_an_imported_citation() {
             .first()
             .and_then(|citation| citation.imported.clone()),
         Some(wire::memory::Provenance {
-            author: Some("phil".to_owned()),
+            author: Some("dana".to_owned()),
             origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
             verification: wire::memory::Verification::Unreceived,
             checks: None,
@@ -333,9 +324,6 @@ async fn auth_origin_preflight_and_methods_use_existing_gateway_policy() {
     for path in ["/api/wiki/topics", "/api/wiki/release", "/wiki/release"] {
         let mut remote = request("GET", path);
         remote.via = Some("remote".to_owned());
-        remote
-            .headers
-            .push(("x-rivetos-user".to_owned(), "owner".to_owned()));
         assert_eq!(answer(&app, remote).await.status, 401);
         let mut hostile = request("GET", path);
         hostile

@@ -37,13 +37,7 @@ use super::types::observed_types;
 use super::view::load_view;
 use super::view::page_from;
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 pub(super) fn hold_payload(prepared: &PreparedEntity) -> serde_json::Value {
     serde_json::json!({
         "name": prepared.name,

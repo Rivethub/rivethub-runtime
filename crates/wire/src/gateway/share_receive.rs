@@ -12,13 +12,7 @@ use crate::capture::ReceiveDecision;
 #[serde(transparent)]
 pub struct CodeText(pub String);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 152: a share code carries the bundle key; Debug must never print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for CodeText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("CodeText(..)")

@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) NAMING,
     Warn,
-    "den/room identifier inherited from the TypeScript (descriptive names; wire strings are serde renames) → docs/PATTERNS.md#naming",
+    "den/room identifier inherited from the TypeScript (descriptive names; wire strings are serde renames)",
     Naming::default()
 );
 
@@ -21,7 +21,7 @@ fn check_ident(cx: &LateContext<'_>, hir_id: rustc_hir::HirId, span: rustc_span:
             hir_id,
             span,
             format!(
-                "`{name}` carries the old den/room name (gateway, session, view; wire strings are serde renames) → docs/PATTERNS.md#naming"
+                "`{name}` carries the old den/room name (gateway, session, view; wire strings are serde renames)"
             ),
         );
     }

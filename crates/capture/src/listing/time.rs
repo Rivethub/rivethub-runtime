@@ -28,10 +28,7 @@ impl RawTime {
         field.text().map_or(Self::Absent, Self::Text)
     }
 
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "epoch values are below 2^53, where i64 to f64 is exact"
-    )]
+    #[expect(clippy::cast_precision_loss)]
     pub(crate) fn from_sql(value: &SqlValue) -> Self {
         match value {
             SqlValue::Integer(number) => Self::Number(*number as f64),
@@ -89,10 +86,7 @@ pub(crate) fn parse_date(text: &str) -> Option<i64> {
     None
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "spec 2.1: fractional epoch sources are floored to integer milliseconds, saturating"
-)]
+#[expect(clippy::cast_possible_truncation)]
 pub(crate) fn floor_ms(value: f64) -> i64 {
     value.floor() as i64
 }

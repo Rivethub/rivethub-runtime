@@ -29,10 +29,7 @@ pub fn hybrid_pool(limit: u32) -> i64 {
     (i64::from(limit) * 3).clamp(HYBRID_POOL_MIN, HYBRID_POOL_MAX)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the literal-scan pattern is a constant; the search tests match it"
-)]
+#[expect(clippy::expect_used)]
 #[must_use]
 pub fn literal_scan(text: &str) -> bool {
     static LITERAL: LazyLock<Regex> = LazyLock::new(|| {
@@ -42,10 +39,7 @@ pub fn literal_scan(text: &str) -> bool {
     LITERAL.is_match(text)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the trigram-fallback pattern is a constant; the search tests match it"
-)]
+#[expect(clippy::expect_used)]
 #[must_use]
 pub fn should_trigram_fallback(text: &str) -> bool {
     static FALLBACK: LazyLock<Regex> = LazyLock::new(|| {
@@ -268,7 +262,7 @@ mod tests {
         for literal in [
             "crates/kernel",
             "main.rs",
-            "rivet@host",
+            "admin@host",
             "host:5441",
             "snake_case",
             "203.0.113.12",

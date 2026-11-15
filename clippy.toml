@@ -6,14 +6,14 @@ allow-print-in-tests = true
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 6
 disallowed-types = [
-  { path = "std::sync::Mutex", reason = "use parking_lot::Mutex for short critical sections or tokio::sync::Mutex across awaits" },
-  { path = "std::sync::RwLock", reason = "use parking_lot::RwLock or tokio::sync::RwLock" },
-  { path = "serde_json::Number", reason = "any-number is not a type; i64 epoch ms, f64 measured, u16/u32/u64 counts (JSMODEL)" },
+  { path = "std::sync::Mutex" },
+  { path = "std::sync::RwLock" },
+  { path = "serde_json::Number" },
 ]
 disallowed-methods = [
-  { path = "std::process::exit", reason = "return an error to main; only the binary decides the exit code (EXIT)" },
-  { path = "std::env::var", reason = "the environment is read once by the config crate (ENV)" },
-  { path = "std::env::var_os", reason = "the environment is read once by the config crate (ENV)" },
-  { path = "std::thread::sleep", reason = "wall-clock sync: tests await the event with a timeout, production timers use pausable tokio::time (SLEEP)" },
-  { path = "sqlx::Row::get", reason = "panics on a missing column or a type mismatch; read into a `FromRow` struct or use `try_get` with `?`" },
+  { path = "std::process::exit" },
+  { path = "std::env::var" },
+  { path = "std::env::var_os" },
+  { path = "std::thread::sleep" },
+  { path = "sqlx::Row::get" },
 ]

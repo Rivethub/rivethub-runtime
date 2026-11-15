@@ -1,4 +1,4 @@
-warning: empty struct accepting a section and throwing its contents away (type the section; arbitrary values go in wire::JsonObject or config::FreeForm) → docs/PATTERNS.md#opaque
+warning: empty struct accepting a section and throwing its contents away (type the section; arbitrary values go in wire::JsonObject or config::FreeForm)
   --> $DIR/fail.rs:3:1
    |
 LL | pub struct OpaqueSection {}

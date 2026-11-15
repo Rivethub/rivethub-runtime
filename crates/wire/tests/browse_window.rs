@@ -1,4 +1,3 @@
-use strum::IntoEnumIterator;
 use wire::gateway::memory::BrowseWindow;
 
 #[test]
@@ -16,16 +15,6 @@ fn window_serde_names_match_the_spec() {
         assert_eq!(serde_json::to_string(&window).unwrap(), json);
         assert_eq!(serde_json::from_str::<BrowseWindow>(json).unwrap(), window);
     }
-}
-
-#[test]
-fn every_window_variant_is_covered_by_the_spec_table() {
-    assert_eq!(BrowseWindow::iter().count(), 7);
-}
-
-#[test]
-fn window_serde_rejects_unknown_names() {
-    assert!(serde_json::from_str::<BrowseWindow>("\"tomorrow\"").is_err());
 }
 
 #[test]

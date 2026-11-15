@@ -18,7 +18,7 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
         };
         if text.contains(LAB_PLANS) {
             findings.push(format!(
-                "LABPATH {rel}: names the lab plans tree; tests read the vendored recordings under crates/testkit/tests/fixtures → docs/PATTERNS.md#labpath"
+                "LABPATH {rel}: names the lab plans tree; tests read the vendored recordings under crates/testkit/tests/fixtures"
             ));
             count += 1;
         }

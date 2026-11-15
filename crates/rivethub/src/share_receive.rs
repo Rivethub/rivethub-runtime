@@ -40,13 +40,7 @@ pub struct NodeReceiver {
     busy: Arc<tokio::sync::Mutex<()>>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the MemoryStore port is not Debug, so the store field cannot be derived"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for NodeReceiver {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

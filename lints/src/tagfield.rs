@@ -5,7 +5,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) TAGFIELD,
     Warn,
-    "constant type tag as a field (use #[serde(tag = \"type\")]) → docs/PATTERNS.md#tagfield",
+    "constant type tag as a field (use #[serde(tag = \"type\")])",
     Tagfield::default()
 );
 
@@ -29,7 +29,7 @@ impl<'tcx> LateLintPass<'tcx> for Tagfield {
                 TAGFIELD,
                 field.hir_id,
                 field.span,
-                "`r#type` field typed String (use #[serde(tag = \"type\")] on the struct or enum) → docs/PATTERNS.md#tagfield"
+                "`r#type` field typed String (use #[serde(tag = \"type\")] on the struct or enum)"
                     .to_owned(),
             );
             return;
@@ -42,7 +42,7 @@ impl<'tcx> LateLintPass<'tcx> for Tagfield {
                 TAGFIELD,
                 field.hir_id,
                 field.span,
-                "constant type tag as a field (use #[serde(tag = \"type\")]) → docs/PATTERNS.md#tagfield"
+                "constant type tag as a field (use #[serde(tag = \"type\")])"
                     .to_owned(),
             );
         }

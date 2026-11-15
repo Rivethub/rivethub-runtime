@@ -17,6 +17,7 @@ mod facts;
 mod flagged;
 mod graphile;
 mod graphile_sql;
+mod jobs;
 mod listen;
 mod loss;
 mod memory_jobs;
@@ -40,15 +41,13 @@ mod session_catalog;
 mod session_marks;
 mod session_messages;
 mod stats;
-mod team;
-pub use search_complete::SearchSynthesis;
-mod jobs;
 mod stats_cache;
 mod store_impl;
 mod summary_dag;
 mod summary_store;
 mod summary_watch;
 mod tags;
+mod team;
 mod tenancy;
 mod tidy;
 mod title;
@@ -74,15 +73,11 @@ use std::time::Duration;
 pub use capture::CaptureOptions;
 pub use capture::CaptureWriter;
 pub use capture::ConversationDates;
-pub use capture::ConversationEnsure;
-pub use capture::ConversationRecord;
-pub use capture::ConversationUpdate;
 pub use capture::ConversationUpsert;
 pub use capture::MessageRow;
 pub use capture::UpsertedConversation;
 pub use embed::QueryEmbed;
 pub use error::Error;
-use graphile::GraphileQueue;
 pub use queue::PostgresQueue;
 
 use sqlx::PgPool;
@@ -98,7 +93,6 @@ pub struct PostgresMemory {
     wiki_owner: Option<kernel::owner::Owner>,
     pool: PgPool,
     embed: Option<embed::EmbedArm>,
-    synthesis: Option<SearchSynthesis>,
     access: std::sync::Arc<access::AccessLog>,
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
@@ -123,7 +117,6 @@ impl PostgresMemory {
             wiki_owner: None,
             pool,
             embed: None,
-            synthesis: None,
             access: std::sync::Arc::default(),
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
@@ -159,12 +152,6 @@ impl PostgresMemory {
     #[must_use]
     pub fn with_query_embed(mut self, embed: QueryEmbed) -> Self {
         self.embed = Some(embed::EmbedArm::new(embed));
-        self
-    }
-
-    #[must_use]
-    pub fn with_search_synthesis(mut self, synthesis: SearchSynthesis) -> Self {
-        self.synthesis = Some(synthesis);
         self
     }
 
@@ -248,10 +235,6 @@ impl PostgresMemory {
 
     pub async fn queue(&self) -> Result<PostgresQueue, Error> {
         PostgresQueue::connect(self.pool.clone()).await
-    }
-
-    pub async fn queue_available(&self) -> Result<bool, Error> {
-        GraphileQueue::schema_present(&self.pool).await
     }
 }
 

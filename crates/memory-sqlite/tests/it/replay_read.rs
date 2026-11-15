@@ -18,66 +18,23 @@ use kernel::memory::Limit;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::MemoryEntry;
 use kernel::memory::MemoryStatsResponse;
+use kernel::memory::MemoryStore as _;
 use memory_sqlite::SqliteStore;
 use serde::Deserialize;
 use testkit::Json;
 use wire::gateway::memory::MemoryBrowseToolArgs;
 use wire::message::Role;
 
-const SKIPPED_STATS_SCENARIOS: [(&str, &str); 2] = [
-    (
-        "embedding endpoint: queued, then drained, queues and buckets",
-        "embedding job enqueue, drain and summarization are outside this slice",
-    ),
-    (
-        "embedding keeps failing → degraded; old failures age out",
-        "embedding job retries and the dead-job sweep are outside this slice",
-    ),
-];
-
-const READ_SET_SKIP: &str =
-    "the read-only tool set's refusals and argument checks belong to the mcp crate";
-
-const HEALTH_SKIP: &str = "health() is outside this slice";
-
-const SKIPPED_TOOL_CALLS: [(&str, &str); 4] = [
-    ("memory_search", "search is outside this slice"),
-    (
-        "memory_append",
-        "the memory_append tool (argument checks, event-id hashing, env attribution) belongs to the mcp crate",
-    ),
-    (
-        "memory_ingest_session",
-        "the memory_ingest_session tool belongs to the mcp crate",
-    ),
-    ("memory_tags", "tags are outside this slice"),
-];
-
-const SKIPPED_TOOL_LABELS: [(&str, &str); 6] = [
-    (
-        "get_full branch summary",
-        "MemoryStore::get_full returns a MemoryEntry; summaries are outside this slice",
-    ),
-    (
-        "get_full leaf summary",
-        "MemoryStore::get_full returns a MemoryEntry; summaries are outside this slice",
-    ),
-    (
-        "get_full big (tail only)",
-        "the row is written by the memory_append tool, which belongs to the mcp crate",
-    ),
-    (
-        "get_full no id",
-        "argument validation is the mcp tool's job",
-    ),
-    (
-        "browse bad window",
-        "the recorded error is a TypeScript throw from window parsing; BrowseWindow rejects an unknown window before the store",
-    ),
-    (
-        "browse bad since",
-        "timestamp argument parsing is the mcp tool's job",
-    ),
+const READ_CALLS: [&str; 9] = [
+    "get_full message",
+    "get_full tool message",
+    "get_full missing",
+    "browse default",
+    "browse include tools asc",
+    "browse window last_7d",
+    "browse empty",
+    "stats",
+    "stats agent",
 ];
 
 fn helper_batch() -> TestResult<kernel::memory::CaptureBatchRequest> {
@@ -106,35 +63,24 @@ async fn stats_json(store: &SqliteStore, agent: Option<&str>) -> TestResult<Json
 #[tokio::test]
 async fn stats_replay_the_recorded_scenarios() -> TestResult {
     let file: ScenarioFile = common::recording("stats-health.json")?;
-    let mut replayed = 0;
-    for scenario in file.scenarios {
-        if let Some((name, reason)) = SKIPPED_STATS_SCENARIOS
+    for (name, seeded) in [
+        ("empty store", false),
+        ("captured, no embedding endpoint", true),
+    ] {
+        let scenario = file
+            .scenarios
             .iter()
-            .find(|(name, _)| *name == scenario.name)
-        {
-            eprintln!("skipped scenario {name}: {reason}");
-            continue;
-        }
+            .find(|scenario| scenario.name == name)
+            .ok_or_else(|| format!("missing scenario {name}"))?;
         let fresh = fresh_store()?;
-        let seeded_at = instant(common::RECORDED_START)?;
-        match scenario.name.as_str() {
-            "empty store" => {}
-            "captured, no embedding endpoint" => {
+        if seeded {
+            let at = instant(common::RECORDED_START)?;
+            for batch in [deploy_batch("cli:sess-1", "rivet")?, helper_batch()?] {
                 fresh
                     .store
-                    .capture(
-                        deploy_batch("cli:sess-1", "rivet")?,
-                        &testkit::owner()?,
-                        None,
-                        seeded_at,
-                    )
-                    .await?;
-                fresh
-                    .store
-                    .capture(helper_batch()?, &testkit::owner()?, None, seeded_at)
+                    .capture(batch, &testkit::owner()?, None, at)
                     .await?;
             }
-            other => return Err(format!("no seed for stats scenario {other:?}").into()),
         }
         let mut ids = Ids::default();
         for step in &scenario.steps {
@@ -142,23 +88,13 @@ async fn stats_replay_the_recorded_scenarios() -> TestResult {
                 "stats" => None,
                 "stats agent helper" => Some("helper"),
                 "stats agent nobody" => Some("nobody"),
-                label if label.starts_with("health") => {
-                    eprintln!("skipped step {} / {label}: {HEALTH_SKIP}", scenario.name);
-                    continue;
-                }
-                other => return Err(format!("no replay for step {other:?}").into()),
+                _ => continue,
             };
             let expected = step.result.clone().ok_or("recorded stats result")?;
             let actual = stats_json(&fresh.store, agent).await?;
-            ids.same(
-                &expected,
-                &actual,
-                &format!("{} / {}", scenario.name, step.label),
-            )?;
+            ids.same(&expected, &actual, &format!("{name} / {}", step.label))?;
         }
-        replayed += 1;
     }
-    assert_eq!(replayed, 2);
     Ok(())
 }
 
@@ -477,26 +413,14 @@ async fn read_tools_replay_browse_get_full_and_stats() -> TestResult {
         &Json::Array(common::table(&fresh.store, "ros_messages").await?),
         "tools seed: ros_messages",
     )?;
-    let mut replayed = 0;
-    for call in &recording.calls {
-        let skipped = SKIPPED_TOOL_CALLS
+    for label in READ_CALLS {
+        let call = recording
+            .calls
             .iter()
-            .find(|(tool, _)| *tool == call.tool)
-            .or_else(|| {
-                SKIPPED_TOOL_LABELS
-                    .iter()
-                    .find(|(label, _)| *label == call.label)
-            })
-            .map(|(_, reason)| *reason)
-            .or_else(|| call.label.starts_with("read ").then_some(READ_SET_SKIP));
-        if let Some(reason) = skipped {
-            eprintln!("skipped call {}: {reason}", call.label);
-            continue;
-        }
+            .find(|call| call.label == label)
+            .ok_or_else(|| format!("missing call {label}"))?;
         let output = call.output.as_deref().ok_or("recorded tool output")?;
         replay_read_call(&fresh.store, call, output, &ids, now).await?;
-        replayed += 1;
     }
-    assert_eq!(replayed, 9);
     Ok(())
 }

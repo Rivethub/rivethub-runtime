@@ -1,7 +1,3 @@
-#[expect(
-    dead_code,
-    reason = "integration binaries share fixtures and use different subsets"
-)]
 mod common;
 mod search_support;
 
@@ -19,9 +15,7 @@ mod open;
 mod queue_port;
 mod reembed;
 mod replay_capture;
-mod replay_context;
 mod replay_hybrid;
-mod replay_jobs;
 mod replay_read;
 mod replay_search;
 mod replay_suggest;
@@ -33,7 +27,6 @@ mod search_modes;
 mod search_parity;
 mod session_catalog;
 mod session_delete;
-mod summarizer_health;
 mod summary_dag;
 mod summary_title;
 mod topics;

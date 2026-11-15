@@ -8,6 +8,7 @@ use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::HeaderName;
 use axum::http::HeaderValue;
 use axum::http::Method;
@@ -242,6 +243,14 @@ fn header_text<'a>(
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
+    let text = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = text.trim().split_once(' ')?;
+    let token = token.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
+}
+
 pub(crate) async fn guard(
     State(state): State<GuardState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -250,7 +259,6 @@ pub(crate) async fn guard(
 ) -> Response {
     let peer = Peer::of(addr, request.headers(), state.gateway.trusted_proxies());
     request.extensions_mut().insert(peer);
-    request.headers_mut().remove("x-rivetos-user");
     let path = request.uri().path().to_string();
     let origin = header_text(request.headers(), &header::ORIGIN);
     let host = header_text(request.headers(), &header::HOST);
@@ -352,13 +360,7 @@ fn html_unauthorized(refusal: &ApiError) -> Response {
 }
 
 pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS#fallback: a configured origin that is not a valid header value lists no origin, as normalize_origin does"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let listed: Vec<HeaderValue> = origins
         .iter()
         .map(String::as_str)
@@ -377,8 +379,6 @@ pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             HeaderName::from_static(crate::login::CSRF_HEADER),
-            HeaderName::from_static("x-rivet-conversation"),
-            HeaderName::from_static("x-rivet-title"),
         ])
 }
 

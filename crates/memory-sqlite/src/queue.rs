@@ -66,13 +66,6 @@ pub enum FailOutcome {
     Dead,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobCount {
-    pub task: String,
-    pub state: JobState,
-    pub count: u64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobInsert {
     pub task: String,
@@ -105,12 +98,6 @@ impl JobInsert {
     }
 
     #[must_use]
-    pub fn max_attempts(mut self, max_attempts: u32) -> Self {
-        self.max_attempts = max_attempts;
-        self
-    }
-
-    #[must_use]
     pub fn run_at(mut self, run_at: DateTime<Utc>) -> Self {
         self.run_at = run_at;
         self
@@ -125,14 +112,8 @@ struct EmbedJob<'a> {
     target_id: &'a str,
 }
 
-#[derive(Clone, Copy)]
-enum ClaimKind {
-    Inherent,
-    Port,
-}
-
 #[must_use]
-pub fn retry_delay_ms(attempt: u32) -> u64 {
+fn retry_delay_ms(attempt: u32) -> u64 {
     DELAYS_MS
         .iter()
         .zip(0_u32..)
@@ -156,25 +137,14 @@ impl SqliteStore {
         Ok(inserted)
     }
 
-    pub async fn claim_tasks(
-        &self,
-        tasks: Vec<String>,
-        now: DateTime<Utc>,
-    ) -> Result<Option<ClaimedSqliteJob>, SqliteError> {
-        self.with_conn(move |conn| claim_one(conn, &tasks, None, now, ClaimKind::Inherent))
-            .await
-    }
-
     pub(crate) async fn claim_port(
         &self,
         tasks: Vec<String>,
         only_id: Option<String>,
         now: DateTime<Utc>,
     ) -> Result<Option<ClaimedSqliteJob>, SqliteError> {
-        self.with_conn(move |conn| {
-            claim_one(conn, &tasks, only_id.as_deref(), now, ClaimKind::Port)
-        })
-        .await
+        self.with_conn(move |conn| claim_one(conn, &tasks, only_id.as_deref(), now))
+            .await
     }
 
     pub async fn fail_job(
@@ -195,33 +165,6 @@ impl SqliteStore {
     pub async fn release_job(&self, id: String, now: DateTime<Utc>) -> Result<(), SqliteError> {
         self.with_conn(move |conn| release_one(conn, &id, now))
             .await
-    }
-
-    pub async fn revive(
-        &self,
-        key: String,
-        payload: String,
-        now: DateTime<Utc>,
-    ) -> Result<bool, SqliteError> {
-        self.with_conn(move |conn| revive_one(conn, &key, &payload, now))
-            .await
-    }
-
-    pub async fn requeue_dead(
-        &self,
-        task: Option<String>,
-        now: DateTime<Utc>,
-    ) -> Result<u64, SqliteError> {
-        self.with_conn(move |conn| requeue(conn, task.as_deref(), now))
-            .await
-    }
-
-    pub async fn recover_running(&self, now: DateTime<Utc>) -> Result<u64, SqliteError> {
-        self.with_conn(move |conn| recover(conn, now)).await
-    }
-
-    pub async fn job_counts(&self) -> Result<Vec<JobCount>, SqliteError> {
-        self.with_conn(counts).await
     }
 }
 
@@ -288,7 +231,6 @@ fn claim_one(
     tasks: &[String],
     only_id: Option<&str>,
     now: DateTime<Utc>,
-    kind: ClaimKind,
 ) -> Result<Option<ClaimedSqliteJob>, SqliteError> {
     if tasks.is_empty() {
         return Ok(None);
@@ -299,7 +241,7 @@ fn claim_one(
     let Some(row) = select_due(&tx, tasks, only_id, now)? else {
         return Ok(None);
     };
-    let payload = match accepted_payload(&row, kind) {
+    let payload = match accepted_payload(&row) {
         Ok(payload) => payload,
         Err(error) => {
             reject_claim(&tx, &row.id, &error, now)?;
@@ -322,17 +264,10 @@ fn claim_one(
     Ok(Some(claimed))
 }
 
-fn accepted_payload(row: &DueRow, kind: ClaimKind) -> Result<JobPayload, SqliteError> {
+fn accepted_payload(row: &DueRow) -> Result<JobPayload, SqliteError> {
     let payload = serde_json::from_str(&row.payload)
         .map_err(|source| SqliteError::StoredPayload { source })?;
-    match kind {
-        ClaimKind::Inherent => Ok(payload),
-        ClaimKind::Port => port_payload(&row.task, payload),
-    }
-}
-
-fn port_payload(task: &str, payload: JobPayload) -> Result<JobPayload, SqliteError> {
-    JobName::from_str(task).map_err(|error| SqliteError::ClaimRejected {
+    JobName::from_str(&row.task).map_err(|error| SqliteError::ClaimRejected {
         message: error.to_string(),
     })?;
     if let JobPayload::Object(_) = &payload {
@@ -489,62 +424,6 @@ pub(crate) fn revive_one(
         )
         .map_err(SqliteError::query("job revive"))?;
     Ok(changed > 0)
-}
-
-fn requeue(conn: &Connection, task: Option<&str>, now: DateTime<Utc>) -> Result<u64, SqliteError> {
-    let stamped = time::stamp(now);
-    let changed = conn
-        .execute(
-            "UPDATE ros_jobs
-                SET state = 'queued', attempts = 0, run_at = ?1, locked_at = NULL, updated_at = ?1
-              WHERE state = 'dead' AND (?2 IS NULL OR task = ?2)",
-            params![stamped, task],
-        )
-        .map_err(SqliteError::query("job requeue"))?;
-    u64::try_from(changed).map_err(SqliteError::Count)
-}
-
-fn recover(conn: &Connection, now: DateTime<Utc>) -> Result<u64, SqliteError> {
-    let changed = conn
-        .execute(
-            "UPDATE ros_jobs
-                SET state = 'queued', locked_at = NULL, updated_at = ?1
-              WHERE state = 'running'",
-            [time::stamp(now)],
-        )
-        .map_err(SqliteError::query("job recover"))?;
-    u64::try_from(changed).map_err(SqliteError::Count)
-}
-
-fn counts(conn: &mut Connection) -> Result<Vec<JobCount>, SqliteError> {
-    let mut statement = conn
-        .prepare(
-            "SELECT task, state, count(*) FROM ros_jobs
-              GROUP BY task, state ORDER BY task, state",
-        )
-        .map_err(SqliteError::query("job counts"))?;
-    let mut rows = statement
-        .query([])
-        .map_err(SqliteError::query("job counts"))?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next().map_err(SqliteError::query("job counts"))? {
-        let task: String = row.get(0).map_err(SqliteError::query("job counts"))?;
-        let state: String = row.get(1).map_err(SqliteError::query("job counts"))?;
-        let count: i64 = row.get(2).map_err(SqliteError::query("job counts"))?;
-        out.push(count_row(task, state, count)?);
-    }
-    Ok(out)
-}
-
-fn count_row(task: String, state: String, count: i64) -> Result<JobCount, SqliteError> {
-    let state = state
-        .parse()
-        .map_err(|_| SqliteError::StoredState { value: state })?;
-    Ok(JobCount {
-        task,
-        state,
-        count: u64::try_from(count).map_err(SqliteError::Count)?,
-    })
 }
 
 pub(crate) fn arm(conn: &Connection, key: &str, job: &JobInsert) -> Result<bool, SqliteError> {

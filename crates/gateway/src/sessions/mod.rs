@@ -13,13 +13,7 @@ pub struct SessionRegistry {
     pub(crate) shutdown: CancellationToken,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "a broadcast sender has no Default, so the notice channel is opened here"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for SessionRegistry {
     fn default() -> Self {
         Self {

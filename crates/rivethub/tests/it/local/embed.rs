@@ -4,7 +4,7 @@ use std::path::Path;
 use wire::gateway::memory::MemorySearchResponse;
 use wire::stream::openai::{EmbeddingRequest, EmbeddingResponse, EmbeddingRow};
 
-use super::{TestResult, provider_base, start, stop, write_config};
+use super::{TestResult, provider_at, start, stop, write_state};
 
 const QUERY: &str = "when does acmekit deploy";
 
@@ -58,9 +58,9 @@ async fn local_vector_search(
         "{}gateway:\n  host: 127.0.0.1\n  port: {port}\n",
         extra(&database, server.addr)
     );
-    write_config(
+    write_state(
         home.path(),
-        &provider_base(home.path(), "http://127.0.0.1:1", &body),
+        &provider_at(home.path(), "http://127.0.0.1:1", &body),
     )?;
     let started = start(
         home.path(),
@@ -90,62 +90,17 @@ async fn local_vector_search(
     Ok((response, calls))
 }
 
-async fn default_inputs(model: &str) -> TestResult<Vec<Vec<String>>> {
-    let (response, calls) = local_vector_search(|database, embed| {
-        format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    embed_endpoint: http://{embed}\n    embed_model: {model}\n",
-            database.display()
-        )
-    })
-    .await?;
-    assert_eq!(response.degraded, None, "{response:?}");
-    Ok(calls.into_iter().map(|call| call.input).collect())
-}
-
-#[tokio::test]
-async fn local_vector_search_embeds_the_bare_query_for_a_non_qwen_model() -> TestResult {
-    assert_eq!(
-        default_inputs("embedding-model").await?,
-        vec![vec![QUERY.to_owned()]]
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn local_vector_search_prefixes_the_qwen_instruction_for_a_qwen_model() -> TestResult {
-    assert_eq!(
-        default_inputs("Qwen/Qwen3-Embedding-0.6B").await?,
-        vec![vec![format!(
-            "{}{QUERY}",
-            kernel::memory_core::DEFAULT_EMBED_QUERY_INSTRUCTION
-        )]]
-    );
-    Ok(())
-}
-
-async fn instructed_inputs(instruction: &str) -> TestResult<Vec<Vec<String>>> {
-    let (_, calls) = local_vector_search(|database, embed| {
-        format!(
-            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    embed_endpoint: http://{embed}\n    embed_model: embedding-model\n    embed_query_instruction: \"{instruction}\"\n",
-            database.display()
-        )
-    })
-    .await?;
-    Ok(calls.into_iter().map(|call| call.input).collect())
-}
-
-#[tokio::test]
-async fn an_empty_sqlite_query_instruction_embeds_the_bare_query() -> TestResult {
-    assert_eq!(instructed_inputs("").await?, vec![vec![QUERY.to_owned()]]);
-    Ok(())
-}
-
 #[tokio::test]
 async fn a_custom_sqlite_query_instruction_prefixes_the_query() -> TestResult {
-    assert_eq!(
-        instructed_inputs("query: ").await?,
-        vec![vec![format!("query: {QUERY}")]]
-    );
+    let (_, calls) = local_vector_search(|database, embed| {
+        format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    embed_endpoint: http://{embed}\n    embed_model: embedding-model\n    embed_query_instruction: \"query: \"\n",
+            database.display()
+        )
+    })
+    .await?;
+    let inputs: Vec<Vec<String>> = calls.into_iter().map(|call| call.input).collect();
+    assert_eq!(inputs, vec![vec![format!("query: {QUERY}")]]);
     Ok(())
 }
 

@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use gateway::account::{CrashJob, install_crash_hook};
 
-#[expect(
-    clippy::panic,
-    reason = "the fixture is a process that panics under the crash hook"
-)]
+#[expect(clippy::panic)]
 fn main() {
     let mut args = std::env::args_os().skip(1);
     let state = args.next().map(PathBuf::from);

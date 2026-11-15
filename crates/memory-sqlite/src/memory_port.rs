@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
@@ -146,10 +145,6 @@ impl MemoryStore for SqliteStore {
         self.message_entry(id).await.map_err(MemoryStoreError::from)
     }
 
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
-        self.context_for(session, now).await
-    }
-
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {
         self.read_summary_dag(owner).await
     }
@@ -180,15 +175,6 @@ impl MemoryStore for SqliteStore {
         decided_by: Option<String>,
     ) -> Result<u64, MemoryStoreError> {
         self.tags_decide(ids, decision, decided_by).await
-    }
-
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.tags_decide_removals(ids, decision, decided_by).await
     }
 
     async fn add_tag(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {

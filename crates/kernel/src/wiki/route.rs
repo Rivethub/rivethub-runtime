@@ -91,10 +91,7 @@ impl TopicTarget {
     }
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel ports are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone, Copy)]
 pub struct TopicPorts<'a> {
     pub topics: &'a dyn TopicStore,
@@ -103,10 +100,7 @@ pub struct TopicPorts<'a> {
     pub lineage: &'a dyn SessionLister,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel ports are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone, Copy)]
 pub struct WikiRouter<'a> {
     pub wiki: &'a dyn WikiBuilderStore,
@@ -484,13 +478,7 @@ impl TopicPorts<'_> {
 
 fn session(summary: &WikiSummary) -> Option<SessionId> {
     let key = summary.session_key.as_deref()?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a conversation whose session key is not a canonical session id has no topic placement"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(session) = SessionId::from_str(key) else {
         return None;
     };

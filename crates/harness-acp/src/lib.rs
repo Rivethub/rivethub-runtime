@@ -11,12 +11,10 @@ pub mod launch;
 mod options;
 pub mod permissions;
 pub mod process;
-mod prompt;
 mod sheets;
 mod supervised;
 
 pub use adapter::AcpHarnessAdapter;
-pub use connection::initialize_handshake;
 pub use discovery::DEFAULT_DISCOVERY_TIMEOUT;
 pub use error::AcpError;
 pub use error::ChatUnsupportedReason;

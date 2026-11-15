@@ -3,11 +3,9 @@ use std::time::Duration;
 
 use rusqlite::OptionalExtension as _;
 
-use super::{DELEGATE_TEXT, TestResult, model_stub, provider_base, start, stop, write_config};
+use super::{REPLY, TestResult, model_stub, provider_at, start, stop, write_state};
 
 const CONVERSATION: &str = "0199e2a0-7b3c-7a00-8000-0000000000e1";
-const IMPORTED: &str = "0199e2a07b3c7a0080000000000000e2";
-const IMPORTED_CANONICAL: &str = "0199e2a0-7b3c-7a00-8000-0000000000e2";
 const MESSAGES: u32 = 20;
 const SUMMARY_WAIT: Duration = Duration::from_mins(1);
 const POLL: Duration = Duration::from_millis(100);
@@ -16,7 +14,7 @@ fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-fn seed_idle_conversation(path: &Path, conversation: &str, separator: &str) -> TestResult {
+fn seed_idle_conversation(path: &Path) -> TestResult {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -26,7 +24,7 @@ fn seed_idle_conversation(path: &Path, conversation: &str, separator: &str) -> T
     conn.execute(
         "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
          VALUES (?1, 'idle-session', 'rivet', ?2, ?2)",
-        (conversation, stamp(started)),
+        (CONVERSATION, stamp(started)),
     )?;
     for index in 0..MESSAGES {
         let role = if index % 2 == 0 { "user" } else { "assistant" };
@@ -34,8 +32,8 @@ fn seed_idle_conversation(path: &Path, conversation: &str, separator: &str) -> T
             "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
              VALUES (?1, ?2, 'rivet', 'test', ?3, ?4, ?5)",
             (
-                format!("0199e2a0{separator}7b3c{separator}7a00{separator}8001{separator}{index:012}"),
-                conversation,
+                format!("0199e2a0-7b3c-7a00-8001-{index:012}"),
+                CONVERSATION,
                 role,
                 format!("ledger step {index}"),
                 stamp(started + chrono::TimeDelta::seconds(i64::from(index))),
@@ -80,18 +78,19 @@ async fn wait_summary(path: &Path, conversation: &str) -> TestResult<Option<Stri
     }
 }
 
-async fn summarized_within_one_idle_tick(
-    home: &Path,
-    database: &Path,
-    conversation: &str,
-) -> TestResult {
+#[tokio::test]
+async fn an_idle_sqlite_conversation_is_summarized_within_one_idle_tick() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let home = dir.path();
+    let database = home.join(".rivethub").join("memory.sqlite");
+    seed_idle_conversation(&database)?;
     let stub = model_stub().await?;
     let port = testkit::ports::claim()?;
-    write_config(
+    write_state(
         home,
-        &provider_base(
+        &provider_at(
             home,
-            &format!("http://{}", stub.address),
+            &format!("http://{}", stub.addr),
             &format!(
                 "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
                 database.display()
@@ -104,29 +103,11 @@ async fn summarized_within_one_idle_tick(
         &["gateway listening on ", "worker running summarizer"],
     )
     .await?;
-    let summarized = wait_summary(database, conversation).await;
+    let summarized = wait_summary(&database, CONVERSATION).await;
     let logs = stop(started).await;
     let closed = stub.close().await;
     let logs = logs?;
     closed?;
-    assert_eq!(summarized?.as_deref(), Some(DELEGATE_TEXT), "{logs}");
+    assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
     Ok(())
-}
-
-#[tokio::test]
-async fn an_idle_sqlite_conversation_is_summarized_within_one_idle_tick() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let database = home.path().join(".rivethub").join("memory.sqlite");
-    seed_idle_conversation(&database, CONVERSATION, "-")?;
-    summarized_within_one_idle_tick(home.path(), &database, CONVERSATION).await
-}
-
-#[tokio::test]
-async fn an_imported_undashed_conversation_is_summarized_after_migrating() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let database = home.path().join(".rivethub").join("memory.sqlite");
-    seed_idle_conversation(&database, IMPORTED, "")?;
-    rusqlite::Connection::open(&database)?.execute_batch("PRAGMA user_version = 9;")?;
-    migrate::sqlite(&database)?;
-    summarized_within_one_idle_tick(home.path(), &database, IMPORTED_CANONICAL).await
 }

@@ -74,13 +74,7 @@ pub(super) async fn tombstoned(
         return BTreeMap::new();
     };
     let read = deletions.tombstones(keys).await;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B1: unreadable tombstones list every session, logged (note 75)"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let found = read.unwrap_or_else(|error| {
         tracing::warn!(%error, "session tombstones are unreadable; listing every session");
         BTreeMap::new()
@@ -93,13 +87,7 @@ pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<Stri
         return BTreeSet::new();
     };
     let read = deletions.trashed(keys).await;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note 127)"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let found = read.unwrap_or_else(|error| {
         tracing::warn!(%error, "session trash is unreadable; listing every session");
         BTreeMap::new()

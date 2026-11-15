@@ -52,7 +52,7 @@ async fn citations_carry_the_importing_author() -> TestResult {
     let imported = cite(
         &conn,
         IMPORT_KEY,
-        r#"{"origin":{"author":"phil"},"receipt":{"verification":"verified"}}"#,
+        r#"{"origin":{"author":"dana"},"receipt":{"verification":"verified"}}"#,
         "acme",
         2,
     )?;
@@ -81,7 +81,7 @@ async fn citations_carry_the_importing_author() -> TestResult {
         .collect();
     assert_eq!(marked.len(), 2);
     assert!(marked.contains(&(native, None)));
-    assert!(marked.contains(&(imported, Some("phil"))));
+    assert!(marked.contains(&(imported, Some("dana"))));
 
     let authors = store
         .wiki_imported_authors(vec!["acme".to_owned(), "mine".to_owned()])

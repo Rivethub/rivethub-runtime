@@ -36,7 +36,7 @@ struct Args {
     source_url: String,
     #[arg(long)]
     scratch_url: String,
-    #[arg(long, default_value = "phil")]
+    #[arg(long, default_value = "dana")]
     principal: String,
     #[arg(long, default_value = "thinkingcap-flash-next")]
     model: String,
@@ -56,7 +56,7 @@ struct Args {
     matcher: String,
     #[arg(long, default_value = "")]
     matcher_url: String,
-    #[arg(long, default_value = "/home/phil/work/entity-eval/runs")]
+    #[arg(long, default_value = "runs")]
     runs: PathBuf,
 
     #[arg(long)]

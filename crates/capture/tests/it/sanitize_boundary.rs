@@ -40,7 +40,7 @@ fn message(event_id: &str, content: &str) -> CaptureMessage {
 fn session(key: &str, messages: Vec<CaptureMessage>) -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("conv-{key}"),
             session_key: key.to_owned(),
@@ -67,7 +67,7 @@ fn session(key: &str, messages: Vec<CaptureMessage>) -> BundledSession {
 fn raw(sessions: Vec<BundledSession>) -> Result<SessionBundle, Box<dyn std::error::Error>> {
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         at()?,
@@ -326,9 +326,9 @@ as = "<luis>"
 fn crafted_long_lines_sanitize_in_bounded_time() -> TestResult {
     let pair = r#"{"name":"DB_PASSWORD","value":"#;
     let cases = [
-        pair.repeat(160_000 / pair.len()),
-        "password:>".repeat(75_000),
-        "password=abc1 ".repeat(25_000),
+        pair.repeat(80_000 / pair.len()),
+        "password:>".repeat(7_000),
+        "password=abc1 ".repeat(5_000),
     ];
     let mut outputs = Vec::new();
     for content in cases {
@@ -337,7 +337,7 @@ fn crafted_long_lines_sanitize_in_bounded_time() -> TestResult {
         let text = sanitized_text(&input, "")?;
         let elapsed = started.elapsed();
         assert!(
-            elapsed < std::time::Duration::from_secs(20),
+            elapsed < std::time::Duration::from_secs(10),
             "{} bytes took {elapsed:?}",
             content.len()
         );

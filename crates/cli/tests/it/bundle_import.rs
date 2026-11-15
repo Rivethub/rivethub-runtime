@@ -20,24 +20,24 @@ const NATIVE_KEY: &str = "claude-code:77777777-7777-7777-7777-777777777777";
 
 fn hook_tool(tool_use: &str, listing: &str) -> String {
     format!(
-        r#"{{"session_id":"{SESSION}","cwd":"/work/alex","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{{"command":"ls {listing}"}},"tool_use_id":"{tool_use}","tool_response":{{"stdout":"{listing}.txt"}}}}"#
+        r#"{{"session_id":"{SESSION}","cwd":"/work/ines","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{{"command":"ls {listing}"}},"tool_use_id":"{tool_use}","tool_response":{{"stdout":"{listing}.txt"}}}}"#
     )
 }
 
-fn phils_sender(directory: &Path) -> String {
-    let path = directory.join("phil.sqlite");
+fn danas_sender(directory: &Path) -> String {
+    let path = directory.join("dana.sqlite");
     migrate::sqlite(&path).expect("migrate");
     let connection = rusqlite::Connection::open(&path).expect("sqlite");
     connection
         .execute_batch(&format!(
             "INSERT INTO ros_conversations (id, session_key, agent, title, settings, created_at, updated_at) VALUES
-               ('c1', '{NATIVE_KEY}', 'rivet-claude', 'phil sender title', '{{\"cwd\":\"/work/phil\"}}',
+               ('c1', '{NATIVE_KEY}', 'rivet-claude', 'dana sender title', '{{\"cwd\":\"/work/dana\"}}',
                 '2026-10-01T09:00:00.000Z', '2026-10-01T11:00:00.000Z');
              INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at) VALUES
-               ('m1', 'c1', 'rivet-claude', 'claude-code', 'user', 'phil prompt about quokka collisions',
-                '{{\"event_id\":\"phil-evt-1\"}}', '2026-10-01T09:00:00.000Z'),
-               ('m2', 'c1', 'rivet-claude', 'claude-code', 'assistant', 'phil reply about quokka collisions',
-                '{{\"event_id\":\"phil-evt-2\"}}', '2026-10-01T10:00:00.000Z');"
+               ('m1', 'c1', 'rivet-claude', 'claude-code', 'user', 'dana prompt about quokka collisions',
+                '{{\"event_id\":\"dana-evt-1\"}}', '2026-10-01T09:00:00.000Z'),
+               ('m2', 'c1', 'rivet-claude', 'claude-code', 'assistant', 'dana reply about quokka collisions',
+                '{{\"event_id\":\"dana-evt-2\"}}', '2026-10-01T10:00:00.000Z');"
         ))
         .expect("seed");
     path.display().to_string()
@@ -92,13 +92,13 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     let sender_users = sender_dir.path().join("users.json");
     std::fs::write(
         &sender_users,
-        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+        r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
     )
     .expect("sender users");
     let sender = environment(&sender_home)
         .with_override("RIVETHUB_USERS_FILE", sender_users.display().to_string())
         .with_override("RIVETHUB_NODE_NAME", "desk");
-    let sqlite = phils_sender(sender_dir.path());
+    let sqlite = danas_sender(sender_dir.path());
     let bundle = sender_dir.path().join("s.json").display().to_string();
     let bundled = run(
         &[
@@ -124,7 +124,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     )
     .with_local_owner(crate::support::local_owner(receiver_home.path()))
     .with_tenancy(Tenancy::local(
-        UserId::new("alex".to_owned()).expect("alex"),
+        UserId::new("ines".to_owned()).expect("ines"),
     ));
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -144,7 +144,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     let receiver = environment(&receiver_home);
     let now = chrono::Utc::now();
     let live =
-        cli::capture_hook::hook(&receiver, &hook_tool("toolu_alex1", "alex-native"), now).await;
+        cli::capture_hook::hook(&receiver, &hook_tool("toolu_ines1", "ines-native"), now).await;
     assert_eq!(live.stderr, "");
     let before = conversations(&pool).await;
     let [native_before] = before.as_slice() else {
@@ -156,16 +156,16 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     assert_eq!(ingested.exit, Exit::Ok, "{}", ingested.stderr);
     assert_eq!(
         ingested.stdout,
-        "ingested 1 session from phil (raw bundle forced): 2 inserted, 0 skipped\n"
+        "ingested 1 session from dana (raw bundle forced): 2 inserted, 0 skipped\n"
     );
     let after = conversations(&pool).await;
     assert_eq!(after.len(), 2, "{after:?}");
     let imported = after
         .iter()
-        .find(|row| row.session_key.starts_with("import:") && row.owner_user_id == "alex")
+        .find(|row| row.session_key.starts_with("import:") && row.owner_user_id == "ines")
         .unwrap_or_else(|| panic!("no import conversation in {after:?}"));
-    assert_eq!(imported.owner_user_id, "alex");
-    assert_eq!(imported.title.as_deref(), Some("phil sender title"));
+    assert_eq!(imported.owner_user_id, "ines");
+    assert_eq!(imported.title.as_deref(), Some("dana sender title"));
     assert_eq!(
         imported.created_at,
         "2026-10-01T09:00:00Z"
@@ -177,8 +177,8 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         "native changed: {native_before:?} -> {after:?}"
     );
 
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let untagged = |found: &[(String, String)]| {
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(
@@ -186,18 +186,18 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
             "{found:?}"
         );
     };
-    let phils = hits(&search, "quokka collisions").await;
-    assert_eq!(phils.len(), 2, "{phils:?}");
-    for (heading, _) in &phils {
+    let danas = hits(&search, "quokka collisions").await;
+    assert_eq!(danas.len(), 2, "{danas:?}");
+    for (heading, _) in &danas {
         assert!(
-            heading.ends_with(" from phil · 2026-10-01 · unverified"),
-            "{phils:?}"
+            heading.ends_with(" from dana · 2026-10-01 · unverified"),
+            "{danas:?}"
         );
     }
-    untagged(&hits(&search, "alex-native").await);
+    untagged(&hits(&search, "ines-native").await);
 
     let again =
-        cli::capture_hook::hook(&receiver, &hook_tool("toolu_alex2", "alex-later"), now).await;
+        cli::capture_hook::hook(&receiver, &hook_tool("toolu_ines2", "ines-later"), now).await;
     assert_eq!(again.stderr, "");
 
     let later = conversations(&pool).await;
@@ -208,11 +208,11 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     );
     for (heading, _) in &hits(&search, "quokka collisions").await {
         assert!(
-            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            heading.ends_with(" from dana · 2026-10-01 · unverified"),
             "{heading}"
         );
     }
-    untagged(&hits(&search, "alex-later").await);
+    untagged(&hits(&search, "ines-later").await);
     stop.cancel();
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
@@ -348,18 +348,18 @@ async fn bundle_from(
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(pool: PgPool) {
     let directory = tempfile::tempdir().expect("directory");
-    let bundle = bundle_from(directory.path(), "phil", "desk", "c1", "wombat-plan").await;
+    let bundle = bundle_from(directory.path(), "dana", "desk", "c1", "wombat-plan").await;
     let store = Arc::new(PostgresMemory::new(pool.clone()));
-    let alex = Receiver::start(&store, "alex").await;
+    let ines = Receiver::start(&store, "ines").await;
     let bob = Receiver::start(&store, "bob").await;
 
-    let by_alex = alex.ingest(&bundle).await;
+    let by_ines = ines.ingest(&bundle).await;
     let by_bob = bob.ingest(&bundle).await;
 
-    for report in [&by_alex, &by_bob] {
+    for report in [&by_ines, &by_bob] {
         assert_eq!(
             report.stdout,
-            "ingested 1 session from phil (raw bundle forced): 1 inserted, 0 skipped\n",
+            "ingested 1 session from dana (raw bundle forced): 1 inserted, 0 skipped\n",
             "{}",
             report.stderr
         );
@@ -370,7 +370,7 @@ async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(poo
         .map(|row| row.owner_user_id.as_str())
         .collect();
     owners.sort_unstable();
-    assert_eq!(owners, ["alex", "bob"], "{stored:?}");
+    assert_eq!(owners, ["bob", "ines"], "{stored:?}");
     let message_owners: Vec<(String, String)> = sqlx::query_as(
         "select c.owner_user_id, m.owner_user_id from rh_messages m \
          join rh_conversations c on c.id = m.conversation_id order by 1",
@@ -381,51 +381,51 @@ async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(poo
     assert_eq!(
         message_owners,
         [
-            ("alex".to_owned(), "alex".to_owned()),
-            ("bob".to_owned(), "bob".to_owned())
+            ("bob".to_owned(), "bob".to_owned()),
+            ("ines".to_owned(), "ines".to_owned())
         ]
     );
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let found = hits(&search, "wombat-plan").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
         assert!(
-            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            heading.ends_with(" from dana · 2026-10-01 · unverified"),
             "{found:?}"
         );
     }
-    alex.stop().await;
+    ines.stop().await;
     bob.stop().await;
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn origins_whose_node_and_conversation_share_a_colon_stay_apart(pool: PgPool) {
     let directory = tempfile::tempdir().expect("directory");
-    let phils = bundle_from(directory.path(), "phil", "lab:x", "c", "phil-quokkas").await;
-    let alexs = bundle_from(directory.path(), "alex", "lab", "x:c", "alex-quokkas").await;
+    let danas = bundle_from(directory.path(), "dana", "lab:x", "c", "dana-quokkas").await;
+    let iness = bundle_from(directory.path(), "ines", "lab", "x:c", "ines-quokkas").await;
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let receiver = Receiver::start(&store, "team").await;
 
-    let first = receiver.ingest(&phils).await;
-    let second = receiver.ingest(&alexs).await;
+    let first = receiver.ingest(&danas).await;
+    let second = receiver.ingest(&iness).await;
 
     assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
     assert_eq!(
-        second.stdout, "ingested 1 session from alex (raw bundle forced): 1 inserted, 0 skipped\n",
+        second.stdout, "ingested 1 session from ines (raw bundle forced): 1 inserted, 0 skipped\n",
         "{}",
         second.stderr
     );
     let stored = conversations(&pool).await;
     assert_eq!(stored.len(), 2, "{stored:?}");
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
-    let phil_hits = hits(&search, "phil-quokkas").await;
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
+    let dana_hits = hits(&search, "dana-quokkas").await;
     assert!(
-        phil_hits
+        dana_hits
             .iter()
-            .all(|(heading, _)| heading.ends_with(" from phil · 2026-10-01 · unverified")),
-        "{phil_hits:?}"
+            .all(|(heading, _)| heading.ends_with(" from dana · 2026-10-01 · unverified")),
+        "{dana_hits:?}"
     );
     receiver.stop().await;
 }
@@ -465,44 +465,44 @@ async fn reexport(pool: &PgPool, directory: &Path, user: &str) -> wire::capture:
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_session_passed_from_user_to_user_stays_credited_to_its_first_author(pool: PgPool) {
     let directory = tempfile::tempdir().expect("directory");
-    let phils = bundle_from(directory.path(), "phil", "desk", "c1", "numbat-notes").await;
-    let phils_origin = {
+    let danas = bundle_from(directory.path(), "dana", "desk", "c1", "numbat-notes").await;
+    let danas_origin = {
         let bundle: wire::capture::SessionBundle =
-            serde_json::from_str(&std::fs::read_to_string(&phils).expect("bundle")).expect("parse");
+            serde_json::from_str(&std::fs::read_to_string(&danas).expect("bundle")).expect("parse");
         bundle.sessions.first().expect("session").origin.clone()
     };
     let store = Arc::new(PostgresMemory::new(pool.clone()));
-    let alex = Receiver::start(&store, "alex").await;
+    let ines = Receiver::start(&store, "ines").await;
     let bob = Receiver::start(&store, "bob").await;
-    assert_eq!(alex.ingest(&phils).await.exit, Exit::Ok);
+    assert_eq!(ines.ingest(&danas).await.exit, Exit::Ok);
 
-    let alexs = reexport(&pool, directory.path(), "alex").await;
-    let path = directory.path().join("from-alex.json");
-    std::fs::write(&path, serde_json::to_string(&alexs).expect("json")).expect("write");
+    let iness = reexport(&pool, directory.path(), "ines").await;
+    let path = directory.path().join("from-ines.json");
+    std::fs::write(&path, serde_json::to_string(&iness).expect("json")).expect("write");
     let by_bob = bob.ingest(&path.display().to_string()).await;
     let bobs = reexport(&pool, directory.path(), "bob").await;
 
     assert_eq!(
-        by_bob.stdout, "ingested 1 session from phil (raw bundle forced): 1 inserted, 0 skipped\n",
+        by_bob.stdout, "ingested 1 session from dana (raw bundle forced): 1 inserted, 0 skipped\n",
         "{}",
         by_bob.stderr
     );
-    for bundle in [&alexs, &bobs] {
+    for bundle in [&iness, &bobs] {
         let session = bundle.sessions.first().expect("session");
-        assert_eq!(session.origin, phils_origin);
-        assert_eq!(session.batch.session_key, phils_origin.session_key);
-        assert_eq!(session.batch.created_at, phils_origin.created_at);
+        assert_eq!(session.origin, danas_origin);
+        assert_eq!(session.batch.session_key, danas_origin.session_key);
+        assert_eq!(session.batch.created_at, danas_origin.created_at);
     }
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let found = hits(&search, "numbat-notes").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
         assert!(
-            heading.ends_with(" from phil · 2026-10-01 · unverified"),
+            heading.ends_with(" from dana · 2026-10-01 · unverified"),
             "{found:?}"
         );
     }
-    alex.stop().await;
+    ines.stop().await;
     bob.stop().await;
 }

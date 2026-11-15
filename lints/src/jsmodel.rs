@@ -7,7 +7,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) JSMODEL,
     Warn,
-    "JavaScript value model or semantics (Js* types, truthiness, typeof, [object Object], JSON.stringify) → docs/PATTERNS.md#jsmodel",
+    "JavaScript value model or semantics (Js* types, truthiness, typeof, [object Object], JSON.stringify)",
     Jsmodel::default()
 );
 
@@ -31,7 +31,7 @@ fn check_ident(cx: &LateContext<'_>, hir_id: HirId, span: Span, name: &str) {
             JSMODEL,
             hir_id,
             span,
-            format!("{name}: JavaScript value model (plain Rust types instead) → docs/PATTERNS.md#jsmodel"),
+            format!("{name}: JavaScript value model (plain Rust types instead)"),
         );
     }
 }
@@ -84,7 +84,7 @@ impl<'tcx> LateLintPass<'tcx> for Jsmodel {
                 JSMODEL,
                 expr.hir_id,
                 expr.span,
-                "JavaScript semantics in a string (build such bodies in Rust where the test needs them) → docs/PATTERNS.md#jsmodel"
+                "JavaScript semantics in a string (build such bodies in Rust where the test needs them)"
                     .to_owned(),
             );
         }

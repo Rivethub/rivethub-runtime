@@ -32,10 +32,7 @@ pub enum ModelError {
     Paths(#[from] config::ConfigError),
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel harness ports do not implement Debug"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Default)]
 pub struct ModelFactory {
     harnesses: BTreeMap<String, Arc<dyn HarnessAdapter>>,
@@ -61,10 +58,7 @@ impl ModelTasks {
     }
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel model ports do not implement Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct ModelBinding {
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
@@ -75,7 +69,6 @@ struct EmbedExtras {
     api_key: Option<String>,
     expected_dims: Option<u32>,
     timeout_ms: Option<u64>,
-    query_instruction: Option<String>,
 }
 
 impl EmbedExtras {
@@ -87,7 +80,6 @@ impl EmbedExtras {
                 api_key: section.and_then(|section| section.embed_api_key.clone()),
                 expected_dims: None,
                 timeout_ms: None,
-                query_instruction: None,
             }
         } else {
             let section = memory.and_then(|memory| memory.postgres.as_ref());
@@ -95,8 +87,6 @@ impl EmbedExtras {
                 api_key: section.and_then(|section| section.embed_api_key.clone()),
                 expected_dims: section.and_then(|section| section.embed_expected_dims),
                 timeout_ms: section.and_then(|section| section.embed_timeout_ms),
-                query_instruction: section
-                    .and_then(|section| section.embed_query_instruction.clone()),
             }
         }
     }
@@ -158,7 +148,6 @@ impl ModelFactory {
             api_prefix: provider.and_then(|provider| provider.api_prefix.clone()),
             expected_dims: extras.expected_dims,
             timeout_ms: extras.timeout_ms,
-            query_instruction: extras.query_instruction,
         })?;
         let embedder = match provider {
             Some(provider) => embedder.with_provider_auth(provider)?,

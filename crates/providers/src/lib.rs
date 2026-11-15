@@ -26,7 +26,6 @@ use kernel::model::ModelStreamItem;
 use kernel::shutdown::Activities;
 use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
-use wire::message::ToolCall;
 use wire::stream::LlmUsage;
 
 pub use crate::embed_provider::EmbedProvider;
@@ -280,33 +279,12 @@ pub(crate) async fn collect_response(
     mut rx: Receiver<ModelStreamItem>,
 ) -> Result<LlmResponse, ModelProviderError> {
     let mut content = String::new();
-    let mut calls: Vec<PartialToolCall> = Vec::new();
     let mut usage: Option<LlmUsage> = None;
     let mut done = false;
     while let Some(item) = rx.recv().await {
         match item? {
             ModelChunk::Text { delta } => content.push_str(&delta),
             ModelChunk::Reasoning { delta: _ } => {}
-            ModelChunk::ToolCallStart { index, id, name } => {
-                if calls.iter().any(|call| call.index == index) {
-                    return Err(StreamFault::RestartedToolCall { index }.into());
-                }
-                calls.push(PartialToolCall {
-                    index,
-                    id,
-                    name,
-                    arguments: String::new(),
-                });
-            }
-            ModelChunk::ToolCallDelta {
-                index,
-                arguments_delta,
-            } => {
-                let Some(call) = calls.iter_mut().find(|call| call.index == index) else {
-                    return Err(StreamFault::UnknownToolCall { index }.into());
-                };
-                call.arguments.push_str(&arguments_delta);
-            }
             ModelChunk::Usage { usage: received } => usage = Some(received),
             ModelChunk::Done => done = true,
         }
@@ -314,91 +292,19 @@ pub(crate) async fn collect_response(
     if !done {
         return Err(StreamFault::EndedBeforeDone.into());
     }
-    let tool_calls = assemble_tool_calls(&calls)?;
-    let r#type = if tool_calls.is_some() {
-        LlmResponseKind::ToolCalls
-    } else {
-        LlmResponseKind::Text
-    };
     Ok(LlmResponse {
-        r#type,
+        r#type: LlmResponseKind::Text,
         content: if content.is_empty() {
             None
         } else {
             Some(content)
         },
-        tool_calls,
+        tool_calls: None,
         usage,
         finish_reason: None,
     })
 }
 
-struct PartialToolCall {
-    index: u32,
-    id: String,
-    name: String,
-    arguments: String,
-}
-
 fn probe_unless_disabled(probe_models: Option<bool>) -> bool {
     probe_models != Some(false)
-}
-
-fn assemble_tool_calls(
-    calls: &[PartialToolCall],
-) -> Result<Option<Vec<ToolCall>>, ModelProviderError> {
-    if calls.is_empty() {
-        return Ok(None);
-    }
-    let mut out = Vec::with_capacity(calls.len());
-    for call in calls {
-        let arguments: wire::JsonObject =
-            serde_json::from_str(&call.arguments).map_err(|source| {
-                sse::stream_error(
-                    format!(
-                        "tool call {} carried malformed arguments: {source}",
-                        call.index
-                    ),
-                    source,
-                )
-            })?;
-        out.push(ToolCall {
-            id: call.id.clone(),
-            name: call.name.clone(),
-            arguments,
-            thought_signature: None,
-        });
-    }
-    Ok(Some(out))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_models_probe_runs_unless_disabled() {
-        assert!(probe_unless_disabled(None));
-        assert!(probe_unless_disabled(Some(true)));
-        assert!(!probe_unless_disabled(Some(false)));
-    }
-
-    #[test]
-    fn the_variant_accepts_only_the_openai_family() {
-        assert_eq!(Variant::of(ProviderType::Vllm), Some(Variant::Vllm));
-        assert_eq!(
-            Variant::of(ProviderType::OpenaiCompatible),
-            Some(Variant::OpenaiCompatible)
-        );
-        for kind in [
-            ProviderType::ClaudeCli,
-            ProviderType::CodexCli,
-            ProviderType::GrokCli,
-            ProviderType::HermesCli,
-            ProviderType::KimiCode,
-            ProviderType::OpencodeCli,
-        ] {
-            assert_eq!(Variant::of(kind), None);
-        }
-    }
 }

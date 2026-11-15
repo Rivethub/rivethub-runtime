@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use config::provider::CliProvider;
-use kernel::harness::{SessionEvent, ToolCallInfo};
+use kernel::harness::SessionEvent;
 use kernel::model::{ModelChunk, ModelProvider};
 use tokio_util::sync::CancellationToken;
 
@@ -35,33 +35,6 @@ async fn eof_and_prompt_error_after_turn_end_cannot_report_success() -> TestResu
         assert!(harness.is_empty());
         drop(actions);
     }
-    Ok(())
-}
-
-#[tokio::test]
-async fn duplicate_tool_ids_fail_closed() -> TestResult {
-    let call = SessionEvent::ToolCall(ToolCallInfo {
-        tool_call_id: "duplicate".into(),
-        name: "echo".into(),
-        input: wire::JsonObject::default(),
-    });
-    let (harness, actions) = Harness::new(vec![Plan {
-        events: vec![call.clone(), call],
-        finish: false,
-    }]);
-    let harness = Arc::new(harness);
-    let provider = provider(
-        Arc::clone(&harness),
-        CliProvider::default(),
-        &CancellationToken::new(),
-    );
-    let error = tokio::time::timeout(Duration::from_secs(5), provider.chat(request()))
-        .await?
-        .expect_err("duplicate tool call");
-    assert!(error.to_string().contains("repeated tool call duplicate"));
-    provider.shutdown().await;
-    assert!(harness.is_empty());
-    drop(actions);
     Ok(())
 }
 

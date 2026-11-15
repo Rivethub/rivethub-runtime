@@ -7,6 +7,7 @@ use values::JsonObject;
 pub struct HarnessTranscriptTurn {
     pub role: SessionMessageRole,
     pub text: String,
+    pub reply_text: Option<String>,
     pub thinking: Option<String>,
     pub tools: Option<Vec<HarnessTranscriptTool>>,
     pub usage: Option<MessageUsage>,

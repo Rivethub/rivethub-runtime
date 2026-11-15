@@ -1,7 +1,3 @@
-mod documentation;
-
-use documentation::deviations_are_documented;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -137,14 +133,11 @@ fn removed_provider_ids(input: &serde_yaml_ng::Value) -> Vec<(String, RemovedPro
     removed
 }
 
-const DECISION_15_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
+const UNINJECTED_REDACTION_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
 
 const EXPOSED_TERMINAL: &str = "an exposed terminal without TLS";
 
-const REMOVED_BY_DECISION_ROWS: usize = 34_398;
-const REMOVED_BY_DECISION_CASES: usize = 5_823;
-
-fn decision_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
+fn ignored_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
     let mut replacements = Vec::new();
     if section_value(input, "plugins").is_some() {
         replacements.push((
@@ -219,15 +212,6 @@ enum RemovedEmbedKey {
     WireShape,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
-enum RemovedByDecision {
-    ProviderKey(RemovedProviderKey),
-    EmbedKey(RemovedEmbedKey),
-    GoneAutoMigrate,
-    RetiredTaskKey,
-    RetiredSection,
-}
-
 fn key_warning(path: String, key: &str) -> Finding {
     Finding::warning(
         path,
@@ -238,13 +222,13 @@ fn key_warning(path: String, key: &str) -> Finding {
 #[derive(Debug, Default)]
 struct RemovedDeltas {
     paths: Vec<String>,
-    findings: Vec<(RemovedByDecision, Finding)>,
+    findings: Vec<Finding>,
 }
 
 impl RemovedDeltas {
-    fn push(&mut self, path: &str, reason: RemovedByDecision, finding: Finding) {
+    fn push(&mut self, path: &str, finding: Finding) {
         self.paths.push(path.to_owned());
-        self.findings.push((reason, finding));
+        self.findings.push(finding);
     }
 }
 
@@ -275,7 +259,6 @@ fn provider_key_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas)
             };
             deltas.push(
                 &format!("providers.{id}.{key}"),
-                RemovedByDecision::ProviderKey(removed),
                 key_warning(format!("providers.{id}.{key}"), &removed.to_string()),
             );
         }
@@ -299,7 +282,6 @@ fn embed_key_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas) {
             };
             deltas.push(
                 &format!("{prefix}.{key}"),
-                RemovedByDecision::EmbedKey(removed),
                 key_warning(format!("{prefix}.{key}"), &removed.to_string()),
             );
         }
@@ -330,7 +312,6 @@ fn auto_migrate_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas)
     if embedded.get("auto_migrate").is_some() {
         deltas.push(
             "memory.postgres.embedded.auto_migrate",
-            RemovedByDecision::GoneAutoMigrate,
             Finding::warning(
                 "memory.postgres.embedded.auto_migrate",
                 "auto_migrate is gone; run rivethub-migrate",
@@ -356,7 +337,6 @@ fn retired_task_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDeltas)
             let path = format!("{section}.{key}");
             deltas.push(
                 &path,
-                RemovedByDecision::RetiredTaskKey,
                 Finding::warning(
                     path.clone(),
                     format!("\"{path}\" is no longer used: {why}. Delete it."),
@@ -396,14 +376,13 @@ fn retired_section_deltas(input: &serde_yaml_ng::Value, deltas: &mut RemovedDelt
         if used {
             deltas.push(
                 retired.path,
-                RemovedByDecision::RetiredSection,
                 Finding::warning(retired.path, retired.message()),
             );
         }
     }
 }
 
-fn removed_by_decision(input: &serde_yaml_ng::Value) -> RemovedDeltas {
+fn removed_deltas(input: &serde_yaml_ng::Value) -> RemovedDeltas {
     let mut deltas = RemovedDeltas::default();
     provider_key_deltas(input, &mut deltas);
     embed_key_deltas(input, &mut deltas);
@@ -440,12 +419,12 @@ fn gateway_finding(mut finding: Finding) -> Finding {
 }
 
 fn contract_findings(input: &serde_yaml_ng::Value, recorded: &Recorded) -> Vec<Finding> {
-    let replacements = decision_replacements(input);
+    let replacements = ignored_replacements(input);
     let mut findings: Vec<Finding> = recorded
         .errors
         .iter()
         .chain(&recorded.warnings)
-        .filter(|finding| finding.message != DECISION_15_WARNING)
+        .filter(|finding| finding.message != UNINJECTED_REDACTION_WARNING)
         .filter(|finding| {
             !replacements
                 .iter()
@@ -590,12 +569,7 @@ fn replay_case(case: &Replay) -> Result<(), String> {
         let exposed = terminal_retired && finding.message.contains(EXPOSED_TERMINAL);
         !(retired || exposed || optional_section(finding))
     });
-    expected_findings.extend(
-        case.removed
-            .findings
-            .iter()
-            .map(|(_, finding)| finding.clone()),
-    );
+    expected_findings.extend(case.removed.findings.iter().cloned());
     for finding in &mut expected_findings {
         if finding.path == "memory.postgres.review_endpoint" {
             finding.message = finding
@@ -623,7 +597,7 @@ fn replay_file(name: &str, deviations: &BTreeMap<String, Deviation>) -> Result<(
             recorded_accepted: case.out.errors.is_empty(),
             contract: contract_findings(&case.input, &case.out),
             deviation: deviations.get(&id).cloned(),
-            removed: removed_by_decision(&case.input),
+            removed: removed_deltas(&case.input),
         };
         if let Err(failure) = replay_case(&replay) {
             failures.push(failure);
@@ -641,22 +615,6 @@ fn replay_file(name: &str, deviations: &BTreeMap<String, Deviation>) -> Result<(
     .into())
 }
 
-fn removed_by_decision_table_size() -> Result<(usize, usize), String> {
-    let mut rows = 0usize;
-    let mut cases = 0usize;
-    for name in GOLDEN_FILES {
-        for case in read_cases(name)? {
-            let deltas = removed_by_decision(&case.input);
-            if deltas.findings.is_empty() {
-                continue;
-            }
-            cases += 1;
-            rows += deltas.findings.len();
-        }
-    }
-    Ok((rows, cases))
-}
-
 fn collect_trials() -> Result<Vec<Trial>, String> {
     let deviations: BTreeMap<String, Deviation> = load_deviations()?
         .into_iter()
@@ -669,20 +627,6 @@ fn collect_trials() -> Result<Vec<Trial>, String> {
             replay_file(name, &file_deviations)
         }));
     }
-    trials.push(Trial::test(
-        "deviations_are_documented".to_owned(),
-        deviations_are_documented,
-    ));
-    trials.push(Trial::test("removed_by_decision_table".to_owned(), || {
-        let (rows, cases) = removed_by_decision_table_size()?;
-        if rows != REMOVED_BY_DECISION_ROWS || cases != REMOVED_BY_DECISION_CASES {
-            return Err(format!(
-                "the RemovedByDecision table drifted: pinned {REMOVED_BY_DECISION_ROWS} rows over {REMOVED_BY_DECISION_CASES} cases, table holds {rows} rows over {cases} cases"
-            )
-            .into());
-        }
-        Ok(())
-    }));
     Ok(trials)
 }
 

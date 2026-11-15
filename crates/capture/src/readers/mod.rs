@@ -33,33 +33,6 @@ pub use message::TranscriptSlice;
 pub(crate) use message::blocking;
 pub(crate) use message::report;
 
-pub const OUT_OF_SLICE: &[(&str, &str)] = &[
-    (
-        "claude-subagent-merge",
-        "inventory names the subagent directory and not a mapping into the parent session",
-    ),
-    (
-        "kimi-live-deltas",
-        "live deltas are not stored transcript records",
-    ),
-    (
-        "cursor-live-turn",
-        "inventory marks the cursor store as not live",
-    ),
-    (
-        "grok-parent-session",
-        "updates.jsonl parent links are not turns",
-    ),
-    (
-        "hermes-list-title",
-        "the port returns session ids; the first user row is not a title field",
-    ),
-    (
-        "store-root-from-environment",
-        "roots are passed in; readers do not read environment variables",
-    ),
-];
-
 #[derive(Debug)]
 pub enum StoreReader {
     Claude(crate::transcript::ClaudeTranscriptReader),

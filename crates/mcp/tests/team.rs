@@ -9,10 +9,9 @@ pub mod support;
 async fn only_a_shared_hub_introduces_the_viewer_and_teammates() {
     let server = Server::builder(
         Arc::new(testkit::FakeMemoryStore::default()),
-        false,
         CancellationToken::new(),
     )
-    .store_identity("alex")
+    .store_identity("ines")
     .await
     .expect("identity")
     .build()

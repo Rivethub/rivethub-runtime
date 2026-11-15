@@ -119,7 +119,7 @@ fn tool_use(id: &str, name: &str, input: &str) -> String {
 }
 
 #[tokio::test]
-async fn b5_1_thinking_text_and_usage_fold_into_one_complete_turn() {
+async fn thinking_text_and_usage_fold_into_one_complete_turn() {
     let reply = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"x"},{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"cache_read_input_tokens":5,"output_tokens":3}}}"#;
     assert_eq!(
         claude_json(&[&user("hi"), reply]).await,
@@ -128,7 +128,7 @@ async fn b5_1_thinking_text_and_usage_fold_into_one_complete_turn() {
 }
 
 #[tokio::test]
-async fn b5_2_a_tool_round_trip_stays_inside_the_assistant_turn() {
+async fn a_tool_round_trip_stays_inside_the_assistant_turn() {
     let result = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt"}]}}"#;
     let done = assistant(r#"[{"type":"text","text":"done"}]"#, "end_turn");
     assert_eq!(
@@ -143,7 +143,27 @@ async fn b5_2_a_tool_round_trip_stays_inside_the_assistant_turn() {
 }
 
 #[tokio::test]
-async fn b5_3_command_wrappers_are_not_user_turns() {
+async fn what_was_said_after_the_last_tool_call_is_given_apart_as_the_reply() {
+    let result = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt"}]}}"#;
+    let said = assistant(
+        r#"[{"type":"text","text":"I'll list the files."}]"#,
+        "tool_use",
+    );
+    let done = assistant(r#"[{"type":"text","text":"One file: a.txt."}]"#, "end_turn");
+    let call = tool_use("t1", "Bash", r#"{"command":"ls"}"#);
+    let turns = claude_turns(&[&said, &call, result, &done]).await;
+    let turn = first_turn(&turns);
+    assert_eq!(turn.text, "I'll list the files.\n\nOne file: a.txt.");
+    assert_eq!(turn.reply_text.as_deref(), Some("One file: a.txt."));
+
+    let open = claude_turns(&[&said, &call]).await;
+    assert_eq!(first_turn(&open).reply_text, None);
+    let plain = claude_turns(&[&call, result, &done]).await;
+    assert_eq!(first_turn(&plain).reply_text, None);
+}
+
+#[tokio::test]
+async fn command_wrappers_are_not_user_turns() {
     assert_eq!(
         claude_turns(&[&user("<command-name>/clear</command-name>")]).await,
         Vec::new()
@@ -151,7 +171,7 @@ async fn b5_3_command_wrappers_are_not_user_turns() {
 }
 
 #[tokio::test]
-async fn b5_4_bare_slash_commands_are_not_user_turns() {
+async fn bare_slash_commands_are_not_user_turns() {
     assert_eq!(
         claude_turns(&[&user("/compact"), &user("/model opus")]).await,
         Vec::new()
@@ -163,7 +183,7 @@ async fn b5_4_bare_slash_commands_are_not_user_turns() {
 }
 
 #[tokio::test]
-async fn b5_5_the_paste_wrapper_is_stripped() {
+async fn the_paste_wrapper_is_stripped() {
     assert_eq!(
         claude_json(&[&user(
             "<pasted_content id=\"7\">\nabc\n</pasted_content id=\"7\">"
@@ -174,7 +194,7 @@ async fn b5_5_the_paste_wrapper_is_stripped() {
 }
 
 #[tokio::test]
-async fn b5_6_a_compact_boundary_between_complete_turns_is_a_marker() {
+async fn a_compact_boundary_between_complete_turns_is_a_marker() {
     let answer = assistant(r#"[{"type":"text","text":"a1"}]"#, "end_turn");
     let boundary = r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":180000,"postTokens":12000}}"#;
     let summary = r#"{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary of the conversation"}}"#;
@@ -236,7 +256,7 @@ async fn token_labels_use_k_and_m_suffixes() {
 }
 
 #[tokio::test]
-async fn b5_7_a_large_file_reads_its_tail_and_drops_parent_sidechains() -> TestResult {
+async fn a_large_file_reads_its_tail_and_drops_parent_sidechains() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join(format!("projects/-home-user/{U1}.jsonl"));
     fs::create_dir_all(path.parent().ok_or("parent")?)?;
@@ -283,7 +303,7 @@ async fn an_all_sidechain_file_keeps_its_sidechain_lines() {
 }
 
 #[tokio::test]
-async fn b5_8_an_errored_tool_result_marks_the_tool() {
+async fn an_errored_tool_result_marks_the_tool() {
     let result = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"exit 1"}]}}"#;
     let turns = claude_turns(&[&tool_use("t1", "Bash", r#"{"command":"false"}"#), result]).await;
     let turn = turns.first().expect("assistant turn");
@@ -298,7 +318,7 @@ async fn b5_8_an_errored_tool_result_marks_the_tool() {
 }
 
 #[tokio::test]
-async fn b5_9_a_large_prompt_tool_input_is_replaced_by_a_marker() {
+async fn a_large_prompt_tool_input_is_replaced_by_a_marker() {
     let question = "q".repeat(9 * 1024);
     let big = tool_use(
         "t1",
@@ -380,7 +400,7 @@ async fn a_subagent_id_reads_its_agent_file() -> TestResult {
 }
 
 #[tokio::test]
-async fn b5_11_a_missing_store_file_is_an_empty_transcript() -> TestResult {
+async fn a_missing_store_file_is_an_empty_transcript() -> TestResult {
     let dir = tempfile::tempdir()?;
     write(
         dir.path(),

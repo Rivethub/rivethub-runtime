@@ -103,12 +103,12 @@ fn written(node: &Node) -> Vec<BTreeMap<PathBuf, (usize, u64)>> {
 #[tokio::test]
 async fn draft_writes_no_file() -> TestResult {
     let model = model().await?;
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    let (alpha, gamma, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
-    let (_, env) = phil.loaded(false)?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
+    let (_, env) = dana.loaded(false)?;
     capture::sanitize::LocalKey::load_or_create(&capture::share::key_path(&env)?)?;
-    let before = written(&phil);
+    let before = written(&dana);
 
     let draft = desk.draft(request(&[&alpha, &gamma], true)?).await?;
     desk.report(draft.id).await?;
@@ -122,7 +122,7 @@ async fn draft_writes_no_file() -> TestResult {
     )
     .await?;
 
-    assert_eq!(written(&phil), before, "a draft wrote under the home");
+    assert_eq!(written(&dana), before, "a draft wrote under the home");
     model.close().await?;
     Ok(())
 }
@@ -182,10 +182,10 @@ async fn send_refuses_open_flags_and_wrong_counts() -> TestResult {
     )
     .await?;
     let host = drop_box.addr.to_string();
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    sign_in(&phil, &host)?;
-    let (alpha, gamma, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    sign_in(&dana, &host)?;
+    let (alpha, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
     let draft = desk.draft(request(&[&alpha, &gamma], true)?).await?;
     assert_eq!(draft.open_flags(), 1);
 
@@ -263,7 +263,7 @@ async fn gated_upload(
         .into_response()
 }
 
-async fn gated_drop_box(phil: &Node) -> TestResult<(Gated, testkit::Stub)> {
+async fn gated_drop_box(dana: &Node) -> TestResult<(Gated, testkit::Stub)> {
     let drops = Gated {
         arrived: Arc::default(),
         gate: Arc::new(tokio::sync::Semaphore::new(0)),
@@ -275,17 +275,17 @@ async fn gated_drop_box(phil: &Node) -> TestResult<(Gated, testkit::Stub)> {
             .with_state(drops.clone()),
     )
     .await?;
-    sign_in(phil, &drop_box.addr.to_string())?;
+    sign_in(dana, &drop_box.addr.to_string())?;
     Ok((drops, drop_box))
 }
 
 #[tokio::test]
 async fn a_draft_sent_twice_at_once_uploads_once() -> TestResult {
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
-    let (drops, drop_box) = gated_drop_box(&phil).await?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let (drops, drop_box) = gated_drop_box(&dana).await?;
     let host = drop_box.addr.to_string();
-    let desk = desk(&phil, false)?;
+    let desk = desk(&dana, false)?;
     let draft = desk.draft(request(&[&alpha], false)?).await?;
 
     let (first, second, ()) = tokio::join!(
@@ -312,11 +312,11 @@ async fn a_draft_sent_twice_at_once_uploads_once() -> TestResult {
 
 #[tokio::test]
 async fn nothing_uploads_after_a_discard_returns() -> TestResult {
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
-    let (drops, drop_box) = gated_drop_box(&phil).await?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let (drops, drop_box) = gated_drop_box(&dana).await?;
     let host = drop_box.addr.to_string();
-    let desk = desk(&phil, false)?;
+    let desk = desk(&dana, false)?;
     let draft = desk.draft(request(&[&alpha], false)?).await?;
     let discarding = tokio::sync::Notify::new();
 
@@ -349,9 +349,9 @@ async fn nothing_uploads_after_a_discard_returns() -> TestResult {
 #[tokio::test]
 async fn debug_never_shows_text_or_code() -> TestResult {
     let model = model().await?;
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    let (_, gamma, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
     let draft = desk.draft(request(&[&gamma], true)?).await?;
     let flag = draft.flags.first().ok_or("one flag")?;
     assert!(
@@ -419,9 +419,9 @@ async fn a_failing_decision_model_never_echoes_into_the_error() -> TestResult {
             ),
     )
     .await?;
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    let (_, gamma, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (_, gamma, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
 
     let refused = desk.draft(request(&[&gamma], true)?).await;
 
@@ -437,15 +437,15 @@ async fn a_failing_decision_model_never_echoes_into_the_error() -> TestResult {
 
 #[tokio::test]
 async fn drafts_are_capped_and_expire_when_idle() -> TestResult {
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
     let start: DateTime<Utc> = "2026-11-11T12:00:00Z".parse()?;
     let minutes = Arc::new(AtomicI64::new(0));
     let clock = {
         let minutes = Arc::clone(&minutes);
         Arc::new(move || start + chrono::TimeDelta::minutes(minutes.load(Ordering::SeqCst)))
     };
-    let desk = desk(&phil, false)?.with_clock(clock);
+    let desk = desk(&dana, false)?.with_clock(clock);
 
     let mut held: Vec<DraftId> = Vec::new();
     for _ in 0..4 {
@@ -497,9 +497,9 @@ async fn counting_model() -> TestResult<(Arc<AtomicUsize>, testkit::Stub)> {
 #[tokio::test]
 async fn concurrent_drafts_hold_no_more_than_the_cap() -> TestResult {
     let (described, model) = counting_model().await?;
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
     let wanted = request(&[&alpha], true)?;
 
     let drafted = futures::future::join_all((0..8).map(|_| desk.draft(wanted.clone()))).await;
@@ -523,9 +523,9 @@ async fn concurrent_drafts_hold_no_more_than_the_cap() -> TestResult {
 #[tokio::test]
 async fn the_byte_cap_refuses_before_sanitizing() -> TestResult {
     let (described, model) = counting_model().await?;
-    let phil = Node::new("phil", &format!("http://{}", model.addr), &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?.with_byte_cap(1);
+    let dana = Node::new("dana", &format!("http://{}", model.addr), &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?.with_byte_cap(1);
 
     let refused = desk.draft(request(&[&alpha], true)?).await;
 
@@ -538,10 +538,10 @@ async fn the_byte_cap_refuses_before_sanitizing() -> TestResult {
 
 #[tokio::test]
 async fn find_matches_session_find() -> TestResult {
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&dana, false)?;
     let (refused, text) = call(
-        &phil.server(false)?,
+        &dana.server(false)?,
         "session_find",
         r#"{"query":"bundle"}"#,
     )
@@ -606,9 +606,9 @@ async fn a_share_server_echoing_the_token_never_reaches_the_desk_error() -> Test
     )
     .await?;
     let host = echo.addr.to_string();
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let (alpha, _, _) = chosen(&phil)?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let (alpha, _, _) = chosen(&dana)?;
+    let desk = desk(&dana, false)?;
 
     let signed_in = desk
         .login(kernel::memory::share::desk::LoginRequest::Team {
@@ -616,7 +616,7 @@ async fn a_share_server_echoing_the_token_never_reaches_the_desk_error() -> Test
             token: TEAM_TOKEN.to_owned(),
         })
         .await;
-    sign_in(&phil, &host)?;
+    sign_in(&dana, &host)?;
     let draft = desk.draft(request(&[&alpha], false)?).await?;
     let sent = desk.send(draft.id, send(&host, 1, 0)).await;
 
@@ -710,8 +710,8 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
     )
     .await?;
     let host = share.addr.to_string();
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&dana, false)?;
 
     let started = desk
         .login(kernel::memory::share::desk::LoginRequest::Cloud {
@@ -730,14 +730,6 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
         matches!(polled, Err(DeskError::UnknownLogin)),
         "a logged-out login stayed pollable: {polled:?}"
     );
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "no signal says a cancelled login stayed quiet, so the test gives a late save time to show"
-        )
-    )]
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let servers = desk.servers().await?;
     assert!(
         servers.servers.iter().all(|server| !server.signed_in),
@@ -771,8 +763,8 @@ async fn a_login_still_starting_when_logout_runs_cannot_sign_the_desk_in() -> Te
     )
     .await?;
     let host = share.addr.to_string();
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&dana, false)?;
 
     let (started, logged_out) = tokio::join!(
         desk.login(kernel::memory::share::desk::LoginRequest::Cloud {
@@ -800,14 +792,6 @@ async fn a_login_still_starting_when_logout_runs_cannot_sign_the_desk_in() -> Te
         matches!(polled, Err(DeskError::UnknownLogin)),
         "a login that started during logout stayed pollable: {polled:?}"
     );
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "no signal says a cancelled login stayed quiet, so the test gives a late save time to show"
-        )
-    )]
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let servers = desk.servers().await?;
     assert!(
         servers.servers.iter().all(|server| !server.signed_in),
@@ -837,8 +821,8 @@ async fn a_login_stalled_on_one_origin_does_not_delay_logout_on_another() -> Tes
     )
     .await?;
     let host = share.addr.to_string();
-    let phil = Node::new("phil", "http://127.0.0.1:9", &sessions()).await?;
-    let desk = desk(&phil, false)?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
+    let desk = desk(&dana, false)?;
 
     let (started, other_logout) = tokio::join!(
         desk.login(kernel::memory::share::desk::LoginRequest::Cloud {

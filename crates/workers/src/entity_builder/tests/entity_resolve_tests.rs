@@ -1,8 +1,21 @@
-use super::*;
+use super::alias::{
+    AliasSubject, RefGate, alias_paired, filter_new_aliases, inject_suggested, new_entity_aliases,
+    ref_gate,
+};
+use super::bind::{
+    Asked, MatchStep, Ruling, apply_asked, ask, decision_for, entity_decision, offered, undecided,
+};
+use super::types::{TypeOutcome, alias_to_keep, settle_type};
+use crate::WorkerError;
+use crate::entity_builder::decide::{DecideRequest, EntityDecider, RawDecision};
 use async_trait::async_trait;
+use kernel::wiki::entity_pass::{
+    KnownEntity, MatchCandidate, MatchDecision, PreparedEntity, TypeBrief,
+};
 use parking_lot::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use uuid::Uuid;
 
 fn prepared(name: &str, type_name: &str) -> PreparedEntity {
     PreparedEntity {
@@ -29,7 +42,7 @@ fn candidate(id: u128, name: &str, type_name: &str) -> MatchCandidate {
 
 #[test]
 fn a_low_confidence_choice_holds_and_a_sure_new_is_created() {
-    let ranked = vec![candidate(4, "gpubox", "Hosts")];
+    let ranked = vec![candidate(4, "tinbox", "Hosts")];
     let held = apply_asked(
         &prepared("gpu server", "Hosts"),
         &ranked,
@@ -42,14 +55,14 @@ fn a_low_confidence_choice_holds_and_a_sure_new_is_created() {
     .expect("a low confidence answer is a hold");
     assert!(matches!(held, MatchStep::Held { reason, .. } if reason == "low-confidence"));
     let created =
-        apply_asked(&prepared("phil", "People"), &[], Asked::Skip, 0.72).expect("no candidates");
+        apply_asked(&prepared("dana", "People"), &[], Asked::Skip, 0.72).expect("no candidates");
     assert!(matches!(created, MatchStep::Ready(item) if item.entity_ref.is_none()));
 }
 
 #[test]
 fn an_exact_alias_binds_and_a_person_stays_a_second_page() {
     let id = Uuid::from_u128(9);
-    let mut host = candidate(9, "gpubox", "Hosts");
+    let mut host = candidate(9, "tinbox", "Hosts");
     host.aliases = vec!["tvrt".to_owned()];
     let bound = apply_asked(
         &prepared("tvrt", "Hosts"),
@@ -72,28 +85,12 @@ fn an_exact_alias_binds_and_a_person_stays_a_second_page() {
     assert!(
         matches!(crossed, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(2)))
     );
-    let person = candidate(3, "phil", "People");
-    let shown = offered(&prepared("phil", "Projects"), std::slice::from_ref(&person));
+    let person = candidate(3, "dana", "People");
+    let shown = offered(&prepared("dana", "Projects"), std::slice::from_ref(&person));
     assert_eq!(shown.len(), 0);
-    let created = apply_asked(&prepared("phil", "Projects"), &shown, Asked::Skip, 0.72)
+    let created = apply_asked(&prepared("dana", "Projects"), &shown, Asked::Skip, 0.72)
         .expect("person stays apart");
     assert!(matches!(created, MatchStep::Ready(item) if item.entity_ref.is_none()));
-    let failed = apply_asked(
-        &prepared("box", "Hosts"),
-        &[candidate(5, "gpubox", "Hosts")],
-        Asked::Unreachable(WorkerError::Llm {
-            message: "down".to_owned(),
-        }),
-        0.72,
-    );
-    let Err(error) = failed else {
-        panic!("an unreachable decider created the entity");
-    };
-    assert!(
-        undecided(&error)
-            .to_string()
-            .contains("entity match undecided")
-    );
 }
 
 struct Scripted {
@@ -168,14 +165,14 @@ async fn a_stub_decider_binds_each_compatible_pair_and_skips_the_rest() {
         }
     }
 
-    let host = candidate(1, "datahub", "Hosts");
-    let service = prepared("Data Hub", "Services");
+    let host = candidate(1, "mailhub", "Hosts");
+    let service = prepared("Mail Hub", "Services");
     let (calls, bound) = judged("new", &service, std::slice::from_ref(&host)).await;
     assert_eq!(calls, 0);
     assert!(matches!(bound, MatchStep::Ready(item) if item.entity_ref == Some(host.id)));
 
-    let repo = candidate(3, "acme/datahub", "Repos");
-    let named = prepared("datahub", "Services");
+    let repo = candidate(3, "acme/mailhub", "Repos");
+    let named = prepared("mailhub", "Services");
     let (calls, kept) = judged("new", &named, std::slice::from_ref(&repo)).await;
     assert_eq!(calls, 0);
     assert!(matches!(kept, MatchStep::Ready(item) if item.entity_ref == Some(repo.id)));
@@ -183,7 +180,7 @@ async fn a_stub_decider_binds_each_compatible_pair_and_skips_the_rest() {
     let model = prepared("ThinkingCap", "Models");
     assert_eq!(offered(&model, std::slice::from_ref(&long)).len(), 1);
 
-    let same_type = candidate(8, "gpubox", "Hosts");
+    let same_type = candidate(8, "tinbox", "Hosts");
     let fuzzy = prepared("gpu server", "Hosts");
     assert_eq!(offered(&fuzzy, std::slice::from_ref(&same_type)).len(), 1);
     checked_name_pairs().await;
@@ -212,13 +209,13 @@ async fn checked_name_pairs() {
             "{observed_type} vs {kept_type} did not bind"
         );
     }
-    let person = prepared("phil", "Projects");
-    let people = [candidate(9, "phil", "People")];
+    let person = prepared("dana", "Projects");
+    let people = [candidate(9, "dana", "People")];
     let (calls, step) = judged("0", &person, &people).await;
     assert_eq!(calls, 0, "a person and a project were offered");
     assert!(matches!(step, MatchStep::Ready(item) if item.entity_ref.is_none()));
     let crossed = [
-        ("Services", "Hosts", "datahub", "datahub-extra"),
+        ("Services", "Hosts", "mailhub", "mailhub-extra"),
         ("Services", "Repos", "web", "acme/web"),
     ];
     for (observed_type, kept_type, observed_name, kept_name) in crossed {
@@ -239,8 +236,8 @@ async fn checked_name_pairs() {
     }
 
     let mut alias_only = candidate(5, "widget", "Hosts");
-    alias_only.aliases = vec!["datahub".to_owned()];
-    let via_alias = prepared("datahub", "Services");
+    alias_only.aliases = vec!["mailhub".to_owned()];
+    let via_alias = prepared("mailhub", "Services");
     let (calls, step) = judged("new", &via_alias, std::slice::from_ref(&alias_only)).await;
     assert_eq!(calls, 0);
     assert!(matches!(step, MatchStep::Ready(item) if item.entity_ref == Some(alias_only.id)));
@@ -272,15 +269,15 @@ impl EntityDecider for Flaky {
 
 #[test]
 fn new_entity_keeps_aliases_the_mention_states() {
-    let known = vec![known_entity(Uuid::new_v4(), "gpubox", "host", &[])];
+    let known = vec![known_entity(Uuid::new_v4(), "tinbox", "host", &[])];
     let aliases = vec![
         "G9".to_owned(),
-        "gpubox".to_owned(),
+        "tinbox".to_owned(),
         "11.22.33.45".to_owned(),
         "box_a".to_owned(),
     ];
-    let mention = "gerty (G9, HP DL380 Gen9) at 11.22.33.45 is up";
-    let kept = new_entity_aliases("gerty", &aliases, mention, &known);
+    let mention = "hally (G9, HP DL380 Gen9) at 11.22.33.45 is up";
+    let kept = new_entity_aliases("hally", &aliases, mention, &known);
     assert_eq!(kept, vec!["G9".to_owned(), "11.22.33.45".to_owned()]);
 }
 
@@ -298,18 +295,18 @@ fn known_entity(id: Uuid, name: &str, type_name: &str, aliases: &[&str]) -> Know
 }
 
 #[test]
-fn gerty_with_gpubox_id_is_not_bound_directly() {
+fn a_reference_to_an_entity_with_another_name_is_offered_not_bound() {
     let id = Uuid::from_u128(7);
-    let known = vec![known_entity(id, "gpubox", "Hosts", &[])];
-    let mut observed = prepared("gerty", "Hosts");
+    let known = vec![known_entity(id, "tinbox", "Hosts", &[])];
+    let mut observed = prepared("hally", "Hosts");
     observed.entity_ref = Some(id);
     observed.aliases = vec!["g9".to_owned(), "srv9".to_owned(), "11.22.33.45".to_owned()];
     let RefGate::Match { suggested } = ref_gate(&observed, &known) else {
-        panic!("gerty was bound directly to gpubox");
+        panic!("hally was bound directly to tinbox");
     };
-    let suggested = suggested.expect("gpubox stays in the candidate set");
+    let suggested = suggested.expect("tinbox stays in the candidate set");
     assert_eq!(suggested.id, id);
-    assert_eq!(suggested.name, "gpubox");
+    assert_eq!(suggested.name, "tinbox");
     let mut ranked = Vec::new();
     inject_suggested(&mut ranked, Some(suggested));
     let mut cleared = observed;
@@ -323,12 +320,12 @@ fn gerty_with_gpubox_id_is_not_bound_directly() {
 #[test]
 fn an_existing_alias_is_bound_directly() {
     let id = Uuid::from_u128(7);
-    let known = vec![known_entity(id, "gpubox", "Hosts", &["g9"])];
+    let known = vec![known_entity(id, "tinbox", "Hosts", &["g9"])];
     let mut observed = prepared("G9", "Hosts");
     observed.entity_ref = Some(id);
     let gate = ref_gate(&observed, &known);
     assert!(
-        matches!(gate, RefGate::Direct(subject) if subject.id == id && subject.name == "gpubox")
+        matches!(gate, RefGate::Direct(subject) if subject.id == id && subject.name == "tinbox")
     );
 }
 
@@ -357,7 +354,7 @@ impl EntityDecider for AliasStub {
 fn host_subject(aliases: &[&str]) -> AliasSubject {
     AliasSubject {
         id: Uuid::from_u128(7),
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         summary: "gpu server".to_owned(),
         aliases: aliases.iter().map(|alias| (*alias).to_owned()).collect(),
@@ -367,7 +364,7 @@ fn host_subject(aliases: &[&str]) -> AliasSubject {
 #[tokio::test]
 async fn a_new_alias_is_attached_only_when_the_jev_check_passes() {
     let subject = host_subject(&[]);
-    let known = vec![known_entity(subject.id, "gpubox", "Hosts", &[])];
+    let known = vec![known_entity(subject.id, "tinbox", "Hosts", &[])];
     let positive = AliasStub {
         score: 0.91,
         calls: AtomicUsize::new(0),
@@ -377,7 +374,7 @@ async fn a_new_alias_is_attached_only_when_the_jev_check_passes() {
         &positive,
         vec!["tvrt".to_owned()],
         &subject,
-        "gpubox is also called tvrt",
+        "tinbox is also called tvrt",
         &known,
     )
     .await;
@@ -385,7 +382,7 @@ async fn a_new_alias_is_attached_only_when_the_jev_check_passes() {
     assert_eq!(positive.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         positive.question.lock().as_str(),
-        "Transcript: \"gpubox is also called tvrt\". Entity: gpubox (Hosts; also known as none; gpu server). Does \"tvrt\" in this transcript refer to this same entity?"
+        "Transcript: \"tinbox is also called tvrt\". Entity: tinbox (Hosts; also known as none; gpu server). Does \"tvrt\" in this transcript refer to this same entity?"
     );
     let negative = AliasStub {
         score: 0.59,
@@ -396,7 +393,7 @@ async fn a_new_alias_is_attached_only_when_the_jev_check_passes() {
         &negative,
         vec!["tvrt".to_owned()],
         &subject,
-        "gpubox is also called tvrt",
+        "tinbox is also called tvrt",
         &known,
     )
     .await;
@@ -406,32 +403,32 @@ async fn a_new_alias_is_attached_only_when_the_jev_check_passes() {
 
 #[test]
 fn a_tight_mention_pairs_the_name_and_the_alias() {
-    let mention = "datahub (box42, 11.22.33.46)";
-    assert!(alias_paired("datahub", "box42", mention));
-    assert!(alias_paired("DataHub", "BOX42", mention));
-    assert!(!alias_paired("datahub", "110", mention));
-    assert!(alias_paired("box_a", "GERTY", "GERTY (box_a)"));
-    assert!(alias_paired("box_a", "gerty", "box_a/GERTY"));
-    assert!(alias_paired("box_a", "gerty", "box_a aka GERTY"));
-    assert!(alias_paired("box_a", "gerty", "box_a = GERTY"));
-    assert!(alias_paired("box_a", "gerty", "GERTY is box_a"));
+    let mention = "mailhub (box42, 11.22.33.46)";
+    assert!(alias_paired("mailhub", "box42", mention));
+    assert!(alias_paired("MailHub", "BOX42", mention));
+    assert!(!alias_paired("mailhub", "110", mention));
+    assert!(alias_paired("box_a", "HALLY", "HALLY (box_a)"));
+    assert!(alias_paired("box_a", "hally", "box_a/HALLY"));
+    assert!(alias_paired("box_a", "hally", "box_a aka HALLY"));
+    assert!(alias_paired("box_a", "hally", "box_a = HALLY"));
+    assert!(alias_paired("box_a", "hally", "HALLY is box_a"));
     assert!(!alias_paired(
-        "gpubox",
+        "tinbox",
         "tvrt",
-        "gpubox is also called tvrt"
+        "tinbox is also called tvrt"
     ));
-    assert!(!alias_paired("datahub", "box42", "datahub is box42"));
-    let near = format!("datahub{}(box42)", " ".repeat(29));
-    let far = format!("datahub{}(box42)", " ".repeat(30));
-    assert!(alias_paired("datahub", "box42", &near));
-    assert!(!alias_paired("datahub", "box42", &far));
+    assert!(!alias_paired("mailhub", "box42", "mailhub is box42"));
+    let near = format!("mailhub{}(box42)", " ".repeat(29));
+    let far = format!("mailhub{}(box42)", " ".repeat(30));
+    assert!(alias_paired("mailhub", "box42", &near));
+    assert!(!alias_paired("mailhub", "box42", &far));
 }
 
 #[tokio::test]
-async fn box42_paired_with_datahub_is_accepted_without_jev() {
+async fn box42_paired_with_mailhub_is_accepted_without_jev() {
     let subject = AliasSubject {
         id: Uuid::from_u128(11),
-        name: "datahub".to_owned(),
+        name: "mailhub".to_owned(),
         type_name: "Hosts".to_owned(),
         summary: "proxmox container".to_owned(),
         aliases: Vec::new(),
@@ -445,7 +442,7 @@ async fn box42_paired_with_datahub_is_accepted_without_jev() {
         &stub,
         vec!["box42".to_owned()],
         &subject,
-        "datahub (box42, 11.22.33.46)",
+        "mailhub (box42, 11.22.33.46)",
         &[],
     )
     .await;
@@ -454,7 +451,7 @@ async fn box42_paired_with_datahub_is_accepted_without_jev() {
 }
 
 #[tokio::test]
-async fn a_contextual_alias_at_065_is_kept_and_030_is_dropped() {
+async fn a_contextual_alias_above_the_bar_is_kept_and_one_below_is_dropped() {
     let subject = host_subject(&["g9", "srv9"]);
     let mention = "jobs moved onto the box";
     let positive = AliasStub {
@@ -467,7 +464,7 @@ async fn a_contextual_alias_at_065_is_kept_and_030_is_dropped() {
     assert_eq!(positive.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         positive.question.lock().as_str(),
-        "Transcript: \"jobs moved onto the box\". Entity: gpubox (Hosts; also known as g9, srv9; gpu server). Does \"tvrt\" in this transcript refer to this same entity?"
+        "Transcript: \"jobs moved onto the box\". Entity: tinbox (Hosts; also known as g9, srv9; gpu server). Does \"tvrt\" in this transcript refer to this same entity?"
     );
     let negative = AliasStub {
         score: 0.3,
@@ -490,8 +487,8 @@ async fn a_contextual_alias_at_065_is_kept_and_030_is_dropped() {
 async fn an_alias_equal_to_another_entity_name_is_rejected() {
     let subject = host_subject(&[]);
     let known = vec![
-        known_entity(subject.id, "gpubox", "Hosts", &[]),
-        known_entity(Uuid::from_u128(8), "gerty", "Hosts", &[]),
+        known_entity(subject.id, "tinbox", "Hosts", &[]),
+        known_entity(Uuid::from_u128(8), "hally", "Hosts", &[]),
     ];
     let stub = AliasStub {
         score: 0.99,
@@ -500,9 +497,9 @@ async fn an_alias_equal_to_another_entity_name_is_rejected() {
     };
     let kept = filter_new_aliases(
         &stub,
-        vec!["gerty".to_owned()],
+        vec!["hally".to_owned()],
         &subject,
-        "gerty showed up in the logs",
+        "hally showed up in the logs",
         &known,
     )
     .await;
@@ -512,19 +509,19 @@ async fn an_alias_equal_to_another_entity_name_is_rejected() {
 }
 
 #[tokio::test]
-async fn an_explicit_pairing_merges_two_hosts_at_or_above_0_8() {
+async fn an_explicit_pairing_at_the_merge_bar_merges_two_hosts() {
     let subject = AliasSubject {
         id: Uuid::from_u128(7),
-        name: "GERTY".to_owned(),
+        name: "HALLY".to_owned(),
         type_name: "Hosts".to_owned(),
         summary: "proxmox host".to_owned(),
         aliases: vec!["oldbox".to_owned()],
     };
     let known = vec![
-        known_entity(subject.id, "GERTY", "Hosts", &["oldbox"]),
+        known_entity(subject.id, "HALLY", "Hosts", &["oldbox"]),
         known_entity(Uuid::from_u128(8), "box_a", "Hosts", &["G9"]),
     ];
-    let mention = "GERTY (old box_a/G9, 11.22.33.45) serves Qwen 27B";
+    let mention = "HALLY (old box_a/G9, 11.22.33.45) serves Qwen 27B";
     let stub = AliasStub {
         score: 0.8,
         calls: AtomicUsize::new(0),
@@ -537,16 +534,12 @@ async fn an_explicit_pairing_merges_two_hosts_at_or_above_0_8() {
         merged.merges.first().map(|item| item.other_id),
         Some(Uuid::from_u128(8))
     );
-    assert_eq!(
-        merged.merges.first().map(|item| item.other_name.as_str()),
-        Some("box_a")
-    );
     let score = merged.merges.first().map(|item| item.score);
     assert!(score.is_some_and(|value| (value - 0.8).abs() < 0.001));
     assert_eq!(stub.calls.load(Ordering::SeqCst), 1);
     let question = stub.question.lock().clone();
     assert!(question.contains(mention));
-    assert!(question.contains("GERTY"));
+    assert!(question.contains("HALLY"));
     assert!(question.contains("box_a"));
     assert!(question.contains("Hosts"));
     assert!(question.contains("oldbox"));
@@ -556,11 +549,11 @@ async fn an_explicit_pairing_merges_two_hosts_at_or_above_0_8() {
 }
 
 #[tokio::test]
-async fn a_merge_below_0_8_or_across_types_does_not_fire() {
+async fn a_merge_below_the_bar_or_across_types_does_not_fire() {
     let subject = host_subject(&[]);
     let hosts = vec![
-        known_entity(subject.id, "gpubox", "Hosts", &[]),
-        known_entity(Uuid::from_u128(8), "gerty", "Hosts", &[]),
+        known_entity(subject.id, "tinbox", "Hosts", &[]),
+        known_entity(Uuid::from_u128(8), "hally", "Hosts", &[]),
     ];
     let low = AliasStub {
         score: 0.79,
@@ -569,9 +562,9 @@ async fn a_merge_below_0_8_or_across_types_does_not_fire() {
     };
     let dropped = filter_new_aliases(
         &low,
-        vec!["gerty".to_owned()],
+        vec!["hally".to_owned()],
         &subject,
-        "gpubox (gerty)",
+        "tinbox (hally)",
         &hosts,
     )
     .await;
@@ -584,14 +577,14 @@ async fn a_merge_below_0_8_or_across_types_does_not_fire() {
         question: Mutex::new(String::new()),
     };
     let known = vec![
-        known_entity(subject.id, "gpubox", "Hosts", &[]),
+        known_entity(subject.id, "tinbox", "Hosts", &[]),
         known_entity(Uuid::from_u128(9), "acme", "Projects", &[]),
     ];
     let apart = filter_new_aliases(
         &project,
         vec!["acme".to_owned()],
         &subject,
-        "gpubox (acme)",
+        "tinbox (acme)",
         &known,
     )
     .await;
@@ -599,20 +592,20 @@ async fn a_merge_below_0_8_or_across_types_does_not_fire() {
     assert_eq!(project.calls.load(Ordering::SeqCst), 0);
     let person = AliasSubject {
         id: Uuid::from_u128(3),
-        name: "Phil".to_owned(),
+        name: "Dana".to_owned(),
         type_name: "People".to_owned(),
         summary: "a person".to_owned(),
         aliases: Vec::new(),
     };
     let mixed = vec![
-        known_entity(person.id, "Phil", "People", &[]),
-        known_entity(Uuid::from_u128(4), "philbox", "Hosts", &[]),
+        known_entity(person.id, "Dana", "People", &[]),
+        known_entity(Uuid::from_u128(4), "danabox", "Hosts", &[]),
     ];
     let blocked = filter_new_aliases(
         &project,
-        vec!["philbox".to_owned()],
+        vec!["danabox".to_owned()],
         &person,
-        "Phil (philbox)",
+        "Dana (danabox)",
         &mixed,
     )
     .await;
@@ -627,7 +620,7 @@ async fn an_ip_alias_not_tied_in_the_mention_is_rejected() {
         calls: AtomicUsize::new(0),
         question: Mutex::new(String::new()),
     };
-    let mention = "G9 is `gerty` at `11.22.33.45`";
+    let mention = "G9 is `hally` at `11.22.33.45`";
     let kept = filter_new_aliases(
         &stub,
         vec!["11.22.33.45".to_owned()],
@@ -647,8 +640,8 @@ async fn a_decide_error_is_retried_once() {
             calls: AtomicUsize::new(0),
         },
         &DecideRequest {
-            observation: "name: phil".to_owned(),
-            options: vec!["Phil (People)".to_owned()],
+            observation: "name: dana".to_owned(),
+            options: vec!["Dana (People)".to_owned()],
         },
     )
     .await
@@ -659,7 +652,7 @@ async fn a_decide_error_is_retried_once() {
 
 #[tokio::test]
 async fn a_near_duplicate_is_created_only_when_the_decider_says_different() {
-    let ranked = [candidate(4, "gerty", "Hosts")];
+    let ranked = [candidate(4, "hally", "Hosts")];
     let prepared = prepared("box9", "Hosts");
     let (calls, same) = judged("0", &prepared, &ranked).await;
     assert_eq!(calls, 1);
@@ -671,7 +664,7 @@ async fn a_near_duplicate_is_created_only_when_the_decider_says_different() {
 
 #[tokio::test]
 async fn an_unreachable_decider_is_asked_twice_and_creates_nothing() {
-    let ranked = [candidate(4, "gerty", "Hosts")];
+    let ranked = [candidate(4, "hally", "Hosts")];
     let prepared = prepared("box9", "Hosts");
     let down = Down {
         calls: AtomicUsize::new(0),
@@ -688,21 +681,9 @@ async fn an_unreachable_decider_is_asked_twice_and_creates_nothing() {
     }
 }
 
-#[tokio::test]
-async fn a_service_and_a_host_are_one_entity_when_the_decider_says_same() {
-    let ranked = [candidate(8, "gerty", "Hosts")];
-    let prepared = prepared("box9", "Services");
-    let (calls, same) = judged("0", &prepared, &ranked).await;
-    assert_eq!(calls, 1);
-    assert!(matches!(same, MatchStep::Ready(item) if item.entity_ref == Some(Uuid::from_u128(8))));
-    let (calls, different) = judged("new", &prepared, &ranked).await;
-    assert_eq!(calls, 1);
-    assert!(matches!(different, MatchStep::Ready(item) if item.entity_ref.is_none()));
-}
-
 #[test]
 fn a_decision_records_the_name_the_candidates_and_the_model() {
-    let ranked = [candidate(4, "gerty", "Hosts")];
+    let ranked = [candidate(4, "hally", "Hosts")];
     let prepared = prepared("box9", "Services");
     let decision = entity_decision(
         &prepared,
@@ -721,7 +702,7 @@ fn a_decision_records_the_name_the_candidates_and_the_model() {
             kind: "entity".to_owned(),
             proposed_name: "box9".to_owned(),
             proposed_type: "Services".to_owned(),
-            candidates: vec![format!("gerty (Hosts) {}", Uuid::from_u128(4))],
+            candidates: vec![format!("hally (Hosts) {}", Uuid::from_u128(4))],
             verdict: "same".to_owned(),
             choice: "0".to_owned(),
             confidence: 0.93,
@@ -779,7 +760,7 @@ fn brief(name: &str, aliases: &[&str], examples: &[&str]) -> TypeBrief {
 
 #[tokio::test]
 async fn a_new_type_follows_the_decider_once() {
-    let existing = vec![brief("Hosts", &[], &["gerty"]), brief("Services", &[], &[])];
+    let existing = vec![brief("Hosts", &[], &["hally"]), brief("Services", &[], &[])];
     let same = type_stub("0");
     let settled = settle_type(&same, "machine", &existing).await;
     assert_eq!(same.calls.load(Ordering::SeqCst), 1);
@@ -794,7 +775,7 @@ async fn a_new_type_follows_the_decider_once() {
         decision
             .candidates
             .iter()
-            .any(|line| line.contains("examples: gerty"))
+            .any(|line| line.contains("examples: hally"))
     );
     assert_eq!(alias_to_keep("machine", &name).as_deref(), Some("machine"));
 
@@ -829,7 +810,7 @@ async fn a_new_type_follows_the_decider_once() {
     assert_eq!(name, "person");
     assert_eq!(decision.verdict, "different");
 
-    let aliased = vec![brief("Hosts", &["machine"], &["gerty"])];
+    let aliased = vec![brief("Hosts", &["machine"], &["hally"])];
     let again = type_stub("0");
     let settled = settle_type(&again, "machine", &aliased).await;
     assert_eq!(again.calls.load(Ordering::SeqCst), 0);

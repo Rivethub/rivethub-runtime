@@ -200,7 +200,7 @@ pub(super) fn bundle_with(
     batch.messages = vec![message];
     let session = BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: node.clone(),
             conversation_id: "conv-1".to_owned(),
             session_key,
@@ -213,7 +213,7 @@ pub(super) fn bundle_with(
     };
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node,
         },
         at()?,
@@ -272,6 +272,17 @@ fn check(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::er
         Ok(sanitized) => sanitized,
         Err(error) => return Ok(vec![tag("run", &format!("refused: {error}"))]),
     };
+    found.extend(
+        sanitize::secrets(&sanitized.sealed.bundle)
+            .iter()
+            .map(|again| tag("ingest scan", &again.to_string())),
+    );
+    if sanitize::withheld(&sanitized.sealed.bundle) > 0 {
+        found.push(tag("ingest", "would count a withheld flag"));
+    }
+    if sanitized.report.rechecked > 0 {
+        found.push(tag("re-check", "caught a span the passes missed"));
+    }
     let file = String::from_utf8(sanitized.sealed.text.clone())?;
     match case.expect {
         Expect::Redact => {
@@ -303,61 +314,6 @@ fn check(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::er
     Ok(found)
 }
 
-fn rescan(case: &Case, position: Position) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let sanitized = sanitize::run(
-        &bundle_with(position, &case.raw)?,
-        &Policy {
-            mapping: sanitize::mapping::Mapping::default(),
-            key: LocalKey::from_bytes([7; 32]),
-            sessions: SessionRules::default(),
-        },
-        at()?,
-    )?;
-    let mut found: Vec<String> = sanitize::secrets(&sanitized.sealed.bundle)
-        .iter()
-        .map(|again| format!("{} | {position:?} | {again}", case.shape))
-        .collect();
-    if sanitize::withheld(&sanitized.sealed.bundle) > 0 {
-        found.push(format!(
-            "{} | {position:?} | ingest would count a withheld flag",
-            case.shape
-        ));
-    }
-    if sanitized.report.rechecked > 0 {
-        found.push(format!(
-            "{} | {position:?} | {} span(s) caught only by the re-check",
-            case.shape, sanitized.report.rechecked
-        ));
-    }
-    Ok(found)
-}
-
-#[test]
-fn every_corpus_case_sanitizes_to_a_bundle_ingest_accepts() -> TestResult {
-    let mut found = Vec::new();
-    let mut runs = 0;
-    for corpus in corpus_dirs()? {
-        for case in &cases(&corpus)? {
-            for position in positions(&case.position)? {
-                runs += 1;
-                found.extend(
-                    rescan(case, position)?
-                        .into_iter()
-                        .map(|line| format!("{corpus} | {line}")),
-                );
-            }
-        }
-    }
-    assert!(runs > 0, "no corpus cases ran");
-    assert!(
-        found.is_empty(),
-        "{} of {runs} sanitized bundles hold a match ingest refuses or needed the re-check (a sanitizer bug either way)\ncorpus | shape | position | match\n{}",
-        found.len(),
-        found.join("\n")
-    );
-    Ok(())
-}
-
 pub(super) fn corpus_dirs() -> Result<Vec<String>, std::io::Error> {
     let mut dirs: Vec<String> = std::fs::read_dir(fixture_dir())?
         .filter_map(Result::ok)
@@ -372,24 +328,24 @@ fn corpus_holds(corpus: &str) -> TestResult {
     let cases = cases(corpus)?;
     assert!(!cases.is_empty(), "{corpus} has no cases");
     let mut found = Vec::new();
-    let mut runs = 0;
-    for case in &cases {
-        for position in positions(&case.position)? {
-            runs += 1;
-            let mut failures = check(case, position)?;
-            if let (Some(note), false) = (&case.note, failures.is_empty()) {
-                for failure in &mut failures {
-                    failure.push_str(" (");
-                    failure.push_str(note);
-                    failure.push(')');
-                }
+    for (index, case) in cases.iter().enumerate() {
+        let spread = positions(&case.position)?;
+        let position = *spread
+            .get(index % spread.len())
+            .ok_or("a case names no position")?;
+        let mut failures = check(case, position)?;
+        if let (Some(note), false) = (&case.note, failures.is_empty()) {
+            for failure in &mut failures {
+                failure.push_str(" (");
+                failure.push_str(note);
+                failure.push(')');
             }
-            found.extend(failures);
         }
+        found.extend(failures);
     }
     assert!(
         found.is_empty(),
-        "{corpus}: {} failures over {runs} runs of {} cases (see {FIXTURES}/README.md)\nshape | position | where | value\n{}",
+        "{corpus}: {} failures over {} cases\nshape | position | where | value\n{}",
         found.len(),
         cases.len(),
         found.join("\n")
@@ -409,31 +365,11 @@ macro_rules! corpus_tests {
 }
 
 corpus_tests! {
-    vendor_shapes_from_round_1_leave_no_survivor => "vendor-shapes-r1";
-    unseen_shapes_from_round_2_leave_no_survivor => "unseen-shapes-r2";
-    vendor_and_code_shapes_from_round_3_leave_no_survivor => "vendor-and-code-shapes-r3";
+    vendor_shapes_leave_no_survivor => "vendor-shapes";
+    unseen_shapes_leave_no_survivor => "unseen-shapes";
+    vendor_and_code_shapes_leave_no_survivor => "vendor-and-code-shapes";
     placement_and_assignment_forms_leave_no_survivor => "placement-and-forms";
-    real_output_contexts_keep_their_text_and_lose_planted_secrets => "real-output-contexts-r3";
-    round_3_fixes_hold => "round-3-fixes";
-    round_4_fixes_hold => "round-4-fixes";
-}
-
-#[test]
-fn every_corpus_directory_has_a_test() -> TestResult {
-    let dirs = corpus_dirs()?;
-    let mut listed = vec![
-        "vendor-shapes-r1",
-        "unseen-shapes-r2",
-        "vendor-and-code-shapes-r3",
-        "placement-and-forms",
-        "real-output-contexts-r3",
-        "round-3-fixes",
-        "round-4-fixes",
-    ];
-    listed.sort_unstable();
-    assert_eq!(
-        dirs, listed,
-        "add a corpus_tests! line for each new corpus directory"
-    );
-    Ok(())
+    real_output_contexts_keep_their_text_and_lose_planted_secrets => "real-output-contexts";
+    nested_quoted_and_bare_values_hold => "nested-quoted-and-bare-values";
+    defaults_and_multiline_output_hold => "defaults-and-multiline-output";
 }

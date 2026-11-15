@@ -9,7 +9,6 @@ use rmcp::{
     service::ServiceError,
 };
 use serde::Deserialize;
-use std::collections::BTreeSet;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -41,35 +40,19 @@ enum Outcome {
     ProtocolError { code: i32, message: String },
 }
 
-const SKIPPED: &[(&str, &str)] = &[
-    (
-        "internet_search",
-        "B7: harness owns web tools; removed by design",
-    ),
-    ("web_fetch", "B7: harness owns web tools; removed by design"),
-    ("echo", "Product decision: not a sidecar tool"),
-    (
-        "skill_list",
-        "Product decision: skills are not sidecar tools",
-    ),
-    (
-        "skill_manage",
-        "Product decision: skills are not sidecar tools",
-    ),
-    (
-        "delegate_task",
-        "Delegation left rh for T3 Code (CONTRACT note 132)",
-    ),
-    (
-        "list_agents",
-        "Delegation left rh for T3 Code (CONTRACT note 132)",
-    ),
+const NOT_SERVED: &[&str] = &[
+    "internet_search",
+    "web_fetch",
+    "echo",
+    "skill_list",
+    "skill_manage",
+    "delegate_task",
+    "list_agents",
 ];
 
 fn recording_server() -> Server {
     Server::builder(
         std::sync::Arc::new(testkit::FakeMemoryStore::default()),
-        false,
         CancellationToken::new(),
     )
     .build()
@@ -112,13 +95,9 @@ async fn recordings_over_stdio_framing() {
         let expected: Catalog = load("tools-list");
         let calls: Calls = load("calls");
         let metadata: Metadata = load("meta");
-        let mut skips = BTreeSet::new();
         let mut tools = Vec::new();
         for mut tool in expected.tools {
-            if let Some((name, reason)) = SKIPPED.iter().find(|(name, _)| *name == tool.name) {
-                assert_ne!(*reason, "");
-                assert!(skips.insert(*name));
-            } else {
+            if !NOT_SERVED.contains(&tool.name.as_ref()) {
                 tool.description = tool
                     .description
                     .map(|text| translate_recorded_product_names(&text).into());
@@ -160,7 +139,7 @@ async fn recordings_over_stdio_framing() {
             tools
         );
         for call in calls.calls {
-            if SKIPPED.iter().any(|(name, _)| *name == call.request.name) {
+            if NOT_SERVED.contains(&call.request.name.as_ref()) {
                 continue;
             }
             let result = client.call_tool(call.request).await;
@@ -177,52 +156,10 @@ async fn recordings_over_stdio_framing() {
                 }
             }
         }
-        assert_eq!(skips, SKIPPED.iter().map(|(name, _)| *name).collect());
         client.cancel().await.expect("client closed");
         shutdown.cancel();
         task.await.expect("task").expect("server closed");
     })
     .await
     .expect("replay deadline");
-}
-
-#[tokio::test]
-async fn typed_memory_search_rejects_wrong_types() {
-    let server = support::server();
-    for arguments in [
-        r#"{"query":null}"#,
-        r#"{"query":7}"#,
-        r#"{"query":false}"#,
-        r#"{"query":[]}"#,
-    ] {
-        assert_eq!(
-            support::call(&server, "memory_search", arguments)
-                .await
-                .is_error,
-            Some(true)
-        );
-    }
-}
-
-#[test]
-fn recorded_product_names_translate_without_changing_prose() {
-    assert_eq!(
-        translate_recorded_product_names(
-            "RivetOS stores rivetos data in ~/.rivetos; unchanged prose."
-        ),
-        "RivetHub stores rh data in ~/.rivethub; unchanged prose."
-    );
-}
-
-#[tokio::test]
-async fn omitted_tools_have_no_handlers() {
-    let server = support::server();
-    for (name, _) in SKIPPED {
-        let error = server
-            .call(CallToolRequestParams::new(*name))
-            .await
-            .expect_err("no handler");
-        assert_eq!(error.code.0, -32602);
-        assert_eq!(error.message, format!("Tool {name} not found"));
-    }
 }

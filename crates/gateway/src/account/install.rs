@@ -154,14 +154,6 @@ impl InstallState {
     }
 
     #[must_use]
-    pub fn email(&self) -> Option<&str> {
-        match &self.membership {
-            Membership::SignedIn { email, .. } => Some(email),
-            Membership::SignedOut | Membership::Pending { .. } => None,
-        }
-    }
-
-    #[must_use]
     pub fn update_source(&self) -> UpdateSource {
         match (&self.membership, self.update_source) {
             (Membership::SignedIn { .. }, Some(source)) => source,

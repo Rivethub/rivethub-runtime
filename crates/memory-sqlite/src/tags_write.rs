@@ -37,20 +37,6 @@ impl SqliteStore {
             .map_err(MemoryStoreError::from)
     }
 
-    pub(crate) async fn tags_decide_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        let at = time::stamp(self.now());
-        self.with_conn(move |conn| {
-            decide_removals(conn, &ids, decision, decided_by.as_deref(), &at)
-        })
-        .await
-        .map_err(MemoryStoreError::from)
-    }
-
     pub(crate) async fn tags_add(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {
         let at = time::stamp(self.now());
         self.with_conn(move |conn| add_tag(conn, &add, &at))
@@ -85,41 +71,6 @@ fn decide_tags(
                 ]),
             )
             .map_err(SqliteError::query("tags decide"))?;
-        changed += u64::try_from(updated).map_err(SqliteError::Count)?;
-    }
-    Ok(changed)
-}
-
-fn decide_removals(
-    conn: &Connection,
-    ids: &[TagId],
-    decision: TagDecision,
-    decided_by: Option<&str>,
-    at: &str,
-) -> Result<u64, SqliteError> {
-    let actor = actor(decided_by);
-    let (state_sql, removal_sql) = match decision {
-        TagDecision::Accept => ("'rejected'", "NULL"),
-        TagDecision::Reject => ("state", "'rejected'"),
-    };
-    let sql = format!(
-        "UPDATE ros_tags \
-            SET state = {state_sql}, removal_state = {removal_sql}, \
-                decided_by = ?2, decided_at = ?3, updated_at = ?3 \
-          WHERE id = ?1 AND removal_state = 'suggested'"
-    );
-    let mut changed = 0u64;
-    for id in ids {
-        let updated = conn
-            .execute(
-                &sql,
-                params_from_iter([
-                    Value::Text(id.uuid().to_string()),
-                    Value::Text(actor.clone()),
-                    Value::Text(at.to_owned()),
-                ]),
-            )
-            .map_err(SqliteError::query("tag removals"))?;
         changed += u64::try_from(updated).map_err(SqliteError::Count)?;
     }
     Ok(changed)

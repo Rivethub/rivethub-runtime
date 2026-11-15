@@ -28,10 +28,7 @@ pub enum Named {
     Unfit(String),
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 pub struct TitleCall<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
@@ -52,7 +49,6 @@ impl TitleCall<'_> {
                 message(Role::System, TITLE_SYSTEM_PROMPT.to_owned()),
                 message(Role::User, input(summaries)),
             ],
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(TITLE_MAX_TOKENS),
         };

@@ -105,81 +105,14 @@ fn compare(actual: &[String], recorded: &[(String, String)], label: &str) -> Vec
 }
 
 const NOW_TEXT: &str = "2026-10-10T12:00:09.000Z";
-const CONTENT_LIMIT_CHARS: usize = 16_000;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lengths {
-    AsRecorded,
-    InChars,
-}
-
-fn char_capped(text: &str) -> (String, usize) {
-    (
-        text.chars().take(CONTENT_LIMIT_CHARS).collect(),
-        text.chars().count(),
-    )
-}
-
-fn text_at<'a>(
-    value: &'a testkit::Json,
-    pointer: &str,
-) -> Result<&'a str, Box<dyn std::error::Error>> {
-    Ok(value
-        .pointer(pointer)
-        .and_then(testkit::Json::as_str)
-        .ok_or_else(|| format!("{pointer} is not text"))?)
-}
-
-fn recount_in_chars(
-    body: &str,
-    input: &testkit::Json,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let mut posted: testkit::Json = serde_json::from_str(body)?;
-    let originals = input
-        .get("messages")
-        .and_then(testkit::Json::as_array)
-        .ok_or("input has no messages")?;
-    let messages = posted
-        .get_mut("messages")
-        .and_then(testkit::Json::as_array_mut)
-        .ok_or("recorded post has no messages")?;
-    for message in messages {
-        let event_id = text_at(message, "/event_id")?.to_owned();
-        let original = originals
-            .iter()
-            .find(|original| text_at(original, "/event_id").is_ok_and(|id| id == event_id))
-            .ok_or("recorded message has no input")?;
-        for (field, length) in [
-            ("content", "full_content_length"),
-            ("tool_result", "full_tool_result_length"),
-        ] {
-            let Some(recorded_length) = message.pointer_mut(&format!("/metadata/{length}")) else {
-                continue;
-            };
-            let (kept, full) = char_capped(text_at(original, &format!("/{field}"))?);
-            *recorded_length = testkit::Json::from(full);
-            let recorded_text = message.get_mut(field).ok_or("capped field is missing")?;
-            *recorded_text = testkit::Json::from(kept);
-        }
-    }
-    Ok(serde_json::to_string(&posted)?)
-}
-
 async fn writer_replay_case(
     name: &str,
     max_chunk_bytes: usize,
     redaction: Option<capture::redaction::Redaction>,
-    lengths: Lengths,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let input = std::fs::read_to_string(format!("{}.input.json", recording(name)))?;
     let batch = capture::batch::parse_batch(&input)?;
-    let mut recorded = recorded_posts(name)?;
-    if lengths == Lengths::InChars {
-        let input: testkit::Json = serde_json::from_str(&input)?;
-        for (_, body) in &mut recorded {
-            *body = recount_in_chars(body, &input)?;
-        }
-    }
+    let recorded = recorded_posts(name)?;
     let transport = RecordingTransport::new();
     let spool_dir = tempfile::tempdir()?;
     let spool = capture::spool::CaptureSpool::new(spool_dir.path().to_path_buf());
@@ -230,15 +163,15 @@ async fn writer_replay_case(
 
 #[tokio::test]
 async fn writer_replays_recorded_batches() -> Result<(), Box<dyn std::error::Error>> {
-    writer_replay_case("single", 768 * 1024, None, Lengths::AsRecorded).await?;
-    writer_replay_case("numbers_and_keys", 768 * 1024, None, Lengths::AsRecorded).await?;
-    writer_replay_case("finalize_multi_chunk", 24576, None, Lengths::AsRecorded).await?;
-    writer_replay_case("elide_tool_args", 32768, None, Lengths::AsRecorded).await
+    writer_replay_case("single", 768 * 1024, None).await?;
+    writer_replay_case("numbers_and_keys", 768 * 1024, None).await?;
+    writer_replay_case("finalize_multi_chunk", 24576, None).await?;
+    writer_replay_case("elide_tool_args", 32768, None).await
 }
 
 #[tokio::test]
 async fn writer_caps_text_at_sixteen_thousand_chars() -> Result<(), Box<dyn std::error::Error>> {
-    writer_replay_case("surrogate_cap", 768 * 1024, None, Lengths::InChars).await
+    writer_replay_case("surrogate_cap", 768 * 1024, None).await
 }
 
 #[tokio::test]
@@ -251,11 +184,5 @@ async fn writer_replays_the_redacted_batch() -> Result<(), Box<dyn std::error::E
     };
     let redaction =
         capture::redaction::resolve(Some(settings), &env).ok_or("redaction should resolve")?;
-    writer_replay_case(
-        "redaction",
-        768 * 1024,
-        Some(redaction),
-        Lengths::AsRecorded,
-    )
-    .await
+    writer_replay_case("redaction", 768 * 1024, Some(redaction)).await
 }

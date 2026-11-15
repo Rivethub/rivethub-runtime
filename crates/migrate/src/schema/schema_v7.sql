@@ -74,9 +74,6 @@ CREATE TRIGGER IF NOT EXISTS ros_messages_au AFTER UPDATE OF content, tool_resul
   VALUES (new.id, new.content, coalesce(new.tool_result, ''));
 END;
 
--- v3: the in-process job queue (jobs.ts). One row per pending unit of work;
--- job_key dedupes ("embed this row" is queued once). A finished job is
--- deleted, a job out of attempts stays as 'dead'.
 CREATE TABLE IF NOT EXISTS ros_jobs (
     id            TEXT PRIMARY KEY NOT NULL,
     task          TEXT NOT NULL,
@@ -94,15 +91,11 @@ CREATE TABLE IF NOT EXISTS ros_jobs (
 CREATE INDEX IF NOT EXISTS idx_ros_jobs_due
     ON ros_jobs (state, run_at);
 
--- v3: small key/value facts about the store (which embedding model wrote the
--- vectors, and how wide they are).
 CREATE TABLE IF NOT EXISTS ros_meta (
     key    TEXT PRIMARY KEY NOT NULL,
     value  TEXT NOT NULL
 );
 
--- Phase-1 queue, superseded by ros_jobs in v3. Kept so a v1/v2 file opens;
--- its rows are moved into ros_jobs by the v2 → v3 migration.
 CREATE TABLE IF NOT EXISTS ros_embed_queue (
     id          TEXT PRIMARY KEY,
     message_id  TEXT NOT NULL UNIQUE REFERENCES ros_messages(id) ON DELETE CASCADE,
@@ -113,10 +106,6 @@ CREATE TABLE IF NOT EXISTS ros_embed_queue (
 CREATE INDEX IF NOT EXISTS idx_ros_embed_queue_enqueued
     ON ros_embed_queue (enqueued_at);
 
--- v4: summaries (mirror of the postgres ros_summaries / ros_summary_sources).
--- A leaf covers a batch of messages (ros_summary_sources); a branch covers
--- leaves and a root covers branches, linked through parent_id. Written by
--- compaction.ts; searched through ros_summaries_fts and the stored vector.
 CREATE TABLE IF NOT EXISTS ros_summaries (
     id                TEXT PRIMARY KEY NOT NULL,
     conversation_id   TEXT REFERENCES ros_conversations(id) ON DELETE CASCADE,
@@ -169,13 +158,6 @@ CREATE TRIGGER IF NOT EXISTS ros_summaries_au AFTER UPDATE OF content, id ON ros
   INSERT INTO ros_summaries_fts(id, content) VALUES (new.id, new.content);
 END;
 
--- Session + summary tags (mirror of postgres 0019_tags.sql, same CHECKs).
--- entity_id is polymorphic, so no FK. Phase 1 has no ros_summaries table
--- here: entity_type 'summary' is accepted for parity but nothing backs it
--- until summaries land in SQLite. Reads and writes are in tags.ts. aliases is a JSON array in TEXT, and
--- created_at / updated_at have no DEFAULT (like every table here, the writer
--- supplies ISO timestamps) where postgres defaults to now(). See
--- packages/types/src/tags.ts for the lifecycle.
 CREATE TABLE IF NOT EXISTS ros_tags (
     id            TEXT PRIMARY KEY NOT NULL,
     entity_type   TEXT NOT NULL CHECK (entity_type IN ('conversation', 'summary')),
@@ -223,10 +205,6 @@ CREATE TABLE IF NOT EXISTS ros_tag_taxonomy (
 CREATE INDEX IF NOT EXISTS idx_ros_tag_taxonomy_parent
     ON ros_tag_taxonomy (key, parent_value);
 
--- v5: the wiki index. Page content lives in git-backed files under the wiki
--- directory; these tables are the search, provenance and idempotency index
--- over them. List columns (aliases, tags, entities, related, topics_touched)
--- hold JSON arrays.
 CREATE TABLE IF NOT EXISTS ros_wiki_topics (
     slug              TEXT PRIMARY KEY NOT NULL,
     title             TEXT NOT NULL,

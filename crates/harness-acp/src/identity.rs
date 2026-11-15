@@ -35,23 +35,9 @@ impl NativeSession {
     }
 
     #[must_use]
-    pub fn harness(&self) -> HarnessId {
-        self.harness
-    }
-
-    #[must_use]
-    pub fn native(&self) -> &str {
-        &self.native
-    }
-
-    #[must_use]
     pub fn canonical(&self) -> SessionId {
         SessionId::new(self.harness, &self.native)
     }
-}
-
-pub fn from_canonical(session: &SessionId) -> Result<NativeSession, IdentityError> {
-    NativeSession::parse(session.harness(), session.native())
 }
 
 fn matches_shape(harness: HarnessId, native: &str) -> Result<(), IdentityError> {

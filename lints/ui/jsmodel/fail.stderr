@@ -1,4 +1,4 @@
-warning: is_truthy: JavaScript value model (plain Rust types instead) → docs/PATTERNS.md#jsmodel
+warning: is_truthy: JavaScript value model (plain Rust types instead)
   --> $DIR/fail.rs:3:1
    |
 LL | / pub fn is_truthy(value: &str) -> bool {
@@ -8,13 +8,13 @@ LL | | }
    |
    = note: `#[warn(jsmodel)]` on by default
 
-warning: JsValue: JavaScript value model (plain Rust types instead) → docs/PATTERNS.md#jsmodel
+warning: JsValue: JavaScript value model (plain Rust types instead)
   --> $DIR/fail.rs:7:1
    |
 LL | pub struct JsValue;
    | ^^^^^^^^^^^^^^^^^^^
 
-warning: NumberOrText: JavaScript value model (plain Rust types instead) → docs/PATTERNS.md#jsmodel
+warning: NumberOrText: JavaScript value model (plain Rust types instead)
   --> $DIR/fail.rs:9:1
    |
 LL | / pub enum NumberOrText {
@@ -22,7 +22,7 @@ LL | |     Text(String),
 LL | | }
    | |_^
 
-warning: JavaScript semantics in a string (build such bodies in Rust where the test needs them) → docs/PATTERNS.md#jsmodel
+warning: JavaScript semantics in a string (build such bodies in Rust where the test needs them)
   --> $DIR/fail.rs:14:5
    |
 LL |     "[object Object]".is_empty()

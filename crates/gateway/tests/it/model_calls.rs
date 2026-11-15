@@ -13,7 +13,7 @@ use wire::model_call::{ModelCallBatchResult, SessionModelCalls};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const COCO: &str = "coco-model-call-token";
+const CLEO: &str = "cleo-model-call-token";
 const CLAUDE_NATIVE: &str = "00000000-0000-4000-8000-0000000000c1";
 const CODEX_NATIVE: &str = "00000000-0000-7000-8000-0000000000c2";
 
@@ -53,7 +53,7 @@ fn codex_headers() -> String {
 
 fn served() -> Result<(Arc<Gateway>, Arc<FakeModelCallStore>), Box<dyn std::error::Error>> {
     let calls = Arc::new(FakeModelCallStore::default());
-    let tenancy = Tenancy::local(user("phil")).with_token(COCO, user("coco"))?;
+    let tenancy = Tenancy::local(user("dana")).with_token(CLEO, user("cleo"))?;
     let gateway = Gateway::new(
         Arc::new(FakeMemoryStore::default()) as _,
         common::settings(),
@@ -103,7 +103,7 @@ async fn a_batch_is_stored_for_its_matched_sessions_and_a_repeat_changes_nothing
         (0, 3, 2)
     );
     assert_eq!(calls.stored().len(), 3);
-    assert!(calls.stored().iter().all(|(owner, _)| owner == "phil"));
+    assert!(calls.stored().iter().all(|(owner, _)| owner == "dana"));
 
     let read = common::answer(
         app.clone(),
@@ -224,7 +224,7 @@ async fn a_session_owned_by_someone_else_is_not_found_and_the_route_needs_a_stor
     let (gateway, _calls) = served()?;
     let app = gateway.router(false);
     let target = format!("/api/sessions/claude-code:{CLAUDE_NATIVE}/model-calls");
-    let theirs = common::answer(app.clone(), request("GET", &target, "", Some(COCO))).await?;
+    let theirs = common::answer(app.clone(), request("GET", &target, "", Some(CLEO))).await?;
     assert_eq!(theirs.status, 404);
     let mine = common::answer(app, request("GET", &target, "", None)).await?;
     assert_eq!(mine.status, 200);
@@ -235,7 +235,7 @@ async fn a_session_owned_by_someone_else_is_not_found_and_the_route_needs_a_stor
             common::settings(),
         )
         .with_local_owner(crate::common::local_owner())
-        .with_tenancy(Tenancy::local(user("phil"))),
+        .with_tenancy(Tenancy::local(user("dana"))),
     );
     let absent = common::answer(
         bare.router(false),

@@ -8,14 +8,6 @@ use testkit::wiki_golden::{Thrown, ThrownName, never_thrown};
 use crate::text::report;
 use crate::{TestResult, corpus};
 
-pub(crate) const REPLAYED: &[&str] = &[
-    "parse_wiki_page",
-    "serialize_wiki_page",
-    "build_wiki_search_text",
-    "apply_patch",
-    "format_wiki_read",
-];
-
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReadArgs {

@@ -31,7 +31,7 @@ impl SqliteStore {
         {
             return Err(SqliteError::Invalid {
                 message: format!(
-                    "{} is an imported session; only a receive writes one (CONTRACT note 150)",
+                    "{} is an imported session; only a receive writes one",
                     entry.session_id
                 ),
             });
@@ -161,8 +161,7 @@ fn admit(
         .map_err(SqliteError::query("conversation receipt"))?;
     if received {
         return Err(SqliteError::Invalid {
-            message: "this session carries a receive receipt; only a receive writes it (CONTRACT note 150)"
-                .to_owned(),
+            message: "this session carries a receive receipt; only a receive writes it".to_owned(),
         });
     }
     Ok(())

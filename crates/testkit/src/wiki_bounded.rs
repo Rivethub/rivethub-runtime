@@ -152,7 +152,6 @@ pub async fn an_entity_mention_is_not_merged_by_the_topic_router(
     second: &ExtractWiki,
 ) -> Outcome {
     let mention = host("The build box runs the nightly AcmeKit builds.")?;
-    stores.mentioned_elsewhere(first, &mention).await?;
     stores.route(first, vec![mention]).await?;
     same(
         "no entity page",

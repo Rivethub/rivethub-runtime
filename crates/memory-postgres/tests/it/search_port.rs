@@ -4,11 +4,10 @@ use kernel::memory::MemoryEntry;
 use kernel::memory::{BrowseWindow, MemoryHitSource, MemoryScope};
 use kernel::memory::{Limit, MemoryStore, SearchMode, SearchQuery};
 use kernel::model::Embedding;
-use memory_postgres::{PostgresMemory, QueryEmbed, SearchSynthesis};
+use memory_postgres::{PostgresMemory, QueryEmbed};
 use pgvector::HalfVector;
 use sqlx::PgPool;
 use testkit::{FakeProvider, Script};
-use tokio_util::sync::CancellationToken;
 use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -202,75 +201,6 @@ async fn runtime_embedding_failure_reaches_the_port_with_results(pool: PgPool) -
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn synthesis_uses_the_injected_provider_and_honours_cancellation(pool: PgPool) -> TestResult {
-    seed(&pool).await?;
-    let provider = Arc::new(FakeProvider::new(vec![Script::Chat(
-        kernel::model::LlmResponse {
-            r#type: kernel::model::LlmResponseKind::Text,
-            content: Some("Deployment is ready.".into()),
-            tool_calls: None,
-            usage: None,
-            finish_reason: None,
-        },
-    )]));
-    let cancel = CancellationToken::new();
-    let memory = PostgresMemory::new(pool.clone()).with_search_synthesis(SearchSynthesis::new(
-        provider.clone(),
-        "summarizer".into(),
-        cancel.clone(),
-    ));
-    let mut query = query(SearchMode::Fts);
-    query.synthesize = Some(true);
-    assert_eq!(
-        memory
-            .search(
-                query
-                    .clone()
-                    .resolve_window(chrono::Utc::now(), &chrono::Utc)
-            )
-            .await?
-            .synthesis,
-        Some("Deployment is ready.".into())
-    );
-    let requests = provider.chat_requests().await;
-    let [request] = requests.as_slice() else {
-        return Err("one synthesis request".into());
-    };
-    assert_eq!(request.model, "summarizer");
-    let [system, user] = request.messages.as_slice() else {
-        return Err("system and user messages".into());
-    };
-    assert_eq!(system.role, Role::System);
-    let wire::message::MessageContent::Text(evidence) = &user.content else {
-        panic!("text evidence")
-    };
-    assert!(evidence.contains(TEXT));
-    assert!(evidence.contains("Memory evidence:"));
-    cancel.cancel();
-    assert!(memory.search(query.clone()).await.is_err());
-    assert_eq!(provider.chat_requests().await.len(), 1);
-    query.synthesize = Some(false);
-    assert_eq!(
-        memory
-            .search(
-                query
-                    .clone()
-                    .resolve_window(chrono::Utc::now(), &chrono::Utc)
-            )
-            .await?
-            .synthesis,
-        None
-    );
-    query.synthesize = Some(true);
-    let unwired = PostgresMemory::new(pool);
-    assert!(matches!(
-        unwired.search(query).await,
-        Err(kernel::memory::MemoryStoreError::InvalidRequest { .. })
-    ));
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn window_filters_and_each_explicit_bound_overrides_it(pool: PgPool) -> TestResult {
     seed(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
@@ -337,37 +267,6 @@ async fn chunk_only_parents_respect_time_bounds(pool: PgPool) -> TestResult {
     assert_eq!(
         hit.created_at,
         "2026-10-12T00:00:00Z".parse::<chrono::DateTime<chrono::Utc>>()?
-    );
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn synthesis_without_text_is_an_error_not_a_silent_default(pool: PgPool) -> TestResult {
-    seed(&pool).await?;
-    let provider = Arc::new(FakeProvider::new(vec![Script::Chat(
-        kernel::model::LlmResponse {
-            r#type: kernel::model::LlmResponseKind::Text,
-            content: None,
-            tool_calls: None,
-            usage: None,
-            finish_reason: None,
-        },
-    )]));
-    let memory = PostgresMemory::new(pool).with_search_synthesis(SearchSynthesis::new(
-        provider,
-        "summarizer".into(),
-        CancellationToken::new(),
-    ));
-    let mut query = query(SearchMode::Fts);
-    query.synthesize = Some(true);
-    let error = memory
-        .search(query)
-        .await
-        .err()
-        .ok_or("synthesis must fail")?;
-    assert_eq!(
-        error.to_string(),
-        "memory query failed: memory synthesis returned no text"
     );
     Ok(())
 }

@@ -30,10 +30,10 @@ Executed, Ran, Called, Invoked, Read, Wrote, Edited, Created, Deleted, Killed, S
 === EXAMPLES ===
 - exec {"command":"df -h /; free -h"}
   → Checked disk usage and free memory on the root filesystem.
-- read {"path":"/opt/rivetos/plugins/memory/postgres/src/compactor/compactor.ts"}
+- read {"path":"/opt/acme/plugins/memory/postgres/src/compactor/compactor.ts"}
   → Read the compactor source at `plugins/memory/postgres/src/compactor/compactor.ts`.
-- memory_search {"query":"rivetos milestone status"}
-  → Searched memory for `rivetos milestone status`.
+- memory_search {"query":"release checklist status"}
+  → Searched memory for `release checklist status`.
 - web_fetch {"url":"https://nvidia.com/blog/v100-eol"}
   → Fetched the Nvidia blog post about V100 end-of-life.
 - edit {"path":"/etc/foo.conf","old_string":"port=8080","new_string":"port=9090"}
@@ -94,7 +94,6 @@ async fn synthesize(
                 format!("tool_name: {name}\ntool_args: {args}\n"),
             ),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(200),
     };

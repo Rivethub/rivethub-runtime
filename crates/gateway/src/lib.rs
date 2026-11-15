@@ -54,14 +54,10 @@ pub(crate) struct GuardState {
     pub(crate) secure: bool,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the store port is a trait object without Debug, so the derive does not compile and a hand-written impl trips the manualderive rule"
-)]
+#[expect(missing_debug_implementations)]
 pub struct Gateway {
     store: Arc<dyn MemoryStore>,
     settings: Settings,
-    embed_provider: bool,
     policy: auth::OriginPolicy,
     denials: DenialLog,
     auth_log: auth_event::AuthLog,
@@ -110,7 +106,6 @@ impl Gateway {
         Self {
             store,
             settings,
-            embed_provider: false,
             policy,
             denials: DenialLog::default(),
             auth_log: auth_event::AuthLog::default(),
@@ -179,12 +174,6 @@ impl Gateway {
     #[must_use]
     pub fn with_provider_health(mut self, providers: Vec<kernel::model::ProviderHealth>) -> Self {
         self.providers = providers;
-        self
-    }
-
-    #[must_use]
-    pub fn with_embed_provider(mut self) -> Self {
-        self.embed_provider = true;
         self
     }
 
@@ -288,11 +277,6 @@ impl Gateway {
 
     pub(crate) fn store(&self) -> &Arc<dyn MemoryStore> {
         &self.store
-    }
-
-    #[must_use]
-    pub fn embeds_wired(&self) -> bool {
-        self.embed_provider
     }
 
     pub(crate) fn policy(&self) -> &auth::OriginPolicy {

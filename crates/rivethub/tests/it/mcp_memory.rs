@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,30 +40,12 @@ struct Exception {
     tool: String,
     note: String,
     kind: ExceptionKind,
-    reason: String,
 }
 
 fn exceptions() -> Result<Vec<Exception>, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&std::fs::read(
         testkit::recording("mcp-memory/rust-replay-exceptions.json"),
     )?)?)
-}
-
-#[test]
-fn replay_exceptions_name_unique_known_calls_and_explain_each_difference() -> TestResult {
-    let calls = recording()?.calls;
-    assert_eq!(calls.len(), 73);
-    let mut names = BTreeSet::new();
-    for exception in exceptions()? {
-        assert!(names.insert((exception.tool.clone(), exception.note.clone())));
-        assert_ne!(exception.reason.trim(), "");
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.request.name == exception.tool && call.note == exception.note)
-        );
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -129,10 +110,7 @@ async fn seed(pool: &PgPool) -> TestResult {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
-)]
+#[expect(clippy::too_many_lines)]
 async fn recorded_memory_text() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
@@ -143,7 +121,9 @@ async fn recorded_memory_text() -> TestResult {
         let entry = entry?;
         std::fs::copy(
             entry.path(),
-            wiki.path().join("topics").join(entry.file_name()),
+            wiki.path()
+                .join("topics")
+                .join(std::path::Path::new(&entry.file_name()).with_extension("md")),
         )?;
     }
     let shutdown = CancellationToken::new();
@@ -151,7 +131,6 @@ async fn recorded_memory_text() -> TestResult {
         Arc::new(
             memory_postgres::PostgresMemory::new(pool).with_wiki_directory(wiki.path().to_owned()),
         ),
-        false,
         shutdown.clone(),
     )
     .display_zone(chrono_tz::Tz::UTC)
@@ -256,7 +235,6 @@ async fn tool_calls_see_the_owner_rows_through_row_security() -> TestResult {
     let server = owner.clone().enter(|| {
         mcp::Server::new(
             Arc::new(memory_postgres::PostgresMemory::new(probe)),
-            false,
             shutdown.clone(),
         )
     })?;
@@ -293,7 +271,6 @@ async fn summary_tree_and_source_messages_render_from_adopted_rows() -> TestResu
     seed(&pool).await?;
     let server = mcp::Server::new(
         Arc::new(memory_postgres::PostgresMemory::new(pool)),
-        false,
         CancellationToken::new(),
     )?;
     let mut request = CallToolRequestParams::new("memory_search");
@@ -351,7 +328,7 @@ async fn chunk_matches_keep_their_source_range_and_unicode_preview() -> TestResu
             None,
         ),
     ));
-    let server = mcp::Server::new(memory.clone(), false, CancellationToken::new())?;
+    let server = mcp::Server::new(memory.clone(), CancellationToken::new())?;
     let mut request = CallToolRequestParams::new("memory_search");
     request.arguments = Some(serde_json::from_str(
         r#"{"query":"unicode tool","mode":"vector","scope":"messages","limit":1}"#,
@@ -400,7 +377,6 @@ async fn wiki_files_follow_redirects_and_refuse_sibling_traversal_and_symlinks()
             memory_postgres::PostgresMemory::new(pool)
                 .with_wiki_directory(root.path().to_path_buf()),
         ),
-        false,
         CancellationToken::new(),
     )?;
     let mut request = CallToolRequestParams::new("wiki_read");

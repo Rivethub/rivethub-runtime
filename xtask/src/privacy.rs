@@ -41,10 +41,7 @@ pub struct PrivacyRes {
     pub tokens: Vec<(Regex, &'static str)>,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the denylist patterns are constants; the privacy tests match canaries for every one of them"
-)]
+#[expect(clippy::expect_used)]
 pub static RES: LazyLock<PrivacyRes> = LazyLock::new(|| {
     PrivacyRes::new().expect("the privacy denylist patterns are constants that compile")
 });
@@ -110,10 +107,7 @@ pub fn sha256(value: &str) -> String {
     ];
     let mut hex = String::with_capacity(64);
     for byte in Sha256::digest(value.as_bytes()) {
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "a shifted or masked byte nibble is 0..=15, inside DIGITS"
-        )]
+        #[expect(clippy::indexing_slicing)]
         let pair = [
             DIGITS[usize::from(byte >> 4)],
             DIGITS[usize::from(byte & 0x0f)],

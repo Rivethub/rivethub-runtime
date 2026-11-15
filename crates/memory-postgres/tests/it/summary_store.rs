@@ -50,9 +50,6 @@ struct EmbedPayload {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn summary_writes_link_children_and_let_the_embed_trigger_fire(pool: PgPool) -> TestResult {
-    if !testkit::queue_present(&pool).await? {
-        return Ok(());
-    }
     let memory = PostgresMemory::new(pool.clone());
     let conversation = seed_conversation(&pool, "cli:summary", "Session cli:summary").await?;
     let heartbeat = seed_conversation(&pool, "heartbeat:pulse", "heartbeat").await?;
@@ -286,9 +283,6 @@ async fn a_written_summary_is_announced_to_watchers(pool: PgPool) -> TestResult 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn the_first_leaf_titles_only_conversations_without_a_real_title(pool: PgPool) -> TestResult {
-    if !testkit::queue_present(&pool).await? {
-        return Ok(());
-    }
     let memory = PostgresMemory::new(pool.clone());
     let untitled = seed_untitled(&pool, "cli:untitled").await?;
     let named = seed_conversation(&pool, "cli:named", "Named by the hook").await?;

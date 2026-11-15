@@ -21,17 +21,6 @@ pub enum SessionRef {
     Bare(String),
 }
 
-impl SessionRef {
-    #[must_use]
-    pub fn key(&self) -> Option<SessionKey> {
-        match self {
-            Self::Canonical(session) => Some(SessionKey::Harness(session.clone())),
-            Self::Import(key) => Some(SessionKey::Import(key.clone())),
-            Self::Bare(_) => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedSegment {
     pub requested: String,
@@ -58,13 +47,7 @@ pub fn encode_segment(session: &SessionId) -> String {
 
 pub fn decode_segment(segment: &str) -> Result<DecodedSegment, SegmentError> {
     let decoded = percent_decode_str(segment).decode_utf8();
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: segment decode keeps the raw segment when percent-decoding fails"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let text: &str = match &decoded {
         Ok(text) => text,
         Err(_) => segment,

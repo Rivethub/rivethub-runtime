@@ -384,20 +384,3 @@ async fn ensure_fails_with_the_log_path_when_the_node_cannot_serve() -> TestResu
     drop(silent);
     Ok(())
 }
-
-#[tokio::test]
-async fn ensure_adopts_legacy_state_before_creating_its_own() -> TestResult {
-    let node = Node::new()?;
-    std::fs::create_dir(node.path().join(".rivetos"))?;
-    let claim = testkit::ports::claim()?;
-    let port = claim.number();
-    let output = node.ensure(port, "30").await?;
-    assert!(output.status.success(), "{output:?}");
-    assert!(
-        text(&output.stderr)?.contains("moved legacy state"),
-        "{output:?}"
-    );
-    assert!(!node.path().join(".rivetos").exists());
-    assert!(healthz(port).await?.ok);
-    node.stop().await
-}

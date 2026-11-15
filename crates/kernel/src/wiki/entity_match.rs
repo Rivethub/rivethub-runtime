@@ -226,10 +226,7 @@ pub fn normalize_confidence(value: f64) -> f32 {
     if !scaled.is_finite() || scaled <= 0.0 {
         return 0.0;
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a confidence score only needs f32 precision inside 0..=1"
-    )]
+    #[expect(clippy::cast_possible_truncation)]
     let score = scaled.clamp(0.0, 1.0) as f32;
     score
 }
@@ -243,13 +240,7 @@ pub fn gate(choice: &str, confidence: f32, threshold: f32, candidates: usize) ->
     if choice.eq_ignore_ascii_case("new") {
         return MatchAct::New;
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a choice that is not an index holds the match"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(index) = choice.parse::<usize>() else {
         return MatchAct::Hold;
     };
@@ -268,20 +259,8 @@ pub fn parse_verdict(text: &str) -> Option<(String, f32)> {
         .or_else(|| trimmed.strip_prefix("```"))
         .unwrap_or(trimmed);
     let body = trimmed.strip_suffix("```").unwrap_or(trimmed).trim();
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a verdict that is not JSON is no verdict"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     let choice = match value.get("choice")? {
         serde_json::Value::String(text) => text.clone(),

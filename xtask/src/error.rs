@@ -24,30 +24,6 @@ pub enum Error {
     MissingTool { tool: String, install: String },
     #[error("{0}")]
     Usage(String),
-    #[error("script: {0}")]
-    Script(#[from] crate::recmcp::script::ScriptError),
-    #[error("initialize: {0}")]
-    Initialize(Box<rmcp::service::ClientInitializeError>),
-    #[error("tools/list failed")]
-    ListTools {
-        #[source]
-        source: Box<rmcp::service::ServiceError>,
-    },
-    #[error("tools/call {name} failed")]
-    CallTool {
-        name: String,
-        #[source]
-        source: Box<rmcp::service::ServiceError>,
-    },
-    #[error("the server did not report an initialize result")]
-    ServerInfo,
-    #[error("close: {0}")]
-    Close(#[from] tokio::task::JoinError),
-    #[error("spawn {program}: {source}")]
-    Spawn {
-        program: String,
-        source: std::io::Error,
-    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

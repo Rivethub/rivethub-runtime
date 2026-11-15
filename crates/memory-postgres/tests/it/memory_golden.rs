@@ -1,31 +1,14 @@
-use crate::common;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use kernel::memory::{CaptureBatchRequest, CaptureResult};
-use memory_postgres::{CaptureOptions, Error, PostgresMemory};
+use memory_postgres::{CaptureOptions, PostgresMemory};
 use serde::Deserialize;
 use sqlx::{PgPool, types::Json};
 use wire::JsonObject;
 use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-const MEMORY_SKIPS: &[(&str, &str)] = &[
-    (
-        "duplicate event ids and a new one, no title/settings",
-        "B4 requires a channel for stored messages; the recording invents unknown. Rust refuses the absent channel. Character caps and duplicate events are covered by typed capture tests.",
-    ),
-    (
-        "title change, settings cleared to {}, task id, finalize",
-        "The batch omits the required channel. Rust refuses it before writing; conversation update and finalization have separate typed tests.",
-    ),
-    (
-        "owner user id option",
-        "The batch omits the required channel and records an invented unknown channel. Rust refuses it; owner persistence is tested with a supplied channel.",
-    ),
-];
 
 #[derive(Deserialize)]
 struct Recording {
@@ -109,21 +92,8 @@ fn recording() -> Result<Recording, serde_json::Error> {
     ))
 }
 
-#[test]
-fn memory_skip_names_are_unique_known_scenarios_with_reasons() -> TestResult {
-    let recording = recording()?;
-    let mut names = BTreeSet::new();
-    for (name, reason) in MEMORY_SKIPS {
-        assert!(names.insert(*name));
-        assert_ne!(reason.trim(), "");
-        assert!(recording.results.iter().any(|case| case.label == *name));
-    }
-    Ok(())
-}
-
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn capture_batch_golden(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let recording = recording()?;
     let mut conversations = BTreeMap::new();
@@ -136,11 +106,7 @@ async fn capture_batch_golden(pool: PgPool) -> TestResult {
                 .clone()
                 .unwrap_or_else(|| testkit::OWNER.to_owned()),
         )?);
-        if MEMORY_SKIPS.iter().any(|(name, _)| *name == case.label) {
-            assert!(matches!(
-                memory.capture_batch(&case.batch, &options).await,
-                Err(Error::MissingChannel)
-            ));
+        if case.batch.channel.is_none() {
             skipped_conversations.insert(&case.result.conversation_id);
             continue;
         }

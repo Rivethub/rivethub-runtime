@@ -25,13 +25,7 @@ fn delay_seconds(text: &str) -> Option<Duration> {
 }
 
 fn http_date(text: &str, now: DateTime<Utc>) -> Option<Duration> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a Retry-After that is neither delay-seconds nor an HTTP-date is no hint"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let date = DateTime::parse_from_rfc2822(text).ok()?;
     let wait = date.with_timezone(&Utc).signed_duration_since(now);
     Some(Duration::from_secs(

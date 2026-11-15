@@ -62,8 +62,6 @@ impl From<JobId> for i64 {
 pub enum JobNameError {
     #[error("unknown job name: {0}")]
     Unknown(String),
-    #[error("heartbeat job name needs a numeric index after the last dash: {0}")]
-    HeartbeatIndex(String),
 }
 
 #[derive(
@@ -111,14 +109,12 @@ pub enum FixedJob {
 #[serde(try_from = "String", into = "String")]
 pub enum JobName {
     Fixed(FixedJob),
-    Heartbeat { agent: String, index: u32 },
 }
 
 impl fmt::Display for JobName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fixed(fixed) => write!(f, "{fixed}"),
-            Self::Heartbeat { agent, index } => write!(f, "heartbeat-{agent}-{index}"),
         }
     }
 }
@@ -127,18 +123,6 @@ impl FromStr for JobName {
     type Err = JobNameError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if let Some(rest) = value.strip_prefix("heartbeat-") {
-            let Some((agent, index)) = rest.rsplit_once('-') else {
-                return Err(JobNameError::HeartbeatIndex(value.to_string()));
-            };
-            let index = index
-                .parse::<u32>()
-                .map_err(|_| JobNameError::HeartbeatIndex(value.to_string()))?;
-            return Ok(Self::Heartbeat {
-                agent: agent.to_string(),
-                index,
-            });
-        }
         FixedJob::from_str(value)
             .map(Self::Fixed)
             .map_err(|_| JobNameError::Unknown(value.to_string()))

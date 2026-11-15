@@ -24,7 +24,7 @@ fn said(event_id: &str, at: &str) -> TestResult<CaptureMessage> {
 async fn digests_count_messages_and_dates_per_key() -> TestResult {
     let fresh = fresh_store()?;
     let store = &fresh.store;
-    let phil = Owner::new("phil".to_owned())?;
+    let dana = Owner::new("dana".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut long = batch("claude-code:long", "rivet", "claude-code");
     long.title = Some("pairing".to_owned());
@@ -33,7 +33,7 @@ async fn digests_count_messages_and_dates_per_key() -> TestResult {
         said("evt-1", "2026-10-14T09:00:00.000Z")?,
         said("evt-3", "2026-10-15T08:00:00.000Z")?,
     ];
-    let long_id = store.capture(long, &phil, None, now).await?.conversation_id;
+    let long_id = store.capture(long, &dana, None, now).await?.conversation_id;
     let mut imported = batch(
         "import:[\"laptop\",\"00000000-0000-4000-8000-000000000009\"]",
         "codex",
@@ -44,21 +44,21 @@ async fn digests_count_messages_and_dates_per_key() -> TestResult {
     )?);
     imported.messages = vec![said("evt-i", "2026-09-01T10:00:00.000Z")?];
     let imported_key =
-        wire::capture::owned_import_key("phil", &imported.session_key)?.ok_or("import key")?;
+        wire::capture::owned_import_key("dana", &imported.session_key)?.ok_or("import key")?;
     let imported_id = store
-        .capture(imported, &phil, None, now)
+        .capture(imported, &dana, None, now)
         .await?
         .conversation_id;
     let mut trashed = batch("claude-code:trashed", "rivet", "claude-code");
     trashed.messages = vec![said("evt-t", "2026-10-14T09:00:00.000Z")?];
-    store.capture(trashed, &phil, None, now).await?;
+    store.capture(trashed, &dana, None, now).await?;
     store
         .trash_session("claude-code:trashed", None, now)
         .await?;
 
     let digests = store
         .session_digests(
-            &phil,
+            &dana,
             vec![
                 "claude-code:long".to_owned(),
                 imported_key.clone(),
@@ -101,25 +101,25 @@ async fn digests_never_return_another_owner() -> TestResult {
     let fresh = fresh_store()?;
     let store = &fresh.store;
     let now = instant("2026-11-02T18:00:00.000Z")?;
-    let mut phils = batch("claude-code:phil", "rivet", "claude-code");
-    phils.messages = vec![said("evt-p", "2026-10-14T09:00:00.000Z")?];
+    let mut danas = batch("claude-code:dana", "rivet", "claude-code");
+    danas.messages = vec![said("evt-p", "2026-10-14T09:00:00.000Z")?];
     store
-        .capture(phils, &Owner::new("phil".to_owned())?, None, now)
+        .capture(danas, &Owner::new("dana".to_owned())?, None, now)
         .await?;
-    let mut alexs = batch("claude-code:alex", "rivet", "claude-code");
-    alexs.messages = vec![said("evt-a", "2026-10-14T09:00:00.000Z")?];
+    let mut iness = batch("claude-code:ines", "rivet", "claude-code");
+    iness.messages = vec![said("evt-a", "2026-10-14T09:00:00.000Z")?];
     store
-        .capture(alexs, &Owner::new("alex".to_owned())?, None, now)
+        .capture(iness, &Owner::new("ines".to_owned())?, None, now)
         .await?;
 
     let digests = store
         .session_digests(
-            &Owner::new("phil".to_owned())?,
-            vec!["claude-code:alex".to_owned(), "claude-code:phil".to_owned()],
+            &Owner::new("dana".to_owned())?,
+            vec!["claude-code:ines".to_owned(), "claude-code:dana".to_owned()],
         )
         .await?;
 
     let keys: Vec<&str> = digests.iter().map(|digest| digest.key.as_str()).collect();
-    assert_eq!(keys, ["claude-code:phil"]);
+    assert_eq!(keys, ["claude-code:dana"]);
     Ok(())
 }

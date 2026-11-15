@@ -1,2 +1,0 @@
-rec-node.example.test:192.0.2.15:rec-agent.example.test
-idle-node.example.test:192.0.2.16:

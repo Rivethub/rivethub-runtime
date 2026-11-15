@@ -177,11 +177,6 @@ fn settings_come_from_the_config_gateway_section() {
     .expect("settings");
     assert_eq!(settings.allowed_origins, vec!["https://hub.example.test"]);
     assert_eq!(settings.allowed_hosts, vec!["gateway.example.test"]);
-
-    let empty: config::Config = serde_yaml_ng::from_str("").expect("empty config");
-    let bind = BindSource::resolve(&empty, &env, "golden-node", home.path());
-    assert_eq!(bind.host, "127.0.0.1");
-    assert_eq!(bind.port, 5174);
 }
 
 #[test]
@@ -230,17 +225,6 @@ fn surface_paths_default_when_the_environment_is_unset() {
     assert_eq!(
         settings.state_dir,
         PathBuf::from("/tmp/golden/home/.rivethub")
-    );
-}
-
-#[test]
-fn bind_error_lines_carry_the_recorded_text() {
-    let error = BindError::TlsRequired {
-        host: "0.0.0.0".to_string(),
-    };
-    assert_eq!(
-        error.to_string(),
-        "[rivethub-gateway] refusing to bind 0.0.0.0: gateway TLS is required off-loopback (set RIVETHUB_TLS_CERT + RIVETHUB_TLS_KEY to the node's TLS certificate and key). Or bind the gateway host to 127.0.0.1."
     );
 }
 

@@ -85,10 +85,7 @@ pub trait FlaggedJobs: Send + Sync {
     async fn dismiss(&self, id: FlaggedId, at: DateTime<Utc>) -> Result<(), FlaggedError>;
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the cause pattern is a constant; the flagged job tests match it"
-)]
+#[expect(clippy::expect_used)]
 static VARYING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+")
         .expect("the cause pattern is a constant")

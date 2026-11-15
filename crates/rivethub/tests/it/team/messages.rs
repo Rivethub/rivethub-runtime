@@ -2,9 +2,9 @@ use serde_json::Value;
 use wire::gateway::session_catalog::SessionMessagesPage;
 use wire::message::Role;
 
-use super::{ALEX, Hub, PHIL, TOM, TestResult, message, segment};
+use super::{DANA, Hub, INES, TOM, TestResult, message, segment};
 
-const ALEXS: &str = "claude-code:00000000-0000-4000-8000-00000000c001";
+const INESS: &str = "claude-code:00000000-0000-4000-8000-00000000c001";
 const TOMS: &str = "claude-code:00000000-0000-4000-8000-00000000c002";
 const RECEIVED: &str = "import:00000000000000000000000000000000000000000000000000000000000000c3";
 
@@ -24,28 +24,28 @@ async fn page(
 #[tokio::test]
 async fn a_session_s_messages_come_in_order_with_tool_rows_paged_and_counted() -> TestResult {
     let hub = Hub::start().await?;
-    hub.share_by_default(ALEX).await?;
-    let mut tool = message(ALEXS, 2, Role::Tool, "Cargo.toml\nsrc")?;
+    hub.share_by_default(INES).await?;
+    let mut tool = message(INESS, 2, Role::Tool, "Cargo.toml\nsrc")?;
     tool.tool_name = Some("Bash".to_owned());
     tool.tool_result = Some("Cargo.toml\nsrc".to_owned());
     let rows = vec![
-        message(ALEXS, 0, Role::User, "list the files")?,
-        message(ALEXS, 1, Role::Assistant, "running ls")?,
+        message(INESS, 0, Role::User, "list the files")?,
+        message(INESS, 1, Role::Assistant, "running ls")?,
         tool,
-        message(ALEXS, 3, Role::Assistant, "two entries")?,
-        message(ALEXS, 4, Role::User, "thanks")?,
+        message(INESS, 3, Role::Assistant, "two entries")?,
+        message(INESS, 4, Role::User, "thanks")?,
     ];
-    hub.capture_messages(ALEX, ALEXS, rows).await?;
+    hub.capture_messages(INES, INESS, rows).await?;
     hub.capture(TOM, TOMS, &["tom's private notes", "ok"])
         .await?;
 
-    let first = page(&hub, TOM, &segment(ALEXS)?, "?limit=2").await?;
+    let first = page(&hub, TOM, &segment(INESS)?, "?limit=2").await?;
     assert_eq!(first.total, 5);
     assert_eq!(first.items.len(), 2);
     let cursor = first.next.clone().ok_or("a second page")?;
-    let second = page(&hub, TOM, ALEXS, &format!("?limit=2&cursor={cursor}")).await?;
+    let second = page(&hub, TOM, INESS, &format!("?limit=2&cursor={cursor}")).await?;
     let cursor = second.next.clone().ok_or("a third page")?;
-    let third = page(&hub, TOM, ALEXS, &format!("?limit=2&cursor={cursor}")).await?;
+    let third = page(&hub, TOM, INESS, &format!("?limit=2&cursor={cursor}")).await?;
     assert_eq!(third.next, None);
     let all: Vec<_> = [first, second, third]
         .into_iter()
@@ -67,7 +67,7 @@ async fn a_session_s_messages_come_in_order_with_tool_rows_paged_and_counted() -
     assert_eq!(tool.tool_name.as_deref(), Some("Bash"));
 
     let detail = hub
-        .get(ALEX, &format!("/api/sessions/{}", segment(ALEXS)?))
+        .get(INES, &format!("/api/sessions/{}", segment(INESS)?))
         .await?;
     assert_eq!(
         detail.body.get("messageCount").and_then(Value::as_u64),
@@ -75,11 +75,11 @@ async fn a_session_s_messages_come_in_order_with_tool_rows_paged_and_counted() -
         "the catalog counts what the messages route returns"
     );
     let refused = hub
-        .get(ALEX, &format!("/api/sessions/{TOMS}/messages"))
+        .get(INES, &format!("/api/sessions/{TOMS}/messages"))
         .await?;
     assert_eq!(refused.status, 404, "{}", refused.body);
     let bad = hub
-        .get(ALEX, &format!("/api/sessions/{ALEXS}/messages?cursor=x"))
+        .get(INES, &format!("/api/sessions/{INESS}/messages?cursor=x"))
         .await?;
     assert_eq!(bad.status, 400, "{}", bad.body);
     hub.stop().await
@@ -90,7 +90,7 @@ async fn a_received_session_returns_its_original_text_and_says_whose_it_is() -> 
     let hub = Hub::start().await?;
     let captured = "claude-code:00000000-0000-4000-8000-00000000c004";
     hub.capture(
-        PHIL,
+        DANA,
         captured,
         &["a friend's question about the relay", "an answer"],
     )
@@ -104,7 +104,7 @@ async fn a_received_session_returns_its_original_text_and_says_whose_it_is() -> 
     .bind(captured)
     .execute(&hub.db.pool())
     .await?;
-    let received = page(&hub, PHIL, RECEIVED, "").await?;
+    let received = page(&hub, DANA, RECEIVED, "").await?;
     assert_eq!(received.total, 2);
     let first = received.items.first().ok_or("a message")?;
     assert_eq!(first.content, "a friend's question about the relay");

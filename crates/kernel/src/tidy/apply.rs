@@ -38,10 +38,7 @@ pub enum Decision {
     Reject,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the tidy, topic and filing ports are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct TidyPorts<'a> {
     pub tidy: &'a dyn TidyStore,
     pub topics: &'a dyn TopicStore,

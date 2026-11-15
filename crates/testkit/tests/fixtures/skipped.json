@@ -1,6 +1,0 @@
-[
-  {"name":"shared_dir:1","reason":"Historical config function internals are outside the testkit transport replay boundary; config owns path resolution."},
-  {"name":"shared_dir:2","reason":"Historical config environment alias behavior belongs to config; testkit does not implement configuration."},
-  {"name":"resolve_env_vars:3","reason":"Historical config substitution function internals are outside testkit; config tests typed substitution errors."},
-  {"name":"install_root:5","reason":"JavaScript undefined sentinel has no Rust boundary value; testkit does not emulate it."}
-]

@@ -141,24 +141,15 @@ fn scrub_urls(text: &str) -> String {
     }
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "a closed stderr cannot carry the progress line anywhere else"
-)]
+#[expect(clippy::let_underscore_must_use)]
 pub(crate) fn note(line: &str) {
     use std::io::Write as _;
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(stderr, "wiki-eval: {line}");
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "the failure report is the process's last write"
-)]
-#[expect(
-    clippy::let_underscore_untyped,
-    reason = "the failure report is the process's last write"
-)]
+#[expect(clippy::let_underscore_must_use)]
+#[expect(clippy::let_underscore_untyped)]
 pub(crate) fn report(error: &Failure) -> std::process::ExitCode {
     use std::io::Write as _;
     let mut stderr = std::io::stderr().lock();

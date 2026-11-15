@@ -1,4 +1,4 @@
-extensions = ["md", "rs", "toml"]
+extensions = ["rs", "toml"]
 paths = [
   ".gitattributes",
   ".cargo/config.toml",
@@ -8,6 +8,7 @@ paths = [
   "contract/accepted.schema.json",
   "contract/sent.schema.json",
   "LICENSE",
+  "README.md",
   "coverage-floor.txt",
   "crates/cli/tests/browser/login-flow.mjs",
   "crates/gateway/src/routes/login.html",
@@ -15,13 +16,11 @@ paths = [
   "lints/Cargo.lock",
 ]
 globs = [
-  ".github/*.md",
   ".github/workflows/*.yml",
   ".sqlx/*.json",
   "crates/*/migrations/*.sql",
   "crates/*/tests/golden/**/*.json",
   "crates/*/tests/golden/**/*.jsonl",
-  "crates/*/tests/golden/**/*.md",
   "crates/*/tests/golden/**/*.txt",
   "crates/*/tests/fixtures/**/*.json",
   "crates/*/tests/fixtures/**/*.jsonl",

@@ -43,13 +43,7 @@ pub enum SignError {
 
 pub struct NodeKey(Ed25519KeyPair);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: the node signing key never leaves the machine; deriving Debug would print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for NodeKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "NodeKey({})", self.public_key())
@@ -73,13 +67,6 @@ impl NodeKey {
                     reason: error.to_string(),
                 })
         })?;
-        Ed25519KeyPair::from_pkcs8(&pkcs8)
-            .map(Self)
-            .map_err(|_| SignError::Invalid(path.to_path_buf()))
-    }
-
-    pub fn load(path: &Path) -> Result<Self, SignError> {
-        let pkcs8 = PrivateFile::new(path, KEY_NAME, PKCS8_CAP).read()?;
         Ed25519KeyPair::from_pkcs8(&pkcs8)
             .map(Self)
             .map_err(|_| SignError::Invalid(path.to_path_buf()))

@@ -32,13 +32,7 @@ pub struct UnixSocket {
     listener: UnixListener,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT B7 authentication material must be redacted; deriving Debug would expose the token digest"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Bearer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Bearer([redacted])")

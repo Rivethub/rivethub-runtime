@@ -5,11 +5,6 @@ use crate::environment::Environment;
 
 const DEFAULT_SHARED_DIR: &str = "/rivet-shared";
 
-#[must_use]
-pub fn temporary_directory() -> PathBuf {
-    std::env::temp_dir()
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigLocation {
     Current(PathBuf),
@@ -120,10 +115,6 @@ impl Paths {
         self.state_dir().join("discovery")
     }
 
-    pub fn ca_dir(&self) -> PathBuf {
-        self.state_dir().join("ca")
-    }
-
     pub fn logs_dir(&self) -> PathBuf {
         self.state_dir().join("logs")
     }
@@ -134,10 +125,6 @@ impl Paths {
 
     pub fn pid_file(&self) -> PathBuf {
         self.state_dir().join(PID_FILE_NAME)
-    }
-
-    pub fn owner_lock(&self, data_dir: &Path) -> PathBuf {
-        data_dir.join("rivethub-owner.lock")
     }
 
     pub fn config_candidates(&self) -> Vec<ConfigLocation> {

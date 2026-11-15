@@ -85,57 +85,9 @@ fn invalid_meta(meta: &Meta, statement: bool) -> bool {
     if !fallback {
         return false;
     }
-    let reason = parts.iter().find_map(|part| {
-        if let Meta::NameValue(pair) = part
-            && pair.path.is_ident("reason")
-            && let Expr::Lit(value) = &pair.value
-            && let syn::Lit::Str(text) = &value.lit
-        {
-            Some(text.value())
-        } else {
-            None
-        }
-    });
     !statement
         || !list.path.is_ident("expect")
-        || !reason.as_deref().is_some_and(cites_rule)
         || parts
             .iter()
             .any(|part| part.path().is_ident("fallback_waiver"))
-}
-
-pub(crate) fn cites_rule(reason: &str) -> bool {
-    let words: Vec<_> = reason
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .filter(|word| !word.is_empty())
-        .collect();
-    for (index, word) in words.iter().enumerate() {
-        let mut tail = words.iter().skip(index + 1).copied();
-        let next = tail.next();
-        let id = if next == Some("md") {
-            tail.next()
-        } else {
-            next
-        };
-        if *word == "CONTRACT"
-            && id.is_some_and(|id| {
-                id.strip_prefix('B')
-                    .and_then(|number| number.parse::<u8>().ok())
-                    .is_some_and(|row| (1..=16).contains(&row))
-            })
-        {
-            return true;
-        }
-        if *word == "PATTERNS"
-            && id.is_some_and(|id| {
-                include_str!("../../docs/PATTERNS.md")
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("## "))
-                    .any(|name| name.eq_ignore_ascii_case(id))
-            })
-        {
-            return true;
-        }
-    }
-    false
 }

@@ -1,5 +1,4 @@
 use super::CARRIER_TOOLS;
-use super::LOOKUP_TOOLS;
 use super::MEMORY_LOOKUP_OMITTED;
 use super::PAYLOAD_KEYS;
 use super::SHELL_TOOLS;
@@ -25,8 +24,6 @@ use kernel::wiki::entity_pass::TranscriptMessage;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::entity_builder::ENTITY_OBSERVE_SYSTEM_PROMPT;
-use crate::entity_builder::ENTITY_REWRITE_SYSTEM_PROMPT;
 use crate::entity_builder::extract_entities_job;
 
 fn at(secs: i64) -> DateTime<Utc> {
@@ -64,13 +61,7 @@ fn messages_render_in_time_order_with_their_own_timestamps() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn shell_calls_keep_the_command_and_cap_the_result() {
     let head = "h".repeat(TOOL_RESULT_CAP - 500);
     let tail = "t".repeat(900);
@@ -112,13 +103,7 @@ fn shell_calls_keep_the_command_and_cap_the_result() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn a_non_shell_call_keeps_compact_args() {
     let mut tool = message(5, 11, "tool", "Read");
     tool.tool_name = Some("Read".to_owned());
@@ -177,7 +162,7 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
     assert!(preface.contains("facts come from the transcript"));
     let mut known = vec![KnownEntity {
         id: uid(1),
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         aliases: Vec::new(),
         facts: vec![KnownFact {
@@ -186,7 +171,7 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
         }],
     }];
     let update = EntityObservation {
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         facts: vec![ObservedFact {
             attribute: "port".to_owned(),
@@ -197,7 +182,7 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
         ..EntityObservation::default()
     };
     let added = EntityObservation {
-        name: "phil".to_owned(),
+        name: "dana".to_owned(),
         type_name: "People".to_owned(),
         entity_ref: None,
         ..EntityObservation::default()
@@ -208,15 +193,15 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
         .and_then(|item| item.facts.first())
         .map(|fact| fact.value.as_str());
     assert_eq!(port, Some("443"));
-    assert_eq!(known.get(1).map(|item| item.name.as_str()), Some("phil"));
+    assert_eq!(known.get(1).map(|item| item.name.as_str()), Some("dana"));
     let provisional = known.get(1).map(|item| item.id);
     let mut observations = vec![EntityObservation {
-        name: "phil".to_owned(),
+        name: "dana".to_owned(),
         entity_ref: provisional,
         ..EntityObservation::default()
     }];
     observations.push(EntityObservation {
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         entity_ref: Some(uid(1)),
         ..EntityObservation::default()
     });
@@ -224,7 +209,7 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
         &mut observations,
         std::slice::from_ref(&KnownEntity {
             id: uid(1),
-            name: "gpubox".to_owned(),
+            name: "tinbox".to_owned(),
             type_name: "Hosts".to_owned(),
             aliases: Vec::new(),
             facts: Vec::new(),
@@ -241,7 +226,7 @@ fn preface_is_labelled_and_later_facts_replace_known_ones() {
 fn a_mismatched_ref_does_not_become_an_alias_of_the_known_entity() {
     let mut hosts = vec![KnownEntity {
         id: uid(1),
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         aliases: Vec::new(),
         facts: Vec::new(),
@@ -249,7 +234,7 @@ fn a_mismatched_ref_does_not_become_an_alias_of_the_known_entity() {
     remember(
         &mut hosts,
         &[EntityObservation {
-            name: "gerty".to_owned(),
+            name: "hally".to_owned(),
             type_name: "Hosts".to_owned(),
             entity_ref: Some(uid(1)),
             aliases: vec!["g9".to_owned()],
@@ -257,48 +242,11 @@ fn a_mismatched_ref_does_not_become_an_alias_of_the_known_entity() {
         }],
     );
     assert_eq!(hosts.first().map(|item| item.aliases.len()), Some(0));
-    assert_eq!(hosts.get(1).map(|item| item.name.as_str()), Some("gerty"));
+    assert_eq!(hosts.get(1).map(|item| item.name.as_str()), Some("hally"));
 }
 
 #[test]
-fn observe_prompt_uses_message_time_and_the_job_key_stays_the_leaf() {
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("Identify every durable"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("Do not return facts"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("copied exactly as written"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("agent CTs 113/116/117/118/112/107"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("never a normalized name"));
-    let schema = serde_json::to_string(&kernel::wiki::entity_pass::identify_schema()).unwrap();
-    assert!(schema.contains("mention"));
-    assert!(!ENTITY_OBSERVE_SYSTEM_PROMPT.contains("period_start"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("those are the preferred choices"));
-    assert!(ENTITY_OBSERVE_SYSTEM_PROMPT.contains("type is a new short name for the kind"));
-    assert!(!ENTITY_OBSERVE_SYSTEM_PROMPT.contains("exactly one of the provided type paths"));
-    assert!(
-        ENTITY_REWRITE_SYSTEM_PROMPT
-            .contains("Tool results are the strongest evidence of current state")
-    );
-    assert!(
-        ENTITY_REWRITE_SYSTEM_PROMPT
-            .contains("A later message overrides an earlier one in the same window")
-    );
-    assert!(
-        ENTITY_REWRITE_SYSTEM_PROMPT
-            .contains("as_of must be the RFC3339 timestamp copied from the header of the message")
-    );
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("vocabulary"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("87 GB"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("152 GB"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains(
-        "When a value changed during the transcript, emit only the final value under the property's key"
-    ));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("reported history, not observations"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("\"memory says\""));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("\"the wiki says\""));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("\"according to the notes\""));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("\"last time\""));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("never to set a current fact"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("what this session's tool output shows"));
-    assert!(ENTITY_REWRITE_SYSTEM_PROMPT.contains("what the user states as fact now"));
+fn the_entity_job_is_keyed_by_the_leaf_and_runs_at_the_session_time() {
     let summary = uid(42);
     let built = extract_entities_job(&ExtractEntities {
         summary_id: summary,
@@ -329,30 +277,18 @@ struct LookupCase {
     lookup: bool,
 }
 
-fn sorted(names: &[&str]) -> bool {
-    let mut previous = "";
-    for name in names {
-        if *name <= previous {
-            return false;
-        }
-        previous = name;
-    }
-    true
-}
-
 #[test]
-fn lookup_name_lists_stay_sorted() {
-    assert!(sorted(LOOKUP_TOOLS));
-    assert!(sorted(CARRIER_TOOLS));
-    assert!(sorted(SHELL_TOOLS));
-    assert!(sorted(PAYLOAD_KEYS));
+fn binary_searched_name_lists_stay_sorted() {
+    assert!(CARRIER_TOOLS.is_sorted());
+    assert!(SHELL_TOOLS.is_sorted());
+    assert!(PAYLOAD_KEYS.is_sorted());
 }
 
 const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "cat of a wiki page",
         name: "Bash",
-        args: r#"{"command":"cat /rivet-shared/wiki/topics/gpubox.md"}"#,
+        args: r#"{"command":"cat /rivet-shared/wiki/topics/tinbox.md"}"#,
         result: "seven working V100s and one dead module\n",
         lookup: true,
     },
@@ -373,28 +309,28 @@ const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "curl of the memory api",
         name: "bash",
-        args: "curl -sk https://127.0.0.1:5174/api/memory/search?q=gpubox",
+        args: "curl -sk https://127.0.0.1:5174/api/memory/search?q=tinbox",
         result: r#"{"hits":[{"text":"RAM 51 GB used"}]}"#,
         lookup: true,
     },
     LookupCase {
         label: "curl of the wiki api",
         name: "run_terminal_command",
-        args: r#"{"command":"curl -sk https://127.0.0.1:5174/api/wiki/topics/gpubox"}"#,
+        args: r#"{"command":"curl -sk https://127.0.0.1:5174/api/wiki/topics/tinbox"}"#,
         result: "page",
         lookup: true,
     },
     LookupCase {
         label: "direct memory_search",
         name: "mcp__rivetos__memory_search",
-        args: r#"{"query":"gpubox"}"#,
+        args: r#"{"query":"tinbox"}"#,
         result: "RAM 51 GB used after DS41 shutdown",
         lookup: true,
     },
     LookupCase {
         label: "direct wiki_read",
         name: "mcp__rivetos__wiki_read",
-        args: r#"{"slug":"gpubox"}"#,
+        args: r#"{"slug":"tinbox"}"#,
         result: "seven working V100s",
         lookup: true,
     },
@@ -408,14 +344,14 @@ const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "use_tool memory_search",
         name: "use_tool",
-        args: r#"{"tool_name":"rivetos__memory_search","tool_input":{"query":"gpubox"}}"#,
+        args: r#"{"tool_name":"rivetos__memory_search","tool_input":{"query":"tinbox"}}"#,
         result: "stale",
         lookup: true,
     },
     LookupCase {
         label: "use_tool slash wiki_read",
         name: "use_tool",
-        args: r#"{"tool_name":"rivetos/wiki_read","tool_input":{"slug":"gpubox"}}"#,
+        args: r#"{"tool_name":"rivetos/wiki_read","tool_input":{"slug":"tinbox"}}"#,
         result: "stale page",
         lookup: true,
     },
@@ -436,7 +372,7 @@ const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "read of a project memory file",
         name: "read_file",
-        args: r#"{"target_file":"/home/phil/.claude/projects/-home-phil/memory/ds41-slot-budget.md"}"#,
+        args: r#"{"target_file":"/home/dana/.claude/projects/-home-dana/memory/ds41-slot-budget.md"}"#,
         result: "october budget",
         lookup: true,
     },
@@ -450,14 +386,14 @@ const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "grep of a project memory directory",
         name: "grep",
-        args: r#"{"path":"/home/phil/.claude/projects/-home-phil/memory","pattern":"DS41"}"#,
+        args: r#"{"path":"/home/dana/.claude/projects/-home-dana/memory","pattern":"DS41"}"#,
         result: "slot budget",
         lookup: true,
     },
     LookupCase {
         label: "session jsonl under claude projects is not a memory file",
         name: "Read",
-        args: r#"{"file_path":"/home/phil/.claude/projects/-home-phil/session.jsonl"}"#,
+        args: r#"{"file_path":"/home/dana/.claude/projects/-home-dana/session.jsonl"}"#,
         result: "transcript",
         lookup: false,
     },
@@ -471,7 +407,7 @@ const LOOKUP_CASES: &[LookupCase] = &[
     LookupCase {
         label: "memory-researcher agent",
         name: "Agent",
-        args: r#"{"subagent_type":"memory-researcher","prompt":"find gpubox"}"#,
+        args: r#"{"subagent_type":"memory-researcher","prompt":"find tinbox"}"#,
         result: "launched",
         lookup: true,
     },
@@ -493,7 +429,7 @@ const LOOKUP_CASES: &[LookupCase] = &[
         label: "filePath header names the wiki page",
         name: "Read",
         args: "{}",
-        result: r#"{"type":"text","file":{"filePath":"/rivet-shared/wiki/topics/gpubox.md","content":"seven working V100s"}}"#,
+        result: r#"{"type":"text","file":{"filePath":"/rivet-shared/wiki/topics/tinbox.md","content":"seven working V100s"}}"#,
         lookup: true,
     },
     LookupCase {
@@ -507,27 +443,27 @@ const LOOKUP_CASES: &[LookupCase] = &[
         label: "file content mentions a wiki path but the path read is not one",
         name: "Read",
         args: r#"{"file_path":"/etc/hostname"}"#,
-        result: r#"{"type":"text","file":{"filePath":"/etc/hostname","content":"see MEMORY.md and /rivet-shared/wiki/topics/gpubox.md"}}"#,
+        result: r#"{"type":"text","file":{"filePath":"/etc/hostname","content":"see MEMORY.md and /rivet-shared/wiki/topics/tinbox.md"}}"#,
         lookup: false,
     },
     LookupCase {
         label: "plain result header is the wiki path",
         name: "bash",
         args: "",
-        result: "/rivet-shared/wiki/topics/gpubox.md\nseven working V100s\n",
+        result: "/rivet-shared/wiki/topics/tinbox.md\nseven working V100s\n",
         lookup: true,
     },
     LookupCase {
         label: "wiki path on a later line is not the header",
         name: "Bash",
         args: "nvidia-smi",
-        result: "GPU 0\n/rivet-shared/wiki/topics/gpubox.md\n",
+        result: "GPU 0\n/rivet-shared/wiki/topics/tinbox.md\n",
         lookup: false,
     },
     LookupCase {
         label: "cat tool of a wiki page",
         name: "cat",
-        args: "/rivet-shared/wiki/topics/gpubox.md",
+        args: "/rivet-shared/wiki/topics/tinbox.md",
         result: "page",
         lookup: true,
     },
@@ -546,22 +482,16 @@ fn memory_lookup_matches_the_case_table() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn a_rendered_transcript_keeps_the_lookup_call_and_drops_the_result() {
     let user = message(1, 0, "user", "how many gpus");
     let mut tool = message(2, 10, "tool", "[tool call] Bash");
     tool.tool_name = Some("Bash".to_owned());
-    tool.tool_args = Some(json!({"command": "cat /rivet-shared/wiki/topics/gpubox.md"}));
+    tool.tool_args = Some(json!({"command": "cat /rivet-shared/wiki/topics/tinbox.md"}));
     tool.tool_result = Some("seven working V100s and one dead module\n".to_owned());
     let rendered = render_transcript(&[tool, user]);
     assert!(rendered.contains("how many gpus"));
-    assert!(rendered.contains("Bash cat /rivet-shared/wiki/topics/gpubox.md"));
+    assert!(rendered.contains("Bash cat /rivet-shared/wiki/topics/tinbox.md"));
     assert!(rendered.contains(MEMORY_LOOKUP_OMITTED));
     assert!(!rendered.contains("seven working V100s"));
     assert!(!rendered.contains("dead module"));

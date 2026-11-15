@@ -1,10 +1,4 @@
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        jsmodel,
-        reason = "CONTRACT note 198: rh writes this plug-in into $DSH_HOME/plugins as file text; the string is the program dsh loads, not a model of values rh evaluates"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(jsmodel))]
 pub(super) const TEMPLATE: &str = r"import { spawn } from 'node:child_process'
 
 const COMMAND = '__COMMAND__'

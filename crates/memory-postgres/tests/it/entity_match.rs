@@ -211,7 +211,7 @@ async fn rejected_alias(pool: PgPool) -> TestResult {
 async fn hostname_match(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
     let leaf = leaf();
-    let gerty = commit(&memory, &leaf, "gerty", "Hosts", &["G9".to_owned()], None).await?;
+    let hally = commit(&memory, &leaf, "hally", "Hosts", &["G9".to_owned()], None).await?;
     let summary = seed_summary(&pool).await?;
     sqlx::query(
         "WITH fact AS (
@@ -227,7 +227,7 @@ async fn hostname_match(pool: PgPool) -> TestResult {
            FROM fact",
     )
     .bind(Uuid::new_v4())
-    .bind(gerty.id)
+    .bind(hally.id)
     .bind(at("2026-11-13T02:00:00Z"))
     .bind(Uuid::new_v4())
     .bind(summary)
@@ -235,9 +235,9 @@ async fn hostname_match(pool: PgPool) -> TestResult {
     .await?;
     sqlx::query(
         "INSERT INTO rh_wiki_topics (slug, title, topic_id, current_state, article, owner_user_id)
-         VALUES ('gerty-page', 'gerty', $1, 'box9 is this machine', 'also called G9', 'owner')",
+         VALUES ('hally-page', 'hally', $1, 'box9 is this machine', 'also called G9', 'owner')",
     )
-    .bind(gerty.id)
+    .bind(hally.id)
     .execute(&pool)
     .await?;
     let found = memory
@@ -248,9 +248,9 @@ async fn hostname_match(pool: PgPool) -> TestResult {
             markers: vec!["box9".to_owned()],
         })
         .await?;
-    let page = found.iter().find(|item| item.id == gerty.id);
+    let page = found.iter().find(|item| item.id == hally.id);
     let Some(page) = page else {
-        panic!("box9 did not find gerty");
+        panic!("box9 did not find hally");
     };
     assert!(
         page.summary.contains("box9 is this machine"),
@@ -265,14 +265,14 @@ async fn hostname_match(pool: PgPool) -> TestResult {
             markers: Vec::new(),
         })
         .await?;
-    assert!(alias.iter().any(|item| item.id == gerty.id));
+    assert!(alias.iter().any(|item| item.id == hally.id));
     Ok(())
 }
 
 async fn stored_type(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
     let leaf = leaf();
-    let host = commit(&memory, &leaf, "gerty", "Hosts", &[], None).await?;
+    let host = commit(&memory, &leaf, "hally", "Hosts", &[], None).await?;
     assert_eq!(host.type_name, "Hosts");
     memory.remember_type_alias("Hosts", "machine").await?;
     memory.remember_type_alias("Hosts", "machine").await?;
@@ -282,7 +282,7 @@ async fn stored_type(pool: PgPool) -> TestResult {
         .find(|brief| brief.name == "Hosts")
         .expect("Hosts");
     assert!(hosts.aliases.iter().any(|alias| alias == "machine"));
-    assert!(hosts.examples.iter().any(|example| example == "gerty"));
+    assert!(hosts.examples.iter().any(|example| example == "hally"));
     let aliases: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM rh_topic_aliases WHERE kind = 'type' AND alias = 'machine'",
     )
@@ -294,7 +294,7 @@ async fn stored_type(pool: PgPool) -> TestResult {
         kind: "type".to_owned(),
         proposed_name: "machine".to_owned(),
         proposed_type: "type".to_owned(),
-        candidates: vec!["Hosts (examples: gerty)".to_owned()],
+        candidates: vec!["Hosts (examples: hally)".to_owned()],
         verdict: "same".to_owned(),
         choice: "0".to_owned(),
         confidence: 0.93,

@@ -141,13 +141,7 @@ fn session_of(key: &str) -> Option<SessionId> {
     if Uuid::parse_str(key).is_ok() {
         return Some(SessionId::new(HarnessId::ClaudeCode, key));
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a conversation key that names no harness session has no session to review it under"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let session = SessionId::from_str(key).ok();
     session
 }

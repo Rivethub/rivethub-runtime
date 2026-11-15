@@ -31,7 +31,6 @@ wire = { workspace = true }
 [dev-dependencies]
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
-tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

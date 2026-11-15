@@ -139,12 +139,6 @@ pub(crate) async fn seed(pool: &PgPool) -> Result<ExtractWiki, sqlx::Error> {
 #[derive(Deserialize)]
 pub(crate) struct Fixture {
     pub(crate) scenarios: Vec<Scenario>,
-    pub(crate) constants: Constants,
-}
-#[derive(Deserialize)]
-pub(crate) struct Constants {
-    #[serde(rename = "WIKI_PIPELINE_VERSION")]
-    pub(crate) wiki_pipeline_version: i32,
 }
 #[derive(Deserialize)]
 pub(crate) struct Scenario {

@@ -99,11 +99,11 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
     let wiki = tempfile::tempdir()?;
     let store = PostgresMemory::new(pool.clone())
         .with_wiki_directory(wiki.path().to_path_buf())
-        .with_wiki_owner(Owner::new("phil".to_owned())?);
+        .with_wiki_owner(Owner::new("dana".to_owned())?);
     for (owner, visibility) in [
-        ("phil", "private"),
-        ("coco", "private"),
-        ("coco", "household"),
+        ("dana", "private"),
+        ("cleo", "private"),
+        ("cleo", "household"),
     ] {
         let job = summary(&pool, owner, visibility).await?;
         store
@@ -127,8 +127,8 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
     assert_eq!(
         all,
         vec![
-            owned("acmekit-deploys", "phil", "private", ""),
-            owned("coco-acmekit-deploys", "coco", "private", "users/coco"),
+            owned("acmekit-deploys", "dana", "private", ""),
+            owned("cleo-acmekit-deploys", "cleo", "private", "users/cleo"),
             owned(
                 "household-acmekit-deploys",
                 "household",
@@ -137,7 +137,7 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
             ),
         ]
     );
-    for directory in ["", "users/coco", "spaces/household"] {
+    for directory in ["", "users/cleo", "spaces/household"] {
         let file = wiki
             .path()
             .join(directory)
@@ -147,16 +147,16 @@ async fn private_and_shared_notes_land_on_separate_pages(pool: PgPool) -> TestRe
     }
     let probe = viewer_pool(&pool).await?;
     assert_eq!(
-        pages(&probe, "phil").await?,
+        pages(&probe, "dana").await?,
         vec![
-            "acmekit-deploys phil private".to_owned(),
+            "acmekit-deploys dana private".to_owned(),
             "household-acmekit-deploys household household".to_owned(),
         ]
     );
     assert_eq!(
-        pages(&probe, "coco").await?,
+        pages(&probe, "cleo").await?,
         vec![
-            "coco-acmekit-deploys coco private".to_owned(),
+            "cleo-acmekit-deploys cleo private".to_owned(),
             "household-acmekit-deploys household household".to_owned(),
         ]
     );
@@ -170,7 +170,7 @@ async fn household(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     sqlx::query(
-        "INSERT INTO rh_space_members (space_id, user_id, role) VALUES ('household', 'phil', 'member'), ('household', 'coco', 'member')",
+        "INSERT INTO rh_space_members (space_id, user_id, role) VALUES ('household', 'dana', 'member'), ('household', 'cleo', 'member')",
     )
     .execute(pool)
     .await?;
@@ -181,7 +181,7 @@ async fn shared_topic(pool: &PgPool) -> Result<kernel::topics::TopicId, sqlx::Er
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO rh_topics (id, slug, name, created_at, updated_at, owner_user_id, visibility_mark)
-         VALUES ($1, 'kitchen-shelves', 'Kitchen shelves', now(), now(), 'phil', 'household')",
+         VALUES ($1, 'kitchen-shelves', 'Kitchen shelves', now(), now(), 'dana', 'household')",
     )
     .bind(id)
     .execute(pool)
@@ -219,7 +219,7 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
     let wiki = tempfile::tempdir()?;
     let store = PostgresMemory::new(pool.clone())
         .with_wiki_directory(wiki.path().to_path_buf())
-        .with_wiki_owner(Owner::new("phil".to_owned())?);
+        .with_wiki_owner(Owner::new("dana".to_owned())?);
     household(&pool).await?;
     let topic = shared_topic(&pool).await?;
     let slug = kernel::wiki::page::WikiSlug::try_from("kitchen-shelves".to_owned())?;
@@ -233,14 +233,14 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
     note(
         &store,
         topic,
-        &summary(&pool, "phil", "household").await?,
+        &summary(&pool, "dana", "household").await?,
         "Brackets every 40 cm.",
     )
     .await?;
     note(
         &store,
         topic,
-        &summary(&pool, "phil", "private").await?,
+        &summary(&pool, "dana", "private").await?,
         "Budget stays under 90 euro.",
     )
     .await?;
@@ -272,7 +272,7 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
             ),
             row(
                 "kitchen-shelves-2",
-                "phil",
+                "dana",
                 "private",
                 "",
                 "Budget stays under 90 euro."
@@ -288,7 +288,7 @@ async fn private_notes_on_a_shared_topic_stay_on_the_owners_own_page(pool: PgPoo
     assert!(own.contains("90 euro"));
     let probe = viewer_pool(&pool).await?;
     assert_eq!(
-        pages(&probe, "coco").await?,
+        pages(&probe, "cleo").await?,
         vec!["kitchen-shelves household household".to_owned()],
         "the private note never reaches the household"
     );
@@ -300,9 +300,9 @@ async fn a_personal_page_stays_bounded_under_repeated_updates(pool: PgPool) -> T
     let wiki = tempfile::tempdir()?;
     let store = PostgresMemory::new(pool.clone())
         .with_wiki_directory(wiki.path().to_path_buf())
-        .with_wiki_owner(Owner::new("phil".to_owned())?);
+        .with_wiki_owner(Owner::new("dana".to_owned())?);
     for round in 0..24 {
-        let job = summary(&pool, "coco", "private").await?;
+        let job = summary(&pool, "cleo", "private").await?;
         let mut update = patch();
         if round > 0 {
             update.action = kernel::wiki::page::WikiAction::Update;
@@ -319,21 +319,21 @@ async fn a_personal_page_stays_bounded_under_repeated_updates(pool: PgPool) -> T
     }
     let (article, scope): (String, String) = sqlx::query_as(
         "SELECT t.article, s.directory FROM rh_wiki_topics t JOIN rh_wiki_scopes s ON s.scope = t.scope
-          WHERE t.slug = 'coco-acmekit-deploys'",
+          WHERE t.slug = 'cleo-acmekit-deploys'",
     )
     .fetch_one(&pool)
     .await?;
-    assert_eq!(scope, "users/coco");
+    assert_eq!(scope, "users/cleo");
     assert!(
         article.len() <= kernel::wiki::page::bound::ARTICLE_BUDGET,
         "{} bytes",
         article.len()
     );
-    let page = std::fs::read_to_string(wiki.path().join("users/coco/topics/acmekit-deploys.md"))?;
+    let page = std::fs::read_to_string(wiki.path().join("users/cleo/topics/acmekit-deploys.md"))?;
     assert!(page.len() < 48 * 1024, "{} bytes on disk", page.len());
     assert!(
         wiki.path()
-            .join("users/coco/archive/acmekit-deploys")
+            .join("users/cleo/archive/acmekit-deploys")
             .is_dir(),
         "what the rewrites dropped is archived in her own repository"
     );

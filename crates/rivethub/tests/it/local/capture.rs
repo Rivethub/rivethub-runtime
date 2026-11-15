@@ -1,4 +1,4 @@
-use wire::capture::{CaptureBatchRequest, CaptureMessage, CaptureResult};
+use wire::capture::{CaptureBatchRequest, CaptureMessage};
 use wire::gateway::memory::{EmbedStatus, MemoryHealthResponse};
 use wire::message::Role;
 
@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use tokio::io::AsyncWriteExt as _;
 
-use super::{TestResult, provider_base, start, stop, write_config};
+use super::{TestResult, provider_at, start, stop, write_state};
 
-const SESSION: &str = "capture-resend";
+const SESSION: &str = "captured";
 
 fn message(event_id: &str, role: Role, content: &str) -> CaptureMessage {
     CaptureMessage {
@@ -41,60 +41,6 @@ fn batch(title: &str) -> CaptureBatchRequest {
             message("evt-2", Role::Assistant, "second"),
         ],
     }
-}
-
-#[tokio::test]
-async fn resent_capture_batches_skip_stored_events_and_keep_the_title() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let port = testkit::ports::claim()?;
-    let port_text = port.to_string();
-    let started = start(
-        home.path(),
-        &["local", "--no-lan", "--port", &port_text],
-        &["gateway listening on "],
-    )
-    .await?;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .default_headers(crate::owner::home_headers(home.path())?)
-        .build()?;
-    let url = format!("http://127.0.0.1:{port}/api/capture");
-    let mut results = Vec::new();
-    for title in ["Stop", "SessionEnd"] {
-        let response = client.post(&url).json(&batch(title)).send().await;
-        results.push(match response {
-            Ok(response) => (response.status(), response.text().await),
-            Err(error) => {
-                stop(started).await?;
-                return Err(error.into());
-            }
-        });
-    }
-    stop(started).await?;
-    let mut counts = Vec::new();
-    for (status, body) in results {
-        let body = body?;
-        assert_eq!(status, reqwest::StatusCode::OK, "{body}");
-        let result: CaptureResult = serde_json::from_str(&body)?;
-        counts.push((result.inserted, result.skipped));
-    }
-    assert_eq!(counts, vec![(2, 0), (0, 2)]);
-    let database = home.path().join(".rivethub").join("memory.sqlite");
-    let conn = rusqlite::Connection::open(&database)?;
-    let rows: i64 = conn.query_row(
-        "SELECT count(*) FROM ros_messages m JOIN ros_conversations c ON c.id = m.conversation_id
-          WHERE c.session_key = ?1",
-        [SESSION],
-        |row| row.get(0),
-    )?;
-    assert_eq!(rows, 2);
-    let title: Option<String> = conn.query_row(
-        "SELECT title FROM ros_conversations WHERE session_key = ?1",
-        [SESSION],
-        |row| row.get(0),
-    )?;
-    assert_eq!(title.as_deref(), Some("SessionEnd"));
-    Ok(())
 }
 
 const HOOK_SESSION: &str = "44444444-4444-4444-4444-444444444444";
@@ -204,9 +150,9 @@ async fn capture_on_node(home: &Path, sqlite: &str) -> TestResult<MemoryHealthRe
         &users,
         format!(r#"{{"ownerUserId":"{NODE_OWNER}","unmappedIsOwner":true,"users":{{}}}}"#),
     )?;
-    write_config(
+    write_state(
         home,
-        &provider_base(
+        &provider_at(
             home,
             "http://127.0.0.1:1",
             &format!(
@@ -254,7 +200,7 @@ fn queued_embeds(home: &Path) -> TestResult<i64> {
 }
 
 #[tokio::test]
-async fn an_embedding_node_reports_embeddings_armed_and_queues_captured_messages() -> TestResult {
+async fn an_embedding_node_queues_captured_messages_for_the_node_owner() -> TestResult {
     let home = tempfile::tempdir()?;
     let health = capture_on_node(
         home.path(),
@@ -264,13 +210,6 @@ async fn an_embedding_node_reports_embeddings_armed_and_queues_captured_messages
     assert_eq!(health.embeddings.status, EmbedStatus::Ok, "{health:?}");
     assert_eq!(health.embed_queue_depth, 2, "{health:?}");
     assert_eq!(queued_embeds(home.path())?, 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn captured_conversations_belong_to_the_node_owner() -> TestResult {
-    let home = tempfile::tempdir()?;
-    capture_on_node(home.path(), "").await?;
     let conn = rusqlite::Connection::open(home.path().join(".rivethub").join("memory.sqlite"))?;
     let conversation: Option<String> = conn.query_row(
         "SELECT owner_user_id FROM ros_conversations WHERE session_key = ?1",

@@ -52,13 +52,7 @@ pub(crate) async fn scope_request(
     let (parts, body) = request.into_parts();
     let viewer = crate::tenancy::caller(&gateway, &parts).map(|user| gateway.tenancy.viewer(&user));
     let request = Request::from_parts(parts, body);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 89 of the contract runs a request whose caller is not identified in the closed scope, and its route refuses it"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let scope = match viewer {
         Ok(viewer) => Scope::Viewer(viewer),
         Err(_) => Scope::Closed,

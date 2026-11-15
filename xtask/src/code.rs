@@ -38,9 +38,7 @@ fn comment_text(text: &str, offset: usize, end: usize) -> String {
 
 pub fn check_source(findings: &mut Vec<String>, rel: &str, text: &str) {
     for (line_number, snippet) in comments(text) {
-        findings.push(format!(
-            "COMMENT {rel}:{line_number}: comment ({snippet}) → docs/PATTERNS.md#comment"
-        ));
+        findings.push(format!("COMMENT {rel}:{line_number}: comment ({snippet})"));
     }
 }
 
@@ -60,22 +58,20 @@ pub fn check_code(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
         let bytes = std::fs::read(root.join(rel))?;
         let Ok(text) = std::str::from_utf8(&bytes) else {
             findings.push(format!(
-                "UTF8 {rel}: not valid UTF-8; the Rust lexer cannot read the file → docs/PATTERNS.md#utf8"
+                "UTF8 {rel}: not valid UTF-8; the Rust lexer cannot read the file"
             ));
             continue;
         };
         let text = text.to_owned();
         check_source(findings, rel, &text);
         if is_naming_violation(rel) {
-            findings.push(format!(
-                "NAMING {rel}: den/room file or module name → docs/PATTERNS.md#naming"
-            ));
+            findings.push(format!("NAMING {rel}: den/room file or module name"));
         }
         if !format!("/{rel}").contains("/tests/") {
             let non_blank = text.lines().filter(|line| !line.trim().is_empty()).count();
             if non_blank > FILE_CEILING {
                 findings.push(format!(
-                    "SIZE {rel}: {non_blank} lines (ceiling {FILE_CEILING}) → docs/PATTERNS.md#size"
+                    "SIZE {rel}: {non_blank} lines (ceiling {FILE_CEILING})"
                 ));
             }
         }

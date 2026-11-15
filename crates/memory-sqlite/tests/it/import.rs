@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use memory_sqlite::SqliteStore;
 use memory_sqlite::import::{ImportError, ImportReport, ImportTable};
-use serde::Deserialize;
 use strum::IntoEnumIterator;
 use testkit::Json;
 use tokio_util::sync::CancellationToken;
@@ -278,17 +277,6 @@ async fn simultaneous_imports_commit_exactly_once() -> Result {
     Ok(())
 }
 
-#[derive(Deserialize)]
-struct SkipList {
-    skips: Vec<Skip>,
-}
-
-#[derive(Deserialize)]
-struct Skip {
-    name: String,
-    reason: String,
-}
-
 fn summaries(columns: &str, body: &str) -> String {
     format!(
         "COPY public.ros_summaries ({columns}) FROM stdin;\n{body}\n\\.\n-- PostgreSQL database dump complete\n"
@@ -417,19 +405,4 @@ async fn a_legacy_summary_kind_below_zero_rolls_the_import_back() -> Result {
         "legacy summary kind has no depth mapping",
     )
     .await
-}
-
-#[test]
-fn import_skip_list_has_no_unexplained_or_unrelated_scenarios() -> Result {
-    let SkipList { skips } =
-        serde_json::from_str(&std::fs::read_to_string(fixture("skips.json"))?)?;
-    for skip in &skips {
-        assert!(skip.name.starts_with("import/"));
-        assert_ne!(skip.reason.trim(), "");
-    }
-    assert!(
-        skips.is_empty(),
-        "all supplied import scenarios are in scope"
-    );
-    Ok(())
 }

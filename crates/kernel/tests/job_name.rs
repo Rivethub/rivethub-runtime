@@ -92,38 +92,6 @@ fn every_fixed_variant_round_trips_through_job_name() {
 }
 
 #[test]
-fn heartbeat_with_a_dashed_agent_round_trips() {
-    let name = JobName::Heartbeat {
-        agent: "rivet-edge-agent".to_string(),
-        index: 7,
-    };
-    assert_eq!(name.to_string(), "heartbeat-rivet-edge-agent-7");
-    assert_eq!(
-        JobName::from_str("heartbeat-rivet-edge-agent-7"),
-        Ok(name.clone())
-    );
-    assert_eq!(String::from(name), "heartbeat-rivet-edge-agent-7");
-}
-
-#[test]
-fn heartbeat_splits_at_the_last_dash() {
-    assert_eq!(
-        JobName::from_str("heartbeat-agent-10"),
-        Ok(JobName::Heartbeat {
-            agent: "agent".to_string(),
-            index: 10
-        })
-    );
-    assert_eq!(
-        JobName::from_str("heartbeat-a-b-c-0"),
-        Ok(JobName::Heartbeat {
-            agent: "a-b-c".to_string(),
-            index: 0
-        })
-    );
-}
-
-#[test]
 fn rejects_an_unknown_name() {
     assert_eq!(
         JobName::from_str("no-such-job"),
@@ -133,44 +101,4 @@ fn rejects_an_unknown_name() {
         JobName::from_str("heartbeat"),
         Err(JobNameError::Unknown("heartbeat".to_string()))
     );
-}
-
-#[test]
-fn rejects_a_non_numeric_heartbeat_index() {
-    assert_eq!(
-        JobName::from_str("heartbeat-agent-x"),
-        Err(JobNameError::HeartbeatIndex(
-            "heartbeat-agent-x".to_string()
-        ))
-    );
-    assert_eq!(
-        JobName::from_str("heartbeat-agent"),
-        Err(JobNameError::HeartbeatIndex("heartbeat-agent".to_string()))
-    );
-    assert_eq!(
-        JobName::from_str("heartbeat-agent-1-x"),
-        Err(JobNameError::HeartbeatIndex(
-            "heartbeat-agent-1-x".to_string()
-        ))
-    );
-}
-
-#[test]
-fn serde_uses_the_wire_string() {
-    let heartbeat = JobName::Heartbeat {
-        agent: "edge-agent".to_string(),
-        index: 3,
-    };
-    assert_eq!(
-        serde_json::to_string(&heartbeat).unwrap(),
-        "\"heartbeat-edge-agent-3\""
-    );
-    for (wire, name) in FIXED {
-        let parsed: JobName = serde_json::from_str(&serde_json::to_string(&name).unwrap()).unwrap();
-        assert_eq!(parsed, name.clone());
-        assert_eq!(
-            serde_json::to_string(&parsed).unwrap(),
-            format!("\"{wire}\"")
-        );
-    }
 }

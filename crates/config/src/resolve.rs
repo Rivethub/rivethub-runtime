@@ -50,13 +50,7 @@ fn substitute(env: &Environment, text: &str, pattern: &Regex) -> Result<String, 
                 })
             })
             .transpose()?;
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B10: an unset substitution variable expands to the empty string"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let replacement = value.unwrap_or("");
         out.push_str(replacement);
         start = found.end();

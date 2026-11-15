@@ -55,10 +55,6 @@ fn an_installed_entry_that_captured_before_but_not_in_three_days_is_stale() {
 #[test]
 fn an_installed_entry_that_has_never_captured_is_idle() {
     assert_eq!(state(true, CaptureHistory::Known(None)), CaptureState::Idle);
-    assert_eq!(
-        serde_json::to_string(&CaptureState::Idle).ok().as_deref(),
-        Some("\"idle\"")
-    );
 }
 
 #[test]

@@ -34,12 +34,12 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
             let line = ident.span().start().line;
             if !schema {
                 findings.push(format!(
-                    "CONTRACT {rel}:{line}: {ident} derives serde but not schemars::JsonSchema → docs/PATTERNS.md#contract"
+                    "CONTRACT {rel}:{line}: {ident} derives serde but not schemars::JsonSchema"
                 ));
                 count += 1;
             } else if rooted && !roots.contains(&format!("::{ident}>")) {
                 findings.push(format!(
-                    "CONTRACT {rel}:{line}: {ident} is missing from ROOTS in {ROOTS_FILE} → docs/PATTERNS.md#contract"
+                    "CONTRACT {rel}:{line}: {ident} is missing from ROOTS in {ROOTS_FILE}"
                 ));
                 count += 1;
             }

@@ -8,10 +8,7 @@ use wire::JsonObject;
 use super::{ModelMerger, embed_job};
 use crate::WorkerError;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel ports are injected trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct RecompileEnv<'a> {
     pub store: &'a dyn WikiRecompileStore,
     pub provider: &'a dyn ModelProvider,

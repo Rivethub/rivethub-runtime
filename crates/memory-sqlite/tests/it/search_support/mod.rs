@@ -1,5 +1,3 @@
-pub(crate) mod superseded;
-
 use chrono::{DateTime, Utc};
 use kernel::memory::MemoryScope;
 use kernel::memory::{Limit, SearchMode, SearchQuery};
@@ -153,6 +151,30 @@ pub(crate) async fn seed(store: &SqliteStore, recording: &Hybrid) -> TestResult 
     Ok(())
 }
 
+pub(crate) async fn reinforce(
+    store: &SqliteStore,
+    ids: Vec<String>,
+    clock: DateTime<Utc>,
+) -> Result<(), memory_sqlite::SqliteError> {
+    let stamp = clock.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    store
+        .with_conn(move |conn| {
+            for id in &ids {
+                for table in ["ros_messages", "ros_summaries"] {
+                    conn.execute(
+                        &format!(
+                            "UPDATE {table} SET access_count = access_count + 1, last_accessed_at = ?1 WHERE id = ?2"
+                        ),
+                        rusqlite::params![stamp, id],
+                    )
+                    .map_err(failed)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+}
+
 pub(crate) fn failed(source: rusqlite::Error) -> memory_sqlite::SqliteError {
     memory_sqlite::SqliteError::Query {
         operation: "test fixture",
@@ -165,11 +187,6 @@ pub(crate) struct BackendCase {
     pub(crate) query: String,
     pub(crate) options: Options,
     pub(crate) response: Option<BackendResponse>,
-    pub(crate) error: Option<RecordedError>,
-}
-#[derive(Deserialize)]
-pub(crate) struct RecordedError {
-    pub(crate) message: String,
 }
 #[derive(Deserialize)]
 pub(crate) struct BackendResponse {

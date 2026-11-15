@@ -72,13 +72,7 @@ pub(crate) async fn archive_parts(
 }
 
 async fn head(root: &Path) -> Option<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a real absence, contract note 100: a repository without a commit has no commit to name"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let sha = git(root, &["rev-parse", "--verify", "--quiet", "HEAD"])
         .await
         .ok();

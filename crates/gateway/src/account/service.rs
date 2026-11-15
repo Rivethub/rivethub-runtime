@@ -102,13 +102,7 @@ impl AccountService {
         if !self.settings.access.cloud() {
             return None;
         }
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B1 note 158: a cloud failure must show a signed-out account rather than preserve a cached claim of sign-in"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let identity = self.login.as_ref()?.identity().await.ok().flatten();
         identity
     }

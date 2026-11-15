@@ -1,4 +1,4 @@
-warning: `#[tokio::main]` builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime
+warning: `#[tokio::main]` builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)
   --> $DIR/tokiofail.rs:1:1
    |
 LL | #[tokio::main]

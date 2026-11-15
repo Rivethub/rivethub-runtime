@@ -303,13 +303,7 @@ pub(crate) fn tool_input(raw: &RawValue) -> Result<JsonObject, TranscriptReaderE
         return Ok(object);
     }
     if let Some(text) = lenient::<String>(raw)? {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B3: a tool input that is not a JSON object is kept whole as the call's input, as the kit keeps it"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let parsed = serde_json::from_str::<JsonObject>(&text).ok();
         if let Some(object) = parsed {
             return Ok(object);

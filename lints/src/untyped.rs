@@ -7,7 +7,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) UNTYPED,
     Warn,
-    "raw serde value or json! outside its sanctioned holders (a typed struct, wire::JsonObject, or config::FreeForm) → docs/PATTERNS.md#untyped",
+    "raw serde value or json! outside its sanctioned holders (a typed struct, wire::JsonObject, or config::FreeForm)",
     Untyped::default()
 );
 
@@ -108,7 +108,7 @@ impl<'tcx> LateLintPass<'tcx> for Untyped {
             ty.hir_id,
             ty.span,
             format!(
-                "{head}::{last} outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm) → docs/PATTERNS.md#untyped"
+                "{head}::{last} outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm)"
             ),
         );
     }
@@ -141,7 +141,7 @@ impl<'tcx> LateLintPass<'tcx> for Untyped {
             expr.hir_id,
             data.call_site,
             format!(
-                "{JSON_MACRO} builds untyped JSON — a typed serde struct or enum (or the crate's own protocol types) instead of json! → docs/PATTERNS.md#untyped"
+                "{JSON_MACRO} builds untyped JSON — a typed serde struct or enum (or the crate's own protocol types) instead of json!"
             ),
         );
     }

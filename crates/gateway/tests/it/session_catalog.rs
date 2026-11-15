@@ -210,7 +210,7 @@ async fn teammate_owner_is_carried_by_both_catalog_list_and_detail() {
     let (stores, mut records) = seeded();
     for record in &mut records {
         if record.id == claude("solo") {
-            record.owner = Some("alex".into());
+            record.owner = Some("ines".into());
         }
     }
     let setup = setup(stores, records);
@@ -221,7 +221,7 @@ async fn teammate_owner_is_carried_by_both_catalog_list_and_detail() {
         .iter()
         .find(|row| row.title == "Solo")
         .expect("solo");
-    assert_eq!(solo.owner.as_deref(), Some("alex"));
+    assert_eq!(solo.owner.as_deref(), Some("ines"));
     let parent = page
         .items
         .iter()
@@ -231,5 +231,5 @@ async fn teammate_owner_is_carried_by_both_catalog_list_and_detail() {
     let key = encode_segment(&claude("solo"));
     let (_, body) = call(&setup, "GET", &format!("/api/sessions/{key}")).await;
     let detail: SessionDetail = serde_json::from_slice(&body).expect("detail");
-    assert_eq!(detail.row.owner.as_deref(), Some("alex"));
+    assert_eq!(detail.row.owner.as_deref(), Some("ines"));
 }

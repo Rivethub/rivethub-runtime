@@ -4,12 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use capture::harnesses::HarnessSetupService;
-use capture::harnesses::REGISTRY;
 use capture::harnesses::SetupChange;
 use chrono::TimeZone;
 use chrono::Utc;
 use config::Environment;
-use kernel::harness_setup::CaptureMethod;
 use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::HarnessProbe;
 use kernel::harness_setup::RecallState;
@@ -169,44 +167,6 @@ impl Written {
             .get(event)
             .and_then(|groups| groups.get(group))
             .and_then(|group| group.hooks.first())
-    }
-}
-
-#[test]
-fn the_registry_has_one_row_per_harness_with_the_ranked_methods() {
-    let methods = |id: &str| {
-        REGISTRY
-            .iter()
-            .find(|spec| spec.id == id)
-            .and_then(|spec| spec.capture.first().copied())
-    };
-    let ids: Vec<&str> = REGISTRY.iter().map(|spec| spec.id).collect();
-    assert_eq!(
-        ids,
-        [
-            "claude-code",
-            "codex",
-            "grok-build",
-            "opencode",
-            "cursor",
-            "dsh",
-            "cowork",
-            "kimi",
-            "omp",
-            "hermes",
-            "antigravity",
-            "kiro"
-        ]
-    );
-    for id in ["claude-code", "codex", "grok-build", "dsh"] {
-        assert_eq!(methods(id), Some(CaptureMethod::Hook), "{id}");
-    }
-    assert_eq!(methods("opencode"), Some(CaptureMethod::Plugin));
-    for id in ["cursor", "cowork", "kimi", "omp", "hermes"] {
-        assert_eq!(methods(id), Some(CaptureMethod::StoreScan), "{id}");
-    }
-    for id in ["antigravity", "kiro"] {
-        assert_eq!(methods(id), Some(CaptureMethod::ClientPush), "{id}");
     }
 }
 
@@ -406,12 +366,10 @@ fn connecting_recall_edits_each_format_in_place() -> TestResult {
 }
 
 #[test]
-fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult {
+fn grok_capture_writes_its_own_hook_file() -> TestResult {
     let machine = machine()?;
     machine.write(".grok/.keep", "")?;
-    machine.write(".config/opencode/.keep", "")?;
     machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
-    machine.connect("opencode", Some(ConnectPart::Capture), false)?;
     let hooks = json_text(&machine.read(".grok/hooks/rivethub-capture.json")?)?;
     assert_eq!(
         hooks.run("PreCompact", 0).map(|run| run.args.clone()),
@@ -426,15 +384,7 @@ fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult
         hooks.run("Stop", 0).map(|run| run.command.as_str()),
         Some(RH)
     );
-    let plugin = machine.read(".config/opencode/plugins/rivethub-capture.ts")?;
-    assert!(
-        plugin.starts_with("export default { id: 'rivethub-capture' }\nconst COMMAND: string = ")
-    );
-    assert!(plugin.contains("capture hook --harness opencode"));
-    assert!(plugin.contains(RH));
-    assert!(!plugin.contains("__COMMAND__"));
     assert!(machine.probe("grok-build")?.capture_installed);
-    assert!(machine.probe("opencode")?.capture_installed);
     let again = machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
     assert_eq!(again.diff, "");
     Ok(())
@@ -465,21 +415,6 @@ fn an_oddly_formatted_config_is_backed_up_exactly_and_rewritten_as_two_space_jso
         restored,
         "{\n  \"zeta\": 1,\n  \"mcpServers\": {\n    \"other\": {\n      \"command\": \"x\"\n    }\n  },\n  \"alpha\": [\n    1,\n    2\n  ]\n}\n"
     );
-    Ok(())
-}
-
-#[test]
-fn opencode_capture_without_an_override_installs_the_plugin_embedded_in_rh() -> TestResult {
-    let machine = machine_with_plugin(false)?;
-    machine.write(".config/opencode/.keep", "")?;
-    let connected = machine.change("opencode", Some(ConnectPart::Capture), false)?;
-    assert!(connected.skipped.is_none());
-    let plugin = machine.read(".config/opencode/plugins/rivethub-capture.ts")?;
-    assert!(plugin.contains("id: 'rivethub-capture'"));
-    assert!(plugin.contains("ctx.event.subscribe({ signal })"));
-    assert!(plugin.contains(&format!("exec {RH} capture hook --harness opencode")));
-    assert!(!plugin.contains("__COMMAND__"));
-    assert!(machine.probe("opencode")?.capture_installed);
     Ok(())
 }
 

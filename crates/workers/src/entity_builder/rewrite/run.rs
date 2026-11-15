@@ -125,10 +125,7 @@ fn note_failure(item: &TouchedEntity, error: WorkerError, fatal: &mut Option<Wor
 }
 
 fn job_fatal(error: &WorkerError) -> bool {
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "database, repository, and exhausted JSON errors retry the job; other entity failures stay with that entity"
-    )]
+    #[expect(clippy::wildcard_enum_match_arm)]
     match error {
         WorkerError::Cancelled
         | WorkerError::Closed
@@ -289,10 +286,7 @@ fn mention_note(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the mention quote travels with the page so the stored claim can cite it"
-)]
+#[expect(clippy::too_many_arguments)]
 pub(in crate::entity_builder) async fn accepted_rewrite(
     env: &super::super::EntityBuilderEnv<'_>,
     view: &EntityView,
@@ -396,10 +390,7 @@ fn mark_is_ahead(session: AppliedMark, mark: Option<AppliedMark>) -> bool {
     mark.is_some_and(|mark| older_than_mark(session.at, session.summary_id, mark))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the passages travel with the page so a retirement quote can be checked"
-)]
+#[expect(clippy::too_many_arguments)]
 async fn rewrite_attempt(
     env: &super::super::EntityBuilderEnv<'_>,
     view: &EntityView,

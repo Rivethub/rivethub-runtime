@@ -68,10 +68,7 @@ fn seeded() -> Result<(Arc<testkit::FakeMemoryStore>, axum::Router), String> {
 }
 
 fn entry(id: &str, content: &str, created_at: &str) -> MemoryEntry {
-    #[expect(
-        clippy::expect_used,
-        reason = "the test literals are constants; a malformed literal must fail the test, not drop the timestamp"
-    )]
+    #[expect(clippy::expect_used)]
     fn at(created_at: &str) -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::parse_from_rfc3339(created_at)
             .expect("entry created_at is an RFC 3339 literal")
@@ -125,10 +122,7 @@ fn full_browse_filter() -> kernel::memory::BrowseFilter {
     }
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "only the search arm carries a query; the fake records sixteen request kinds"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn recorded_searches(requests: &[testkit::MemoryRequest]) -> Vec<&kernel::memory::SearchQuery> {
     requests
         .iter()
@@ -139,10 +133,7 @@ fn recorded_searches(requests: &[testkit::MemoryRequest]) -> Vec<&kernel::memory
         .collect()
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "only the browse arm carries a filter; the fake records sixteen request kinds"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn recorded_browses(requests: &[testkit::MemoryRequest]) -> Vec<&kernel::memory::BrowseFilter> {
     requests
         .iter()

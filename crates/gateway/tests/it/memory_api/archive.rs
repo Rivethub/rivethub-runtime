@@ -31,10 +31,7 @@ impl MemoryExport for RecordingExport {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "an in-process request that cannot be answered must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn get(app: &axum::Router, path: &str) -> testkit::Response {
     block_on(answer(app.clone(), recorded("GET", path, Vec::new()))).expect("in-process answer")
 }
@@ -47,10 +44,7 @@ fn header<'a>(response: &'a testkit::Response, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the test literals are constants; a malformed literal must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn at(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
         .expect("RFC 3339 literal")
@@ -243,19 +237,6 @@ fn a_conversation_answers_its_summary_dag_under_its_own_key() {
         get(&app, "/api/memory/conversations/not-an-id/summaries").status,
         400
     );
-}
-
-#[test]
-fn summaries_route_reports_an_unavailable_store() {
-    let app = common::failing_gateway().router(false);
-    let response = get(&app, &format!("/api/memory/summaries/{SESSION}"));
-    assert_eq!(response.status, 503);
-    let response = block_on(answer(
-        app,
-        recorded("POST", "/api/memory/summaries/s-1", Vec::new()),
-    ))
-    .expect("in-process answer");
-    assert_eq!(response.status, 405);
 }
 
 #[test]

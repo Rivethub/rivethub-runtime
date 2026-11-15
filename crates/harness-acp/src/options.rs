@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn a_provider_and_model_pair_is_offered_and_chosen_as_provider_slash_model() {
-        let value = r#"["gpubox","deepseek-v4.1-flash"]"#;
+        let value = r#"["tinbox","deepseek-v4.1-flash"]"#;
         let options = vec![
             acp::SessionConfigOption::select(
                 "model",
@@ -270,9 +270,9 @@ mod tests {
         let models = stored.models().expect("models").expect("offered");
         assert_eq!(
             models.first().expect("model").id,
-            "gpubox/deepseek-v4.1-flash"
+            "tinbox/deepseek-v4.1-flash"
         );
-        for asked in ["gpubox/deepseek-v4.1-flash", value] {
+        for asked in ["tinbox/deepseek-v4.1-flash", value] {
             let chosen = select(&options, &SessionOption::Model(asked.to_owned())).expect(asked);
             assert_eq!(chosen.value, acp::SessionConfigOptionValue::value_id(value));
         }

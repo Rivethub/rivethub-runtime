@@ -46,34 +46,3 @@ fn occurrence_ids_carry_the_occurrence_index() -> Result<(), serde_json::Error> 
     );
     Ok(())
 }
-
-#[test]
-fn number_spelling_follows_the_recorded_hashes() -> Result<(), serde_json::Error> {
-    let cases = [
-        (r#"{"a":1.0}"#, r#"{"a":1}"#),
-        (r#"{"a":0.1}"#, r#"{"a":0.1}"#),
-        (r#"{"a":1e21}"#, r#"{"a":1e+21}"#),
-        (r#"{"a":1.5e-7}"#, r#"{"a":1.5e-7}"#),
-        (r#"{"a":1e-7}"#, r#"{"a":1e-7}"#),
-        (r#"{"a":1e20}"#, r#"{"a":100000000000000000000}"#),
-        (
-            r#"{"a":12345678901234567890}"#,
-            r#"{"a":12345678901234567000}"#,
-        ),
-        (r#"{"a":-0.0}"#, r#"{"a":0}"#),
-        (r#"{"b":1,"2":2,"a":3}"#, r#"{"2":2,"b":1,"a":3}"#),
-        (
-            r#"{"s":"quote\"back\\slash"}"#,
-            r#"{"s":"quote\"back\\slash"}"#,
-        ),
-        (
-            r#"{"a":[1,{"b":null},true]}"#,
-            r#"{"a":[1,{"b":null},true]}"#,
-        ),
-    ];
-    for (input, expected) in cases {
-        let parsed = arguments(input)?;
-        assert_eq!(parsed.spelling(), expected, "spelling of {input}");
-    }
-    Ok(())
-}

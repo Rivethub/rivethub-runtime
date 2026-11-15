@@ -91,13 +91,7 @@ pub(super) fn installed(binary: &Path) -> Result<Version, Unread> {
 }
 
 pub(super) fn known(binary: &Path) -> Option<Version> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a harness version rh cannot read is an unknown version, and status and connect then make no claim that depends on it (CONTRACT note 204)"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let version = installed(binary).ok();
     version
 }

@@ -385,10 +385,6 @@ async fn run_gateway(
     Ok(())
 }
 
-pub async fn start(env: &Environment) -> Exit {
-    Box::pin(start_with_check(env, false)).await
-}
-
 pub async fn start_with_check(env: &Environment, check: bool) -> Exit {
     if check {
         return match check_config(env).await {
@@ -513,7 +509,8 @@ mod embed_tests {
     }
 
     #[test]
-    fn the_environment_supplies_the_model_like_the_den() -> Result<(), Box<dyn std::error::Error>> {
+    fn the_environment_supplies_the_endpoint_and_the_model()
+    -> Result<(), Box<dyn std::error::Error>> {
         let env = Environment::from_vars([(
             "RIVETOS_EMBED_MODEL".to_owned(),
             "qwen3-embedding-0.6b".to_owned(),

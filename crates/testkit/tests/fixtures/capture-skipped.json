@@ -1,1 +1,0 @@
-{"name":"hook/1","reason":"The recorded PostToolUse body contains a lone surrogate; Rust refuses invalid Unicode instead of repairing a JavaScript string."}

@@ -8,9 +8,6 @@ use tempfile::TempDir;
 
 use crate::Error;
 use crate::json::Json;
-use crate::json::json_eq;
-use crate::json::json_text;
-use crate::json::value_eq;
 
 #[derive(Debug)]
 pub struct FixtureCopy {
@@ -47,25 +44,6 @@ pub fn copy_fixture(path: &Path) -> Result<FixtureCopy, Error> {
     })
 }
 
-#[derive(Debug)]
-pub struct FixtureDb {
-    copy: FixtureCopy,
-    pub conn: Connection,
-}
-
-impl FixtureDb {
-    #[must_use]
-    pub fn path(&self) -> &Path {
-        self.copy.path()
-    }
-}
-
-pub fn open_fixture(path: &Path) -> Result<FixtureDb, Error> {
-    let copy = copy_fixture(path)?;
-    let conn = Connection::open(copy.path())?;
-    Ok(FixtureDb { copy, conn })
-}
-
 fn value_to_json(value: ValueRef<'_>) -> Result<Json, Error> {
     Ok(match value {
         ValueRef::Null => Json::Null,
@@ -94,18 +72,4 @@ pub fn query_json(conn: &Connection, sql: &str, params: &[&dyn ToSql]) -> Result
         out.push(Json::Object(map));
     }
     Ok(out)
-}
-
-#[must_use]
-pub fn rows_eq(a: &[Json], b: &[Json]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| value_eq(x, y, &text_cell_eq))
-}
-
-fn text_cell_eq(a: &str, b: &str) -> bool {
-    a == b || matches!((json_text(a), json_text(b)), (Ok(x), Ok(y)) if json_eq(&x, &y))
-}
-
-#[must_use]
-pub fn sqlite_version() -> String {
-    rusqlite::version().to_string()
 }

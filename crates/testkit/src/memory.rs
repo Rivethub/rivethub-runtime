@@ -5,7 +5,6 @@ mod team;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
@@ -53,8 +52,6 @@ pub struct FakeMemoryStore {
     wiki_pages: Mutex<BTreeMap<String, kernel::wiki::WikiPageResponse>>,
     wiki_redirects: Mutex<BTreeMap<String, String>>,
     wiki_error: Mutex<Option<MemoryStoreError>>,
-    tag_context: Mutex<Option<TagJobContext>>,
-    tag_entities: Mutex<BTreeMap<String, Uuid>>,
     embeddings_armed: std::sync::atomic::AtomicBool,
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
@@ -80,10 +77,6 @@ impl FakeMemoryStore {
         *self.capture_activity.lock().await = activity;
     }
 
-    pub async fn script_session_entity(&self, session: String, entity: Uuid) {
-        self.tag_entities.lock().await.insert(session, entity);
-    }
-
     pub async fn fail_next_wiki_request(&self, error: MemoryStoreError) {
         *self.wiki_error.lock().await = Some(error);
     }
@@ -106,10 +99,6 @@ impl FakeMemoryStore {
 
     pub async fn requests(&self) -> Vec<MemoryRequest> {
         self.requests.lock().await.clone()
-    }
-
-    pub async fn script_tag_context(&self, context: TagJobContext) {
-        *self.tag_context.lock().await = Some(context);
     }
 
     async fn record(&self, request: MemoryRequest) {
@@ -415,21 +404,6 @@ impl MemoryStore for FakeMemoryStore {
         Ok(self.origins.attach(found.into_iter().collect()).await.pop())
     }
 
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
-        self.record(MemoryRequest::Context {
-            session: session.to_owned(),
-            now,
-        })
-        .await;
-        let entries = self.entries.lock().await;
-        Ok(entries
-            .iter()
-            .filter(|e| e.session_id == session)
-            .map(|e| e.content.clone())
-            .collect::<Vec<_>>()
-            .join("\n"))
-    }
-
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {
         self.record(MemoryRequest::SummaryDag(owner.clone())).await;
         Ok(self
@@ -479,49 +453,24 @@ impl MemoryStore for FakeMemoryStore {
         Ok(0)
     }
 
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.record(MemoryRequest::DecideTagRemovals {
-            ids,
-            decision,
-            decided_by,
-        })
-        .await;
-        Ok(0)
-    }
-
     async fn add_tag(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {
         self.record(MemoryRequest::AddTag(add.clone())).await;
         let display = match add.display.as_deref().map(str::trim) {
             Some(text) if !text.is_empty() => text.to_owned(),
             _ => add.tag.value.clone(),
         };
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag reason is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let reason = add.reason.as_deref().unwrap_or("").to_owned();
         Ok(TagWire {
             id: Uuid::new_v4().to_string(),
             entity_type: add.entity_type,
             entity_id: match &add.entity {
                 TagEntity::Id(id) => id.to_string(),
-                TagEntity::SessionKey(session) => self
-                    .tag_entities
-                    .lock()
-                    .await
-                    .get(session)
-                    .ok_or_else(|| MemoryStoreError::InvalidRequest {
+                TagEntity::SessionKey(session) => {
+                    return Err(MemoryStoreError::InvalidRequest {
                         message: format!("no scripted entity for session {session}"),
-                    })?
-                    .to_string(),
+                    });
+                }
             },
             key: add.tag.key,
             value: add.tag.value,
@@ -568,21 +517,9 @@ impl MemoryStore for FakeMemoryStore {
     ) -> Result<TagTaxonomyEntry, MemoryStoreError> {
         self.record(MemoryRequest::UpsertTagTaxonomy(upsert.clone()))
             .await;
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag display is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let display = upsert.display.as_deref().unwrap_or("").to_owned();
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag reason is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let reason = upsert.reason.as_deref().unwrap_or("").to_owned();
         Ok(TagTaxonomyEntry {
             key: upsert.key,
@@ -626,8 +563,7 @@ impl MemoryStore for FakeMemoryStore {
         summary_id: Uuid,
     ) -> Result<Option<TagJobContext>, MemoryStoreError> {
         self.record(MemoryRequest::TagJobContext(summary_id)).await;
-        let context = self.tag_context.lock().await.clone();
-        Ok(context.filter(|loaded| loaded.summary_id == summary_id))
+        Ok(None)
     }
 
     async fn store_tag_suggestions(

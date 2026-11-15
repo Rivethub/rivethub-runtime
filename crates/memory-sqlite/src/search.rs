@@ -21,7 +21,6 @@ use wire::message::Role;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
-use crate::health::EMBED_MISSING;
 use crate::time;
 
 pub(crate) mod embed;
@@ -29,6 +28,8 @@ mod fts;
 pub(crate) mod functions;
 mod ranked;
 pub(crate) use fts::fts_or;
+
+const EMBED_MISSING: &str = "embedding endpoint not configured";
 
 const KEYWORD_EFFECT: &str = "Keyword / FTS ranking only \u{2014} not meaning-based.";
 const SUMMARY_AGENT: &str = "summary";

@@ -242,11 +242,11 @@ pub(super) fn record_reconciliation(entity: &str, reconciled: &FactReconciliatio
     let mut ledger = LEDGER.lock();
     ledger.facts_carried = ledger
         .facts_carried
-        .saturating_add(count_of(carried_forward));
-    ledger.facts_retired = ledger.facts_retired.saturating_add(count_of(retired));
+        .saturating_add(gather::as_u64(carried_forward));
+    ledger.facts_retired = ledger.facts_retired.saturating_add(gather::as_u64(retired));
     ledger.retirements_rejected = ledger
         .retirements_rejected
-        .saturating_add(count_of(retirements_rejected));
+        .saturating_add(gather::as_u64(retirements_rejected));
     if carried_forward > 0 {
         ledger.rewrites_with_carry_forward = ledger.rewrites_with_carry_forward.saturating_add(1);
     }
@@ -308,18 +308,6 @@ fn push_rejected(
 
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn count_of(len: usize) -> u64 {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: an example count that does not fit saturates"
-        )
-    )]
-    let count = u64::try_from(len).unwrap_or(u64::MAX);
-    count
 }
 
 pub(super) fn owner_of(view: &EntityView, leaves: &[EntityLeaf]) -> Result<String, WorkerError> {

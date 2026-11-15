@@ -15,6 +15,7 @@ fn harness_transcript_turn_body(
     sessions::HarnessTranscriptTurn {
         role: session_message_role_body(value.role),
         text: value.text,
+        reply_text: value.reply_text,
         thinking: value.thinking,
         tools: value
             .tools

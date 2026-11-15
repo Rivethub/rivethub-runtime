@@ -43,13 +43,7 @@ impl ToolInput {
     }
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        customserde,
-        reason = "CONTRACT 2 exception: the event-id hash spells tool arguments in the harness's member order"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
 impl<'de> Deserialize<'de> for ToolInput {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let tree = Argument::deserialize(deserializer)?;
@@ -85,13 +79,7 @@ pub fn occurrence_event_id(session_key: &str, digest: &str, occurrence: usize) -
     format!("{session_key}:occ:{digest}:{occurrence}")
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        dynvalue,
-        reason = "CONTRACT 2 exception: the event-id hash needs the harness's member order and number spelling"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(dynvalue))]
 #[derive(Debug)]
 enum Argument {
     Null,
@@ -104,26 +92,14 @@ enum Argument {
     Members(Vec<(String, Self)>),
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        customserde,
-        reason = "CONTRACT 2 exception: the event-id hash needs the harness's member order"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
 impl<'de> Deserialize<'de> for Argument {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_any(ArgumentVisitor)
     }
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        customserde,
-        reason = "the order-keeping argument tree becomes the tool_args object through serde"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
 impl Serialize for Argument {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -209,10 +185,7 @@ impl<'de> Visitor<'de> for ArgumentVisitor {
 }
 
 impl Argument {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "PATTERNS JSMODEL: event-id hashing spells every number as the nearest f64"
-    )]
+    #[expect(clippy::cast_precision_loss)]
     fn spelling(&self) -> Result<String, serde_json::Error> {
         Ok(match self {
             Self::Null => "null".to_owned(),

@@ -2,7 +2,6 @@ use std::io;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::process::ExitStatus;
-use std::time::Duration;
 
 use nix::sys::signal::Signal;
 use nix::sys::signal::kill;
@@ -38,27 +37,6 @@ impl DerefMut for Guarded {
 }
 
 impl Guarded {
-    pub async fn stop(
-        &mut self,
-        signal: Signal,
-        grace: Duration,
-    ) -> io::Result<(ExitStatus, bool)> {
-        let Some(pid) = self.0.id() else {
-            return self.wait().await.map(|status| (status, false));
-        };
-        let tree = self.tree();
-        signal_pid(pid, signal);
-        let (status, escalated) =
-            if let Ok(status) = tokio::time::timeout(grace, self.0.wait()).await {
-                (status?, false)
-            } else {
-                signal_pid(pid, Signal::SIGKILL);
-                (self.0.wait().await?, true)
-            };
-        sweep(&tree);
-        Ok((status, escalated))
-    }
-
     pub async fn wait(&mut self) -> io::Result<ExitStatus> {
         let tree = self.tree();
         let status = self.0.wait().await?;

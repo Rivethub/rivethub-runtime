@@ -6,20 +6,14 @@ use uuid::Uuid;
 
 use super::passage_report;
 use super::passages;
-use super::passages_within;
+use super::select::passages_within;
 use crate::entity_builder::transcript::render_message;
 
 fn at(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 struct Tool<'a> {
     name: &'a str,
     args: Option<serde_json::Value>,
@@ -53,30 +47,24 @@ fn line(
 #[test]
 fn an_alias_matches_on_a_word_boundary() {
     let messages = vec![
-        said(1, "2026-11-07T12:00:00Z", "GPUBox is up"),
-        said(2, "2026-11-07T12:01:00Z", "the gpuboxes rack"),
+        said(1, "2026-11-07T12:00:00Z", "TinBox is up"),
+        said(2, "2026-11-07T12:01:00Z", "the tinboxes rack"),
     ];
-    let text = passages(&messages, "gpubox", &[], "");
-    assert!(text.contains("GPUBox is up"));
-    assert!(!text.contains("gpuboxes"));
+    let text = passages(&messages, "tinbox", &[], "");
+    assert!(text.contains("TinBox is up"));
+    assert!(!text.contains("tinboxes"));
 }
 
 #[test]
 fn a_matched_call_keeps_its_result_and_a_matched_result_keeps_its_call() {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let hostname = serde_json::json!({"command": "hostname"});
     let call_only = vec![
         line(
             1,
             "2026-11-07T12:00:00Z",
             "assistant",
-            "check gpubox",
+            "check tinbox",
             Some(&Tool {
                 name: "Bash",
                 args: Some(hostname.clone()),
@@ -95,8 +83,8 @@ fn a_matched_call_keeps_its_result_and_a_matched_result_keeps_its_call() {
             }),
         ),
     ];
-    let from_call = passages(&call_only, "gpubox", &[], "");
-    assert!(from_call.contains("check gpubox"));
+    let from_call = passages(&call_only, "tinbox", &[], "");
+    assert!(from_call.contains("check tinbox"));
     assert!(from_call.contains("ok"));
     let result_only = vec![
         line(
@@ -118,25 +106,25 @@ fn a_matched_call_keeps_its_result_and_a_matched_result_keeps_its_call() {
             Some(&Tool {
                 name: "Bash",
                 args: None,
-                result: Some("gpubox\n"),
+                result: Some("tinbox\n"),
             }),
         ),
     ];
-    let from_result = passages(&result_only, "gpubox", &[], "");
+    let from_result = passages(&result_only, "tinbox", &[], "");
     assert!(from_result.contains("hostname"));
-    assert!(from_result.contains("gpubox"));
+    assert!(from_result.contains("tinbox"));
 }
 
 #[test]
 fn the_cap_keeps_the_latest_passages() {
     let messages = vec![
-        said(1, "2026-11-07T12:00:00Z", "early-token gpubox"),
-        said(2, "2026-11-07T12:01:00Z", "mid-token gpubox"),
-        said(3, "2026-11-07T12:02:00Z", "latest-token gpubox"),
+        said(1, "2026-11-07T12:00:00Z", "early-token tinbox"),
+        said(2, "2026-11-07T12:01:00Z", "mid-token tinbox"),
+        said(3, "2026-11-07T12:02:00Z", "latest-token tinbox"),
     ];
-    let latest_only = vec![said(3, "2026-11-07T12:02:00Z", "latest-token gpubox")];
-    let latest = passages_within(&latest_only, "gpubox", &[], "", usize::MAX);
-    let text = passages_within(&messages, "gpubox", &[], "", latest.chars().count());
+    let latest_only = vec![said(3, "2026-11-07T12:02:00Z", "latest-token tinbox")];
+    let latest = passages_within(&latest_only, "tinbox", &[], "", usize::MAX);
+    let text = passages_within(&messages, "tinbox", &[], "", latest.chars().count());
     assert!(text.contains("latest-token"));
     assert!(!text.contains("early-token"));
     assert!(!text.contains("mid-token"));
@@ -144,14 +132,8 @@ fn the_cap_keeps_the_latest_passages() {
 
 #[test]
 fn a_mention_matches_when_the_name_never_appears() {
-    let quote = "agent CTs 113/116/117/118/112/107";
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    let quote = "build VMs 213/216/217/218/212/207";
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let hostname = serde_json::json!({"command": "hostname"});
     let messages = vec![
         line(
@@ -173,7 +155,7 @@ fn a_mention_matches_when_the_name_never_appears() {
             Some(&Tool {
                 name: "Read",
                 args: None,
-                result: Some("guests: agent CTs 113/116/117/118/112/107\n"),
+                result: Some("guests: build VMs 213/216/217/218/212/207\n"),
             }),
         ),
     ];
@@ -188,25 +170,19 @@ fn a_mention_matches_through_markdown_and_whitespace() {
     let messages = vec![said(
         1,
         "2026-11-07T12:00:00Z",
-        "plan:\n\nagent **CTs**\n113/116/117/118/112/107",
+        "plan:\n\nbuild **VMs**\n213/216/217/218/212/207",
     )];
     let text = passages(
         &messages,
         "node_a",
         &[],
-        "agent CTs 113/116/117/118/112/107",
+        "build VMs 213/216/217/218/212/207",
     );
-    assert!(text.contains("**CTs**"));
+    assert!(text.contains("**VMs**"));
     assert_eq!(passages(&messages, "node_a", &[], ""), "");
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn bash(
     id: u128,
     stamp: &str,
@@ -247,7 +223,7 @@ fn a_long_tool_result_keeps_the_header_and_a_window_around_the_row() {
     let table = wide_table(
         &[
             (0, "FAR-HEAD"),
-            (60, "gpubox vm 101"),
+            (60, "tinbox vm 101"),
             (70, "NEAR-ROW"),
             (99, "FAR-TAIL"),
         ],
@@ -265,11 +241,11 @@ fn a_long_tool_result_keeps_the_header_and_a_window_around_the_row() {
     assert!(rendered.contains("FAR-HEAD"));
     assert!(rendered.chars().count() > super::EXCERPT_CHARS);
     let before = passage_report();
-    let text = passages(&[call, result], "gpubox", &[], "");
+    let text = passages(&[call, result], "tinbox", &[], "");
     let after = passage_report();
     assert!(text.contains("Bash pct list"));
     assert!(text.contains("[2026-11-07T12:00:01.000Z] tool (Bash)"));
-    assert!(text.contains("gpubox vm 101"));
+    assert!(text.contains("tinbox vm 101"));
     assert!(text.contains("NEAR-ROW"));
     assert!(text.contains("lines elided"));
     assert!(!text.contains("FAR-HEAD"));
@@ -289,9 +265,9 @@ fn overlapping_windows_merge_into_one_span() {
     let table = wide_table(
         &[
             (0, "FAR-HEAD"),
-            (40, "gpubox here"),
+            (40, "tinbox here"),
             (46, "BETWEEN-HIT"),
-            (52, "gpu-box here"),
+            (52, "tin-box here"),
             (99, "FAR-TAIL"),
         ],
         100,
@@ -305,28 +281,28 @@ fn overlapping_windows_merge_into_one_span() {
     );
     let text = passages(
         std::slice::from_ref(&message),
-        "gpubox",
-        &["gpu-box".to_owned()],
+        "tinbox",
+        &["tin-box".to_owned()],
         "",
     );
     assert!(text.contains("Bash pct list"));
-    assert!(text.contains("gpubox here"));
-    assert!(text.contains("gpu-box here"));
+    assert!(text.contains("tinbox here"));
+    assert!(text.contains("tin-box here"));
     assert!(text.contains("BETWEEN-HIT"));
     assert!(!text.contains("FAR-HEAD"));
     assert!(!text.contains("FAR-TAIL"));
     assert_eq!(text.matches("lines elided").count(), 2);
-    let start = text.find("gpubox here").unwrap_or(0);
-    let end = text.find("gpu-box here").unwrap_or(0);
+    let start = text.find("tinbox here").unwrap_or(0);
+    let end = text.find("tin-box here").unwrap_or(0);
     let between = text.get(start..end).unwrap_or("");
     assert!(!between.contains("elided"));
 }
 
 #[test]
 fn a_short_message_is_unchanged() {
-    let body = format!("gpubox {}", "y".repeat(2_000));
+    let body = format!("tinbox {}", "y".repeat(2_000));
     let message = said(1, "2026-11-07T12:00:00Z", &body);
-    let text = passages(std::slice::from_ref(&message), "gpubox", &[], "");
+    let text = passages(std::slice::from_ref(&message), "tinbox", &[], "");
     assert_eq!(text, render_message(&message));
     assert!(!text.contains("elided"));
 }
@@ -334,7 +310,7 @@ fn a_short_message_is_unchanged() {
 #[test]
 fn a_long_single_line_uses_a_character_window() {
     let body = format!(
-        "HEADTOKEN{} gpubox {}TAILTOKEN",
+        "HEADTOKEN{} tinbox {}TAILTOKEN",
         "a".repeat(3_500),
         "b".repeat(3_500)
     );
@@ -348,9 +324,9 @@ fn a_long_single_line_uses_a_character_window() {
     let rendered = render_message(&message);
     assert!(rendered.contains("HEADTOKEN"));
     assert!(rendered.contains("TAILTOKEN"));
-    let text = passages(std::slice::from_ref(&message), "gpubox", &[], "");
+    let text = passages(std::slice::from_ref(&message), "tinbox", &[], "");
     assert!(text.contains("Bash cat dump.json"));
-    assert!(text.contains("gpubox"));
+    assert!(text.contains("tinbox"));
     assert!(text.contains("chars elided"));
     assert!(!text.contains("HEADTOKEN"));
     assert!(!text.contains("TAILTOKEN"));
@@ -360,7 +336,7 @@ fn a_long_single_line_uses_a_character_window() {
 #[test]
 fn a_message_is_kept_whole_when_windows_cover_most_of_it() {
     let body = (0..100)
-        .map(|index| format!("gpubox row-{index:03} {}", "x".repeat(40)))
+        .map(|index| format!("tinbox row-{index:03} {}", "x".repeat(40)))
         .collect::<Vec<_>>()
         .join("\n");
     let message = bash(
@@ -372,7 +348,7 @@ fn a_message_is_kept_whole_when_windows_cover_most_of_it() {
     );
     let rendered = render_message(&message);
     assert!(rendered.chars().count() > super::EXCERPT_CHARS);
-    let text = passages(std::slice::from_ref(&message), "gpubox", &[], "");
+    let text = passages(std::slice::from_ref(&message), "tinbox", &[], "");
     assert_eq!(text, rendered);
     assert!(!text.contains("elided"));
 }
@@ -380,14 +356,14 @@ fn a_message_is_kept_whole_when_windows_cover_most_of_it() {
 #[test]
 fn the_excerpt_map_matches_evidence_normalization() {
     for sample in [
-        "plain gpubox",
+        "plain tinbox",
         "agent **CTs**\n113/116",
         "a_b",
         "*x*",
         "see [[wiki]](url)",
     ] {
         let chars: Vec<char> = sample.chars().collect();
-        let (normalized, map) = super::normalize_map(&chars);
+        let (normalized, map) = super::excerpt::normalize_map(&chars);
         assert_eq!(normalized, normalize_evidence(sample));
         assert_eq!(map.len(), normalized.chars().count());
     }

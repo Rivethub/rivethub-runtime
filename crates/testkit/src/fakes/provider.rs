@@ -48,11 +48,6 @@ impl FakeProvider {
         }
     }
 
-    pub async fn use_fnv(&self, width: usize) {
-        *self.http_status.lock().await = None;
-        *self.fnv_dims.lock().await = Some(width);
-    }
-
     pub async fn chat_requests(&self) -> Vec<ModelRequest> {
         self.chat_requests.lock().await.clone()
     }
@@ -89,10 +84,7 @@ fn fnv_token_vector(text: &str, dims: usize) -> Embedding {
         .filter(|token| !token.is_empty())
     {
         let index = fnv1a32(token.as_bytes()) as usize % dims;
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "the index is a hash modulo the vector width"
-        )]
+        #[expect(clippy::indexing_slicing)]
         {
             vector[index] += 1.0;
         }
@@ -159,7 +151,7 @@ fn take_hang(script: &Script) -> Option<()> {
 
 #[derive(Debug, thiserror::Error)]
 #[error("fake has no scripted {0} response")]
-pub(super) struct MissingScript(pub(super) &'static str);
+struct MissingScript(&'static str);
 
 fn missing_script(operation: &'static str) -> ModelProviderError {
     ModelProviderError::Request {

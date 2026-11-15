@@ -160,11 +160,6 @@ impl ProposedTree {
         self.chain(id).iter().any(|topic| topic.id == ancestor)
     }
 
-    #[must_use]
-    pub fn root(&self, id: TopicId) -> Option<TopicId> {
-        self.chain(id).last().map(|topic| topic.id)
-    }
-
     pub fn listings(&self, now: DateTime<Utc>) -> Result<Vec<TopicListing>, TopicError> {
         self.topics
             .iter()

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{RawQuery, State};
-use kernel::preview::PreviewKind;
 use wire::gateway::sessions::{SessionPreview, SessionPreviewKind, SessionPreviewList};
 use wire::session_id::{SessionId, encode_segment};
 
@@ -70,7 +69,7 @@ async fn preview(gateway: &Gateway, user: &UserId, session: SessionId) -> Option
     let shown = kept(&session, history.preview(gateway, &resolved).await)??;
     Some(SessionPreview {
         session_id: resolved.session,
-        kind: kind(shown.kind),
+        kind: SessionPreviewKind::Said,
         text: shown.text,
         at: shown.at,
     })
@@ -83,14 +82,5 @@ fn kept<T>(session: &SessionId, read: Result<T, ApiError>) -> Option<T> {
             tracing::debug!(%session, %error, "no preview for this session");
             None
         }
-    }
-}
-
-const fn kind(kind: PreviewKind) -> SessionPreviewKind {
-    match kind {
-        PreviewKind::Running => SessionPreviewKind::Running,
-        PreviewKind::Asking => SessionPreviewKind::Asking,
-        PreviewKind::Approval => SessionPreviewKind::Approval,
-        PreviewKind::Said => SessionPreviewKind::Said,
     }
 }

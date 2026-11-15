@@ -1,8 +1,4 @@
-#[expect(
-    dead_code,
-    reason = "the harness module is included whole by every test binary and this one uses a subset"
-)]
-mod common;
+mod owner;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -96,7 +92,7 @@ fn user_version(path: &Path) -> TestResult<i64> {
 }
 
 #[test]
-fn legacy_summary_kinds_follow_depth_and_keep_the_v8_backup() -> TestResult {
+fn legacy_summary_kinds_follow_depth_and_keep_a_backup_of_the_original() -> TestResult {
     let (_directory, path) = fresh()?;
     let (original, before) = seed(&path, LEGACY)?;
     assert_eq!(before, owned(LEGACY));
@@ -105,7 +101,7 @@ fn legacy_summary_kinds_follow_depth_and_keep_the_v8_backup() -> TestResult {
     assert_eq!(std::fs::read(&bak)?, original);
     assert_eq!(rows(&bak)?, before);
     assert_eq!(rows(&path)?, owned(MAPPED));
-    assert_eq!(user_version(&path)?, 35);
+    assert_eq!(user_version(&path)?, memory_sqlite::SCHEMA_VERSION);
     let settled = std::fs::read(&path)?;
     let saved = std::fs::read(&bak)?;
     migrate::sqlite(&path)?;
@@ -142,7 +138,7 @@ fn legacy_summary_kind_below_zero_keeps_the_file_and_refuses_a_second_copy() -> 
     Ok(())
 }
 
-async fn apply_through_22(pool: &PgPool) -> TestResult {
+async fn before_summary_kinds(pool: &PgPool) -> TestResult {
     for migration in POSTGRES
         .migrations
         .iter()
@@ -208,14 +204,14 @@ fn chain(error: &dyn std::error::Error) -> String {
 
 #[sqlx::test(migrations = false)]
 async fn legacy_summary_kinds_follow_depth_and_rerun_is_a_noop(pool: PgPool) -> TestResult {
-    apply_through_22(&pool).await?;
+    before_summary_kinds(&pool).await?;
     insert(&pool, LEGACY).await?;
     assert_eq!(stored(&pool, false).await?, owned(LEGACY));
-    common::migrate_owned_by(&pool, testkit::OWNER).await?;
+    owner::migrate_owned_by(&pool, testkit::OWNER).await?;
     let mapped = owned(MAPPED);
     assert_eq!(stored(&pool, false).await?, mapped);
     assert_eq!(stored(&pool, true).await?, mapped);
-    common::migrate_owned_by(&pool, testkit::OWNER).await?;
+    owner::migrate_owned_by(&pool, testkit::OWNER).await?;
     let Some(migration) = POSTGRES
         .migrations
         .iter()
@@ -232,7 +228,7 @@ async fn legacy_summary_kinds_follow_depth_and_rerun_is_a_noop(pool: PgPool) -> 
 
 #[sqlx::test(migrations = false)]
 async fn legacy_summary_kind_below_zero_rolls_the_rewrite_back(pool: PgPool) -> TestResult {
-    apply_through_22(&pool).await?;
+    before_summary_kinds(&pool).await?;
     let seeded = [
         ("below zero", "condensed", -1),
         ("good row", "condensed", 1),
@@ -252,7 +248,7 @@ async fn legacy_summary_kind_below_zero_rolls_the_rewrite_back(pool: PgPool) -> 
     sqlx::query("UPDATE rh_summaries SET depth = 2 WHERE content = 'below zero'")
         .execute(&pool)
         .await?;
-    common::migrate_owned_by(&pool, testkit::OWNER).await?;
+    owner::migrate_owned_by(&pool, testkit::OWNER).await?;
     assert_eq!(
         stored(&pool, false).await?,
         owned(&[("below zero", "root", 2), ("good row", "branch", 1)])

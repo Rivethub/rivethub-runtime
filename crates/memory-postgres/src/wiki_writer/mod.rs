@@ -263,10 +263,7 @@ async fn remove_files(root: &Path, removed: &[String]) -> Result<Vec<String>, Wi
 async fn sync(root: &Path) -> Result<(), WikiWriteError> {
     ensure_repo(root).await?;
     if tracks_upstream(root).await? {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "CONTRACT B11: wiki pull failure warns and local page application continues"
-        )]
+        #[expect(clippy::let_underscore_must_use)]
         let _: Result<String, WikiWriteError> = git(root, &["pull", "--rebase"])
             .await
             .inspect_err(|error| tracing::warn!(%error, "wiki pull failed; applying local patch"));

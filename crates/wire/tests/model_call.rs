@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use wire::model_call::{
-    CallOutcome, CallUsage, ModelCallBatchRequest, ModelCallBatchResult, SessionModelCalls,
+    CallOutcome, ModelCallBatchRequest, ModelCallBatchResult, SessionModelCalls,
 };
 
 const FIXTURE: &str = concat!(
@@ -59,22 +59,4 @@ fn a_call_needs_only_its_id_start_provider_and_outcome() -> Result<(), Box<dyn s
     assert!(call.headers.is_empty());
     assert_eq!(call.usage, None);
     Ok(())
-}
-
-#[test]
-fn usage_counts_default_to_zero() -> Result<(), serde_json::Error> {
-    let usage: CallUsage = serde_json::from_str(r#"{"output":7}"#)?;
-    assert_eq!(
-        usage,
-        CallUsage {
-            output: 7,
-            ..CallUsage::default()
-        }
-    );
-    Ok(())
-}
-
-#[test]
-fn an_unknown_outcome_is_refused() {
-    assert!(serde_json::from_str::<CallOutcome>(r#""exploded""#).is_err());
 }

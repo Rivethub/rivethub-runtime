@@ -51,13 +51,7 @@ pub struct AuthPolicy {
     pub attempts_per_minute: NonZeroU32,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "SS-15a: the defaults are the decided lifetimes (7 d idle, 30 d absolute, 5 min fresh), not zeros"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for AuthPolicy {
     fn default() -> Self {
         Self {
@@ -206,13 +200,7 @@ impl Browser {
     }
 
     pub(crate) fn layer(&self, tls: bool) -> SessionManagerLayer<MemoryStore> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS#fallback: an idle limit beyond time::Duration's range saturates to its maximum"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let idle = time::Duration::try_from(self.policy.idle).unwrap_or(time::Duration::MAX);
         SessionManagerLayer::new(self.store.clone())
             .with_name(if tls { TLS_COOKIE } else { PLAIN_COOKIE })

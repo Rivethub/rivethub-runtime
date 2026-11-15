@@ -56,13 +56,7 @@ fn preceded_by_even_backslashes(bytes: &[u8], index: usize) -> bool {
 
 fn optional_escape_code(bytes: &[u8], index: usize) -> Option<u32> {
     let hex = bytes.get(index + 2..index + 6)?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS JSONBYTES: a non-hex escape has no surrogate code point"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let code = u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok();
     code
 }

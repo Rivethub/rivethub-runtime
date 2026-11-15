@@ -250,9 +250,10 @@ async fn every_unsent_chunk_is_spooled_when_the_server_fails()
     let transport = RuleTransport::with(vec![(r#""event_id":"e1""#, Verdict::Unavailable)]);
     let writer = CaptureWriter::new(&transport, spool, NonZeroUsize::new(700), None);
     let now = now_at("2026-10-10T12:00:00Z")?;
-    let Err(_) = writer.write(&batch("split", 3)?, now).await else {
+    let Err(error) = writer.write(&batch("split", 3)?, now).await else {
         return Err("expected the failed chunk to fail the write".into());
     };
+    assert!(error.to_string().contains("capture HTTP 500"));
     assert_eq!(transport.posted().len(), 2);
     let spooled = bodies(&dir.path().join("spool"))?;
     assert_eq!(spooled.len(), 2);

@@ -86,13 +86,7 @@ pub(crate) fn sessions(root: &Path) -> Result<Vec<(String, PathBuf)>, Transcript
             if session_component(id).is_err() {
                 continue;
             }
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    fallback,
-                    reason = "CONTRACT B3 (note 148): an unreadable dsh session is listed by its folder so its read fails as that session's backfill failure and the other sessions are still captured"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
             let path = match newest_transcript(&root, &folder) {
                 Ok(Some(path)) => path,
                 Ok(None) => continue,

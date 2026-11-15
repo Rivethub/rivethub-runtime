@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) OPAQUE,
     Warn,
-    "empty struct that swallows a section (type its fields, or hold free-form data in the sanctioned holder) → docs/PATTERNS.md#opaque",
+    "empty struct that swallows a section (type its fields, or hold free-form data in the sanctioned holder)",
     Opaque::default()
 );
 
@@ -32,7 +32,7 @@ impl<'tcx> LateLintPass<'tcx> for Opaque {
             OPAQUE,
             item.hir_id(),
             item.span,
-            "empty struct accepting a section and throwing its contents away (type the section; arbitrary values go in wire::JsonObject or config::FreeForm) → docs/PATTERNS.md#opaque"
+            "empty struct accepting a section and throwing its contents away (type the section; arbitrary values go in wire::JsonObject or config::FreeForm)"
                 .to_owned(),
         );
     }

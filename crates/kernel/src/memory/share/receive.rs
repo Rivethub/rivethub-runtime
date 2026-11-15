@@ -24,13 +24,7 @@ pub trait ReceiveDesk: Send + Sync + fmt::Debug {
 
 pub struct ReceiveCode(String);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: a share code carries the bundle key; Debug must never print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for ReceiveCode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("ReceiveCode(..)")

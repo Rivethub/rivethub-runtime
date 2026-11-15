@@ -4,6 +4,7 @@ mod logs;
 mod proxy;
 
 use crate::process::guard::SpawnGuarded;
+use crate::process::{TestResult, provider_config, terminate, write_state};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -13,8 +14,8 @@ use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue;
-use kernel::tool::Tool;
 use memory_postgres::PostgresMemory;
+use rmcp::ServiceExt as _;
 use sqlx::PgPool;
 use tokio::io::BufReader;
 use tokio::process::Child;
@@ -24,8 +25,6 @@ use wire::gateway::HealthzResponse;
 
 use logs::Logs;
 use proxy::Proxy;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const TASK_DOWN: &str = "summary watch: database unreachable; reconnecting";
 const TASK_UP: &str = "summary watch: database connection restored";
@@ -41,43 +40,6 @@ struct Running {
 struct Tally {
     n: i64,
     attempts: Option<i64>,
-}
-
-fn provider_config(home: &Path, postgres: &str, extra: &str) -> String {
-    format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: m\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1\n    model: m\nmemory:\n  postgres:\n    connection_string: {postgres}\n{extra}",
-        home.display()
-    )
-}
-
-fn write_state(home: &Path, body: &str) -> TestResult {
-    let state = home.join(".rivethub");
-    std::fs::create_dir_all(&state)?;
-    std::fs::write(state.join("config.yaml"), body)?;
-    Ok(())
-}
-
-fn terminate(pid: u32) -> TestResult {
-    let pid = i32::try_from(pid)?;
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid),
-        nix::sys::signal::Signal::SIGTERM,
-    )?;
-    Ok(())
-}
-
-async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let present: bool =
-        sqlx::query_scalar("SELECT to_regclass('graphile_worker._private_jobs') IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
-    if present {
-        return Ok(());
-    }
-    sqlx::raw_sql(include_str!("../fixtures/graphile_worker.txt"))
-        .execute(pool)
-        .await?;
-    Ok(())
 }
 
 async fn front(db: &crate::pgdb::TestDb) -> TestResult<(Proxy, String)> {
@@ -361,7 +323,7 @@ async fn worker_stays_up_and_claims_after_the_database_returns() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    install_queue(&pool).await?;
+    crate::pgdb::install_queue(&pool).await?;
     let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
@@ -407,37 +369,27 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(
         Duration::from_secs(30),
-        mcp::client::Client::connect((stdout, stdin), tokio_util::sync::CancellationToken::new()),
+        rmcp::model::ClientConfig::default().serve((stdout, stdin)),
     )
     .await?
     .map_err(|error| format!("mcp connect failed: {error}"))?;
-    let tools = client.tools().await.map_err(|error| format!("{error}"))?;
-    let stats_tool = tool(&tools, "memory_stats")?;
-    let context = kernel::ToolContext {
-        agent_id: None,
-        working_dir: None,
-        session: None,
+    let memory_stats = || {
+        let mut request = rmcp::model::CallToolRequestParams::new("memory_stats");
+        request.arguments = Some(rmcp::model::JsonObject::new());
+        client.call_tool(request)
     };
-    let healthy = stats_tool
-        .call(Some(rmcp::model::JsonObject::new()), context.clone())
-        .await?;
+    let healthy = memory_stats().await?;
     assert_ne!(healthy.is_error, Some(true), "{healthy:?}");
     proxy.pause().await;
     alive(&mut child)?;
-    let failed = tokio::time::timeout(
-        Duration::from_secs(20),
-        stats_tool.call(Some(rmcp::model::JsonObject::new()), context.clone()),
-    )
-    .await?
-    .map_err(|error| format!("{error}"))?;
+    let failed = tokio::time::timeout(Duration::from_secs(20), memory_stats())
+        .await?
+        .map_err(|error| format!("{error}"))?;
     assert_eq!(failed.is_error, Some(true), "{failed:?}");
     proxy.resume();
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
-            let restored = stats_tool
-                .call(Some(rmcp::model::JsonObject::new()), context.clone())
-                .await
-                .map_err(|error| format!("{error}"))?;
+            let restored = memory_stats().await.map_err(|error| format!("{error}"))?;
             if restored.is_error != Some(true) {
                 return Ok::<(), String>(());
             }
@@ -453,51 +405,5 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     assert!(text.contains("mcp stopped"), "{text}");
     drop(client);
     drop(proxy);
-    Ok(())
-}
-
-fn tool<'a>(
-    tools: &'a [std::sync::Arc<dyn Tool>],
-    name: &str,
-) -> TestResult<&'a std::sync::Arc<dyn Tool>> {
-    tools
-        .iter()
-        .find(|tool| tool.definition().name.as_ref() == name)
-        .ok_or_else(|| format!("missing tool {name}").into())
-}
-
-#[tokio::test]
-async fn local_sqlite_stays_healthy_when_postgres_backends_die() -> TestResult {
-    let db = crate::pgdb::TestDb::bare().await?;
-    let pool = db.pool();
-    migrate::postgres_pool(&pool).await?;
-    let home = tempfile::tempdir()?;
-    let port = testkit::ports::claim()?;
-    let port_text = port.to_string();
-    let mut running = spawn_rh(
-        home.path(),
-        &["local", "--no-lan", "--port", &port_text],
-        "gateway listening on ",
-    )
-    .await?;
-    let client = client(home.path())?;
-    let base = format!("http://127.0.0.1:{port}");
-    wait_http(&client, &format!("{base}/healthz"), 200).await?;
-    sqlx::query(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-         WHERE datname = current_database() AND pid <> pg_backend_pid() \
-           AND backend_type = 'client backend'",
-    )
-    .execute(&pool)
-    .await?;
-    let health = wait_http(&client, &format!("{base}/healthz"), 200).await?;
-    let parsed: HealthzResponse = serde_json::from_str(&health)?;
-    assert!(parsed.ok);
-    assert_eq!(parsed.degraded, None);
-    wait_http(&client, &format!("{base}/api/memory/browse"), 200).await?;
-    alive(&mut running.child)?;
-    assert_eq!(running.logs.count(TASK_DOWN).await, 0);
-    assert_eq!(running.logs.count(JOB_DOWN).await, 0);
-    stop(running, "gateway stopped").await?;
     Ok(())
 }

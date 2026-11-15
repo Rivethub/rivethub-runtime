@@ -9,6 +9,7 @@ use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::TranscriptToolStatus;
 use wire::JsonObject;
 
+use super::display::reply_after;
 use super::display::tail_chars;
 use super::tools::RESULT_CHARS;
 use super::tools::args_summary;
@@ -62,6 +63,7 @@ struct Draft {
     tools: Vec<HarnessTranscriptTool>,
     stop_reason: Option<String>,
     last_block: Option<TranscriptBlock>,
+    spoken: usize,
     started_at_ms: Option<i64>,
     ended_at_ms: Option<i64>,
 }
@@ -134,6 +136,7 @@ impl Folder {
         self.turns.push(HarnessTranscriptTurn {
             role: SessionMessageRole::User,
             text: text.to_owned(),
+            reply_text: None,
             thinking: None,
             tools: None,
             usage: None,
@@ -212,6 +215,7 @@ impl Draft {
             result_text: None,
             name,
         });
+        self.spoken = self.text.len();
         self.last_block = Some(TranscriptBlock::ToolUse);
         Ok(())
     }
@@ -271,6 +275,7 @@ impl Draft {
                 .any(|tool| tool.status == TranscriptToolStatus::Running);
         Some(HarnessTranscriptTurn {
             role: SessionMessageRole::Assistant,
+            reply_text: reply_after(&self.text, self.spoken),
             text: self.text,
             thinking: (!self.thinking.is_empty()).then(|| tail_chars(&self.thinking)),
             tools: (!self.tools.is_empty()).then_some(self.tools),

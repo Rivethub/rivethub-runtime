@@ -82,36 +82,6 @@ pub struct UpsertedConversation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationEnsure<'a> {
-    pub session_key: &'a str,
-    pub agent: &'a str,
-    pub channel: Option<&'a str>,
-    pub title: Option<&'a str>,
-    pub settings: &'a JsonObject,
-    pub task_id: Option<&'a str>,
-    pub owner_user_id: &'a str,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
-    pub active: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationRecord {
-    pub id: Uuid,
-    pub created: bool,
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationUpdate<'a> {
-    pub id: Uuid,
-    pub updated_at: Option<DateTime<Utc>>,
-    pub active: bool,
-    pub title: Option<&'a str>,
-    pub settings: &'a JsonObject,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageRow<'a> {
     pub conversation_id: Uuid,
     pub agent: &'a str,
@@ -195,56 +165,6 @@ impl<'a> CaptureWriter<'a> {
             .commit()
             .await
             .map_err(|source| Error::operation("capture commit", source))
-    }
-
-    pub async fn backfill_task_id(&mut self, id: Uuid, task_id: &str) -> Result<(), Error> {
-        sqlx::query!(
-            "update rh_conversations set task_id = $2::text::uuid
-              where id = $1 and task_id is null",
-            id,
-            task_id
-        )
-        .execute(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("task backfill", source))?;
-        Ok(())
-    }
-
-    pub async fn update_conversation(
-        &mut self,
-        update: &ConversationUpdate<'_>,
-    ) -> Result<(), Error> {
-        let settings = sqlx::types::Json(update.settings);
-        sqlx::query!(
-            "update rh_conversations
-                set updated_at = coalesce($2, now()),
-                    active = $3,
-                    title = coalesce($4, title),
-                    settings = $5
-              where id = $1",
-            update.id,
-            update.updated_at,
-            update.active,
-            update.title,
-            settings as _
-        )
-        .execute(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("conversation update", source))?;
-        Ok(())
-    }
-
-    pub async fn touch_settings(&mut self, id: Uuid, settings: &JsonObject) -> Result<(), Error> {
-        let json = sqlx::types::Json(settings);
-        sqlx::query!(
-            "update rh_conversations set updated_at = now(), settings = $2 where id = $1",
-            id,
-            json as _
-        )
-        .execute(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("conversation settings", source))?;
-        Ok(())
     }
 
     pub async fn finalize_conversation(
@@ -406,80 +326,11 @@ impl<'a> CaptureWriter<'a> {
         .map_err(|source| Error::operation("event id lookup", source))?;
         Ok(seen.into_iter().flatten().collect())
     }
-
-    pub async fn stored_assistant_uuids(
-        &mut self,
-        conversation_id: Uuid,
-    ) -> Result<Vec<String>, Error> {
-        let stored = sqlx::query_scalar!(
-            "select metadata->>'uuid' from rh_messages
-              where conversation_id = $1 and role = 'assistant' and jsonb_exists(metadata, 'uuid')",
-            conversation_id
-        )
-        .fetch_all(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("uuid lookup", source))?;
-        Ok(stored.into_iter().flatten().collect())
-    }
-
-    pub async fn stored_tool_calls(
-        &mut self,
-        conversation_id: Uuid,
-    ) -> Result<Vec<(Option<String>, Option<String>)>, Error> {
-        let rows = sqlx::query!(
-            "select tool_name, tool_args::text as args from rh_messages
-              where conversation_id = $1 and role = 'tool'",
-            conversation_id
-        )
-        .fetch_all(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("tool call lookup", source))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| (row.tool_name, row.args))
-            .collect())
-    }
-
-    pub async fn stored_user_contents(
-        &mut self,
-        conversation_id: Uuid,
-    ) -> Result<Vec<String>, Error> {
-        sqlx::query_scalar!(
-            "select content from rh_messages where conversation_id = $1 and role = 'user'",
-            conversation_id
-        )
-        .fetch_all(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("user content lookup", source))
-    }
-
-    pub async fn ingest_key_seen(
-        &mut self,
-        conversation_id: Uuid,
-        key: &str,
-    ) -> Result<bool, Error> {
-        let record = sqlx::query!(
-            "select exists(select 1 from rh_messages
-                where conversation_id = $1 and metadata->>'ingest_key' = $2) as \"seen!\"",
-            conversation_id,
-            key
-        )
-        .fetch_one(&mut *self.tx)
-        .await
-        .map_err(|source| Error::operation("ingest key lookup", source))?;
-        Ok(record.seen)
-    }
-}
-
-pub(crate) fn char_prefix(text: &str, max: usize) -> &str {
-    text.char_indices()
-        .nth(max)
-        .map_or(text, |(end, _)| &text[..end])
 }
 
 fn capped(text: &str) -> Result<(String, Option<u64>), Error> {
     let text = text.replace('\0', "");
-    let kept = char_prefix(&text, MAX_CONTENT_CHARS);
+    let kept = kernel::memory::budget::char_prefix(&text, MAX_CONTENT_CHARS);
     let full = (kept.len() < text.len())
         .then(|| u64::try_from(text.chars().count()))
         .transpose()?;

@@ -169,7 +169,7 @@ async fn a_flag_placeholder_written_in_a_session_is_escaped_reversibly() {
     assert!(
         node.ingest_line(&sanitized)
             .await
-            .ends_with("would ingest 1 session from phil; nothing written")
+            .ends_with("would ingest 1 session from dana; nothing written")
     );
 }
 

@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -82,11 +82,6 @@ impl Corpus {
     #[must_use]
     pub fn new(dir: PathBuf, skips: &'static [Skip]) -> Self {
         Self { dir, skips }
-    }
-
-    #[must_use]
-    pub fn dir(&self) -> &Path {
-        &self.dir
     }
 
     fn skip_for(&self, function: &str, line: usize) -> Option<&'static Skip> {

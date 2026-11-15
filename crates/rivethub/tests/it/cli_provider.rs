@@ -33,8 +33,6 @@ const KINDS: &[ProviderType] = &[
     ProviderType::KimiCode,
     ProviderType::OpencodeCli,
 ];
-const SKIPPED: &[(&str, &str)] = &[];
-
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Chunk {
@@ -67,7 +65,7 @@ fn configured(
 ) -> TestResult<(config::Config, config::Environment)> {
     let env = config::Environment::from_vars([(OsStr::new("HOME"), home.as_os_str())]);
     let text = format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\nproviders:\n  p:\n    type: {kind}\n    model: provider-model\n    effort: high\n    permission_mode: plan\n    timeout_ms: 5000\n    permission_timeout_ms: 1000\ntasks:\n  enabled: false\nmesh:\n  enabled: false\n  node_name: test-node\n{extra}",
+        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\nproviders:\n  p:\n    type: {kind}\n    model: provider-model\n    effort: high\n    permission_mode: plan\n    timeout_ms: 5000\n    permission_timeout_ms: 1000\n{extra}",
         home.display()
     );
     let path = home.join("config.yaml");
@@ -76,31 +74,6 @@ fn configured(
         config::Config::load(&env, &config::ConfigLocation::Current(path))?.config,
         env,
     ))
-}
-
-#[test]
-fn every_provider_recording_is_replayed_or_explicitly_skipped() -> TestResult {
-    let mut cases = Vec::new();
-    for entry in std::fs::read_dir(testkit::recording("provider"))? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            cases.push(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| "fixture name")?,
-            );
-        }
-    }
-    let mut covered = vec!["A-text".to_owned()];
-    for (name, reason) in SKIPPED {
-        assert_ne!(*reason, "");
-        covered.push((*name).to_owned());
-    }
-    cases.sort();
-    covered.sort();
-    assert_eq!(cases, covered);
-    Ok(())
 }
 
 #[tokio::test]
@@ -148,7 +121,6 @@ fn turn(model: &str) -> ModelRequest {
     ModelRequest {
         model: model.into(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
         options: kernel::model::ModelOptions::default(),

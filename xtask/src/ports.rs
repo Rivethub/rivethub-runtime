@@ -1,14 +1,8 @@
 use std::path::{Component, Path};
 
-use syn::{Attribute, ItemTrait, Visibility};
+use syn::{ItemTrait, Visibility};
 
-use crate::baseline::Baseline;
-use crate::error::Result;
 use crate::rustsrc::Hits;
-
-pub fn check(root: &Path, baseline: &Baseline, findings: &mut Vec<String>) -> Result<()> {
-    crate::rustsrc::check(root, baseline, "PORTS", findings)
-}
 
 pub fn testkit_dependencies(metadata: &cargo_metadata::Metadata, findings: &mut Vec<String>) {
     for package in &metadata.packages {
@@ -17,7 +11,7 @@ pub fn testkit_dependencies(metadata: &cargo_metadata::Metadata, findings: &mut 
                 && dependency.kind != cargo_metadata::DependencyKind::Development
             {
                 findings.push(format!(
-                    "PORTS {}: testkit must be a dev-dependency; database access belongs to kernel ports → docs/PATTERNS.md#ports",
+                    "PORTS {}: testkit must be a dev-dependency; database access belongs to kernel ports",
                     package.name
                 ));
             }
@@ -26,7 +20,7 @@ pub fn testkit_dependencies(metadata: &cargo_metadata::Metadata, findings: &mut 
 }
 
 pub(crate) fn inspect(rel: &str, item: &ItemTrait, hits: &mut Hits) {
-    if scoped(rel) && matches!(item.vis, Visibility::Public(_)) && !waived(&item.attrs) {
+    if scoped(rel) && matches!(item.vis, Visibility::Public(_)) {
         hits.push(
             "PORTS",
             item.ident.span(),
@@ -56,16 +50,4 @@ fn scoped(rel: &str) -> bool {
                 | "memory-sqlite"
         )
     )
-}
-
-fn waived(attrs: &[Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        matches!(attr.style, syn::AttrStyle::Outer)
-            && attr.path().is_ident("expect")
-            && crate::ast::reason(attr.meta.clone()).is_some_and(|reason| {
-                reason
-                    .split(|character: char| !character.is_alphanumeric() && character != '_')
-                    .any(|word| word == "PORTS")
-            })
-    })
 }

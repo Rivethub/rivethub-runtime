@@ -185,14 +185,6 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
-    async fn context(
-        &self,
-        _session: &str,
-        _now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<String, MemoryStoreError> {
-        unavailable()
-    }
-
     async fn summary_dag(
         &self,
         _owner: &kernel::memory::SummaryOwner,
@@ -229,15 +221,6 @@ impl MemoryStore for FailingStore {
     }
 
     async fn decide_tags(
-        &self,
-        _ids: Vec<kernel::memory::TagId>,
-        _decision: kernel::memory::TagDecision,
-        _decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        unavailable()
-    }
-
-    async fn decide_tag_removals(
         &self,
         _ids: Vec<kernel::memory::TagId>,
         _decision: kernel::memory::TagDecision,
@@ -414,14 +397,6 @@ impl MemoryStore for GatedStore {
         self.inner.get_full(id).await
     }
 
-    async fn context(
-        &self,
-        session: &str,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<String, MemoryStoreError> {
-        self.inner.context(session, now).await
-    }
-
     async fn summary_dag(
         &self,
         owner: &kernel::memory::SummaryOwner,
@@ -464,17 +439,6 @@ impl MemoryStore for GatedStore {
         decided_by: Option<String>,
     ) -> Result<u64, MemoryStoreError> {
         self.inner.decide_tags(ids, decision, decided_by).await
-    }
-
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.inner
-            .decide_tag_removals(ids, decision, decided_by)
-            .await
     }
 
     async fn add_tag(&self, add: TagAdd) -> Result<kernel::memory::TagWire, MemoryStoreError> {
@@ -607,8 +571,7 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
 
 const CORS_LISTED: [&str; 2] = ["https://hub.example.test", "app://bundle"];
 const CORS_METHODS: &str = "GET,POST,PATCH,DELETE";
-const CORS_HEADERS: &str =
-    "authorization,content-type,x-rh-csrf,x-rivet-conversation,x-rivet-title";
+const CORS_HEADERS: &str = "authorization,content-type,x-rh-csrf";
 
 pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
     let mut lines = case.request.head.lines();

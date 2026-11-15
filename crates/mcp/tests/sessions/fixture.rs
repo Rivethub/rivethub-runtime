@@ -77,7 +77,7 @@ fn session(
     let last = messages.last().and_then(|message| message.created_at);
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: id(n).to_string(),
             session_key: key.to_owned(),
@@ -346,7 +346,7 @@ impl SessionShare for ScriptedShare {
                     dates: session.origin.created_at.zip(session.origin.updated_at),
                 })
                 .collect(),
-            authors: vec!["phil".to_owned()],
+            authors: vec!["dana".to_owned()],
             batches: Ok(stub.sessions.iter().map(kernel_batch).collect()),
         }))
     }
@@ -396,7 +396,7 @@ pub(crate) async fn node(
         owner,
         node: "desk".to_owned(),
     };
-    let server = Server::builder(store.clone(), false, CancellationToken::new())
+    let server = Server::builder(store.clone(), CancellationToken::new())
         .sessions(kit)
         .build()
         .expect("server");

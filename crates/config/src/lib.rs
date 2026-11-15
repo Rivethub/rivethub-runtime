@@ -36,7 +36,7 @@ pub use model::{
 pub use node_name::resolve as resolve_node_name;
 pub use paths::{
     ConfigLocation, NodeClaim, Paths, StateError, adopt_legacy_state, claim_node, normalize,
-    shared_dir, temporary_directory,
+    shared_dir,
 };
 pub use provider::{ProviderType, RemovedProviderType};
 pub use report::{Finding, Severity, ValidationResult};

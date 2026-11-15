@@ -130,22 +130,3 @@ pub async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin(
     )?;
     Ok(())
 }
-
-pub async fn a_held_candidate_keeps_its_own_session_for_its_facts(
-    stores: RouteStores<'_>,
-    job: &ExtractWiki,
-) -> Outcome {
-    let text = "The build box runs the nightly AcmeKit builds.";
-    stores
-        .mentioned_elsewhere(job, &host_with(text, &[("os", "Ubuntu 22.04")])?)
-        .await?;
-    stores
-        .route(job, vec![host_with(text, &[("address", "192.0.2.7")])?])
-        .await?;
-    same(
-        "the topic router does not create the entity",
-        stores.named(TopicKind::Entity, HOST).await?,
-        None,
-    )?;
-    Ok(())
-}

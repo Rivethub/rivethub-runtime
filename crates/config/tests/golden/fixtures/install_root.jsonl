@@ -1,9 +1,0 @@
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"relative"}},"out":"relative"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":""}},"out":"/opt/rivetos"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"/home/user/data"}},"out":"/home/user/data"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"~/shared"}},"out":"~/shared"}
-{"fn":"install_root","in":{"env":{}},"out":"/opt/rivetos"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":" /srv/shared "}},"out":"/srv/shared"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"/srv/shared/"}},"out":"/srv/shared/"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"/srv/shared\n"}},"out":"/srv/shared"}
-{"fn":"install_root","in":{"env":{"RIVETOS_INSTALL_ROOT":"/srv/shared"}},"out":"/srv/shared"}

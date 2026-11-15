@@ -105,12 +105,12 @@ mod tests {
 
     #[test]
     fn the_banner_names_each_author_once_and_keeps_the_weakest_verification() {
-        let phil = provenance("phil", true);
-        let weak = provenance("phil", false);
-        let alex = provenance("alex", true);
+        let dana = provenance("dana", true);
+        let weak = provenance("dana", false);
+        let ines = provenance("ines", true);
         assert_eq!(
-            imported_banner([&phil, &alex, &weak]).as_deref(),
-            Some("Built partly from imported sessions: phil (unverified), alex (verified).")
+            imported_banner([&dana, &ines, &weak]).as_deref(),
+            Some("Built partly from imported sessions: dana (unverified), ines (verified).")
         );
         assert_eq!(imported_banner([]), None);
     }
@@ -119,13 +119,13 @@ mod tests {
     fn only_the_rows_citing_an_import_are_marked() {
         let view = "## Citations\n\n| Date | Kind | Summary | Note |\n|---|---|---|---|\n| 2026-10-14 | leaf | `aaa` | Decision \\| made |\n| 2026-10-15 | leaf | `bbb` |  |\n| 2026-10-16 | leaf | `ccc` | Mine |\nMentions `aaa` in prose.\n";
         let citations = [
-            citation("aaa", Some(provenance("phil", false))),
-            citation("bbb", Some(provenance("alex", true))),
+            citation("aaa", Some(provenance("dana", false))),
+            citation("bbb", Some(provenance("ines", true))),
             citation("ccc", None),
         ];
         assert_eq!(
             mark_imported_citations(view, &citations),
-            "## Citations\n\n| Date | Kind | Summary | Note |\n|---|---|---|---|\n| 2026-10-14 | leaf | `aaa` | Decision \\| made (imported from phil, unverified) |\n| 2026-10-15 | leaf | `bbb` | (imported from alex, verified) |\n| 2026-10-16 | leaf | `ccc` | Mine |\nMentions `aaa` in prose.\n"
+            "## Citations\n\n| Date | Kind | Summary | Note |\n|---|---|---|---|\n| 2026-10-14 | leaf | `aaa` | Decision \\| made (imported from dana, unverified) |\n| 2026-10-15 | leaf | `bbb` | (imported from ines, verified) |\n| 2026-10-16 | leaf | `ccc` | Mine |\nMentions `aaa` in prose.\n"
         );
         assert_eq!(
             mark_imported_citations(view, &[citation("ccc", None)]),

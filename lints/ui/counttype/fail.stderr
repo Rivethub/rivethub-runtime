@@ -1,4 +1,4 @@
-warning: signed or oversized integer for a port (u16) → docs/PATTERNS.md#counttype
+warning: signed or oversized integer for a port (u16)
   --> $DIR/fail.rs:4:5
    |
 LL |     pub port: i64,
@@ -6,7 +6,7 @@ LL |     pub port: i64,
    |
    = note: `#[warn(counttype)]` on by default
 
-warning: signed integer for a count (u32/u64/usize) → docs/PATTERNS.md#counttype
+warning: signed integer for a count (u32/u64/usize)
   --> $DIR/fail.rs:5:5
    |
 LL |     pub limit: i64,

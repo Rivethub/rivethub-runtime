@@ -68,10 +68,7 @@ fn one_snapshot_fact(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a contradicted retirement is checked against this session's passages"
-)]
+#[expect(clippy::too_many_arguments)]
 #[must_use]
 pub fn reconcile_facts(
     type_name: &str,
@@ -186,13 +183,7 @@ fn accept_retirement(
 }
 
 fn canonical_kind(kind: &str) -> Option<&'static str> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            dispatch,
-            reason = "the model sends a free-text tag, checked against the known words"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(dispatch))]
     match kind.trim().to_ascii_lowercase().as_str() {
         RENAMED => Some(RENAMED),
         CONTRADICTED => Some(CONTRADICTED),

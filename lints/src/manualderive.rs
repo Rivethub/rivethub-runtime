@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) MANUALDERIVE,
     Warn,
-    "hand-written impl of a derivable trait (use #[derive]) → docs/PATTERNS.md#manualderive",
+    "hand-written impl of a derivable trait (use #[derive])",
     Manualderive::default()
 );
 
@@ -39,7 +39,7 @@ impl<'tcx> LateLintPass<'tcx> for Manualderive {
                 item.hir_id(),
                 item.span,
                 format!(
-                    "hand-written impl {name} for (what #[derive({name})] writes) → docs/PATTERNS.md#manualderive"
+                    "hand-written impl {name} for (what #[derive({name})] writes)"
                 ),
             );
         }

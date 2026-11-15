@@ -1,10 +1,11 @@
 use crate::process::guard::SpawnGuarded;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
 use kernel::memory::{MemoryEntry, MemoryStore as _};
-use kernel::tool::Tool;
+use rmcp::ServiceExt as _;
+use rmcp::model::{CallToolRequestParams, ClientConfig};
+use rmcp::service::{RoleClient, RunningService};
 use tokio::process::Command;
 use wire::message::Role;
 
@@ -29,19 +30,14 @@ fn entry(role: Role, content: &str) -> MemoryEntry {
     }
 }
 
-async fn call(tools: &[Arc<dyn Tool>], name: &str, arguments: &str) -> TestResult<String> {
-    let tool = tools
-        .iter()
-        .find(|tool| tool.definition().name.as_ref() == name)
-        .ok_or_else(|| format!("missing tool {name}"))?;
-    let context = kernel::ToolContext {
-        agent_id: None,
-        working_dir: None,
-        session: None,
-    };
-    let result = tool
-        .call(Some(serde_json::from_str(arguments)?), context)
-        .await?;
+async fn call(
+    client: &RunningService<RoleClient, ClientConfig>,
+    name: &str,
+    arguments: &str,
+) -> TestResult<String> {
+    let mut request = CallToolRequestParams::new(name.to_owned());
+    request.arguments = Some(serde_json::from_str(arguments)?);
+    let result = client.call_tool(request).await?;
     assert_ne!(result.is_error, Some(true), "{name}: {result:?}");
     Ok(result
         .content
@@ -94,16 +90,15 @@ async fn stdio_mcp_reads_the_sqlite_store_of_a_local_node() -> TestResult {
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(
         Duration::from_secs(30),
-        mcp::client::Client::connect((stdout, stdin), tokio_util::sync::CancellationToken::new()),
+        ClientConfig::default().serve((stdout, stdin)),
     )
     .await?
     .map_err(|error| format!("mcp connect failed: {error}"))?;
-    let tools = client.tools().await.map_err(|error| format!("{error}"))?;
-    let search = call(&tools, "memory_search", r#"{"query":"copper lantern"}"#).await?;
+    let search = call(&client, "memory_search", r#"{"query":"copper lantern"}"#).await?;
     assert!(search.contains(ANSWER), "{search}");
-    let browse = call(&tools, "memory_browse", r#"{"limit":5}"#).await?;
+    let browse = call(&client, "memory_browse", r#"{"limit":5}"#).await?;
     assert!(browse.contains(ANSWER), "{browse}");
-    let full = call(&tools, "memory_get_full", &format!(r#"{{"id":"{id}"}}"#)).await?;
+    let full = call(&client, "memory_get_full", &format!(r#"{{"id":"{id}"}}"#)).await?;
     assert!(full.contains(ANSWER), "{full}");
     drop(client);
     child.kill().await?;

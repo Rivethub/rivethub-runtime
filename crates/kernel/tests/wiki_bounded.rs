@@ -6,7 +6,7 @@ use kernel::wiki::page::archive::{
 };
 use kernel::wiki::page::bound::{
     ARCHIVED_TITLE, ARTICLE_BUDGET, Archived, HISTORY_LINE, SECTION_BUDGET, SECTIONS_BUDGET,
-    bound_page, bound_parts, dropped, fit, history_line, rebase, tail,
+    bound_page, bound_parts, fit, history_line, rebase, tail,
 };
 use kernel::wiki::page::{ArticleSection, WikiHistoryEntry, WikiPage, WikiSlug};
 use kernel::wiki::recompile::{rebase_recompiled, restore_history};
@@ -66,13 +66,6 @@ fn tail_keeps_the_newest_blocks() {
     let kept = tail(&text, 330);
     assert!(kept.starts_with("0007 "));
     assert!(kept.ends_with(&"x".repeat(100)));
-}
-
-#[test]
-fn dropped_lists_only_the_blocks_a_rewrite_left_out() {
-    let before = "Ships on Fridays.\n\nRuns on the build box.\n\nOld port 8080.";
-    let after = "Ships on Fridays.\n\nRuns on the build box.";
-    assert_eq!(dropped(before, after), "Old port 8080.");
 }
 
 #[test]

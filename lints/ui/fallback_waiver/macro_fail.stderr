@@ -1,16 +1,10 @@
-warning: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
-  --> $DIR/macro_fail.rs:20:1
+warning: FALLBACK expectation must be on a statement
+  --> $DIR/macro_fail.rs:11:1
    |
 LL | broad!();
    | ^^^^^^^^
    |
    = note: `#[warn(fallback_waiver)]` on by default
 
-warning: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
-  --> $DIR/macro_fail.rs:24:13
-   |
-LL |     let _ = silent!(Ok::<u32, ()>(7));
-   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: 2 warnings emitted
+warning: 1 warning emitted
 

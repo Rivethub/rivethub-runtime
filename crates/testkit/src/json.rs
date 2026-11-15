@@ -228,7 +228,7 @@ pub fn masked_eq(rec: &str, act: &str, masks: &Masks) -> Result<bool, regex::Err
 }
 
 #[must_use]
-pub fn has_tokens(rec: &str) -> bool {
+fn has_tokens(rec: &str) -> bool {
     rec.contains("{{") || rec.contains("<ts>")
 }
 
@@ -276,10 +276,6 @@ pub(crate) fn value_eq(rec: &Json, act: &Json, strings: &impl Fn(&str, &str) -> 
         Ok(equal) => equal,
         Err(never) => match never {},
     }
-}
-
-pub(crate) fn json_text(text: &str) -> Result<Json, serde_json::Error> {
-    serde_json::from_str(text)
 }
 
 #[must_use]

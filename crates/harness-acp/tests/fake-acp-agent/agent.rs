@@ -14,7 +14,6 @@ use tokio::sync::Notify;
 
 mod script;
 
-use script::Chunk;
 use script::Selection;
 use script::Step;
 
@@ -23,35 +22,23 @@ use script::Step;
 struct FakeArgs {
     #[arg(long)]
     session_id: String,
-    #[arg(long, default_value = "none")]
-    on_load: OnLoad,
     #[arg(long)]
     steps: Vec<String>,
-    #[arg(long, default_value = "end-turn")]
-    stop: String,
     #[arg(long)]
     crash_on: Option<CrashPoint>,
     #[arg(long)]
     hang_until_cancel: bool,
     #[arg(long)]
     list_sessions: bool,
-    #[arg(long, default_value = "plain")]
-    prompt: PromptMode,
-    #[arg(long, default_value = "none")]
-    usage: UsageMode,
     #[arg(long)]
-    record_meta: Option<std::path::PathBuf>,
+    usage: bool,
     #[arg(long)]
     record_new: Option<std::path::PathBuf>,
     #[arg(long)]
     record_delete: Option<std::path::PathBuf>,
-    #[arg(long)]
-    steering: bool,
     #[arg(long, default_value = "offered")]
     effort_option: EffortOption,
 }
-
-const REPLAYED_CHUNKS: usize = 300;
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum EffortOption {
@@ -60,52 +47,20 @@ enum EffortOption {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
-enum OnLoad {
-    None,
-    Replay,
-    Reject,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum PromptMode {
-    Plain,
-    Echo,
-    EchoImages,
-}
-
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum UsageMode {
-    None,
-    Reported,
-    Meta,
-}
-
-const META_STEERING: &str = r#"{"steering":{"supported":true}}"#;
-
-const META_USAGE: &str = r#"{"usage":{"inputTokens":20185,"outputTokens":44,"totalTokens":20229,"cachedReadTokens":2176,"cacheCreationTokens":0,"reasoningTokens":43}}"#;
-
-#[derive(Clone, Copy, clap::ValueEnum)]
 enum CrashPoint {
-    New,
     Prompt,
 }
 
 struct AgentState {
     session_id: String,
-    on_load: OnLoad,
     steps: Vec<Step>,
-    stop: acp::StopReason,
     crash_on: Option<CrashPoint>,
     hang_until_cancel: bool,
     list_sessions: bool,
-    prompt: PromptMode,
-    usage: UsageMode,
-    record_meta: Option<std::path::PathBuf>,
+    usage: bool,
     record_new: Option<std::path::PathBuf>,
     record_delete: Option<std::path::PathBuf>,
-    steering: bool,
     effort_option: EffortOption,
-    running: AtomicBool,
     cancelled: AtomicBool,
     cancel_notify: Notify,
     crashed: Notify,
@@ -120,9 +75,6 @@ impl AgentState {
 }
 
 fn prepare(args: FakeArgs) -> Option<AgentState> {
-    let Ok(stop) = script::parse_stop(&args.stop) else {
-        return None;
-    };
     let mut steps = Vec::with_capacity(args.steps.len());
     for raw in &args.steps {
         let Ok(parsed) = script::parse_step(raw) else {
@@ -132,20 +84,14 @@ fn prepare(args: FakeArgs) -> Option<AgentState> {
     }
     Some(AgentState {
         session_id: args.session_id,
-        on_load: args.on_load,
         steps,
-        stop,
         crash_on: args.crash_on,
         hang_until_cancel: args.hang_until_cancel,
         list_sessions: args.list_sessions,
-        prompt: args.prompt,
         usage: args.usage,
-        record_meta: args.record_meta,
         record_new: args.record_new,
         record_delete: args.record_delete,
-        steering: args.steering,
         effort_option: args.effort_option,
-        running: AtomicBool::new(false),
         cancelled: AtomicBool::new(false),
         cancel_notify: Notify::new(),
         crashed: Notify::new(),
@@ -172,35 +118,19 @@ fn on_initialize(
     request: &acp::InitializeRequest,
     responder: Responder<acp::InitializeResponse>,
 ) -> Result<(), acp::Error> {
-    let meta: Option<acp::Meta> = if state.steering {
-        Some(
-            serde_json::from_str(META_STEERING)
-                .map_err(|error| acp::Error::internal_error().data(error.to_string()))?,
-        )
-    } else {
-        None
-    };
     responder.respond(
-        acp::InitializeResponse::new(request.protocol_version)
-            .meta(meta)
-            .agent_capabilities(
-                acp::AgentCapabilities::new()
-                    .load_session(!matches!(state.on_load, OnLoad::None))
-                    .prompt_capabilities(
-                        acp::PromptCapabilities::new()
-                            .image(state.prompt == PromptMode::EchoImages),
-                    )
-                    .session_capabilities(
-                        acp::SessionCapabilities::new()
-                            .list(state.list_sessions.then(acp::SessionListCapabilities::new))
-                            .delete(
-                                state
-                                    .record_delete
-                                    .is_some()
-                                    .then(acp::SessionDeleteCapabilities::new),
-                            ),
+        acp::InitializeResponse::new(request.protocol_version).agent_capabilities(
+            acp::AgentCapabilities::new().session_capabilities(
+                acp::SessionCapabilities::new()
+                    .list(state.list_sessions.then(acp::SessionListCapabilities::new))
+                    .delete(
+                        state
+                            .record_delete
+                            .is_some()
+                            .then(acp::SessionDeleteCapabilities::new),
                     ),
             ),
+        ),
     )
 }
 
@@ -222,40 +152,9 @@ fn on_new_session(
     if let Some(path) = &state.record_new {
         record(path, &request.cwd.display().to_string())?;
     }
-    if let Some(path) = &state.record_meta {
-        let recorded = serde_json::to_string(&request.meta)
-            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-        std::fs::write(path, recorded)
-            .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-    }
     responder.respond(
         acp::NewSessionResponse::new(session_id(state)).config_options(current_options(state)),
     )
-}
-
-fn on_load(
-    state: &AgentState,
-    connection: &ConnectionTo<Client>,
-    responder: Responder<acp::LoadSessionResponse>,
-) -> Result<(), acp::Error> {
-    match state.on_load {
-        OnLoad::Reject => {
-            responder.respond_with_error(acp::Error::invalid_params().data("session not found"))
-        }
-        OnLoad::Replay => {
-            for _ in 0..REPLAYED_CHUNKS {
-                connection.send_notification(acp::SessionNotification::new(
-                    session_id(state),
-                    acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                        acp::ContentBlock::from("restored"),
-                    )),
-                ))?;
-            }
-            responder
-                .respond(acp::LoadSessionResponse::new().config_options(current_options(state)))
-        }
-        OnLoad::None => responder.respond(acp::LoadSessionResponse::new()),
-    }
 }
 
 fn on_set_config(
@@ -290,119 +189,25 @@ fn spawn_prompt(
 ) -> Result<(), acp::Error> {
     let task_connection = connection.clone();
     connection.spawn(async move {
-        state.running.store(true, Ordering::SeqCst);
         let session_id = request.session_id;
-        if state.prompt != PromptMode::Plain {
-            for block in &request.prompt {
-                script::emit_text(
-                    &task_connection,
-                    &session_id,
-                    &described(block),
-                    Chunk::Agent,
-                )?;
-            }
-        }
         let executed = execute_prompt(&state, &task_connection, &session_id).await;
-        state.running.store(false, Ordering::SeqCst);
         match executed {
-            Ok(stop) => responder.respond(ended(stop, state.usage)?),
+            Ok(stop) => responder.respond(ended(stop, state.usage)),
             Err(error) => responder.respond_with_error(error),
         }
     })
 }
 
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, agent_client_protocol::JsonRpcRequest,
-)]
-#[request(method = "_session/steering", response = SteerAnswer)]
-#[serde(rename_all = "camelCase")]
-struct Steer {
-    session_id: acp::SessionId,
-    prompt: Vec<acp::ContentBlock>,
-    #[serde(rename = "_meta")]
-    meta: Option<SteerMeta>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct SteerMeta {
-    steering: SteerOptions,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SteerOptions {
-    idle_behavior: String,
-}
-
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, agent_client_protocol::JsonRpcResponse,
-)]
-struct SteerAnswer {
-    outcome: String,
-}
-
-fn on_steer(
-    state: &AgentState,
-    request: Steer,
-    responder: Responder<SteerAnswer>,
-    connection: &ConnectionTo<Client>,
-) -> Result<(), acp::Error> {
-    let outcome = if state.running.load(Ordering::SeqCst) {
-        for block in &request.prompt {
-            script::emit_text(
-                connection,
-                &request.session_id,
-                &format!("steered:{}", described(block)),
-                Chunk::Agent,
-            )?;
-        }
-        "injected"
-    } else if request
-        .meta
-        .is_some_and(|meta| meta.steering.idle_behavior == "promptRequired")
-    {
-        "promptRequired"
-    } else {
-        "startedNewTurn"
-    };
-    responder.respond(SteerAnswer {
-        outcome: outcome.to_owned(),
-    })
-}
-
-fn ended(stop: acp::StopReason, usage: UsageMode) -> Result<acp::PromptResponse, acp::Error> {
+fn ended(stop: acp::StopReason, usage: bool) -> acp::PromptResponse {
     let response = acp::PromptResponse::new(stop);
-    match usage {
-        UsageMode::None => Ok(response),
-        UsageMode::Reported => Ok(response.usage(
+    if usage {
+        response.usage(
             acp::Usage::new(23_252, 2, 4)
                 .cached_read_tokens(10_470)
                 .cached_write_tokens(12_776),
-        )),
-        UsageMode::Meta => {
-            let meta: acp::Meta = serde_json::from_str(META_USAGE)
-                .map_err(|error| acp::Error::internal_error().data(error.to_string()))?;
-            Ok(response.meta(meta))
-        }
-    }
-}
-
-fn described(block: &acp::ContentBlock) -> String {
-    match block {
-        acp::ContentBlock::Text(text) => format!("text:{}", text.text),
-        acp::ContentBlock::Image(image) => format!(
-            "image:{}:{}:{}",
-            image.mime_type,
-            image.data.len(),
-            image.uri.as_deref().unwrap_or_default()
-        ),
-        acp::ContentBlock::ResourceLink(link) => format!(
-            "link:{}:{}:{}",
-            link.name,
-            link.mime_type.as_deref().unwrap_or_default(),
-            link.uri
-        ),
-        acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) | _ => "other".to_owned(),
+        )
+    } else {
+        response
     }
 }
 
@@ -423,7 +228,7 @@ async fn execute_prompt(
         wait_until_cancelled(state).await;
         return Ok(acp::StopReason::Cancelled);
     }
-    Ok(state.stop)
+    Ok(acp::StopReason::EndTurn)
 }
 
 async fn wait_until_cancelled(state: &AgentState) {
@@ -446,11 +251,9 @@ fn on_cancel(state: &AgentState) {
 async fn serve(state: Arc<AgentState>) -> Result<(), acp::Error> {
     let initialize_state = Arc::clone(&state);
     let new_state = Arc::clone(&state);
-    let load_state = Arc::clone(&state);
     let config_state = Arc::clone(&state);
     let prompt_state = Arc::clone(&state);
     let cancel_state = Arc::clone(&state);
-    let steer_state = Arc::clone(&state);
     let delete_state = Arc::clone(&state);
     Agent
         .builder()
@@ -463,16 +266,7 @@ async fn serve(state: Arc<AgentState>) -> Result<(), acp::Error> {
         )
         .on_receive_request(
             async move |request: acp::NewSessionRequest, responder, _connection| {
-                if matches!(new_state.crash_on, Some(CrashPoint::New)) {
-                    match new_state.crash().await {}
-                }
                 on_new_session(&new_state, &request, responder)
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |_request: acp::LoadSessionRequest, responder, connection| {
-                on_load(&load_state, &connection, responder)
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -485,12 +279,6 @@ async fn serve(state: Arc<AgentState>) -> Result<(), acp::Error> {
         .on_receive_request(
             async move |request: acp::PromptRequest, responder, connection| {
                 spawn_prompt(Arc::clone(&prompt_state), request, responder, &connection)
-            },
-            agent_client_protocol::on_receive_request!(),
-        )
-        .on_receive_request(
-            async move |request: Steer, responder, connection| {
-                on_steer(&steer_state, request, responder, &connection)
             },
             agent_client_protocol::on_receive_request!(),
         )

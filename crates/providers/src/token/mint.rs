@@ -45,13 +45,7 @@ struct Flight {
     rx: watch::Receiver<Option<Result<String, TokenError>>>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) would print the token command argv and the cached bearer; the impl shows only the argv length and whether a token is cached"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for TokenSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let inner = self.inner.lock();
@@ -198,13 +192,7 @@ fn cache_until(token: &str, ttl: Duration) -> Option<tokio::time::Instant> {
 }
 
 fn cache_lifetime(token: &str, ttl: Duration) -> Duration {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B8: a bearer without a readable JWT exp claim is opaque and is cached for token_ttl_ms"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let lifetime = match jwt::lifetime(token, SystemTime::now()) {
         Ok(lifetime) => lifetime,
         Err(_) => ttl,

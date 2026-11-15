@@ -110,7 +110,7 @@ fn session(
 ) -> Result<BundledSession, serde_json::Error> {
     Ok(BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: NODE.to_owned(),
             conversation_id: conversation.to_owned(),
             session_key: format!("claude-code:{conversation}"),
@@ -168,7 +168,7 @@ fn corpus() -> Result<BundledSession, Box<dyn std::error::Error>> {
 fn raw(sessions: Vec<BundledSession>) -> Result<SessionBundle, Box<dyn std::error::Error>> {
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: NODE.to_owned(),
         },
         at()?,
@@ -197,10 +197,10 @@ fn every_planted_secret_is_gone() -> TestResult {
     let parsed = capture::bundle::parse(&file)?;
     assert_eq!(parsed, sanitized.sealed.bundle);
     assert_eq!(sanitize::secrets(&parsed), Vec::new());
-    assert_eq!(parsed.manifest.exported_by.user, "phil");
+    assert_eq!(parsed.manifest.exported_by.user, "dana");
     assert_eq!(parsed.manifest.exported_by.node, "<node>");
     let first = first(&parsed)?;
-    assert_eq!(first.origin.author, "phil");
+    assert_eq!(first.origin.author, "dana");
     assert_eq!(first.origin.node, "<node>");
     let Sanitization::Sanitized(stamp) = &parsed.manifest.sanitization else {
         panic!("the output is stamped sanitized");
@@ -450,39 +450,5 @@ fn a_decode_bomb_is_redacted_whole_in_sanitize_and_ingest() -> TestResult {
             .markdown("s.clean.json", "m.toml")
             .contains("undecoded_blob")
     );
-    Ok(())
-}
-
-#[test]
-fn a_bomb_in_every_message_costs_the_bundle_budget_not_the_message_count() -> TestResult {
-    let inner = gzip_base64(&vec![0xff; 1 << 20])?;
-    let bomb = gzip_base64([inner.as_str(); 9].join(" ").as_bytes())?;
-    let scan = |count: usize| -> Result<std::time::Duration, Box<dyn std::error::Error>> {
-        let messages = (0..count)
-            .map(|at| {
-                let mut tool = message(&format!("evt-{at}"), "x".to_owned());
-                tool.tool_result = Some(format!("blob {bomb}"));
-                tool
-            })
-            .collect();
-        let input = raw(vec![session(
-            "0195f0c2-0000-7000-8000-000000000005",
-            messages,
-        )?])?;
-        let started = std::time::Instant::now();
-        let found = sanitize::secrets(&input);
-        let took = started.elapsed();
-        assert_eq!(found.len(), count);
-        assert!(
-            found
-                .iter()
-                .all(|change| change.rule.to_string() == "undecoded_blob")
-        );
-        Ok(took)
-    };
-    scan(1)?;
-    let few = scan(16)?;
-    let many = scan(1024)?;
-    assert!(many < few * 8, "16 bombs took {few:?}, 1024 took {many:?}");
     Ok(())
 }

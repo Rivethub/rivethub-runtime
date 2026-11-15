@@ -53,7 +53,6 @@ pub(crate) struct Scenario {
     pub(crate) steps: Vec<Step>,
     #[serde(default)]
     pub(crate) tables: HashMap<String, Vec<Json>>,
-    pub(crate) logs: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,12 +367,6 @@ pub(crate) async fn compare_tables(
         .map_err(|error| format!("{error}\nactual rows: {}", Json::Array(actual)))?;
     }
     Ok(())
-}
-
-pub(crate) fn step_result(step: &Step) -> TestResult<&Json> {
-    step.result
-        .as_ref()
-        .ok_or_else(|| format!("step {} has no result", step.label).into())
 }
 
 pub(crate) fn expect_json(recorded: &Json, actual: &Json, at: &str, ids: &mut Ids) -> TestResult {

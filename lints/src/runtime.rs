@@ -12,7 +12,7 @@ use crate::util;
 dylint_linting::declare_lint!(
     pub(crate) RUNTIME,
     Warn,
-    "a library builds a tokio runtime (only the rivethub binary does) → docs/PATTERNS.md#runtime"
+    "a library builds a tokio runtime (only the rivethub binary does)"
 );
 
 dylint_linting::impl_lint_pass!(RuntimeEarly => [RUNTIME]);
@@ -54,7 +54,7 @@ impl EarlyLintPass for RuntimeEarly {
             attr.span,
             DiagDecorator(|diag| {
                 diag.primary_message(
-                    "`#[tokio::main]` builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime"
+                    "`#[tokio::main]` builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)"
                         .to_owned(),
                 );
             }),
@@ -95,7 +95,7 @@ impl<'tcx> LateLintPass<'tcx> for RuntimeLate {
             expr.hir_id,
             expr.span,
             format!(
-                "{path} builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime"
+                "{path} builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)"
             ),
         );
     }

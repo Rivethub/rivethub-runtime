@@ -8,7 +8,7 @@ use crate::{fallback_policy, util};
 dylint_linting::impl_late_lint!(
     pub(crate) FALLBACK_WAIVER,
     Warn,
-    "FALLBACK expectations require a statement and a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback",
+    "FALLBACK expectations belong on a statement",
     FallbackWaiver::default()
 );
 
@@ -50,7 +50,7 @@ impl FallbackWaiver {
                         CRATE_HIR_ID,
                         span,
                         format!(
-                            "{file}:{line}: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback"
+                            "{file}:{line}: FALLBACK expectation must be on a statement"
                         ),
                     );
                 }
@@ -87,16 +87,12 @@ pub(crate) fn expanded_expectation(cx: &LateContext<'_>, id: rustc_hir::HirId, s
     }
     let valid = match specification.src {
         rustc_middle::lint::LintLevelSource::Node {
-            reason: Some(reason),
-            span: attribute,
-            ..
-        } => {
-            fallback_policy::cites_rule(reason.as_str()) && statement_expectation(cx, id, attribute)
-        }
+            span: attribute, ..
+        } => statement_expectation(cx, id, attribute),
         _ => false,
     };
     if !valid {
-        util::lint(cx, FALLBACK_WAIVER, CRATE_HIR_ID, span.source_callsite(), "FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback".to_owned());
+        util::lint(cx, FALLBACK_WAIVER, CRATE_HIR_ID, span.source_callsite(), "FALLBACK expectation must be on a statement".to_owned());
     }
 }
 

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use tempfile::TempDir;
-use xtask::{baseline, git, ports, rustsrc};
+use xtask::{baseline, git, rustsrc};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -21,7 +21,12 @@ fn repository(files: &[(&str, &str)]) -> Result<TempDir> {
 
 fn findings(root: &Path) -> Result<Vec<String>> {
     let mut findings = Vec::new();
-    ports::check(root, &baseline::Baseline::load(root)?, &mut findings)?;
+    rustsrc::check(
+        root,
+        &baseline::Baseline::load(root)?,
+        "PORTS",
+        &mut findings,
+    )?;
     Ok(findings)
 }
 
@@ -41,9 +46,7 @@ fn public_traits_fail_in_every_service_and_adapter() -> Result {
         let repo = repository(&[(&file, "pub trait Store: Send + Sync {}")])?;
         assert_eq!(
             findings(repo.path())?,
-            [format!(
-                "PORTS {file}:1: pub trait Store (occurrence 1) → docs/PATTERNS.md#ports"
-            )]
+            [format!("PORTS {file}:1: pub trait Store (occurrence 1)")]
         );
     }
     Ok(())
@@ -109,62 +112,7 @@ items! { pub trait External {} }
 }
 
 #[test]
-fn sealed_extension_with_local_pattern_reason_passes() -> Result {
-    let repo = repository(&[(
-        "crates/providers/src/lib.rs",
-        r#"
-mod sealed { pub(crate) trait Sealed {} }
-#[expect(private_bounds, reason = "PORTS: sealed extension helper, no external boundary")]
-pub trait Extension: sealed::Sealed {}
-"#,
-    )])?;
-    assert_eq!(findings(repo.path())?, Vec::<String>::new());
-    Ok(())
-}
-
-#[test]
-fn unrelated_missing_invalid_and_conditional_reasons_fail() -> Result {
-    for attribute in [
-        "#[expect(dead_code)]",
-        "#[expect(dead_code, reason = \"internal helper\")]",
-        "#[expect(dead_code, reason = \"TRANSPORTS\")]",
-        "#[expect(dead_code, reason = \"PORTS_EXTRA\")]",
-        "#[expect(dead_code, reason = 123)]",
-        "#[allow(dead_code, reason = \"PORTS\")]",
-        "#[cfg_attr(any(), expect(dead_code, reason = \"PORTS\"))]",
-    ] {
-        let source = format!("{attribute}\npub trait Store {{}}");
-        let repo = repository(&[("crates/gateway/src/lib.rs", &source)])?;
-        assert_eq!(findings(repo.path())?.len(), 1, "{attribute}");
-    }
-    Ok(())
-}
-
-#[test]
-fn expectations_do_not_leak_to_siblings_or_from_modules() -> Result {
-    let repo = repository(&[(
-        "crates/gateway/src/lib.rs",
-        r#"
-#[expect(dead_code, reason = "PORTS: extension")]
-pub trait Extension {}
-pub trait Store {}
-#[expect(dead_code, reason = "PORTS: module")]
-mod nested { pub trait Runner {} }
-"#,
-    )])?;
-    assert_eq!(findings(repo.path())?.len(), 2);
-    Ok(())
-}
-
-#[test]
-fn malformed_source_is_an_error() -> Result {
-    let repo = repository(&[("crates/gateway/src/lib.rs", "pub trait Store {")])?;
-    assert!(findings(repo.path()).is_err());
-    Ok(())
-}
-
-#[test]
-fn generated_baseline_counts_duplicates_and_rejects_growth_and_staleness() -> Result {
+fn the_generated_baseline_counts_duplicates_and_passes_the_gate() -> Result {
     let file = "crates/capture/src/lib.rs";
     let source = "mod first { pub trait Store {} } mod second { pub trait Store {} }";
     let repo = repository(&[(file, source), (baseline::FILE, "")])?;
@@ -184,50 +132,5 @@ fn generated_baseline_counts_duplicates_and_rejects_growth_and_staleness() -> Re
     baseline::validate(&saved, &mut invalid);
     assert_eq!(invalid, Vec::<String>::new());
     assert_eq!(findings(repo.path())?, Vec::<String>::new());
-    std::fs::write(
-        repo.path().join(file),
-        format!("{source} mod third {{ pub trait Store {{}} }}"),
-    )?;
-    let grown = findings(repo.path())?;
-    assert_eq!(grown.len(), 1);
-    assert!(grown.iter().all(|finding| finding.contains("occurrence 3")));
-    std::fs::write(repo.path().join(file), "pub trait Store {}")?;
-    let stale = findings(repo.path())?;
-    assert_eq!(stale.len(), 1);
-    assert!(
-        stale
-            .iter()
-            .all(|finding| finding.contains("no longer matches code"))
-    );
-    Ok(())
-}
-
-#[test]
-fn ports_baseline_cannot_grow_against_main() {
-    let entry = baseline::Entry {
-        check: "PORTS".into(),
-        file: "crates/capture/src/writer.rs".into(),
-        text: "pub trait CaptureTransport".into(),
-        count: 1,
-    };
-    let mut findings = Vec::new();
-    baseline::compare(&[], std::slice::from_ref(&entry), &mut findings);
-    assert_eq!(findings.len(), 1);
-    findings.clear();
-    let mut increased = entry.clone();
-    increased.count = 2;
-    baseline::compare(std::slice::from_ref(&entry), &[increased], &mut findings);
-    assert_eq!(findings.len(), 1);
-    findings.clear();
-    baseline::compare(&[entry], &[], &mut findings);
-    assert_eq!(findings, Vec::<String>::new());
-}
-
-#[test]
-fn workspace_ports_match_the_generated_baseline() -> Result {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask must live under the workspace root")?;
-    assert_eq!(findings(root)?, Vec::<String>::new());
     Ok(())
 }

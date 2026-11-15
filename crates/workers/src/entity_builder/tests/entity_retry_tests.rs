@@ -14,15 +14,6 @@ use kernel::model::ModelProvider;
 use kernel::model::ModelProviderError;
 use kernel::model::ModelRequest;
 use kernel::model::ModelStreamItem;
-use kernel::queue::ClaimSelector;
-use kernel::queue::ClaimedJob;
-use kernel::queue::Job;
-use kernel::queue::JobId;
-use kernel::queue::JobName;
-use kernel::queue::JobQueue;
-use kernel::queue::JobQueueError;
-use kernel::queue::StoredJob;
-use kernel::queue::WorkerRole;
 use kernel::wiki::builder::BackfillBudget;
 use kernel::wiki::entity_pass::AppliedMark;
 use kernel::wiki::entity_pass::CandidateQuery;
@@ -60,6 +51,7 @@ use crate::entity_builder::rewrite::TouchedEntity;
 use crate::entity_builder::rewrite::accepted_rewrite;
 use crate::entity_builder::rewrite::rewrite_touched;
 use crate::outage::OutageCause;
+use testkit::FakeJobQueue;
 
 #[derive(Debug)]
 pub(super) enum Step {
@@ -263,52 +255,10 @@ impl EntityStore for IdleStore {
 }
 
 #[derive(Debug)]
-struct IdleQueue;
-
-#[async_trait]
-impl JobQueue for IdleQueue {
-    fn task_names(&self, role: WorkerRole) -> Vec<JobName> {
-        role.task_list().to_vec()
-    }
-
-    async fn subscribe(&self) -> Result<Box<dyn kernel::queue::JobNotifications>, JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn enqueue(&self, _job: Job) -> Result<JobId, JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn claim(&self, _selector: &ClaimSelector) -> Result<Option<ClaimedJob>, JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn complete(&self, _id: JobId) -> Result<(), JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn fail(&self, _id: JobId, _error: &str) -> Result<(), JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn release(&self, _id: JobId) -> Result<(), JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn flag_stuck(&self) -> Result<u64, JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-
-    async fn read(&self, _id: JobId) -> Result<Option<StoredJob>, JobQueueError> {
-        Err(JobQueueError::Absent)
-    }
-}
-
-#[derive(Debug)]
 pub(super) struct Harness {
     provider: Script,
     store: IdleStore,
-    queue: IdleQueue,
+    queue: FakeJobQueue,
     settings: MatcherSettings,
     cancel: CancellationToken,
     model: String,
@@ -320,7 +270,7 @@ impl Harness {
         Self {
             provider: Script::new(steps),
             store: IdleStore,
-            queue: IdleQueue,
+            queue: FakeJobQueue::default(),
             settings: MatcherSettings::default(),
             cancel: CancellationToken::new(),
             model: "thinkingcap-flash-next".to_owned(),
@@ -359,12 +309,12 @@ async fn identify(harness: &Harness) -> Result<Vec<String>, WorkerError> {
 
 #[tokio::test(start_paused = true)]
 async fn an_empty_reply_then_a_good_one_succeeds() {
-    let harness = Harness::new(vec![Step::Empty, Step::Json(identified("gpubox"))]);
+    let harness = Harness::new(vec![Step::Empty, Step::Json(identified("tinbox"))]);
     let names = identify(&harness).await;
     assert!(
         names
             .as_ref()
-            .is_ok_and(|found| found == &["gpubox".to_owned()]),
+            .is_ok_and(|found| found == &["tinbox".to_owned()]),
         "{}",
         names
             .as_ref()
@@ -377,12 +327,12 @@ async fn an_empty_reply_then_a_good_one_succeeds() {
 
 #[tokio::test(start_paused = true)]
 async fn a_stream_error_then_a_good_reply_succeeds() {
-    let harness = Harness::new(vec![Step::MalformedStream, Step::Json(identified("gerty"))]);
+    let harness = Harness::new(vec![Step::MalformedStream, Step::Json(identified("hally"))]);
     let names = identify(&harness).await;
     assert!(
         names
             .as_ref()
-            .is_ok_and(|found| found == &["gerty".to_owned()]),
+            .is_ok_and(|found| found == &["hally".to_owned()]),
         "{}",
         names
             .as_ref()
@@ -411,13 +361,13 @@ async fn two_stream_errors_get_a_last_chance_that_succeeds() {
     let harness = Harness::new(vec![
         Step::MalformedStream,
         Step::MalformedStream,
-        Step::Json(identified("datahub")),
+        Step::Json(identified("mailhub")),
     ]);
     let names = identify(&harness).await;
     assert!(
         names
             .as_ref()
-            .is_ok_and(|found| found == &["datahub".to_owned()]),
+            .is_ok_and(|found| found == &["mailhub".to_owned()]),
         "{}",
         names
             .as_ref()
@@ -449,8 +399,8 @@ fn stamp() -> chrono::DateTime<Utc> {
 fn host_view() -> EntityView {
     EntityView {
         id: Uuid::from_u128(3),
-        name: "gpubox".to_owned(),
-        slug: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
+        slug: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         type_slug: "hosts".to_owned(),
         aliases: Vec::new(),
@@ -525,7 +475,7 @@ async fn a_rewrite_that_drops_every_fact_is_retried_once() {
 
 #[tokio::test(start_paused = true)]
 async fn a_truncated_identify_is_not_retried() {
-    let harness = Harness::new(vec![Step::Truncated, Step::Json(identified("gpubox"))]);
+    let harness = Harness::new(vec![Step::Truncated, Step::Json(identified("tinbox"))]);
     let names = identify(&harness).await;
     assert!(matches!(names, Err(WorkerError::Truncated)));
     assert_eq!(harness.calls(), 1);
@@ -574,7 +524,7 @@ fn transient_kinds_name_the_measured_failures() {
     assert_eq!(transient_kind(&http), Some("http-5xx"));
     assert_eq!(
         transient_kind(&WorkerError::Llm {
-            message: "rewrite of gpubox dropped every current fact".to_owned(),
+            message: "rewrite of tinbox dropped every current fact".to_owned(),
         }),
         Some("dropped-facts")
     );
@@ -593,7 +543,7 @@ async fn a_database_error_retries_the_session_without_rewriting_the_applied_enti
     let lost = Uuid::from_u128(12);
     let store = RetryStore::new(lost);
     let provider = NamedModel::default();
-    let queue = IdleQueue;
+    let queue = FakeJobQueue::default();
     let mut settings = MatcherSettings::default();
     settings.embed_url.clear();
     let cancel = CancellationToken::new();

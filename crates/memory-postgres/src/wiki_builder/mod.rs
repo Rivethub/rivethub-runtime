@@ -12,9 +12,8 @@ pub(crate) use topics::store as store_wiki_page;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use kernel::owner::Owner;
-use kernel::topics::Slug;
 use kernel::wiki::builder::{
-    BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, HeldEntity, RouteLease,
+    BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, RouteLease,
     WIKI_PIPELINE_VERSION, WikiBuilderStore, WikiRouting, WikiStoreError, WikiSummary, WikiWork,
     WikiWriteError,
 };
@@ -149,18 +148,6 @@ impl WikiBuilderStore for PostgresMemory {
         .bind(summary_id).bind(WIKI_PIPELINE_VERSION).bind(error).bind(now)
         .execute(&self.pool).await.map_err(query_error)?;
         Ok(())
-    }
-
-    async fn hold_entity(&self, held: HeldEntity) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        held::hold(&self.pool, held).await
-    }
-
-    async fn held_entities(&self, key: &Slug) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        held::candidates(&self.pool, key).await
-    }
-
-    async fn release_entity(&self, held: &[HeldEntity]) -> Result<(), WikiStoreError> {
-        held::release(&self.pool, held).await
     }
 
     async fn defer_wiki(&self, deferred: DeferredWiki) -> Result<(), WikiStoreError> {

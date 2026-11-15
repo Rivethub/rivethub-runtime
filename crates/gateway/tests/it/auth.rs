@@ -136,14 +136,16 @@ fn origin_policy_applies_the_allow_lists() {
             echo: Some("https://hub.example.test".to_string())
         }
     );
-    assert_eq!(
-        decide(Some("https://evil.example"), Some("127.0.0.1:5174"), true),
-        Decision::Deny {
-            reason:
-                "origin \"https://evil.example\" is not allowed (add it to the gateway allowed_origins setting)"
-                    .to_string()
-        }
-    );
+    for loopback in [true, false] {
+        assert_eq!(
+            decide(Some("https://evil.example"), Some("127.0.0.1:5174"), loopback),
+            Decision::Deny {
+                reason:
+                    "origin \"https://evil.example\" is not allowed (add it to the gateway allowed_origins setting)"
+                        .to_string()
+            }
+        );
+    }
 }
 
 #[test]
@@ -231,21 +233,17 @@ fn response(
 }
 
 #[test]
-fn remote_callers_get_unauthorized_json_on_api_paths() {
-    let answer = response("GET", "/api/memory/stats", Some("remote"), &[]);
-    assert_eq!(answer.status, 401);
-    let parsed: GatewayError = serde_json::from_slice(&answer.body).expect("error body");
-    assert_eq!(parsed.error, "unauthorized");
-
-    let html = response(
-        "GET",
-        "/api/memory/stats",
-        Some("remote"),
-        &[("Accept", "text/html")],
-    );
-    assert_eq!(html.status, 401);
-    let parsed: GatewayError = serde_json::from_slice(&html.body).expect("error body");
-    assert_eq!(parsed.error, "unauthorized");
+fn remote_callers_get_unauthorized_json_on_api_paths_and_writes() {
+    for (method, target, headers) in [
+        ("GET", "/api/memory/stats", &[][..]),
+        ("GET", "/api/memory/stats", &[("Accept", "text/html")][..]),
+        ("POST", "/", &[("Accept", "text/html")][..]),
+    ] {
+        let answer = response(method, target, Some("remote"), headers);
+        assert_eq!(answer.status, 401, "{method} {target}");
+        let parsed: GatewayError = serde_json::from_slice(&answer.body).expect("error body");
+        assert_eq!(parsed.error, "unauthorized", "{method} {target}");
+    }
 }
 
 #[test]
@@ -281,11 +279,11 @@ fn remote_browsers_get_the_html_gate_off_api_paths() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-fn documented_origin_example(doc: &str) -> Option<&str> {
-    doc.split("```yaml\n")
-        .nth(1)
-        .and_then(|rest| rest.split("```").next())
-}
+const DEV_ORIGINS: &str = "gateway:
+  allowed_origins:
+    - http://127.0.0.1:5273
+    - http://localhost:5273
+";
 
 fn loopback_check(origin: &str) -> OriginCheck<'_> {
     OriginCheck {
@@ -297,11 +295,8 @@ fn loopback_check(origin: &str) -> OriginCheck<'_> {
 }
 
 #[test]
-fn the_documented_vite_dev_origin_example_admits_exactly_that_origin() {
-    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/CLI.md"))
-        .expect("CLI doc");
-    let example = documented_origin_example(&doc).expect("documented allowed_origins example");
-    let config: config::Config = serde_yaml_ng::from_str(example).expect("documented config");
+fn allowed_origins_for_a_dev_server_admit_exactly_those_origins() {
+    let config: config::Config = serde_yaml_ng::from_str(DEV_ORIGINS).expect("config");
     let home = tempfile::tempdir().expect("home");
     let env = config::Environment::from_vars([("HOME", home.path().to_str().expect("utf-8 home"))]);
     let settings = gateway::Settings::from_config_in(

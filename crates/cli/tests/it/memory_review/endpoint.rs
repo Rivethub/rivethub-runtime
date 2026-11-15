@@ -63,7 +63,7 @@ const IDENTIFIERS: [&str; 4] = [
     "6b0404f2-b094-90b8-6b01-a1c12a3a2107",
     "3f9a2c1be07d4e5f",
     "req_011CVzKq8RmT2vLx9WabQ7",
-    "~/.claude/projects/-home-phil-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl",
+    "~/.claude/projects/-home-dana-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl",
 ];
 
 #[tokio::test]

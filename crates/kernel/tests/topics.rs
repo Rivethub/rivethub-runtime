@@ -235,7 +235,6 @@ fn topics_nest_four_levels_deep_and_never_under_themselves() -> TestResult {
         );
     }
     assert_eq!((tree.depth(merge.id), tree.height(runtime.id)), (3, 3));
-    assert_eq!(tree.root(merge.id), runtime.id);
     Ok(())
 }
 

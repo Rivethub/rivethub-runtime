@@ -24,13 +24,7 @@ struct SourceLink {
 struct TranscriptRow {
     id: Uuid,
     created_at: DateTime<Utc>,
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            stringly,
-            reason = "a transcript speaker is harness text, not the worker Role enum"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
     role: String,
     tool_name: Option<String>,
     content: String,

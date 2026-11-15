@@ -1,29 +1,8 @@
 use std::str::FromStr;
 
 use kernel::memory::Limit;
-use kernel::memory::SearchMode;
-use kernel::memory::TagDecision;
-use kernel::memory::TagId;
 use kernel::memory::TagLiteral;
 use kernel::memory::TagLiteralError;
-use kernel::memory::TagState;
-use uuid::Uuid;
-
-#[test]
-fn tag_id_parses_and_displays_uuids() {
-    let raw = "00000000-0000-4000-8000-000000000001";
-    let id = TagId::from_str(raw).unwrap();
-    assert_eq!(id.to_string(), raw);
-    assert_eq!(id.uuid(), Uuid::from_str(raw).unwrap());
-    assert_eq!(TagId::from_uuid(id.uuid()), id);
-    assert!(TagId::from_str("not-a-uuid").is_err());
-}
-
-#[test]
-fn tag_decisions_map_to_tag_states() {
-    assert_eq!(TagState::from(TagDecision::Accept), TagState::Accepted);
-    assert_eq!(TagState::from(TagDecision::Reject), TagState::Rejected);
-}
 
 #[test]
 fn tag_literal_parses_key_and_value() {
@@ -87,15 +66,4 @@ fn limit_clamps_to_its_range() {
     assert_eq!(Limit::clamped(Some(500), 20, 1..=50).get(), 50);
     assert_eq!(Limit::clamped(None, 50, 1..=200).get(), 50);
     assert_eq!(Limit::clamped(Some(201), 50, 1..=200).get(), 200);
-}
-
-#[test]
-fn search_mode_defaults_to_hybrid_and_names_its_variants() {
-    assert_eq!(SearchMode::default(), SearchMode::Hybrid);
-    assert_eq!(SearchMode::Fts.to_string(), "fts");
-    assert_eq!(
-        SearchMode::from_str("trigram").unwrap(),
-        SearchMode::Trigram
-    );
-    assert!(SearchMode::from_str("regex-ish").is_err());
 }

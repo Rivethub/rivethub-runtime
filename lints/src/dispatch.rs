@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) DISPATCH,
     Warn,
-    "string dispatch on a protocol tag (use a serde enum and match on the variant) → docs/PATTERNS.md#dispatch",
+    "string dispatch on a protocol tag (use a serde enum and match on the variant)",
     Dispatch::default()
 );
 
@@ -28,7 +28,7 @@ impl<'tcx> LateLintPass<'tcx> for Dispatch {
                 DISPATCH,
                 expr.hir_id,
                 expr.span,
-                "match on `.as_str()` (deserialize the tag into a serde enum and match on the variant) → docs/PATTERNS.md#dispatch"
+                "match on `.as_str()` (deserialize the tag into a serde enum and match on the variant)"
                     .to_owned(),
             );
         }

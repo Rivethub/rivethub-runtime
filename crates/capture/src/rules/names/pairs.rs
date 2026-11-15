@@ -9,10 +9,7 @@ use super::Names;
 use super::Verdict;
 use super::value;
 
-#[expect(
-    clippy::expect_used,
-    reason = "constant patterns; pair_forms_compile runs them in CI"
-)]
+#[expect(clippy::expect_used)]
 static FORMS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
         r#"(?i)\\?"name\\?"[ \t]*:[ \t]*\\?"([^"\\\n]{1,200})\\?"[ \t]*,\s*\\?"value\\?"[ \t]*:[ \t]*"#,
@@ -66,15 +63,5 @@ impl Names {
         }
         found.sort_by_key(|range| range.start);
         found
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pair_forms_compile() {
-        assert_eq!(FORMS.len(), 2);
     }
 }

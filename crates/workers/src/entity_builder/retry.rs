@@ -67,10 +67,7 @@ pub(super) async fn last_chance<T>(
 }
 
 pub(super) fn transient_kind(error: &WorkerError) -> Option<&'static str> {
-    #[expect(
-        clippy::wildcard_enum_match_arm,
-        reason = "only the listed model failures are retried; every other worker error fails the job"
-    )]
+    #[expect(clippy::wildcard_enum_match_arm)]
     match error {
         WorkerError::EmptySummary => Some("empty"),
         WorkerError::ModelTimeout { .. } => Some("timeout"),
@@ -127,13 +124,7 @@ async fn pause(cancel: &CancellationToken) -> bool {
 }
 
 fn retry_delay() -> Duration {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a clock before the epoch uses the minimum retry delay"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.subsec_nanos());

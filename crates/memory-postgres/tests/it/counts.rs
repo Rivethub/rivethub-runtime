@@ -50,11 +50,10 @@ async fn messages(pool: &PgPool, conversation: Uuid, owner: &str) -> Result<(), 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn message_counts_follow_every_write(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
-    let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
-    let garden = conversation(&pool, "claude-code:garden", "coco").await?;
-    messages(&pool, kitchen, "phil").await?;
-    messages(&pool, garden, "coco").await?;
+    let kitchen = conversation(&pool, "claude-code:kitchen", "dana").await?;
+    let garden = conversation(&pool, "claude-code:garden", "cleo").await?;
+    messages(&pool, kitchen, "dana").await?;
+    messages(&pool, garden, "cleo").await?;
     sqlx::query(
         "UPDATE rh_messages SET embedding = array_fill(0.5::real, ARRAY[1024])::halfvec
           WHERE role = 'user'",
@@ -65,7 +64,7 @@ async fn message_counts_follow_every_write(pool: PgPool) -> TestResult {
         .bind(garden)
         .execute(&pool)
         .await?;
-    sqlx::query("UPDATE rh_messages SET owner_user_id = 'phil' WHERE conversation_id = $1 AND role = 'tool'")
+    sqlx::query("UPDATE rh_messages SET owner_user_id = 'dana' WHERE conversation_id = $1 AND role = 'tool'")
         .bind(garden)
         .execute(&pool)
         .await?;
@@ -91,9 +90,8 @@ async fn message_counts_follow_every_write(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
-    let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
-    let garden = conversation(&pool, "claude-code:garden", "phil").await?;
+    let kitchen = conversation(&pool, "claude-code:kitchen", "dana").await?;
+    let garden = conversation(&pool, "claude-code:garden", "dana").await?;
     sqlx::query("INSERT INTO rh_message_counts_pending (conversation_id) VALUES ($1), ($2)")
         .bind(kitchen)
         .bind(garden)
@@ -102,8 +100,8 @@ async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
     sqlx::query("INSERT INTO rh_backfills (name) VALUES ('message-counts')")
         .execute(&pool)
         .await?;
-    messages(&pool, kitchen, "phil").await?;
-    messages(&pool, garden, "phil").await?;
+    messages(&pool, kitchen, "dana").await?;
+    messages(&pool, garden, "dana").await?;
     assert!(
         tallies(&pool, COUNTED).await?.is_empty(),
         "a conversation waiting for its backfill is not counted twice"
@@ -113,7 +111,7 @@ async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
         .fetch_one(&pool)
         .await?;
     assert_eq!(left, 1);
-    messages(&pool, kitchen, "phil").await?;
+    messages(&pool, kitchen, "dana").await?;
     let left: i64 = sqlx::query_scalar("SELECT rh_backfill_message_counts(1)")
         .fetch_one(&pool)
         .await?;
@@ -131,9 +129,8 @@ async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn chunks_of_said_messages_are_marked(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
-    let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
-    messages(&pool, kitchen, "phil").await?;
+    let kitchen = conversation(&pool, "claude-code:kitchen", "dana").await?;
+    messages(&pool, kitchen, "dana").await?;
     sqlx::query(
         "INSERT INTO rh_message_chunks (message_id, idx, char_start, char_end, content, owner_user_id)
          SELECT id, 0, 0, 10, content, owner_user_id FROM rh_messages",
@@ -188,13 +185,12 @@ async fn chunks_of_said_messages_are_marked(pool: PgPool) -> TestResult {
 async fn deleting_rows_loaded_without_triggers_recounts_instead_of_going_negative(
     pool: PgPool,
 ) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
-    let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
-    messages(&pool, kitchen, "phil").await?;
+    let kitchen = conversation(&pool, "claude-code:kitchen", "dana").await?;
+    messages(&pool, kitchen, "dana").await?;
     sqlx::query("ALTER TABLE rh_messages DISABLE TRIGGER rh_message_counts_inserted")
         .execute(&pool)
         .await?;
-    messages(&pool, kitchen, "phil").await?;
+    messages(&pool, kitchen, "dana").await?;
     sqlx::query("ALTER TABLE rh_messages ENABLE TRIGGER rh_message_counts_inserted")
         .execute(&pool)
         .await?;
@@ -225,10 +221,9 @@ async fn a_bad_stored_counter_degrades_one_field_and_the_answers_still_come(
 ) -> TestResult {
     use kernel::facts::FactStore as _;
     use kernel::memory::MemoryStore as _;
-    crate::common::install_graphile(&pool).await?;
     let session = "claude-code:00000000-0000-4000-8000-0000000000f1";
-    let kitchen = conversation(&pool, session, "phil").await?;
-    messages(&pool, kitchen, "phil").await?;
+    let kitchen = conversation(&pool, session, "dana").await?;
+    messages(&pool, kitchen, "dana").await?;
     sqlx::query("UPDATE rh_message_counts SET total = -3 WHERE conversation_id = $1")
         .bind(kitchen)
         .execute(&pool)

@@ -181,13 +181,7 @@ impl Environment {
 
     #[must_use]
     pub fn log_level(&self) -> LogLevelSetting {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B10: unknown log levels use info and report the ignored setting"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         match self.setting(Alias::LogLevel) {
             None => LogLevelSetting {
                 level: LogLevel::Info,

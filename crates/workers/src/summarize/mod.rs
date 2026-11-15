@@ -18,11 +18,9 @@ use wire::JsonObject;
 pub use settings::SummaryParts;
 pub use settings::SummarySettings;
 pub use settings::SummaryTrigger;
-pub use sweep::SummaryHealth;
 pub use sweep::handle_enqueue_idle;
 pub use sweep::handle_enqueue_stale;
 pub use sweep::handle_reap;
-pub use sweep::summary_health;
 
 pub(crate) use llm::llm_error;
 
@@ -42,10 +40,7 @@ pub struct SummarizeOutcome {
     pub reenqueued: bool,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the summary store, model provider and job queue are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct SummarizeEnv<'a> {
     pub store: &'a dyn SummaryStore,
     pub provider: &'a dyn ModelProvider,

@@ -83,13 +83,7 @@ pub struct Shared {
     pub code: String,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Shared {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let id = self
@@ -145,18 +139,11 @@ pub struct DeviceLogin {
 pub struct PendingLogin {
     server: ShareServer,
     interval: Arc<AtomicU64>,
-    expires_at: DateTime<Utc>,
     cancel: CancellationToken,
     task: Option<AbortOnDropHandle<Result<Approval, Error>>>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 151: the device code never leaves rh; Debug names only the server"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for PendingLogin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "PendingLogin({})", self.server)
@@ -172,11 +159,6 @@ impl PendingLogin {
     #[must_use]
     pub fn interval(&self) -> Duration {
         Duration::from_secs(self.interval.load(Ordering::Relaxed).max(1))
-    }
-
-    #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
-        self.expires_at
     }
 
     pub async fn poll(&mut self) -> Result<Option<Approval>, Error> {
@@ -258,7 +240,6 @@ pub async fn start(
         pending: PendingLogin {
             server: host,
             interval,
-            expires_at,
             cancel,
             task: Some(AbortOnDropHandle::new(task)),
         },

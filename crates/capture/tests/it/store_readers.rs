@@ -9,7 +9,6 @@ use wire::harness::HarnessId;
 use wire::message::Role;
 use wire::session_id::SessionId;
 
-use capture::readers::OUT_OF_SLICE;
 use capture::readers::SkipRule;
 use capture::readers::StoreReader;
 use capture::readers::TranscriptSlice;
@@ -538,31 +537,6 @@ async fn sqlite_query_failure_is_a_read_error() -> Result<(), Box<dyn std::error
         return Err("hermes query failure was not a read error".into());
     }
     Ok(())
-}
-
-#[tokio::test]
-async fn out_of_slice_names_are_the_scenarios_this_slice_does_not_read() {
-    let names: Vec<&str> = OUT_OF_SLICE.iter().map(|(name, _)| *name).collect();
-    for (name, reason) in OUT_OF_SLICE {
-        assert!(!reason.is_empty(), "{name}");
-    }
-    for harness in [
-        "claude-code",
-        "grok-build",
-        "kimi-code",
-        "hermes",
-        "codex",
-        "opencode",
-        "omp",
-        "dsh",
-        "cursor",
-        "cowork",
-    ] {
-        assert!(!names.contains(&harness), "{harness}");
-    }
-    assert!(StoreReader::open(HarnessId::Cowork, std::path::PathBuf::new()).is_some());
-    assert!(StoreReader::open(HarnessId::Codex, std::path::PathBuf::new()).is_some());
-    assert!(StoreReader::open(HarnessId::Dsh, std::path::PathBuf::new()).is_none());
 }
 
 #[tokio::test]

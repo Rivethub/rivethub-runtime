@@ -1001,7 +1001,7 @@
         "content": [
           {
             "type": "text",
-            "text": "3 pending (decide with action=decide, ids=[…], state=accepted|rejected):\nd0000000-0000-4000-8000-000000000005  project:Pelican (0.80)  ← session fixture:pelican-parser \"Pelican recipe parser\"\n    user names the Pelican recipe parser\nd0000000-0000-4000-8000-000000000004  topic:CI cache (0.55)  ← session fixture:lighthouse-p95 \"Lighthouse dashboard latency\"\n    conversation is about query latency, not CI caching\nd0000000-0000-4000-8000-000000000006  topic:Build performance (0.65)  ← summary b0000000 of fixture:kiwi-cache\n    summary reports pipeline wall time"
+            "text": "3 pending:\nd0000000-0000-4000-8000-000000000005  project:Pelican (0.80)  ← session fixture:pelican-parser \"Pelican recipe parser\"\n    user names the Pelican recipe parser\nd0000000-0000-4000-8000-000000000004  topic:CI cache (0.55)  ← session fixture:lighthouse-p95 \"Lighthouse dashboard latency\"\n    conversation is about query latency, not CI caching\nd0000000-0000-4000-8000-000000000006  topic:Build performance (0.65)  ← summary b0000000 of fixture:kiwi-cache\n    summary reports pipeline wall time"
           }
         ]
       }
@@ -1020,7 +1020,7 @@
         "content": [
           {
             "type": "text",
-            "text": "1 pending (decide with action=decide, ids=[…], state=accepted|rejected):\nd0000000-0000-4000-8000-000000000005  project:Pelican (0.80)  ← session fixture:pelican-parser \"Pelican recipe parser\"\n    user names the Pelican recipe parser"
+            "text": "1 pending:\nd0000000-0000-4000-8000-000000000005  project:Pelican (0.80)  ← session fixture:pelican-parser \"Pelican recipe parser\"\n    user names the Pelican recipe parser"
           }
         ]
       }
@@ -1139,28 +1139,6 @@
           {
             "type": "text",
             "text": "project:Kiwi  [accepted]\nproject:Lighthouse  [accepted]\nproject:Pelican  [accepted]\ntopic:CI cache  [accepted]"
-          }
-        ]
-      }
-    },
-    {
-      "request": {
-        "name": "memory_tags",
-        "arguments": {
-          "action": "decide",
-          "ids": [
-            "d0000000-0000-4000-8000-000000000005"
-          ],
-          "state": "accepted"
-        }
-      },
-      "note": "a write action on the read-only surface: refused",
-      "kind": "result",
-      "result": {
-        "content": [
-          {
-            "type": "text",
-            "text": "memory_tags: \"decide\" is not available here (read-only surface). Review and edit tags in the hub under Memory → Tags."
           }
         ]
       }

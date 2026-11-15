@@ -32,7 +32,6 @@ pub struct ModelRequest {
     pub options: ModelOptions,
     pub model: String,
     pub messages: Vec<Message>,
-    pub tools: Vec<rmcp::model::Tool>,
     pub thinking: Option<ThinkingLevel>,
     pub max_tokens: Option<u32>,
 }
@@ -44,24 +43,9 @@ pub struct Embedding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelChunk {
-    Text {
-        delta: String,
-    },
-    Reasoning {
-        delta: String,
-    },
-    ToolCallStart {
-        index: u32,
-        id: String,
-        name: String,
-    },
-    ToolCallDelta {
-        index: u32,
-        arguments_delta: String,
-    },
-    Usage {
-        usage: LlmUsage,
-    },
+    Text { delta: String },
+    Reasoning { delta: String },
+    Usage { usage: LlmUsage },
     Done,
 }
 

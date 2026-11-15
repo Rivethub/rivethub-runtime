@@ -342,14 +342,6 @@ pub(super) struct AliasFilter {
 
 pub(super) struct ConfirmedMerge {
     pub(super) other_id: Uuid,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the partner name is asserted by the merge detection tests"
-        )
-    )]
-    pub(super) other_name: String,
     pub(super) score: f32,
 }
 
@@ -444,7 +436,6 @@ async fn confirm_merge(
     match ask_alias(decider, &question).await {
         Ok(score) if score.is_finite() && score >= MERGE_MIN => KnownAlias::Merge(ConfirmedMerge {
             other_id: other.id,
-            other_name: other.name.clone(),
             score,
         }),
         Ok(score) => {

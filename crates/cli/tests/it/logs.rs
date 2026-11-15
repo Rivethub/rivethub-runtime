@@ -180,7 +180,7 @@ async fn logs_reads_the_rivethub_journal_for_both_scopes() {
 }
 
 #[tokio::test]
-async fn dispatch_uses_the_caller_scope_and_legacy_bare_metal_warns() {
+async fn dispatch_uses_the_caller_scope() {
     let fixture = Fixture::new();
     let report = dispatch(&["logs", "--no-follow"], &fixture.env(&[])).await;
     let scope = Scope::for_uid(nix::unistd::geteuid().as_raw());
@@ -189,17 +189,6 @@ async fn dispatch_uses_the_caller_scope_and_legacy_bare_metal_warns() {
         format!("{}|-n|50|--no-pager\n", prefix(scope))
     );
     assert_eq!(report.stderr, "");
-    let fixture = Fixture::new();
-    let warned = dispatch(
-        &["logs", "--no-follow", "--bare-metal"],
-        &fixture.env(&[("RIVETOS_BARE_METAL", "1")]),
-    )
-    .await;
-    assert_eq!(warned.exit, Exit::Ok);
-    assert!(warned.stderr.starts_with(
-        "warning: RIVETOS_BARE_METAL is deprecated — rename it to RIVETHUB_BARE_METAL; the legacy name is read only while RIVETHUB_BARE_METAL is unset.\n"
-    ));
-    assert!(fixture.calls().contains("-u|rivethub"));
 }
 
 #[tokio::test]

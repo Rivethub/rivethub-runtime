@@ -12,7 +12,7 @@ use testkit::fakes::{FakeJobQueue, FakeProvider};
 use tokio_util::sync::CancellationToken;
 use workers::{EmbedSettings, OwnerScopes, ProcessRole, RoleModel, Runner, RunnerConfig};
 
-use super::{ALEX, Hub, PHIL, TestResult};
+use super::{DANA, Hub, INES, TestResult};
 
 struct Worker {
     store: Arc<PostgresMemory>,
@@ -27,7 +27,7 @@ impl Worker {
             PostgresMemory::connect(&hub.url)
                 .await?
                 .with_wiki_directory(wiki.path().to_path_buf())
-                .with_wiki_owner(Owner::new(PHIL.to_owned())?),
+                .with_wiki_owner(Owner::new(DANA.to_owned())?),
         );
         let tenancy = Arc::new(PostgresTenancy::new(store.pool().clone()));
         Ok(Self {
@@ -104,7 +104,7 @@ impl Worker {
                 summary: workers::SummarySettings::standard("unused")?,
                 scopes: Some(OwnerScopes {
                     store: self.tenancy.clone(),
-                    primary: Owner::new(PHIL.to_owned())?,
+                    primary: Owner::new(DANA.to_owned())?,
                 }),
             },
         )
@@ -133,19 +133,19 @@ impl Worker {
 async fn a_sweep_makes_pages_for_every_owners_private_topics() -> TestResult {
     let hub = Hub::start().await?;
     let worker = Worker::connect(&hub).await?;
-    let phils = worker.private_root(PHIL, "Phil garden plans").await?;
-    let alexs = worker.private_root(ALEX, "Alex boat repairs").await?;
+    let danas = worker.private_root(DANA, "Dana garden plans").await?;
+    let iness = worker.private_root(INES, "Ines boat repairs").await?;
     worker.run(&[SyncTopicPage::every_topic()]).await?;
     assert!(
-        worker.has_page(PHIL, phils).await?,
+        worker.has_page(DANA, danas).await?,
         "the primary person's page"
     );
     assert!(
-        worker.has_page(ALEX, alexs).await?,
+        worker.has_page(INES, iness).await?,
         "a second person's private topic gets its page too"
     );
     assert!(
-        !worker.has_page(PHIL, alexs).await?,
+        !worker.has_page(DANA, iness).await?,
         "the page stays private to its owner"
     );
     worker.store.pool().close().await;
@@ -156,10 +156,10 @@ async fn a_sweep_makes_pages_for_every_owners_private_topics() -> TestResult {
 async fn a_single_topic_sync_runs_as_the_topics_owner() -> TestResult {
     let hub = Hub::start().await?;
     let worker = Worker::connect(&hub).await?;
-    let alexs = worker.private_root(ALEX, "Alex kitchen remodel").await?;
-    worker.run(&[SyncTopicPage::topic(alexs)]).await?;
+    let iness = worker.private_root(INES, "Ines kitchen remodel").await?;
+    worker.run(&[SyncTopicPage::topic(iness)]).await?;
     assert!(
-        worker.has_page(ALEX, alexs).await?,
+        worker.has_page(INES, iness).await?,
         "a job naming another person's topic is not dropped as missing"
     );
     worker.store.pool().close().await;
@@ -172,14 +172,14 @@ async fn a_person_claims_only_their_own_wiki_scope() -> TestResult {
     let pool = sqlx::PgPool::connect(&hub.url).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('rh.principal', $1, true)")
-        .bind(ALEX)
+        .bind(INES)
         .execute(&mut *tx)
         .await?;
     let refused = sqlx::query(
         "INSERT INTO rh_wiki_scopes (scope, owner_user_id, visibility, key_prefix, directory)
          VALUES ($1, $1, 'private', 'x-', 'users/x')",
     )
-    .bind(PHIL)
+    .bind(DANA)
     .execute(&mut *tx)
     .await;
     assert!(

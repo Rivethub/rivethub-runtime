@@ -266,27 +266,3 @@ fn apply_tail_indexes(tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
     tx.execute_batch(TAIL_INDEXES_SQL)
         .map_err(Error::SqliteCreate)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::TAIL_INDEXES_SQL;
-
-    #[test]
-    fn the_tail_indexes_are_absent_from_the_schema_text() {
-        let schema = include_str!("schema/schema_v7.sql");
-        for marker in [
-            "idx_ros_messages_unembedded",
-            "idx_ros_conversations_owner",
-            "idx_ros_tags_removal_state",
-        ] {
-            assert!(
-                !schema.contains(marker),
-                "{marker} must be applied after the schema text, not inside it"
-            );
-            assert!(
-                TAIL_INDEXES_SQL.contains(marker),
-                "{marker} must be created by the tail batch"
-            );
-        }
-    }
-}

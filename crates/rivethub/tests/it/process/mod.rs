@@ -1,82 +1,131 @@
-use guard::SpawnGuarded;
+pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+pub mod guard;
+pub mod provider;
+
 use std::net::SocketAddr;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-use tokio::process::{ChildStderr, Command};
+use nix::sys::signal::Signal;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::process::Command;
 
-pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+use guard::{Guarded, SpawnGuarded};
 
-#[derive(Debug)]
-pub struct Running {
-    child: guard::Guarded,
-    lines: Lines<BufReader<ChildStderr>>,
-    pub address: SocketAddr,
+pub const DEAD_POSTGRES: &str = "postgres://127.0.0.1:1/none";
+
+pub fn provider_at(home: &Path, base: &str, extra: &str) -> String {
+    format!(
+        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: m\nproviders:\n  p:\n    type: openai-compatible\n    base_url: {base}\n    model: m\n{extra}",
+        home = home.display()
+    )
 }
 
-pub fn prepare_home(home: &std::path::Path) -> TestResult {
-    std::fs::create_dir_all(home.join(".rivethub"))?;
+pub fn provider_config(home: &Path, postgres: impl std::fmt::Display, extra: &str) -> String {
+    provider_at(
+        home,
+        "http://127.0.0.1:1",
+        &format!("memory:\n  postgres:\n    connection_string: {postgres}\n{extra}"),
+    )
+}
+
+pub fn write_state(home: &Path, body: &str) -> TestResult {
+    let state = home.join(".rivethub");
+    std::fs::create_dir_all(&state)?;
+    std::fs::write(state.join("config.yaml"), body)?;
     Ok(())
 }
 
-impl Running {
-    pub async fn start(home: &std::path::Path) -> TestResult<Self> {
-        Self::start_with_environment(home, &[]).await
-    }
+pub fn signal(pid: u32, signal: Signal) -> TestResult {
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(i32::try_from(pid)?), signal)?;
+    Ok(())
+}
 
-    pub async fn start_with_environment(
-        home: &std::path::Path,
-        environment: &[(&str, &str)],
-    ) -> TestResult<Self> {
-        prepare_home(home)?;
-        let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
-            .arg("gateway")
-            .env_clear()
-            .env("HOME", home)
-            .env("RIVETHUB_SHARED_DIR", home)
-            .envs(environment.iter().copied())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn_guarded()?;
-        let stderr = child.stderr.take().ok_or("missing stderr")?;
-        let mut lines = BufReader::new(stderr).lines();
-        let address = tokio::time::timeout(Duration::from_secs(30), async {
-            let mut output = Vec::new();
-            while let Some(line) = lines.next_line().await? {
-                if let Some((_, address)) = line.split_once("gateway listening on ") {
-                    let address = address.split_whitespace().next().ok_or("missing address")?;
-                    return address.parse::<SocketAddr>().map_err(Into::into);
-                }
-                output.push(line);
-            }
-            Err::<SocketAddr, Box<dyn std::error::Error>>(
-                format!("gateway stopped before readiness: {}", output.join("\n")).into(),
-            )
-        })
-        .await??;
-        Ok(Self {
-            child,
-            lines,
-            address,
-        })
-    }
+pub fn terminate(pid: u32) -> TestResult {
+    signal(pid, Signal::SIGTERM)
+}
 
-    pub async fn stop(mut self, signal: nix::sys::signal::Signal) -> TestResult<Vec<String>> {
-        let pid = self.child.id().ok_or("gateway already stopped")?;
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(i32::try_from(pid)?), signal)?;
-        let mut output = Vec::new();
-        tokio::time::timeout(Duration::from_secs(30), async {
-            while let Some(line) = self.lines.next_line().await? {
-                output.push(line);
-            }
-            let status = self.child.wait().await?;
-            assert!(status.success(), "gateway exit: {status}");
-            Ok::<_, std::io::Error>(())
-        })
-        .await??;
-        Ok(output)
+#[derive(Debug)]
+pub struct Blackhole {
+    pub address: SocketAddr,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Blackhole {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
-pub mod guard;
-pub mod provider;
+
+pub async fn blackhole() -> TestResult<Blackhole> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let address = listener.local_addr()?;
+    let task = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 1024];
+                while matches!(stream.read(&mut buf).await, Ok(read) if read > 0) {}
+            });
+        }
+    });
+    Ok(Blackhole { address, task })
+}
+
+#[derive(Debug)]
+pub struct Started {
+    pub child: Guarded,
+    pub logs: tokio::task::JoinHandle<std::io::Result<String>>,
+}
+
+pub async fn start(mut command: Command, needles: &'static [&str]) -> TestResult<Started> {
+    let mut child = command
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn_guarded()?;
+    let stderr = child.stderr.take().ok_or("missing stderr")?;
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let logs = tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        let mut text = String::new();
+        let mut pending: Vec<&str> = needles.to_vec();
+        let mut ready = Some(ready_tx);
+        while let Some(line) = lines.next_line().await? {
+            if let Some(index) = pending.iter().position(|needle| line.contains(needle)) {
+                pending.swap_remove(index);
+            }
+            if pending.is_empty()
+                && let Some(sender) = ready.take()
+                && sender.send(()).is_err()
+            {
+                return Err(std::io::Error::other("readiness listener dropped"));
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+        Ok(text)
+    });
+    if tokio::time::timeout(Duration::from_secs(30), ready_rx).await == Ok(Ok(())) {
+        return Ok(Started { child, logs });
+    }
+    if child.try_wait()?.is_none()
+        && let Some(pid) = child.id()
+    {
+        terminate(pid)?;
+    }
+    let text = tokio::time::timeout(Duration::from_secs(30), logs).await???;
+    Err(format!("{needles:?} did not appear: {text}").into())
+}
+
+pub async fn stop(started: Started) -> TestResult<String> {
+    let Started { mut child, logs } = started;
+    terminate(child.id().ok_or("process already stopped")?)?;
+    let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
+    let text = tokio::time::timeout(Duration::from_secs(30), logs).await???;
+    if status.success() {
+        Ok(text)
+    } else {
+        Err(format!("exit {status}\n{text}").into())
+    }
+}

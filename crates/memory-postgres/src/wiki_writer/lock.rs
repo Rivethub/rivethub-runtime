@@ -111,13 +111,7 @@ fn reclaim(path: &Path) -> Result<Attempt, std::io::Error> {
     let Some(timestamp) = content.split_whitespace().nth(1) else {
         return Ok(Attempt::Busy);
     };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B11: an invalid lock timestamp cannot prove staleness, so the writer waits"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(timestamp) = timestamp.parse::<i64>() else {
         return Ok(Attempt::Busy);
     };

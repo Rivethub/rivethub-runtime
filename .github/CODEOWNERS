@@ -1,7 +1,6 @@
 *                       @philbert440
 /crates/kernel/         @philbert440
 /crates/wire/           @philbert440
-/docs/CONTRACT.md       @philbert440
 /xtask/languages.toml   @philbert440
 /xtask/lints-policy.toml @philbert440
 /Cargo.toml             @philbert440

@@ -87,7 +87,7 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<()> {
         for tool in ToolFile::ALL {
             if tool.matches(&rel) {
                 findings.push(format!(
-                    "TOOLCONFIG {rel}: {tool} must live only at the workspace root → docs/PATTERNS.md#toolconfig"
+                    "TOOLCONFIG {rel}: {tool} must live only at the workspace root"
                 ));
             }
         }
@@ -142,12 +142,12 @@ fn member_lints(root: &Path, rel: &str, findings: &mut Vec<String>) -> Result<()
         }) => {
             for tool in other.into_keys() {
                 findings.push(format!(
-                    "TOOLCONFIG {rel}: own [lints.{tool}] table (lints come from [workspace.lints]) → docs/PATTERNS.md#toolconfig"
+                    "TOOLCONFIG {rel}: own [lints.{tool}] table (lints come from [workspace.lints])"
                 ));
             }
         }
         _ => findings.push(format!(
-            "TOOLCONFIG {rel}: missing [lints] workspace = true → docs/PATTERNS.md#toolconfig"
+            "TOOLCONFIG {rel}: missing [lints] workspace = true"
         )),
     }
     Ok(())

@@ -20,20 +20,14 @@ use crate::WorkerError;
 
 const DIGEST_TIMEOUT: Duration = Duration::from_secs(180);
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the digest ports are trait objects without Debug"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone)]
 pub struct DailyDigests {
     pub changes: Arc<dyn ChangeFeed>,
     pub digests: Arc<dyn DigestStore>,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct DigestEnv<'a> {
     pub deps: &'a DailyDigests,
     pub provider: &'a dyn ModelProvider,
@@ -61,7 +55,6 @@ pub async fn handle_digest_day(
             crate::tool_synthesis::message_text(Role::System, DIGEST_SYSTEM_PROMPT.to_owned()),
             crate::tool_synthesis::message_text(Role::User, digest_prompt(request.day, &changes)),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(400),
     };

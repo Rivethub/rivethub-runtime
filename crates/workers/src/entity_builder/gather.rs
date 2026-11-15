@@ -12,12 +12,9 @@ mod excerpt;
 mod select;
 mod shape;
 
+pub(in crate::entity_builder) use budget::as_u64;
 pub(in crate::entity_builder) use budget::passage_report;
-#[cfg(test)]
-use excerpt::normalize_map;
 pub(in crate::entity_builder) use select::passages;
-#[cfg(test)]
-use select::passages_within;
 
 #[cfg(test)]
 #[path = "tests/entity_gather_tests.rs"]

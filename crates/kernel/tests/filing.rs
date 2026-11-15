@@ -143,7 +143,7 @@ fn filing_follows_placement_then_parent_then_folder_then_name() -> TestResult {
     let desktop = topic(
         "Desktop App",
         &["rivethub-desktop"],
-        Some("/home/phil/work/rhd"),
+        Some("/home/dana/work/rhd"),
     )?;
     let topics = listed(&[&rivetos, &desktop]);
     let summary = "Reworked the rivethub-desktop topic screen.";
@@ -184,7 +184,7 @@ fn filing_follows_placement_then_parent_then_folder_then_name() -> TestResult {
         }
     );
     let sibling = Evidence {
-        cwd: Some("/home/phil/work/rhd-next"),
+        cwd: Some("/home/dana/work/rhd-next"),
         ..evidence(None, summary)
     };
     assert_eq!(

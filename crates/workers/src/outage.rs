@@ -203,11 +203,9 @@ mod tests {
     use super::CEILING;
     use super::next_delay;
     use super::pause_for;
-    use crate::runner::POLL_INTERVAL;
 
     #[test]
-    fn the_backoff_ceiling_is_the_poll_interval() {
-        assert_eq!(CEILING, POLL_INTERVAL);
+    fn the_backoff_stops_growing_at_the_ceiling() {
         assert_eq!(next_delay(CEILING), CEILING);
     }
 

@@ -22,13 +22,7 @@ pub(crate) fn parse_answer<T: DeserializeOwned + JsonSchema>(bytes: &[u8]) -> Re
 }
 
 fn located<T: JsonSchema>(bytes: &[u8], coarse: &str) -> Option<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: an answer that is not JSON at all is refused in serde's own words"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
         return None;
     };

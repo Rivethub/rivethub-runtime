@@ -281,10 +281,7 @@ fn unsafe_source(source: &str) -> bool {
             Some(')') if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
-                    #[expect(
-                        clippy::indexing_slicing,
-                        reason = "group_start and index bracket one group inside the source"
-                    )]
+                    #[expect(clippy::indexing_slicing)]
                     let body = &characters[group_start + 1..index];
                     let repeated = characters
                         .get(index + 1)

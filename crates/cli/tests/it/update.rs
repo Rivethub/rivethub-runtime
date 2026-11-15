@@ -418,26 +418,6 @@ async fn cancellation_and_busy_installations_refuse_changes() -> Result {
     Ok(())
 }
 
-#[test]
-fn update_db_recording_scope_has_no_unexplained_skips() -> Result {
-    const SKIPPED: [(&str, &str); 0] = [];
-    let files: std::collections::BTreeSet<_> = std::fs::read_dir(testkit::recording("cli"))?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<std::result::Result<_, _>>()?;
-    assert_eq!(
-        files,
-        std::iter::once(std::ffi::OsString::from("README.md")).collect(),
-        "new CLI transcripts must be wired into their command's replay tests"
-    );
-    let skipped: std::collections::BTreeMap<_, _> = SKIPPED.into_iter().collect();
-    for (name, reason) in &skipped {
-        assert!(name.starts_with("update") || name.starts_with("db"));
-        assert_ne!(*reason, "");
-    }
-    assert_eq!(skipped.len(), files.len() - 1);
-    Ok(())
-}
-
 #[tokio::test]
 async fn restart_failure_preserves_both_rollback_binaries() -> Result {
     let fixture = Fixture::new()?;

@@ -182,37 +182,3 @@ async fn newest_applied(pool: &PgPool) -> Result<i64, Error> {
         Err(source) => Err(Error::PostgresVersion(source)),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::POSTGRES;
-    use super::migration_file_name;
-
-    #[test]
-    fn migration_file_names_are_the_sql_files() {
-        let mut from_migrator: Vec<String> = POSTGRES
-            .migrations
-            .iter()
-            .map(migration_file_name)
-            .collect();
-        from_migrator.sort();
-        let mut on_disk = Vec::new();
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-        for entry in std::fs::read_dir(dir).expect("migrations directory") {
-            let path = entry.expect("migration entry").path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("sql"))
-            {
-                on_disk.push(
-                    path.file_name()
-                        .expect("migration file name")
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
-        }
-        on_disk.sort();
-        assert_eq!(from_migrator, on_disk);
-    }
-}

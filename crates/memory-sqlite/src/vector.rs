@@ -8,10 +8,7 @@ pub(crate) fn normalize(vector: &mut [f32]) -> bool {
         return false;
     }
     for value in vector {
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "B5 embeddings are stored as normalized float32 values"
-        )]
+        #[expect(clippy::cast_possible_truncation)]
         let normalized = (f64::from(*value) / norm) as f32;
         *value = normalized;
     }

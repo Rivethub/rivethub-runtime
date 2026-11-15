@@ -9,7 +9,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) STRINGLY,
     Warn,
-    "a String field whose values are a closed set that already has an enum (use the enum) → docs/PATTERNS.md#stringly",
+    "a String field whose values are a closed set that already has an enum (use the enum)",
     Stringly::default()
 );
 
@@ -80,7 +80,7 @@ impl<'tcx> LateLintPass<'tcx> for Stringly {
                 *hir_id,
                 *span,
                 format!(
-                    "field `{field}` is a String but an enum with that name exists (use the enum) → docs/PATTERNS.md#stringly"
+                    "field `{field}` is a String but an enum with that name exists (use the enum)"
                 ),
             );
         }

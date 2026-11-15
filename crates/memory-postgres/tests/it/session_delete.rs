@@ -154,7 +154,6 @@ async fn place(memory: &PostgresMemory, sessions: &[&SessionId]) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn delete_removes_one_session_and_leaves_its_sibling(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let (deleted, sibling) = session_delete::seed(&memory).await?;
     place(&memory, &[&deleted, &sibling]).await?;
@@ -204,7 +203,6 @@ async fn activity_counts_turns_tools_and_placements(pool: PgPool) -> TestResult 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_summary_cited_by_a_wiki_page_marks_the_session_cited(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let (deleted, sibling) = session_delete::seed(&memory).await?;
     let summaries = seed_related(&pool, &sibling).await?;
@@ -231,7 +229,6 @@ async fn a_summary_cited_by_a_wiki_page_marks_the_session_cited(pool: PgPool) ->
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn the_sweep_removes_rows_written_behind_the_gateway(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let (deleted, sibling) = session_delete::seed(&memory).await?;
     memory
@@ -289,7 +286,6 @@ async fn the_sweep_removes_rows_written_behind_the_gateway(pool: PgPool) -> Test
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn the_sweep_lifts_the_tombstone_when_the_session_was_used_again(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let (deleted, _sibling) = session_delete::seed(&memory).await?;
     memory

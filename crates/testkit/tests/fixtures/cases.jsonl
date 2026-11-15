@@ -1,5 +1,0 @@
-{"fn":"shared_dir","in":{"env":{}},"out":"/rivet-shared"}
-{"fn":"shared_dir","in":{"env":{"RIVETOS_SHARED_DIR":"~/shared"}},"out":"~/shared"}
-{"fn":"resolve_env_vars","in":{"env":{},"value":"${HOME}/x"},"throws":{"name":"Error"}}
-
-{"fn":"install_root","in":{"env":{}},"out":{"$t":"undefined"}}

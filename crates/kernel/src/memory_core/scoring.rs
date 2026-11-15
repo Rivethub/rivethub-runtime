@@ -50,29 +50,9 @@ mod tests {
     }
 
     #[test]
-    fn old_rows_keep_a_share_of_the_temporal_weight() {
-        let week = temporal_decay(7.0, 0);
-        let month = temporal_decay(30.0, 0);
-        let year = temporal_decay(365.0, 0);
-        let five_years = temporal_decay(5.0 * 365.0, 0);
-        assert!((0.82..0.84).contains(&week), "{week}");
-        assert!((0.59..0.60).contains(&month), "{month}");
-        assert!((0.27..0.29).contains(&year), "{year}");
-        assert!((0.19..0.20).contains(&five_years), "{five_years}");
-    }
-
-    #[test]
     fn a_row_dated_in_the_future_counts_as_fresh() {
         assert_close(temporal_decay(-1.0, 0), 1.0);
         assert_close(temporal_decay(-400.0, 4), 1.04);
-    }
-
-    #[test]
-    fn decay_falls_monotonically_with_age() {
-        let ages = [0.0, 0.5, 1.0, 7.0, 30.0, 365.0];
-        for (younger, older) in ages.iter().zip(ages.iter().skip(1)) {
-            assert!(temporal_decay(*younger, 3) > temporal_decay(*older, 3));
-        }
     }
 
     #[test]

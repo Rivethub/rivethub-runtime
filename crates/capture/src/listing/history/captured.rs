@@ -131,6 +131,7 @@ impl Folder {
         self.turns.push(HarnessTranscriptTurn {
             role: SessionMessageRole::User,
             text,
+            reply_text: None,
             thinking: None,
             tools: None,
             usage: None,
@@ -288,6 +289,7 @@ impl Draft {
         Some(HarnessTranscriptTurn {
             role: SessionMessageRole::Assistant,
             text: self.text,
+            reply_text: None,
             thinking: (!self.thinking.is_empty()).then(|| tail_chars(&self.thinking)),
             tools: (!self.tools.is_empty()).then_some(self.tools),
             usage: None,

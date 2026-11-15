@@ -3,7 +3,7 @@ use rusqlite::Connection;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
-fn v7_upgrade_backfills_trigram_indexes_and_keeps_the_original_backup() -> TestResult {
+fn an_upgrade_backfills_the_trigram_indexes_and_keeps_the_original_backup() -> TestResult {
     let fixture = testkit::copy_fixture(&testkit::recording("memory-sqlite/fixture-v7.sqlite"))?;
     let original = std::fs::read(fixture.path())?;
     let status = migrate::sqlite(fixture.path())?;

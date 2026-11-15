@@ -155,7 +155,7 @@ impl TenancyStore for PostgresTenancy {
                     return tx.commit().await.map_err(failed("space sync"));
                 }
                 return Err(TenancyStoreError::CatalogConflict(format!(
-                    "the store's spaces and members are kept by node {keeper}, and this node's users file ({node}) lists different ones; make the two users files agree, or move the authority with UPDATE rh_membership_authority SET node = '{node}' as the store's admin (CONTRACT note 193)"
+                    "the store's spaces and members are kept by node {keeper}, and this node's users file ({node}) lists different ones; make the two users files agree, or move the authority with UPDATE rh_membership_authority SET node = '{node}' as the store's admin"
                 )));
             }
         }

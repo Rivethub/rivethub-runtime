@@ -386,10 +386,7 @@ pub(super) fn normalize(key: &str) -> String {
     out.trim_matches('_').to_owned()
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "a secret is far shorter than 2^52 bytes, so the counts convert exactly"
-)]
+#[expect(clippy::cast_precision_loss)]
 #[must_use]
 pub(super) fn shannon_entropy(text: &str) -> f64 {
     let mut counts = [0usize; 256];

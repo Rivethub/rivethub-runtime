@@ -72,7 +72,7 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
     for file in &files {
         if deny_matchers.iter().any(|matcher| matcher.is_match(file)) {
             findings.push(format!(
-                "LANGUAGES {file}: denied by xtask/languages.toml (lane notes live on rivet-shared) → docs/PATTERNS.md#languages"
+                "LANGUAGES {file}: denied by xtask/languages.toml (lane notes live on rivet-shared)"
             ));
             continue;
         }
@@ -89,7 +89,7 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
             continue;
         }
         findings.push(format!(
-            "LANGUAGES {file}: not in the allow-list (xtask/languages.toml) → docs/PATTERNS.md#languages"
+            "LANGUAGES {file}: not in the allow-list (xtask/languages.toml)"
         ));
     }
     Ok(files.len())
@@ -167,7 +167,7 @@ pub fn staged_privacy(root: &Path, findings: &mut Vec<String>) -> Result<usize> 
         }
         if !files.contains(&rel.to_owned()) {
             findings.push(format!(
-                "LANGUAGES {rel}: not in the allow-list (xtask/languages.toml) → docs/PATTERNS.md#languages"
+                "LANGUAGES {rel}: not in the allow-list (xtask/languages.toml)"
             ));
         }
         if let Some(text) = staging_text(root, rel)?

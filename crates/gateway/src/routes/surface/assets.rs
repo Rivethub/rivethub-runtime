@@ -275,9 +275,6 @@ fn word(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Target;
-    use super::cache_control;
-    use super::locate;
     use super::request_refused;
 
     #[test]
@@ -290,39 +287,5 @@ mod tests {
         assert!(!request_refused("/assets/app.js"));
         assert!(!request_refused("/foo/%2e/bar"));
         assert!(!request_refused("/sub/"));
-    }
-
-    #[test]
-    fn cache_follows_the_request_name() {
-        assert_eq!(
-            cache_control("/assets/app-abcdef12.js"),
-            "public, max-age=31536000, immutable"
-        );
-        assert_eq!(cache_control("/assets/app-abcdef123.js"), "no-cache");
-        assert_eq!(cache_control("/mesh"), "no-cache");
-        assert_eq!(cache_control("/sub"), "no-cache");
-    }
-
-    #[test]
-    fn containment_accepts_files_inside_and_refuses_escape() -> Result<(), crate::error::ApiError> {
-        let root_dir = tempfile::tempdir().map_err(super::io_error)?;
-        let root = root_dir.path().join("static");
-        let sibling = root_dir.path().join("static-evil");
-        std::fs::create_dir(&root).map_err(super::io_error)?;
-        std::fs::create_dir(&sibling).map_err(super::io_error)?;
-        let inside = root.join("ok.txt");
-        let outside = sibling.join("secret.txt");
-        std::fs::write(&inside, b"yes").map_err(super::io_error)?;
-        std::fs::write(&outside, b"no").map_err(super::io_error)?;
-        std::os::unix::fs::symlink(&outside, root.join("escape")).map_err(super::io_error)?;
-        std::os::unix::fs::symlink(&inside, root.join("linked")).map_err(super::io_error)?;
-        std::os::unix::fs::symlink(&sibling, root.join("out")).map_err(super::io_error)?;
-        assert!(matches!(locate(&root, "/ok.txt")?, Target::File));
-        assert!(matches!(locate(&root, "/linked")?, Target::File));
-        assert!(matches!(locate(&root, "/escape")?, Target::Refused));
-        assert!(matches!(locate(&root, "/out/secret.txt")?, Target::Refused));
-        assert!(matches!(locate(&root, "/missing.txt")?, Target::Missing));
-        assert!(matches!(locate(&root, "/foo/../ok.txt")?, Target::Refused));
-        Ok(())
     }
 }

@@ -7,13 +7,7 @@ use crate::topics::Slug;
 
 #[must_use]
 pub fn attribute_key(text: &str) -> Option<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: text that is not a slug is no attribute key"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let slug = Slug::fold(text).ok();
     slug.map(|slug| slug.as_str().to_owned())
 }

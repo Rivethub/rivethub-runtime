@@ -44,7 +44,7 @@ async fn match_case(pool: PgPool) -> TestResult {
         "2026-11-01T00:01:00Z",
     )
     .await?;
-    let folded = commit(&memory, "gpubox", "Hosts", &[], "2026-11-01T00:02:00Z").await?;
+    let folded = commit(&memory, "tinbox", "Hosts", &[], "2026-11-01T00:02:00Z").await?;
     let repo = commit(
         &memory,
         "acme/Widget-Box",
@@ -72,7 +72,7 @@ async fn match_case(pool: PgPool) -> TestResult {
     seed_fact(&scoped, datahub.id, summary).await?;
     let known = known_in(
         &memory,
-        "Gpu-Box hosts datahub beside comfyui. We shipped ACME/widget-box after nfsserver came up.",
+        "Tin-Box hosts datahub beside comfyui. We shipped ACME/widget-box after nfsserver came up.",
     )
     .await?;
     let found = named(&known, "datahub").ok_or("datahub missing")?;
@@ -87,7 +87,7 @@ async fn match_case(pool: PgPool) -> TestResult {
     let host = named(&known, "sparehost").ok_or("alias missing")?;
     assert_eq!(host.id, aliased.id);
     assert!(host.aliases.iter().any(|alias| alias == "comfyui"));
-    assert_eq!(named(&known, "gpubox").map(|item| item.id), Some(folded.id));
+    assert_eq!(named(&known, "tinbox").map(|item| item.id), Some(folded.id));
     assert_eq!(
         named(&known, "acme/Widget-Box").map(|item| item.id),
         Some(repo.id)

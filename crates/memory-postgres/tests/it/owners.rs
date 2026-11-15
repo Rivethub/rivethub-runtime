@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::Utc;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::FilingStore as _;
@@ -60,7 +58,6 @@ async fn owner_of(pool: &PgPool, sql: &'static str) -> Result<Vec<String>, sqlx:
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn rows_derived_from_a_conversation_take_its_owner(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let alice = Owner::new("alice".to_owned())?;
     let bob = Owner::new("bob".to_owned())?;

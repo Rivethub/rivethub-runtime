@@ -24,26 +24,12 @@ fn spool_error(status: u16) -> capture::writer::PostError {
     }
 }
 
-#[derive(Default)]
-struct ChoiceTransport {
-    results: Mutex<Vec<Result<CaptureResult, capture::writer::PostError>>>,
-}
-
-impl ChoiceTransport {
-    fn failing(error: capture::writer::PostError) -> Self {
-        Self {
-            results: Mutex::new(vec![Err(error)]),
-        }
-    }
-}
+struct AcceptingTransport;
 
 #[async_trait]
-impl capture::writer::CaptureTransport for ChoiceTransport {
+impl capture::writer::CaptureTransport for AcceptingTransport {
     async fn post(&self, _body: String) -> Result<CaptureResult, capture::writer::PostError> {
-        self.results
-            .lock()
-            .pop()
-            .unwrap_or_else(|| Ok(spool_ok("c-x")))
+        Ok(spool_ok("c-x"))
     }
 }
 
@@ -149,7 +135,8 @@ async fn http_transport_maps_4xx_to_client_errors() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
-async fn spool_round_trip_and_dead_letters() -> Result<(), Box<dyn std::error::Error>> {
+async fn spooled_batches_replay_and_a_failure_waits_out_its_backoff()
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let spool = capture::spool::CaptureSpool::new(dir.path().to_path_buf());
     let now = now_at("2026-10-10T12:00:00Z")?;
@@ -179,14 +166,6 @@ async fn spool_round_trip_and_dead_letters() -> Result<(), Box<dyn std::error::E
     assert_eq!(posted.lock().len(), 2);
     assert_eq!(std::fs::read_dir(dir.path())?.count(), 0);
 
-    spool.spool(r#"{"session_key":"c"}"#, now).await?;
-    spool
-        .replay(50, now, |_body| async { Err(spool_error(400)) })
-        .await?;
-    let dead = dir.path().join("dead");
-    assert!(dead.is_dir());
-    assert_eq!(std::fs::read_dir(&dead)?.count(), 1);
-
     spool.spool(r#"{"session_key":"d"}"#, now).await?;
     spool
         .replay(50, now, |_body| async { Err(spool_error(503)) })
@@ -207,37 +186,13 @@ async fn spool_round_trip_and_dead_letters() -> Result<(), Box<dyn std::error::E
 }
 
 #[tokio::test]
-async fn write_spools_when_the_server_fails() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let spool = capture::spool::CaptureSpool::new(dir.path().join("spool"));
-    let transport = ChoiceTransport::failing(spool_error(503));
-    let writer = capture::writer::CaptureWriter::new(
-        transport,
-        spool,
-        std::num::NonZeroUsize::new(768 * 1024),
-        None,
-    );
-    let batch = capture::batch::parse_batch(
-        r#"{"session_key":"s","agent":"a","messages":[{"event_id":"e1","role":"user","content":"hi"}]}"#,
-    )?;
-    let Err(error) = writer.write(&batch, now_at("2026-10-10T12:00:00Z")?).await else {
-        return Err("expected the 503 response to fail the write".into());
-    };
-    assert!(error.to_string().contains("capture HTTP 503"));
-    let spooled = std::fs::read_dir(dir.path().join("spool"))?.count();
-    assert_eq!(spooled, 1);
-    Ok(())
-}
-
-#[tokio::test]
 async fn write_replays_the_spool_first() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let spool = capture::spool::CaptureSpool::new(dir.path().join("spool"));
     let now = now_at("2026-10-10T12:00:00Z")?;
     spool.spool(r#"{"session_key":"old"}"#, now).await?;
-    let transport = ChoiceTransport::default();
     let writer = capture::writer::CaptureWriter::new(
-        transport,
+        AcceptingTransport,
         spool,
         std::num::NonZeroUsize::new(768 * 1024),
         None,

@@ -1,20 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-fn write_config(home: &Path) -> TestResult {
-    let state = home.join(".rivethub");
-    std::fs::create_dir_all(&state)?;
-    std::fs::write(
-        state.join("config.yaml"),
-        format!(
-            "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: m\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1\n    model: m\nmemory:\n  postgres:\n    connection_string: postgres://127.0.0.1:1/none\n",
-            home.display()
-        ),
-    )?;
-    Ok(())
-}
+use crate::process::{DEAD_POSTGRES, TestResult, provider_config, write_state};
 
 async fn check(home: &Path, role: &str, extraction: Option<&str>) -> TestResult<(bool, String)> {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"));
@@ -35,7 +22,10 @@ async fn check(home: &Path, role: &str, extraction: Option<&str>) -> TestResult<
 #[tokio::test]
 async fn wiki_roles_refuse_to_start_without_wiki_extraction() -> TestResult {
     let home = tempfile::tempdir()?;
-    write_config(home.path())?;
+    write_state(
+        home.path(),
+        &provider_config(home.path(), DEAD_POSTGRES, ""),
+    )?;
     for role in ["wiki-builder", "all"] {
         for extraction in [None, Some("0")] {
             let (ok, text) = check(home.path(), role, extraction).await?;

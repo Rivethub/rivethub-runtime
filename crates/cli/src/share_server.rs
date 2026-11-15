@@ -167,13 +167,7 @@ pub(crate) struct Tokens {
     pub(crate) scope: String,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: share server tokens never reach a log; Debug prints only their expiry"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Tokens {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "Tokens(until {})", self.expires_at)
@@ -186,13 +180,7 @@ pub(crate) struct TeamLogin {
     pub(crate) user: String,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: a team token never reaches a log; Debug prints only its user"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for TeamLogin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "TeamLogin({})", self.user)

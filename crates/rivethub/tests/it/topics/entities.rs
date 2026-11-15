@@ -460,7 +460,7 @@ async fn entity_claims_name_the_importing_author() -> TestResult {
 
     let provenance = Provenance {
         team_owner: None,
-        author: Some("phil".to_owned()),
+        author: Some("dana".to_owned()),
         origin_date: None,
         verification: kernel::memory::Verification::Unreceived,
         checks: None,
@@ -486,13 +486,13 @@ async fn entity_claims_name_the_importing_author() -> TestResult {
     let source = address.sources.first().ok_or("the address has a source")?;
     assert_eq!(
         source.session.title,
-        "Set up web01 (imported from phil, unverified)"
+        "Set up web01 (imported from dana, unverified)"
     );
     let from = source
         .imported_from
         .as_ref()
         .ok_or("the source is an import")?;
-    assert_eq!(from.author.as_deref(), Some("phil"));
+    assert_eq!(from.author.as_deref(), Some("dana"));
     assert_eq!(from.verification, ImportVerification::Unreceived);
     let rivals: Vec<bool> = address
         .conflict

@@ -7,7 +7,6 @@ use memory_sqlite::import::ImportTable;
 use super::target::Origin;
 use super::target::Source;
 use crate::Error;
-use crate::Exit;
 use crate::Report;
 
 pub(super) struct Header {
@@ -152,15 +151,6 @@ pub(super) fn sqlite_rows(rows: BTreeMap<ImportTable, u64>) -> BTreeMap<String, 
     rows.into_iter()
         .map(|(table, count)| (table.to_string(), count))
         .collect()
-}
-
-pub(super) fn cloud_refusal() -> Report {
-    Report {
-        stdout: String::new(),
-        stderr: "RIVETHUB_PG_URL host is rivetos.cloud; tenant roles cannot import summaries/wiki. Use `rh cloud import <file>` instead.\n".to_owned(),
-        exit: Exit::Memory,
-        stdout_raw: Vec::new(),
-    }
 }
 
 fn is_gzip(bytes: &[u8]) -> bool {

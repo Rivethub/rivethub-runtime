@@ -24,8 +24,8 @@ use wire::message::Role;
 
 pub(crate) type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-pub(crate) const PHIL: &str = "phil";
-pub(crate) const ALEX: &str = "alex";
+pub(crate) const DANA: &str = "dana";
+pub(crate) const INES: &str = "ines";
 pub(crate) const TOM: &str = "tom";
 pub(crate) const SPACE: &str = "team";
 
@@ -49,7 +49,7 @@ fn token(person: &str) -> String {
 }
 
 pub(crate) fn users() -> UsersRegistry {
-    let users = [PHIL, ALEX, TOM]
+    let users = [DANA, INES, TOM]
         .into_iter()
         .map(|person| {
             let digest = hex::encode(Sha256::digest(token(person).as_bytes()));
@@ -68,7 +68,7 @@ pub(crate) fn users() -> UsersRegistry {
         })
         .collect();
     UsersRegistry {
-        owner_user_id: PHIL.to_owned(),
+        owner_user_id: DANA.to_owned(),
         unmapped_is_owner: false,
         local_stores: None,
         users,
@@ -77,7 +77,7 @@ pub(crate) fn users() -> UsersRegistry {
             SpaceConfig {
                 kind: SpaceKind::Team,
                 name: Some("Team".to_owned()),
-                members: vec![PHIL.to_owned(), ALEX.to_owned(), TOM.to_owned()],
+                members: vec![DANA.to_owned(), INES.to_owned(), TOM.to_owned()],
             },
         )])),
     }
@@ -195,13 +195,7 @@ impl Hub {
             if members == 3 {
                 return Ok(());
             }
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    sleep,
-                    reason = "the space sync is a background retry loop that signals nothing"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         Err("the hub never saved its space".into())

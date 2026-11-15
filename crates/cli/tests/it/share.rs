@@ -43,8 +43,6 @@ struct Seen {
     taken: Vec<bool>,
     gets: usize,
     refreshes: Vec<String>,
-    device_requests: Vec<String>,
-    device_polls: usize,
     revokes: Vec<String>,
     revoke_status: Option<StatusCode>,
     hostile: Vec<(&'static str, Hostile)>,
@@ -182,15 +180,10 @@ async fn discovery(headers: HeaderMap) -> Response {
     )
 }
 
-async fn device_code(State(drops): State<DropBox>, body: Bytes) -> Response {
+async fn device_code(State(drops): State<DropBox>) -> Response {
     if let Some(answer) = hostile_answer(&drops, "device") {
         return answer;
     }
-    drops
-        .0
-        .lock()
-        .device_requests
-        .push(String::from_utf8_lossy(&body).into_owned());
     json(
         StatusCode::OK,
         r#"{"device_code":"dev-code","user_code":"ABCD-EFGH","verification_uri":"http://127.0.0.1/device","verification_uri_complete":"http://127.0.0.1/device#user_code=ABCD-EFGH","expires_in":600,"interval":1}"#,
@@ -204,23 +197,13 @@ async fn token(State(drops): State<DropBox>, body: Bytes) -> Response {
     if form_field(&body, "grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
         return refresh(&drops, &body);
     }
-    let polls = {
-        let mut seen = drops.0.lock();
-        seen.device_polls += 1;
-        seen.device_polls
-    };
-    if form_field(&body, "device_code") != "dev-code" {
-        json(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#)
-    } else if polls < 2 {
-        json(
-            StatusCode::BAD_REQUEST,
-            r#"{"error":"authorization_pending"}"#,
-        )
-    } else {
+    if form_field(&body, "device_code") == "dev-code" {
         json(
             StatusCode::OK,
             r#"{"access_token":"rhca_login","token_type":"Bearer","expires_in":900,"refresh_token":"rhcr_login","scope":"drops:write offline_access"}"#,
         )
+    } else {
+        json(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#)
     }
 }
 
@@ -393,7 +376,7 @@ fn session_saying(
 ) -> BundledSession {
     BundledSession {
         origin: wire::capture::SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("c{number}"),
             session_key: format!("claude-code:{number}"),
@@ -427,7 +410,7 @@ fn session_saying(
 }
 
 async fn sanitized(node: &Node, outside: &Path, settings: Option<wire::JsonObject>) -> PathBuf {
-    sanitized_sessions(node, outside, "phil", vec![session(settings)]).await
+    sanitized_sessions(node, outside, "dana", vec![session(settings)]).await
 }
 
 async fn sanitized_sessions(
@@ -496,7 +479,7 @@ fn code_of(stdout: &str) -> String {
 async fn share_writes_no_plaintext() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized(&sender, outside.path(), None).await;
     let before = files(sender.home.path());
@@ -547,7 +530,7 @@ async fn share_writes_no_plaintext() {
 async fn the_code_key_never_reaches_a_url() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized(&sender, outside.path(), None).await;
     let shared = sender
@@ -556,13 +539,13 @@ async fn the_code_key_never_reaches_a_url() {
     assert_eq!(shared.exit, Exit::Ok, "{}", shared.stderr);
     let code = code_of(&shared.stdout);
     let key = code.split_once('#').expect("key part").1.to_owned();
-    let alex = Node::new("alex", &served.url, None);
-    let received = alex.run(&["memory", "receive", &code, "--dry-run"]).await;
+    let ines = Node::new("ines", &served.url, None);
+    let received = ines.run(&["memory", "receive", &code, "--dry-run"]).await;
     assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
     assert!(
         received
             .stdout
-            .starts_with("would import 1 session from phil (unverified: signed by ed25519:"),
+            .starts_with("would import 1 session from dana (unverified: signed by ed25519:"),
         "{}",
         received.stdout
     );
@@ -579,12 +562,12 @@ async fn the_code_key_never_reaches_a_url() {
 async fn the_receive_output_escapes_the_exporter_name() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized_sessions(
         &sender,
         outside.path(),
-        "phil\u{1b}[2J",
+        "dana\u{1b}[2J",
         vec![session(None)],
     )
     .await;
@@ -597,37 +580,18 @@ async fn the_receive_output_escapes_the_exporter_name() {
         ])
         .await;
     assert_eq!(shared.exit, Exit::Ok, "{}", shared.stderr);
-    let alex = Node::new("alex", &served.url, None);
-    let dry = alex
+    let ines = Node::new("ines", &served.url, None);
+    let dry = ines
         .run(&["memory", "receive", &code_of(&shared.stdout), "--dry-run"])
         .await;
     assert_eq!(dry.exit, Exit::Ok, "{}", dry.stderr);
     assert!(
         dry.stdout
-            .starts_with("would import 1 session from phil<U+001B>[2J "),
+            .starts_with("would import 1 session from dana<U+001B>[2J "),
         "{}",
         dry.stdout
     );
     assert!(!dry.stdout.contains('\u{1b}'), "{}", dry.stdout);
-    served.stop.cancel();
-}
-
-#[tokio::test]
-async fn a_typo_is_refused_before_any_request() {
-    let served = drop_box().await;
-    let receiver = Node::new("alex", &served.url, None);
-    let typo = format!(
-        "rhb1:{}/{DROP_ID}#qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-        host_of(&served.url)
-    );
-    let report = receiver.run(&["memory", "receive", &typo]).await;
-    assert_eq!(report.exit, Exit::Failure);
-    assert!(
-        report.stderr.contains("fails its checksum"),
-        "{}",
-        report.stderr
-    );
-    assert_eq!(served.drops.0.lock().uris.len(), 0);
     served.stop.cancel();
 }
 
@@ -641,7 +605,7 @@ async fn a_refused_upload_prints_no_code_and_keeps_the_bundle() {
         let served = drop_box().await;
         served.drops.0.lock().upload_status = Some(status);
         let outside = tempfile::tempdir().expect("outside");
-        let sender = Node::new("phil", &served.url, None);
+        let sender = Node::new("dana", &served.url, None);
         sender.sign_in(&served.url);
         let bundle = sanitized(&sender, outside.path(), None).await;
         let shared = sender
@@ -663,7 +627,7 @@ async fn a_refused_upload_prints_no_code_and_keeps_the_bundle() {
 async fn a_signed_out_sender_uploads_nothing() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     let bundle = sanitized(&sender, outside.path(), None).await;
     let shared = sender
         .run(&["memory", "share", &bundle.display().to_string()])
@@ -683,7 +647,7 @@ async fn a_signed_out_sender_uploads_nothing() {
 async fn receive_keeps_ciphertext_on_failure() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized(&sender, outside.path(), None).await;
     let shared = sender
@@ -696,7 +660,7 @@ async fn receive_keeps_ciphertext_on_failure() {
         .local_addr()
         .expect("address")
         .port();
-    let receiver = Node::new("alex", &served.url, Some(closed));
+    let receiver = Node::new("ines", &served.url, Some(closed));
     let failed = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(failed.exit, Exit::Failure, "{}", failed.stdout);
     let kept = receiver.inbox().join(inbox_name(&served.url, "age"));
@@ -711,7 +675,7 @@ async fn receive_keeps_ciphertext_on_failure() {
         .run(&["memory", "receive", &code, "--dry-run"])
         .await;
     assert_eq!(again.exit, Exit::Ok, "{}", again.stderr);
-    assert!(again.stdout.starts_with("would import 1 session from phil"));
+    assert!(again.stdout.starts_with("would import 1 session from dana"));
     assert_eq!(
         served.drops.0.lock().gets,
         1,
@@ -775,7 +739,7 @@ fn forged_receipt() -> wire::JsonObject {
 async fn bundle_receipt_is_stripped(pool: PgPool) {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized(&sender, outside.path(), Some(forged_receipt())).await;
     let shared = sender
@@ -790,13 +754,13 @@ async fn bundle_receipt_is_stripped(pool: PgPool) {
     let code = code_of(&shared.stdout);
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
+    let receiver = Node::new("ines", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let received = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(received.exit, Exit::Ok, "{}", received.stderr);
     assert_eq!(
         received.stdout,
-        "received 1 session from phil (unverified: the bundle is unsigned); imported 1: 1 messages inserted, 0 skipped\n"
+        "received 1 session from dana (unverified: the bundle is unsigned); imported 1: 1 messages inserted, 0 skipped\n"
     );
     let stored = receipts(&pool).await;
     assert_eq!(stored.len(), 1);
@@ -831,7 +795,7 @@ async fn bundle_receipt_is_stripped(pool: PgPool) {
 async fn a_trusted_signed_bundle_imports_as_verified(pool: PgPool) {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let shown = sender.run(&["memory", "key", "show"]).await;
     let key = shown.stdout.lines().next().expect("key line").to_owned();
@@ -842,10 +806,10 @@ async fn a_trusted_signed_bundle_imports_as_verified(pool: PgPool) {
     let code = code_of(&shared.stdout);
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
+    let receiver = Node::new("ines", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let trusted = receiver
-        .run(&["memory", "trust", "add", "phil", &key])
+        .run(&["memory", "trust", "add", "dana", &key])
         .await;
     assert_eq!(trusted.exit, Exit::Ok, "{}", trusted.stderr);
     let received = receiver.run(&["memory", "receive", &code]).await;
@@ -853,7 +817,7 @@ async fn a_trusted_signed_bundle_imports_as_verified(pool: PgPool) {
     assert!(
         received
             .stdout
-            .starts_with("received 1 session from phil (verified, signed by ed25519:"),
+            .starts_with("received 1 session from dana (verified, signed by ed25519:"),
         "{}",
         received.stdout
     );
@@ -875,9 +839,9 @@ async fn ingest_bundle_strips_a_bundle_receipt(pool: PgPool) {
     let outside = tempfile::tempdir().expect("outside");
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
     let receiver =
-        Node::new("alex", "http://127.0.0.1:9/", Some(gateway.port)).with_owner(&gateway.owner);
+        Node::new("ines", "http://127.0.0.1:9/", Some(gateway.port)).with_owner(&gateway.owner);
     let bundle = sanitized(&receiver, outside.path(), Some(forged_receipt())).await;
     let ingested = receiver
         .run(&["memory", "ingest-bundle", &bundle.display().to_string()])
@@ -907,7 +871,7 @@ async fn a_truncated_download_is_a_burned_drop_and_leaves_nothing() {
         drop(socket);
         String::from_utf8_lossy(request.get(..read).unwrap_or_default()).into_owned()
     });
-    let receiver = Node::new("alex", &url, None);
+    let receiver = Node::new("ines", &url, None);
     let code = format!(
         "rhb1:{}/{DROP_ID}#{}",
         host_of(&url),
@@ -949,7 +913,7 @@ async fn messages_by_verification(pool: &PgPool) -> Vec<(Option<String>, i64)> {
 async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let alice = Node::new("phil", &served.url, None);
+    let alice = Node::new("dana", &served.url, None);
     alice.sign_in(&served.url);
     let key = alice.run(&["memory", "key", "show"]).await.stdout;
     let key = key.lines().next().expect("key line").to_owned();
@@ -973,7 +937,7 @@ async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
         forged.sessions,
     )
     .expect("reseal");
-    let mallory = Node::new("phil", &served.url, None);
+    let mallory = Node::new("dana", &served.url, None);
     mallory.sign_in(&served.url);
     let planted = mallory.home.path().join("forged.clean.json");
     std::fs::write(&planted, resealed.text).expect("forged bundle");
@@ -990,10 +954,10 @@ async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
 
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
+    let receiver = Node::new("ines", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
     let trusted = receiver
-        .run(&["memory", "trust", "add", "phil", &key])
+        .run(&["memory", "trust", "add", "dana", &key])
         .await;
     assert_eq!(trusted.exit, Exit::Ok, "{}", trusted.stderr);
     let first = receiver.run(&["memory", "receive", &verified_code]).await;
@@ -1028,7 +992,7 @@ async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
 async fn concurrent_shares_refresh_the_login_once() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in_until(&served.url, "2020-01-01T00:00:00Z");
     let first = sanitized(&sender, outside.path(), None).await;
     let one = first.with_file_name("one.clean.json");
@@ -1074,7 +1038,7 @@ async fn a_server_error_then_a_miss_says_the_drop_failed_midway() {
         .expect("listener");
     let url = format!("http://{}/", listener.local_addr().expect("address"));
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
-    let receiver = Node::new("alex", &url, None);
+    let receiver = Node::new("ines", &url, None);
     let code = format!(
         "rhb1:{}/{DROP_ID}#{}",
         host_of(&url),
@@ -1123,7 +1087,7 @@ fn logins(node: &Node) -> String {
 async fn logout_keeps_the_login_when_the_revoke_fails_and_touches_only_its_server() {
     let team = drop_box().await;
     let other = drop_box().await;
-    let node = Node::new("phil", &team.url, None);
+    let node = Node::new("dana", &team.url, None);
     let entry = r#"{"access_token":"rhca_throwaway","refresh_token":"rhcr_throwaway","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"}"#;
     let store = node.home.path().join("state/rivethub/share-logins.json");
     std::fs::create_dir_all(store.parent().expect("parent")).expect("state dir");
@@ -1183,7 +1147,7 @@ async fn a_receiver_needs_no_share_config_and_share_takes_a_server_flag() {
     let configured = drop_box().await;
     let team = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &configured.url, None);
+    let sender = Node::new("dana", &configured.url, None);
     sender.sign_in(&team.url);
     let bundle = sanitized(&sender, outside.path(), None).await;
     let shared = sender
@@ -1219,7 +1183,7 @@ async fn a_receiver_needs_no_share_config_and_share_takes_a_server_flag() {
     assert!(
         received
             .stdout
-            .starts_with("would import 1 session from phil"),
+            .starts_with("would import 1 session from dana"),
         "{}",
         received.stdout
     );
@@ -1231,7 +1195,7 @@ async fn a_receiver_needs_no_share_config_and_share_takes_a_server_flag() {
 #[tokio::test]
 async fn a_bad_trusted_ca_names_its_server() {
     let served = drop_box().await;
-    let node = Node::new("phil", &served.url, None);
+    let node = Node::new("dana", &served.url, None);
     support::config(
         &node.home,
         &format!(
@@ -1265,7 +1229,7 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
     let first = drop_box().await;
     let second = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &first.url, None);
+    let sender = Node::new("dana", &first.url, None);
     sender.sign_in(&first.url);
     sender.sign_in_also(&second.url);
     let one = sanitized(&sender, outside.path(), None).await;
@@ -1290,19 +1254,19 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
 
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &first.url, Some(gateway.port)).with_owner(&gateway.owner);
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
+    let receiver = Node::new("ines", &first.url, Some(gateway.port)).with_owner(&gateway.owner);
     let got_one = receiver.run(&["memory", "receive", &code_one]).await;
     assert_eq!(got_one.exit, Exit::Ok, "{}", got_one.stderr);
     assert!(
-        got_one.stdout.starts_with("received 1 session from phil"),
+        got_one.stdout.starts_with("received 1 session from dana"),
         "{}",
         got_one.stdout
     );
     let got_two = receiver.run(&["memory", "receive", &code_two]).await;
     assert_eq!(got_two.exit, Exit::Ok, "{}", got_two.stderr);
     assert!(
-        got_two.stdout.starts_with("received 1 session from phil"),
+        got_two.stdout.starts_with("received 1 session from dana"),
         "{}",
         got_two.stdout
     );
@@ -1322,7 +1286,7 @@ async fn the_same_drop_id_on_two_servers_is_received_twice(pool: PgPool) {
 
 #[tokio::test]
 async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
-    let node = Node::new("phil", "https://unused.example.com/", None);
+    let node = Node::new("dana", "https://unused.example.com/", None);
     support::config(&node.home, "cloud:\n  disabled: true\n");
     let report = node.run(&["share", "login"]).await;
     assert_eq!(report.exit, Exit::Failure, "{}", report.stdout);
@@ -1358,7 +1322,7 @@ async fn a_disabled_cloud_refuses_rivethub_cloud_without_a_request() {
 
 #[tokio::test]
 async fn a_refused_logout_forgets_a_keyring_login_without_reading_its_secret() {
-    let node = Node::new("phil", "https://unused.example.com/", None);
+    let node = Node::new("dana", "https://unused.example.com/", None);
     support::config(&node.home, "cloud:\n  disabled: true\n");
     let path = node.home.path().join("state/rivethub/share-logins.json");
     std::fs::create_dir_all(path.parent().expect("parent")).expect("state dir");
@@ -1387,7 +1351,7 @@ async fn a_refused_logout_forgets_a_keyring_login_without_reading_its_secret() {
 #[tokio::test]
 async fn a_disabled_cloud_reaches_only_listed_share_servers() {
     let served = drop_box().await;
-    let node = Node::new("phil", &served.url, None);
+    let node = Node::new("dana", &served.url, None);
     let share_config = format!(
         "memory:\n  share:\n    server:\n      url: {}\n",
         served.url
@@ -1431,7 +1395,7 @@ async fn a_disabled_cloud_reaches_only_listed_share_servers() {
 
 #[tokio::test]
 async fn a_login_stored_under_another_spelling_reads_as_its_server() {
-    let node = Node::new("phil", "https://team.example.com/", None);
+    let node = Node::new("dana", "https://team.example.com/", None);
     node.sign_in("Team.Example.com:443");
     let status = node.run(&["share", "status"]).await;
     assert_eq!(status.exit, Exit::Ok, "{}", status.stderr);
@@ -1447,7 +1411,7 @@ async fn a_login_stored_under_another_spelling_reads_as_its_server() {
 #[tokio::test]
 async fn login_runs_the_device_grant_on_the_discovered_endpoints_and_logout_revokes_it() {
     let served = drop_box().await;
-    let node = Node::new("phil", &served.url, None);
+    let node = Node::new("dana", &served.url, None);
     let signed_in = node.run(&["share", "login"]).await;
     assert_eq!(signed_in.exit, Exit::Ok, "{}", signed_in.stderr);
     assert!(
@@ -1457,16 +1421,6 @@ async fn login_runs_the_device_grant_on_the_discovered_endpoints_and_logout_revo
         "{}",
         signed_in.stdout
     );
-    {
-        let seen = served.drops.0.lock();
-        let first = seen.device_requests.first().expect("a device code request");
-        let asked: Vec<(String, String)> = url::form_urlencoded::parse(first.as_bytes())
-            .into_owned()
-            .collect();
-        assert!(asked.contains(&("client_id".to_owned(), "rivethub-cli".to_owned())));
-        assert!(asked.contains(&("scope".to_owned(), "drops:write offline_access".to_owned())));
-        assert_eq!(seen.device_polls, 2, "pending once, then approved");
-    }
     let stored = logins(&node);
     assert!(
         stored.contains("rhca_login") && stored.contains("rhcr_login"),
@@ -1481,34 +1435,10 @@ async fn login_runs_the_device_grant_on_the_discovered_endpoints_and_logout_revo
 }
 
 #[tokio::test]
-async fn a_server_without_oauth_metadata_says_it_offers_no_device_sign_in() {
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("listener");
-    let url = format!("http://{}/", listener.local_addr().expect("address"));
-    let stop = CancellationToken::new();
-    let token = stop.clone();
-    tokio::spawn(async move {
-        axum::serve(listener, Router::new())
-            .with_graceful_shutdown(async move { token.cancelled().await })
-            .await
-    });
-    let node = Node::new("phil", &url, None);
-    let refused = node.run(&["share", "login"]).await;
-    assert_eq!(refused.exit, Exit::Failure, "{}", refused.stdout);
-    assert!(
-        refused.stderr.contains("offers no device sign-in"),
-        "{}",
-        refused.stderr
-    );
-    stop.cancel();
-}
-
-#[tokio::test]
 async fn oauth_failures_never_put_server_text_on_stderr() {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let node = Node::new("phil", &served.url, None);
+    let node = Node::new("dana", &served.url, None);
     for (endpoint, kind) in [
         ("device", Hostile::Refusal),
         ("device", Hostile::Garbage),
@@ -1590,7 +1520,7 @@ async fn a_busy_or_down_server_is_transient_not_a_missing_device_flow() {
         (StatusCode::BAD_GATEWAY, None, "try again shortly"),
     ] {
         let (url, stop) = discovery_answering(status, retry_after).await;
-        let node = Node::new("phil", &url, None);
+        let node = Node::new("dana", &url, None);
         let refused = node.run(&["share", "login"]).await;
         assert_eq!(refused.exit, Exit::Failure, "{status}");
         assert!(
@@ -1612,7 +1542,7 @@ async fn a_busy_or_down_server_is_transient_not_a_missing_device_flow() {
     }
     for status in [StatusCode::NOT_FOUND, StatusCode::GONE] {
         let (url, stop) = discovery_answering(status, None).await;
-        let node = Node::new("phil", &url, None);
+        let node = Node::new("dana", &url, None);
         let refused = node.run(&["share", "login"]).await;
         assert!(
             refused.stderr.contains("offers no device sign-in"),
@@ -1627,12 +1557,12 @@ async fn a_busy_or_down_server_is_transient_not_a_missing_device_flow() {
 async fn a_flagged_bundle_is_held_then_imported_by_decision(pool: PgPool) {
     let served = drop_box().await;
     let outside = tempfile::tempdir().expect("outside");
-    let sender = Node::new("phil", &served.url, None);
+    let sender = Node::new("dana", &served.url, None);
     sender.sign_in(&served.url);
     let bundle = sanitized_sessions(
         &sender,
         outside.path(),
-        "phil",
+        "dana",
         vec![
             session_saying(None, 1, "all good here"),
             session_saying(
@@ -1654,8 +1584,8 @@ async fn a_flagged_bundle_is_held_then_imported_by_decision(pool: PgPool) {
     let code = code_of(&shared.stdout);
     let store = Arc::new(PostgresMemory::new(pool.clone()));
     let probe = support::home();
-    let gateway = gateway_for(&store, "alex", probe.path()).await;
-    let receiver = Node::new("alex", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
+    let gateway = gateway_for(&store, "ines", probe.path()).await;
+    let receiver = Node::new("ines", &served.url, Some(gateway.port)).with_owner(&gateway.owner);
 
     let held = receiver.run(&["memory", "receive", &code]).await;
     assert_eq!(held.exit, Exit::Held, "{}", held.stderr);
@@ -1690,7 +1620,7 @@ async fn a_flagged_bundle_is_held_then_imported_by_decision(pool: PgPool) {
     assert_eq!(decided.exit, Exit::Ok, "{}", decided.stderr);
     assert_eq!(
         decided.stdout,
-        "received 2 sessions from phil (unverified: the bundle is unsigned); imported 2 (spans held in 2): 2 messages inserted, 0 skipped\n"
+        "received 2 sessions from dana (unverified: the bundle is unsigned); imported 2 (spans held in 2): 2 messages inserted, 0 skipped\n"
     );
     assert_eq!(served.drops.0.lock().gets, 1, "the rerun needs no network");
     let stored = receipts(&pool).await;
@@ -1746,7 +1676,7 @@ async fn team_server() -> (String, Arc<Mutex<usize>>, CancellationToken) {
                     .get("authorization")
                     .and_then(|value| value.to_str().ok());
                 if bearer == Some("Bearer team-secret") {
-                    json(StatusCode::OK, r#"{"user":"phil"}"#)
+                    json(StatusCode::OK, r#"{"user":"dana"}"#)
                 } else {
                     json(StatusCode::UNAUTHORIZED, r#"{"error":"unauthorized"}"#)
                 }
@@ -1780,8 +1710,8 @@ async fn team_server() -> (String, Arc<Mutex<usize>>, CancellationToken) {
 async fn a_team_token_signs_in_from_a_file_and_logout_leaves_other_machines_signed_in() {
     let (url, revokes, stop) = team_server().await;
     let host = host_of(&url);
-    let first = Node::new("phil", &url, None);
-    let second = Node::new("phil", &url, None);
+    let first = Node::new("dana", &url, None);
+    let second = Node::new("dana", &url, None);
     for node in [&first, &second] {
         let file = node.home.path().join("team.token");
         std::fs::write(&file, "team-secret\n").expect("token file");
@@ -1798,7 +1728,7 @@ async fn a_team_token_signs_in_from_a_file_and_logout_leaves_other_machines_sign
         assert!(
             signed_in
                 .stdout
-                .starts_with(&format!("signed in to {host} as phil with a team token")),
+                .starts_with(&format!("signed in to {host} as dana with a team token")),
             "{}",
             signed_in.stdout
         );

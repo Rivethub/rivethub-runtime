@@ -57,20 +57,6 @@ impl PostgresQueue {
         }
     }
 
-    #[must_use]
-    pub fn task_list(role: WorkerRole) -> &'static [JobName] {
-        role.task_list()
-    }
-
-    #[must_use]
-    pub fn crontab(role: WorkerRole) -> Vec<CronEntry> {
-        role.crontab(false)
-    }
-
-    pub async fn dead_job_ids(&self, task: &JobName, limit: u32) -> Result<Vec<JobId>, Error> {
-        self.inner.dead_job_ids(task, limit).await
-    }
-
     pub async fn reschedule_dead(
         &self,
         task: &JobName,
@@ -78,10 +64,6 @@ impl PostgresQueue {
         priority: i16,
     ) -> Result<u64, Error> {
         self.inner.reschedule_dead(task, limit, priority).await
-    }
-
-    pub async fn reap_dead_corpses(&self, allowlist: &[JobName], limit: u32) -> Result<u64, Error> {
-        self.inner.reap_dead_corpses(allowlist, limit).await
     }
 
     pub async fn queue_health(&self, task: &JobName) -> Result<Option<QueueHealth>, Error> {
@@ -92,7 +74,7 @@ impl PostgresQueue {
 #[async_trait]
 impl JobQueue for PostgresQueue {
     fn task_names(&self, role: WorkerRole) -> Vec<JobName> {
-        Self::task_list(role).to_vec()
+        role.task_list().to_vec()
     }
 
     async fn subscribe(&self) -> Result<Box<dyn kernel::queue::JobNotifications>, JobQueueError> {

@@ -51,6 +51,7 @@ pub struct TranscriptAttachment {
 pub struct HarnessTranscriptTurn {
     pub role: SessionMessageRole,
     pub text: String,
+    pub reply_text: Option<String>,
     pub thinking: Option<String>,
     pub tools: Option<Vec<HarnessTranscriptTool>>,
     pub usage: Option<MessageUsage>,
@@ -95,7 +96,6 @@ pub struct HarnessSessionResponse {
     pub summary: HarnessSessionSummary,
     pub redirected_to: Option<SessionId>,
     pub switches: Option<SessionSwitches>,
-    pub running_elsewhere: Option<bool>,
 }
 
 #[derive(

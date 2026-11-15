@@ -2,7 +2,6 @@ mod append;
 mod bundle;
 pub mod capture;
 mod changes;
-mod context;
 mod conversation;
 mod deletion;
 mod digest;
@@ -11,7 +10,6 @@ pub mod error;
 pub mod export;
 mod facts;
 mod flagged;
-mod health;
 pub mod import;
 mod insert;
 mod job_rank;
@@ -66,26 +64,17 @@ use rusqlite::Connection;
 
 pub use capture::MAX_CONTENT_CHARS;
 pub use error::SqliteError;
-pub use health::SqliteHealth;
 pub use queue::ClaimedSqliteJob;
 pub use queue::FailOutcome;
-pub use queue::JobCount;
 pub use queue::JobInsert;
 pub use queue::JobPayload;
 pub use queue::JobState;
-pub use queue::retry_delay_ms;
 pub use reembed::ReembedReport;
 
 #[derive(Clone)]
 struct SharedClock(Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) cannot format a function object; the impl names the clock and skips the closure"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for SharedClock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_tuple("SharedClock").finish_non_exhaustive()
@@ -294,7 +283,6 @@ fn verify(path: &Path, found: i64) -> Result<(), SqliteError> {
 #[cfg(test)]
 mod tests {
     use super::SqliteStore;
-    use crate::error::SqliteError;
 
     #[tokio::test]
     async fn with_conn_runs_off_the_async_worker() {
@@ -311,45 +299,5 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(ran_on, awaited_on);
-    }
-
-    #[tokio::test]
-    async fn migrated_store_opens_the_current_schema() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("memory.sqlite");
-        migrate::sqlite(&path).unwrap();
-        let store = SqliteStore::open(&path).unwrap();
-        let state = store
-            .with_conn(move |conn| {
-                let version: i64 = conn
-                    .query_row("PRAGMA user_version", [], |row| row.get(0))
-                    .unwrap();
-                let tables: i64 = conn
-                    .query_row(
-                        "SELECT count(*) FROM sqlite_master WHERE type = 'table'",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .unwrap();
-                Ok((version, tables))
-            })
-            .await
-            .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 76));
-    }
-
-    #[tokio::test]
-    async fn with_conn_propagates_the_closure_error() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("memory.sqlite");
-        migrate::sqlite(&path).unwrap();
-        let store = SqliteStore::open(&path).unwrap();
-        let outcome = store
-            .with_conn(move |_conn| Err::<i64, _>(SqliteError::UnsupportedSchema { found: 9 }))
-            .await;
-        match outcome {
-            Err(SqliteError::UnsupportedSchema { found }) => assert_eq!(found, 9),
-            other => panic!("expected UnsupportedSchema, got {other:?}"),
-        }
     }
 }

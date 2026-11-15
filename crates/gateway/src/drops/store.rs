@@ -36,13 +36,7 @@ impl Part {
     }
 
     fn of(name: &str) -> Option<(DropId, Self)> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract leaves a file whose name is not a drop file alone"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let id = name.get(..DropId::LEN)?.parse().ok()?;
         let rest = name.get(DropId::LEN..)?;
         Self::ALL

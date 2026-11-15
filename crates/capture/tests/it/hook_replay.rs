@@ -6,9 +6,6 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use parking_lot::Mutex;
-use testkit::HookFile;
-use testkit::HookOutcome;
-use testkit::HookPost;
 use testkit::capture::entries;
 use wire::capture::CaptureResult;
 
@@ -80,51 +77,19 @@ fn prepare_store(root: &Path) -> std::io::Result<PathBuf> {
     Ok(target)
 }
 
-struct EntryRun {
-    outcome: HookOutcome,
-    exit: i64,
-}
-
-async fn run_entry(
+async fn posted_bodies(
     entry: &testkit::capture::EntryRecord,
     transcript_text: &str,
     now: DateTime<Utc>,
-) -> Result<EntryRun, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let inner = tempfile::tempdir()?;
     let transport = FakeTransport::new();
     let hook = hook_in(inner.path(), &transport)?;
     let stdin = entry.stdin.replace("__TRANSCRIPT__", transcript_text);
     let run = hook.run(&stdin, now, "1791656243919-30e4c5d70").await;
-    let posts = transport
-        .posts
-        .lock()
-        .iter()
-        .map(|body| HookPost {
-            url: "/api/capture".to_owned(),
-            content_type: "application/json".to_owned(),
-            body: body.replace(transcript_text, "__TRANSCRIPT__"),
-        })
-        .collect();
-    let log_content = std::fs::read_to_string(hook.log_file())?;
-    let files = vec![HookFile {
-        path: hook
-            .log_file()
-            .strip_prefix(inner.path())?
-            .display()
-            .to_string(),
-        mode: "644".to_owned(),
-        content: log_content.replace(transcript_text, "__TRANSCRIPT__"),
-    }];
-    Ok(EntryRun {
-        outcome: HookOutcome {
-            exit: run.exit,
-            stdout: String::new(),
-            stderr: run.stderr.clone(),
-            posts,
-            files,
-        },
-        exit: run.exit,
-    })
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    let posts = transport.posts.lock().clone();
+    Ok(posts)
 }
 
 #[tokio::test]
@@ -197,16 +162,15 @@ async fn transcript_tool_arguments_preserve_input_values() -> Result<(), Box<dyn
             .iter()
             .find(|entry| entry.index == index)
             .ok_or("missing transcript case")?;
-        let run = run_entry(
+        let posts = posted_bodies(
             entry,
             transcript.to_str().ok_or("non-UTF-8 transcript path")?,
             NOW_TEXT.parse()?,
         )
         .await?;
-        assert_eq!(run.exit, 0);
         let mut actual = Vec::new();
-        for post in run.outcome.posts {
-            let batch: wire::capture::CaptureBatchRequest = serde_json::from_str(&post.body)?;
+        for body in posts {
+            let batch: wire::capture::CaptureBatchRequest = serde_json::from_str(&body)?;
             for message in batch.messages {
                 if let Some(arguments) = message.tool_args {
                     actual.push((

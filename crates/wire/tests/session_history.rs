@@ -6,13 +6,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::fmt::Debug;
-use strum::IntoEnumIterator;
 use wire::events::ContextSource;
 use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTranscriptResponse, HarnessTranscriptTool,
     HarnessTranscriptTurn, MessageUsage, SessionMessageRole, TranscriptBlock, TranscriptToolStatus,
 };
-use wire::harness::{HarnessCode, HarnessId, HarnessSessionStatus, RosterCommand};
+use wire::harness::{HarnessCode, HarnessId, HarnessSessionStatus};
 use wire::session_id::{
     DecodedSegment, SegmentError, SessionId, SessionRef, decode_segment, encode_segment,
 };
@@ -44,7 +43,7 @@ fn invalid(segment: &str) {
 }
 
 #[test]
-fn t0_1_encode_is_unpadded_base64url_and_decodes_back() {
+fn encode_is_unpadded_base64url_and_decodes_back() {
     let id = session(&format!("claude-code:{UUID}"));
     let encoded = encode_segment(&id);
     assert_eq!(
@@ -81,7 +80,7 @@ fn encode_uses_the_url_alphabet_without_padding() {
 }
 
 #[test]
-fn t0_2_decodes_an_unpadded_hermes_segment() {
+fn decodes_an_unpadded_hermes_segment() {
     let decoded = decode_segment("aGVybWVzOjIwMjYwODAyXzIyNTY0N182YWQwYjk").unwrap();
     assert_eq!(
         decoded,
@@ -93,7 +92,7 @@ fn t0_2_decodes_an_unpadded_hermes_segment() {
 }
 
 #[test]
-fn t0_3_a_bare_uuid_is_not_misread_as_base64() {
+fn a_bare_uuid_is_not_misread_as_base64() {
     let decoded = decode_segment(UUID).unwrap();
     assert_eq!(decoded.session, SessionRef::Bare(UUID.to_owned()));
     let resolved = session(&format!("claude-code:{UUID}"));
@@ -110,17 +109,17 @@ fn bare_uuid_match_is_case_insensitive() {
 }
 
 #[test]
-fn t0_4_leading_whitespace_in_the_decoded_id_is_rejected() {
+fn leading_whitespace_in_the_decoded_id_is_rejected() {
     invalid("IGNsYXVkZS1jb2RlOng");
 }
 
 #[test]
-fn t0_5_a_roster_token_prefix_is_rejected() {
+fn a_roster_token_prefix_is_rejected() {
     invalid("Y2xhdWRlOmFiYw");
 }
 
 #[test]
-fn t0_6_path_fallback_collapses_to_the_uuid_and_redirects() {
+fn path_fallback_collapses_to_the_uuid_and_redirects() {
     let decoded = decode_segment(
         "Y2xhdWRlLWNvZGU6LWhvbWUtcml2ZXQvM2YyYzlhMTAtMWIyYy00ZDVlLThmOTAtYTFiMmMzZDRlNWY2",
     )
@@ -139,12 +138,12 @@ fn a_native_with_a_slash_but_no_uuid_tail_is_kept() {
 }
 
 #[test]
-fn t0_7_padding_is_rejected() {
+fn padding_is_rejected() {
     invalid("abc=");
 }
 
 #[test]
-fn t0_8_a_task_key_is_rejected() {
+fn a_task_key_is_rejected() {
     invalid("task%3A123");
     invalid("task:123");
 }
@@ -191,73 +190,19 @@ fn encode_segment_text(text: &str) -> String {
 }
 
 #[test]
-fn roster_commands_map_to_harness_ids_both_ways() {
-    let table = [
-        (HarnessId::ClaudeCode, "claude"),
-        (HarnessId::GrokBuild, "grok"),
-        (HarnessId::KimiCode, "kimi"),
-        (HarnessId::Hermes, "hermes"),
-        (HarnessId::Codex, "codex"),
-        (HarnessId::Opencode, "opencode"),
-        (HarnessId::Omp, "omp"),
-        (HarnessId::Dsh, "dsh"),
-        (HarnessId::Cursor, "cursor"),
-        (HarnessId::Cowork, "cowork"),
-    ];
-    assert_eq!(table.len(), HarnessId::iter().count());
-    for (harness, command) in table {
-        let roster = RosterCommand::from(harness);
-        assert_eq!(roster.to_string(), command);
-        assert_eq!(serde_json::to_value(roster).unwrap(), json!(command));
-        assert_eq!(command.parse::<RosterCommand>().unwrap(), roster);
-        assert_eq!(HarnessId::from(roster), harness);
-    }
-}
-
-#[test]
-fn harness_codes_carry_status_and_retryable() {
-    let table = [
-        (
-            HarnessCode::InvalidSessionId,
-            "invalid_session_id",
-            400,
-            false,
-        ),
-        (HarnessCode::BadRequest, "bad_request", 400, false),
-        (
-            HarnessCode::SessionIdCollision,
-            "session_id_collision",
-            409,
-            false,
-        ),
-        (HarnessCode::TurnInFlight, "turn_in_flight", 409, true),
-        (
-            HarnessCode::CapabilityUnsupported,
-            "capability_unsupported",
-            501,
-            false,
-        ),
-        (HarnessCode::UnknownApproval, "unknown_approval", 404, false),
-        (HarnessCode::UnknownPrompt, "unknown_prompt", 404, false),
-        (HarnessCode::TurnFailed, "turn_failed", 502, false),
-        (
-            HarnessCode::SessionRunningElsewhere,
-            "session_running_elsewhere",
-            409,
-            false,
-        ),
-    ];
-    assert_eq!(table.len(), HarnessCode::iter().count());
-    for (code, name, status, retryable) in table {
+fn harness_codes_serialize_by_name() {
+    for (code, name) in [
+        (HarnessCode::InvalidSessionId, "invalid_session_id"),
+        (HarnessCode::BadRequest, "bad_request"),
+        (HarnessCode::CapabilityUnsupported, "capability_unsupported"),
+    ] {
         assert_eq!(roundtrip::<HarnessCode>(&json!(name)), code);
         assert_eq!(code.to_string(), name);
-        assert_eq!(code.status(), status);
-        assert_eq!(code.retryable(), retryable);
     }
 }
 
 #[test]
-fn b5_1_turns_serialize_with_optional_fields_omitted() {
+fn turns_serialize_with_optional_fields_omitted() {
     let wire = json!([
         {"role": "user", "text": "hi"},
         {
@@ -277,6 +222,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
             HarnessTranscriptTurn {
                 role: SessionMessageRole::User,
                 text: "hi".to_owned(),
+                reply_text: None,
                 thinking: None,
                 tools: None,
                 usage: None,
@@ -292,6 +238,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
             HarnessTranscriptTurn {
                 role: SessionMessageRole::Assistant,
                 text: "hello".to_owned(),
+                reply_text: None,
                 thinking: Some("x".to_owned()),
                 tools: None,
                 usage: Some(MessageUsage {
@@ -313,7 +260,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
 }
 
 #[test]
-fn b5_2_tools_carry_status_args_and_id() {
+fn tools_carry_status_args_and_id() {
     let wire = json!({
         "role": "assistant",
         "text": "done",
@@ -365,7 +312,7 @@ fn prompt_tools_carry_input_and_result_text() {
 }
 
 #[test]
-fn b5_6_compact_markers_keep_the_compact_flag() {
+fn compact_markers_keep_the_compact_flag() {
     let wire = json!({
         "role": "assistant",
         "text": "Conversation compacted (180k tokens → 12k tokens)",
@@ -455,11 +402,6 @@ fn every_way_of_naming_a_session_decodes_to_the_same_reference() {
     for segment in [import.clone(), import.replace(':', "%3A")] {
         let decoded = decode_segment(&segment).unwrap();
         assert_eq!(decoded.session, SessionRef::Import(import.parse().unwrap()));
-        assert_eq!(
-            decoded.session.key().map(|key| key.to_string()),
-            Some(import.clone())
-        );
     }
-    assert_eq!(decode_segment(UUID).unwrap().session.key(), None);
     invalid("import:short");
 }

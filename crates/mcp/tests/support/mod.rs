@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 pub fn server() -> Server {
     Server::new(
         Arc::new(testkit::FakeMemoryStore::default()),
-        false,
         CancellationToken::new(),
     )
     .expect("server")

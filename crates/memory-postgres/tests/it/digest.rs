@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
@@ -66,11 +64,10 @@ async fn captured(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let (long_id, long_key) = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
             "claude-code:long",
             vec![
@@ -88,10 +85,10 @@ async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
     imported.settings = Some(serde_json::from_str(
         r#"{"origin":{"author":"ana","node":"laptop","conversation_id":"00000000-0000-4000-8000-000000000009","session_key":"codex:shared","agent":"codex","created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-01T10:00:00Z"}}"#,
     )?);
-    let (imported_id, imported_key) = captured(&store, "phil", &imported).await?;
+    let (imported_id, imported_key) = captured(&store, "dana", &imported).await?;
     let (_, trashed_key) = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
             "claude-code:trashed",
             vec![said("evt-t", at("2026-10-14T09:00:00Z")?)],
@@ -104,7 +101,7 @@ async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
 
     let digests = store
         .session_digests(
-            &Owner::new("phil".to_owned())?,
+            &Owner::new("dana".to_owned())?,
             &[
                 long_key.clone(),
                 imported_key.clone(),
@@ -143,32 +140,31 @@ async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn digests_never_return_another_owner(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
-    let (_, phils) = captured(
+    let (_, danas) = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
-            "claude-code:phil",
+            "claude-code:dana",
             vec![said("evt-p", at("2026-10-14T09:00:00Z")?)],
         ),
     )
     .await?;
-    let (_, alexs) = captured(
+    let (_, iness) = captured(
         &store,
-        "alex",
+        "ines",
         &batch(
-            "claude-code:alex",
+            "claude-code:ines",
             vec![said("evt-a", at("2026-10-14T09:00:00Z")?)],
         ),
     )
     .await?;
 
     let digests = store
-        .session_digests(&Owner::new("phil".to_owned())?, &[alexs, phils.clone()])
+        .session_digests(&Owner::new("dana".to_owned())?, &[iness, danas.clone()])
         .await?;
 
     let keys: Vec<&str> = digests.iter().map(|digest| digest.key.as_str()).collect();
-    assert_eq!(keys, [phils.as_str()]);
+    assert_eq!(keys, [danas.as_str()]);
     Ok(())
 }

@@ -216,13 +216,7 @@ impl FromStr for ShareServer {
 
 pub struct ShareKey(age::x25519::Identity);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 140: the share key is the only secret in a share code; Debug must never print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for ShareKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("ShareKey(..)")

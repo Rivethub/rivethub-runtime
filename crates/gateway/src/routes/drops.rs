@@ -93,25 +93,11 @@ async fn method_not_allowed(request: Request) -> Response {
     refusal(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
 }
 
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract treats an authorization header that is not text as no token, which refuses the upload with 401"
-        )
-    )]
-    let text = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = text.trim().split_once(' ')?;
-    let token = token.trim();
-    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
-}
-
 fn holder(gateway: &Gateway, headers: &HeaderMap) -> Result<UserId, Turned> {
     if !headers.contains_key(header::AUTHORIZATION) {
         return Err(Turned::NoToken);
     }
-    let (user, scope) = bearer(headers)
+    let (user, scope) = crate::auth::bearer(headers)
         .and_then(|token| gateway.tenancy.user_for_token(token))
         .ok_or(Turned::InvalidToken)?;
     if scope.allows(TokenScope::DropsWrite) {
@@ -137,13 +123,7 @@ async fn drain(stream: &mut BodyDataStream, cap: u64) {
 }
 
 fn declared_length(headers: &HeaderMap) -> Option<u64> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract reads a content-length that is not a number as none declared, so the upload reserves max_bytes"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let length: u64 = headers
         .get(header::CONTENT_LENGTH)?
         .to_str()
@@ -257,13 +237,7 @@ async fn upload(
 }
 
 fn drop_id(segment: Result<Path<String>, PathRejection>) -> Option<DropId> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract answers a malformed drop id, invalid UTF-8 included, with the same 404 as an unknown one"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let id = segment.ok()?.0.parse().ok()?;
     Some(id)
 }

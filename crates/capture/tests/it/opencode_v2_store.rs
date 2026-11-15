@@ -8,7 +8,11 @@ use chrono::DateTime;
 use chrono::Utc;
 use kernel::transcript::ListLimit;
 use kernel::transcript::SessionLister;
+use kernel::transcript::ToolOutputRead;
+use kernel::transcript::TranscriptRead;
 use kernel::transcript::TranscriptReader;
+use kernel::transcript::TranscriptToolStatus;
+use kernel::transcript::TranscriptWindow;
 use rusqlite::Connection;
 use serde::Deserialize;
 use wire::harness::HarnessId;
@@ -274,6 +278,50 @@ async fn opencode_2_tool_calls_carry_name_input_and_result() -> TestResult {
             .starts_with("Invalid arguments for tool \"read\""),
         "{}",
         tool.content
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn opencode_2_failed_call_is_stored_and_read_as_failed() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    store(dir.path())?;
+    let lister = StoreSessionLister::new(StoreRoots {
+        opencode: Some(dir.path().to_path_buf()),
+        ..StoreRoots::default()
+    });
+    let TranscriptRead::Read(read) = lister
+        .transcript(
+            HarnessId::Opencode,
+            FAILED_SESSION,
+            TranscriptWindow::Latest,
+        )
+        .await?
+    else {
+        return Err("opencode has a transcript source".into());
+    };
+    let call = read
+        .turns
+        .iter()
+        .filter_map(|turn| turn.tools.as_ref())
+        .flatten()
+        .find(|tool| tool.name == "read")
+        .ok_or("the failed call")?;
+    assert_eq!(call.status, TranscriptToolStatus::Error);
+    let id = call.id.as_deref().ok_or("the call has an id")?;
+    let ToolOutputRead::Found(output) = lister
+        .tool_output(HarnessId::Opencode, FAILED_SESSION, id)
+        .await?
+    else {
+        return Err("the failed call has an output".into());
+    };
+    assert!(output.is_error);
+    assert!(
+        output
+            .text
+            .starts_with("Invalid arguments for tool \"read\""),
+        "{}",
+        output.text
     );
     Ok(())
 }

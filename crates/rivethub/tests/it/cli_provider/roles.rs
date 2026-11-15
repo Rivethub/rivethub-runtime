@@ -63,7 +63,7 @@ async fn every_role_gets_its_own_provider_and_model() -> TestResult {
     .await?;
     let home = tempfile::tempdir()?;
     let text = format!(
-        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: big\n    model: agent-model\nproviders:\n  big:\n    type: vllm\n    base_url: http://{big}\n    model: big-model\n  small:\n    type: vllm\n    base_url: http://{small}\n    model: small-model\nmesh:\n  enabled: false\n  node_name: test-node\nmemory:\n  sqlite:\n    path: ':memory:'\n  models:\n    default:\n      provider: big\n      model: big-model\n    summarizer:\n      provider: small\n      model: small-summarizer\n    wiki_writer:\n      provider: big\n      model: big-writer\n    embedder:\n      endpoint: http://{embed}\n      model: bge-test\n",
+        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: big\n    model: agent-model\nproviders:\n  big:\n    type: vllm\n    base_url: http://{big}\n    model: big-model\n  small:\n    type: vllm\n    base_url: http://{small}\n    model: small-model\nmemory:\n  sqlite:\n    path: ':memory:'\n  models:\n    default:\n      provider: big\n      model: big-model\n    summarizer:\n      provider: small\n      model: small-summarizer\n    wiki_writer:\n      provider: big\n      model: big-writer\n    embedder:\n      endpoint: http://{embed}\n      model: bge-test\n",
         home = home.path().display(),
         big = big.addr,
         small = small.addr,
@@ -105,7 +105,7 @@ async fn absent_models_give_every_role_the_default_agent() -> TestResult {
     let big = served("served-big").await?;
     let home = tempfile::tempdir()?;
     let text = format!(
-        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: big\n    model: agent-model\nproviders:\n  big:\n    type: vllm\n    base_url: http://{big}\n    model: big-model\nmesh:\n  enabled: false\n  node_name: test-node\nmemory:\n  sqlite:\n    path: ':memory:'\n",
+        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: big\n    model: agent-model\nproviders:\n  big:\n    type: vllm\n    base_url: http://{big}\n    model: big-model\nmemory:\n  sqlite:\n    path: ':memory:'\n",
         home = home.path().display(),
         big = big.addr,
     );

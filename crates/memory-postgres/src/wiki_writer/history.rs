@@ -35,13 +35,7 @@ pub(super) async fn since(
         .collect();
     let mut entries: Vec<WikiHistoryEntry> = Vec::new();
     blobs(root, &specs, |markdown| {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: the rule of contract note 100: a git version of the page that does not parse holds no History to restore"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(page) = parse_wiki_page(markdown) else {
             return;
         };

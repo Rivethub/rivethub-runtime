@@ -89,24 +89,12 @@ pub(super) async fn assert_snapshot(
         return Ok(());
     }
     let quote = Evidence::quote(evidence);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: an owner that does not parse is left off the claim"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let by = Owner::new(owner.to_owned()).ok();
     let now = Utc::now();
     let mut sessions: HashMap<Uuid, SessionId> = HashMap::new();
     for fact in snapshot {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a key that does not fit FactKey is skipped"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(key) = FactKey::new(&fact.attribute) else {
             tracing::info!(attribute = %fact.attribute, "skipped a fact whose key does not fit");
             continue;
@@ -222,13 +210,7 @@ fn clipped_value(text: &str) -> Option<FactValue> {
         return None;
     }
     let clipped: String = trimmed.chars().take(400).collect();
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a value that does not fit FactValue is absent"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let value = FactValue::new(&clipped).ok();
     value
 }

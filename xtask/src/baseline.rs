@@ -91,12 +91,8 @@ pub fn adjudicate(baseline: &Baseline, check: &str, hits: &[Hit], findings: &mut
         *count += 1;
         if *count > baseline.count(check, &hit.file, &hit.text) {
             findings.push(format!(
-                "{check} {}:{}: {} (occurrence {}) → docs/PATTERNS.md#{}",
-                hit.file,
-                hit.line,
-                hit.text,
-                count,
-                check.to_ascii_lowercase()
+                "{check} {}:{}: {} (occurrence {})",
+                hit.file, hit.line, hit.text, count
             ));
         }
     }

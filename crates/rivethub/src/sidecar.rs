@@ -64,7 +64,6 @@ fn mcp_exit(error: &mcp::Error) -> Exit {
         | mcp::Error::WikiRedirect
         | mcp::Error::Task(_)
         | mcp::Error::Initialize(_)
-        | mcp::Error::Service(_)
         | mcp::Error::Format(_)
         | mcp::Error::Path(_)
         | mcp::Error::Share(_)
@@ -217,7 +216,7 @@ async fn run_server(
         mcp::plugins::SocketTools::new(folder.join("tools.sock"), folder.join("tools.token"))?;
     let identity = crate::composition::identities::load(config, env).await?;
     let viewer = identity.primary();
-    let mut builder = mcp::Server::builder(memory, false, shutdown.child_token())
+    let mut builder = mcp::Server::builder(memory, shutdown.child_token())
         .store_identity(viewer.as_str())
         .await?
         .display_zone(display_zone(env))
@@ -242,8 +241,7 @@ pub(crate) fn memory_future(
             "rh local serves MCP only when a host or socket is configured".into(),
         ));
     }
-    let mut builder =
-        mcp::Server::builder(memory, false, shutdown.child_token()).display_zone(zone);
+    let mut builder = mcp::Server::builder(memory, shutdown.child_token()).display_zone(zone);
     if let Some(port) = plugins {
         builder = builder.plugins(port);
     }

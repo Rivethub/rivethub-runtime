@@ -56,7 +56,7 @@ fn wiki_extraction(env: &Environment) -> bool {
 
 fn require_wiki_extraction(env: &Environment, role: ProcessRole) -> Result<(), RootError> {
     if role
-        .claim_roles()?
+        .selected()
         .contains(&kernel::queue::WorkerRole::WikiBuilder)
         && !wiki_extraction(env)
     {
@@ -231,10 +231,7 @@ async fn owner_scopes(
     })
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "worker dependencies are kernel ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct WorkerPorts<Q> {
     pub queue: Arc<Q>,
     pub targets: Arc<dyn EmbeddingStore>,
@@ -283,7 +280,6 @@ pub fn with_models<Q: JobQueue + 'static>(
     shutdown: &CancellationToken,
     activities: &Activities,
 ) -> Result<ComposedRunner<Q>, RootError> {
-    role.claim_roles()?;
     let cancel = shutdown.child_token();
     let bindings = role_bindings(config, factory, &cancel)?;
     check_embeddings(role, &bindings)?;
@@ -350,10 +346,7 @@ pub fn with_models<Q: JobQueue + 'static>(
     })
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "worker runner holds kernel ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct ComposedRunner<Q> {
     pub runner: Runner<Q>,
     tasks: crate::models::ModelTasks,
@@ -388,10 +381,7 @@ async fn drive<Q: JobQueue + 'static>(
     Ok(())
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "role bindings hold kernel model ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct RoleBindings {
     pub summarizer: crate::models::ModelBinding,
     pub categorizer: crate::models::ModelBinding,

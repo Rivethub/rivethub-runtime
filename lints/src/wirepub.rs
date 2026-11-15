@@ -8,7 +8,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) WIREPUB,
     Warn,
-    "private field on a wire payload struct (payloads have pub fields; validated newtypes are exempt) → docs/PATTERNS.md#wirepub",
+    "private field on a wire payload struct (payloads have pub fields; validated newtypes are exempt)",
     Wirepub::default()
 );
 
@@ -69,7 +69,7 @@ impl<'tcx> LateLintPass<'tcx> for Wirepub {
                 WIREPUB,
                 *hir_id,
                 *span,
-                "private field on a wire payload struct (wire payloads have pub fields; validated newtypes are exempt) → docs/PATTERNS.md#wirepub"
+                "private field on a wire payload struct (wire payloads have pub fields; validated newtypes are exempt)"
                     .to_owned(),
             );
         }

@@ -21,7 +21,7 @@ impl Vault for MemoryVault {
     }
 }
 
-const OLD_FILE: &str = r#"{"logins":{"rivethub.cloud":{"access_token":"rhca_x","refresh_token":"rhcr_x","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"},"team.example.com":{"team_token":"rht_x","user":"phil"}}}"#;
+const OLD_FILE: &str = r#"{"logins":{"rivethub.cloud":{"access_token":"rhca_x","refresh_token":"rhcr_x","expires_at":"2099-01-01T00:00:00Z","scope":"drops:write"},"team.example.com":{"team_token":"rht_x","user":"dana"}}}"#;
 
 fn server(host: &str) -> ShareServer {
     host.parse().expect("server")
@@ -37,7 +37,7 @@ fn old_file(dir: &Path) -> PathBuf {
 fn team(token: &str) -> Login {
     Login::Team(TeamLogin {
         team_token: token.to_owned(),
-        user: "phil".to_owned(),
+        user: "dana".to_owned(),
     })
 }
 
@@ -60,7 +60,7 @@ async fn the_file_store_reads_old_files_and_round_trips() {
     assert_eq!(
         listed.get("team.example.com"),
         Some(&Listed::Team {
-            user: "phil".to_owned()
+            user: "dana".to_owned()
         })
     );
 

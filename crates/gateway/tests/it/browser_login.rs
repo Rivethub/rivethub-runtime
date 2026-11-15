@@ -528,7 +528,7 @@ async fn rotation_invalidates_the_old_token_every_session_and_every_code() -> Te
 async fn a_session_idle_past_its_limit_is_refused() -> TestResult {
     let rig = rig_with(
         AuthPolicy {
-            idle: Duration::from_secs(1),
+            idle: Duration::from_millis(300),
             ..policy()
         },
         false,
@@ -536,14 +536,8 @@ async fn a_session_idle_past_its_limit_is_refused() -> TestResult {
     let browser = login(&rig).await?;
     let probe = || rig.call("GET", "/api/memory/stats").browser(&browser);
     assert_eq!(probe().send().await?.status, StatusCode::OK);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "tower-sessions expires on inactivity against the wall clock, which a paused tokio clock does not move"
-        )
-    )]
-    tokio::time::sleep(Duration::from_millis(2100)).await;
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
+    tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(probe().send().await?.status, StatusCode::UNAUTHORIZED);
     Ok(())
 }

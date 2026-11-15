@@ -131,10 +131,7 @@ SELECT g.session_key, g.title, g.started_at, g.updated_at, g.active, g.kept, g.t
  ORDER BY g.started_at DESC, g.session_key DESC";
 
 #[derive(sqlx::FromRow)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "one column per SQL flag of a session row"
-)]
+#[expect(clippy::struct_excessive_bools)]
 struct Row {
     owner: Option<String>,
     session_key: String,

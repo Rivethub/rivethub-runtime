@@ -1,4 +1,4 @@
-warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule) → docs/PATTERNS.md#dupnames
+warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule)
   --> $DIR/fail.rs:11:9
    |
 LL |         H::A => "a",
@@ -6,13 +6,13 @@ LL |         H::A => "a",
    |
    = note: `#[warn(dupnames)]` on by default
 
-warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule) → docs/PATTERNS.md#dupnames
+warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule)
   --> $DIR/fail.rs:12:9
    |
 LL |         H::B => "b",
    |         ^^^^^^^^^^^
 
-warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule) → docs/PATTERNS.md#dupnames
+warning: match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule)
   --> $DIR/fail.rs:13:9
    |
 LL |         H::C => "c",

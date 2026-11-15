@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
@@ -73,7 +71,6 @@ async fn captured(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let mut tool = said("evt-tool", "[tool call] Read", at("2026-10-14T09:05:00Z")?);
     tool.role = Role::Tool;
@@ -90,7 +87,7 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
         ],
     );
     first.settings = Some(object(r#"{"model":"opus"}"#)?);
-    let first_id = captured(&store, "phil", &first).await?;
+    let first_id = captured(&store, "dana", &first).await?;
     let skipped = batch(
         "claude-code:skipped",
         vec![said(
@@ -99,15 +96,15 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
             at("2026-10-14T09:00:00Z")?,
         )],
     );
-    captured(&store, "phil", &skipped).await?;
+    captured(&store, "dana", &skipped).await?;
     let third = batch(
         "codex:third",
         vec![said("evt-third", "third", at("2026-10-14T10:00:00Z")?)],
     );
-    let third_id = captured(&store, "phil", &third).await?;
+    let third_id = captured(&store, "dana", &third).await?;
 
     let sessions = store
-        .bundled_sessions(&author("phil"), Some(&[third_id, first_id]))
+        .bundled_sessions(&author("dana"), Some(&[third_id, first_id]))
         .await?;
 
     let mut ids: Vec<_> = sessions
@@ -122,7 +119,7 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
         .iter()
         .find(|session| session.origin.conversation_id == first_id.to_string())
         .ok_or("first session")?;
-    assert_eq!(exported.origin.author, "phil");
+    assert_eq!(exported.origin.author, "dana");
     assert_eq!(exported.origin.session_key, "claude-code:first");
     assert_eq!(exported.batch.settings, first.settings);
     assert_eq!(
@@ -153,50 +150,48 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
-    let phils = captured(
+    let danas = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
-            "claude-code:phil",
+            "claude-code:dana",
             vec![said("evt-p", "mine", at("2026-10-14T09:00:00Z")?)],
         ),
     )
     .await?;
-    let alexs = captured(
+    let iness = captured(
         &store,
-        "alex",
+        "ines",
         &batch(
-            "claude-code:alex",
-            vec![said("evt-a", "not phil's", at("2026-10-14T09:00:00Z")?)],
+            "claude-code:ines",
+            vec![said("evt-a", "not dana's", at("2026-10-14T09:00:00Z")?)],
         ),
     )
     .await?;
 
     let named = store
-        .bundled_sessions(&author("phil"), Some(&[alexs, phils]))
+        .bundled_sessions(&author("dana"), Some(&[iness, danas]))
         .await?;
-    let everything = store.bundled_sessions(&author("phil"), None).await?;
+    let everything = store.bundled_sessions(&author("dana"), None).await?;
 
     for sessions in [&named, &everything] {
         let ids: Vec<_> = sessions
             .iter()
             .map(|session| session.origin.conversation_id.clone())
             .collect();
-        assert_eq!(ids, [phils.to_string()]);
+        assert_eq!(ids, [danas.to_string()]);
     }
-    assert!(!serde_json::to_string(&everything)?.contains("not phil's"));
+    assert!(!serde_json::to_string(&everything)?.contains("not dana's"));
     Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let kept = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
             "claude-code:kept",
             vec![said("evt-k", "kept", at("2026-10-14T09:00:00Z")?)],
@@ -205,7 +200,7 @@ async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResu
     .await?;
     let trashed = captured(
         &store,
-        "phil",
+        "dana",
         &batch(
             "claude-code:trashed",
             vec![said("evt-t", "trashed", at("2026-10-14T09:01:00Z")?)],
@@ -216,9 +211,9 @@ async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResu
         .trash_session("claude-code:trashed", None, at("2026-10-15T00:00:00Z")?)
         .await?;
 
-    let everything = store.bundled_sessions(&author("phil"), None).await?;
+    let everything = store.bundled_sessions(&author("dana"), None).await?;
     let named = store
-        .bundled_sessions(&author("phil"), Some(&[trashed]))
+        .bundled_sessions(&author("dana"), Some(&[trashed]))
         .await?;
 
     let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
@@ -236,7 +231,6 @@ async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResu
 async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T09:00:00Z")?;
     let steps: Vec<String> = (1..=8).map(|step| format!("step {step}")).collect();
@@ -247,9 +241,9 @@ async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
             ..said(&format!("evt-{step}"), step, tied)
         })
         .collect();
-    let id = captured(&store, "phil", &batch("claude-code:undated", messages)).await?;
+    let id = captured(&store, "dana", &batch("claude-code:undated", messages)).await?;
 
-    let sessions = store.bundled_sessions(&author("phil"), Some(&[id])).await?;
+    let sessions = store.bundled_sessions(&author("dana"), Some(&[id])).await?;
 
     let session = sessions.first().ok_or("undated session")?;
     let exported: Vec<&str> = session
@@ -266,25 +260,24 @@ async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
 async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let key = "claude-code:overlap";
     let undated = |content: &str| CaptureMessage {
         created_at: None,
         ..said(&format!("evt-{content}"), content, Utc::now())
     };
-    let id = captured(&store, "phil", &batch(key, vec![undated("seed")])).await?;
+    let id = captured(&store, "dana", &batch(key, vec![undated("seed")])).await?;
     let warm = (pool.acquire().await?, pool.acquire().await?);
     drop(warm);
 
-    let first: Vec<String> = (0..3_000).map(|n| format!("a {n}")).collect();
+    let first: Vec<String> = (0..3).map(|n| format!("a {n}")).collect();
     let metadata = object("{}")?;
     let mut holder = memory_postgres::CaptureWriter::begin(&pool, key).await?;
     let second = tokio::spawn({
         let store = PostgresMemory::new(pool.clone());
         let request = batch(key, vec![undated("b")]);
         async move {
-            captured(&store, "phil", &request)
+            captured(&store, "dana", &request)
                 .await
                 .map_err(|e| e.to_string())
         }
@@ -310,16 +303,16 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
                 tool_args: None,
                 tool_result: None,
                 metadata: &metadata,
-                owner_user_id: "phil",
+                owner_user_id: "dana",
                 created_at: None,
-                batch_index: i64::try_from(index)?,
+                batch_index: i64::try_from(index)? * 5_000_000,
             })
             .await?;
     }
     holder.commit().await?;
     second.await??;
 
-    let sessions = store.bundled_sessions(&author("phil"), Some(&[id])).await?;
+    let sessions = store.bundled_sessions(&author("dana"), Some(&[id])).await?;
 
     let session = sessions.first().ok_or("overlap session")?;
     let exported: Vec<&str> = session

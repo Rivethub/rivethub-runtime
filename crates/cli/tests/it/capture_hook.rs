@@ -101,13 +101,9 @@ async fn backfill_reports_what_it_would_capture_and_posts_nothing()
 #[tokio::test]
 async fn backfill_exits_1_and_names_the_failure_when_the_gateway_is_unreachable()
 -> Result<(), Box<dyn std::error::Error>> {
-    let port = testkit::ports::claim()?;
     let home = home();
     let env = environment(&home);
-    config(
-        &home,
-        &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
-    );
+    config(&home, "gateway:\n  host: 127.0.0.1\n  port: 9\n");
     store_a_session(&home)?;
     let report = run(&["capture", "backfill", "--harness", "claude-code"], &env).await;
     assert_eq!(report.exit, Exit::Failure);

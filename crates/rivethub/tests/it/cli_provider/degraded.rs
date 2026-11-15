@@ -16,7 +16,7 @@ fn configured(home: &std::path::Path) -> TestResult<(config::Config, config::Env
     std::fs::set_permissions(&stalled, std::fs::Permissions::from_mode(0o700))?;
     let env = config::Environment::from_vars([(OsStr::new("HOME"), home.as_os_str())]);
     let text = format!(
-        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\n  slow:\n    provider: q\n    model: slow-model\n  gone:\n    provider: r\n    model: gone-model\nproviders:\n  p:\n    type: claude-cli\n    model: provider-model\n  q:\n    type: hermes-cli\n    binary: {stalled}\n    discovery_timeout_ms: 200\n  r:\n    type: kimi-code\n    binary: {absent}\ntasks:\n  enabled: false\nmesh:\n  enabled: false\n  node_name: test-node\n",
+        "runtime:\n  workspace: {home}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\n  slow:\n    provider: q\n    model: slow-model\n  gone:\n    provider: r\n    model: gone-model\nproviders:\n  p:\n    type: claude-cli\n    model: provider-model\n  q:\n    type: hermes-cli\n    binary: {stalled}\n    discovery_timeout_ms: 200\n  r:\n    type: kimi-code\n    binary: {absent}\n",
         home = home.display(),
         stalled = stalled.display(),
         absent = home.join("absent").display(),

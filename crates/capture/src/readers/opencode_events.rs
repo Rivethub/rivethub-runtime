@@ -272,9 +272,9 @@ fn tool(
     name: String,
     state: ToolState,
 ) -> Result<Mapped, TranscriptReaderError> {
-    let (input, result) = match state {
-        ToolState::Completed { input, content } => (input, output_text(content)),
-        ToolState::Error { input, error } => (input, error.message),
+    let (input, result, failed) = match state {
+        ToolState::Completed { input, content } => (input, output_text(content), false),
+        ToolState::Error { input, error } => (input, error.message, true),
         ToolState::Streaming | ToolState::Running => return Ok(Mapped::None),
         ToolState::Other => {
             return Ok(Mapped::Skip(unknown(
@@ -283,12 +283,17 @@ fn tool(
             )));
         }
     };
+    let content = if failed && row.mode == Mode::Capture {
+        format!("[tool-failure] {name}")
+    } else {
+        result.clone()
+    };
     tool_turn(
-        &turn(row, position, Role::Tool, &result),
+        &turn(row, position, Role::Tool, &content),
         ToolFields {
             name: Some(name),
             arguments: Some(input),
-            result: Some(result.clone()),
+            result: Some(result),
         },
     )
 }

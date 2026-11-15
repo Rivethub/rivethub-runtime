@@ -234,13 +234,7 @@ fn decoded_joined(joined: &str, budget: &mut Budget<'_>) -> Option<Decoded> {
     let config =
         GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
     let standard = GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(joined);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B9 (note 136): text that is not base64 in either alphabet is not a blob to scan; only_text_and_der_keys_decode pins it"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let bytes = match standard {
         Ok(bytes) => bytes,
         Err(_) => match GeneralPurpose::new(&base64::alphabet::URL_SAFE, config).decode(joined) {
@@ -278,13 +272,7 @@ fn decoded_joined(joined: &str, budget: &mut Budget<'_>) -> Option<Decoded> {
     if is_der_private_key(&bytes) {
         return Some(Decoded::DerPrivateKey);
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B9 (note 136): a blob that decodes to bytes that are not UTF-8 is not text to scan; only_text_and_der_keys_decode pins it"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(text) = String::from_utf8(bytes) else {
         return None;
     };

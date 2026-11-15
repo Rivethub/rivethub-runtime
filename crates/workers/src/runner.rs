@@ -34,10 +34,7 @@ use crate::summarize::SummarySettings;
 use crate::wiki_builder::WikiBuilderDeps;
 
 #[derive(Clone)]
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 pub struct RoleModel {
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
@@ -64,21 +61,9 @@ impl RunnerConfig {
             poll_interval: POLL_INTERVAL,
         })
     }
-
-    #[must_use]
-    pub fn embedder() -> Self {
-        Self {
-            role: ProcessRole::Embedder,
-            concurrency: EMBED_CONCURRENCY,
-            poll_interval: POLL_INTERVAL,
-        }
-    }
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider and the summary and embedding stores are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct WorkerDeps {
     pub targets: Arc<dyn EmbeddingStore>,
     pub summaries: Arc<dyn SummaryStore>,
@@ -90,10 +75,7 @@ pub struct WorkerDeps {
     pub scopes: Option<crate::OwnerScopes>,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider and the summary and embedding stores are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct Runner<Q> {
     job_settings: crate::MemoryJobSettings,
     schedules: bool,
@@ -285,7 +267,7 @@ where
     }
 
     pub async fn run(&self, cancel: CancellationToken) -> Result<(), WorkerError> {
-        let roles = self.config.role.claim_roles()?;
+        let roles = self.config.role.selected();
         if self.wiki.is_none() && roles.contains(&WorkerRole::WikiBuilder) {
             return Err(WorkerError::MissingDependencies {
                 role: ProcessRole::WikiBuilder,

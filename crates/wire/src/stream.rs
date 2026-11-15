@@ -1,143 +1,9 @@
-use crate::JsonObject;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-
 pub use values::{LlmUsage, ThinkingLevel};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum StreamEventKind {
-    Text,
-    Reasoning,
-    ToolStart,
-    ToolResult,
-    Status,
-    Interrupt,
-    Done,
-    Error,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamEvent {
-    pub r#type: StreamEventKind,
-    pub content: String,
-    pub metadata: Option<JsonObject>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TokenUsage {
-    pub agent: String,
-    pub provider: String,
-    pub model: String,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub timestamp: i64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmChunkKind {
-    Text,
-    Reasoning,
-    ToolCallStart,
-    ToolCallDelta,
-    ToolCallDone,
-    Status,
-    Done,
-    Error,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PartialToolCall {
-    pub index: Option<u32>,
-    pub id: Option<String>,
-    pub name: Option<String>,
-    pub arguments: Option<JsonObject>,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct LlmChunk {
-    pub r#type: LlmChunkKind,
-    pub delta: Option<String>,
-    pub tool_call: Option<PartialToolCall>,
-    pub usage: Option<LlmUsage>,
-    pub citations: Option<Vec<String>>,
-    pub error: Option<String>,
-}
-
-#[serde_as]
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionContext {
-    pub session_token: String,
-    pub agent_id: String,
-    pub node_id: String,
-    pub conversation_id: String,
-    pub user_id: String,
-    pub discord_channel_id: Option<String>,
-    pub telegram_chat_id: Option<String>,
-    pub parent_session_id: Option<String>,
-    pub allowlist: Vec<String>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub issued_at: DateTime<Utc>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub expires_at: DateTime<Utc>,
-    pub working_dir: Option<String>,
-    pub trace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ErrorSeverity {
-    Fatal,
-    Error,
-    Warning,
-    Transient,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RivetError {
-    pub name: String,
-    pub code: String,
-    pub message: String,
-    pub severity: ErrorSeverity,
-    pub retryable: bool,
-    pub timestamp: i64,
-    pub context: JsonObject,
-    pub cause: Option<String>,
-    pub stack: String,
-}
 
 pub mod openai {
     use crate::JsonObject;
     use crate::message::Role;
     use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-    #[serde(tag = "type", rename_all = "camelCase")]
-    pub enum Tool {
-        #[serde(rename = "function")]
-        Function { function: FunctionDef },
-    }
-
-    #[serde_with::skip_serializing_none]
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-    pub struct FunctionDef {
-        pub name: String,
-        pub description: Option<String>,
-        pub parameters: JsonObject,
-    }
 
     #[serde_with::skip_serializing_none]
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -198,8 +64,6 @@ pub mod openai {
         pub model: String,
         pub max_tokens: Option<u64>,
         pub messages: Vec<Message>,
-        pub tools: Option<Vec<Tool>>,
-        pub tool_choice: Option<String>,
         pub stream: Option<bool>,
         pub stream_options: Option<StreamOptions>,
         pub chat_template_kwargs: Option<ChatTemplateKwargs>,
@@ -244,27 +108,12 @@ pub mod openai {
         pub function: FunctionDelta,
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-    #[serde(tag = "type", rename_all = "camelCase")]
-    pub enum FunctionToolCallTag {
-        #[serde(rename = "function")]
-        Function(StreamedPlainToolCall),
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-    #[serde(untagged)]
-    pub enum StreamedToolCall {
-        Function(FunctionToolCallTag),
-        Plain(StreamedPlainToolCall),
-    }
-
     #[serde_with::skip_serializing_none]
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
     pub struct Delta {
         pub role: Option<Role>,
         pub content: Option<String>,
         pub reasoning_content: Option<String>,
-        pub tool_calls: Option<Vec<StreamedToolCall>>,
     }
 
     #[serde_with::skip_serializing_none]

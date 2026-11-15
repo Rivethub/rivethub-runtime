@@ -30,7 +30,7 @@ fn node() -> Node {
     let users = directory.path().join("users.json");
     std::fs::write(
         &users,
-        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+        r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
     )
     .expect("users file");
     let environment = support::environment(&home)
@@ -42,9 +42,9 @@ fn node() -> Node {
         .expect("sqlite")
         .execute_batch(&format!(
             "INSERT INTO ros_conversations (id, session_key, agent, owner_user_id, created_at, updated_at) VALUES
-               ('{ONE}', 'claude-code:one', 'rivet', 'phil', '2026-10-14T09:00:00.000Z', '2026-10-14T10:00:00.000Z'),
-               ('{TWO}', 'claude-code:two', 'rivet', 'phil', '2026-10-15T09:00:00.000Z', '2026-10-15T10:00:00.000Z'),
-               ('{TRASHED}', 'claude-code:gone', 'rivet', 'phil', '2026-10-16T09:00:00.000Z', '2026-10-16T10:00:00.000Z'),
+               ('{ONE}', 'claude-code:one', 'rivet', 'dana', '2026-10-14T09:00:00.000Z', '2026-10-14T10:00:00.000Z'),
+               ('{TWO}', 'claude-code:two', 'rivet', 'dana', '2026-10-15T09:00:00.000Z', '2026-10-15T10:00:00.000Z'),
+               ('{TRASHED}', 'claude-code:gone', 'rivet', 'dana', '2026-10-16T09:00:00.000Z', '2026-10-16T10:00:00.000Z'),
                ('{ANAS}', 'claude-code:ana', 'rivet', 'ana', '2026-10-17T09:00:00.000Z', '2026-10-17T10:00:00.000Z');
              INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, tool_name, tool_args, tool_result, metadata, created_at) VALUES
                ('m1', '{ONE}', 'rivet', 'claude-code', 'user', 'first session with {CLIENT}', NULL, NULL, NULL, '{{}}', '2026-10-14T09:00:00.000Z'),

@@ -121,9 +121,6 @@ pub(crate) async fn dispatch<Q: JobQueue>(
             | FixedJob::EnqueueEntityBackfill
             | FixedJob::EnqueueStaleEntities,
         ) => dispatch_entities(queue, env, job, cancel).await,
-        JobName::Heartbeat { .. } => Err(WorkerError::Unhandled {
-            name: job.name.to_string(),
-        }),
     }
 }
 
@@ -442,7 +439,7 @@ async fn dispatch_entities<Q: JobQueue>(
                 .await
                 .map(|_| ())
         }
-        JobName::Fixed(_) | JobName::Heartbeat { .. } => Err(WorkerError::Unhandled {
+        JobName::Fixed(_) => Err(WorkerError::Unhandled {
             name: job.name.to_string(),
         }),
     }

@@ -31,13 +31,7 @@ pub struct CliBacked {
     tasks: Mutex<TaskTracker>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "PATTERNS MANUALDERIVE: HarnessAdapter is not Debug; this implementation exposes only the harness id"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for CliBacked {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -104,7 +98,6 @@ impl ModelProvider for CliBacked {
     ) -> Result<Receiver<ModelStreamItem>, ModelProviderError> {
         let prompt = HeadlessInput {
             messages: &request.messages,
-            tools: &request.tools,
             system_prompt: self.config.system_prompt.as_deref(),
             max_tokens: request.max_tokens,
         };
@@ -175,7 +168,6 @@ impl ModelProvider for CliBacked {
 #[derive(Serialize)]
 struct HeadlessInput<'a> {
     messages: &'a [wire::message::Message],
-    tools: &'a [rmcp::model::Tool],
     #[serde(skip_serializing_if = "Option::is_none")]
     system_prompt: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

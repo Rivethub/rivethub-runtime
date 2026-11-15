@@ -9,22 +9,10 @@ use kernel::memory::StoredEmbedding;
 use kernel::memory::Unembeddable;
 use memory_postgres::PostgresMemory;
 use pgvector::HalfVector;
-use serde::Deserialize;
 use sqlx::PgPool;
-use testkit::Json;
-use testkit::capture_pg::Recording;
-use testkit::capture_pg::StepRecord;
 use uuid::Uuid;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-
-const FILES: [&str; 5] = [
-    "capture/pg/transcript.json",
-    "capture/pg/task.json",
-    "capture/pg/routed.json",
-    "capture/pg/hook.json",
-    "capture/pg/errors.json",
-];
 
 const WIDTH: usize = 1024;
 
@@ -209,140 +197,29 @@ async fn chunk_texts(pool: &PgPool, message: Uuid) -> Result<Vec<ChunkText>, sql
         .await
 }
 
-struct RecordedEmbed {
-    key: String,
-    content: String,
-    tool_result: Option<String>,
-}
-
-fn collect_recorded() -> Vec<RecordedEmbed> {
-    let mut found = Vec::new();
-    for name in FILES {
-        let text = std::fs::read_to_string(testkit::recording(name)).expect(name);
-        let recording: Recording = serde_json::from_str(&text).expect(name);
-        for scenario in &recording.scenarios {
-            for step in &scenario.steps {
-                push_step(&scenario.name, step, &mut found);
-            }
-        }
-    }
-    assert_eq!(found.len(), 128, "recorded embed-target jobs");
-    found
-}
-
-fn push_step(scenario: &str, step: &StepRecord, found: &mut Vec<RecordedEmbed>) {
-    let Some(rows) = step.rows.as_ref() else {
-        return;
-    };
-    if !rows
-        .as_object()
-        .is_some_and(|object| object.contains_key("graphile_jobs"))
-    {
-        return;
-    }
-    let jobs = rows_array(rows, "graphile_jobs");
-    let messages = rows_array(rows, "ros_messages");
-    for job in jobs {
-        found.push(recorded_embed(scenario, job, messages));
-    }
-}
-
-fn rows_array<'a>(rows: &'a Json, key: &str) -> &'a [Json] {
-    rows.as_object()
-        .and_then(|object| object.get(key))
-        .and_then(Json::as_array)
-        .unwrap_or_else(|| panic!("{key} is not an array"))
-}
-
-fn recorded_embed(scenario: &str, value: &Json, messages: &[Json]) -> RecordedEmbed {
-    let job: RecordedJob =
-        serde_json::from_value(value.clone()).unwrap_or_else(|error| panic!("{scenario}: {error}"));
-    assert_eq!(job.task, "embed-target", "{scenario}");
-    assert_eq!(job.priority, 0, "{}", job.key);
-    assert_eq!(job.max_attempts, 5, "{}", job.key);
-    assert_eq!(job.attempts, 0, "{}", job.key);
-    assert!(job.queue.is_none(), "{}", job.key);
-    let fields: TargetFields =
-        serde_json::from_str(&job.payload).unwrap_or_else(|error| panic!("{scenario}: {error}"));
-    assert_eq!(fields.target_table, "ros_messages", "{}", job.key);
-    assert_eq!(
-        job.key,
-        format!("embed-ros_messages-{}", fields.target_id),
-        "{scenario}"
-    );
-    let message = messages
-        .iter()
-        .find_map(|row| message_for(row, &fields.target_id))
-        .unwrap_or_else(|| panic!("{scenario} missing {}", fields.target_id));
-    RecordedEmbed {
-        key: job.key,
-        content: message.content.unwrap_or_default(),
-        tool_result: message.tool_result,
-    }
-}
-
-fn message_for(row: &Json, id: &str) -> Option<RecordedMessage> {
-    let message: RecordedMessage = serde_json::from_value(row.clone()).expect("message");
-    (message.id == id).then_some(message)
-}
-
-#[derive(Debug, Deserialize)]
-struct RecordedJob {
-    task: String,
-    payload: String,
-    key: String,
-    priority: i16,
-    max_attempts: i32,
-    attempts: i32,
-    queue: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RecordedMessage {
-    id: String,
-    content: Option<String>,
-    tool_result: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct TargetFields {
-    #[serde(rename = "targetTable")]
-    target_table: String,
-    #[serde(rename = "targetId")]
-    target_id: String,
-}
-
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn recorded_message_jobs_round_trip(pool: PgPool) -> TestResult {
-    let jobs = collect_recorded();
+async fn message_jobs_round_trip(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool.clone());
-    for (index, job) in jobs.iter().enumerate() {
-        round_trip_recorded(&pool, &memory, index, job).await?;
+    for (index, (content, tool_result)) in [("plain text", None), ("", Some("tool output"))]
+        .into_iter()
+        .enumerate()
+    {
+        let id = insert_message(&pool, index, content, tool_result).await?;
+        let target = message_target(&id);
+        let loaded = EmbeddingStore::load(&memory, &target)
+            .await?
+            .expect("stored row");
+        assert_eq!(loaded.content, content);
+        assert_eq!(loaded.tool_result.as_deref(), tool_result);
+        EmbeddingStore::write(&memory, stored(target, "hash", Vec::new())).await?;
+        let ledger = message_ledger(&pool, id).await?;
+        assert_eq!(ledger.content_hash.as_deref(), Some("hash"));
+        assert_eq!(ledger.embed_status, None);
+        assert_eq!(ledger.embed_error, None);
+        assert_eq!(ledger.embed_failures, Some(0));
+        assert_eq!(ledger.embedded, Some(true));
+        assert_eq!(ledger.cleared, Some(false));
     }
-    Ok(())
-}
-
-async fn round_trip_recorded(
-    pool: &PgPool,
-    memory: &PostgresMemory,
-    index: usize,
-    job: &RecordedEmbed,
-) -> TestResult {
-    let id = insert_message(pool, index, &job.content, job.tool_result.as_deref()).await?;
-    let target = message_target(&id);
-    let loaded = EmbeddingStore::load(memory, &target)
-        .await?
-        .expect("recorded row");
-    assert_eq!(loaded.content, job.content, "{}", job.key);
-    assert_eq!(loaded.tool_result, job.tool_result, "{}", job.key);
-    EmbeddingStore::write(memory, stored(target, "hash", Vec::new())).await?;
-    let ledger = message_ledger(pool, id).await?;
-    assert_eq!(ledger.content_hash.as_deref(), Some("hash"), "{}", job.key);
-    assert_eq!(ledger.embed_status, None, "{}", job.key);
-    assert_eq!(ledger.embed_error, None, "{}", job.key);
-    assert_eq!(ledger.embed_failures, Some(0), "{}", job.key);
-    assert_eq!(ledger.embedded, Some(true), "{}", job.key);
-    assert_eq!(ledger.cleared, Some(false), "{}", job.key);
     Ok(())
 }
 

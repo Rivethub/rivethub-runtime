@@ -25,13 +25,6 @@ const STALE_PRIORITY: i16 = 10;
 const RECENT: TimeDelta = TimeDelta::hours(24);
 const SUMMARIZE_ATTEMPTS: i32 = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SummaryHealth {
-    pub eligible: u64,
-    pub active_tail: u64,
-    pub below_floor: u64,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SummarizePayload {
@@ -49,45 +42,6 @@ pub(super) fn effective_trigger(trigger: Option<SummaryTrigger>) -> SummaryTrigg
 pub(super) fn read_summarize(payload: &JsonObject) -> Result<SummarizePayload, WorkerError> {
     let value = serde_json::to_value(payload).map_err(WorkerError::summary_payload)?;
     serde_json::from_value(value).map_err(WorkerError::summary_payload)
-}
-
-pub fn summary_health(
-    pending: &[PendingConversation],
-    settings: &super::SummarySettings,
-) -> Result<SummaryHealth, WorkerError> {
-    let batch = u64::from(settings.leaf_batch);
-    let floor = u64::from(settings.idle_floor());
-    if batch == 0 {
-        return Err(WorkerError::SummarySettings {
-            message: "leaf batch must be at least 1".to_owned(),
-        });
-    }
-    let mut health = SummaryHealth {
-        eligible: 0,
-        active_tail: 0,
-        below_floor: 0,
-    };
-    for conversation in pending {
-        let count = u64::from(conversation.unsummarized);
-        let full = count / batch * batch;
-        let rest = count % batch;
-        health.eligible = health
-            .eligible
-            .checked_add(full)
-            .ok_or(WorkerError::Count)?;
-        if rest >= floor {
-            health.active_tail = health
-                .active_tail
-                .checked_add(rest)
-                .ok_or(WorkerError::Count)?;
-        } else {
-            health.below_floor = health
-                .below_floor
-                .checked_add(rest)
-                .ok_or(WorkerError::Count)?;
-        }
-    }
-    Ok(health)
 }
 
 pub async fn handle_enqueue_idle(env: &SummarizeEnv<'_>) -> Result<u64, WorkerError> {

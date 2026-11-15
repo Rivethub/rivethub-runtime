@@ -39,11 +39,6 @@ pub enum MemoryRequest {
         decision: TagDecision,
         decided_by: Option<String>,
     },
-    DecideTagRemovals {
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    },
     AddTag(TagAdd),
     LookupTags(TagLookup),
     LookupOrigins(Vec<String>),

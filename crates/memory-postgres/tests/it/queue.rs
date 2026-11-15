@@ -1,12 +1,9 @@
-use crate::common;
-
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue as _;
 use kernel::queue::WorkerRole;
-use memory_postgres::PostgresMemory;
 use memory_postgres::PostgresQueue;
 use sqlx::PgPool;
 use wire::JsonObject;
@@ -48,10 +45,6 @@ async fn queue(pool: &PgPool) -> Result<PostgresQueue, Box<dyn std::error::Error
     Ok(PostgresQueue::connect(pool.clone()).await?)
 }
 
-fn store(pool: &PgPool) -> PostgresMemory {
-    PostgresMemory::new(pool.clone())
-}
-
 async fn stored_jobs(
     pool: &PgPool,
 ) -> Result<Vec<(String, Option<String>, i64, i64, i64)>, sqlx::Error> {
@@ -83,7 +76,6 @@ fn embed_job() -> Job {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn enqueue_claims_and_completes_through_the_public_api(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
 
     jobs.enqueue(embed_job()).await?;
@@ -158,7 +150,6 @@ async fn enqueue_claims_and_completes_through_the_public_api(pool: PgPool) -> Te
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_postponed_job_waits_its_turn_unless_claimed_by_id(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
     let any = kernel::queue::ClaimSelector::matching(jobs.task_names(WorkerRole::Embedder));
     jobs.enqueue(embed_job()).await?;
@@ -181,7 +172,6 @@ async fn a_postponed_job_waits_its_turn_unless_claimed_by_id(pool: PgPool) -> Te
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
     let arm = |priority: i16, trigger: &str| Job {
         name: JobName::Fixed(FixedJob::SummarizeConversation),
@@ -229,7 +219,6 @@ async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it(pool: PgPool) -> 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn job_keys_replace_preserve_and_revive(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
     let summarize = |payload: JsonObject| Job {
         name: JobName::Fixed(FixedJob::SummarizeConversation),
@@ -275,7 +264,6 @@ async fn job_keys_replace_preserve_and_revive(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn role_scoping_keeps_the_task_lists_apart(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
     assert!(
         jobs.claim(&kernel::queue::ClaimSelector::matching(
@@ -331,32 +319,11 @@ async fn role_scoping_keeps_the_task_lists_apart(pool: PgPool) -> TestResult {
         Some(0),
         "revive resets attempts"
     );
-
-    sqlx::query(
-        "UPDATE graphile_worker._private_jobs
-            SET attempts = max_attempts, key = null,
-                updated_at = now() - interval '8 days'",
-    )
-    .execute(&pool)
-    .await?;
-    let reaped = jobs
-        .reap_dead_corpses(
-            &[
-                JobName::Fixed(FixedJob::ExtractWiki),
-                JobName::Fixed(FixedJob::SummarizeConversation),
-                JobName::Fixed(FixedJob::EmbedTarget),
-            ],
-            200,
-        )
-        .await?;
-    assert_eq!(reaped, 1, "the keyless corpse is reaped");
-    assert_eq!(stored_jobs(&pool).await?, Vec::new());
     Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn queue_health_reports_buckets(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let jobs = queue(&pool).await?;
     jobs.enqueue(Job {
         name: JobName::Fixed(FixedJob::ExtractWiki),
@@ -390,24 +357,7 @@ async fn queue_health_reports_buckets(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn the_migrations_create_the_queue(pool: PgPool) -> TestResult {
-    let jobs = queue(&pool).await?;
-    jobs.enqueue(embed_job()).await?;
-    let claimed = jobs
-        .claim(&kernel::queue::ClaimSelector::matching(
-            jobs.task_names(WorkerRole::Embedder),
-        ))
-        .await?;
-    assert_eq!(
-        claimed.map(|job| job.name),
-        Some(JobName::Fixed(FixedJob::EmbedTarget))
-    );
-    assert!(store(&pool).queue_available().await?);
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn the_store_reports_a_missing_queue_as_unavailable(pool: PgPool) -> TestResult {
+async fn queue_availability_follows_the_queue_schema(pool: PgPool) -> TestResult {
     sqlx::query("DROP SCHEMA graphile_worker CASCADE")
         .execute(&pool)
         .await?;
@@ -415,55 +365,15 @@ async fn the_store_reports_a_missing_queue_as_unavailable(pool: PgPool) -> TestR
         PostgresQueue::connect(pool.clone()).await,
         Err(memory_postgres::Error::QueueAbsent)
     ));
-    let memory = store(&pool);
-    assert!(!memory.queue_available().await?);
     Ok(())
-}
-
-#[test]
-fn crontab_and_task_lists_follow_the_roles() {
-    let embedder = PostgresQueue::crontab(WorkerRole::Embedder);
-    assert_eq!(embedder.len(), 2);
-    assert_eq!(
-        embedder.first().map(|entry| entry.schedule.as_str()),
-        Some("*/10 * * * *")
-    );
-    assert_eq!(
-        embedder.get(1).map(|entry| entry.identifier.as_str()),
-        Some("unchunked-sweep")
-    );
-    let summarizer = PostgresQueue::crontab(WorkerRole::Summarizer);
-    assert_eq!(summarizer.len(), 5);
-    assert_eq!(
-        PostgresQueue::crontab(WorkerRole::Categorizer)
-            .iter()
-            .map(|entry| (entry.identifier.as_str(), entry.schedule.as_str()))
-            .collect::<Vec<_>>(),
-        [("tidy-sweep", "0 * * * *")]
-    );
-
-    assert_eq!(
-        PostgresQueue::task_list(WorkerRole::Embedder),
-        &[
-            JobName::Fixed(FixedJob::EmbedTarget),
-            JobName::Fixed(FixedJob::EnqueueUnembedded),
-            JobName::Fixed(FixedJob::EnqueueUnchunked)
-        ]
-    );
-    assert!(
-        PostgresQueue::task_list(WorkerRole::Summarizer)
-            .contains(&JobName::Fixed(FixedJob::SummarizeConversation))
-    );
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_pending_sweep_is_queued_once(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     testkit::sweeps::a_pending_sweep_is_queued_once(&queue(&pool).await?).await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn the_sweeps_run_before_an_older_backlog(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     testkit::sweeps::the_sweeps_run_before_an_older_backlog(&queue(&pool).await?).await
 }

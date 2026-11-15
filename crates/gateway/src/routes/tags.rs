@@ -321,13 +321,7 @@ async fn owned(gateway: &Gateway, user: &UserId, entity: &TagEntity) -> Result<(
         }
         TagEntity::SessionKey(key) => {
             let parsed = key.parse::<SessionKey>();
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    fallback,
-                    reason = "CONTRACT B1: a legacy key that is not a session key names no session with an owner (note 178), so the store tags it as before"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
             let checked = match parsed {
                 Ok(key) => crate::session_access::change_key(gateway, user, &key).await,
                 Err(_) => Ok(()),

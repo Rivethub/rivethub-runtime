@@ -35,7 +35,7 @@ fn team() -> TestResult<Space> {
         id: SpaceId::new("team".into())?,
         kind: SpaceKind::Team,
         name: "Team".into(),
-        members: ["alex", "phil", "tom"]
+        members: ["ines", "dana", "tom"]
             .into_iter()
             .map(|id| Owner::new(id.into()))
             .collect::<Result<_, _>>()?,
@@ -46,7 +46,7 @@ async fn seed(pool: &PgPool) -> TestResult {
     let tenancy = PostgresTenancy::new(pool.clone());
     tenancy.sync_spaces("node-a", &[team()?]).await?;
     let writer = PostgresMemory::new(pool.clone());
-    for (owner, key) in [("phil", SHARED), ("alex", OWN), ("tom", PRIVATE)] {
+    for (owner, key) in [("dana", SHARED), ("ines", OWN), ("tom", PRIVATE)] {
         writer.capture_batch(&CaptureBatchRequest {
             session_key: key.into(), agent: "rivet".into(), channel: Some("claude-code".into()),
             title: Some(format!("{owner} release work")), settings: None, task_id: None, finalize: None,
@@ -56,7 +56,7 @@ async fn seed(pool: &PgPool) -> TestResult {
                 tool_name: None, tool_args: None, tool_result: None, metadata: None, created_at: None }],
         }, &CaptureOptions::owned_by(&Owner::new(owner.into())?)).await?;
     }
-    let owner = Viewer::new(Owner::new("phil".into())?, vec![team()?.id]);
+    let owner = Viewer::new(Owner::new("dana".into())?, vec![team()?.id]);
     tenancy
         .mark_session(
             &owner,
@@ -74,7 +74,7 @@ async fn roles(pool: &PgPool) -> TestResult {
         GRANT USAGE ON SCHEMA public TO rh_team_recall_person, rh_team_recall_reader;
         GRANT SELECT ON ALL TABLES IN SCHEMA public TO rh_team_recall_person, rh_team_recall_reader;")
         .execute(pool).await?;
-    sqlx::query("INSERT INTO rh_role_principals(role_name, user_id) VALUES ($1, 'alex')")
+    sqlx::query("INSERT INTO rh_role_principals(role_name, user_id) VALUES ($1, 'ines')")
         .bind(PERSON)
         .execute(pool)
         .await?;
@@ -94,7 +94,7 @@ async fn pinned_mcp_introduces_its_database_person_without_a_spaces_users_file()
         .password(PERSON);
     let instructions = introduction(options, "wrong-fallback").await?;
     assert!(
-        instructions.starts_with("You are working with alex on a shared hub with phil, tom."),
+        instructions.starts_with("You are working with ines on a shared hub with dana, tom."),
         "{instructions}"
     );
     assert!(!instructions.contains("wrong-fallback"));
@@ -106,8 +106,8 @@ async fn unpinned_mcp_uses_the_users_owner_and_store_memberships() -> TestResult
     let db = crate::pgdb::TestDb::migrated().await?;
     seed(&db).await?;
     let served: sqlx::postgres::PgConnectOptions = db.served_url().await?.parse()?;
-    let instructions = introduction(served, "alex").await?;
-    assert!(instructions.starts_with("You are working with alex on a shared hub with phil, tom."));
+    let instructions = introduction(served, "ines").await?;
+    assert!(instructions.starts_with("You are working with ines on a shared hub with dana, tom."));
     Ok(())
 }
 
@@ -180,7 +180,7 @@ impl Api {
         let store = Arc::new(PostgresMemory::new(reader.clone()));
         let tenancy = Tenancy::local(UserId::new("node-owner".into())?)
             .with_spaces(vec![team()?])
-            .with_token("alex-token", UserId::new("alex".into())?)?;
+            .with_token("ines-token", UserId::new("ines".into())?)?;
         let root = tempfile::tempdir()?;
         let gateway = gateway::Gateway::new(store.clone(), crate::topics::settings(root.path()))
             .with_local_owner(crate::owner::holder())
@@ -198,7 +198,7 @@ impl Api {
         let mut request = Request::builder()
             .uri(path)
             .header(header::HOST, "127.0.0.1:5975")
-            .header(header::AUTHORIZATION, "Bearer alex-token")
+            .header(header::AUTHORIZATION, "Bearer ines-token")
             .body(Body::empty())?;
         request
             .extensions_mut()
@@ -223,7 +223,7 @@ async fn memory_owners(api: &Api) -> TestResult {
             .iter()
             .find(|hit| hit.session_id.as_deref() == Some(key))
             .ok_or("search hit")?;
-        assert_eq!(hit.owner.as_deref(), (key == SHARED).then_some("phil"));
+        assert_eq!(hit.owner.as_deref(), (key == SHARED).then_some("dana"));
     }
     let raw = api.get("/api/memory/browse").await?;
     assert_eq!(
@@ -238,15 +238,9 @@ async fn memory_owners(api: &Api) -> TestResult {
             .iter()
             .find(|hit| hit.session_id.as_deref() == Some(key))
             .ok_or("browse hit")?;
-        assert_eq!(hit.owner.as_deref(), (key == SHARED).then_some("phil"));
+        assert_eq!(hit.owner.as_deref(), (key == SHARED).then_some("dana"));
     }
     Ok(())
-}
-
-#[tokio::test]
-async fn non_owner_gateway_memory_rows_name_teammates_and_omit_the_viewer_owner() -> TestResult {
-    let db = crate::pgdb::TestDb::migrated().await?;
-    memory_owners(&Api::new(&db).await?).await
 }
 
 #[tokio::test]
@@ -267,7 +261,7 @@ async fn non_owner_gateway_owner_fields_cover_search_browse_and_session_catalog(
             .iter()
             .find(|row| row.id.to_string() == key)
             .ok_or("catalog row")?;
-        assert_eq!(row.owner.as_deref(), (key == SHARED).then_some("phil"));
+        assert_eq!(row.owner.as_deref(), (key == SHARED).then_some("dana"));
     }
     Ok(())
 }

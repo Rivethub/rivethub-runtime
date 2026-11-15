@@ -19,19 +19,8 @@ pub mod review;
 pub mod shutdown;
 pub mod tenancy;
 pub mod tidy;
-pub mod tool;
 pub mod topics;
 pub mod transcript;
 pub mod wiki;
 
-use std::path::PathBuf;
-use values::SessionId;
-
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolContext {
-    pub agent_id: Option<String>,
-    pub working_dir: Option<PathBuf>,
-    pub session: Option<SessionId>,
-}

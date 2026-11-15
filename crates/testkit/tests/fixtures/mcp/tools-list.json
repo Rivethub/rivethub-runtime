@@ -311,7 +311,7 @@
     },
     {
       "name": "memory_tags",
-      "description": "Read key:value tags on sessions and summaries (session tagging). Actions: pending (suggestions awaiting review; the default), list (tags on an entity or by key+value), counts (accepted usage per tag), lookup (tags for session_keys), taxonomy (the vocabulary). This surface is READ-ONLY: decide, add and the taxonomy edits are refused (set RIVETOS_MCP_ENABLE_MEMORY_WRITE=1, or review in the hub under Memory → Tags). Rejecting keeps the row so the tagger never re-proposes it. Use tag=key:value on memory_search / memory_browse to filter by an accepted tag.",
+      "description": "Read key:value tags on sessions and summaries (session tagging). Actions: pending (suggestions awaiting review; the default), list (tags on an entity or by key+value), counts (accepted usage per tag), lookup (tags for session_keys), taxonomy (the vocabulary). This surface is read-only: review and edit tags in the hub under Memory → Tags. Use tag=key:value on memory_search / memory_browse to filter by an accepted tag.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -321,81 +321,21 @@
               "list",
               "pending",
               "counts",
-              "decide",
-              "add",
               "lookup",
-              "taxonomy",
-              "taxonomy_upsert",
-              "taxonomy_decide",
-              "taxonomy_merge"
+              "taxonomy"
             ],
             "type": "string"
           },
-          "agent": {
-            "description": "add with session_key: narrow to one agent",
-            "type": "string"
-          },
-          "aliases": {
-            "description": "taxonomy_upsert: replaces the alias list ([] clears it; omit to keep it)",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "decided_by": {
-            "description": "decide / add: who decided (audit column)",
-            "type": "string"
-          },
-          "display": {
-            "description": "Display casing (add / taxonomy_upsert)",
-            "type": "string"
-          },
           "entity_id": {
-            "description": "Conversation or summary id (list / add)",
+            "description": "Conversation or summary id (list)",
             "type": "string"
           },
           "entity_type": {
-            "description": "list / add",
+            "description": "list",
             "enum": [
               "conversation",
               "summary"
             ],
-            "type": "string"
-          },
-          "entries": {
-            "description": "taxonomy_decide: [{key, value}]",
-            "items": {
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "value": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "key",
-                "value"
-              ],
-              "type": "object"
-            },
-            "maxItems": 500,
-            "type": "array"
-          },
-          "from": {
-            "description": "taxonomy_merge: value to fold away",
-            "type": "string"
-          },
-          "ids": {
-            "description": "Tag ids (decide)",
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 1000,
-            "type": "array"
-          },
-          "into": {
-            "description": "taxonomy_merge: value that survives",
             "type": "string"
           },
           "key": {
@@ -407,20 +347,6 @@
             "minimum": 1,
             "type": "integer"
           },
-          "parent_value": {
-            "description": "taxonomy_upsert: nest under this value (null clears the parent)",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reason": {
-            "type": "string"
-          },
-          "session_key": {
-            "description": "add: tag the conversation captured under this session key",
-            "type": "string"
-          },
           "session_keys": {
             "description": "lookup",
             "items": {
@@ -430,16 +356,12 @@
             "type": "array"
           },
           "state": {
-            "description": "decide / taxonomy_decide: accepted or rejected. list / taxonomy: filter.",
+            "description": "list / lookup / taxonomy: filter",
             "enum": [
               "suggested",
               "accepted",
               "rejected"
             ],
-            "type": "string"
-          },
-          "tag": {
-            "description": "key:value literal (add)",
             "type": "string"
           },
           "value": {

@@ -61,7 +61,7 @@ impl Key {
         self.claim(
             value,
             Said::You {
-                by: Owner::new("phil".into())?,
+                by: Owner::new("dana".into())?,
                 pinned,
             },
             at,

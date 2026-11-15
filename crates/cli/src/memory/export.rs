@@ -16,10 +16,7 @@ use super::io;
 use super::target;
 use crate::Error;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the Postgres URL carries credentials, so the exporter has no Debug form"
-)]
+#[expect(missing_debug_implementations)]
 pub enum MemoryExporter {
     Postgres {
         memory: Arc<PostgresMemory>,

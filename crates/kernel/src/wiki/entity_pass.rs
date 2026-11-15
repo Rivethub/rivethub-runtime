@@ -15,19 +15,13 @@ pub use bind::pick_existing;
 pub use history::render_history;
 pub use history::session_history;
 pub use history::snapshot_of;
-pub use ledger::integrate;
 pub use ledger::place_as_of;
-pub use ledger::recompute;
 pub use page::article_with_facts;
 pub use page::facts_section;
 pub use page::prose_article;
 pub use parse::identify_schema;
-pub use parse::observation_schema;
 pub use parse::parse_identifications;
-pub use parse::parse_observations;
-pub use parse::parse_prose;
 pub use parse::parse_rewrite;
-pub use parse::prose_schema;
 pub use parse::rewrite_schema;
 pub use prepare::merge_same;
 pub use prepare::prepare;
@@ -57,7 +51,6 @@ pub use types::EntityView;
 pub use types::EntityWork;
 pub use types::ExtractEntities;
 pub use types::FactReconciliation;
-pub use types::FactRecord;
 pub use types::FactState;
 pub use types::FollowingLeaf;
 pub use types::HISTORY_CHARS;
@@ -85,15 +78,6 @@ pub use types::StoredRewrite;
 pub use types::TranscriptMessage;
 pub use types::TypeBrief;
 pub use types::older_than_mark;
-
-#[cfg(test)]
-use chrono::DateTime;
-#[cfg(test)]
-use chrono::NaiveDate;
-#[cfg(test)]
-use chrono::Utc;
-#[cfg(test)]
-use uuid::Uuid;
 
 #[cfg(test)]
 #[path = "tests/entity_pass_tests.rs"]

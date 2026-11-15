@@ -3,11 +3,9 @@ use chrono::Utc;
 use kernel::filing::Target;
 use std::str::FromStr;
 
-use kernel::topics::Slug;
 use kernel::topics::TopicId;
 use kernel::wiki::builder::DeferredWiki;
 use kernel::wiki::builder::ExtractWiki;
-use kernel::wiki::builder::HeldEntity;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::page::WikiPatch;
 use kernel::wiki::page::WikiSlug;
@@ -19,78 +17,6 @@ use wire::session_id::SessionId;
 use crate::time;
 use crate::wiki_builder::load_summary;
 use crate::wiki_builder::query;
-
-pub(crate) fn hold(
-    conn: &Connection,
-    held: &HeldEntity,
-) -> Result<Vec<HeldEntity>, WikiStoreError> {
-    conn.execute(
-        "INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, (SELECT c.owner_user_id FROM ros_summaries s
-                                       JOIN ros_conversations c ON c.id = s.conversation_id
-                                      WHERE s.id = ?3))
-         ON CONFLICT (key, source) DO UPDATE SET summary_id = excluded.summary_id,
-            patch = excluded.patch, held_at = excluded.held_at, owner_user_id = excluded.owner_user_id",
-        params![
-            held.key.as_str(),
-            held.source,
-            held.summary_id.to_string(),
-            encoded(&held.patch)?,
-            time::stamp(held.at)
-        ],
-    )
-    .map_err(query)?;
-    candidates(conn, &held.key)
-}
-
-pub(crate) fn candidates(conn: &Connection, key: &Slug) -> Result<Vec<HeldEntity>, WikiStoreError> {
-    let rows = conn
-        .prepare(
-            "SELECT source, summary_id, patch, held_at FROM rh_wiki_entity_candidates
-              WHERE key = ?1 ORDER BY held_at, source",
-        )
-        .and_then(|mut statement| {
-            statement
-                .query_map(params![key.as_str()], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                    ))
-                })?
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .map_err(query)?;
-    rows.into_iter()
-        .map(|(source, summary_id, patch, at)| {
-            Ok(HeldEntity {
-                key: key.clone(),
-                source,
-                summary_id: uuid(&summary_id)?,
-                patch: serde_json::from_str(&patch).map_err(invalid)?,
-                at: stamped(&at)?,
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn release(conn: &mut Connection, held: &[HeldEntity]) -> Result<(), WikiStoreError> {
-    let tx = conn.transaction().map_err(query)?;
-    for mention in held {
-        tx.execute(
-            "DELETE FROM rh_wiki_entity_candidates
-              WHERE key = ?1 AND source = ?2 AND summary_id = ?3",
-            params![
-                mention.key.as_str(),
-                mention.source,
-                mention.summary_id.to_string()
-            ],
-        )
-        .map_err(query)?;
-    }
-    tx.commit().map_err(query)
-}
 
 pub(crate) fn defer(conn: &Connection, deferred: &DeferredWiki) -> Result<(), WikiStoreError> {
     conn.execute(

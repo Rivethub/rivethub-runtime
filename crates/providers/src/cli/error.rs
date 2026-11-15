@@ -24,13 +24,9 @@ pub enum CliError {
     Incomplete,
     #[error("harness exited before the turn completed: {code:?}")]
     Exited { code: Option<i32> },
-    #[error("harness repeated tool call {0}")]
-    DuplicateTool(String),
-    #[error("too many harness tool calls")]
-    ToolCount(#[from] std::num::TryFromIntError),
     #[error(transparent)]
     Harness(#[from] HarnessAdapterError),
-    #[error("could not serialize the headless prompt or tool arguments: {0}")]
+    #[error("could not serialize the headless prompt: {0}")]
     Json(#[from] serde_json::Error),
     #[error("headless turn failed: {turn}; session cleanup also failed: {cleanup}")]
     Cleanup { turn: Box<Self>, cleanup: Box<Self> },

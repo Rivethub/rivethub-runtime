@@ -16,13 +16,7 @@ impl NoteOrigin {
 
     #[must_use]
     pub fn current() -> Option<Uuid> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a real absence, as page syncs and edits write outside any summary's notes"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let current = ORIGIN.try_with(|summary| *summary).ok();
         current
     }

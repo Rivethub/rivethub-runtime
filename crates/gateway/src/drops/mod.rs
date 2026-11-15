@@ -31,13 +31,7 @@ const DROPS_PATH: &str = "/api/drops";
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct DropId(String);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "CONTRACT note 143: a drop id is the download capability, so Debug never prints it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for DropId {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("DropId(..)")

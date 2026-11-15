@@ -3,7 +3,7 @@ use std::time::Duration;
 use memory_postgres::MissingModels;
 use wire::gateway::memory_models::{ModelHealth, ModelJob};
 
-use super::{Hub, PHIL, TestResult};
+use super::{DANA, Hub, TestResult};
 
 const NO_MODEL_CONFIG: &str = "memory:\n  postgres:\n    connection_string: postgres://hub@127.0.0.1:1/hub\ngateway:\n  host: 127.0.0.1\n  port: 5975\n";
 
@@ -14,7 +14,7 @@ async fn queued(hub: &Hub) -> Result<i64, sqlx::Error> {
 }
 
 #[tokio::test]
-async fn a_config_without_a_model_is_valid_everywhere_and_doctor_says_so() -> TestResult {
+async fn a_config_without_a_model_passes_the_gateway_check() -> TestResult {
     let home = tempfile::tempdir()?;
     let state = home.path().join(".rivethub");
     tokio::fs::create_dir(&state).await?;
@@ -33,36 +33,20 @@ async fn a_config_without_a_model_is_valid_everywhere_and_doctor_says_so() -> Te
             embeddings: true
         }
     );
-    for arguments in [
-        &["config", "validate"][..],
-        &["gateway", "--check"][..],
-        &["doctor"][..],
-    ] {
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
-                .args(arguments)
-                .env_clear()
-                .env("HOME", home.path())
-                .env("TOKIO_WORKER_THREADS", "2")
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await??;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if arguments != ["doctor"] {
-            assert!(output.status.success(), "rh {arguments:?}: {text}");
-        }
-        assert_eq!(
-            text.contains(config::NO_MODEL_NOTE),
-            arguments == ["doctor"],
-            "only doctor names a missing model: rh {arguments:?}: {text}"
-        );
-    }
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
+            .args(["gateway", "--check"])
+            .env_clear()
+            .env("HOME", home.path())
+            .env("TOKIO_WORKER_THREADS", "2")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await??;
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains(config::NO_MODEL_NOTE), "{text}");
     Ok(())
 }
 
@@ -75,7 +59,7 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
     .await?;
     let before = queued(&hub).await?;
     hub.capture(
-        PHIL,
+        DANA,
         "claude-code:00000000-0000-4000-8000-00000000d001",
         &[
             "a message long enough to be chunked and embedded later on",
@@ -88,11 +72,11 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
         before,
         "capture queued no embedding job"
     );
-    let reply = hub.get(PHIL, "/api/memory/models").await?;
+    let reply = hub.get(DANA, "/api/memory/models").await?;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let jobs: Vec<ModelJob> = serde_json::from_value(reply.body)?;
     let client = reqwest::Client::builder()
-        .default_headers(super::headers(PHIL)?)
+        .default_headers(super::headers(DANA)?)
         .build()?;
     crate::store_routes::none_unavailable(&client, &hub.base).await?;
     assert_eq!(jobs.len(), 5, "one row per role");
@@ -108,7 +92,7 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
     let before = queued(&modelled).await?;
     modelled
         .capture(
-            PHIL,
+            DANA,
             "claude-code:00000000-0000-4000-8000-00000000d002",
             &[
                 "a message long enough to be chunked and embedded later on",

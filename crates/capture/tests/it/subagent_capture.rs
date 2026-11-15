@@ -481,7 +481,7 @@ async fn backfill_reads_every_dsh_session_and_a_second_run_adds_nothing() -> Tes
             "--work-dsh--",
             "session-09517129-cb94-487b-a8da-10a015a7d984",
         ),
-        ("--home-phil--", "1cf1bf29-57f2-483d-8d72-1980e4e52d20"),
+        ("--home-dana--", "1cf1bf29-57f2-483d-8d72-1980e4e52d20"),
     ];
     for (workspace, id) in sessions {
         let folder = home.path().join(".dsh/sessions").join(workspace).join(id);

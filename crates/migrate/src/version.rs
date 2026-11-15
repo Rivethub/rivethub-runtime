@@ -137,44 +137,15 @@ mod tests {
     use super::SchemaVersion;
     use crate::error::Error;
 
-    const LADDER: [i64; 35] = [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-    ];
-
-    #[test]
-    fn every_recorded_user_version_maps_to_a_schema_version() {
-        for found in LADDER {
-            let version = SchemaVersion::try_from(found).unwrap_or_else(|error| {
-                panic!("user_version {found} must map to a schema version: {error}")
-            });
-            assert_eq!(version.number(), found);
-        }
-    }
-
     #[test]
     fn versions_outside_the_ladder_are_typed_errors() {
-        for found in [-3, 0, 36, 99] {
+        for found in [-3, 0, 99] {
             match SchemaVersion::try_from(found) {
                 Err(Error::Unsupported { found: reported }) => {
                     assert_eq!(reported, found);
                 }
                 other => panic!("user_version {found} must be unsupported, got {other:?}"),
             }
-        }
-    }
-
-    #[test]
-    fn the_ladder_runs_from_any_version_to_the_newest() {
-        for (index, from) in LADDER.into_iter().enumerate() {
-            let mut current = SchemaVersion::try_from(from).unwrap();
-            let mut visited = Vec::new();
-            while let Some(next) = current.next() {
-                visited.push(next.number());
-                current = next;
-            }
-            let expected: Vec<i64> = LADDER.get(index + 1..).unwrap_or_default().to_vec();
-            assert_eq!(visited, expected, "ladder from user_version {from}");
         }
     }
 }

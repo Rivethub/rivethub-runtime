@@ -36,13 +36,7 @@ pub(crate) struct Auth {
     command: Option<TokenSource>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) would print the static API key; the impl redacts it and defers the command to TokenSource"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Auth {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

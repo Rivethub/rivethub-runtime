@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -172,15 +172,7 @@ async fn holder(
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let presented = match request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .map(HeaderValue::to_str)
-    {
-        Some(Ok(text)) => text.strip_prefix("Bearer "),
-        Some(Err(_)) | None => None,
-    };
-    let held = match (presented, host.tools_key.get()) {
+    let held = match (crate::auth::bearer(request.headers()), host.tools_key.get()) {
         (Some(token), Some(key)) => {
             let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
             bool::from(digest.ct_eq(key))

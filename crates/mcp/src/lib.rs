@@ -1,5 +1,4 @@
 pub mod catalog;
-pub mod client;
 pub mod error;
 pub mod memory;
 mod nonblock;
@@ -33,7 +32,6 @@ pub struct Server {
     instructions: Option<String>,
     memory: Arc<dyn MemoryStore>,
     tools: Arc<Vec<Tool>>,
-    memory_write: bool,
     shutdown: CancellationToken,
     zone: chrono_tz::Tz,
     plugins: Option<Arc<dyn PluginTools>>,
@@ -44,42 +42,26 @@ pub struct Server {
 pub struct Builder {
     instructions: Option<String>,
     memory: Arc<dyn MemoryStore>,
-    memory_write: bool,
     shutdown: CancellationToken,
     zone: Option<chrono_tz::Tz>,
     plugins: Option<Arc<dyn PluginTools>>,
     sessions: Option<sessions::Sessions>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects and the tool catalog"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Server")
-            .field("memory_write", &self.memory_write)
             .field("plugins", &self.plugins.is_some())
             .field("sessions", &self.sessions.is_some())
             .finish_non_exhaustive()
     }
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Builder")
-            .field("memory_write", &self.memory_write)
-            .finish_non_exhaustive()
+        f.debug_struct("Builder").finish_non_exhaustive()
     }
 }
 
@@ -110,23 +92,14 @@ enum Operation {
 }
 
 impl Server {
-    pub fn new(
-        memory: Arc<dyn MemoryStore>,
-        memory_write: bool,
-        shutdown: CancellationToken,
-    ) -> Result<Self, Error> {
-        Self::builder(memory, memory_write, shutdown).build()
+    pub fn new(memory: Arc<dyn MemoryStore>, shutdown: CancellationToken) -> Result<Self, Error> {
+        Self::builder(memory, shutdown).build()
     }
 
-    pub fn builder(
-        memory: Arc<dyn MemoryStore>,
-        memory_write: bool,
-        shutdown: CancellationToken,
-    ) -> Builder {
+    pub fn builder(memory: Arc<dyn MemoryStore>, shutdown: CancellationToken) -> Builder {
         Builder {
             instructions: None,
             memory,
-            memory_write,
             shutdown,
             zone: None,
             plugins: None,
@@ -214,9 +187,7 @@ impl Server {
             }
             Operation::Stats => memory::stats(self.memory.as_ref(), decode(arguments)?).await,
             Operation::GetFull => memory::get_full(self.memory.as_ref(), decode(arguments)?).await,
-            Operation::Tags => {
-                tags::call(self.memory.as_ref(), self.memory_write, decode(arguments)?).await
-            }
+            Operation::Tags => tags::call(self.memory.as_ref(), decode(arguments)?).await,
             Operation::WikiSearch => wiki::search(self.memory.as_ref(), decode(arguments)?).await,
             Operation::WikiRead => wiki::read(self.memory.as_ref(), decode(arguments)?).await,
             Operation::SessionFind => {
@@ -284,25 +255,10 @@ impl Builder {
         if self.sessions.is_some() {
             tools.extend(catalog::session_definitions()?);
         }
-        if self.memory_write {
-            let tags = tools
-                .iter_mut()
-                .find(|tool| tool.name == "memory_tags")
-                .ok_or_else(|| Error::Invalid("memory_tags is missing from catalog".into()))?;
-            tags.description = Some("Read and manage memory tags. Writes are enabled. taxonomy_upsert fully replaces aliases, parent_value, display and reason; aliases is required and omitted parent_value clears the parent.".into());
-            tags.annotations = Some(rmcp::model::ToolAnnotations::from_raw(
-                None,
-                Some(false),
-                Some(true),
-                Some(false),
-                Some(false),
-            ));
-        }
         Ok(Server {
             instructions: self.instructions,
             memory: self.memory,
             tools: Arc::new(tools),
-            memory_write: self.memory_write,
             shutdown: self.shutdown,
             zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
             plugins: self.plugins,
@@ -431,8 +387,4 @@ fn stamp(mut result: CallToolResult) -> CallToolResult {
         result.meta = Some(rmcp::model::MetaObject(meta.as_map().clone()));
     }
     result
-}
-
-pub(crate) fn json<T: serde::Serialize>(value: &T) -> Result<CallToolResult, Error> {
-    Ok(text(serde_json::to_string(value)?))
 }

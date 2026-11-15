@@ -1,4 +1,4 @@
-warning: tokio::runtime::Builder::new_multi_thread builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime
+warning: tokio::runtime::Builder::new_multi_thread builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)
   --> $DIR/fail.rs:34:13
    |
 LL |     let _ = tokio::runtime::Builder::new_multi_thread();
@@ -6,13 +6,13 @@ LL |     let _ = tokio::runtime::Builder::new_multi_thread();
    |
    = note: `#[warn(runtime)]` on by default
 
-warning: tokio::runtime::Builder::new_current_thread builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime
+warning: tokio::runtime::Builder::new_current_thread builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)
   --> $DIR/fail.rs:35:13
    |
 LL |     let _ = tokio::runtime::Builder::new_current_thread();
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: tokio::runtime::Runtime::new builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one) → docs/PATTERNS.md#runtime
+warning: tokio::runtime::Runtime::new builds a tokio runtime in a library (libraries expose async fns; only the rivethub binary builds one)
   --> $DIR/fail.rs:36:13
    |
 LL |     let _ = tokio::runtime::Runtime::new();

@@ -1,5 +1,3 @@
-use crate::common;
-
 use kernel::queue::{ClaimSelector, JobName, JobQueue, WorkerRole};
 use memory_postgres::PostgresQueue;
 use sqlx::PgPool;
@@ -27,7 +25,6 @@ async fn owner(pool: &PgPool, queue: &str) -> Result<Option<String>, sqlx::Error
 async fn concurrent_workers_serialize_each_named_queue_and_release_on_completion(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let first = add(&pool, Some("serial")).await?;
     let second = add(&pool, Some("serial")).await?;
     let left = PostgresQueue::connect(pool.clone()).await?;
@@ -78,7 +75,6 @@ async fn concurrent_workers_serialize_each_named_queue_and_release_on_completion
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn failure_unlocks_the_queue_and_preserves_retry_metadata(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let first = add(&pool, Some("serial")).await?;
     let second = add(&pool, Some("serial")).await?;
     let queue = PostgresQueue::connect(pool.clone()).await?;
@@ -119,7 +115,6 @@ async fn failure_unlocks_the_queue_and_preserves_retry_metadata(pool: PgPool) ->
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn locked_queues_do_not_block_other_queues_or_unnamed_jobs(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     add(&pool, Some("busy")).await?;
     let independent = add(&pool, Some("independent")).await?;
     let unnamed = add(&pool, None).await?;
@@ -170,7 +165,6 @@ async fn locked_queues_do_not_block_other_queues_or_unnamed_jobs(pool: PgPool) -
 async fn expired_locks_are_reclaimed_and_old_workers_cannot_release_the_new_owner(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     add(&pool, Some("serial")).await?;
     let old = PostgresQueue::connect(pool.clone()).await?;
     let new = PostgresQueue::connect(pool.clone()).await?;
@@ -213,7 +207,6 @@ async fn expired_locks_are_reclaimed_and_old_workers_cannot_release_the_new_owne
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_compaction_added_while_one_runs_waits_for_it(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let compact = || kernel::queue::Job {
         name: JobName::Fixed(kernel::queue::FixedJob::SummarizeConversation),
         payload: wire::JsonObject::default(),
@@ -239,7 +232,6 @@ async fn a_compaction_added_while_one_runs_waits_for_it(pool: PgPool) -> TestRes
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_claim_ceiling_leaves_lower_priority_jobs_for_others(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     sqlx::query("SELECT graphile_worker.add_job('embed-target', '{}'::json, priority => 50)")
         .execute(&pool)
         .await?;

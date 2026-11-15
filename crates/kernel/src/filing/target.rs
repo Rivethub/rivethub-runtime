@@ -46,13 +46,7 @@ impl Target {
     pub fn stored(session: Option<&str>, conversation: Option<Uuid>) -> Option<Self> {
         match (session, conversation) {
             (Some(session), None) => {
-                #[cfg_attr(
-                    dylint_lib = "rr_lints",
-                    expect(
-                        fallback,
-                        reason = "PATTERNS FALLBACK: a stored session id that no longer parses names no target"
-                    )
-                )]
+                #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
                 let Ok(session) = SessionId::from_str(session) else {
                     return None;
                 };
@@ -83,13 +77,7 @@ impl Filable {
             return Self::Never;
         }
         if let Some(task) = key.strip_prefix(TASK_PREFIX) {
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    fallback,
-                    reason = "PATTERNS FALLBACK: a task key without a task id files as a conversation"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
             let Ok(task) = Uuid::parse_str(task) else {
                 return Self::Conversation;
             };
@@ -98,13 +86,7 @@ impl Filable {
         if bare_claude_session(head) {
             return Self::Session(SessionId::new(HarnessId::ClaudeCode, key));
         }
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a key that is not a session id files as a conversation"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(session) = SessionId::from_str(key) else {
             return Self::Conversation;
         };
@@ -166,13 +148,7 @@ pub fn session_key(channel: Option<&str>, key: &str) -> String {
 
 #[must_use]
 pub fn stored_keys(session: &str) -> Vec<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a key that is not a session id is looked up as it is stored"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(id) = SessionId::from_str(session) else {
         return vec![session.to_owned()];
     };

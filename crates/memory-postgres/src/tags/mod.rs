@@ -363,43 +363,6 @@ async fn decide_tags(
     Ok(result.rows_affected())
 }
 
-async fn decide_tag_removals(
-    pool: &PgPool,
-    ids: &[TagId],
-    decision: TagDecision,
-    decided_by: Option<String>,
-) -> Result<u64, MemoryStoreError> {
-    let uuids: Vec<Uuid> = ids.iter().map(|id| id.uuid()).collect();
-    let result = match decision {
-        TagDecision::Accept => {
-            sqlx::query!(
-                "update rh_tags set state = 'rejected', removal_state = null, \
-                        decided_by = coalesce($2, decided_by), decided_at = now(), \
-                        updated_at = now() \
-                  where id = any($1) and removal_state = 'suggested'",
-                &uuids,
-                decided_by
-            )
-            .execute(pool)
-            .await
-        }
-        TagDecision::Reject => {
-            sqlx::query!(
-                "update rh_tags set removal_state = 'rejected', \
-                        decided_by = coalesce($2, decided_by), decided_at = now(), \
-                        updated_at = now() \
-                  where id = any($1) and removal_state = 'suggested'",
-                &uuids,
-                decided_by
-            )
-            .execute(pool)
-            .await
-        }
-    };
-    let result = result.map_err(|source| store_error("tag removals", source))?;
-    Ok(result.rows_affected())
-}
-
 async fn resolve_session(
     pool: &PgPool,
     key: &str,
@@ -559,15 +522,6 @@ impl crate::PostgresMemory {
         decided_by: Option<String>,
     ) -> Result<u64, MemoryStoreError> {
         decide_tags(&self.pool, ids, decision, decided_by).await
-    }
-
-    pub(crate) async fn tags_decide_removals(
-        &self,
-        ids: &[TagId],
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        decide_tag_removals(&self.pool, ids, decision, decided_by).await
     }
 
     pub(crate) async fn tags_add(&self, add: &TagAdd) -> Result<TagWire, MemoryStoreError> {

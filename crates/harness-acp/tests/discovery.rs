@@ -19,8 +19,6 @@ fn recording_adapter(
     let mut args = vec![
         "--session-id".to_owned(),
         "ses_fake0123456789abcdefgh".to_owned(),
-        "--on-load".to_owned(),
-        "replay".to_owned(),
     ];
     if listing {
         args.push("--list-sessions".to_owned());

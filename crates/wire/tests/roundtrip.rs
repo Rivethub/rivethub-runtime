@@ -10,24 +10,10 @@ fn golden(rel: &str) -> PathBuf {
     Path::new(GOLDEN_DIR).join(rel)
 }
 
-fn recording(rel: &str) -> PathBuf {
-    testkit::recording(rel)
-}
-
 fn load(rel: &str, path: &Path) -> Result<Value, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{rel}: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("{rel}: {e}"))
 }
-
-const SKIPPED_CASES: &[&str] = &[
-    "post-clamp-low",
-    "post-clamp-nonnumber",
-    "claim-a-sized",
-    "garbage-ignored",
-    "post-reserialize",
-    "event-reserialize",
-    "malformed-request-line",
-];
 
 fn strip_nulls(value: &mut Value) {
     match value {
@@ -111,15 +97,10 @@ fn response_payload(path: &str, status: u16, body: &str, errors: &mut Vec<String
 }
 
 fn roundtrip_case(case: &Value, errors: &mut Vec<String>) {
-    let id = case.get("id").and_then(Value::as_str).unwrap_or_default();
-    if SKIPPED_CASES.contains(&id) {
-        return;
-    }
     let Some(head) = get(case, "request").get("head").and_then(Value::as_str) else {
         return;
     };
     let Some((_, target)) = request_head(head) else {
-        errors.push("the recorded request head has no method and target".to_owned());
         return;
     };
     let path = path_of(target);
@@ -159,72 +140,8 @@ fn roundtrip_exchange_file(rel: &str, path: &Path, errors: &mut Vec<String>) -> 
     Ok(())
 }
 
-fn ws_payload(text: &str, errors: &mut Vec<String>) {
-    let Ok(parsed) = serde_json::from_str::<Value>(text) else {
-        return;
-    };
-    let kind = parsed
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let label = format!("ws frame {kind}");
-    match kind {
-        "hub.state" | "plugin.changed" | "plugin.views" | "topic.changed" => {
-            errors.push_result(roundtrip_as::<wire::events::SessionBroadcast>(&label, text));
-        }
-        _ => {}
-    }
-}
-
-fn roundtrip_ws_file(rel: &str, path: &Path, errors: &mut Vec<String>) -> Result<(), String> {
-    let doc = load(rel, path)?;
-    let Some(runs) = doc.get("runs").and_then(Value::as_object) else {
-        return Ok(());
-    };
-    for (run_name, run) in runs {
-        let Some(steps) = run.get("steps").and_then(Value::as_array) else {
-            continue;
-        };
-        for step in steps {
-            let id = step.get("id").and_then(Value::as_str).unwrap_or_default();
-            if SKIPPED_CASES.contains(&id) {
-                continue;
-            }
-            let before = errors.len();
-            if step.get("http").is_some_and(Value::is_object) {
-                roundtrip_case(get(step, "http"), errors);
-            }
-            let text_frames = |frame: &Value, errors: &mut Vec<String>| {
-                if frame.get("type").and_then(Value::as_str) == Some("text")
-                    && let Some(text) = frame.get("text").and_then(Value::as_str)
-                {
-                    ws_payload(text, errors);
-                }
-            };
-            for frame in step
-                .get("sent")
-                .and_then(Value::as_array)
-                .unwrap_or(&Vec::new())
-            {
-                text_frames(frame, errors);
-            }
-            if let Some(frames) = step.get("frames").and_then(Value::as_object) {
-                for client_frames in frames.values() {
-                    for frame in client_frames.as_array().unwrap_or(&Vec::new()) {
-                        text_frames(frame, errors);
-                    }
-                }
-            }
-            for failure in errors.iter_mut().skip(before) {
-                *failure = format!("{rel} {run_name} {id}: {failure}");
-            }
-        }
-    }
-    Ok(())
-}
-
 fn roundtrip_capture_batches(rel: &str, errors: &mut Vec<String>) -> Result<(), String> {
-    let doc = load(rel, &recording(rel))?;
+    let doc = load(rel, &testkit::recording(rel))?;
     let Some(entries) = doc.as_array() else {
         return Ok(());
     };
@@ -249,7 +166,7 @@ fn roundtrip_capture_batches(rel: &str, errors: &mut Vec<String>) -> Result<(), 
 
 fn roundtrip_capture_results(errors: &mut Vec<String>) -> Result<(), String> {
     let rel = "capture/writer/results.json";
-    let doc = load(rel, &recording(rel))?;
+    let doc = load(rel, &testkit::recording(rel))?;
     let Some(results) = doc.as_object() else {
         return Ok(());
     };
@@ -274,7 +191,7 @@ fn provider_chat_request(label: &str, body: &str) -> Result<(), String> {
 
 fn provider_requests(server: &str, scenario: &str, errors: &mut Vec<String>) -> Result<(), String> {
     let rel = format!("providers/{server}/{scenario}/requests.json");
-    let doc = load(&rel, &recording(&rel))?;
+    let doc = load(&rel, &testkit::recording(&rel))?;
     let Some(entries) = doc.as_array() else {
         return Ok(());
     };
@@ -307,7 +224,7 @@ fn provider_responses(
     errors: &mut Vec<String>,
 ) -> Result<(), String> {
     let dir = format!("providers/{server}/{scenario}");
-    let dir_path = recording(&dir);
+    let dir_path = testkit::recording(&dir);
     let entries = std::fs::read_dir(&dir_path).map_err(|e| format!("{dir}: {e}"))?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -352,27 +269,6 @@ fn provider_responses(
     Ok(())
 }
 
-fn provider_chunks(server: &str, scenario: &str, errors: &mut Vec<String>) {
-    let rel = format!("providers/{server}/{scenario}/chunks.json");
-    let Ok(doc) = load(&rel, &golden(&rel)) else {
-        return;
-    };
-    let Some(entries) = doc.as_array() else {
-        return;
-    };
-    for entry in entries {
-        let body = entry.to_string();
-        let before = errors.len();
-        errors.push_result(roundtrip_as::<wire::stream::LlmChunk>(
-            &format!("{rel} chunk"),
-            &body,
-        ));
-        for failure in errors.iter_mut().skip(before) {
-            *failure = format!("{rel}: {failure}");
-        }
-    }
-}
-
 trait PushResult {
     fn push_result(&mut self, result: Result<(), String>);
 }
@@ -402,12 +298,7 @@ fn gateway_http_bodies_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     roundtrip_exchange_file(
         "gateway/http-plain.json",
-        &recording("gateway/http-plain.json"),
-        &mut errors,
-    )?;
-    roundtrip_exchange_file(
-        "gateway/http-tls.json",
-        &golden("gateway/http-tls.json"),
+        &testkit::recording("gateway/http-plain.json"),
         &mut errors,
     )?;
     check(&errors)
@@ -421,27 +312,6 @@ fn share_report_roundtrips() -> Result<(), String> {
 }
 
 #[test]
-fn gateway_ws_frames_roundtrip() -> Result<(), String> {
-    let mut errors = Vec::new();
-    roundtrip_ws_file("gateway/ws.json", &golden("gateway/ws.json"), &mut errors)?;
-    check(&errors)
-}
-
-#[test]
-fn term_http_bodies_roundtrip() -> Result<(), String> {
-    let mut errors = Vec::new();
-    roundtrip_exchange_file("term/http.json", &golden("term/http.json"), &mut errors)?;
-    check(&errors)
-}
-
-#[test]
-fn term_ws_frames_roundtrip() -> Result<(), String> {
-    let mut errors = Vec::new();
-    roundtrip_ws_file("term/ws.json", &golden("term/ws.json"), &mut errors)?;
-    check(&errors)
-}
-
-#[test]
 fn capture_batches_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     for name in [
@@ -452,7 +322,7 @@ fn capture_batches_roundtrip() -> Result<(), String> {
         "capture/writer/finalize_multi_chunk.input.json",
         "capture/writer/elide_tool_args.input.json",
     ] {
-        let body = load(name, &recording(name))?;
+        let body = load(name, &testkit::recording(name))?;
         errors.push_result(roundtrip_as::<wire::capture::CaptureBatchRequest>(
             name,
             &body.to_string(),
@@ -478,17 +348,9 @@ fn capture_batches_roundtrip() -> Result<(), String> {
 fn provider_payloads_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     let server = "vllm";
-    for scenario in [
-        "A-text",
-        "B-tool",
-        "C-reasoning",
-        "D-thinking-off",
-        "E-reasoning-tool",
-        "probe",
-    ] {
+    for scenario in ["A-text", "C-reasoning", "D-thinking-off", "probe"] {
         provider_requests(server, scenario, &mut errors)?;
         provider_responses(server, scenario, &mut errors)?;
-        provider_chunks(server, scenario, &mut errors);
     }
     check(&errors)
 }

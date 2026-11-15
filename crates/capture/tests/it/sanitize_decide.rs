@@ -125,7 +125,7 @@ pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     repeat.tool_args.clone_from(&tool.tool_args);
     let session = BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:c1".to_owned(),
@@ -157,7 +157,7 @@ pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     };
     let raw = capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         DateTime::UNIX_EPOCH,
@@ -611,18 +611,18 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
     Ok(())
 }
 
-const V080_BUNDLE: &str = include_str!("../fixtures/decide-v0.8.0/bundle.json");
-const V080_REPORT: &str = include_str!("../fixtures/decide-v0.8.0/report.md");
-const V080_LOCAL: &str = include_str!("../fixtures/decide-v0.8.0/review.local.json");
+const V1_BUNDLE: &str = include_str!("../fixtures/decide-v1-mac/bundle.json");
+const V1_REPORT: &str = include_str!("../fixtures/decide-v1-mac/report.txt");
+const V1_LOCAL: &str = include_str!("../fixtures/decide-v1-mac/review.local.json");
 
 #[test]
-fn a_0_8_0_decide_run_still_resolves() -> TestResult {
-    let bundle: SessionBundle = serde_json::from_str(V080_BUNDLE)?;
-    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+fn a_v1_mac_decide_run_still_resolves() -> TestResult {
+    let bundle: SessionBundle = serde_json::from_str(V1_BUNDLE)?;
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V1_LOCAL)?;
     let key = LocalKey::from_bytes([7; 32]);
     assert_eq!(stamp_flags(&bundle), Some(3));
 
-    let report = mark(V080_REPORT, 1, "redact");
+    let report = mark(V1_REPORT, 1, "redact");
     let report = mark(&report, 2, "keep");
     let flags = sanitize::marks::read_flags(&report)?;
     let resolved = sanitize::resolve(&bundle, &flags, &local, &key)?;
@@ -708,11 +708,11 @@ fn open_flag_marked_keep(bundle: &mut SessionBundle) -> TestResult {
 }
 
 #[test]
-fn an_edited_review_table_is_refused_in_a_0_8_0_run() -> TestResult {
-    let mut bundle: SessionBundle = serde_json::from_str(V080_BUNDLE)?;
-    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+fn an_edited_review_table_is_refused_in_a_v1_mac_run() -> TestResult {
+    let mut bundle: SessionBundle = serde_json::from_str(V1_BUNDLE)?;
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V1_LOCAL)?;
     open_flag_marked_keep(&mut bundle)?;
-    let flags = sanitize::marks::read_flags(V080_REPORT)?;
+    let flags = sanitize::marks::read_flags(V1_REPORT)?;
 
     let error = sanitize::resolve(&bundle, &flags, &local, &LocalKey::from_bytes([7; 32])).err();
 
@@ -751,13 +751,13 @@ async fn an_edited_review_table_is_refused_in_a_fresh_run() -> TestResult {
 #[test]
 fn only_a_missing_mac_format_reads_as_v1() -> TestResult {
     let with = |format: &str| {
-        V080_LOCAL.replacen(
+        V1_LOCAL.replacen(
             r#""seal""#,
             &format!(r#""mac_format": "{format}", "seal""#),
             1,
         )
     };
-    let local: sanitize::decide::LocalReview = serde_json::from_str(V080_LOCAL)?;
+    let local: sanitize::decide::LocalReview = serde_json::from_str(V1_LOCAL)?;
     assert_eq!(local.mac_format, MacFormat::V1);
 
     assert!(serde_json::from_str::<sanitize::decide::LocalReview>(&with("v1")).is_err());

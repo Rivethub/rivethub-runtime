@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use kernel::filing::Target;
-use kernel::topics::Slug;
 use kernel::topics::TopicId;
-use kernel::wiki::builder::{DeferredWiki, ExtractWiki, HeldEntity, WikiStoreError};
+use kernel::wiki::builder::{DeferredWiki, ExtractWiki, WikiStoreError};
 use kernel::wiki::page::WikiPatch;
 use kernel::wiki::page::WikiSlug;
 use sqlx::PgPool;
@@ -12,15 +11,6 @@ use wire::session_id::SessionId;
 use super::{load_summary, query_error, topics};
 
 #[derive(Debug, sqlx::FromRow)]
-struct HeldRow {
-    key: String,
-    source: String,
-    summary_id: Uuid,
-    patch: String,
-    held_at: DateTime<Utc>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 struct DeferredRow {
     summary_id: Uuid,
     waits_session: Option<String>,
@@ -28,69 +18,6 @@ struct DeferredRow {
     applied_topic: Option<Uuid>,
     patches: String,
     deferred_at: DateTime<Utc>,
-}
-
-pub(super) async fn hold(
-    pool: &PgPool,
-    held: HeldEntity,
-) -> Result<Vec<HeldEntity>, WikiStoreError> {
-    sqlx::query(
-        "INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
-         VALUES ($1, $2, $3, $4::jsonb, $5, (SELECT owner_user_id FROM rh_summaries WHERE id = $3))
-         ON CONFLICT (key, source) DO UPDATE SET summary_id = EXCLUDED.summary_id,
-            patch = EXCLUDED.patch, held_at = EXCLUDED.held_at, owner_user_id = EXCLUDED.owner_user_id",
-    )
-    .bind(held.key.as_str())
-    .bind(&held.source)
-    .bind(held.summary_id)
-    .bind(encoded(&held.patch)?)
-    .bind(held.at)
-    .execute(pool)
-    .await
-    .map_err(query_error)?;
-    candidates(pool, &held.key).await
-}
-
-pub(super) async fn candidates(
-    pool: &PgPool,
-    key: &Slug,
-) -> Result<Vec<HeldEntity>, WikiStoreError> {
-    sqlx::query_as::<_, HeldRow>(
-        "SELECT key, source, summary_id, patch::text AS patch, held_at
-           FROM rh_wiki_entity_candidates WHERE key = $1 ORDER BY held_at, source",
-    )
-    .bind(key.as_str())
-    .fetch_all(pool)
-    .await
-    .map_err(query_error)?
-    .into_iter()
-    .map(|row| {
-        Ok(HeldEntity {
-            key: Slug::fold(&row.key).map_err(invalid)?,
-            source: row.source,
-            summary_id: row.summary_id,
-            patch: serde_json::from_str(&row.patch).map_err(invalid)?,
-            at: row.held_at,
-        })
-    })
-    .collect()
-}
-
-pub(super) async fn release(pool: &PgPool, held: &[HeldEntity]) -> Result<(), WikiStoreError> {
-    let mut tx = pool.begin().await.map_err(query_error)?;
-    for mention in held {
-        sqlx::query(
-            "DELETE FROM rh_wiki_entity_candidates
-              WHERE key = $1 AND source = $2 AND summary_id = $3",
-        )
-        .bind(mention.key.as_str())
-        .bind(&mention.source)
-        .bind(mention.summary_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(query_error)?;
-    }
-    tx.commit().await.map_err(query_error)
 }
 
 pub(super) async fn defer(pool: &PgPool, deferred: DeferredWiki) -> Result<(), WikiStoreError> {

@@ -44,13 +44,7 @@ pub enum TokenError {
 #[derive(Clone, PartialEq, Eq)]
 pub struct OwnerToken(String);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "SS-15a: the local owner token is a credential; deriving Debug would print it into logs and reports"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for OwnerToken {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("OwnerToken(..)")
@@ -193,13 +187,7 @@ pub struct LocalOwner {
     held: RwLock<Held>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "SS-15a: the holder carries the live local owner token; deriving Debug would print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for LocalOwner {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

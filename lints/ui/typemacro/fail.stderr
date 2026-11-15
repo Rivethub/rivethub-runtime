@@ -1,4 +1,4 @@
-warning: macro_rules! in production code (write the types and impls out) → docs/PATTERNS.md#typemacro
+warning: macro_rules! in production code (write the types and impls out)
   --> $DIR/fail.rs:4:1
    |
 LL | / macro_rules! closed {

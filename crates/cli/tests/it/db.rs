@@ -12,11 +12,14 @@ async fn sqlite_status_is_read_only_and_migrate_is_idempotent() -> Result {
     let env = environment(&home);
     let path = home.path().join("memory with spaces.sqlite");
     let path_text = path.to_str().ok_or("path")?;
+    let required = memory_sqlite::SCHEMA_VERSION;
     let before = run(&["db", "status", "--path", path_text], &env).await;
     assert_eq!(before.exit, Exit::Ok);
     assert_eq!(
         before.stdout,
-        format!("sqlite {path_text}: current 0, required 35, pending 35\nforeign: none\n")
+        format!(
+            "sqlite {path_text}: current 0, required {required}, pending {required}\nforeign: none\n"
+        )
     );
     assert!(!path.exists());
     for _ in 0..2 {
@@ -24,14 +27,18 @@ async fn sqlite_status_is_read_only_and_migrate_is_idempotent() -> Result {
         assert_eq!(applied.exit, Exit::Ok, "{}", applied.stderr);
         assert_eq!(
             applied.stdout,
-            format!("sqlite {path_text}: applied; current 35, required 35, pending 0\n")
+            format!(
+                "sqlite {path_text}: applied; current {required}, required {required}, pending 0\n"
+            )
         );
     }
     let bytes = std::fs::read(&path)?;
     let after = run(&["db", "status", "--path", path_text], &env).await;
     assert_eq!(
         after.stdout,
-        format!("sqlite {path_text}: current 35, required 35, pending 0\nforeign: none\n")
+        format!(
+            "sqlite {path_text}: current {required}, required {required}, pending 0\nforeign: none\n"
+        )
     );
     assert_eq!(std::fs::read(path)?, bytes);
     Ok(())
@@ -68,7 +75,6 @@ async fn configured_database_missing_config_and_typed_flags() -> Result {
             "postgres://example.com/db",
         ],
         vec!["update", "--channel", "wrong"],
-        vec!["update", "--ssh-user", "user"],
     ] {
         assert_eq!(run(&args, &env).await.exit, Exit::Failure);
     }

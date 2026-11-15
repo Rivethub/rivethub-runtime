@@ -151,11 +151,6 @@ impl Desk {
     }
 
     #[must_use]
-    pub const fn automated(&self) -> &Automated {
-        &self.automated
-    }
-
-    #[must_use]
     pub fn parent_session(conversation: &SnapshotConversation) -> Option<Target> {
         let parent = conversation.parent_session.as_deref()?;
         Target::stored(Some(parent), None)
