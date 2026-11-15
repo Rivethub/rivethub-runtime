@@ -51,13 +51,6 @@ pub fn recorded_schema_metadata(schema: &mut Schema) {
     schemars::transform::transform_subschemas(&mut recorded_schema_metadata, schema);
 }
 
-pub fn object_properties(schema: &mut Schema) {
-    if schema.get("properties").is_none() {
-        let empty: rmcp::model::JsonObject = rmcp::model::JsonObject::default();
-        schema.insert("properties".into(), empty.into());
-    }
-}
-
 pub fn optional_non_null(schema: &mut Schema) {
     if let Some(types) = schema
         .get_mut("type")

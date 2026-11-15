@@ -22,18 +22,6 @@ impl ProviderType {
     pub fn is_openai_family(self) -> bool {
         matches!(self, Self::OpenaiCompatible | Self::Vllm)
     }
-
-    pub fn is_cli_family(self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeCli
-                | Self::CodexCli
-                | Self::GrokCli
-                | Self::HermesCli
-                | Self::KimiCode
-                | Self::OpencodeCli
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString, strum::EnumIter)]

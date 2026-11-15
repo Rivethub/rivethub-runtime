@@ -263,13 +263,6 @@ pub(crate) async fn read_uncapped_async(path: &Path) -> Result<String, Transcrip
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-pub async fn read_capped_async(path: &Path) -> Result<String, TranscriptReaderError> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|error| read_error(path, error))?;
-    Ok(capped_text(&bytes))
-}
-
 fn read_error(path: &Path, error: std::io::Error) -> TranscriptReaderError {
     TranscriptReaderError::Read {
         message: format!("transcript {}: {error}", path.display()),

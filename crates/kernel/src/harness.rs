@@ -198,15 +198,6 @@ impl SessionOption {
             Self::Effort(_) => "effort",
         }
     }
-
-    #[must_use]
-    pub fn for_turn(model: Option<String>, effort: Option<ThinkingLevel>) -> Vec<Self> {
-        model
-            .map(Self::Model)
-            .into_iter()
-            .chain(effort.map(Self::Effort))
-            .collect()
-    }
 }
 
 #[async_trait]

@@ -88,9 +88,6 @@ fn kept<T>(session: &SessionId, read: Result<T, ApiError>) -> Option<T> {
 
 const fn kind(kind: PreviewKind) -> SessionPreviewKind {
     match kind {
-        PreviewKind::Running => SessionPreviewKind::Running,
-        PreviewKind::Asking => SessionPreviewKind::Asking,
-        PreviewKind::Approval => SessionPreviewKind::Approval,
         PreviewKind::Said => SessionPreviewKind::Said,
     }
 }

@@ -120,10 +120,6 @@ impl Paths {
         self.state_dir().join("discovery")
     }
 
-    pub fn ca_dir(&self) -> PathBuf {
-        self.state_dir().join("ca")
-    }
-
     pub fn logs_dir(&self) -> PathBuf {
         self.state_dir().join("logs")
     }
@@ -134,10 +130,6 @@ impl Paths {
 
     pub fn pid_file(&self) -> PathBuf {
         self.state_dir().join(PID_FILE_NAME)
-    }
-
-    pub fn owner_lock(&self, data_dir: &Path) -> PathBuf {
-        data_dir.join("rivethub-owner.lock")
     }
 
     pub fn config_candidates(&self) -> Vec<ConfigLocation> {

@@ -73,10 +73,6 @@ impl ImportTable {
         format!("ros_{self}")
     }
 
-    pub fn postgres_name(self) -> String {
-        format!("rh_{self}")
-    }
-
     #[must_use]
     pub fn dump_columns(self) -> Option<&'static [&'static str]> {
         catalog::columns(self)

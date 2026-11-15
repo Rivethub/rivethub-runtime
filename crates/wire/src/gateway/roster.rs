@@ -68,11 +68,6 @@ const BUILTIN: &[BuiltinCommand] = &[
 ];
 
 #[must_use]
-pub fn builtin_commands() -> &'static [BuiltinCommand] {
-    BUILTIN
-}
-
-#[must_use]
 pub fn harness_for_roster_key(key: &str) -> Option<HarnessId> {
     match key {
         "claude" => Some(HarnessId::ClaudeCode),
