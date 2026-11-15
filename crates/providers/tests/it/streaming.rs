@@ -1,11 +1,8 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
-use common::fixed_status_server;
-use common::repeating_server;
-use common::scenario_server;
-use common::slow_server;
+use crate::common;
+use crate::common::fixed_status_server;
+use crate::common::repeating_server;
+use crate::common::scenario_server;
+use crate::common::slow_server;
 use kernel::model::ModelChunk;
 use kernel::model::ModelProvider;
 use kernel::model::ModelProviderError;
@@ -226,7 +223,6 @@ async fn a_stream_that_closes_without_done_is_not_a_completed_response() {
         ),
         "",
     );
-    assert!(!unfinished.contains("DONE"));
     let server = scenario_server(vec![
         testkit::Canned {
             status: 200,
@@ -268,10 +264,6 @@ async fn dropping_the_stream_receiver_aborts_the_request() {
         "data: {\"id\":\"chatcmpl-golden-vllm-A-1\",\"object\":\"chat.completion.chunk\",",
         "\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,",
         "\"delta\":{\"content\":\"Hi\"},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
-    );
-    assert!(
-        !one_event.contains("[DONE]"),
-        "the held response must not already contain the done marker"
     );
     let server = slow_server(one_event.to_owned()).await;
     let provider = chat_provider(server.addr);

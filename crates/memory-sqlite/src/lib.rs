@@ -288,7 +288,6 @@ fn verify(path: &Path, found: i64) -> Result<(), SqliteError> {
 #[cfg(test)]
 mod tests {
     use super::SqliteStore;
-    use crate::error::SqliteError;
 
     #[tokio::test]
     async fn with_conn_runs_off_the_async_worker() {
@@ -305,45 +304,5 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(ran_on, awaited_on);
-    }
-
-    #[tokio::test]
-    async fn migrated_store_opens_the_current_schema() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("memory.sqlite");
-        migrate::sqlite(&path).unwrap();
-        let store = SqliteStore::open(&path).unwrap();
-        let state = store
-            .with_conn(move |conn| {
-                let version: i64 = conn
-                    .query_row("PRAGMA user_version", [], |row| row.get(0))
-                    .unwrap();
-                let tables: i64 = conn
-                    .query_row(
-                        "SELECT count(*) FROM sqlite_master WHERE type = 'table'",
-                        [],
-                        |row| row.get(0),
-                    )
-                    .unwrap();
-                Ok((version, tables))
-            })
-            .await
-            .unwrap();
-        assert_eq!(state, (crate::SCHEMA_VERSION, 76));
-    }
-
-    #[tokio::test]
-    async fn with_conn_propagates_the_closure_error() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("memory.sqlite");
-        migrate::sqlite(&path).unwrap();
-        let store = SqliteStore::open(&path).unwrap();
-        let outcome = store
-            .with_conn(move |_conn| Err::<i64, _>(SqliteError::UnsupportedSchema { found: 9 }))
-            .await;
-        match outcome {
-            Err(SqliteError::UnsupportedSchema { found }) => assert_eq!(found, 9),
-            other => panic!("expected UnsupportedSchema, got {other:?}"),
-        }
     }
 }

@@ -116,23 +116,18 @@ pub(crate) async fn repeating_server(body: String) -> RepeatingServer {
 
 pub(crate) struct SlowServer {
     pub(crate) addr: SocketAddr,
-    pub(crate) recorder: Recorder,
     pub(crate) disconnect: Disconnect,
     _stub: testkit::Stub,
 }
 
 pub(crate) async fn slow_server(first: String) -> SlowServer {
-    let recorder: Recorder = Arc::default();
     let disconnect = Disconnect::default();
-    let routes = axum::Router::new().fallback(slow_handler).with_state((
-        recorder.clone(),
-        Arc::new(first),
-        disconnect.clone(),
-    ));
+    let routes = axum::Router::new()
+        .fallback(slow_handler)
+        .with_state((Arc::new(first), disconnect.clone()));
     let stub = demand(testkit::stub_server(routes).await, "stub server binds");
     SlowServer {
         addr: stub.addr,
-        recorder,
         disconnect,
         _stub: stub,
     }
@@ -177,15 +172,8 @@ impl Drop for DisconnectGuard {
 }
 
 async fn slow_handler(
-    axum::extract::State((recorder, body, disconnect)): axum::extract::State<(
-        Recorder,
-        Arc<String>,
-        Disconnect,
-    )>,
-    request: axum::extract::Request,
+    axum::extract::State((body, disconnect)): axum::extract::State<(Arc<String>, Disconnect)>,
 ) -> axum::response::Response {
-    let call = capture(request).await;
-    recorder.lock().push(call);
     let event = body.as_bytes().to_vec();
     let stream = unfold(
         (Some(event), DisconnectGuard(disconnect)),

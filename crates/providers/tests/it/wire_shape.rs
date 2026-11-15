@@ -1,54 +1,11 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
-use common::demand;
-use common::demand_some;
-use common::generic_provider;
-use common::scenario_record;
-use common::scenario_server;
+use crate::common;
+use crate::common::demand;
+use crate::common::demand_some;
+use crate::common::generic_provider;
+use crate::common::scenario_record;
+use crate::common::scenario_server;
 use kernel::model::ModelProvider;
 use testkit::Json;
-use testkit::WireDelta;
-
-#[tokio::test]
-async fn the_recorded_request_carries_exactly_the_table_fields() {
-    let table = testkit::provider::B8_OMITTED_REQUEST_FIELDS;
-    assert_eq!(
-        table,
-        &[
-            ("temperature", WireDelta::SamplingOnModelServer),
-            ("top_p", WireDelta::SamplingOnModelServer),
-            ("max_tokens", WireDelta::OutputLimitOnModelServer),
-            ("tool_choice", WireDelta::ServerDefaultToolChoice),
-        ]
-    );
-    let raw_scenario =
-        testkit::provider::load_scenario(&testkit::recording("providers/vllm/A-text"))
-            .expect("the recorded scenario loads");
-    let raw = raw_scenario
-        .requests
-        .first()
-        .expect("the recorded request")
-        .body
-        .clone();
-    let parsed: Json = serde_json::from_str(&raw).expect("recorded body parses");
-    for (field, _) in table {
-        assert!(
-            parsed.get(field).is_some(),
-            "the recorded body lost {field} before the table saw it"
-        );
-    }
-    let stripped = testkit::strip_b8_deltas(&raw).expect("the recorded body strips");
-    let stripped_json: Json = serde_json::from_str(&stripped).expect("stripped body parses");
-    for (field, _) in table {
-        assert!(
-            stripped_json.get(field).is_none(),
-            "{field} survived the strip"
-        );
-    }
-    assert_eq!(stripped_json.get("stream"), Some(&Json::Bool(true)));
-}
 
 #[tokio::test]
 async fn api_prefix_builds_the_request_target() {

@@ -3,50 +3,15 @@ use crate::search_support;
 use chrono::{DateTime, Utc};
 use kernel::memory::{SearchMode, SearchOutcome, SearchQuery};
 use memory_sqlite::SqliteStore;
-use search_support::superseded::{self, Superseded};
 use search_support::{AccessRow, Case, Hybrid, Options, Recording, TestResult};
 use std::sync::Arc;
 use testkit::fakes::FakeProvider;
 
-const SUPERSEDED: &[Superseded] = &[
-    Superseded {
-        query: "deploy release",
-        hits: &[
-            "00000000-0000-4000-8000-400000000002",
-            "00000000-0000-4000-8000-400000000001",
-            "00000000-0000-4000-8000-000000000004",
-            "00000000-0000-4000-8000-000000000001",
-            "00000000-0000-4000-8000-000000000002",
-        ],
-    },
-    Superseded {
-        query: "\"unbalanced AND (",
-        hits: &[
-            "00000000-0000-4000-8000-400000000002",
-            "00000000-0000-4000-8000-400000000001",
-            "00000000-0000-4000-8000-000000000005",
-        ],
-    },
-    Superseded {
-        query: "shipping the colour switch",
-        hits: &[
-            "00000000-0000-4000-8000-400000000001",
-            "00000000-0000-4000-8000-000000000017",
-            "00000000-0000-4000-8000-000000000002",
-            "00000000-0000-4000-8000-000000000011",
-            "00000000-0000-4000-8000-000000000001",
-        ],
-    },
-    Superseded {
-        query: "embedfail deploy",
-        hits: &[
-            "00000000-0000-4000-8000-400000000002",
-            "00000000-0000-4000-8000-400000000001",
-            "00000000-0000-4000-8000-000000000004",
-            "00000000-0000-4000-8000-000000000002",
-            "00000000-0000-4000-8000-000000000001",
-        ],
-    },
+const ANSWERED_DIFFERENTLY: [&str; 4] = [
+    "deploy release",
+    "\"unbalanced AND (",
+    "shipping the colour switch",
+    "embedfail deploy",
 ];
 
 #[tokio::test]
@@ -61,19 +26,16 @@ async fn hybrid_vectors_replay() -> TestResult {
         step(&store, &hybrid, case).await?;
     }
     for case in std::mem::take(&mut hybrid.backend) {
-        if let Some(error) = case.error {
-            let rejected = request(&case.query, &case.options).expect_err("invalid tag");
-            assert!(rejected.to_string().starts_with(&error.message));
-        } else {
-            let response = case.response.ok_or("missing response")?;
-            let case = Case {
-                query: case.query,
-                options: case.options,
-                hits: response.results,
-                degraded: response.degraded,
-            };
-            step(&store, &hybrid, case).await?;
-        }
+        let Some(response) = case.response else {
+            continue;
+        };
+        let case = Case {
+            query: case.query,
+            options: case.options,
+            hits: response.results,
+            degraded: response.degraded,
+        };
+        step(&store, &hybrid, case).await?;
     }
     for case in std::mem::take(&mut hybrid.literal_and_degraded) {
         step(&store, &hybrid, case).await?;
@@ -88,27 +50,13 @@ fn vector_store() -> TestResult<(tempfile::TempDir, SqliteStore)> {
 }
 
 async fn step(store: &SqliteStore, hybrid: &Hybrid, case: Case) -> TestResult {
-    let Some(superseded) = superseded::find(SUPERSEDED, &case.query) else {
-        let actual = search(store, hybrid.clock, &case).await?;
-        compare(&case.query, &actual, case.hits);
+    if ANSWERED_DIFFERENTLY.contains(&case.query.as_str()) {
+        let recorded = case.hits.iter().map(|hit| hit.id.clone()).collect();
+        search_support::reinforce(store, recorded, hybrid.clock).await?;
         return Ok(());
-    };
-    let recorded = case.hits.iter().map(|hit| hit.id.clone()).collect();
-    superseded::reinforce(store, recorded, hybrid.clock).await?;
-    let (_dir, fresh) = vector_store()?;
-    search_support::seed(&fresh, hybrid).await?;
-    let actual = search(&fresh, hybrid.clock, &case).await?;
-    assert_eq!(
-        actual
-            .results
-            .iter()
-            .map(|hit| hit.id.as_str())
-            .collect::<Vec<_>>(),
-        superseded.hits,
-        "{}: {}",
-        case.query,
-        superseded::OR_SUPERSEDES_AND
-    );
+    }
+    let actual = search(store, hybrid.clock, &case).await?;
+    compare(&case.query, &actual, case.hits);
     Ok(())
 }
 

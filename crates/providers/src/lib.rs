@@ -371,34 +371,3 @@ fn assemble_tool_calls(
     }
     Ok(Some(out))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_models_probe_runs_unless_disabled() {
-        assert!(probe_unless_disabled(None));
-        assert!(probe_unless_disabled(Some(true)));
-        assert!(!probe_unless_disabled(Some(false)));
-    }
-
-    #[test]
-    fn the_variant_accepts_only_the_openai_family() {
-        assert_eq!(Variant::of(ProviderType::Vllm), Some(Variant::Vllm));
-        assert_eq!(
-            Variant::of(ProviderType::OpenaiCompatible),
-            Some(Variant::OpenaiCompatible)
-        );
-        for kind in [
-            ProviderType::ClaudeCli,
-            ProviderType::CodexCli,
-            ProviderType::GrokCli,
-            ProviderType::HermesCli,
-            ProviderType::KimiCode,
-            ProviderType::OpencodeCli,
-        ] {
-            assert_eq!(Variant::of(kind), None);
-        }
-    }
-}

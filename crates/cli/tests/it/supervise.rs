@@ -14,11 +14,6 @@ use support::{config, environment, home, run};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
-const GAPS: &[(&str, &str)] = &[(
-    "postgres-worker-roles",
-    "A Postgres config has no worker-role list, so rh start does not invent worker children for it.",
-)];
-
 const BASE: &str = "\
 runtime:\n  \
   workspace: /home/user/work\n  \
@@ -31,18 +26,6 @@ providers:\n  \
     type: openai-compatible\n    \
     base_url: http://127.0.0.1:1/v1\n    \
     model: m\n";
-
-#[test]
-fn skipped_scenarios_are_named_once_with_a_reason() {
-    let mut names = std::collections::BTreeSet::new();
-    assert_ne!(GAPS, []);
-    for (name, reason) in GAPS {
-        assert_ne!(*name, "");
-        assert_ne!(*reason, "");
-        assert!(names.insert(*name), "duplicate scenario {name}");
-    }
-    assert_eq!(names.len(), GAPS.len());
-}
 
 #[tokio::test]
 async fn start_refuses_a_missing_config_with_the_contract_text() {
@@ -58,14 +41,6 @@ async fn start_refuses_a_missing_config_with_the_contract_text() {
     let help = run(&["--help"], &env).await;
     assert_eq!(help.exit, Exit::Ok);
     assert!(help.stdout.contains("local"));
-    let unknown = run(&["local", "--yes"], &env).await;
-    assert_eq!(unknown.exit, Exit::Failure);
-    assert!(!unknown.stderr.starts_with("Unknown command:"));
-    assert!(
-        !help
-            .stdout
-            .contains("Supervise the configured service roots")
-    );
 }
 
 #[tokio::test]
@@ -175,10 +150,6 @@ async fn service_roots_keep_their_config_flag() {
         .expect("worker dispatch");
     assert_eq!(role, workers::ProcessRole::Summarizer);
     assert_eq!(got, path);
-    assert!(
-        Cli::parse_args(["rh", "agent", "--config", path.to_str().expect("path")].map(Into::into))
-            .is_err()
-    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -1,12 +1,11 @@
-#[expect(dead_code)]
-mod common;
+mod owner;
 
 use migrate::POSTGRES;
 use sqlx::PgPool;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-async fn through_0041(pool: &PgPool) -> TestResult {
+async fn before_owners(pool: &PgPool) -> TestResult {
     for migration in POSTGRES
         .migrations
         .iter()
@@ -27,8 +26,8 @@ async fn owners(pool: &PgPool, table: &str) -> Result<Vec<Option<String>>, sqlx:
 }
 
 #[sqlx::test(migrations = false)]
-async fn migration_0042_gives_every_row_the_owner_of_its_store(pool: PgPool) -> TestResult {
-    through_0041(&pool).await?;
+async fn every_row_takes_the_owner_of_its_store(pool: PgPool) -> TestResult {
+    before_owners(&pool).await?;
     sqlx::raw_sql(
         "SET rivet.defer_embed_enqueue = 'on';
          INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id) VALUES
@@ -94,7 +93,7 @@ async fn migration_0042_gives_every_row_the_owner_of_its_store(pool: PgPool) -> 
 
 #[sqlx::test(migrations = false)]
 async fn a_store_without_a_single_owner_must_be_named(pool: PgPool) -> TestResult {
-    through_0041(&pool).await?;
+    before_owners(&pool).await?;
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (session_key, agent, owner_user_id) VALUES
            ('cli:one', 'rivet', 'alice'), ('cli:two', 'rivet', 'bob'), ('cli:three', 'rivet', NULL)",
@@ -110,7 +109,7 @@ async fn a_store_without_a_single_owner_must_be_named(pool: PgPool) -> TestResul
         vec![Some("alice".to_owned()), Some("bob".to_owned()), None]
     );
 
-    common::migrate_owned_by(&pool, "carol").await?;
+    owner::migrate_owned_by(&pool, "carol").await?;
 
     let owned: Vec<(String, String)> = sqlx::query_as(
         "SELECT session_key, owner_user_id FROM rh_conversations ORDER BY session_key",
@@ -129,7 +128,7 @@ async fn a_store_without_a_single_owner_must_be_named(pool: PgPool) -> TestResul
 }
 
 #[test]
-fn schema_v28_gives_every_row_the_owner_of_its_store() -> TestResult {
+fn every_row_of_a_file_takes_the_owner_of_its_store() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("memory.sqlite");
     migrate::sqlite(&path)?;

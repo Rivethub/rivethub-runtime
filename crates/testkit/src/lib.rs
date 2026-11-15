@@ -1,6 +1,5 @@
 pub mod capture;
 pub mod capture_pg;
-pub mod cases;
 pub mod changes;
 pub mod decisions;
 pub mod facts;
@@ -37,7 +36,6 @@ pub mod wiki_golden;
 pub mod wiki_lineage;
 pub mod wiki_mentions;
 pub mod wiki_routes;
-pub mod ws;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -47,15 +45,11 @@ pub use capture::HookOutcome;
 pub use capture::HookPost;
 pub use capture_pg::PgOutcome;
 pub use capture_pg::PgStep;
-pub use cases::Thrown;
-pub use fakes::FakeHarness;
 pub use fakes::FakeJobQueue;
 pub use fakes::FakeModelCallStore;
 pub use fakes::FakeProvider;
-pub use fakes::FakeReader;
 pub use fakes::FakeSessionCatalog;
 pub use fakes::FakeSessionDeletion;
-pub use fakes::FakeTool;
 pub use fakes::Script;
 pub use graphile_schema::install_graphile_worker;
 pub use http::Handshake;
@@ -83,19 +77,10 @@ pub use provider::ProviderTurn;
 pub use provider::WireDelta;
 pub use provider::strip_b8_deltas;
 pub use sqlite::FixtureCopy;
-pub use sqlite::FixtureDb;
 pub use sqlite::copy_fixture;
-pub use sqlite::open_fixture;
 pub use sqlite::query_json;
-pub use sqlite::rows_eq;
-pub use sqlite::sqlite_version;
 pub use stub::Stub;
 pub use stub::stub_server;
-pub use ws::Frame;
-pub use ws::WsCall;
-pub use ws::WsReply;
-pub use ws::WsRequest;
-pub use ws::WsSent;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{id}: {detail}")]

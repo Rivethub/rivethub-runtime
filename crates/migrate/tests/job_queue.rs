@@ -3,7 +3,7 @@ use sqlx::PgPool;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[sqlx::test(migrations = false)]
-async fn migration_0052_creates_the_graphile_worker_schema(pool: PgPool) -> TestResult {
+async fn the_migrations_create_the_job_queue(pool: PgPool) -> TestResult {
     migrate::postgres_pool(&pool).await?;
     let version: Option<i32> = sqlx::query_scalar("SELECT max(id) FROM graphile_worker.migrations")
         .fetch_one(&pool)
@@ -23,7 +23,7 @@ async fn migration_0052_creates_the_graphile_worker_schema(pool: PgPool) -> Test
 }
 
 #[sqlx::test(migrations = false)]
-async fn migration_0052_leaves_an_existing_queue_schema_alone(pool: PgPool) -> TestResult {
+async fn an_existing_queue_schema_is_left_alone(pool: PgPool) -> TestResult {
     testkit::graphile_schema::install_graphile_worker(&pool).await?;
     migrate::postgres_pool(&pool).await?;
     let created: Option<String> =

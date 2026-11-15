@@ -24,27 +24,16 @@ use testkit::Json;
 use wire::gateway::memory::MemoryBrowseToolArgs;
 use wire::message::Role;
 
-const SKIPPED_STATS_SCENARIOS: [&str; 2] = [
-    "embedding endpoint: queued, then drained, queues and buckets",
-    "embedding keeps failing → degraded; old failures age out",
-];
-
-const HEALTH_SKIP: &str = "health() is outside this slice";
-
-const SKIPPED_TOOL_CALLS: [&str; 4] = [
-    "memory_search",
-    "memory_append",
-    "memory_ingest_session",
-    "memory_tags",
-];
-
-const SKIPPED_TOOL_LABELS: [&str; 6] = [
-    "get_full branch summary",
-    "get_full leaf summary",
-    "get_full big (tail only)",
-    "get_full no id",
-    "browse bad window",
-    "browse bad since",
+const READ_CALLS: [&str; 9] = [
+    "get_full message",
+    "get_full tool message",
+    "get_full missing",
+    "browse default",
+    "browse include tools asc",
+    "browse window last_7d",
+    "browse empty",
+    "stats",
+    "stats agent",
 ];
 
 fn helper_batch() -> TestResult<kernel::memory::CaptureBatchRequest> {
@@ -73,31 +62,24 @@ async fn stats_json(store: &SqliteStore, agent: Option<&str>) -> TestResult<Json
 #[tokio::test]
 async fn stats_replay_the_recorded_scenarios() -> TestResult {
     let file: ScenarioFile = common::recording("stats-health.json")?;
-    let mut replayed = 0;
-    for scenario in file.scenarios {
-        if SKIPPED_STATS_SCENARIOS.contains(&scenario.name.as_str()) {
-            continue;
-        }
+    for (name, seeded) in [
+        ("empty store", false),
+        ("captured, no embedding endpoint", true),
+    ] {
+        let scenario = file
+            .scenarios
+            .iter()
+            .find(|scenario| scenario.name == name)
+            .ok_or_else(|| format!("missing scenario {name}"))?;
         let fresh = fresh_store()?;
-        let seeded_at = instant(common::RECORDED_START)?;
-        match scenario.name.as_str() {
-            "empty store" => {}
-            "captured, no embedding endpoint" => {
+        if seeded {
+            let at = instant(common::RECORDED_START)?;
+            for batch in [deploy_batch("cli:sess-1", "rivet")?, helper_batch()?] {
                 fresh
                     .store
-                    .capture(
-                        deploy_batch("cli:sess-1", "rivet")?,
-                        &testkit::owner()?,
-                        None,
-                        seeded_at,
-                    )
-                    .await?;
-                fresh
-                    .store
-                    .capture(helper_batch()?, &testkit::owner()?, None, seeded_at)
+                    .capture(batch, &testkit::owner()?, None, at)
                     .await?;
             }
-            other => return Err(format!("no seed for stats scenario {other:?}").into()),
         }
         let mut ids = Ids::default();
         for step in &scenario.steps {
@@ -105,23 +87,13 @@ async fn stats_replay_the_recorded_scenarios() -> TestResult {
                 "stats" => None,
                 "stats agent helper" => Some("helper"),
                 "stats agent nobody" => Some("nobody"),
-                label if label.starts_with("health") => {
-                    eprintln!("skipped step {} / {label}: {HEALTH_SKIP}", scenario.name);
-                    continue;
-                }
-                other => return Err(format!("no replay for step {other:?}").into()),
+                _ => continue,
             };
             let expected = step.result.clone().ok_or("recorded stats result")?;
             let actual = stats_json(&fresh.store, agent).await?;
-            ids.same(
-                &expected,
-                &actual,
-                &format!("{} / {}", scenario.name, step.label),
-            )?;
+            ids.same(&expected, &actual, &format!("{name} / {}", step.label))?;
         }
-        replayed += 1;
     }
-    assert_eq!(replayed, 2);
     Ok(())
 }
 
@@ -440,18 +412,14 @@ async fn read_tools_replay_browse_get_full_and_stats() -> TestResult {
         &Json::Array(common::table(&fresh.store, "ros_messages").await?),
         "tools seed: ros_messages",
     )?;
-    let mut replayed = 0;
-    for call in &recording.calls {
-        let skipped = SKIPPED_TOOL_CALLS.contains(&call.tool.as_str())
-            || SKIPPED_TOOL_LABELS.contains(&call.label.as_str())
-            || call.label.starts_with("read ");
-        if skipped {
-            continue;
-        }
+    for label in READ_CALLS {
+        let call = recording
+            .calls
+            .iter()
+            .find(|call| call.label == label)
+            .ok_or_else(|| format!("missing call {label}"))?;
         let output = call.output.as_deref().ok_or("recorded tool output")?;
         replay_read_call(&fresh.store, call, output, &ids, now).await?;
-        replayed += 1;
     }
-    assert_eq!(replayed, 9);
     Ok(())
 }

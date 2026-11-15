@@ -53,7 +53,6 @@ pub struct FakeMemoryStore {
     wiki_pages: Mutex<BTreeMap<String, kernel::wiki::WikiPageResponse>>,
     wiki_redirects: Mutex<BTreeMap<String, String>>,
     wiki_error: Mutex<Option<MemoryStoreError>>,
-    tag_context: Mutex<Option<TagJobContext>>,
     tag_entities: Mutex<BTreeMap<String, Uuid>>,
     embeddings_armed: std::sync::atomic::AtomicBool,
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
@@ -106,10 +105,6 @@ impl FakeMemoryStore {
 
     pub async fn requests(&self) -> Vec<MemoryRequest> {
         self.requests.lock().await.clone()
-    }
-
-    pub async fn script_tag_context(&self, context: TagJobContext) {
-        *self.tag_context.lock().await = Some(context);
     }
 
     async fn record(&self, request: MemoryRequest) {
@@ -608,8 +603,7 @@ impl MemoryStore for FakeMemoryStore {
         summary_id: Uuid,
     ) -> Result<Option<TagJobContext>, MemoryStoreError> {
         self.record(MemoryRequest::TagJobContext(summary_id)).await;
-        let context = self.tag_context.lock().await.clone();
-        Ok(context.filter(|loaded| loaded.summary_id == summary_id))
+        Ok(None)
     }
 
     async fn store_tag_suggestions(

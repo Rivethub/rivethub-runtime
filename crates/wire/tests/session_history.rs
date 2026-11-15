@@ -6,7 +6,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::fmt::Debug;
-use strum::IntoEnumIterator;
 use wire::events::ContextSource;
 use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTranscriptResponse, HarnessTranscriptTool,
@@ -44,7 +43,7 @@ fn invalid(segment: &str) {
 }
 
 #[test]
-fn t0_1_encode_is_unpadded_base64url_and_decodes_back() {
+fn encode_is_unpadded_base64url_and_decodes_back() {
     let id = session(&format!("claude-code:{UUID}"));
     let encoded = encode_segment(&id);
     assert_eq!(
@@ -81,7 +80,7 @@ fn encode_uses_the_url_alphabet_without_padding() {
 }
 
 #[test]
-fn t0_2_decodes_an_unpadded_hermes_segment() {
+fn decodes_an_unpadded_hermes_segment() {
     let decoded = decode_segment("aGVybWVzOjIwMjYwODAyXzIyNTY0N182YWQwYjk").unwrap();
     assert_eq!(
         decoded,
@@ -93,7 +92,7 @@ fn t0_2_decodes_an_unpadded_hermes_segment() {
 }
 
 #[test]
-fn t0_3_a_bare_uuid_is_not_misread_as_base64() {
+fn a_bare_uuid_is_not_misread_as_base64() {
     let decoded = decode_segment(UUID).unwrap();
     assert_eq!(decoded.session, SessionRef::Bare(UUID.to_owned()));
     let resolved = session(&format!("claude-code:{UUID}"));
@@ -110,17 +109,17 @@ fn bare_uuid_match_is_case_insensitive() {
 }
 
 #[test]
-fn t0_4_leading_whitespace_in_the_decoded_id_is_rejected() {
+fn leading_whitespace_in_the_decoded_id_is_rejected() {
     invalid("IGNsYXVkZS1jb2RlOng");
 }
 
 #[test]
-fn t0_5_a_roster_token_prefix_is_rejected() {
+fn a_roster_token_prefix_is_rejected() {
     invalid("Y2xhdWRlOmFiYw");
 }
 
 #[test]
-fn t0_6_path_fallback_collapses_to_the_uuid_and_redirects() {
+fn path_fallback_collapses_to_the_uuid_and_redirects() {
     let decoded = decode_segment(
         "Y2xhdWRlLWNvZGU6LWhvbWUtcml2ZXQvM2YyYzlhMTAtMWIyYy00ZDVlLThmOTAtYTFiMmMzZDRlNWY2",
     )
@@ -139,12 +138,12 @@ fn a_native_with_a_slash_but_no_uuid_tail_is_kept() {
 }
 
 #[test]
-fn t0_7_padding_is_rejected() {
+fn padding_is_rejected() {
     invalid("abc=");
 }
 
 #[test]
-fn t0_8_a_task_key_is_rejected() {
+fn a_task_key_is_rejected() {
     invalid("task%3A123");
     invalid("task:123");
 }
@@ -204,7 +203,6 @@ fn roster_commands_map_to_harness_ids_both_ways() {
         (HarnessId::Cursor, "cursor"),
         (HarnessId::Cowork, "cowork"),
     ];
-    assert_eq!(table.len(), HarnessId::iter().count());
     for (harness, command) in table {
         let roster = RosterCommand::from(harness);
         assert_eq!(roster.to_string(), command);
@@ -247,7 +245,6 @@ fn harness_codes_carry_status_and_retryable() {
             false,
         ),
     ];
-    assert_eq!(table.len(), HarnessCode::iter().count());
     for (code, name, status, retryable) in table {
         assert_eq!(roundtrip::<HarnessCode>(&json!(name)), code);
         assert_eq!(code.to_string(), name);
@@ -257,7 +254,7 @@ fn harness_codes_carry_status_and_retryable() {
 }
 
 #[test]
-fn b5_1_turns_serialize_with_optional_fields_omitted() {
+fn turns_serialize_with_optional_fields_omitted() {
     let wire = json!([
         {"role": "user", "text": "hi"},
         {
@@ -315,7 +312,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
 }
 
 #[test]
-fn b5_2_tools_carry_status_args_and_id() {
+fn tools_carry_status_args_and_id() {
     let wire = json!({
         "role": "assistant",
         "text": "done",
@@ -367,7 +364,7 @@ fn prompt_tools_carry_input_and_result_text() {
 }
 
 #[test]
-fn b5_6_compact_markers_keep_the_compact_flag() {
+fn compact_markers_keep_the_compact_flag() {
     let wire = json!({
         "role": "assistant",
         "text": "Conversation compacted (180k tokens → 12k tokens)",

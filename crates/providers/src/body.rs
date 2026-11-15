@@ -283,18 +283,12 @@ mod url_tests {
         );
     }
 
-    #[derive(schemars::JsonSchema)]
-    struct Probe {
-        #[expect(dead_code)]
-        ok: bool,
-    }
-
     #[test]
     fn thinking_off_and_compact_json_are_sent_only_when_the_caller_asks() {
         let request = kernel::model::ModelRequest {
             options: kernel::model::ModelOptions {
                 enable_thinking: Some(false),
-                json_schema: Some(schemars::schema_for!(Probe)),
+                json_schema: Some(kernel::wiki::builder::extraction_schema()),
                 disable_any_whitespace: true,
                 ..kernel::model::ModelOptions::default()
             },

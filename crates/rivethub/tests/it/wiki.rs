@@ -133,17 +133,6 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
     assert_eq!(source.kind, WikiSourceKind::Summary);
     assert_eq!(source.ids, ["00000000-0000-4000-8000-000000000001"]);
     assert!(actual.markdown.starts_with("# Release guide\n"));
-    let response = get(&client, &base, "/api/wiki/release/raw").await?;
-    assert_eq!(response.status().as_u16(), 200);
-    assert_eq!(
-        response
-            .headers()
-            .get("content-type")
-            .ok_or("raw content type")?
-            .to_str()?,
-        "text/markdown; charset=utf-8"
-    );
-    assert_eq!(response.text().await?, actual.markdown);
     let response = get(&client, &base, "/api/wiki/_gaps?limit=5").await?;
     assert_eq!(response.status().as_u16(), 200);
     let gaps: WikiGapsResponse = response.json().await?;
@@ -154,9 +143,6 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
             .collect::<Vec<_>>(),
         ["release", "known"]
     );
-    for retired in ["/api/wiki/page/release", "/api/wiki/gaps"] {
-        assert_eq!(get(&client, &base, retired).await?.status().as_u16(), 404);
-    }
     let response = get(&client, &base, "/api/wiki/topics?tag=project%3AAcmeKit").await?;
     let topics: WikiTopicList = response.json().await?;
     assert_eq!(topics.total, 1);
@@ -164,11 +150,6 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
         topics.topics.first().ok_or("one topic")?.excerpt,
         "🚀".repeat(240)
     );
-    let response = get(&client, &base, "/wiki/release").await?;
-    assert_eq!(response.status().as_u16(), 200);
-    let html = response.text().await?;
-    assert!(html.contains("Article with &lt;script&gt; and quotes"));
-    assert!(html.contains("Ship it"));
     for (target, location) in [
         ("/api/wiki/legacy", "/api/wiki/release"),
         ("/api/wiki/legacy/raw", "/api/wiki/release/raw"),

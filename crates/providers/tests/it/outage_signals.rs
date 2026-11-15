@@ -1,7 +1,4 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
+use crate::common;
 use std::time::Duration;
 
 use axum::http::StatusCode;

@@ -1,4 +1,3 @@
-#[expect(dead_code)]
 mod common;
 mod search_support;
 

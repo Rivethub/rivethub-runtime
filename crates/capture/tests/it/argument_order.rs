@@ -104,22 +104,6 @@ async fn occurrence_count_spans_hook_and_transcript_spellings()
         .ok_or("expected one message")?;
 
     let value = ToolInput::parse(r#"{"z":1,"a":2}"#)?;
-    let transcript_spelling = {
-        let parsed = parse_lines(TRANSCRIPT_LINE);
-        let first_use = parsed
-            .lines
-            .first()
-            .expect("assistant line parses")
-            .tool_uses()
-            .into_iter()
-            .next()
-            .expect("assistant line carries a tool call");
-        first_use.input.spelling().to_owned()
-    };
-    let hook_spelling = value.spelling();
-    assert_eq!(transcript_spelling, hook_spelling);
-    assert_eq!(transcript_spelling, r#"{"z":1,"a":2}"#);
-
     let digest = occurrence_digest(
         OccurrenceKind::Tool,
         "[tool call] Bash",

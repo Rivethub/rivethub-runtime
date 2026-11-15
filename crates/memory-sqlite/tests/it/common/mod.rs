@@ -370,12 +370,6 @@ pub(crate) async fn compare_tables(
     Ok(())
 }
 
-pub(crate) fn step_result(step: &Step) -> TestResult<&Json> {
-    step.result
-        .as_ref()
-        .ok_or_else(|| format!("step {} has no result", step.label).into())
-}
-
 pub(crate) fn expect_json(recorded: &Json, actual: &Json, at: &str, ids: &mut Ids) -> TestResult {
     ids.same(recorded, actual, at)
         .map_err(|error| format!("{error}\nactual: {actual}"))?;

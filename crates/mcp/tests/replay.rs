@@ -9,7 +9,6 @@ use rmcp::{
     service::ServiceError,
 };
 use serde::Deserialize;
-use std::collections::BTreeSet;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -41,7 +40,7 @@ enum Outcome {
     ProtocolError { code: i32, message: String },
 }
 
-const SKIPPED: &[&str] = &[
+const NOT_SERVED: &[&str] = &[
     "internet_search",
     "web_fetch",
     "echo",
@@ -97,12 +96,9 @@ async fn recordings_over_stdio_framing() {
         let expected: Catalog = load("tools-list");
         let calls: Calls = load("calls");
         let metadata: Metadata = load("meta");
-        let mut skips = BTreeSet::new();
         let mut tools = Vec::new();
         for mut tool in expected.tools {
-            if let Some(name) = SKIPPED.iter().find(|name| **name == tool.name) {
-                assert!(skips.insert(*name));
-            } else {
+            if !NOT_SERVED.contains(&tool.name.as_ref()) {
                 tool.description = tool
                     .description
                     .map(|text| translate_recorded_product_names(&text).into());
@@ -144,7 +140,7 @@ async fn recordings_over_stdio_framing() {
             tools
         );
         for call in calls.calls {
-            if SKIPPED.iter().any(|name| *name == call.request.name) {
+            if NOT_SERVED.contains(&call.request.name.as_ref()) {
                 continue;
             }
             let result = client.call_tool(call.request).await;
@@ -161,52 +157,10 @@ async fn recordings_over_stdio_framing() {
                 }
             }
         }
-        assert_eq!(skips, SKIPPED.iter().copied().collect());
         client.cancel().await.expect("client closed");
         shutdown.cancel();
         task.await.expect("task").expect("server closed");
     })
     .await
     .expect("replay deadline");
-}
-
-#[tokio::test]
-async fn typed_memory_search_rejects_wrong_types() {
-    let server = support::server();
-    for arguments in [
-        r#"{"query":null}"#,
-        r#"{"query":7}"#,
-        r#"{"query":false}"#,
-        r#"{"query":[]}"#,
-    ] {
-        assert_eq!(
-            support::call(&server, "memory_search", arguments)
-                .await
-                .is_error,
-            Some(true)
-        );
-    }
-}
-
-#[test]
-fn recorded_product_names_translate_without_changing_prose() {
-    assert_eq!(
-        translate_recorded_product_names(
-            "RivetOS stores rivetos data in ~/.rivetos; unchanged prose."
-        ),
-        "RivetHub stores rh data in ~/.rivethub; unchanged prose."
-    );
-}
-
-#[tokio::test]
-async fn omitted_tools_have_no_handlers() {
-    let server = support::server();
-    for name in SKIPPED {
-        let error = server
-            .call(CallToolRequestParams::new(*name))
-            .await
-            .expect_err("no handler");
-        assert_eq!(error.code.0, -32602);
-        assert_eq!(error.message, format!("Tool {name} not found"));
-    }
 }

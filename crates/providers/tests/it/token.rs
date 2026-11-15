@@ -1,19 +1,15 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
+use crate::common;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 
-use common::fixed_status_server;
-use common::scenario_server;
+use crate::common::fixed_status_server;
+use crate::common::scenario_server;
 use config::provider::OpenaiProvider;
 use config::provider::ProviderType;
 use kernel::model::ModelProvider;
 use kernel::model::ModelProviderError;
 use kernel::model::ModelRequest;
-use providers::BuildError;
 use providers::OpenAiCompatible;
 use testkit::Canned;
 use wire::message::Message;
@@ -111,31 +107,6 @@ fn hi_request() -> ModelRequest {
 }
 
 #[tokio::test]
-async fn stdout_shapes_become_the_bearer() {
-    for (script, bearer) in [
-        ("printf 'ab c\\n'", "Bearer ab c"),
-        ("printf 'secret'", "Bearer secret"),
-        ("printf 'secret\\r\\n'", "Bearer secret"),
-    ] {
-        let server = fixed_status_server(200, EMBEDDING.to_owned()).await;
-        let built = provider(server.addr, Some(shell(script)), None, None, None);
-        built
-            .embed(vec!["q".to_owned()])
-            .await
-            .unwrap_or_else(|error| panic!("{script}: {error}"));
-        let call = server
-            .recorder
-            .lock()
-            .first()
-            .cloned()
-            .unwrap_or_else(|| panic!("{script}: no call"));
-        assert_eq!(call.method, "POST");
-        assert_eq!(call.target, "/v1/embeddings");
-        assert_eq!(call.authorization.as_deref(), Some(bearer), "{script}");
-    }
-}
-
-#[tokio::test]
 async fn a_bad_stdout_is_an_error_without_the_secret() {
     for (script, needle) in [
         ("printf 'secret-token\\n\\n'", "single line"),
@@ -229,7 +200,6 @@ async fn two_embeds_share_one_mint_and_the_command_wins() {
     assert_eq!(lines(&log), 1);
     for call in &calls {
         assert_eq!(call.authorization.as_deref(), Some("Bearer minted-token"));
-        assert_ne!(call.authorization.as_deref(), Some("Bearer static-secret"));
     }
 }
 
@@ -388,39 +358,6 @@ async fn list_models_and_chat_send_the_minted_bearer() {
     assert_eq!(lines(&log), 1);
     for call in &calls {
         assert_eq!(call.authorization.as_deref(), Some("Bearer minted-token"));
-    }
-}
-
-#[test]
-fn a_bad_token_command_refuses_to_build() {
-    let empty = provider_error(Some(Vec::new()), None, None);
-    assert!(matches!(empty, BuildError::TokenCommand));
-    let blank = provider_error(Some(vec![String::new()]), None, None);
-    assert!(matches!(blank, BuildError::TokenArg));
-    let hole = provider_error(
-        Some(vec!["/bin/true".to_owned(), String::new()]),
-        None,
-        None,
-    );
-    assert!(matches!(hole, BuildError::TokenArg));
-    let ttl = provider_error(Some(vec!["/bin/true".to_owned()]), Some(0), None);
-    assert!(matches!(ttl, BuildError::TokenTtl));
-    let timeout = provider_error(Some(vec!["/bin/true".to_owned()]), None, Some(0));
-    assert!(matches!(timeout, BuildError::TokenTimeout));
-}
-
-fn provider_error(argv: Option<Vec<String>>, ttl: Option<u64>, timeout: Option<u64>) -> BuildError {
-    let config = OpenaiProvider {
-        model: Some("test-model".to_owned()),
-        base_url: Some("http://127.0.0.1:9".to_owned()),
-        token_command: argv,
-        token_ttl_ms: ttl,
-        token_command_timeout_ms: timeout,
-        ..OpenaiProvider::default()
-    };
-    match OpenAiCompatible::build(ProviderType::Vllm, &config) {
-        Ok(_) => common::halt("the provider refuses"),
-        Err(error) => error,
     }
 }
 

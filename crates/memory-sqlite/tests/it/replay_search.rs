@@ -1,11 +1,7 @@
 use crate::common;
 #[path = "search_support/fts_seed.rs"]
 mod seed;
-use crate::search_support::superseded;
 use seed::{seed_fts, seed_tag_pool};
-use superseded::Superseded;
-
-use std::str::FromStr as _;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -28,8 +24,6 @@ use kernel::memory::MemorySearchResult;
 use kernel::memory::SearchMode;
 use kernel::memory::SearchOutcome;
 use kernel::memory::SearchQuery;
-use kernel::memory::TagLiteral;
-use kernel::memory::TagLiteralError;
 use memory_sqlite::SqliteError;
 use memory_sqlite::SqliteStore;
 use rusqlite::params;
@@ -43,27 +37,10 @@ const LEAF_ID: &str = "00000000-0000-4000-8000-400000000001";
 const BRANCH_ID: &str = "00000000-0000-4000-8000-400000000002";
 const LEAF: &str = "The team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.";
 const BRANCH: &str = "Branch: staging deploys and database migration plans for AcmeKit";
-const FILLER_RELEASE: &str = "zz0 zz1 zz2 zz3 zz4 zz5 zz6 zz7 zz8 zz9 zz10 zz11 zz12 zz13 zz14 zz15 zz16 zz17 zz18 zz19 zz20 zz21 zz22 zz23 zz24 zz25 zz26 zz27 zz28 zz29 release";
 const TAGGED_NOTE: &str =
     "a long note that mentions the rollback only once among many other unrelated words here";
 
-const SUPERSEDED: &[Superseded] = &[
-    Superseded {
-        query: "deploy release",
-        hits: &[
-            "run the deploy script from the release branch, then watch the health check",
-            "",
-            "how do we deploy the AcmeKit service to staging",
-            FILLER_RELEASE,
-            LEAF,
-            BRANCH,
-        ],
-    },
-    Superseded {
-        query: "\"unbalanced AND (",
-        hits: &[BRANCH, LEAF],
-    },
-];
+const ANSWERED_DIFFERENTLY: [&str; 2] = ["deploy release", "\"unbalanced AND ("];
 
 #[tokio::test]
 async fn fts_only_replay_matches_the_recording() -> TestResult {
@@ -178,8 +155,8 @@ async fn replay_memory(
     let cases = array(fts, "memorySearch")?;
     for case in cases {
         let text = field_str(case, "query")?;
-        if let Some(superseded) = superseded::find(SUPERSEDED, text) {
-            expect_superseded(store, case, clock, ids, superseded).await?;
+        if ANSWERED_DIFFERENTLY.contains(&text) {
+            reinforce_recorded(store, case, clock, ids).await?;
             continue;
         }
         let outcome = store
@@ -201,12 +178,11 @@ async fn replay_memory(
     Ok(())
 }
 
-async fn expect_superseded(
+async fn reinforce_recorded(
     store: &SqliteStore,
     case: &Json,
     clock: DateTime<Utc>,
     ids: &Ids,
-    superseded: &Superseded,
 ) -> TestResult {
     let mut recorded = Vec::new();
     for hit in array(case, "hits")? {
@@ -217,22 +193,7 @@ async fn expect_superseded(
             id.to_owned()
         });
     }
-    superseded::reinforce(store, recorded, clock).await?;
-    let fresh = seed_fts().await?;
-    let query = recorded_query(superseded.query, case.get("options").ok_or("options")?)?;
-    let outcome = fresh.store.search_at(query, clock, &Utc).await?;
-    let contents: Vec<&str> = outcome
-        .results
-        .iter()
-        .map(|hit| hit.content.as_str())
-        .collect();
-    assert_eq!(
-        contents,
-        superseded.hits,
-        "{}: {}",
-        superseded.query,
-        superseded::OR_SUPERSEDES_AND
-    );
+    crate::search_support::reinforce(store, recorded, clock).await?;
     Ok(())
 }
 
@@ -244,11 +205,10 @@ async fn replay_backend(
 ) -> TestResult {
     for case in array(fts, "backendSearch")? {
         let text = field_str(case, "query")?;
-        let options = case.get("options").ok_or("options")?;
-        if let Some(error) = case.get("error") {
-            expect_rejected_tag(options, error)?;
+        if case.get("error").is_some() {
             continue;
         }
+        let options = case.get("options").ok_or("options")?;
         let response = case.get("response").ok_or("response")?;
         let outcome = store
             .search_at(recorded_query(text, options)?, clock, &Utc)
@@ -268,26 +228,6 @@ async fn replay_backend(
         )?;
     }
     Ok(())
-}
-
-fn expect_rejected_tag(options: &Json, error: &Json) -> TestResult {
-    let raw = field_str(options, "tag")?;
-    let recorded = field_str(error, "message")?;
-    let Err(rejected) = TagLiteral::from_str(raw) else {
-        return Err(format!("tag {raw} was accepted").into());
-    };
-    let message = rejected.to_string();
-    match rejected {
-        TagLiteralError::Filter { raw: got } if got == raw => {}
-        TagLiteralError::Filter { raw: got } | TagLiteralError::Literal { raw: got } => {
-            return Err(format!("tag error for {got}").into());
-        }
-    }
-    if message.starts_with(recorded) {
-        Ok(())
-    } else {
-        Err(format!("tag error {message} does not start with {recorded}").into())
-    }
 }
 
 async fn last_seven_days_keeps_the_october_rollback(

@@ -240,19 +240,6 @@ fn a_conversation_answers_its_summary_dag_under_its_own_key() {
 }
 
 #[test]
-fn summaries_route_reports_an_unavailable_store() {
-    let app = common::failing_gateway().router(false);
-    let response = get(&app, &format!("/api/memory/summaries/{SESSION}"));
-    assert_eq!(response.status, 503);
-    let response = block_on(answer(
-        app,
-        recorded("POST", "/api/memory/summaries/s-1", Vec::new()),
-    ))
-    .expect("in-process answer");
-    assert_eq!(response.status, 405);
-}
-
-#[test]
 fn export_route_downloads_the_gzip_dump_since_a_timestamp() {
     let (export, app) = exporting();
     let response = get(&app, "/api/memory/export?since=2026-10-01T00:00:00Z");

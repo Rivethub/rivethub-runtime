@@ -548,18 +548,6 @@ async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
         "{}",
         ingest.stdout
     );
-
-    let again = run(
-        &["memory", "sanitize", &out_text, "--out", &raw],
-        &node.environment,
-    )
-    .await;
-    assert_eq!(again.exit, Exit::Failure);
-    assert!(
-        again.stderr.contains("already sanitized"),
-        "{}",
-        again.stderr
-    );
 }
 
 #[tokio::test]

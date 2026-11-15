@@ -39,15 +39,6 @@ pub(crate) enum Step {
     Permission,
 }
 
-pub(crate) fn parse_stop(stop: &str) -> Result<acp::StopReason, String> {
-    match stop {
-        "end-turn" => Ok(acp::StopReason::EndTurn),
-        "max-tokens" => Ok(acp::StopReason::MaxTokens),
-        "refusal" => Ok(acp::StopReason::Refusal),
-        other => Err(format!("unknown stop reason {other}")),
-    }
-}
-
 pub(crate) fn parse_step(spec: &str) -> Result<Step, String> {
     let (kind, rest) = match spec.split_once(':') {
         Some(parts) => parts,

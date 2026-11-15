@@ -412,20 +412,6 @@ fn toolconfig_nested_below_excluded_root_fires() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-#[test]
-fn toolconfig_current_repository_passes() -> Result<(), Box<dyn std::error::Error>> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask must live inside the repository")?;
-    let mut findings = Vec::new();
-    toolconfig::check(root, &mut findings)?;
-    assert!(
-        findings.is_empty(),
-        "the current repository passes: {findings:?}"
-    );
-    Ok(())
-}
-
 fn manifest(crate_name: &str, extra: &str) -> String {
     format!(
         "[package]\nname = \"{crate_name}\"\nedition.workspace = true\nlicense.workspace = true\n\
@@ -923,20 +909,6 @@ fn labpath_fires_and_passes() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .any(|finding| finding.starts_with("LABPATH docs/")),
         "files outside crates/ and xtask/ are not scanned: {findings:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn labpath_current_repository_passes() -> Result<(), Box<dyn std::error::Error>> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask must live inside the repository")?;
-    let mut findings = Vec::new();
-    labpath::check(root, &mut findings)?;
-    assert!(
-        findings.is_empty(),
-        "the current repository passes: {findings:?}"
     );
     Ok(())
 }

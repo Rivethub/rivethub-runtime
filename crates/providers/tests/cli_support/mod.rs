@@ -45,8 +45,6 @@ pub(crate) struct Plan {
 }
 
 struct Session {
-    spec: SessionSpec,
-    mode: Option<String>,
     events: Option<mpsc::Receiver<SessionEvent>>,
     output: mpsc::Sender<SessionEvent>,
     permission: Arc<Notify>,
@@ -116,8 +114,6 @@ impl HarnessAdapter for Harness {
         self.sessions.lock().insert(
             session.clone(),
             Session {
-                spec: spec.clone(),
-                mode: None,
                 events: Some(events),
                 output,
                 permission: Arc::new(Notify::new()),
@@ -230,17 +226,11 @@ impl HarnessAdapter for Harness {
                 option: "mode".into(),
             });
         }
-        let mut sessions = self.sessions.lock();
-        let entry = sessions
-            .get_mut(session)
-            .ok_or_else(|| HarnessAdapterError::UnknownSession(session.clone()))?;
-        match option {
-            SessionOption::Mode(mode) => entry.mode = Some(mode),
-            SessionOption::Model(model) => entry.spec.model = Some(model),
-            SessionOption::Effort(effort) => entry.spec.effort = Some(effort),
+        if self.sessions.lock().contains_key(session) {
+            Ok(())
+        } else {
+            Err(HarnessAdapterError::UnknownSession(session.clone()))
         }
-        drop(sessions);
-        Ok(())
     }
 
     async fn events(

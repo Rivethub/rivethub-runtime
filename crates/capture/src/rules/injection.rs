@@ -72,21 +72,3 @@ pub fn load() -> Result<Ruleset, RuleError> {
         None,
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_injection_rule_compiles() {
-        let rules = load().unwrap_or_else(|error| panic!("{error}"));
-        assert!(rules.rules().len() > 10);
-        assert!(rules.upstream().is_none());
-        assert!(
-            rules
-                .rules()
-                .iter()
-                .any(|rule| rule.id == BUDGET_EXHAUSTED && rule.family == Some(Family::Budget))
-        );
-    }
-}

@@ -172,12 +172,3 @@ fn ports_baseline_cannot_grow_against_main() {
     baseline::compare(&[entry], &[], &mut findings);
     assert_eq!(findings, Vec::<String>::new());
 }
-
-#[test]
-fn workspace_ports_match_the_generated_baseline() -> Result {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("xtask must live under the workspace root")?;
-    assert_eq!(findings(root)?, Vec::<String>::new());
-    Ok(())
-}

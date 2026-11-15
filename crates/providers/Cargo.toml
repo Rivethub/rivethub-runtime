@@ -30,7 +30,6 @@ wire.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-schemars.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
 testkit.workspace = true

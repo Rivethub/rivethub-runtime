@@ -15,11 +15,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
-memory-postgres = { workspace = true }
 memory-sqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tempfile = { workspace = true }
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -201,8 +201,6 @@ fn cell(value: ValueRef<'_>) -> Cell {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct SchemaRecording {
-    pub(crate) schema_text: String,
-    pub(crate) schema_text_sha256: String,
     pub(crate) fresh: SchemaSnapshot,
     #[serde(rename = "populated")]
     pub(crate) fixture: FixtureSnapshot,
@@ -322,23 +320,9 @@ impl PartialEq for Cell {
 }
 
 pub(crate) fn assert_upgraded_pragmas(actual: &Pragmas, legacy: &Pragmas) {
-    assert_eq!(actual.user_version, migrate::SchemaVersion::V35.number());
-    assert_eq!(legacy.user_version, 7);
+    assert_eq!(actual.user_version, memory_sqlite::SCHEMA_VERSION);
     assert_eq!(actual.journal_mode, legacy.journal_mode);
     assert_eq!(actual.foreign_keys, legacy.foreign_keys);
     assert_eq!(actual.page_size, legacy.page_size);
     assert_eq!(actual.encoding, legacy.encoding);
-}
-
-pub(crate) async fn migrate_owned_by(pool: &sqlx::PgPool, owner: &str) -> TestResult<()> {
-    let mut conn = pool.acquire().await?;
-    sqlx::query("SELECT set_config('rh.store_owner', $1, false)")
-        .bind(owner)
-        .execute(&mut *conn)
-        .await?;
-    migrate::POSTGRES.run(&mut *conn).await?;
-    sqlx::query("RESET rh.store_owner")
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
 }

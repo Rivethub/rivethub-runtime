@@ -329,7 +329,7 @@ const ROLLOUT: &str = r#"{"timestamp":"2026-10-30T15:00:00.000Z","type":"session
 "#;
 
 #[tokio::test]
-async fn a_codex_turn_end_posts_rollout_items_under_the_kits_ids() -> TestResult {
+async fn a_codex_turn_end_posts_its_rollout_items() -> TestResult {
     let home = tempfile::tempdir()?;
     let day = home.path().join(".codex/sessions/2026/10/30");
     std::fs::create_dir_all(&day)?;
@@ -452,7 +452,7 @@ fn dsh_hook(
 }
 
 #[tokio::test]
-async fn a_dsh_turn_end_posts_the_transcript_under_the_kits_ids() -> TestResult {
+async fn a_dsh_turn_end_posts_its_transcript() -> TestResult {
     let home = tempfile::tempdir()?;
     let transport = FakeTransport::default();
     let hook = dsh_hook(home.path(), &transport)?;

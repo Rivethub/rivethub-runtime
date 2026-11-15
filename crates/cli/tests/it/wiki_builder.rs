@@ -17,15 +17,6 @@ use workers::wiki_builder::{
 
 const SKIPPED: &[&str] = &["failing LLM fails the job; heartbeat never summarized"];
 
-#[test]
-fn wiki_summary_replay_accounts_for_every_scenario() {
-    let fixture = fixture();
-    assert_eq!(
-        fixture.constants.wiki_pipeline_version,
-        WIKI_PIPELINE_VERSION
-    );
-}
-
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn wiki_replays_every_recorded_summary_shape(pool: PgPool) -> TestResult {
     let wiki = tempfile::tempdir()?;

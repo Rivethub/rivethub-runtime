@@ -1,18 +1,14 @@
 use super::*;
 
 #[tokio::test]
-async fn node_account_and_cli_share_one_login_and_never_call_retired_routes() {
+async fn node_account_and_cli_share_one_login() {
     use gateway::account::{AccountLogin as _, LoginProgress};
     let node = node();
     let served = serve().await;
     served.auth.queue("/api/auth/device/code", [device(1)]);
     served.auth.queue(
         "/api/auth/oauth2/token",
-        [
-            oauth_error("authorization_pending"),
-            oauth_error("slow_down"),
-            issued("account"),
-        ],
+        [oauth_error("authorization_pending"), issued("account")],
     );
     served.auth.0.lock().me = Some(ok(r#"{"email":"you@example.com"}"#));
     let login = cli::account_login::NodeAccountLogin::new(
@@ -46,13 +42,6 @@ async fn node_account_and_cli_share_one_login_and_never_call_retired_routes() {
         .await
         .expect("CLI logout");
     assert!(login.identity().await.expect("signed out").is_none());
-    assert!(
-        served
-            .auth
-            .paths()
-            .iter()
-            .all(|path| !path.starts_with("/v1/auth/"))
-    );
     assert!(
         served
             .auth

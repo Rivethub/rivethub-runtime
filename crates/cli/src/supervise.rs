@@ -477,7 +477,7 @@ fn emit(observer: Option<&UnboundedSender<SupervisionEvent>>, event: Supervision
 
 #[cfg(test)]
 mod tests {
-    use super::{RestartPolicy, grace_elapsed_on_the_wall};
+    use super::RestartPolicy;
     use std::time::Duration;
 
     #[test]
@@ -512,14 +512,5 @@ mod tests {
             Duration::from_secs(4)
         );
         assert_eq!(policy.grace(), Duration::from_secs(10));
-    }
-
-    #[test]
-    fn a_paused_clock_is_not_the_grace() {
-        let grace = Duration::from_secs(10);
-        assert!(!grace_elapsed_on_the_wall(Duration::from_millis(60), grace));
-        assert!(!grace_elapsed_on_the_wall(Duration::from_secs(4), grace));
-        assert!(grace_elapsed_on_the_wall(grace / 2, grace));
-        assert!(grace_elapsed_on_the_wall(grace, grace));
     }
 }

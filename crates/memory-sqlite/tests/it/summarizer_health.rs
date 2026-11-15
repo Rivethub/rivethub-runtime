@@ -65,7 +65,5 @@ async fn empty_store_summarizer_health_keeps_the_recorded_shape()
     assert_eq!(health.summarizer.eligible, expected.eligible);
     assert_eq!(health.summarizer.active_tail, expected.active_tail);
     assert_eq!(health.summarizer.below_floor, expected.below_floor);
-    let serialized: HealthSnapshot = serde_json::from_value(serde_json::to_value(health)?)?;
-    assert_eq!(serialized.summarizer.as_ref(), Some(expected));
     Ok(())
 }

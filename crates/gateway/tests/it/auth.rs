@@ -136,14 +136,16 @@ fn origin_policy_applies_the_allow_lists() {
             echo: Some("https://hub.example.test".to_string())
         }
     );
-    assert_eq!(
-        decide(Some("https://evil.example"), Some("127.0.0.1:5174"), true),
-        Decision::Deny {
-            reason:
-                "origin \"https://evil.example\" is not allowed (add it to the gateway allowed_origins setting)"
-                    .to_string()
-        }
-    );
+    for loopback in [true, false] {
+        assert_eq!(
+            decide(Some("https://evil.example"), Some("127.0.0.1:5174"), loopback),
+            Decision::Deny {
+                reason:
+                    "origin \"https://evil.example\" is not allowed (add it to the gateway allowed_origins setting)"
+                        .to_string()
+            }
+        );
+    }
 }
 
 #[test]
@@ -231,21 +233,17 @@ fn response(
 }
 
 #[test]
-fn remote_callers_get_unauthorized_json_on_api_paths() {
-    let answer = response("GET", "/api/memory/stats", Some("remote"), &[]);
-    assert_eq!(answer.status, 401);
-    let parsed: GatewayError = serde_json::from_slice(&answer.body).expect("error body");
-    assert_eq!(parsed.error, "unauthorized");
-
-    let html = response(
-        "GET",
-        "/api/memory/stats",
-        Some("remote"),
-        &[("Accept", "text/html")],
-    );
-    assert_eq!(html.status, 401);
-    let parsed: GatewayError = serde_json::from_slice(&html.body).expect("error body");
-    assert_eq!(parsed.error, "unauthorized");
+fn remote_callers_get_unauthorized_json_on_api_paths_and_writes() {
+    for (method, target, headers) in [
+        ("GET", "/api/memory/stats", &[][..]),
+        ("GET", "/api/memory/stats", &[("Accept", "text/html")][..]),
+        ("POST", "/", &[("Accept", "text/html")][..]),
+    ] {
+        let answer = response(method, target, Some("remote"), headers);
+        assert_eq!(answer.status, 401, "{method} {target}");
+        let parsed: GatewayError = serde_json::from_slice(&answer.body).expect("error body");
+        assert_eq!(parsed.error, "unauthorized", "{method} {target}");
+    }
 }
 
 #[test]

@@ -1,13 +1,10 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
+use crate::common;
 use std::future::Future;
 use std::time::Duration;
 
-use common::FixedStatusServer;
-use common::demand;
-use common::fixed_status_server;
+use crate::common::FixedStatusServer;
+use crate::common::demand;
+use crate::common::fixed_status_server;
 use kernel::model::Embedding;
 use kernel::model::ModelProvider;
 use providers::BuildError;

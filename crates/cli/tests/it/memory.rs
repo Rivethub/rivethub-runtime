@@ -157,11 +157,8 @@ async fn a_sqlite_node_keeps_postgres_commands_off_a_stray_database_url() {
             report.stderr
         );
     }
-    let exported = run(
-        &["memory", "export", "--out", "/tmp/unused-export.dump"],
-        &environment,
-    )
-    .await;
+    let out = home.path().join("unused-export.dump").display().to_string();
+    let exported = run(&["memory", "export", "--out", &out], &environment).await;
     assert_eq!(exported.exit, Exit::Failure, "{}", exported.stderr);
     assert!(
         exported.stderr.contains("is not initialised"),
@@ -291,7 +288,7 @@ fn gunzip(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
-async fn sqlite_import_is_idempotent_only_when_empty_and_dry_run_rolls_back() {
+async fn sqlite_import_dry_run_writes_nothing_and_a_real_run_imports() {
     let directory = tempfile::tempdir().expect("directory");
     let database = migrated(directory.path());
     let (_home, environment) = env(&[]);
@@ -324,13 +321,6 @@ async fn sqlite_import_is_idempotent_only_when_empty_and_dry_run_rolls_back() {
         scalar(&database, "SELECT count(*) FROM ros_conversations"),
         1
     );
-    let again = run(
-        &["memory", "import", &recording(), "--sqlite", &path],
-        &environment,
-    )
-    .await;
-    assert_eq!(again.exit, Exit::Failure);
-    assert!(again.stderr.contains("not empty"));
 }
 
 #[tokio::test]

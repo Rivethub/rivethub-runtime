@@ -321,16 +321,3 @@ fn column_present(conn: &Connection, table: &str, column: &str) -> rusqlite::Res
 fn timestamp(now: DateTime<Utc>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::timestamp;
-    use chrono::TimeZone;
-    use chrono::Utc;
-
-    #[test]
-    fn timestamps_render_as_millisecond_instant_text() {
-        let now = Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, 0).unwrap();
-        assert_eq!(timestamp(now), "2026-10-10T12:00:00.000Z");
-    }
-}

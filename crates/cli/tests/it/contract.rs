@@ -4,7 +4,7 @@ use cli::{ConfigCommand, Exit};
 use support::{config, environment, home, run};
 
 #[tokio::test]
-async fn dispatch_help_unknown_flags_and_version_follow_b9() {
+async fn dispatch_reports_help_unknown_flags_and_version() {
     let home = home();
     let env = environment(&home);
     for args in [vec![], vec!["help"], vec!["--help"], vec!["-h"]] {

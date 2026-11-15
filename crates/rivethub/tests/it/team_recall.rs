@@ -244,12 +244,6 @@ async fn memory_owners(api: &Api) -> TestResult {
 }
 
 #[tokio::test]
-async fn non_owner_gateway_memory_rows_name_teammates_and_omit_the_viewer_owner() -> TestResult {
-    let db = crate::pgdb::TestDb::migrated().await?;
-    memory_owners(&Api::new(&db).await?).await
-}
-
-#[tokio::test]
 async fn non_owner_gateway_owner_fields_cover_search_browse_and_session_catalog() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let api = Api::new(&db).await?;

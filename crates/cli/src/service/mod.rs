@@ -429,3 +429,35 @@ pub enum ServiceError {
     #[error("could not read the running node: {0}")]
     Node(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use config::Environment;
+
+    use super::Scope;
+
+    #[tokio::test]
+    async fn a_unit_left_naming_a_replaced_binary_is_explained() {
+        let home = tempfile::tempdir().expect("home");
+        let env = Environment::from_vars([("HOME".as_ref(), home.path().as_os_str())]);
+        let unit = Scope::User.unit_path(home.path());
+        std::fs::create_dir_all(unit.parent().expect("parent")).expect("unit directory");
+        std::fs::write(
+            &unit,
+            "[Service]\nExecStart=\"/home/person/.local/bin/rh\" local\n",
+        )
+        .expect("unit");
+        assert_eq!(Scope::User.replaced_binary_hint(&env).await, None);
+        std::fs::write(
+            &unit,
+            "[Service]\nExecStart=\"/home/person/.local/bin/rh (deleted)\" local\n",
+        )
+        .expect("unit");
+        let hint = Scope::User.replaced_binary_hint(&env).await.expect("hint");
+        assert!(
+            hint.contains("names a binary that an update replaced")
+                && hint.contains("Run `rh service restart` to repair it."),
+            "{hint}"
+        );
+    }
+}

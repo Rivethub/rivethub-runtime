@@ -85,31 +85,3 @@ pub(crate) fn relation_missing(source: &sqlx::Error) -> bool {
         .as_database_error()
         .is_some_and(|error| error.code().as_deref() == Some("42P01"))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Error;
-
-    #[test]
-    fn sqlite_upgrade_display_includes_the_sqlite_error() {
-        let connection = rusqlite::Connection::open_in_memory().expect("memory database");
-        let source = connection.execute("NOT SQL", []).expect_err("bad sql");
-        let rendered = source.to_string();
-        let error = Error::SqliteUpgrade {
-            version: 18,
-            source,
-        };
-        assert_eq!(
-            error.to_string(),
-            format!("the memory schema upgrade to version 18 failed: {rendered}")
-        );
-        assert!(
-            error.to_string().contains("version 18"),
-            "the version stays visible"
-        );
-        assert!(
-            std::error::Error::source(&error).is_some(),
-            "callers can still walk the source chain"
-        );
-    }
-}

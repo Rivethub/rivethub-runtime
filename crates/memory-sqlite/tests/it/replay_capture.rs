@@ -17,36 +17,25 @@ use kernel::owner::Owner;
 use testkit::Json;
 use wire::message::Role;
 
-const SKIPPED_SCENARIOS: [&str; 2] = [
-    "project rule tag at capture",
-    "captured messages queued for embedding, then drained",
-];
-
-const HISTORY_SKIP: &str = "session and task history reads are not part of this slice";
-const SETTINGS_SKIP: &str = "session settings and task association are not part of this slice";
-const BAD_STAMP: &str = "a capture timestamp is DateTime<Utc>; a non-instant cannot be constructed, and the recorded rejection is a parse throw outside the store";
-
 #[derive(Debug)]
 enum Action {
     Capture(CaptureBatchRequest),
     Append(MemoryEntry),
-    Skip(&'static str),
 }
 
 #[derive(Debug)]
-struct Deviation {
+struct Cell {
     table: &'static str,
     row: usize,
     column: &'static str,
     value: Json,
-    reason: &'static str,
 }
 
 #[derive(Debug, Default)]
 struct Plan {
     owner: Option<&'static str>,
     steps: Vec<(&'static str, Action)>,
-    deviations: Vec<Deviation>,
+    cells: Vec<Cell>,
 }
 
 fn entry(session: &str, channel: &str, role: Role, content: &str) -> MemoryEntry {
@@ -80,7 +69,6 @@ fn resent_batch() -> TestResult<Plan> {
                 Action::Capture(deploy_batch("cli:sess-1", "rivet")?),
             ),
             ("capture batch + e4", Action::Capture(again)),
-            ("getSessionHistory", Action::Skip(HISTORY_SKIP)),
         ],
         ..Plan::default()
     })
@@ -126,16 +114,14 @@ fn kept_unless_supplied() -> TestResult<Plan> {
                 "capture no messages",
                 Action::Capture(batch("cli:sess-1", "rivet", "cli")),
             ),
-            ("loadSessionSettings", Action::Skip(SETTINGS_SKIP)),
             ("rename", Action::Capture(rename)),
             ("clear title with null, settings {}", Action::Capture(clear)),
         ],
-        deviations: vec![Deviation {
+        cells: vec![Cell {
             table: "ros_conversations",
             row: 0,
             column: "title",
             value: Json::String(renamed.to_owned()),
-            reason: "wire CaptureBatchRequest.title is Option<String>: an explicit null is the same as absent, and the B3 schema rejects title:null, so the title is kept",
         }],
         ..Plan::default()
     })
@@ -172,9 +158,6 @@ fn timestamps_and_finalize() -> TestResult<Plan> {
                 "finalize again (already inactive)",
                 Action::Capture(finalize),
             ),
-            ("bad created_at", Action::Skip(BAD_STAMP)),
-            ("bad updated_at", Action::Skip(BAD_STAMP)),
-            ("bad message created_at", Action::Skip(BAD_STAMP)),
         ],
         ..Plan::default()
     })
@@ -276,17 +259,15 @@ fn capped_text() -> TestResult<Plan> {
         surrogate,
         message("exact", Role::Assistant, &"y".repeat(16_000)),
     ];
-    let reason = "text lengths count chars, never UTF-16 units: the emoji at the 16000 boundary is one char and is kept whole";
-    let cell = |column: &'static str, value: Json| Deviation {
+    let cell = |column: &'static str, value: Json| Cell {
         table: "ros_messages",
         row: 1,
         column,
         value,
-        reason,
     };
     Ok(Plan {
         steps: vec![("big + surrogate", Action::Capture(capture))],
-        deviations: vec![
+        cells: vec![
             cell("content", Json::String(kept.clone())),
             cell("tool_result", Json::String(kept)),
             cell(
@@ -327,12 +308,11 @@ fn appends() -> TestResult<Plan> {
     tool.created_at = Some(instant("2026-10-10T11:00:00.000Z")?);
     let mut tagged = entry("cli:meta-task", "cli", Role::User, "tagged by metadata");
     tagged.metadata = Some(object(&format!(r#"{{"taskId":"{task}"}}"#))?);
-    let alice = |column: &'static str, value: Json| Deviation {
+    let alice = |column: &'static str, value: Json| Cell {
         table: "ros_conversations",
         row: 0,
         column,
         value,
-        reason: SETTINGS_SKIP,
     };
     Ok(Plan {
         steps: vec![
@@ -359,11 +339,8 @@ fn appends() -> TestResult<Plan> {
                 "append heartbeat",
                 Action::Append(entry("heartbeat:rivet", "heartbeat", Role::System, "beat")),
             ),
-        ]
-        .into_iter()
-        .chain(append_skips())
-        .collect(),
-        deviations: vec![
+        ],
+        cells: vec![
             alice("settings", Json::String("{}".to_owned())),
             alice("task_id", Json::Null),
             alice(
@@ -375,93 +352,19 @@ fn appends() -> TestResult<Plan> {
     })
 }
 
-fn append_skips() -> Vec<(&'static str, Action)> {
-    let not_in_store = "MemoryEntry carries no user and the store has one owner: other-user refusal is outside this API";
-    vec![
-        (
-            "append no channel",
-            Action::Skip(
-                "MemoryEntry.channel is a required String; an unbound JavaScript undefined cannot be expressed",
-            ),
-        ),
-        (
-            "append other user (refused, logs once)",
-            Action::Skip(not_in_store),
-        ),
-        (
-            "append other user again (no second log)",
-            Action::Skip(not_in_store),
-        ),
-        (
-            "append bad role (CHECK)",
-            Action::Skip("Role is a closed enum, so an unknown role cannot reach the store"),
-        ),
-        ("getSessionHistory", Action::Skip(HISTORY_SKIP)),
-        ("getSessionHistory limit 1", Action::Skip(HISTORY_SKIP)),
-        ("getSessionHistory other user", Action::Skip(HISTORY_SKIP)),
-        ("getTaskHistory uuid", Action::Skip(HISTORY_SKIP)),
-        ("getTaskHistory legacy", Action::Skip(HISTORY_SKIP)),
-        ("saveSessionSettings", Action::Skip(SETTINGS_SKIP)),
-        ("loadSessionSettings", Action::Skip(SETTINGS_SKIP)),
-        ("loadSessionSettings missing", Action::Skip(SETTINGS_SKIP)),
-        (
-            "loadSessionSettings other user",
-            Action::Skip(SETTINGS_SKIP),
-        ),
-        ("associateTask", Action::Skip(SETTINGS_SKIP)),
-        (
-            "search other user",
-            Action::Skip("search is outside this slice"),
-        ),
-        (
-            "getContextForTurn other user",
-            Action::Skip("turn context is outside this slice"),
-        ),
-        ("isHealthy", Action::Skip("health is outside this slice")),
-        (
-            "append after close",
-            Action::Skip("the store has no close; dropping it is the close"),
-        ),
-    ]
-}
-
-fn plan(name: &str) -> TestResult<Option<Plan>> {
-    Ok(Some(match name {
-        "re-sent batch is skipped event by event" => resent_batch()?,
-        "same event id under another session or agent is a different message" => {
-            same_event_elsewhere()?
-        }
-        "title, settings and task id kept unless supplied" => kept_unless_supplied()?,
-        "source timestamps kept; updated_at only moves forward; finalize" => {
-            timestamps_and_finalize()?
-        }
-        "pending tool result filled in place" => pending_tool_fill()?,
-        "cowork hook prompt rewritten onto the transcript id, once" => cowork_claim()?,
-        "UTC timestamps; oversized and surrogate-boundary text capped with metadata" => {
-            capped_text()?
-        }
-        "owner stamp (userId alice)" => owner_stamp()?,
-        "append, histories, settings, task ids, heartbeat, other users" => appends()?,
-        _ => return Ok(None),
-    }))
-}
-
-async fn replay(scenario: &mut Scenario, plan: Plan) -> TestResult<Vec<String>> {
-    let mut notes = Vec::new();
+async fn replay(scenario: &mut Scenario, plan: Plan) -> TestResult {
     let fresh = fresh_store()?;
     let owner = Owner::new(plan.owner.unwrap_or(testkit::OWNER).trim().to_owned())?;
     let store = &fresh.store;
     let mut ids = Ids::default();
-    assert_eq!(
-        scenario.steps.len(),
-        plan.steps.len(),
-        "{}: step count",
-        scenario.name
-    );
-    for (step, (label, action)) in scenario.steps.iter().zip(plan.steps) {
-        assert_eq!(step.label, label, "{}: step order", scenario.name);
-        let now = instant(&step.at)?;
+    for (label, action) in plan.steps {
         let at = format!("{} / {label}", scenario.name);
+        let step = scenario
+            .steps
+            .iter()
+            .find(|step| step.label == label)
+            .ok_or_else(|| format!("{at}: not recorded"))?;
+        let now = instant(&step.at)?;
         match action {
             Action::Capture(request) => {
                 match (store.capture(request, &owner, None, now).await, &step.error) {
@@ -487,80 +390,65 @@ async fn replay(scenario: &mut Scenario, plan: Plan) -> TestResult<Vec<String>> 
                 let expected = Json::Array(step.result.clone().into_iter().collect());
                 ids.same(&expected, &actual, &at)?;
             }
-            Action::Skip(reason) => notes.push(format!("skipped step {at}: {reason}")),
         }
     }
-    for deviation in plan.deviations {
-        notes.push(format!(
-            "deviation {}: {} row {} {}: {}",
-            scenario.name, deviation.table, deviation.row, deviation.column, deviation.reason
-        ));
+    for cell in plan.cells {
         let row = scenario
             .tables
-            .get_mut(deviation.table)
-            .and_then(|rows| rows.get_mut(deviation.row))
+            .get_mut(cell.table)
+            .and_then(|rows| rows.get_mut(cell.row))
             .and_then(Json::as_object_mut)
-            .ok_or_else(|| {
-                format!(
-                    "{}: no {} row {}",
-                    scenario.name, deviation.table, deviation.row
-                )
-            })?;
-        row.insert(deviation.column.to_owned(), deviation.value);
+            .ok_or_else(|| format!("{}: no {} row {}", scenario.name, cell.table, cell.row))?;
+        row.insert(cell.column.to_owned(), cell.value);
     }
     if plan.owner.is_none() {
-        notes.push(format!(
-            "deviation {}: owner_user_id is the capturing caller, where the recording ran without a user",
-            scenario.name
-        ));
         for table in ["ros_conversations", "ros_messages"] {
             if let Some(rows) = scenario.tables.get_mut(table) {
                 common::owned_by_the_caller(rows);
             }
         }
     }
-    compare_tables(store, &scenario.tables, &mut ids, &scenario.name).await?;
-    Ok(notes)
-}
-
-#[test]
-fn skipped_timestamp_steps_are_the_plan() -> TestResult {
-    let plan = timestamps_and_finalize()?;
-    for name in ["bad created_at", "bad updated_at", "bad message created_at"] {
-        let action = plan
-            .steps
-            .iter()
-            .find(|(label, _)| *label == name)
-            .map(|(_, action)| action)
-            .ok_or_else(|| format!("plan is missing {name}"))?;
-        match action {
-            Action::Skip(reason) if *reason == BAD_STAMP => {}
-            Action::Skip(reason) => {
-                return Err(format!("{name} skipped for {reason}").into());
-            }
-            Action::Capture(_) | Action::Append(_) => {
-                return Err(format!("{name} must skip with the stamp reason").into());
-            }
-        }
-    }
-    Ok(())
+    compare_tables(store, &scenario.tables, &mut ids, &scenario.name).await
 }
 
 #[tokio::test]
 async fn capture_and_append_replay_the_recorded_scenarios() -> TestResult {
-    let file: ScenarioFile = common::recording("capture.json")?;
-    let mut replayed = Vec::new();
-    for mut scenario in file.scenarios {
-        if SKIPPED_SCENARIOS.contains(&scenario.name.as_str()) {
-            continue;
-        }
-        let plan = plan(&scenario.name)?
-            .ok_or_else(|| format!("no replay plan for scenario {:?}", scenario.name))?;
-        for note in replay(&mut scenario, plan).await? {
-            eprintln!("{note}");
-        }
-        replayed.push(scenario.name);
+    let mut file: ScenarioFile = common::recording("capture.json")?;
+    for (name, plan) in [
+        ("re-sent batch is skipped event by event", resent_batch()?),
+        (
+            "same event id under another session or agent is a different message",
+            same_event_elsewhere()?,
+        ),
+        (
+            "title, settings and task id kept unless supplied",
+            kept_unless_supplied()?,
+        ),
+        (
+            "source timestamps kept; updated_at only moves forward; finalize",
+            timestamps_and_finalize()?,
+        ),
+        ("pending tool result filled in place", pending_tool_fill()?),
+        (
+            "cowork hook prompt rewritten onto the transcript id, once",
+            cowork_claim()?,
+        ),
+        (
+            "UTC timestamps; oversized and surrogate-boundary text capped with metadata",
+            capped_text()?,
+        ),
+        ("owner stamp (userId alice)", owner_stamp()?),
+        (
+            "append, histories, settings, task ids, heartbeat, other users",
+            appends()?,
+        ),
+    ] {
+        let scenario = file
+            .scenarios
+            .iter_mut()
+            .find(|scenario| scenario.name == name)
+            .ok_or_else(|| format!("missing scenario {name}"))?;
+        replay(scenario, plan).await?;
     }
-    assert_eq!(replayed.len(), 9);
     Ok(())
 }

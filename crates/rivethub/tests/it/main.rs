@@ -17,7 +17,6 @@ mod mcp_sqlite;
 mod node_name;
 mod owner;
 mod pgdb;
-mod process_guard;
 mod roots;
 mod sessions;
 mod share_desk;

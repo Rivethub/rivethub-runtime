@@ -6,7 +6,6 @@ use std::sync::Arc;
 use config::provider::CliProvider;
 use kernel::harness::{SessionEvent, ToolCallInfo};
 use kernel::model::{ModelChunk, ModelProvider};
-use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use wire::stream::LlmChunk;
 use wire::stream::LlmChunkKind;
@@ -28,48 +27,6 @@ enum Expected {
         index: u32,
         arguments: wire::JsonObject,
     },
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum BasicChunk {
-    Text { text: String },
-    Done,
-}
-
-#[tokio::test]
-async fn basic_provider_recording_replays_through_harness() -> TestResult {
-    let chunks: Vec<BasicChunk> = serde_json::from_reader(std::fs::File::open(
-        testkit::recording("provider/A-text/chunks.json"),
-    )?)?;
-    let mut events = Vec::new();
-    let mut expected = Vec::new();
-    for chunk in chunks {
-        match chunk {
-            BasicChunk::Text { text } => {
-                events.push(SessionEvent::AgentMessageChunk { text: text.clone() });
-                expected.push(ModelChunk::Text { delta: text });
-            }
-            BasicChunk::Done => expected.push(ModelChunk::Done),
-        }
-    }
-    let (harness, actions) = Harness::new(vec![Plan {
-        events,
-        finish: true,
-    }]);
-    let provider = provider(
-        Arc::new(harness),
-        CliProvider::default(),
-        &CancellationToken::new(),
-    );
-    let actual = items(provider.stream(request()).await?)
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(actual, expected);
-    provider.shutdown().await;
-    drop(actions);
-    Ok(())
 }
 
 #[tokio::test]

@@ -28,102 +28,65 @@ fn run(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn migrating_a_v5_copy_reports_v8_and_leaves_a_byte_equal_backup() -> TestResult {
-    let original = fs::read(recording("upgrade-v5.sqlite"))?;
+fn sqlite_status_reports_the_ladder_position_and_migrate_reaches_the_top() -> TestResult {
     let dir = tempdir()?;
     let path = dir.path().join("memory.sqlite");
     fs::copy(recording("upgrade-v5.sqlite"), &path)?;
-
-    let stdout = run(&["sqlite", "--path", &path.to_string_lossy()])?;
-    assert!(
-        stdout.contains("current 35")
-            && stdout.contains("required 35")
-            && stdout.contains("pending 0"),
-        "the applied report must name the reached state: {stdout}"
-    );
-
-    let backup = dir.path().join("memory.sqlite.v5.bak");
-    assert!(
-        backup.exists(),
-        "the pre-upgrade copy must be <file>.v5.bak"
+    let shown = path.display();
+    let file = path.to_string_lossy();
+    let required = memory_sqlite::SCHEMA_VERSION;
+    assert_eq!(
+        run(&["status", "sqlite", "--path", &file])?,
+        format!(
+            "sqlite {shown}: current 5, required {required}, pending {}\n",
+            required - 5
+        )
     );
     assert_eq!(
-        fs::read(&backup)?,
-        original,
-        "the backup must be byte-equal to the upgraded file's original bytes"
+        run(&["sqlite", "--path", &file])?,
+        format!("sqlite {shown}: applied; current {required}, required {required}, pending 0\n")
     );
-
-    let conn = rusqlite::Connection::open(&path)?;
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    assert_eq!(version, 35);
     Ok(())
 }
 
 #[test]
-fn status_reports_the_sqlite_ladder_position() -> TestResult {
+fn sqlite_imports_a_pg_dump_and_reports_its_rows() -> TestResult {
     let dir = tempdir()?;
     let path = dir.path().join("memory.sqlite");
-    fs::copy(recording("upgrade-v5.sqlite"), &path)?;
-
-    let stdout = run(&["status", "sqlite", "--path", &path.to_string_lossy()])?;
-    assert!(
-        stdout.contains("current 5")
-            && stdout.contains("required 35")
-            && stdout.contains("pending 30"),
-        "status must report the current, required and pending steps: {stdout}"
-    );
-    assert!(
-        !dir.path().join("memory.sqlite.v5.bak").exists(),
-        "status must not touch the file"
-    );
-
-    let missing = dir.path().join("absent.sqlite");
-    let stdout = run(&["status", "sqlite", "--path", &missing.to_string_lossy()])?;
-    assert!(
-        stdout.contains("current 0") && stdout.contains("pending 35"),
-        "a missing file reads as version 0 with the whole ladder pending: {stdout}"
-    );
-    assert!(!missing.exists(), "status must not create the file");
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn status_reports_a_migrated_postgres_database(pool: PgPool) -> TestResult {
-    let url = pool.connect_options().to_url_lossy().to_string();
-    let stdout = run(&["status", "postgres", "--url", &url])?;
-    assert!(
-        stdout.contains("current 75")
-            && stdout.contains("required 75")
-            && stdout.contains("pending 0"),
-        "status must report the applied state: {stdout}"
+    let stdout = run(&[
+        "sqlite",
+        "--path",
+        &path.to_string_lossy(),
+        "--import-pg-dump",
+        &recording("import/copy-cases.txt").to_string_lossy(),
+    ])?;
+    let report: memory_sqlite::import::ImportReport = serde_json::from_str(&stdout)?;
+    assert_eq!(
+        report
+            .rows
+            .get(&memory_sqlite::import::ImportTable::Summaries),
+        Some(&2)
     );
     Ok(())
 }
 
 #[sqlx::test(migrations = false)]
-async fn status_reports_a_fresh_postgres_database_and_migrate_applies_the_chain(
+async fn postgres_status_reports_a_fresh_database_and_migrate_applies_the_chain(
     pool: PgPool,
 ) -> TestResult {
     let url = pool.connect_options().to_url_lossy().to_string();
-    let stdout = run(&["status", "postgres", "--url", &url])?;
-    assert!(
-        stdout.contains("current 0")
-            && stdout.contains("required 75")
-            && stdout.contains("pending 71"),
-        "a fresh database reads as version 0 with the whole chain pending: {stdout}"
+    let required = migrate::required()?;
+    assert_eq!(
+        run(&["status", "postgres", "--url", &url])?,
+        format!(
+            "postgres: current 0, required {required}, pending {}\n",
+            migrate::POSTGRES.migrations.len()
+        )
     );
-
-    let stdout = run(&["postgres", "--url", &url])?;
-    assert!(
-        stdout.contains("current 75") && stdout.contains("pending 0"),
-        "migrate must apply the chain and report the reached state: {stdout}"
+    assert_eq!(
+        run(&["postgres", "--url", &url])?,
+        format!("postgres: applied; current {required}, required {required}, pending 0\n")
     );
-    let tables: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'",
-    )
-    .fetch_one(&pool)
-    .await?;
-    assert!(tables > 0, "the applied chain must have created tables");
     Ok(())
 }
 
@@ -138,13 +101,12 @@ async fn adopting_a_database_without_sqlx_history_changes_no_columns(pool: PgPoo
         other => panic!("expected NotAdopted, got {other:?}"),
     }
     let before = column_listing(&pool).await?;
-    let stdout = run(&["postgres", "--url", &url])?;
-    assert!(
-        stdout.contains("current 75") && stdout.contains("pending 0"),
-        "adopting must succeed: {stdout}"
+    let required = migrate::required()?;
+    assert_eq!(
+        run(&["postgres", "--url", &url])?,
+        format!("postgres: applied; current {required}, required {required}, pending 0\n")
     );
-    let after = column_listing(&pool).await?;
-    assert_eq!(before, after, "adopting must apply no schema change");
+    assert_eq!(column_listing(&pool).await?, before);
     memory_postgres::PostgresMemory::connect(&url).await?;
     Ok(())
 }

@@ -34,10 +34,15 @@ fn defaults_and_zero_refuse_to_build() {
         TokenSource::new(&[] as &[String], None, None),
         Err(BuildError::TokenCommand)
     ));
-    assert!(matches!(
-        TokenSource::new(&[String::new()], None, None),
-        Err(BuildError::TokenArg)
-    ));
+    for hole in [
+        vec![String::new()],
+        vec!["/bin/true".to_owned(), String::new()],
+    ] {
+        assert!(matches!(
+            TokenSource::new(&hole, None, None),
+            Err(BuildError::TokenArg)
+        ));
+    }
     assert!(matches!(
         TokenSource::new(&argv("/bin/true"), Some(0), None),
         Err(BuildError::TokenTtl)

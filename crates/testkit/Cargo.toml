@@ -17,9 +17,7 @@ httparse = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
-rmcp = { workspace = true }
 rusqlite = { workspace = true }
-schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -33,13 +31,8 @@ wire = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }
-libtest-mimic = { workspace = true }
 similar-asserts = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "macros"] }
-
-[[test]]
-name = "replay"
-harness = false
 
 [lints]
 workspace = true

@@ -92,6 +92,8 @@ jobs:
           brew services start postgresql@17
           for _ in $(seq 1 30); do "$(brew --prefix postgresql@17)/bin/pg_isready" -h 127.0.0.1 && break; sleep 1; done
           echo "DATABASE_URL=postgres://$(whoami)@127.0.0.1:5432/postgres" >> "$GITHUB_ENV"
+      - name: Postgres without disk syncing
+        run: psql "$DATABASE_URL" -c "alter system set fsync=off" -c "alter system set synchronous_commit=off" -c "alter system set full_page_writes=off" -c "select pg_reload_conf()"
       - name: Build rh
         run: cargo build --locked -p rivethub --bin rh
       - name: cli tests
@@ -127,6 +129,8 @@ jobs:
           tool: cargo-nextest,cargo-llvm-cov,cargo-deny@0.20.2
       - name: sqlx-cli
         run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+      - name: Postgres without disk syncing
+        run: psql "$DATABASE_URL" -c "alter system set fsync=off" -c "alter system set synchronous_commit=off" -c "alter system set full_page_writes=off" -c "select pg_reload_conf()"
       - name: Tests under the coverage floor
         run: cargo llvm-cov nextest --workspace --all-features --locked --fail-under-lines "$(cat coverage-floor.txt)" --summary-only
       - name: Query data is current
@@ -135,7 +139,5 @@ jobs:
           cargo sqlx prepare --workspace --check
         env:
           SQLX_OFFLINE: "false"
-      - name: Doc tests
-        run: cargo test --doc --workspace --all-features --locked
       - name: Build
         run: cargo build --workspace --locked

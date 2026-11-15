@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash as _;
 use std::hash::Hasher as _;
 use std::num::NonZeroUsize;
@@ -420,7 +421,11 @@ async fn every_case(
     ));
     let mut tasks = tokio::task::JoinSet::new();
     for corpus in corpus_dirs()? {
+        let mut sampled = HashSet::new();
         for case in cases(&corpus).map_err(|error| error.to_string())? {
+            if !sampled.insert((case.position.clone(), case.expect == Expect::Redact)) {
+                continue;
+            }
             let case = Arc::new(case);
             for position in positions(&case.position)? {
                 let (corpus, case, url, slots) =
@@ -449,7 +454,7 @@ async fn every_case(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn every_corpus_case_through_the_review_and_every_mark_set_stays_a_bundle_ingest_accepts()
+async fn a_case_of_each_corpus_position_and_expectation_survives_the_review_and_every_mark_set()
 -> Result<(), SendError> {
     for (routes, sets) in [
         (

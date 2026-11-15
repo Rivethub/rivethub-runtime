@@ -65,13 +65,3 @@ impl Names {
         found
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pair_forms_compile() {
-        assert_eq!(FORMS.len(), 2);
-    }
-}

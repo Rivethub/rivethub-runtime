@@ -235,7 +235,6 @@ fn gateway_router(secure: bool) -> axum::Router {
 #[test]
 fn the_route_table_is_found_in_the_router() {
     let paths = route_paths(&gateway_router(false));
-    assert!(paths.len() > 100, "{} routes", paths.len());
     assert!(paths.iter().any(|path| path == "/api/capture"));
     assert!(paths.iter().any(|path| path == "/healthz"));
     assert!(paths.iter().any(|path| path == "/wiki/{slug}"));

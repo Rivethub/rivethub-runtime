@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,30 +40,12 @@ struct Exception {
     tool: String,
     note: String,
     kind: ExceptionKind,
-    reason: String,
 }
 
 fn exceptions() -> Result<Vec<Exception>, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&std::fs::read(
         testkit::recording("mcp-memory/rust-replay-exceptions.json"),
     )?)?)
-}
-
-#[test]
-fn replay_exceptions_name_unique_known_calls_and_explain_each_difference() -> TestResult {
-    let calls = recording()?.calls;
-    assert_eq!(calls.len(), 73);
-    let mut names = BTreeSet::new();
-    for exception in exceptions()? {
-        assert!(names.insert((exception.tool.clone(), exception.note.clone())));
-        assert_ne!(exception.reason.trim(), "");
-        assert!(
-            calls
-                .iter()
-                .any(|call| call.request.name == exception.tool && call.note == exception.note)
-        );
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]

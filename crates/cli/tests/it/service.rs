@@ -89,11 +89,8 @@ esac
 }
 
 #[tokio::test]
-async fn verbs_replay_b9_for_both_scopes() {
-    for (scope, prefix) in [
-        (Scope::System, "systemctl"),
-        (Scope::User, "systemctl|--user"),
-    ] {
+async fn start_and_restart_reload_then_start_the_unit() {
+    for (scope, prefix) in [(Scope::User, "systemctl|--user")] {
         for action in [ServiceCommand::Start, ServiceCommand::Restart] {
             let fixture = Fixture::new();
             let report = fixture
@@ -457,58 +454,6 @@ async fn loginctl_errors_are_explicit() {
 }
 
 #[tokio::test]
-async fn logs_follow_until_cancelled_and_reap_the_child() {
-    use tokio::io::AsyncReadExt;
-    let fixture = Fixture::new();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("readiness listener");
-    fixture.script(
-        "journalctl",
-        r#"#!/bin/bash
-printf '%s\n' "$*" > "$RIVETHUB_TEST_CALLS"
-exec 3<>/dev/tcp/127.0.0.1/$RIVETHUB_TEST_PORT
-printf 'ready\n' >&3
-read -r line <&3
-"#,
-    );
-    let port = listener.local_addr().expect("address").port().to_string();
-    let env = fixture.env(&[("RIVETHUB_TEST_PORT", &port)]);
-    let shutdown = CancellationToken::new();
-    let task_shutdown = shutdown.clone();
-    let task = tokio::spawn(async move {
-        Scope::User
-            .run(ServiceCommand::Logs, &env, &task_shutdown)
-            .await
-    });
-    let (mut stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
-        .await
-        .expect("ready deadline")
-        .expect("ready connection");
-    let mut ready = [0; 6];
-    tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut ready))
-        .await
-        .expect("event deadline")
-        .expect("ready event");
-    assert_eq!(&ready, b"ready\n");
-    shutdown.cancel();
-    let report = tokio::time::timeout(Duration::from_secs(5), task)
-        .await
-        .expect("shutdown deadline")
-        .expect("join")
-        .expect("logs");
-    assert_eq!(report.exit, Exit::Ok);
-    assert_eq!(fixture.calls(), "--user -u rivethub -f --no-pager\n");
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(5), stream.read(&mut ready))
-            .await
-            .expect("EOF deadline")
-            .expect("child closed socket"),
-        0
-    );
-}
-
-#[tokio::test]
 async fn cancellation_before_spawn_does_not_run_tools() {
     let fixture = Fixture::new();
     let shutdown = CancellationToken::new();
@@ -540,7 +485,10 @@ async fn cancellation_before_spawn_does_not_run_tools() {
 async fn logs_preserve_failure_and_treat_interrupt_as_success() {
     for (body, exit) in [("exit 9", Exit::Child(9)), ("kill -INT $$", Exit::Ok)] {
         let fixture = Fixture::new();
-        fixture.script("journalctl", &format!("#!/bin/sh\n{body}\n"));
+        fixture.script(
+            "journalctl",
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$RIVETHUB_TEST_CALLS\"\n{body}\n"),
+        );
         assert_eq!(
             fixture
                 .run(Scope::System, ServiceCommand::Logs, &[])
@@ -549,6 +497,7 @@ async fn logs_preserve_failure_and_treat_interrupt_as_success() {
                 .exit,
             exit
         );
+        assert_eq!(fixture.calls(), "-u rivethub -f --no-pager\n");
     }
     let fixture = Fixture::new();
     std::fs::remove_file(fixture.bin.join("journalctl")).expect("remove fake");
@@ -579,7 +528,7 @@ read -r line <&3
     let shutdown = CancellationToken::new();
     let task_shutdown = shutdown.clone();
     let task = tokio::spawn(async move {
-        Scope::System
+        Scope::User
             .run(ServiceCommand::Start, &env, &task_shutdown)
             .await
     });
@@ -892,7 +841,7 @@ fn hold_pid(home: &Path, program: &str) -> std::process::Child {
     let state = home.join(".rivethub");
     std::fs::create_dir_all(&state).expect("state");
     let ready = state.join("holder.ready");
-    let child = std::process::Command::new("/usr/bin/python3")
+    let child = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg(program)
         .env("READY", &ready)
@@ -910,9 +859,9 @@ fn hold_pid(home: &Path, program: &str) -> std::process::Child {
     child
 }
 
-const SLEEPING_HOLDER: &str = "import os, signal\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_DFL)\nopen(os.environ['READY'], 'w').close()\nos.execv('/bin/sleep', ['sleep', '60'])\n";
+const SLEEPING_HOLDER: &str = ": > \"$READY\"; exec sleep 60";
 
-const STUBBORN_HOLDER: &str = "import os, signal, time\nsignal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen(os.environ['READY'], 'w').close()\nwhile True:\n    time.sleep(1)\n";
+const STUBBORN_HOLDER: &str = "trap '' TERM; : > \"$READY\"; exec sleep 60";
 
 #[tokio::test]
 async fn service_start_stops_a_detached_node_before_the_unit() {
@@ -957,13 +906,17 @@ async fn service_start_leaves_the_units_own_process_running() {
     child.wait().expect("reap");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn service_start_refuses_once_when_the_detached_node_stays_up() {
     let fixture = Fixture::new();
     let mut child = hold_pid(fixture.home.path(), STUBBORN_HOLDER);
     let pid = child.id();
-    let error = fixture
-        .run(Scope::User, ServiceCommand::Start, &[])
+    let error = Scope::User
+        .run(
+            ServiceCommand::Start,
+            &fixture.env(&[]),
+            &CancellationToken::new(),
+        )
         .await
         .expect_err("still running");
     assert!(

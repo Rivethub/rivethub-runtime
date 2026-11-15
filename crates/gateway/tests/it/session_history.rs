@@ -255,7 +255,7 @@ async fn local_sessions_the_store_has_not_attributed_belong_to_the_node_person()
 }
 
 #[tokio::test]
-async fn b3_1_plane_rows_are_summaries_with_millisecond_iso_times() {
+async fn plane_rows_are_summaries_with_millisecond_iso_times() {
     let stores = Stores {
         rows: vec![row(HarnessId::ClaudeCode, U1, 1_760_700_000_000)],
         cwd: BTreeMap::from([(U1.to_owned(), "/home/user/proj".to_owned())]),
@@ -274,7 +274,7 @@ async fn b3_1_plane_rows_are_summaries_with_millisecond_iso_times() {
 }
 
 #[tokio::test]
-async fn b3_2_a_title_equal_to_the_id_is_omitted() {
+async fn a_title_equal_to_the_id_is_omitted() {
     let stores = Stores {
         rows: vec![
             row(HarnessId::ClaudeCode, U1, 2),
@@ -292,7 +292,7 @@ async fn b3_2_a_title_equal_to_the_id_is_omitted() {
 }
 
 #[tokio::test]
-async fn b3_3_an_unknown_harness_is_not_found() {
+async fn an_unknown_harness_is_not_found() {
     let setup = setup(Stores::default());
     let (status, body) = get(&setup, "/api/harnesses/claude/sessions", None).await;
     assert_eq!(status, 404);
@@ -300,7 +300,7 @@ async fn b3_3_an_unknown_harness_is_not_found() {
 }
 
 #[tokio::test]
-async fn b3_5_a_subagent_row_links_its_canonical_parent() {
+async fn a_subagent_row_links_its_canonical_parent() {
     let stores = Stores {
         rows: vec![
             row(HarnessId::ClaudeCode, U1, 2),
@@ -325,7 +325,7 @@ fn one_claude_row() -> Stores {
 }
 
 #[tokio::test]
-async fn b4_1_and_t0_9_a_bare_uuid_resolves_to_its_store_and_redirects() {
+async fn a_bare_uuid_resolves_to_its_store_and_redirects() {
     let setup = setup(one_claude_row());
     for _ in 0..2 {
         let (status, body) = get(&setup, &format!("/api/harness-sessions/{U1}"), None).await;
@@ -347,7 +347,7 @@ async fn b4_1_and_t0_9_a_bare_uuid_resolves_to_its_store_and_redirects() {
 }
 
 #[tokio::test]
-async fn t0_6_a_path_fallback_id_redirects_to_the_collapsed_id() {
+async fn a_path_fallback_id_redirects_to_the_collapsed_id() {
     let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:-home-user/{U1}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), None).await;
@@ -360,7 +360,7 @@ async fn t0_6_a_path_fallback_id_redirects_to_the_collapsed_id() {
 }
 
 #[tokio::test]
-async fn b4_2_an_unknown_session_without_a_live_chat_is_not_found() {
+async fn an_unknown_session_without_a_live_chat_is_not_found() {
     let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:{U2}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), None).await;
@@ -372,7 +372,7 @@ async fn b4_2_an_unknown_session_without_a_live_chat_is_not_found() {
 }
 
 #[tokio::test]
-async fn b4_3_another_users_session_is_forbidden() {
+async fn another_users_session_is_forbidden() {
     let setup = setup(one_claude_row());
     let segment = enc(&format!("claude-code:{U1}"));
     let (status, body) = get(&setup, &format!("/api/harness-sessions/{segment}"), ALICE).await;
@@ -409,7 +409,7 @@ async fn segments_that_do_not_decode_are_bad_requests() {
 }
 
 #[tokio::test]
-async fn b5_the_transcript_is_store_scoped_and_carries_the_context_stamp() {
+async fn the_transcript_is_store_scoped_and_carries_the_context_stamp() {
     let stores = Stores {
         rows: vec![
             row(HarnessId::ClaudeCode, U1, 1),

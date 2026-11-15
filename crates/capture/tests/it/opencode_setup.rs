@@ -90,6 +90,7 @@ fn the_installed_plugin_offers_an_entry_point_to_each_opencode_line() -> TestRes
     assert!(plugin.contains("'session.idle'"));
     assert!(plugin.contains("session.execution.interrupted"));
     assert!(plugin.contains(&format!("exec {RH} capture hook --harness opencode")));
+    assert!(!plugin.contains("__COMMAND__"));
     Ok(())
 }
 

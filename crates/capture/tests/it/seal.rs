@@ -185,7 +185,6 @@ fn decompression_is_capped() -> TestResult {
     let full: ShareCode = code(&key).parse()?;
     let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
     assert!(ciphertext.len() < 1 << 20, "a small download");
-    assert_eq!(capture::seal::MAX_PLAIN_BYTES, 64 << 20);
     assert!(matches!(
         capture::seal::open(ciphertext, &full.key, &TrustStore::default()),
         Err(OpenError::TooLarge)

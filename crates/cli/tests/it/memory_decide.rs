@@ -59,6 +59,14 @@ async fn run(parts: &[&str], environment: &Environment) -> Report {
     support::run(parts, environment).await
 }
 
+fn unused(node: &Node) -> String {
+    node.directory
+        .path()
+        .join("unused.json")
+        .display()
+        .to_string()
+}
+
 async fn decide(axum::Json(ask): axum::Json<Ask>) -> axum::Json<Answer> {
     let state = ask.state;
     let yes = if state.contains(RISKY) { 0.88 } else { 0.05 };
@@ -383,7 +391,7 @@ async fn decide_without_a_configured_model_says_which_setting_to_add() {
             "sanitize",
             &raw,
             "--out",
-            "unused.json",
+            &unused(&node),
             "--decide",
         ],
         &node.environment,
@@ -408,7 +416,7 @@ async fn block_needs_decide() {
             "sanitize",
             &raw,
             "--out",
-            "unused.json",
+            &unused(&node),
             "--block",
         ],
         &node.environment,
@@ -466,7 +474,7 @@ async fn decide_concurrency_is_capped_for_the_shared_model() {
             "sanitize",
             &raw,
             "--out",
-            "unused.json",
+            &unused(&node),
             "--decide",
         ],
         &node.environment,

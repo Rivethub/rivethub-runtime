@@ -1,7 +1,4 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
+use crate::common;
 use std::sync::Arc;
 use std::time::Duration;
 

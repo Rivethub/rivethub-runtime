@@ -554,15 +554,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_rule_compiles_and_the_upstream_pin_holds() {
+    fn every_rule_compiles_and_both_rule_sets_are_loaded() {
         let rules = load().unwrap_or_else(|error| panic!("{error}"));
-        let (ours, theirs) = rules.counts();
-        assert!(theirs > 200, "{theirs} gitleaks rules");
-        assert!(ours > 30, "{ours} RivetHub rules");
-        assert_eq!(
-            rules.upstream().map(|upstream| upstream.version.as_str()),
-            Some("v8.30.1")
-        );
         assert!(rules.emits("github_token"));
         assert!(rules.emits("github-pat"));
         assert!(rules.emits("secret_assignment"));

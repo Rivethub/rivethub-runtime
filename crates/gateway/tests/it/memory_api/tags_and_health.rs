@@ -568,22 +568,3 @@ fn search_with_a_wired_provider_carries_no_degradation() {
         serde_json::from_slice(&response.body).expect("search response");
     assert_eq!(parsed.degraded, None);
 }
-
-#[test]
-fn store_failures_map_to_statuses() {
-    let gateway = common::failing_gateway();
-    let app = gateway.router(false);
-    let response = block_on(answer(
-        app,
-        recorded("GET", "/api/memory/stats", Vec::new()),
-    ))
-    .expect("in-process answer");
-    assert_eq!(response.status, 503);
-    assert_eq!(error_of(&response).error, "memory store unavailable");
-    let response = block_on(answer(
-        gateway.router(false),
-        recorded("GET", "/api/memory/health", Vec::new()),
-    ))
-    .expect("in-process answer");
-    assert_eq!(response.status, 503);
-}

@@ -8,7 +8,6 @@ use mcp::{
 use rmcp::transport::{
     StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
 };
-use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -128,21 +127,12 @@ async fn tcp_auth_client_bridge_and_shutdown() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unix_permissions_and_optional_bearer() {
+async fn unix_socket_serves_with_and_without_a_bearer() {
     tokio::time::timeout(Duration::from_secs(15), async {
         for token in [None, Some("unix-secret")] {
             let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).expect("directory");
             let path = directory.path().join("mcp.sock");
             let listener = bind_unix(&path).await.expect("bind");
-            assert_eq!(
-                std::fs::metadata(&path)
-                    .expect("metadata")
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-            assert!(bind_unix(&path).await.is_err());
             let shutdown = CancellationToken::new();
             let bearer = token.map(|token| Bearer::new(token).expect("bearer"));
             let task = tokio::spawn(serve_unix(

@@ -1,12 +1,9 @@
-#[path = "common/mod.rs"]
-#[expect(dead_code)]
-mod common;
-
-use common::captured_requests;
-use common::chat_provider;
-use common::drive;
-use common::scenario_record;
-use common::scenario_server;
+use crate::common;
+use crate::common::captured_requests;
+use crate::common::chat_provider;
+use crate::common::drive;
+use crate::common::scenario_record;
+use crate::common::scenario_server;
 use kernel::model::ModelProvider;
 use testkit::Json;
 use testkit::ProviderTurn;

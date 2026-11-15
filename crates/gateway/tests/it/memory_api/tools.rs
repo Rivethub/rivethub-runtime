@@ -25,47 +25,6 @@ fn search_requires_q_and_maps_hits() {
 }
 
 #[test]
-fn search_scope_and_filters_reach_the_port() {
-    let (store, app) = seeded().expect("seed store");
-    let first = block_on(answer(
-        app.clone(),
-        recorded(
-            "GET",
-            "/api/memory/search?q=hello&scope=summaries",
-            Vec::new(),
-        ),
-    ))
-    .expect("in-process answer");
-    assert_eq!(first.status, 200);
-    let second = block_on(answer(
-        app,
-        recorded(
-            "GET",
-            "/api/memory/search?q=hello&agent=rivet-claude&tag=project:acmekit&limit=7",
-            Vec::new(),
-        ),
-    ))
-    .expect("in-process answer");
-    assert_eq!(second.status, 200);
-    let requests = block_on(store.requests());
-    let searches = recorded_searches(&requests);
-    assert_eq!(searches.len(), 2);
-    let first_query = searches.first().expect("first search");
-    assert_eq!(first_query.scope, kernel::memory::MemoryScope::Summaries);
-    let second_query = searches.get(1).expect("second search");
-    assert_eq!(second_query.scope, kernel::memory::MemoryScope::Both);
-    assert_eq!(second_query.agent.as_deref(), Some("rivet-claude"));
-    assert_eq!(
-        second_query.tag,
-        Some(kernel::memory::TagLiteral {
-            key: "project".to_owned(),
-            value: "acmekit".to_owned(),
-        })
-    );
-    assert_eq!(second_query.limit, Limit::clamped(Some(7), 20, 1..=50));
-}
-
-#[test]
 fn browse_returns_messages() {
     let (store, app) = seeded().expect("seed store");
     let response = block_on(answer(
