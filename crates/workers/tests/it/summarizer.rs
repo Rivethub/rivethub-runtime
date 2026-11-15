@@ -77,7 +77,7 @@ struct Scenario {
     name: String,
     steps: Vec<Step>,
     #[serde(default)]
-    chat_calls: serde_json::Value,
+    chat_calls: Option<Recorded<Vec<ChatCall>>>,
     #[serde(default)]
     tables: Tables,
 }
@@ -94,7 +94,14 @@ struct ChatCall {
 
 #[derive(Debug, Deserialize)]
 struct Step {
-    result: serde_json::Value,
+    result: Recorded<HealthSnap>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Recorded<T> {
+    Read(T),
+    Other(serde::de::IgnoredAny),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -202,14 +209,21 @@ fn scenario<'a>(fixture: &'a Fixture, name: &str) -> &'a Scenario {
 }
 
 fn chat_calls(scenario: &Scenario) -> Vec<ChatCall> {
-    serde_json::from_value(scenario.chat_calls.clone()).unwrap_or_default()
+    if let Some(Recorded::Read(calls)) = &scenario.chat_calls {
+        calls.clone()
+    } else {
+        Vec::new()
+    }
 }
 
 fn health_steps(scenario: &Scenario) -> Vec<HealthSnap> {
     scenario
         .steps
         .iter()
-        .filter_map(|step| serde_json::from_value(step.result.clone()).ok())
+        .filter_map(|step| match &step.result {
+            Recorded::Read(snap) => Some(snap.clone()),
+            Recorded::Other(_) => None,
+        })
         .collect()
 }
 
