@@ -238,7 +238,7 @@ fn decoded_joined(joined: &str, budget: &mut Budget<'_>) -> Option<Decoded> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B9 (note 136): text that is not base64 in either alphabet is not a blob to scan; only_text_and_der_keys_decode pins it"
+            reason = "CONTRACT B9: text that is not base64 in either alphabet is not a blob to scan; only_text_and_der_keys_decode pins it"
         )
     )]
     let bytes = match standard {
@@ -282,7 +282,7 @@ fn decoded_joined(joined: &str, budget: &mut Budget<'_>) -> Option<Decoded> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B9 (note 136): a blob that decodes to bytes that are not UTF-8 is not text to scan; only_text_and_der_keys_decode pins it"
+            reason = "CONTRACT B9: a blob that decodes to bytes that are not UTF-8 is not text to scan; only_text_and_der_keys_decode pins it"
         )
     )]
     let Ok(text) = String::from_utf8(bytes) else {

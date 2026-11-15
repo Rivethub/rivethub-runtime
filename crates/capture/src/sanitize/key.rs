@@ -66,7 +66,7 @@ pub struct LocalKey {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 136: the local sanitize key never leaves the machine; deriving Debug would print its bytes into logs and reports"
+        reason = "the local sanitize key never leaves the machine; deriving Debug would print its bytes into logs and reports"
     )
 )]
 impl std::fmt::Debug for LocalKey {

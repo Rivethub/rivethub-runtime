@@ -39,7 +39,7 @@ pub(super) async fn since(
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "PATTERNS FALLBACK: the rule of contract note 100: a git version of the page that does not parse holds no History to restore"
+                reason = "PATTERNS FALLBACK: a git version of the page that does not parse holds no History to restore"
             )
         )]
         let Ok(page) = parse_wiki_page(markdown) else {

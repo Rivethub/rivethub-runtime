@@ -11,7 +11,7 @@ brief names. The TypeScript source at /opt/rivetos is REFERENCE for boundary beh
    and untyped maps; ownership and `&mut` over copy-on-write spreads and whole-state clones; traits only where there are real
    alternatives (the kernel ports); standard crates over custom code (serde, chrono, url, std::path, axum, reqwest, sqlx,
    rusqlite, clap, tracing, thiserror); modules by responsibility; descriptive names (gateway, session, view — never den, room).
-3. Depend only downward. Plug-ins are separate processes behind B17 (CONTRACT notes 50–60): the gateway's plug-in host
+3. Depend only downward. Plug-ins are separate processes behind B17: the gateway's plug-in host
    supervises them and they reach rh only through the plug-in API socket with a scoped token. No plug-in code is loaded into
    rh: do not add dynamic loading, in-process registries or "capability" hooks for code that does not exist. Your crate imports `wire`, `config`, `kernel` (and `testkit` as a dev-dependency) plus external crates.
    Never another adapter or service. If you need another feature, you need a port: stop and write it in the notes.
@@ -34,5 +34,8 @@ brief names. The TypeScript source at /opt/rivetos is REFERENCE for boundary beh
    written (decisions, deliberate deviations with contract evidence, coverage before/after); one Conventional Commit on your
    branch (`feat(rust): <crate> — <what>`), no trailers, no push, no rebase, no reset, no edits outside your crate except the
    workspace manifests.
+10. CONTRACT.md is the boundary table and nothing else (Phil, 2026-11-14). Do not add notes, decisions or a record of your
+   change to it. What a change does and why goes in its commit message and pull request; how to operate something goes in
+   OPERATIONS.md or CLI.md. Edit CONTRACT.md only when a boundary row itself changes.
 Privacy: the repository is public. Fixtures use /home/user, example.com, 00000000-0000-4000-8000-… ids, AcmeKit; never a name,
 host or path from this lab. Never read /rivet-shared/wiki or memory dumps.

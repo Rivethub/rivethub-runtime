@@ -62,7 +62,7 @@ async fn described(
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "CONTRACT B1: a memory session key that is not a canonical session id is never a trash candidate (note 75)"
+                reason = "CONTRACT B1: a memory session key that is not a canonical session id is never a trash candidate"
             )
         )]
         let Ok(session) = key.parse::<SessionId>() else {

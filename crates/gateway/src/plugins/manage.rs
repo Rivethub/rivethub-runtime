@@ -72,7 +72,7 @@ async fn forward_summaries(
                     dylint_lib = "rr_lints",
                     expect(
                         fallback,
-                        reason = "PATTERNS FALLBACK: a real absence, as note 56 of the contract leaves sessionId out when the key is not a canonical session id"
+                        reason = "PATTERNS FALLBACK: a real absence: rh leaves sessionId out when the key is not a canonical session id"
                     )
                 )]
                 let session_id = summary.session_key.parse().ok();

@@ -27,7 +27,7 @@ The gate (`cargo xtask check`) fails any Cargo.toml that breaks this.
 | `DecisionStore` | decisions(topic) · decision(id) · keep_decisions(batch) (upserts and queues `sync-topic-page` for each topic in one transaction). The `Decision` entity and its rules (non-empty text, only an active decision is edited or superseded, a replacement belongs to the same topic) live in `kernel::topics`; `sync_topic_page` renders a root's and its sub-topics' decisions as the page's `Decisions` section; a merge moves the source's decisions to the target | memory-postgres (`rh_topic_decisions`, migration 0030), memory-sqlite (`rh_topic_decisions`, schema v17) | gateway (`/api/topics/{topic}/decisions`), workers (`sync-topic-page`) |
 | `SessionDeletion` | delete_session(session key, by) → counts (writes the tombstone) · tombstones(keys) → deleted_at (a tombstone is lifted when the session is used again) · session_activity(keys) (turn, tool, filing and citation facts for the trash review, read no further than `TRASH_MESSAGES_MAX` messages) · empty_sessions(limit) (remembered with no messages) · purge_tombstoned(limit) · keep_session(session key, by) and kept(keys) → kept_at (a keep holds until the session is updated after it); unkeep_session(session key) · trash_session(session key, by) (idempotent, the first moment holds) · restore_session(session key) · trashed(keys) → trashed_at · purge_trashed(older than, limit) (deletes through the same path as delete_session). The trash rule is the pure `kernel::memory::trash_verdict` over kernel-owned turns; the gateway translates transcripts and the contract's trash reason | memory-postgres (`rh_session_tombstones`, migration 0039; lookups indexed by migration 0041; `rh_session_keeps`, migration 0043; `rh_session_trash`, migration 0057), memory-sqlite (`rh_session_tombstones`, schema v24; lookups indexed by schema v26; `rh_session_keeps`, schema v29; `rh_session_trash`, schema v31) | gateway (`DELETE /api/sessions/{session}`, `POST /api/sessions/delete`, `GET /api/sessions/trash`, `PUT`/`DELETE /api/sessions/{session}/keep`, `POST /api/sessions/{session}/trash` and `/restore`, list filtering), workers (`purge-deleted-sessions`, also past-retention trash) |
 | `ModelCallStore` | record(owner, calls) → inserted and duplicate counts (idempotent on `call_id`: a repeat changes nothing) · session_calls(session) → the session's calls, oldest first. The pure rules live in `kernel::model_calls`: `ProxyHeaders` (names lowercased once, credential headers refused by name), `correlate` (a table with one row per harness: session header, `User-Agent` prefix and, for Codex, the turn-metadata header, naming the `claude-code:<id>` or `codex:<id>` session key) and `CallTotals` (call count, usage sums, errors, per-model counts). Headers never reach the port, so no adapter can store one; a call no row matches is stored with no session key | memory-postgres (`rh_model_calls`, migration 0062, owner-scoped by row-level security), memory-sqlite (`rh_model_calls`, schema v35) | gateway (`POST /api/capture/model-calls`, `GET /api/sessions/{session}/model-calls`) |
-| `SessionCatalog` | list(query: view, harness, topic, text, cursor, exclude, limit) → page of `SessionRecord` (one store query, newest start first, stable cursor) · get(session) → record. A record carries the title (derived by the pure `kernel::memory::session_title`), message count, topic path, keep and trash marks, `kernel::memory::memory_state` and the gist. Which rows a viewer reads is the store's scope (note 89); child sessions are excluded by the gateway through `exclude` | memory-postgres, memory-sqlite | gateway (`GET /api/sessions`, `GET /api/sessions/{session}`) |
+| `SessionCatalog` | list(query: view, harness, topic, text, cursor, exclude, limit) → page of `SessionRecord` (one store query, newest start first, stable cursor) · get(session) → record. A record carries the title (derived by the pure `kernel::memory::session_title`), message count, topic path, keep and trash marks, `kernel::memory::memory_state` and the gist. Which rows a viewer reads is the store's scope; child sessions are excluded by the gateway through `exclude` | memory-postgres, memory-sqlite | gateway (`GET /api/sessions`, `GET /api/sessions/{session}`) |
 | `ReviewStore` | marks(owner) · mark(owner, mark). A mark is decided or snoozed until a time, keyed by `kernel::review::ReviewKey`; the queue itself is gathered from the fact, topic, tag and tidy ports at read time, and `kernel::review::fact_reviews` derives conflict items, and new-fact items from claims that the entity worker has not settled | memory-postgres (`rh_review_marks`, migration 0059), memory-sqlite (`rh_review_marks`, schema v33) | gateway `/api/review` |
 | `ChangeFeed` | records(window) → change records; changes(window) is a provided method that derives `Change`s through the pure `kernel::changes::changes` (fact events through `kernel::facts::timeline`). `DigestStore`: digest(day, owner) · keep_digest(digest) · request_digest(request) (queues `digest-day`). The Today rules (headline, fallback summary, activity levels, recently updated, digest prompt) are pure functions in `kernel::changes` | memory-postgres, memory-sqlite (`rh_daily_digests`, Postgres migration 0060, SQLite schema v34; `rh_topic_redirects.merged_from`) | gateway (`GET /api/today`, `GET /api/changes`), workers (the summarizer's `digest-day`) |
 | `JobQueue` | task_names(role) · enqueue(job) → id · claim(selector) (by priority, then run_at) · read · subscribe · complete/fail · revive_dead | memory-postgres (graphile tables), memory-sqlite (`ros_jobs`, priorities in `rh_job_priorities`, schema v27) | memory adapters, workers |
@@ -35,7 +35,7 @@ The gate (`cargo xtask check`) fails any Cargo.toml that breaks this.
 | `HarnessAdapter` | new_session(spec) · prompt(id, input) · cancel(id) · answer_permission(id, decision) · set_option(id, model/effort) · release(id) · events(id) → SessionEvent stream · offerings | harness-acp (one ACP client + a per-harness launch table: native ACP, or codex-acp / claude-code-acp) | providers (the CLI model providers, started through `harness_acp::HeadlessLaunch`) |
 | `Tool` | definition() → `rmcp::Tool` · call(args, ctx) → `rmcp::CallToolResult` (the MCP tool shape, no translation) | RivetHub's own capabilities (memory, wiki) in mcp; remote MCP servers' tools via the mcp client | mcp server |
 | `TranscriptReader` | sessions(store) · read(session) → turns · tail(session, since) | capture's store readers (one per harness) | capture (incremental + backfill), gateway (transcript route) via the binary's wiring |
-| `TenancyStore` | sync_spaces(spaces) · default_visibility(user) · set_default_visibility(user, visibility, now) · session_visibility(viewer, sessions) · mark_session(viewer, session, mark, now) · mark_topic(viewer, topic, mark). Which rows a viewer reads is not a port argument: `kernel::tenancy::Scope` rides with the request or job and the Postgres pool applies it on every checkout (CONTRACT note 89) | memory-postgres (`PostgresTenancy`), memory-sqlite | gateway |
+| `TenancyStore` | sync_spaces(spaces) · default_visibility(user) · set_default_visibility(user, visibility, now) · session_visibility(viewer, sessions) · mark_session(viewer, session, mark, now) · mark_topic(viewer, topic, mark). Which rows a viewer reads is not a port argument: `kernel::tenancy::Scope` rides with the request or job and the Postgres pool applies it on every checkout | memory-postgres (`PostgresTenancy`), memory-sqlite | gateway |
 | `SummaryWatch` | written() → a stream of the summaries stored (id, session key, kind, depth) | memory-postgres (`NOTIFY rh_summary_written` from every summary write, listened for by the gateway's process), memory-sqlite (in process) | gateway's plug-in host (`summary.written`) |
 | `PluginTools` | tools() → the running plug-ins' tools and a version · call(plugin, tool, call) · changed(seen version) → the next version | gateway's plug-in host in-process (`rh local`); mcp's `SocketTools` over the node's `<state>/plugins/tools.sock` (`rh mcp`) | mcp server (lists plug-in tools after its own and sends `tools/list_changed`) |
 
@@ -50,7 +50,7 @@ module), `Env` (config owns the environment), `Fs` (direct I/O; tests use temp d
 ports that `rh local` composes. It has no message-chunk table, so `EmbeddingStore` refuses chunked embeddings
 (`EmbedTable::MessageChunks`, or a `StoredEmbedding` with chunks) with a typed error and standalone nodes embed without
 chunking. Vector search scans the stored vectors; there is no approximate-nearest-neighbour index. It stores visibility
-marks but does not filter reads by them (one user per SQLite node, CONTRACT note 89), and keeps no wiki archive or History.
+marks but does not filter reads by them (one user per SQLite node), and keeps no wiki archive or History.
 `rh local` arms vector and hybrid search with a query embedder built from `memory.sqlite.embed_endpoint`,
 `embed_model` and `embed_api_key` (or the provider `embed_provider` names), falling back to `RIVETHUB_EMBED_URL` / `RIVETHUB_EMBED_MODEL`, the same
 endpoint the standalone embedder worker uses. Without an endpoint, those modes answer with keyword results and
@@ -97,7 +97,7 @@ move to the parent, the denser summary and article win, and the text not kept is
 included, and the removal of each child's page file land in one wiki git commit. A second run finds nothing to fold. A page bound to a topic is never folded as a child, and
 it is the survivor of its identity group.
 
-## Process shape (Phil 2026-10-12; `rh agent` retired by CONTRACT note 74; the memory service cut, note 132)
+## Process shape (Phil 2026-10-12; `rh agent` retired; the memory service cut)
 
 One process per service, each with one tokio multi-thread runtime built in its own composition root:
 `rh gateway` (the gateway with its notice channel and plug-in host), `rh worker --role
@@ -110,10 +110,10 @@ Postgres queue B4/B13). Inside a process: supervised tasks under one `Cancellati
 
 ## Sessions
 
-rh runs no live sessions (CONTRACT note 132); T3 Code does. One `SessionId` (serialized exactly as today's session-id
+rh runs no live sessions; T3 Code does. One `SessionId` (serialized exactly as today's session-id
 strings) names a captured session. The gateway reads stored sessions through capture's `SessionLister` and
-`TranscriptReader` for every harness id. Who may read or change a session is the store's answer alone (CONTRACT
-note 178): the gateway keeps no owner map of its own. ACP is used
+`TranscriptReader` for every harness id. Who may read or change a session is the store's answer alone: the gateway keeps no
+owner map of its own. ACP is used
 only by the CLI model providers: `harness_acp::HeadlessLaunch` starts a harness, natively or through the codex-acp and
 claude-agent-acp adapter binaries, and the provider runs one headless turn on it.
 
@@ -134,7 +134,7 @@ repository: the native desktop in rivethub-desktop, and RivetHub web, Android an
 the rivetOS monorepo. The chat-channel bots and CFO tooling live in their own private repos (rivethub-channels, rivet-cfo). No tools crate: the TypeScript's built-in shell/file/search/interaction/web tools are deleted (unused; every
 harness has its own).
 
-## Build order (history; note 132 later removed the sessions, agent, tasks, mesh and CA work)
+## Build order (history; the sessions, agent, tasks, mesh and CA work were later removed)
 
 Wave 0 foundation (wire, config, kernel, testkit; Phil reviews the types) → Wave 1 memory path (memory-postgres, gateway
 skeleton, capture with its readers; B3 B4 B6) → Wave 2 sessions (gateway's session registry + session/term routes, harness-acp, terminal; B1 B2
@@ -143,7 +143,7 @@ mesh, memory-sqlite; B5 B13 B14) → Wave 5 operations (cli incl. CA, standalone
 B16) → cutover. Each wave's gate is a boundary working end to end against the recordings.
 
 Standalone: `rh local` composes the gateway, the SQLite worker roles, and network MCP into one process on the SQLite store (one composition root, same crates). It runs the wiki builder when `memory.sqlite.wiki_dir` is set. `Config::load` with `Profile::Node` still requires runtime, agents, and providers; `rh local` loads with `Profile::Standalone` and does not invent them, and `rh config validate`, `rh status` and `rh doctor` accept such a SQLite config.
-16 crates (the mesh, the agent loop, the terminal and the PKI left with note 132).
+16 crates (the mesh, the agent loop, the terminal and the PKI have since left).
 Schema changes never run inside the runtime: `rivethub-migrate postgres|sqlite` applies them (Postgres from the
 `migrate` crate's `sqlx::migrate!` chain, SQLite through the v7 creation, the v1→v7 upgrade ladder and the steps to v35, with a
 `<file>.v<N>.bak` copy of the original file before any read-write connection), and the stores verify one schema version each
@@ -171,5 +171,5 @@ B10 deprecated environment aliases remain owned by `config`, including its warni
 Recorded expected text is translated only by `testkit::translate_recorded_product_names`, including only the
 environment names changed in this slice; other adapters retain their existing boundaries. JSON is parsed into
 typed payloads before translating text fields. Actual results are compared without name normalization. Source
-recordings remain unchanged. Recorded cases for removed routes are named in the gateway parity skips with CONTRACT
-note 132 as the reason. Provider, database, capture and config format changes are outside this naming slice.
+recordings remain unchanged. Recorded cases for removed routes are named in the gateway parity skips, with the
+removal as the reason. Provider, database, capture and config format changes are outside this naming slice.

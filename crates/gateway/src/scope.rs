@@ -56,7 +56,7 @@ pub(crate) async fn scope_request(
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 89 of the contract runs a request whose caller is not identified in the closed scope, and its route refuses it"
+            reason = "PATTERNS FALLBACK: a stated rule: rh runs a request whose caller is not identified in the closed scope, and its route refuses it"
         )
     )]
     let scope = match viewer {

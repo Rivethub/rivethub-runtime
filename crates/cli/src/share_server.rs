@@ -171,7 +171,7 @@ pub(crate) struct Tokens {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: share server tokens never reach a log; Debug prints only their expiry"
+        reason = "share server tokens never reach a log; Debug prints only their expiry"
     )
 )]
 impl std::fmt::Debug for Tokens {
@@ -190,7 +190,7 @@ pub(crate) struct TeamLogin {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: a team token never reaches a log; Debug prints only its user"
+        reason = "a team token never reaches a log; Debug prints only its user"
     )
 )]
 impl std::fmt::Debug for TeamLogin {

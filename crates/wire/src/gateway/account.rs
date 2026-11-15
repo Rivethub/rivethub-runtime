@@ -52,7 +52,7 @@ pub struct PendingUpdate {
 #[serde(rename_all = "camelCase")]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each flag is a JSON field of GET /api/account (CONTRACT notes 131 and 145)"
+    reason = "each flag is a JSON field of GET /api/account"
 )]
 pub struct Account {
     #[serde(default)]
@@ -91,7 +91,7 @@ pub struct AccountUpdate {
     dylint_lib = "rr_lints",
     expect(
         opaque,
-        reason = "CONTRACT note 158: device sign-in has no input fields; deny_unknown_fields rejects rather than discards contents"
+        reason = "device sign-in has no input fields; deny_unknown_fields rejects rather than discards contents"
     )
 )]
 pub struct SignInRequest {}

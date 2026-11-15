@@ -142,7 +142,7 @@ pub struct Draft {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: a draft's flags carry flagged text; Debug shows counts only"
+        reason = "a draft's flags carry flagged text; Debug shows counts only"
     )
 )]
 impl fmt::Debug for Draft {
@@ -220,7 +220,7 @@ pub struct FlagView {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: flagged text leaves rh only in the share report body; Debug never prints it"
+        reason = "flagged text leaves rh only in the share report body; Debug never prints it"
     )
 )]
 impl fmt::Debug for FlagView {
@@ -253,7 +253,7 @@ impl EscapedText {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: flagged text never reaches a log; Debug shows its length only"
+        reason = "flagged text never reaches a log; Debug shows its length only"
     )
 )]
 impl fmt::Debug for EscapedText {
@@ -313,7 +313,7 @@ pub enum FlagState {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: a map term is flagged text; Debug never prints it or its placeholder"
+        reason = "a map term is flagged text; Debug never prints it or its placeholder"
     )
 )]
 impl fmt::Debug for FlagState {
@@ -345,7 +345,7 @@ pub enum FlagChoice {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: a map term is flagged text; Debug never prints it or its placeholder"
+        reason = "a map term is flagged text; Debug never prints it or its placeholder"
     )
 )]
 impl fmt::Debug for FlagChoice {
@@ -390,7 +390,7 @@ pub struct Sent {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
+        reason = "the share code's key is a secret; Debug shows only the drop id part"
     )
 )]
 impl fmt::Debug for Sent {
@@ -467,7 +467,7 @@ pub enum LoginRequest {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: a team token never reaches a log; Debug names only the server"
+        reason = "a team token never reaches a log; Debug names only the server"
     )
 )]
 impl fmt::Debug for LoginRequest {

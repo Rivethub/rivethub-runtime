@@ -35,7 +35,7 @@ pub struct DropId(String);
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 143: a drop id is the download capability, so Debug never prints it"
+        reason = "a drop id is the download capability, so Debug never prints it"
     )
 )]
 impl std::fmt::Debug for DropId {

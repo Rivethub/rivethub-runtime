@@ -78,7 +78,7 @@ pub(super) async fn tombstoned(
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B1: unreadable tombstones list every session, logged (note 75)"
+            reason = "CONTRACT B1: unreadable tombstones list every session, logged"
         )
     )]
     let found = read.unwrap_or_else(|error| {
@@ -97,7 +97,7 @@ pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<Stri
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B1: an unreadable trash list shows every session, logged (note 127)"
+            reason = "CONTRACT B1: an unreadable trash list shows every session, logged"
         )
     )]
     let found = read.unwrap_or_else(|error| {

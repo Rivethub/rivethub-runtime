@@ -6,7 +6,7 @@ this; its notes are at the end.
 ## The database
 
 rh connects as an ordinary role that owns the database and its tables, never as a superuser. Row-level security is
-forced on the owned tables (CONTRACT note 89), so the owner is subject to it like any other role; rh sets `rh.principal`,
+forced on the owned tables, so the owner is subject to it like any other role; rh sets `rh.principal`,
 `rh.spaces` and `rh.maintenance` on each connection from the work it is doing.
 
 A new database needs two superuser steps, once per database, and then its migrations:
@@ -73,7 +73,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS rh_messages_event_id
 ## Updating from 0.8.4 on Linux with the service
 
 `rh update` on 0.8.4 leaves a node that runs as `rivethub.service` down: it rewrites the unit's `ExecStart` to
-`<path>/rh (deleted)`, which systemd cannot start (CONTRACT note 206). After updating from 0.8.4, run:
+`<path>/rh (deleted)`, which systemd cannot start. After updating from 0.8.4, run:
 
 ```sh
 rh service restart
@@ -123,7 +123,7 @@ affected, and neither is an update from 0.8.3.
   it wrote them; it now prints that line only for `--dry-run`.
 - `rh harness connect dsh` writes the DeepSeek Harness capture plug-in and a recall row into
   `$DSH_HOME/cordis.patch.yml`, which covers every profile including ones created later. A released 0.8.3 `rh`
-  refuses that command and writes nothing (CONTRACT note 198).
+  refuses that command and writes nothing.
 
 ## Upgrading from 0.8.1 to 0.8.2
 
@@ -144,8 +144,7 @@ Also in 0.8.2:
 
 ## Upgrading from 0.8.0 to 0.8.1
 
-0.8.1 needs no schema migration. It is also a security release, so these things behave differently after the upgrade
-(CONTRACT notes 143 to 152 have the rules).
+0.8.1 needs no schema migration. It is also a security release, so these things behave differently after the upgrade.
 
 ### Local access
 
@@ -213,7 +212,7 @@ receive routes apply the same rules to sanitized bundles.
   file, and a bare digest is a full token that also reads all memory, so give a member who only shares
   `{"digest": "<sha-256 hex>", "scopes": ["drops:write"]}`. The local owner token is not a users-file token and cannot
   upload. Serve it over TLS, or list the reverse proxy in `gateway.trusted_proxies` so the server
-  can tell that a request arrived over HTTPS (CONTRACT note 143).
+  can tell that a request arrived over HTTPS.
 - **Sign in to share again.** 0.8.0 signed in to rivethub.cloud with its own `/api/cli` endpoints, which the cloud no
   longer serves. `rh share login` now uses OAuth device sign-in found through the server's RFC 8414 metadata, and asks
   for `offline_access` so the login can refresh. Run `rh share login` once on each machine. A team server offers no
@@ -355,7 +354,7 @@ WantedBy=timers.target
 - List the people and the SHA-256 digests of their bearer tokens in the users file (`gateway.users_file`; README,
   Tenancy). Rows captured with a bearer token take that person as owner; loopback, plug-ins and `rh mcp` act as the node owner
   on a personal node.
-- No node treats loopback as the owner (CONTRACT note 147), so a team server needs no extra switch: every caller needs
+- No node treats loopback as the owner, so a team server needs no extra switch: every caller needs
   a credential, and a same-host forwarder gains nothing. Give the server's own tools one: `rh` and the capture hook read
   `<state_dir>/local-owner.token`, and `memory.capture.gateway.token` names a remote capture gateway's token.
 - Behind a reverse proxy, list it in `gateway.trusted_proxies` and have it overwrite `X-Forwarded-Proto`, not append
@@ -369,8 +368,7 @@ WantedBy=timers.target
 
 ### Person logins
 
-A personal node that writes to the store directly gets its own Postgres role, pinned to its person by the store
-(CONTRACT note 121). Whatever `rh.principal`, `rh.spaces` or `rh.maintenance` that login sets, it reads its own rows and
+A personal node that writes to the store directly gets its own Postgres role, pinned to its person by the store. Whatever `rh.principal`, `rh.spaces` or `rh.maintenance` that login sets, it reads its own rows and
 the rows shared to spaces it belongs to, writes only its own, and never enters maintenance. Roles not listed in
 `rh_role_principals` keep the connection settings, so service logins and workers need nothing.
 
@@ -398,7 +396,7 @@ recreating a pinned role unpins it, since the mapping is by name: repeat the `IN
 then uses `postgres://rivet_rose:...@<host>/<database>` as its `RIVETHUB_PG_URL`; its `users.json` still names the
 person and spaces for the gateway, but the store, not the node, decides what the login sees.
 
-A person login gets nothing in the `graphile_worker` schema (CONTRACT note 123): the job queue carries no owner, so a
+A person login gets nothing in the `graphile_worker` schema: the job queue carries no owner, so a
 login that could add a job could have the store's workers read and rewrite anyone's rows. Grant it no `USAGE` there and
 create no policies on the queue tables; migration 0055 takes both away from every role already listed in
 `rh_role_principals`. The node notices that the queue is out of reach and captures without queueing, and the store's
@@ -407,9 +405,8 @@ every 15 minutes), summaries every 5 minutes (which also file and title the conv
 minute, and topic pages every hour. `rh memory recompile`, `rh memory run` and the other queue commands answer on a person login that the queue is absent:
 run them from the store's operator node.
 
-Migration 0054 (CONTRACT note 122) puts the tables 0044 left open under row-level security, so the grants above stay
-as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Migration 0056
-(CONTRACT note 124) closes the four tables 0054 left open: a person login reads `rh_topic_tombstones` and
+Migration 0054 puts the tables 0044 left open under row-level security, so the grants above stay
+as written: a person login keeps full DML on every table and the policies decide which rows it reaches. Migration 0056 closes the four tables 0054 left open: a person login reads `rh_topic_tombstones` and
 `rh_tag_taxonomy` but writes only tombstones for its own topics and vocabulary rows it created, and it neither reads
 nor writes `rh_worker_runs` or `rh_job_failures`. `rh_session_tombstones`, `rh_backfills` and the two migration ledgers
 are readable by every login but written only under maintenance or, for tombstones, by the session's owner, and a
@@ -441,7 +438,7 @@ cloud:
 With the policy on, sign-in and the cloud update source answer `409` (`disabled by this hub's policy`), no crash report
 or usage count is written or sent, `rh update` fetches GitHub releases, and nothing is shared through rivethub.cloud.
 Users cannot turn any of it back on; only an edit to config.yaml does. `rh status`, `rh doctor` and `/healthz` report
-the policy. CONTRACT note 145 has the full rules.
+the policy.
 
 To keep crash reports and usage counts but send them to your own collector, name it in `telemetry.url`:
 
@@ -455,7 +452,7 @@ with the same JSON rivethub.cloud receives, and nothing goes to rivethub.cloud f
 report; `422` or `413` drops it. On any other answer a crash report stays queued for the next try, but a day's usage
 report is not resent. This also works with `cloud: {disabled:
 true}`: the cloud stays off and only telemetry goes to your url. `telemetry: {disabled: true}` turns telemetry off
-everywhere and wins over the url. CONTRACT note 154 has the rules.
+everywhere and wins over the url.
 
 The entity worker matches observations with the ThinkingCap matcher and the embedder at `http://127.0.0.1:9402`
 (`qwen3-embedding-0.6b`) unless config.yaml says otherwise:
@@ -469,7 +466,6 @@ entities:
 `matcher` must be `thinkingcap` or `jev`. `jev` needs `matcher_url`, and that url must be http or https. When
 `memory.postgres.embed_endpoint` or `memory.postgres.embed_model` is set, entity matching uses it; with SQLite selected,
 the same keys under `memory.sqlite` are used instead. An omitted `entities` section keeps the ThinkingCap matcher.
-CONTRACT note 202 has the rules.
 
 This hub's gateway and its `rh` CLI enforce the policy, including the share rules below, by reading this hub's
 config.yaml. The policy governs the hub, not every program on the machine. A shell user who runs `rh` with a config

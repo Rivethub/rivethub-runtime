@@ -90,7 +90,7 @@ impl TurnMetadata {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "CONTRACT B3: a malformed x-codex-turn-metadata header is ignored and the call keeps its session (note 125)"
+                reason = "CONTRACT B3: a malformed x-codex-turn-metadata header is ignored and the call keeps its session"
             )
         )]
         let parsed = serde_json::from_str::<Self>(raw).ok()?;

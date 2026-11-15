@@ -444,7 +444,7 @@ impl SessionOrigin {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "CONTRACT B3 (note 135): a stored origin that does not parse counts as the earliest when an import merges settings"
+                reason = "CONTRACT B3: a stored origin that does not parse counts as the earliest when an import merges settings"
             )
         )]
         let origin = serde_json::from_value(settings.get("origin")?.clone()).ok();

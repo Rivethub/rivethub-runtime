@@ -56,7 +56,7 @@ fn forwarded_client(headers: &HeaderMap, trusted: &[TrustedProxy]) -> Option<IpA
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract has an X-Forwarded-For value that is not UTF-8 contribute no hops"
+            reason = "PATTERNS FALLBACK: a stated rule: rh has an X-Forwarded-For value that is not UTF-8 contribute no hops"
         )
     )]
     let values: Vec<&str> = headers
@@ -82,7 +82,7 @@ fn hop_address(hop: &str) -> Option<IpAddr> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract skips an X-Forwarded-For hop that does not parse and walks on"
+            reason = "PATTERNS FALLBACK: a stated rule: rh skips an X-Forwarded-For hop that does not parse and walks on"
         )
     )]
     let address = bare

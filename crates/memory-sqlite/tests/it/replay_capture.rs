@@ -516,7 +516,7 @@ async fn replay(scenario: &mut Scenario, plan: Plan) -> TestResult<Vec<String>> 
     }
     if plan.owner.is_none() {
         notes.push(format!(
-            "deviation {}: owner_user_id is the capturing caller, where the recording ran without a user (CONTRACT note 88)",
+            "deviation {}: owner_user_id is the capturing caller, where the recording ran without a user",
             scenario.name
         ));
         for table in ["ros_conversations", "ros_messages"] {

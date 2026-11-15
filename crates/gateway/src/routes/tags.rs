@@ -325,7 +325,7 @@ async fn owned(gateway: &Gateway, user: &UserId, entity: &TagEntity) -> Result<(
                 dylint_lib = "rr_lints",
                 expect(
                     fallback,
-                    reason = "CONTRACT B1: a legacy key that is not a session key names no session with an owner (note 178), so the store tags it as before"
+                    reason = "CONTRACT B1: a legacy key that is not a session key names no session with an owner, so the store tags it as before"
                 )
             )]
             let checked = match parsed {

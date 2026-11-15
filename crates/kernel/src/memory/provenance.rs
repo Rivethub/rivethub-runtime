@@ -244,7 +244,7 @@ fn parsed<T: serde::de::DeserializeOwned>(settings: &JsonObject, key: &str) -> O
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B6 (note 150): a stored origin or receipt that does not parse reads as unattributed and unverified, and the recall still succeeds"
+            reason = "CONTRACT B6: a stored origin or receipt that does not parse reads as unattributed and unverified, and the recall still succeeds"
         )
     )]
     let parsed =

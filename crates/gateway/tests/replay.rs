@@ -325,7 +325,7 @@ const OUT_OF_SCOPE: &[(&str, &str, &str)] = &[
 const SKIP_REASONS: &[(&str, &str)] = &[
     (
         "cut",
-        "B1: rh v0.8 cut this route (CONTRACT note 132); the recording keeps the den's answer",
+        "B1: rh v0.8 cut this route; the recording keeps the den's answer",
     ),
     (
         "2",
@@ -341,7 +341,7 @@ const SKIP_REASONS: &[(&str, &str)] = &[
     ),
     (
         "removed",
-        "B1: note 90 removed the mic bridge, /layout and /api/capabilities; the recording keeps the den's answers",
+        "B1: the mic bridge, /layout and /api/capabilities were removed; the recording keeps the den's answers",
     ),
     (
         "mime guessing is case-insensitive; the recording pins a case-sensitive octet-stream quirk",
@@ -361,7 +361,7 @@ const SKIP_REASONS: &[(&str, &str)] = &[
     ),
     (
         "no-app-page",
-        "B1: a node with no web app answers GET / with a page, not the recording's JSON 404 (CONTRACT note 172)",
+        "B1: a node with no web app answers GET / with a page, not the recording's JSON 404",
     ),
     (
         "the session route owns the rewritten /ws path",

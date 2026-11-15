@@ -87,7 +87,7 @@ pub struct Shared {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: the share code's key is a secret; Debug shows only the drop id part"
+        reason = "the share code's key is a secret; Debug shows only the drop id part"
     )
 )]
 impl std::fmt::Debug for Shared {
@@ -154,7 +154,7 @@ pub struct PendingLogin {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: the device code never leaves rh; Debug names only the server"
+        reason = "the device code never leaves rh; Debug names only the server"
     )
 )]
 impl std::fmt::Debug for PendingLogin {

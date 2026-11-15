@@ -98,7 +98,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract treats an authorization header that is not text as no token, which refuses the upload with 401"
+            reason = "PATTERNS FALLBACK: a stated rule: rh treats an authorization header that is not text as no token, which refuses the upload with 401"
         )
     )]
     let text = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
@@ -141,7 +141,7 @@ fn declared_length(headers: &HeaderMap) -> Option<u64> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract reads a content-length that is not a number as none declared, so the upload reserves max_bytes"
+            reason = "PATTERNS FALLBACK: a stated rule: rh reads a content-length that is not a number as none declared, so the upload reserves max_bytes"
         )
     )]
     let length: u64 = headers
@@ -261,7 +261,7 @@ fn drop_id(segment: Result<Path<String>, PathRejection>) -> Option<DropId> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract answers a malformed drop id, invalid UTF-8 included, with the same 404 as an unknown one"
+            reason = "PATTERNS FALLBACK: a stated rule: rh answers a malformed drop id, invalid UTF-8 included, with the same 404 as an unknown one"
         )
     )]
     let id = segment.ok()?.0.parse().ok()?;

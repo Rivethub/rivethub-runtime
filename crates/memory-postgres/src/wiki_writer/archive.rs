@@ -76,7 +76,7 @@ async fn head(root: &Path) -> Option<String> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a real absence, contract note 100: a repository without a commit has no commit to name"
+            reason = "PATTERNS FALLBACK: a real absence: a repository without a commit has no commit to name"
         )
     )]
     let sha = git(root, &["rev-parse", "--verify", "--quiet", "HEAD"])

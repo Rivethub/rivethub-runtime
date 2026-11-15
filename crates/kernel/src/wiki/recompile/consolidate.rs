@@ -186,7 +186,7 @@ async fn ask(
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: the rule of contract note 100: a merge that fails leaves the text to the writer's budget trim, so recompiling never fails for size"
+            reason = "PATTERNS FALLBACK: a merge that fails leaves the text to the writer's budget trim, so recompiling never fails for size"
         )
     )]
     let merged = pages.merge(input).await.ok();

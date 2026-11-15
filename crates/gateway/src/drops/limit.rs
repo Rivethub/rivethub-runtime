@@ -32,7 +32,7 @@ pub struct Rates {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 143: the default rates are the rivethub.cloud drop limits, not the derive's zeros"
+        reason = "the default rates are the rivethub.cloud drop limits, not the derive's zeros"
     )
 )]
 impl Default for Rates {

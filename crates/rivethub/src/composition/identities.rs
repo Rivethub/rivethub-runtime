@@ -77,7 +77,7 @@ fn one_person(users: &UsersRegistry) -> Result<(), ComposeError> {
         (None, None) => return Ok(()),
     };
     Err(ComposeError::Invalid(format!(
-        "users registry: this node keeps memory in SQLite, which serves one person ({owner}) and does not separate anyone's sessions, but {other}; use a Postgres memory store for several people (CONTRACT note 190), or remove them from the users file"
+        "users registry: this node keeps memory in SQLite, which serves one person ({owner}) and does not separate anyone's sessions, but {other}; use a Postgres memory store for several people, or remove them from the users file"
     )))
 }
 
