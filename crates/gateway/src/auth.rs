@@ -18,9 +18,14 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use chrono::Utc;
 use parking_lot::Mutex;
+use sha2::Digest as _;
+use sha2::Sha256;
 use tower_http::set_header::SetResponseHeaderLayer;
 use url::Url;
+use wire::gateway::auth::RefusalKind;
+use wire::gateway::auth::RefusedRequest;
 
 use crate::GuardState;
 use crate::error::ApiError;
@@ -291,39 +296,50 @@ pub(crate) async fn guard(
             crate::tenancy::caller(&state.gateway, &parts).map(drop)
         };
         request = Request::from_parts(parts, body);
-        refused(secure, &resolved)
+        refused(secure, &resolved, request.headers())
     };
-    if let Some(refusal) = refusal {
-        return match refusal {
-            Refused::InsufficientScope => ApiError::InsufficientScope.into_response(),
-            Refused::Unauthorized => unauthorized(&request, &path),
+    if let Some(kind) = refusal {
+        state.gateway.auth_log().refuse(
+            RefusedRequest {
+                at: Utc::now(),
+                kind,
+                method: request.method().to_string(),
+                route: path.clone(),
+                peer: addr.ip().to_string(),
+                token: bearer(request.headers()).map(|token| {
+                    let mut digest = hex::encode(Sha256::digest(token));
+                    digest.truncate(8);
+                    digest
+                }),
+            },
+            addr.ip(),
+        );
+        return match kind {
+            RefusalKind::InsufficientScope => ApiError::InsufficientScope.into_response(),
+            RefusalKind::InvalidToken => unauthorized(&request, &path, ApiError::InvalidToken),
+            RefusalKind::Unauthorized => unauthorized(&request, &path, ApiError::Unauthorized),
         };
     }
     next.run(request).await
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Refused {
-    Unauthorized,
-    InsufficientScope,
-}
-
-fn refused(secure: bool, resolved: &Result<(), ApiError>) -> Option<Refused> {
+fn refused(
+    secure: bool,
+    resolved: &Result<(), ApiError>,
+    headers: &HeaderMap,
+) -> Option<RefusalKind> {
     if secure && matches!(resolved, Err(ApiError::InsufficientScope)) {
-        Some(Refused::InsufficientScope)
+        Some(RefusalKind::InsufficientScope)
     } else if secure && resolved.is_ok() {
         None
+    } else if headers.contains_key(header::AUTHORIZATION) {
+        Some(RefusalKind::InvalidToken)
     } else {
-        Some(Refused::Unauthorized)
+        Some(RefusalKind::Unauthorized)
     }
 }
 
-fn unauthorized(request: &Request, path: &str) -> Response {
-    let refusal = if request.headers().contains_key(header::AUTHORIZATION) {
-        ApiError::InvalidToken
-    } else {
-        ApiError::Unauthorized
-    };
+fn unauthorized(request: &Request, path: &str, refusal: ApiError) -> Response {
     let method = request.method();
     let wants_html = (method == Method::GET || method == Method::HEAD)
         && !path.starts_with("/api/")

@@ -3,6 +3,7 @@ paths = [
   ".gitattributes",
   ".cargo/config.toml",
   ".github/CODEOWNERS",
+  ".github/release.yml",
   ".gitignore",
   "Cargo.lock",
   "contract/accepted.schema.json",

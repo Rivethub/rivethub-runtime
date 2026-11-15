@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub const REAUTH_REQUIRED: &str = "reauth_required";
@@ -51,4 +52,39 @@ pub struct SessionResponse {
 #[serde(rename_all = "camelCase")]
 pub struct RotateResponse {
     pub rotated: bool,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, strum::Display,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum RefusalKind {
+    Unauthorized,
+    InvalidToken,
+    InsufficientScope,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RefusedRequest {
+    pub at: DateTime<Utc>,
+    pub kind: RefusalKind,
+    pub method: String,
+    pub route: String,
+    pub peer: String,
+    #[schemars(description = "The first eight hex digits of the presented token's SHA-256.")]
+    pub token: Option<String>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthRefusals {
+    pub unauthorized: u64,
+    pub invalid_token: u64,
+    pub insufficient_scope: u64,
+    #[schemars(description = "The latest request refused with a token presented.")]
+    pub last: Option<RefusedRequest>,
 }

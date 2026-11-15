@@ -43,6 +43,23 @@ struct TokenPathJson {
 }
 
 #[tokio::test]
+async fn token_prints_the_owner_token_and_says_where_a_missing_one_belongs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = home();
+    let env = environment(&home);
+    let missing = run(&["auth", "token"], &env).await;
+    assert_ne!(missing.exit, Exit::Ok);
+    let path = token_path(&gateway::state_dir(&env)?);
+    assert!(missing.stderr.contains(&path.display().to_string()));
+    let token = OwnerToken::generate()?;
+    install_owner_token(&env, &token);
+    let printed = run(&["auth", "token"], &env).await;
+    assert_eq!(printed.exit, Exit::Ok);
+    assert_eq!(printed.stdout, format!("{}\n", token.expose()));
+    Ok(())
+}
+
+#[tokio::test]
 async fn token_path_prints_the_path_as_text_and_json() -> Result<(), Box<dyn std::error::Error>> {
     let home = home();
     let env = environment(&home);

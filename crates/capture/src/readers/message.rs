@@ -156,7 +156,7 @@ pub(crate) fn report(format: &str, skipped: &[SkippedRecord]) {
         return;
     }
     let positions: Vec<u64> = skipped.iter().map(|record| record.position).collect();
-    tracing::warn!(
+    tracing::debug!(
         store_format = format,
         count = skipped.len(),
         ?positions,

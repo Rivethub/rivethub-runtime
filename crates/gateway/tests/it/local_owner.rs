@@ -12,6 +12,8 @@ use gateway::local_owner::TokenError;
 use gateway::local_owner::read_token;
 use gateway::local_owner::token_path;
 use tower::ServiceExt as _;
+use wire::gateway::auth::AuthRefusals;
+use wire::gateway::auth::RefusalKind;
 
 use crate::common;
 
@@ -494,5 +496,51 @@ async fn account_and_harness_routes_need_a_direct_local_caller_and_a_credential(
     .await?;
     assert_ne!(status, StatusCode::UNAUTHORIZED);
     assert_ne!(status, StatusCode::FORBIDDEN);
+    Ok(())
+}
+
+#[tokio::test]
+async fn refused_requests_are_counted_by_kind_and_the_owner_reads_the_latest() -> TestResult {
+    let app = gateway_router(false);
+    call(
+        &app,
+        &Method::GET,
+        "/api/memory/stats",
+        LOCAL,
+        &[("host", HOST)],
+    )
+    .await?;
+    let wrong = [("host", HOST), ("authorization", "Bearer not-a-token")];
+    call(&app, &Method::POST, "/api/memory/stats", LOCAL, &wrong).await?;
+    let mut request = Request::get("/api/auth/refusals")
+        .header("host", HOST)
+        .header("authorization", format!("Bearer {}", common::owner_token()))
+        .body(Body::empty())?;
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(LOCAL.parse::<std::net::SocketAddr>()?));
+    let response = app.oneshot(request).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+    let seen: AuthRefusals = serde_json::from_slice(&body)?;
+    assert_eq!(
+        (
+            seen.unauthorized,
+            seen.invalid_token,
+            seen.insufficient_scope
+        ),
+        (1, 1, 0)
+    );
+    let last = seen.last.ok_or("no latest refusal")?;
+    assert_eq!(last.kind, RefusalKind::InvalidToken);
+    assert_eq!(
+        (
+            last.method.as_str(),
+            last.route.as_str(),
+            last.peer.as_str()
+        ),
+        ("POST", "/api/memory/stats", "127.0.0.1")
+    );
+    assert_eq!(last.token.as_deref(), Some("ce6f21ae"));
     Ok(())
 }

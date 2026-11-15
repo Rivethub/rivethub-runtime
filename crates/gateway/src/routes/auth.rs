@@ -18,6 +18,7 @@ use base64::Engine as _;
 use sha2::Digest as _;
 use sha2::Sha256;
 use tower_sessions::Session;
+use wire::gateway::auth::AuthRefusals;
 use wire::gateway::auth::LoginCodeResponse;
 use wire::gateway::auth::RotateResponse;
 use wire::gateway::auth::Secret;
@@ -71,6 +72,18 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             "/api/auth/rotate",
             post(rotate).fallback(super::method_not_allowed),
         )
+        .route(
+            "/api/auth/refusals",
+            get(refusals).fallback(super::method_not_allowed),
+        )
+}
+
+async fn refusals(
+    State(gateway): State<Arc<Gateway>>,
+    user: UserId,
+) -> Result<Json<AuthRefusals>, ApiError> {
+    gateway.tenancy.owner(&user)?;
+    Ok(Json(gateway.auth_log().refusals()))
 }
 
 async fn page() -> Response {

@@ -16,6 +16,8 @@ pub enum AuthCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Print the local owner token")]
+    Token,
     #[command(about = "Replace the local owner token and end every browser session")]
     Rotate,
 }
@@ -23,8 +25,17 @@ pub enum AuthCommand {
 pub(crate) async fn run(command: AuthCommand, env: &Environment) -> Result<Report, Error> {
     match command {
         AuthCommand::TokenPath { json } => token_path(env, json),
+        AuthCommand::Token => token(env),
         AuthCommand::Rotate => rotate(env).await,
     }
+}
+
+fn token(env: &Environment) -> Result<Report, Error> {
+    let state = gateway::state_dir(env)?;
+    let token = gateway::local_owner::read_token(&state)?.ok_or_else(|| Error::NoOwnerToken {
+        path: gateway::local_owner::token_path(&state),
+    })?;
+    Ok(Report::success(format!("{}\n", token.expose())))
 }
 
 #[derive(serde::Serialize)]

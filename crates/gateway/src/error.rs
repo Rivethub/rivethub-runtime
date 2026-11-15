@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use kernel::memory::MemoryStoreError;
 use wire::gateway::GatewayError;
+use wire::gateway::auth::RefusalKind;
 
 const INVALID_JSON: &str = "invalid JSON";
 const BODY_MUST_BE_OBJECT: &str = "body must be a JSON object";
@@ -125,9 +126,11 @@ impl ApiError {
                 StatusCode::REQUEST_TIMEOUT,
                 GatewayError::new("request timeout"),
             ),
-            Self::Unauthorized | Self::InvalidToken => {
-                (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized"))
-            }
+            Self::Unauthorized => (StatusCode::UNAUTHORIZED, GatewayError::new("unauthorized")),
+            Self::InvalidToken => (
+                StatusCode::UNAUTHORIZED,
+                GatewayError::new("unauthorized").code(RefusalKind::InvalidToken.to_string()),
+            ),
             Self::InsufficientScope => insufficient_scope(),
             Self::ReauthRequired => (
                 StatusCode::UNAUTHORIZED,
@@ -228,6 +231,7 @@ impl IntoResponse for ApiError {
 fn insufficient_scope() -> (StatusCode, GatewayError) {
     (
         StatusCode::FORBIDDEN,
-        GatewayError::new("the token's scope does not cover this route").code("insufficient_scope"),
+        GatewayError::new("the token's scope does not cover this route")
+            .code(RefusalKind::InsufficientScope.to_string()),
     )
 }
