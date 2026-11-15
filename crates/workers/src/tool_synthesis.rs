@@ -30,7 +30,7 @@ Executed, Ran, Called, Invoked, Read, Wrote, Edited, Created, Deleted, Killed, S
 === EXAMPLES ===
 - exec {"command":"df -h /; free -h"}
   → Checked disk usage and free memory on the root filesystem.
-- read {"path":"/opt/acme/plugins/memory/postgres/src/compactor/compactor.ts"}
+- read {"path":"/opt/rivetos/plugins/memory/postgres/src/compactor/compactor.ts"}
   → Read the compactor source at `plugins/memory/postgres/src/compactor/compactor.ts`.
 - memory_search {"query":"release checklist status"}
   → Searched memory for `release checklist status`.
