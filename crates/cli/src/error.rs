@@ -59,6 +59,8 @@ pub enum Error {
     AuthRotateUnreachable { pid: i32 },
     #[error("the gateway refused the token rotation with HTTP {status}")]
     AuthRotate { status: u16 },
+    #[error("there is no owner token at {path}; the node writes it the first time it starts")]
+    NoOwnerToken { path: std::path::PathBuf },
     #[error(
         "the gateway refused to mint a login code with HTTP {status}; the token file may be stale, restart the gateway or run `rh auth rotate`"
     )]
