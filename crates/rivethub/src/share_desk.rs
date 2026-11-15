@@ -81,7 +81,7 @@ pub struct NodeDesk {
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 151: drafts hold flagged text; Debug shows counts only"
+        reason = "drafts hold flagged text; Debug shows counts only"
     )
 )]
 impl std::fmt::Debug for NodeDesk {

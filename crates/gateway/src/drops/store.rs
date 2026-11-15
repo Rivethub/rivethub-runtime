@@ -40,7 +40,7 @@ impl Part {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "PATTERNS FALLBACK: a stated rule, as note 143 of the contract leaves a file whose name is not a drop file alone"
+                reason = "PATTERNS FALLBACK: a stated rule: rh leaves a file whose name is not a drop file alone"
             )
         )]
         let id = name.get(..DropId::LEN)?.parse().ok()?;

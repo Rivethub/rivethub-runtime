@@ -111,7 +111,7 @@ async fn capture_activity(env: &Environment) -> Option<Vec<CaptureActivity>> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the node cannot be read"
+            reason = "PATTERNS FALLBACK: capture history is left off the line when the node cannot be read"
         )
     )]
     let (_, loaded) = crate::configuration::load(env).await.ok()?;
@@ -132,7 +132,7 @@ async fn sqlite_activity(config: &Config) -> Option<Vec<CaptureActivity>> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
         )
     )]
     let store = tokio::task::spawn_blocking(move || memory_sqlite::SqliteStore::open(path))
@@ -143,7 +143,7 @@ async fn sqlite_activity(config: &Config) -> Option<Vec<CaptureActivity>> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
         )
     )]
     return store.capture_activity_read().await.ok();
@@ -155,7 +155,7 @@ async fn postgres_activity(config: &Config, env: &Environment) -> Option<Vec<Cap
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
         )
     )]
     let store = memory_postgres::PostgresMemory::connect(&url).await.ok()?;
@@ -163,7 +163,7 @@ async fn postgres_activity(config: &Config, env: &Environment) -> Option<Vec<Cap
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: note 174 leaves capture history off the line when the store cannot be read"
+            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
         )
     )]
     return store.read_capture_activity().await.ok();

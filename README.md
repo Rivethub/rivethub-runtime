@@ -141,7 +141,7 @@ gateway:
 | `providers` | model endpoints: `openai-compatible` or `vllm` (`base_url`, `model`, `api_key` or `token_command`), or a harness used headless (`claude-cli`, `codex-cli`, `grok-cli`, `hermes-cli`, `opencode-cli`, `kimi-code`) |
 | `agents`, `runtime` | named agents on those providers; `runtime.default_agent` is the model the workers use |
 | `memory` | `backend` (`postgres` or `sqlite`), connection and embedding settings, `capture.redaction` (off by default) |
-| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir`, `request_deadline_secs` (default 30: a read request's database work stops then), `fresh_login_secs` (default 300: how recent a browser login must be for account, export and token-rotation routes), `drops` (off by default: serve the drop API as a team share server, CONTRACT note 143), `trusted_proxies` (reverse proxies whose forwarding headers rh believes) |
+| `gateway` | `host`, `port`, TLS (`tls_cert`, `tls_key`), `users_file`, `allowed_origins`, `static_dir`, `request_deadline_secs` (default 30: a read request's database work stops then), `fresh_login_secs` (default 300: how recent a browser login must be for account, export and token-rotation routes), `drops` (off by default: serve the drop API as a team share server), `trusted_proxies` (reverse proxies whose forwarding headers rh believes) |
 | `tasks` | `harnesses.<id>` (`binary`, `model`, `effort`, `cwd`) for the harnesses a headless provider runs |
 | `transports.mcp` | network MCP: `host` and `port` (default 5700, needs `auth_token`), or `socket` (an absolute path) |
 | `mesh` | `node_name` only, as this node's name; the other keys warn and are ignored |
@@ -164,7 +164,7 @@ what the node could not take under `~/.rivethub/capture-spool/` for the next run
 | `claude-code` (default) | `UserPromptSubmit`, `PostToolUse`, `Stop`, `SubagentStop`, `SessionEnd` | the payload's `transcript_path` | the session id |
 | `grok-build` | `Stop`, `PreCompact`, `SessionEnd` | `$GROK_HOME` (`~/.grok`) | `grok-build:<session>` |
 | `codex` | `Stop`, `SessionEnd`, once the person has trusted the hooks in Codex (0.129.0 and later skip untrusted hooks, `codex exec` included) | `$CODEX_HOME/sessions` (`~/.codex/sessions`) | `codex:<session>` |
-| `opencode` | the end of each turn, from the plug-in `rh harness connect opencode` writes: `session.idle` on OpenCode 1.x from 1.3.4, `session.execution.*` on 2.x; checked on 1.3.4, 1.19.5, 2.0.0, 2.2.5 and 2.3.0. OpenCode 2 is the supported line; 1.x capture is kept as it is and gets no further work (CONTRACT note 215) | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
+| `opencode` | the end of each turn, from the plug-in `rh harness connect opencode` writes: `session.idle` on OpenCode 1.x from 1.3.4, `session.execution.*` on 2.x; checked on 1.3.4, 1.19.5, 2.0.0, 2.2.5 and 2.3.0. OpenCode 2 is the supported line; 1.x capture is kept as it is and gets no further work | `opencode.db` under `$XDG_DATA_HOME/opencode` | `opencode:<session>` |
 | `dsh` | `turn/end` from `$DSH_HOME/plugins/rivethub-capture.mjs` | `$DSH_HOME/sessions` (`~/.dsh`) | `dsh:<session>` |
 
 `rh harness connect dsh` writes that plug-in and a recall MCP entry into `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`). DeepSeek Harness applies the home patch to every profile, including profiles created later. `rh harness disconnect dsh` removes both.
@@ -227,7 +227,7 @@ per-start token on the node's plug-in API socket. `rh gateway` and `rh local` ho
   installs it and reads its log. It never enables one; a person does.
 
 `GET /api/plugins` lists them; `…/{id}/enable`, `/disable`, `/reload`, `/logs`, `/settings` and `DELETE` manage them
-(owner only). The manifest, socket protocol and bodies are CONTRACT row B17 and notes 50 to 60, 71, 90 and 91.
+(owner only). The manifest, socket protocol and bodies are CONTRACT row B17.
 
 ## Memory
 
@@ -284,8 +284,8 @@ cleanup that can be written as one Tidy batch), and `merge-store`. `rh memory --
 
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): running Postgres, workers and the wiki for a datahub.
 - [docs/CLI.md](docs/CLI.md): every command, releases and updates.
-- [docs/CONTRACT.md](docs/CONTRACT.md): the boundaries (HTTP API, events, schema, CLI, config, plug-ins) and every
-  numbered note that changed them; the payload schemas are in `contract/`.
+- [docs/CONTRACT.md](docs/CONTRACT.md): the boundaries (HTTP API, events, schema, CLI, config, plug-ins) the
+  runtime keeps, and what is not part of them; the payload schemas are in `contract/`.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crates, ports, process shape.
 - [docs/BUILDER-RULES.md](docs/BUILDER-RULES.md) and [docs/PATTERNS.md](docs/PATTERNS.md): the rules every change is held to.
 

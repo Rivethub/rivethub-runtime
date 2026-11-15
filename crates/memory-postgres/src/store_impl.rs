@@ -391,7 +391,7 @@ impl MemoryStore for crate::PostgresMemory {
         {
             return Err(MemoryStoreError::InvalidRequest {
                 message: format!(
-                    "{} is an imported session; only a receive writes one (CONTRACT note 150)",
+                    "{} is an imported session; only a receive writes one",
                     entry.session_id
                 ),
             });

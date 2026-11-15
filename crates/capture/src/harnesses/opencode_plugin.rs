@@ -2,7 +2,7 @@
     dylint_lib = "rr_lints",
     expect(
         jsmodel,
-        reason = "CONTRACT notes 125 and 204: rh writes this plug-in file into OpenCode's plugins directory as-is (vendored from rivethub-app integrations/opencode/src/capture.ts at bbd4885); the string is file content rh installs, not a model of values rh evaluates"
+        reason = "rh writes this plug-in file into OpenCode's plugins directory as-is (vendored from rivethub-app integrations/opencode/src/capture.ts at bbd4885); the string is file content rh installs, not a model of values rh evaluates"
     )
 )]
 pub(super) const TEMPLATE: &str = r"import { spawn } from 'node:child_process'

@@ -12,9 +12,7 @@ pub enum Error {
     WikiScope(#[source] kernel::wiki::builder::WikiStoreError),
     #[error("capture channel is required")]
     MissingChannel,
-    #[error(
-        "a session that carries a receive receipt takes no appends; only a receive writes it (CONTRACT note 150)"
-    )]
+    #[error("a session that carries a receive receipt takes no appends; only a receive writes it")]
     ReceivedSession,
     #[error("time windows must be resolved by the caller with its time zone")]
     UnresolvedWindow,

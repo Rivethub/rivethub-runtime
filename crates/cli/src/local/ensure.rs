@@ -198,7 +198,7 @@ pub(crate) async fn ensure(
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B9 (note 146): a node that answers its health check is running even when its pid file is unreadable, so pid is null"
+            reason = "CONTRACT B9: a node that answers its health check is running even when its pid file is unreadable, so pid is null"
         )
     )]
     let pid = match process::read_pid(env).await {

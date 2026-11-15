@@ -256,7 +256,7 @@ impl LoginStore {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "CONTRACT B9 (note 140): with RIVETHUB_TOKEN_STORE unset, a keyring that does not open means the 0600 file; the_environment_chooses_the_file_store_without_touching_a_keyring pins it"
+                reason = "CONTRACT B9: with RIVETHUB_TOKEN_STORE unset, a keyring that does not open means the 0600 file; the_environment_chooses_the_file_store_without_touching_a_keyring pins it"
             )
         )]
         let vault = match env.text(TOKEN_STORE_VARIABLE) {

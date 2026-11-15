@@ -90,7 +90,7 @@ pub(crate) fn sessions(root: &Path) -> Result<Vec<(String, PathBuf)>, Transcript
                 dylint_lib = "rr_lints",
                 expect(
                     fallback,
-                    reason = "CONTRACT B3 (note 148): an unreadable dsh session is listed by its folder so its read fails as that session's backfill failure and the other sessions are still captured"
+                    reason = "CONTRACT B3: an unreadable dsh session is listed by its folder so its read fails as that session's backfill failure and the other sessions are still captured"
                 )
             )]
             let path = match newest_transcript(&root, &folder) {

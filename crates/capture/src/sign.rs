@@ -47,7 +47,7 @@ pub struct NodeKey(Ed25519KeyPair);
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: the node signing key never leaves the machine; deriving Debug would print it"
+        reason = "the node signing key never leaves the machine; deriving Debug would print it"
     )
 )]
 impl fmt::Debug for NodeKey {

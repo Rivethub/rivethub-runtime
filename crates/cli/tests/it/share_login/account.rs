@@ -151,7 +151,7 @@ async fn poll_interval() {
         dylint_lib = "rr_lints",
         expect(
             sleep,
-            reason = "CONTRACT note 158: this models the app polling the node's progress while the node owns OAuth timing"
+            reason = "this models the app polling the node's progress while the node owns OAuth timing"
         )
     )]
     tokio::time::sleep(Duration::from_millis(50)).await;

@@ -56,14 +56,8 @@ const SKIPPED: &[(&str, &str)] = &[
         "skill_manage",
         "Product decision: skills are not sidecar tools",
     ),
-    (
-        "delegate_task",
-        "Delegation left rh for T3 Code (CONTRACT note 132)",
-    ),
-    (
-        "list_agents",
-        "Delegation left rh for T3 Code (CONTRACT note 132)",
-    ),
+    ("delegate_task", "Delegation left rh for T3 Code"),
+    ("list_agents", "Delegation left rh for T3 Code"),
 ];
 
 fn recording_server() -> Server {

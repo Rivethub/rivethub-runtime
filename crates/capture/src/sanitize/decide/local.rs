@@ -26,7 +26,7 @@ pub struct LocalReview {
         dylint_lib = "rr_lints",
         expect(
             customserde,
-            reason = "CONTRACT note 144: format 1 is the absence of the field, so an explicit \"v1\" must not deserialize"
+            reason = "format 1 is the absence of the field, so an explicit \"v1\" must not deserialize"
         )
     )]
     #[serde(

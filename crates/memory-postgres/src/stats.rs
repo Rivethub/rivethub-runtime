@@ -80,7 +80,7 @@ pub(crate) fn stored_count(value: i64, field: &'static str) -> u64 {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B1: a stored counter below zero is reported as 0 and logged, never failing the whole answer (note 186)"
+            reason = "CONTRACT B1: a stored counter below zero is reported as 0 and logged, never failing the whole answer"
         )
     )]
     let shown = counted.unwrap_or_else(|_| {

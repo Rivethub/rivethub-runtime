@@ -172,7 +172,7 @@ impl Scope {
             dylint_lib = "rr_lints",
             expect(
                 fallback,
-                reason = "PATTERNS FALLBACK: a real absence, as note 89 of the contract runs work outside any scope with no viewer, and the stores fail closed"
+                reason = "PATTERNS FALLBACK: a real absence: rh runs work outside any scope with no viewer, and the stores fail closed"
             )
         )]
         let current = SCOPE.try_with(Self::clone).ok();

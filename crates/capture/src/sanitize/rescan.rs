@@ -206,7 +206,7 @@ fn worker_count(units: usize) -> usize {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "CONTRACT B9 (note 136): when the OS cannot report its cores the scan runs on one thread, with the same result"
+            reason = "CONTRACT B9: when the OS cannot report its cores the scan runs on one thread, with the same result"
         )
     )]
     let cores = thread::available_parallelism().map_or(1, NonZeroUsize::get);

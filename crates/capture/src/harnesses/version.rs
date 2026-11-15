@@ -95,7 +95,7 @@ pub(super) fn known(binary: &Path) -> Option<Version> {
         dylint_lib = "rr_lints",
         expect(
             fallback,
-            reason = "PATTERNS FALLBACK: a harness version rh cannot read is an unknown version, and status and connect then make no claim that depends on it (CONTRACT note 204)"
+            reason = "PATTERNS FALLBACK: a harness version rh cannot read is an unknown version, and status and connect then make no claim that depends on it"
         )
     )]
     let version = installed(binary).ok();

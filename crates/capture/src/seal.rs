@@ -220,7 +220,7 @@ pub struct ShareKey(age::x25519::Identity);
     dylint_lib = "rr_lints",
     expect(
         manualderive,
-        reason = "CONTRACT note 140: the share key is the only secret in a share code; Debug must never print it"
+        reason = "the share key is the only secret in a share code; Debug must never print it"
     )
 )]
 impl fmt::Debug for ShareKey {
