@@ -23,6 +23,9 @@ use wire::plugin::process::{PluginNotification, PluginNotify, PluginViewsChanged
 use super::{HostError, PluginHost};
 use crate::extract::Body;
 
+const SOCKET_PATH_LIMIT: usize =
+    size_of::<nix::libc::sockaddr_un>() - std::mem::offset_of!(nix::libc::sockaddr_un, sun_path);
+
 const ATTRIBUTED_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
@@ -36,7 +39,14 @@ pub(super) async fn bind(path: &Path) -> Result<UnixListener, HostError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let listener = UnixListener::bind(path)?;
+    let listener = UnixListener::bind(path).map_err(|error| {
+        HostError::Unavailable(format!(
+            "cannot listen on {} ({} of at most {} bytes): {error}",
+            path.display(),
+            path.as_os_str().len(),
+            SOCKET_PATH_LIMIT - 1
+        ))
+    })?;
     super::registry::set_private(path).await?;
     Ok(listener)
 }
@@ -225,4 +235,17 @@ async fn notify(
         ts: Utc::now(),
     });
     StatusCode::NO_CONTENT
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn a_socket_path_that_is_too_long_is_named_with_its_limit() {
+        let folder = tempfile::tempdir().expect("folder");
+        let path = folder.path().join("s".repeat(200));
+        let error = super::bind(&path).await.expect_err("too long");
+        let text = error.to_string();
+        assert!(text.contains(&path.display().to_string()), "{text}");
+        assert!(text.contains("of at most"), "{text}");
+    }
 }
