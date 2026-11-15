@@ -277,6 +277,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
             HarnessTranscriptTurn {
                 role: SessionMessageRole::User,
                 text: "hi".to_owned(),
+                reply_text: None,
                 thinking: None,
                 tools: None,
                 usage: None,
@@ -292,6 +293,7 @@ fn b5_1_turns_serialize_with_optional_fields_omitted() {
             HarnessTranscriptTurn {
                 role: SessionMessageRole::Assistant,
                 text: "hello".to_owned(),
+                reply_text: None,
                 thinking: Some("x".to_owned()),
                 tools: None,
                 usage: Some(MessageUsage {

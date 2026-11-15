@@ -10,6 +10,11 @@ pub(super) fn tail_chars(thinking: &str) -> String {
     kept
 }
 
+pub(super) fn reply_after(text: &str, spoken: usize) -> Option<String> {
+    let reply = text.get(spoken..)?.trim();
+    (spoken > 0 && !reply.is_empty()).then(|| reply.to_owned())
+}
+
 pub(super) fn token_label(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         let tenths = (tokens + 50_000) / 100_000;

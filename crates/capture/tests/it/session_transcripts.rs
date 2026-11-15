@@ -143,6 +143,26 @@ async fn b5_2_a_tool_round_trip_stays_inside_the_assistant_turn() {
 }
 
 #[tokio::test]
+async fn what_was_said_after_the_last_tool_call_is_given_apart_as_the_reply() {
+    let result = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt"}]}}"#;
+    let said = assistant(
+        r#"[{"type":"text","text":"I'll list the files."}]"#,
+        "tool_use",
+    );
+    let done = assistant(r#"[{"type":"text","text":"One file: a.txt."}]"#, "end_turn");
+    let call = tool_use("t1", "Bash", r#"{"command":"ls"}"#);
+    let turns = claude_turns(&[&said, &call, result, &done]).await;
+    let turn = first_turn(&turns);
+    assert_eq!(turn.text, "I'll list the files.\n\nOne file: a.txt.");
+    assert_eq!(turn.reply_text.as_deref(), Some("One file: a.txt."));
+
+    let open = claude_turns(&[&said, &call]).await;
+    assert_eq!(first_turn(&open).reply_text, None);
+    let plain = claude_turns(&[&call, result, &done]).await;
+    assert_eq!(first_turn(&plain).reply_text, None);
+}
+
+#[tokio::test]
 async fn b5_3_command_wrappers_are_not_user_turns() {
     assert_eq!(
         claude_turns(&[&user("<command-name>/clear</command-name>")]).await,

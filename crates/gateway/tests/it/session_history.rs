@@ -139,6 +139,7 @@ fn turn(role: SessionMessageRole, text: &str) -> HarnessTranscriptTurn {
     HarnessTranscriptTurn {
         role,
         text: text.to_owned(),
+        reply_text: None,
         thinking: None,
         tools: None,
         usage: None,

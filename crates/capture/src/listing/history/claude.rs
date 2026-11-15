@@ -26,6 +26,7 @@ use super::super::text::human_turn;
 use super::super::text::strip_paste;
 use super::super::text::text_elements;
 use super::super::time::parse_date;
+use super::display::reply_after;
 use super::display::tail_chars;
 use super::display::token_label;
 use super::tools::RESULT_CHARS;
@@ -249,6 +250,7 @@ struct Draft {
     stop_reason: Option<String>,
     last_block: Option<TranscriptBlock>,
     last_line_had_text: bool,
+    spoken: usize,
     started_at_ms: Option<i64>,
     ended_at_ms: Option<i64>,
 }
@@ -272,6 +274,7 @@ impl Draft {
         let output = self.output;
         Some(HarnessTranscriptTurn {
             role: SessionMessageRole::Assistant,
+            reply_text: reply_after(&self.text, self.spoken),
             text: self.text,
             thinking,
             tools: (!self.tools.is_empty()).then_some(self.tools),
@@ -376,6 +379,7 @@ impl Folder {
         self.turns.push(HarnessTranscriptTurn {
             role: SessionMessageRole::User,
             text,
+            reply_text: None,
             thinking: None,
             tools: None,
             usage: None,
@@ -492,6 +496,7 @@ impl Draft {
                 result_text: None,
                 name,
             });
+            self.spoken = self.text.len();
             self.last_block = Some(TranscriptBlock::ToolUse);
         }
         false
@@ -617,6 +622,7 @@ fn compact_marker(record: &Record) -> HarnessTranscriptTurn {
     HarnessTranscriptTurn {
         role: SessionMessageRole::Assistant,
         text,
+        reply_text: None,
         thinking: None,
         tools: None,
         usage: post.map(|post| MessageUsage {
