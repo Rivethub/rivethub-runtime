@@ -252,13 +252,6 @@ fn distinct(hits: Vec<MemorySearchHit>) -> Vec<MemorySearchHit> {
 }
 
 impl crate::PostgresMemory {
-    pub(crate) async fn search_full(
-        &self,
-        options: &SearchOptions,
-    ) -> Result<Vec<MemorySearchHit>, Error> {
-        Ok(self.search_outcome(options).await?.hits)
-    }
-
     pub async fn search_outcome_for(
         &self,
         query: &kernel::memory::SearchQuery,

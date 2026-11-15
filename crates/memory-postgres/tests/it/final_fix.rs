@@ -156,24 +156,6 @@ async fn append_rejects_wrong_event_id_types_and_hashes_absent_ids_without_colli
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn context_without_a_user_query_does_not_run_empty_semantic_search(
-    pool: PgPool,
-) -> TestResult {
-    let store = PostgresMemory::new(pool.clone());
-    let mut batch = batch("assistant only".to_owned())?;
-    batch.messages.first_mut().ok_or("message")?.role = Role::Assistant;
-    store
-        .capture_batch(&batch, &CaptureOptions::owned_by(&testkit::owner()?))
-        .await?;
-    let context = store
-        .context("final-fix", "2026-10-15T12:01:00Z".parse()?)
-        .await?;
-    assert!(context.contains("assistant only"));
-    assert!(!context.contains("Relevant Context"));
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn caller_time_zone_controls_calendar_windows(pool: PgPool) -> TestResult {
     use kernel::memory::{BrowseFilter, Limit, SearchMode, SearchQuery};
     use kernel::memory::{BrowseWindow, MemoryBrowseOrder, MemoryScope};

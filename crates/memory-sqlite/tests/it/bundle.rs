@@ -429,22 +429,6 @@ async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_tit
         .collect();
     assert_eq!(summarized, steps);
 
-    let context = store
-        .store
-        .context("claude-code:tied", instant("2026-11-08T12:00:00.000Z")?)
-        .await?;
-    let (older, newest) = steps.split_at(3);
-    let recent = newest.iter().map(|step| format!("[user] {step}"));
-    let relevant = older.iter().map(|step| format!("[rivet/user] {step}"));
-    assert!(
-        context.contains(&recent.collect::<Vec<_>>().join("\n")),
-        "{context}"
-    );
-    assert!(
-        context.contains(&relevant.collect::<Vec<_>>().join("\n")),
-        "{context}"
-    );
-
     let page = store
         .store
         .list(&SessionQuery::new(SessionView::All))

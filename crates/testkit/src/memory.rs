@@ -5,7 +5,6 @@ mod team;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
@@ -408,21 +407,6 @@ impl MemoryStore for FakeMemoryStore {
             .find(|e| e.id.as_deref() == Some(id))
             .cloned();
         Ok(self.origins.attach(found.into_iter().collect()).await.pop())
-    }
-
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
-        self.record(MemoryRequest::Context {
-            session: session.to_owned(),
-            now,
-        })
-        .await;
-        let entries = self.entries.lock().await;
-        Ok(entries
-            .iter()
-            .filter(|e| e.session_id == session)
-            .map(|e| e.content.clone())
-            .collect::<Vec<_>>()
-            .join("\n"))
     }
 
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {

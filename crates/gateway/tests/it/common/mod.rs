@@ -185,14 +185,6 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
-    async fn context(
-        &self,
-        _session: &str,
-        _now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<String, MemoryStoreError> {
-        unavailable()
-    }
-
     async fn summary_dag(
         &self,
         _owner: &kernel::memory::SummaryOwner,
@@ -412,14 +404,6 @@ impl MemoryStore for GatedStore {
         id: &str,
     ) -> Result<Option<kernel::memory::MemoryEntry>, MemoryStoreError> {
         self.inner.get_full(id).await
-    }
-
-    async fn context(
-        &self,
-        session: &str,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<String, MemoryStoreError> {
-        self.inner.context(session, now).await
     }
 
     async fn summary_dag(

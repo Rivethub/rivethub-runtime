@@ -7,8 +7,6 @@ use crate::capture::UpsertedConversation;
 use crate::capture::prepare_capture_message;
 use crate::error::Error;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
@@ -459,12 +457,6 @@ impl MemoryStore for crate::PostgresMemory {
 
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError> {
         self.memory_get_full(id)
-            .await
-            .map_err(MemoryStoreError::from)
-    }
-
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
-        self.context_for_turn(session, now)
             .await
             .map_err(MemoryStoreError::from)
     }

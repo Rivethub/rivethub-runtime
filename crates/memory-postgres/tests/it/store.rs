@@ -495,26 +495,6 @@ async fn stats_get_full_and_context(pool: PgPool) -> TestResult {
             .await?
             .is_none()
     );
-
-    let context = memory
-        .context("claude-code:seed", chrono::Utc::now())
-        .await?;
-    assert!(context.contains("## Recent"), "{context}");
-    assert!(context.contains("## Relevant Context"), "{context}");
-    assert!(
-        context.contains("[rivet/assistant"),
-        "message hits render their agent and role: {context}"
-    );
-    assert!(
-        context.contains("[summary/leaf"),
-        "summary hits render from their kind, not a role: {context}"
-    );
-    assert!(!context.contains("## Wiki"), "no wiki rows exist");
-
-    let empty = memory
-        .context("claude-code:heartbeat:x", chrono::Utc::now())
-        .await?;
-    assert_eq!(empty, "");
     Ok(())
 }
 

@@ -518,8 +518,6 @@ pub trait MemoryStore: Send + Sync {
 
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError>;
 
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError>;
-
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError>;
 
     async fn summary_outline(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {

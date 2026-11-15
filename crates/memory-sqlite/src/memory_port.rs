@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
@@ -144,10 +143,6 @@ impl MemoryStore for SqliteStore {
 
     async fn get_full(&self, id: &str) -> Result<Option<MemoryEntry>, MemoryStoreError> {
         self.message_entry(id).await.map_err(MemoryStoreError::from)
-    }
-
-    async fn context(&self, session: &str, now: DateTime<Utc>) -> Result<String, MemoryStoreError> {
-        self.context_for(session, now).await
     }
 
     async fn summary_dag(&self, owner: &SummaryOwner) -> Result<SummaryDag, MemoryStoreError> {
