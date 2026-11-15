@@ -6,6 +6,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use wire::gateway::auth::{AuthRefusals, RefusalKind, RefusedRequest};
 
 const REFUSAL_LOG_CAP: usize = 100;
 const WINDOW: Duration = Duration::from_secs(60);
@@ -22,6 +23,7 @@ pub(crate) enum AuthEvent {
     Logout,
     Rotated,
     BearerRejected,
+    ScopeRefused,
     ForwardedTokenRefused,
 }
 
@@ -37,6 +39,7 @@ impl AuthEvent {
             Self::Logout => "logout",
             Self::Rotated => "rotated",
             Self::BearerRejected => "bearer_rejected",
+            Self::ScopeRefused => "scope_refused",
             Self::ForwardedTokenRefused => "forwarded_token_refused",
         }
     }
@@ -52,6 +55,7 @@ impl AuthEvent {
             Self::Logout => "the browser session ended",
             Self::Rotated => "the local owner token was replaced and every session ended",
             Self::BearerRejected => "the bearer token matched no credential",
+            Self::ScopeRefused => "the bearer token's scope does not cover the route",
             Self::ForwardedTokenRefused => {
                 "the owner token came with a forwarding header or a non-loopback host"
             }
@@ -65,6 +69,7 @@ impl AuthEvent {
             | Self::ExchangeRefused
             | Self::ExchangeRateLimited
             | Self::BearerRejected
+            | Self::ScopeRefused
             | Self::ForwardedTokenRefused => true,
             Self::LoginCodeMinted | Self::ExchangeSucceeded | Self::Logout | Self::Rotated => false,
         }
@@ -83,6 +88,7 @@ type Windows = HashMap<(AuthEvent, Option<IpAddr>), Window>;
 pub(crate) struct AuthLog {
     windows: Arc<Mutex<Windows>>,
     flusher: Mutex<Option<JoinHandle<()>>>,
+    refusals: Mutex<AuthRefusals>,
 }
 
 fn peer_text(peer: Option<IpAddr>) -> String {
@@ -125,10 +131,42 @@ async fn flush_when_windows_close(windows: Arc<Mutex<Windows>>) {
 
 impl AuthLog {
     pub(crate) fn emit(&self, event: AuthEvent, peer: Option<IpAddr>) {
-        self.emit_at(event, peer, Instant::now());
+        self.emit_at(event, peer, Instant::now(), None);
     }
 
-    pub(crate) fn emit_at(&self, event: AuthEvent, peer: Option<IpAddr>, now: Instant) {
+    pub(crate) fn refuse(&self, request: RefusedRequest, peer: IpAddr) {
+        let event = {
+            let mut refusals = self.refusals.lock();
+            match request.kind {
+                RefusalKind::Unauthorized => {
+                    refusals.unauthorized += 1;
+                    return;
+                }
+                RefusalKind::InvalidToken => {
+                    refusals.invalid_token += 1;
+                    AuthEvent::BearerRejected
+                }
+                RefusalKind::InsufficientScope => {
+                    refusals.insufficient_scope += 1;
+                    AuthEvent::ScopeRefused
+                }
+            }
+        };
+        self.emit_at(event, Some(peer), Instant::now(), Some(&request));
+        self.refusals.lock().last = Some(request);
+    }
+
+    pub(crate) fn refusals(&self) -> AuthRefusals {
+        self.refusals.lock().clone()
+    }
+
+    pub(crate) fn emit_at(
+        &self,
+        event: AuthEvent,
+        peer: Option<IpAddr>,
+        now: Instant,
+        request: Option<&RefusedRequest>,
+    ) {
         let (name, reason) = (event.name(), event.reason());
         let text = peer_text(peer);
         drain(&self.windows, |window| {
@@ -157,7 +195,15 @@ impl AuthLog {
             }
         };
         if first {
-            tracing::warn!(event = name, reason, peer = %text, "auth event");
+            tracing::warn!(
+                event = name,
+                reason,
+                peer = %text,
+                method = request.map(|request| request.method.as_str()),
+                route = request.map(|request| request.route.as_str()),
+                token = request.and_then(|request| request.token.as_deref()),
+                "auth event"
+            );
             self.ensure_flusher();
         }
     }
@@ -200,6 +246,8 @@ mod tests {
     use parking_lot::Mutex;
     use tokio::time::Instant;
 
+    use wire::gateway::auth::{RefusalKind, RefusedRequest};
+
     use super::{AuthEvent, AuthLog};
 
     #[derive(Clone, Default)]
@@ -241,6 +289,7 @@ mod tests {
                 AuthEvent::ExchangeRefused,
                 peer,
                 start + Duration::from_secs(second),
+                None,
             );
         }
         assert_eq!(lines().matches("exchange_refused").count(), 1);
@@ -249,6 +298,7 @@ mod tests {
                 AuthEvent::ExchangeRefused,
                 peer,
                 start + Duration::from_secs(second),
+                None,
             );
         }
         let text = lines();
@@ -258,6 +308,7 @@ mod tests {
             AuthEvent::ExchangeRefused,
             peer,
             start + Duration::from_secs(400),
+            None,
         );
         let text = lines();
         assert!(text.contains("38 more in the last 60s"), "{text}");
@@ -300,5 +351,40 @@ mod tests {
         let text = String::from_utf8_lossy(&captured.0.lock()).into_owned();
         assert!(text.contains("3 more in the last 60s"), "{text}");
         assert!(log.flusher.lock().is_none());
+    }
+
+    #[test]
+    fn a_refused_token_is_counted_each_time_and_logged_once_with_where_it_was_tried() {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(captured.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let log = AuthLog::default();
+        let request = RefusedRequest {
+            at: chrono::Utc::now(),
+            kind: RefusalKind::InsufficientScope,
+            method: "PUT".to_owned(),
+            route: "/api/wiki/pages/a".to_owned(),
+            peer: "203.0.113.9".to_owned(),
+            token: Some("ce6f21ae".to_owned()),
+        };
+        for _ in 0..3 {
+            log.refuse(request.clone(), IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9)));
+        }
+        let text = String::from_utf8_lossy(&captured.0.lock()).into_owned();
+        assert_eq!(text.matches("scope_refused").count(), 1, "{text}");
+        for field in [
+            "method=\"PUT\"",
+            "route=\"/api/wiki/pages/a\"",
+            "token=\"ce6f21ae\"",
+            "peer=203.0.113.9",
+        ] {
+            assert!(text.contains(field), "{field} in {text}");
+        }
+        let seen = log.refusals();
+        assert_eq!(seen.insufficient_scope, 3);
+        assert_eq!(seen.last, Some(request));
     }
 }

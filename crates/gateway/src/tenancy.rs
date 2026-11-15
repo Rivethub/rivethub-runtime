@@ -225,7 +225,6 @@ pub(crate) fn authenticate(
         .tenancy
         .resolve_bearer(token, parts)
         .map(|user| (user, Credential::Bearer))
-        .inspect_err(|_| gateway.auth_log().emit(AuthEvent::BearerRejected, peer))
 }
 
 pub(crate) enum OwnerRefused {

@@ -243,6 +243,42 @@
       ],
       "type": "string"
     },
+    "AuthRefusals": {
+      "properties": {
+        "insufficientScope": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invalidToken": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefusedRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The latest request refused with a token presented."
+        },
+        "unauthorized": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "unauthorized",
+        "invalidToken",
+        "insufficientScope"
+      ],
+      "type": "object"
+    },
     "BrowseWindow": {
       "enum": [
         "today",
@@ -7732,6 +7768,14 @@
       },
       "type": "object"
     },
+    "RefusalKind": {
+      "enum": [
+        "unauthorized",
+        "invalid_token",
+        "insufficient_scope"
+      ],
+      "type": "string"
+    },
     "RefusalReason": {
       "enum": [
         "not_local",
@@ -7753,6 +7797,41 @@
         "failed"
       ],
       "type": "string"
+    },
+    "RefusedRequest": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RefusalKind"
+        },
+        "method": {
+          "type": "string"
+        },
+        "peer": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string"
+        },
+        "token": {
+          "description": "The first eight hex digits of the presented token's SHA-256.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "at",
+        "kind",
+        "method",
+        "route",
+        "peer"
+      ],
+      "type": "object"
     },
     "ReleaseChannel": {
       "enum": [
