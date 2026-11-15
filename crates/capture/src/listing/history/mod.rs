@@ -1,3 +1,4 @@
+mod captured;
 mod claude;
 mod display;
 mod grok;
@@ -15,6 +16,7 @@ use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::TranscriptWindow;
 use kernel::transcript::Turn;
+use wire::capture::CaptureMessage;
 use wire::harness::HarnessId;
 use wire::message::Role;
 use wire::session_id::SessionId;
@@ -22,6 +24,8 @@ use wire::session_id::SessionId;
 use super::StoreRoots;
 use crate::readers::StoreReader;
 use crate::readers::blocking;
+use crate::readers::codex::CodexTranscriptReader;
+use crate::readers::opencode::OpencodeTranscriptReader;
 
 pub(super) async fn transcript(
     roots: &StoreRoots,
@@ -49,6 +53,9 @@ pub(super) async fn transcript(
             .await
             .map(TranscriptRead::Read);
     }
+    if let Some(messages) = captured_messages(harness, root.clone(), &native).await? {
+        return captured::transcript(messages).map(TranscriptRead::Read);
+    }
     text_turns(harness, root, &native).await
 }
 
@@ -58,7 +65,10 @@ pub(super) async fn tool_output(
     native: &str,
     call: &str,
 ) -> Result<ToolOutputRead, TranscriptReaderError> {
-    if harness != HarnessId::ClaudeCode {
+    if !matches!(
+        harness,
+        HarnessId::ClaudeCode | HarnessId::Codex | HarnessId::Opencode
+    ) {
         return Ok(ToolOutputRead::NoSource);
     }
     let Some(root) = roots.single(harness).map(Path::to_path_buf) else {
@@ -66,9 +76,36 @@ pub(super) async fn tool_output(
     };
     let native = native.to_owned();
     let call = call.to_owned();
-    blocking(move || claude::tool_output(&root, &native, &call))
-        .await
-        .map(|found| found.map_or(ToolOutputRead::Missing, ToolOutputRead::Found))
+    let found = match captured_messages(harness, root.clone(), &native).await? {
+        Some(messages) => captured::tool_output(messages, &call),
+        None => blocking(move || claude::tool_output(&root, &native, &call)).await,
+    };
+    found.map(|found| found.map_or(ToolOutputRead::Missing, ToolOutputRead::Found))
+}
+
+async fn captured_messages(
+    harness: HarnessId,
+    root: PathBuf,
+    native: &str,
+) -> Result<Option<Vec<CaptureMessage>>, TranscriptReaderError> {
+    let session = SessionId::new(harness, native);
+    let slice = match harness {
+        HarnessId::Codex => CodexTranscriptReader::new(root).capture(&session).await?,
+        HarnessId::Opencode => {
+            OpencodeTranscriptReader::new(root)
+                .capture(&session)
+                .await?
+        }
+        HarnessId::ClaudeCode
+        | HarnessId::GrokBuild
+        | HarnessId::Cursor
+        | HarnessId::Hermes
+        | HarnessId::KimiCode
+        | HarnessId::Omp
+        | HarnessId::Dsh
+        | HarnessId::Cowork => return Ok(None),
+    };
+    Ok(Some(slice.messages))
 }
 
 async fn text_turns(
