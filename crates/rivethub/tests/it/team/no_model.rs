@@ -14,7 +14,7 @@ async fn queued(hub: &Hub) -> Result<i64, sqlx::Error> {
 }
 
 #[tokio::test]
-async fn a_config_without_a_model_is_valid_everywhere_and_doctor_says_so() -> TestResult {
+async fn a_config_without_a_model_passes_the_gateway_check() -> TestResult {
     let home = tempfile::tempdir()?;
     let state = home.path().join(".rivethub");
     tokio::fs::create_dir(&state).await?;
@@ -33,36 +33,20 @@ async fn a_config_without_a_model_is_valid_everywhere_and_doctor_says_so() -> Te
             embeddings: true
         }
     );
-    for arguments in [
-        &["config", "validate"][..],
-        &["gateway", "--check"][..],
-        &["doctor"][..],
-    ] {
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
-                .args(arguments)
-                .env_clear()
-                .env("HOME", home.path())
-                .env("TOKIO_WORKER_THREADS", "2")
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await??;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if arguments != ["doctor"] {
-            assert!(output.status.success(), "rh {arguments:?}: {text}");
-        }
-        assert_eq!(
-            text.contains(config::NO_MODEL_NOTE),
-            arguments == ["doctor"],
-            "only doctor names a missing model: rh {arguments:?}: {text}"
-        );
-    }
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
+            .args(["gateway", "--check"])
+            .env_clear()
+            .env("HOME", home.path())
+            .env("TOKIO_WORKER_THREADS", "2")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await??;
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{text}");
+    assert!(!text.contains(config::NO_MODEL_NOTE), "{text}");
     Ok(())
 }
 

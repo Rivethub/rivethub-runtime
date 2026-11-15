@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
@@ -66,7 +64,6 @@ async fn captured(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let (long_id, long_key) = captured(
         &store,
@@ -143,7 +140,6 @@ async fn digests_count_messages_and_dates_per_key(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn digests_never_return_another_owner(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let (_, phils) = captured(
         &store,

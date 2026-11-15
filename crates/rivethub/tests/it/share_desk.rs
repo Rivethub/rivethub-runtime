@@ -730,8 +730,6 @@ async fn approving_a_login_after_logout_does_not_sign_the_desk_back_in() -> Test
         matches!(polled, Err(DeskError::UnknownLogin)),
         "a logged-out login stayed pollable: {polled:?}"
     );
-    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let servers = desk.servers().await?;
     assert!(
         servers.servers.iter().all(|server| !server.signed_in),
@@ -794,8 +792,6 @@ async fn a_login_still_starting_when_logout_runs_cannot_sign_the_desk_in() -> Te
         matches!(polled, Err(DeskError::UnknownLogin)),
         "a login that started during logout stayed pollable: {polled:?}"
     );
-    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let servers = desk.servers().await?;
     assert!(
         servers.servers.iter().all(|server| !server.signed_in),

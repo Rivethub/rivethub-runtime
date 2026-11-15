@@ -2,13 +2,7 @@ use std::path::{Component, Path};
 
 use syn::{ItemTrait, Visibility};
 
-use crate::baseline::Baseline;
-use crate::error::Result;
 use crate::rustsrc::Hits;
-
-pub fn check(root: &Path, baseline: &Baseline, findings: &mut Vec<String>) -> Result<()> {
-    crate::rustsrc::check(root, baseline, "PORTS", findings)
-}
 
 pub fn testkit_dependencies(metadata: &cargo_metadata::Metadata, findings: &mut Vec<String>) {
     for package in &metadata.packages {

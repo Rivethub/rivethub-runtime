@@ -7,23 +7,14 @@ use xtask::check;
 use xtask::code;
 use xtask::contract;
 use xtask::dupfixture;
-use xtask::env_scan;
-use xtask::jsnames;
-use xtask::jsonbytes;
 use xtask::labpath;
 use xtask::lang;
 use xtask::manifests;
-use xtask::pathcontain;
 use xtask::privacy;
-use xtask::privilege;
 use xtask::toolconfig;
-use xtask::utf16;
-use xtask::waivers;
-
-type Scan = fn(&Path, &baseline::Baseline, &mut Vec<String>) -> xtask::error::Result<()>;
 
 fn scan_findings(
-    scan: Scan,
+    check: &str,
     files: &[(&str, &str)],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
@@ -33,7 +24,7 @@ fn scan_findings(
     repo.track()?;
     let baseline = baseline::Baseline::load(repo.root())?;
     let mut findings = Vec::new();
-    scan(repo.root(), &baseline, &mut findings)?;
+    xtask::rustsrc::check(repo.root(), &baseline, check, &mut findings)?;
     Ok(findings)
 }
 
@@ -1013,7 +1004,7 @@ fn skip_scan_paths() {
 #[test]
 fn env_scan_fires_outside_config() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        env_scan::check,
+        "ENV",
         &[(
             "crates/gateway/src/auth.rs",
             "pub fn probe() -> String {\n    std::env::var(\"RIVETHUB_HOST\").unwrap_or_default()\n}\n",
@@ -1028,7 +1019,7 @@ fn env_scan_fires_outside_config() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let findings = scan_findings(
-        env_scan::check,
+        "ENV",
         &[
             (
                 "crates/config/src/environment.rs",
@@ -1050,7 +1041,7 @@ fn env_scan_fires_outside_config() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn privilege_scan_fires_on_fail_open_defaults() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        privilege::check,
+        "PRIVILEGE",
         &[(
             "crates/gateway/src/auth.rs",
             "fn role(spec: &Spec) -> Role {\n    spec.role.unwrap_or(Role::Admin)\n}\n\nfn viewer(spec: &Spec) -> Viewer {\n    spec.viewer.unwrap_or(Viewer::System)\n}\n\nfn owner(spec: &Spec) -> Role {\n    spec.role.unwrap_or(Role::Owner)\n}\n\nfn permission(spec: &Spec) -> Permission {\n    spec.permission.unwrap_or_default()\n}\n",
@@ -1069,7 +1060,7 @@ fn privilege_scan_fires_on_fail_open_defaults() -> Result<(), Box<dyn std::error
     }
 
     let findings = scan_findings(
-        privilege::check,
+        "PRIVILEGE",
         &[(
             "crates/gateway/src/auth.rs",
             "fn scope(args: &Args) -> MemoryScope {\n    args.scope.unwrap_or(MemoryScope::Both)\n}\n\nfn count(args: &Args) -> usize {\n    args.count.unwrap_or_default()\n}\n",
@@ -1085,7 +1076,7 @@ fn privilege_scan_fires_on_fail_open_defaults() -> Result<(), Box<dyn std::error
 #[test]
 fn pathcontain_scan_fires_on_string_containment() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        pathcontain::check,
+        "PATHCONTAIN",
         &[(
             "crates/capture/src/spool.rs",
             "pub fn inside(path: &Path, root: &Path) -> bool {\n    path.to_string_lossy().starts_with(root.to_string_lossy().to_string().as_str())\n}\n\npub fn inside_str(path: &Path, root: &Path) -> bool {\n    path.to_str().unwrap_or_default().starts_with(\"/srv\")\n}\n\npub fn inside_display(path: &Path, root: &Path) -> bool {\n    path.display().to_string().starts_with(\"/srv\")\n}\n",
@@ -1101,7 +1092,7 @@ fn pathcontain_scan_fires_on_string_containment() -> Result<(), Box<dyn std::err
     );
 
     let findings = scan_findings(
-        pathcontain::check,
+        "PATHCONTAIN",
         &[(
             "crates/xtask-check/src/lib.rs",
             "pub fn inside(path: &Path, root: &Path) -> bool {\n    path.starts_with(root)\n}\n\npub fn label(rel: &str) -> bool {\n    rel.starts_with(\"crates/\")\n}\n",
@@ -1117,7 +1108,7 @@ fn pathcontain_scan_fires_on_string_containment() -> Result<(), Box<dyn std::err
 #[test]
 fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        waivers::check,
+        "WAIVER",
         &[(
             "crates/demo/src/lib.rs",
             "#![expect(dead_code)]\n\npub fn start() {}\n",
@@ -1131,7 +1122,7 @@ fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Err
     );
 
     let findings = scan_findings(
-        waivers::check,
+        "WAIVER",
         &[(
             "crates/demo/src/lib.rs",
             "#![allow(dead_code)]\n\npub fn start() {}\n",
@@ -1145,7 +1136,7 @@ fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Err
     );
 
     let findings = scan_findings(
-        waivers::check,
+        "WAIVER",
         &[(
             "crates/demo/src/lib.rs",
             "#[expect(clippy::manual_div_ceil)]\npub fn start() {}\n",
@@ -1161,7 +1152,7 @@ fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn utf16_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        utf16::check,
+        "UTF16",
         &[(
             "crates/capture/src/writer.rs",
             "pub fn cap(text: &str, max: usize) -> String {\n    let mut units = 0usize;\n    let _ = text.chars().map(char::len_utf16).sum::<usize>();\n    String::new()\n}\n",
@@ -1173,7 +1164,7 @@ fn utf16_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let findings = scan_findings(
-        utf16::check,
+        "UTF16",
         &[
             (
                 "crates/wire/src/cap.rs",
@@ -1195,7 +1186,7 @@ fn utf16_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn jsmodel_scan_fires_on_js_names() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        jsnames::check,
+        "JSMODEL",
         &[(
             "crates/testkit/src/echo.rs",
             "pub fn js_number(value: u64) -> u64 {\n    value\n}\n\npub struct JsJson;\n",
@@ -1209,7 +1200,7 @@ fn jsmodel_scan_fires_on_js_names() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let findings = scan_findings(
-        jsnames::check,
+        "JSMODEL",
         &[(
             "crates/testkit/src/echo.rs",
             "pub const JSON_LIMIT: usize = 4;\n\npub fn parse_json(text: &str) -> Json {\n    Json\n}\n\npub struct JsonValue;\n",
@@ -1218,7 +1209,7 @@ fn jsmodel_scan_fires_on_js_names() -> Result<(), Box<dyn std::error::Error>> {
     assert!(findings.is_empty(), "Json names pass: {findings:?}");
 
     let findings = scan_findings(
-        jsnames::check,
+        "JSMODEL",
         &[(
             "crates/capture/src/event_id.rs",
             "pub fn hash(value: JsJson) -> String {\n    String::new()\n}\n",
@@ -1234,7 +1225,7 @@ fn jsmodel_scan_fires_on_js_names() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn jsonbytes_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>> {
     let findings = scan_findings(
-        jsonbytes::check,
+        "JSONBYTES",
         &[(
             "crates/testkit/src/scan.rs",
             "pub fn scan(bytes: &[u8]) -> usize {\n    let mut depth = 0usize;\n    for byte in bytes {\n        match byte {\n            b'{' => depth += 1,\n            b'}' => depth -= 1,\n            b'\"' => {}\n            _ => {}\n        }\n    }\n    depth\n}\n",
@@ -1248,7 +1239,7 @@ fn jsonbytes_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>>
     );
 
     let findings = scan_findings(
-        jsonbytes::check,
+        "JSONBYTES",
         &[(
             "crates/wire/src/scan.rs",
             "pub fn scan(bytes: &[u8]) -> usize {\n    let mut depth = 0usize;\n    for byte in bytes {\n        if byte == b'\"' {\n            depth += 1;\n        }\n    }\n    depth\n}\n",
@@ -1257,7 +1248,7 @@ fn jsonbytes_scan_fires_outside_wire() -> Result<(), Box<dyn std::error::Error>>
     assert!(findings.is_empty(), "wire is exempt: {findings:?}");
 
     let findings = scan_findings(
-        jsonbytes::check,
+        "JSONBYTES",
         &[(
             "crates/testkit/src/scan.rs",
             "pub fn scan(bytes: &[u8]) -> usize {\n    bytes.iter().filter(|byte| **byte == b'\"').count()\n}\n",
@@ -1451,7 +1442,7 @@ fn baseline_duplicate_and_zero_count_entries_are_invalid() {
 fn ast_distinguishes_syntax_from_raw_strings_and_nested_attributes()
 -> Result<(), Box<dyn std::error::Error>> {
     let clean = scan_findings(
-        jsnames::check,
+        "JSMODEL",
         &[(
             "crates/sample/src/lib.rs",
             "const TEXT: &str = r###\"fn js_fake() {} struct JsFake;\"###;",
@@ -1459,12 +1450,12 @@ fn ast_distinguishes_syntax_from_raw_strings_and_nested_attributes()
     )?;
     assert!(clean.is_empty(), "{clean:?}");
     let raw = scan_findings(
-        jsnames::check,
+        "JSMODEL",
         &[("crates/sample/src/lib.rs", "fn r#js_real() {}")],
     )?;
     assert_eq!(raw.len(), 1);
     let inner = scan_findings(
-        waivers::check,
+        "WAIVER",
         &[(
             "crates/sample/src/lib.rs",
             "mod nested { #![cfg_attr(test, expect(dead_code))] fn item() {} }",
@@ -1476,10 +1467,7 @@ fn ast_distinguishes_syntax_from_raw_strings_and_nested_attributes()
 
 #[test]
 fn malformed_rust_fails_instead_of_being_skipped() {
-    let result = scan_findings(
-        utf16::check,
-        &[("crates/sample/src/lib.rs", "fn incomplete(")],
-    );
+    let result = scan_findings("UTF16", &[("crates/sample/src/lib.rs", "fn incomplete(")]);
     assert!(result.is_err());
 }
 
@@ -1487,7 +1475,7 @@ fn malformed_rust_fails_instead_of_being_skipped() {
 fn importing_an_environment_reader_is_still_a_read_boundary()
 -> Result<(), Box<dyn std::error::Error>> {
     let hits = scan_findings(
-        env_scan::check,
+        "ENV",
         &[(
             "crates/sample/src/lib.rs",
             "use std::env::{var as read, current_dir}; fn load() { let _ = read(\"RIVETHUB_HOST\"); }",
@@ -1501,7 +1489,7 @@ fn importing_an_environment_reader_is_still_a_read_boundary()
 fn a_second_ast_occurrence_in_the_same_file_exceeds_the_baseline()
 -> Result<(), Box<dyn std::error::Error>> {
     let hits = scan_findings(
-        utf16::check,
+        "UTF16",
         &[
             (
                 "xtask/baseline.toml",

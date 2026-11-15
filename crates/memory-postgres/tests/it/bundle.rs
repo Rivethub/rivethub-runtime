@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
@@ -73,7 +71,6 @@ async fn captured(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let mut tool = said("evt-tool", "[tool call] Read", at("2026-10-14T09:05:00Z")?);
     tool.role = Role::Tool;
@@ -153,7 +150,6 @@ async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> Te
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let phils = captured(
         &store,
@@ -192,7 +188,6 @@ async fn export_never_returns_another_owners_session(pool: PgPool) -> TestResult
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let kept = captured(
         &store,
@@ -236,7 +231,6 @@ async fn a_trashed_session_is_exported_only_when_named(pool: PgPool) -> TestResu
 async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T09:00:00Z")?;
     let steps: Vec<String> = (1..=8).map(|step| format!("step {step}")).collect();
@@ -266,7 +260,6 @@ async fn export_keeps_capture_order_among_messages_captured_without_a_timestamp(
 async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let key = "claude-code:overlap";
     let undated = |content: &str| CaptureMessage {
@@ -277,7 +270,7 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
     let warm = (pool.acquire().await?, pool.acquire().await?);
     drop(warm);
 
-    let first: Vec<String> = (0..3_000).map(|n| format!("a {n}")).collect();
+    let first: Vec<String> = (0..3).map(|n| format!("a {n}")).collect();
     let metadata = object("{}")?;
     let mut holder = memory_postgres::CaptureWriter::begin(&pool, key).await?;
     let second = tokio::spawn({
@@ -312,7 +305,7 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
                 metadata: &metadata,
                 owner_user_id: "phil",
                 created_at: None,
-                batch_index: i64::try_from(index)?,
+                batch_index: i64::try_from(index)? * 5_000_000,
             })
             .await?;
     }

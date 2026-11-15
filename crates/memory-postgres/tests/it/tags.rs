@@ -432,7 +432,7 @@ async fn decide_tag_removals_follows_the_removal_rules(pool: PgPool) -> TestResu
     assert_eq!(
         accepted.try_get::<String, _>("state").unwrap(),
         "rejected",
-        "accepting a removal rejects the tag (#1105)"
+        "accepting a removal rejects the tag"
     );
     assert!(
         accepted

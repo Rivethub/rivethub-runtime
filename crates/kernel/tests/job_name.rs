@@ -154,23 +154,3 @@ fn rejects_a_non_numeric_heartbeat_index() {
         ))
     );
 }
-
-#[test]
-fn serde_uses_the_wire_string() {
-    let heartbeat = JobName::Heartbeat {
-        agent: "edge-agent".to_string(),
-        index: 3,
-    };
-    assert_eq!(
-        serde_json::to_string(&heartbeat).unwrap(),
-        "\"heartbeat-edge-agent-3\""
-    );
-    for (wire, name) in FIXED {
-        let parsed: JobName = serde_json::from_str(&serde_json::to_string(&name).unwrap()).unwrap();
-        assert_eq!(parsed, name.clone());
-        assert_eq!(
-            serde_json::to_string(&parsed).unwrap(),
-            format!("\"{wire}\"")
-        );
-    }
-}

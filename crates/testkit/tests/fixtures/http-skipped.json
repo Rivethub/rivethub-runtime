@@ -1,1 +1,0 @@
-{"name":"main/deviation-server-header","reason":"This synthetic transport case deliberately adds X-Recorded-Only to exercise named replay exclusions; it does not describe a RivetHub response."}

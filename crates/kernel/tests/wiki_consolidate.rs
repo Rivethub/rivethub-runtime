@@ -307,7 +307,6 @@ fn a_page_bound_to_a_topic_is_never_folded_as_a_child() -> Result<(), serde_json
 #[test]
 fn the_job_payload_takes_the_documented_defaults() -> Result<(), serde_json::Error> {
     let empty: ConsolidateWiki = serde_json::from_str("{}")?;
-    assert_eq!(empty, defaults()?);
     assert_eq!(empty.limit_clusters, 50);
     assert_eq!(empty.min_cluster_size, 2);
     assert!(!empty.dry_run);

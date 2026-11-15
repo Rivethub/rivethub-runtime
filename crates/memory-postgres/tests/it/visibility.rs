@@ -1,4 +1,3 @@
-use crate::common;
 use crate::common::PROBE;
 use crate::common::probe;
 
@@ -87,7 +86,6 @@ pub(crate) fn viewer(name: &str) -> Result<Viewer, Box<dyn std::error::Error>> {
 pub(crate) async fn seed(
     pool: &PgPool,
 ) -> Result<(PostgresMemory, PostgresTenancy), Box<dyn std::error::Error>> {
-    common::install_graphile(pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let alice = Owner::new("alice".to_owned())?;
     for (session, text) in [(FIRST, "the first session"), (SECOND, "the second session")] {

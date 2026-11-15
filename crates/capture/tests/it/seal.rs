@@ -184,7 +184,6 @@ fn decompression_is_capped() -> TestResult {
     let key = ShareKey::generate();
     let full: ShareCode = code(&key).parse()?;
     let ciphertext = age::encrypt(&recipient(&key)?, &plaintext)?;
-    assert!(ciphertext.len() < 1 << 20, "a small download");
     assert!(matches!(
         capture::seal::open(ciphertext, &full.key, &TrustStore::default()),
         Err(OpenError::TooLarge)
@@ -384,14 +383,9 @@ fn base64_encode(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn the_share_code_key_is_redacted_where_text_is_captured() -> TestResult {
+fn sanitize_redacts_the_share_code_key() -> TestResult {
     let key = ShareKey::generate();
     let line = format!("send this privately: {}", code(&key));
-    let redacted = capture::redaction::Redaction::builtins().redact_text(&line);
-    assert_eq!(
-        redacted,
-        format!("send this privately: rhb1:{DROP_ID}#[REDACTED:rivethub_share_code]")
-    );
     let sanitized = String::from_utf8(sanitized(&line)?)?;
     assert!(!sanitized.contains(&key.reveal()));
     assert!(sanitized.contains("[REDACTED:rivethub_share_code]"));

@@ -181,9 +181,7 @@ fn canonical_ids_round_trip_through_the_native_parser() {
 }
 
 #[test]
-fn canonical_ids_without_a_known_harness_are_rejected() {
-    assert!(SessionId::from_str("nosuch:00000000-0000-4000-8000-000000000000").is_err());
-    assert!(SessionId::from_str("bare-uuid").is_err());
+fn a_canonical_id_with_a_malformed_native_part_is_rejected() {
     let session = SessionId::from_str("claude-code:not-a-uuid").expect("canonical parses");
     let parsed = harness_acp::identity::from_canonical(&session);
     assert!(matches!(parsed, Err(IdentityError::Shape { .. })));

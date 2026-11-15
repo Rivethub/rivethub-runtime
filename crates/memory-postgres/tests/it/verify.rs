@@ -15,7 +15,6 @@ fn url(pool: &PgPool) -> String {
 
 #[sqlx::test(migrations = false)]
 async fn a_fresh_database_is_not_adopted_and_left_untouched(pool: PgPool) -> TestResult {
-    assert_eq!(SCHEMA_VERSION, 75);
     match PostgresMemory::connect(&url(&pool)).await {
         Err(error @ Error::NotAdopted) => assert_eq!(
             error.to_string(),

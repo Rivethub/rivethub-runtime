@@ -139,8 +139,8 @@ async fn an_empty_jev_url_does_not_decide() {
     };
     let error = decider
         .decide(&DecideRequest {
-            observation: "name: gpubox".to_owned(),
-            options: vec!["gpubox (Hosts)".to_owned()],
+            observation: "name: tinbox".to_owned(),
+            options: vec!["tinbox (Hosts)".to_owned()],
         })
         .await
         .unwrap_err();
@@ -149,7 +149,7 @@ async fn an_empty_jev_url_does_not_decide() {
 
 #[tokio::test]
 async fn jev_decide_reads_choice_index_and_probability() {
-    let body = r#"{"probabilities":[0.91,0.09],"choice":"gpubox","choice_index":0}"#;
+    let body = r#"{"probabilities":[0.91,0.09],"choice":"tinbox","choice_index":0}"#;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { serve_json(listener, body).await });
@@ -159,8 +159,8 @@ async fn jev_decide_reads_choice_index_and_probability() {
     let decision = tokio::time::timeout(
         Duration::from_secs(5),
         decider.decide(&DecideRequest {
-            observation: "name: gpubox\ntype: Hosts".to_owned(),
-            options: vec!["gpubox (Hosts) aliases: ".to_owned()],
+            observation: "name: tinbox\ntype: Hosts".to_owned(),
+            options: vec!["tinbox (Hosts) aliases: ".to_owned()],
         }),
     )
     .await

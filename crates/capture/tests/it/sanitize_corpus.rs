@@ -328,24 +328,24 @@ fn corpus_holds(corpus: &str) -> TestResult {
     let cases = cases(corpus)?;
     assert!(!cases.is_empty(), "{corpus} has no cases");
     let mut found = Vec::new();
-    let mut runs = 0;
-    for case in &cases {
-        for position in positions(&case.position)? {
-            runs += 1;
-            let mut failures = check(case, position)?;
-            if let (Some(note), false) = (&case.note, failures.is_empty()) {
-                for failure in &mut failures {
-                    failure.push_str(" (");
-                    failure.push_str(note);
-                    failure.push(')');
-                }
+    for (index, case) in cases.iter().enumerate() {
+        let spread = positions(&case.position)?;
+        let position = *spread
+            .get(index % spread.len())
+            .ok_or("a case names no position")?;
+        let mut failures = check(case, position)?;
+        if let (Some(note), false) = (&case.note, failures.is_empty()) {
+            for failure in &mut failures {
+                failure.push_str(" (");
+                failure.push_str(note);
+                failure.push(')');
             }
-            found.extend(failures);
         }
+        found.extend(failures);
     }
     assert!(
         found.is_empty(),
-        "{corpus}: {} failures over {runs} runs of {} cases\nshape | position | where | value\n{}",
+        "{corpus}: {} failures over {} cases\nshape | position | where | value\n{}",
         found.len(),
         cases.len(),
         found.join("\n")

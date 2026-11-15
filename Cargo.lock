@@ -6061,12 +6061,10 @@ name = "xtask"
 version = "0.8.3"
 dependencies = [
  "cargo_metadata",
- "chrono",
  "hex",
  "proc-macro2",
  "ra-ap-rustc_lexer",
  "regex",
- "rmcp",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6074,7 +6072,6 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "toml 1.1.8+spec-1.1.0",
 ]
 

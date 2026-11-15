@@ -111,7 +111,6 @@ async fn state(memory: &PostgresMemory, session: &SessionId) -> Result<MemorySta
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn memory_state_follows_summaries_and_open_flagged_jobs(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let seeded = session_catalog::seed(&memory).await?;
     assert_eq!(state(&memory, &seeded.alpha).await?, MemoryState::Queued);

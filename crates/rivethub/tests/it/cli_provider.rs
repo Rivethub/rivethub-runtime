@@ -65,7 +65,7 @@ fn configured(
 ) -> TestResult<(config::Config, config::Environment)> {
     let env = config::Environment::from_vars([(OsStr::new("HOME"), home.as_os_str())]);
     let text = format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\nproviders:\n  p:\n    type: {kind}\n    model: provider-model\n    effort: high\n    permission_mode: plan\n    timeout_ms: 5000\n    permission_timeout_ms: 1000\ntasks:\n  enabled: false\nmesh:\n  enabled: false\n  node_name: test-node\n{extra}",
+        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: agent-model\nproviders:\n  p:\n    type: {kind}\n    model: provider-model\n    effort: high\n    permission_mode: plan\n    timeout_ms: 5000\n    permission_timeout_ms: 1000\n{extra}",
         home.display()
     );
     let path = home.join("config.yaml");

@@ -50,7 +50,6 @@ async fn messages(pool: &PgPool, conversation: Uuid, owner: &str) -> Result<(), 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn message_counts_follow_every_write(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
     let garden = conversation(&pool, "claude-code:garden", "coco").await?;
     messages(&pool, kitchen, "phil").await?;
@@ -91,7 +90,6 @@ async fn message_counts_follow_every_write(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
     let garden = conversation(&pool, "claude-code:garden", "phil").await?;
     sqlx::query("INSERT INTO rh_message_counts_pending (conversation_id) VALUES ($1), ($2)")
@@ -131,7 +129,6 @@ async fn existing_conversations_fill_in_batches(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn chunks_of_said_messages_are_marked(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
     messages(&pool, kitchen, "phil").await?;
     sqlx::query(
@@ -188,7 +185,6 @@ async fn chunks_of_said_messages_are_marked(pool: PgPool) -> TestResult {
 async fn deleting_rows_loaded_without_triggers_recounts_instead_of_going_negative(
     pool: PgPool,
 ) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let kitchen = conversation(&pool, "claude-code:kitchen", "phil").await?;
     messages(&pool, kitchen, "phil").await?;
     sqlx::query("ALTER TABLE rh_messages DISABLE TRIGGER rh_message_counts_inserted")
@@ -225,7 +221,6 @@ async fn a_bad_stored_counter_degrades_one_field_and_the_answers_still_come(
 ) -> TestResult {
     use kernel::facts::FactStore as _;
     use kernel::memory::MemoryStore as _;
-    crate::common::install_graphile(&pool).await?;
     let session = "claude-code:00000000-0000-4000-8000-0000000000f1";
     let kitchen = conversation(&pool, session, "phil").await?;
     messages(&pool, kitchen, "phil").await?;

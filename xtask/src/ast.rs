@@ -71,7 +71,7 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         let name = ident.to_string();
         let name = name.strip_prefix("r#").unwrap_or(&name);
         if self.rel != "crates/capture/src/event_id.rs" {
-            if crate::jsnames::banned_name(name) {
+            if banned_name(name) {
                 self.hits.push("JSMODEL", ident.span(), name);
             }
             let lower = name.to_ascii_lowercase();
@@ -269,4 +269,16 @@ pub(crate) fn waiver_meta(meta: &Meta, out: &mut Vec<Meta>) {
             waiver_meta(child, out);
         }
     }
+}
+
+fn banned_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("js_") {
+        return true;
+    }
+    let mut chars = name.chars();
+    if !matches!((chars.next(), chars.next()), (Some('J'), Some('s'))) {
+        return false;
+    }
+    chars.next().is_some_and(|third| third.is_ascii_uppercase())
 }

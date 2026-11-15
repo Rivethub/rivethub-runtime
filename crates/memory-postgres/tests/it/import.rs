@@ -1,5 +1,3 @@
-use crate::common;
-
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::MemoryStore as _;
@@ -118,7 +116,6 @@ async fn stored(pool: &PgPool, id: Uuid) -> Result<Stored, sqlx::Error> {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn imported_conversation_keeps_origin_dates_and_receiver_owner(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
 
@@ -189,7 +186,6 @@ async fn imported_conversation_keeps_origin_dates_and_receiver_owner(pool: PgPoo
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn reimport_adds_nothing(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
     let first = import(&store, "alex", &session).await?;
@@ -264,7 +260,6 @@ async fn conversation(pool: &PgPool, id: &str) -> Result<Conversation, Box<dyn s
 async fn an_import_lands_beside_a_native_conversation_with_the_same_session_key(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let native = capture_live(&store, "alex", &alexs_native_session()?).await?;
     let before = conversation(&pool, &native.conversation_id).await?;
@@ -293,7 +288,6 @@ async fn an_import_lands_beside_a_native_conversation_with_the_same_session_key(
 async fn live_capture_keeps_capture_time_whatever_dates_the_batch_carries(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let mut live = alexs_native_session()?;
     live.created_at = Some(at("2031-01-01T00:00:00Z")?);
@@ -336,7 +330,6 @@ async fn settings(pool: &PgPool, id: &str) -> Result<Settings, Box<dyn std::erro
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_reimport_keeps_settings_the_receiver_added(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
     let first = import(&store, "alex", &session).await?;
@@ -359,7 +352,6 @@ async fn a_reimport_keeps_settings_the_receiver_added(pool: PgPool) -> TestResul
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn only_a_bundle_as_new_or_newer_replaces_the_stored_origin(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
     let first = import(&store, "alex", &session).await?;
@@ -383,7 +375,6 @@ async fn only_a_bundle_as_new_or_newer_replaces_the_stored_origin(pool: PgPool) 
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_message_tied_with_stored_messages_lands_after_all_of_them(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T10:00:00.000Z")?;
     let earlier = at("2026-10-14T09:59:59.000Z")?;
@@ -419,7 +410,6 @@ async fn a_message_tied_with_stored_messages_lands_after_all_of_them(pool: PgPoo
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn messages_sharing_a_millisecond_export_in_bundle_order(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T09:00:00.123Z")?;
     let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
@@ -467,7 +457,6 @@ fn team() -> wire::capture::BundleAuthor {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn an_older_bundle_keeps_a_newer_title(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let mut newer = phils_session()?;
     newer.origin.updated_at = Some(at("2026-10-20T10:00:00Z")?);
@@ -493,7 +482,6 @@ async fn an_older_bundle_keeps_a_newer_title(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_client_cannot_post_into_another_owners_import(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let alexs = import(&store, "alex", &phils_session()?).await?;
     let target = conversation(&pool, &alexs.conversation_id).await?;
@@ -551,7 +539,6 @@ async fn exported_order(store: &PostgresMemory) -> Result<Vec<String>, Box<dyn s
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_millisecond_past_1000_ties_keeps_the_batch_order(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T09:00:00.123Z")?;
     let next = at("2026-10-14T09:00:00.124Z")?;
@@ -574,7 +561,6 @@ async fn a_millisecond_past_1000_ties_keeps_the_batch_order(pool: PgPool) -> Tes
 async fn ties_past_1000_land_after_a_message_stored_in_the_next_millisecond(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let tied = at("2026-10-14T09:00:00.123Z")?;
     let next = at("2026-10-14T09:00:00.124Z")?;
@@ -596,7 +582,6 @@ async fn ties_past_1000_land_after_a_message_stored_in_the_next_millisecond(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn times_finer_than_a_microsecond_keep_the_batch_order(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let mut batch = alexs_native_session()?;
     let steps: Vec<String> = (1..=8).map(|step| format!("n{step}")).collect();
@@ -652,7 +637,6 @@ async fn times_finer_than_a_microsecond_keep_the_batch_order(pool: PgPool) -> Te
 async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let store = PostgresMemory::new(pool.clone());
     let session = phils_session()?;
     let first = import(&store, "alex", &session).await?;

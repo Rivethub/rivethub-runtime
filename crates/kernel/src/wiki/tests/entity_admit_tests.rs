@@ -1,6 +1,8 @@
+use super::classify::{CLIS, FILE_SUFFIXES, GENERICS, TOOLS};
 use super::*;
 use crate::wiki::entity_pass::KnownFact;
 use crate::wiki::entity_pass::ObservedFact;
+use crate::wiki::entity_pass::{EntityObservation, KnownEntity};
 use uuid::Uuid;
 
 fn kept(name: &str) -> bool {
@@ -13,7 +15,7 @@ fn dropped(name: &str, kind: DropKind) -> bool {
 
 #[test]
 fn an_owner_slash_repo_name_is_an_entity_and_a_real_path_is_not() {
-    assert!(kept("philbert440/rivethub-runtime"));
+    assert!(kept("danaexample/rivethub-runtime"));
     assert!(kept("1CatAI/1Cat-vLLM"));
     assert!(kept("bottlecapai/ThinkingCap-Qwen3.8-Flash-Next-NVFP4"));
     assert!(dropped("/nvme/tcfn/tc-nvfp4", DropKind::Path));
@@ -65,7 +67,7 @@ fn mechanical_admission_rejects_paths_addresses_indexes_tools_and_commands() {
     assert!(dropped("config", DropKind::Generic));
     assert!(dropped("kernel", DropKind::Generic));
     assert!(dropped("root", DropKind::Generic));
-    assert!(kept("gpubox"));
+    assert!(kept("tinbox"));
     assert!(kept("jj"));
     assert!(kept("g9"));
     assert!(kept("box42"));
@@ -77,7 +79,7 @@ fn mechanical_admission_rejects_paths_addresses_indexes_tools_and_commands() {
 fn an_ip_or_chassis_of_a_host_is_an_alias_not_a_page() {
     let host = KnownEntity {
         id: Uuid::from_u128(7),
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         aliases: Vec::new(),
         facts: vec![KnownFact {
@@ -91,7 +93,7 @@ fn an_ip_or_chassis_of_a_host_is_an_alias_not_a_page() {
     );
     let page = screened.first().expect("folded onto the host");
     assert_eq!(page.entity_ref, Some(Uuid::from_u128(7)));
-    assert_eq!(page.name, "gpubox");
+    assert_eq!(page.name, "tinbox");
     assert!(page.aliases.iter().any(|alias| alias == "11.22.33.44"));
     let chassis = identifying_aliases("Hosts", "Supermicro SYS-4029GP-TVRT at 11.22.33.44");
     assert!(chassis.iter().any(|alias| alias == "11.22.33.44"));
@@ -112,13 +114,13 @@ fn a_chassis_observation_folds_into_the_host_and_types_stay_apart() {
     let screened = screen_observations(
         vec![
             observation("SYS-4029GP-TVRT", "Hardware", "the chassis"),
-            observation("gpubox", "Hosts", "Supermicro SYS-4029GP-TVRT"),
+            observation("tinbox", "Hosts", "Supermicro SYS-4029GP-TVRT"),
         ],
         &[],
     );
     assert_eq!(screened.len(), 1);
     let page = screened.first().expect("one host");
-    assert_eq!(page.name, "gpubox");
+    assert_eq!(page.name, "tinbox");
     assert_eq!(page.type_name, "Hosts");
     let apart = screen_observations(
         vec![
@@ -132,10 +134,10 @@ fn a_chassis_observation_folds_into_the_host_and_types_stay_apart() {
 
 #[test]
 fn an_alias_absent_from_the_evidence_or_another_entity_name_is_dropped() {
-    let evidence = "Phil restarted the desk. NFS is mounted.";
+    let evidence = "Dana restarted the desk. NFS is mounted.";
     let kept = evidenced_aliases(
-        "Phil",
-        &["aliasdesk".to_owned(), "Phil".to_owned(), "desk".to_owned()],
+        "Dana",
+        &["aliasdesk".to_owned(), "Dana".to_owned(), "desk".to_owned()],
         evidence,
     );
     assert_eq!(kept, vec!["desk".to_owned()]);
@@ -150,37 +152,37 @@ fn an_alias_absent_from_the_evidence_or_another_entity_name_is_dropped() {
     };
     assert!(alias_claims_known("NVIDIA", "V100", &[nvidia]));
     assert!(!alias_claims_known("V100", "V100", &[]));
-    let mention = "G9 is `gerty` at `11.22.33.45`";
-    assert!(address_tied_to_name("11.22.33.45", "gerty", mention));
+    let mention = "G9 is `hally` at `11.22.33.45`";
+    assert!(address_tied_to_name("11.22.33.45", "hally", mention));
     assert!(address_tied_to_name("11.22.33.45", "G9", mention));
-    assert!(!address_tied_to_name("11.22.33.45", "gpubox", mention));
-    assert!(!address_tied_to_name("g9", "gerty", mention));
+    assert!(!address_tied_to_name("11.22.33.45", "tinbox", mention));
+    assert!(!address_tied_to_name("g9", "hally", mention));
     assert!(alias_is_address("11.22.33.44"));
 }
 
 #[test]
 fn a_paired_name_or_alias_of_a_compatible_entity_is_a_merge_partner() {
-    let gerty = Uuid::from_u128(1);
+    let hally = Uuid::from_u128(1);
     let box_a = Uuid::from_u128(2);
     let person = Uuid::from_u128(3);
     let known = vec![
-        known(gerty, "GERTY", "Hosts", &[]),
+        known(hally, "HALLY", "Hosts", &[]),
         known(box_a, "box_a", "Hosts", &["G9"]),
-        known(person, "Phil", "People", &[]),
+        known(person, "Dana", "People", &[]),
     ];
-    let partner = merge_partner("G9", gerty, "Hosts", &known).map(|entity| entity.id);
+    let partner = merge_partner("G9", hally, "Hosts", &known).map(|entity| entity.id);
     assert_eq!(partner, Some(box_a));
     assert_eq!(
-        merge_partner("box_a", gerty, "Hosts", &known).map(|entity| entity.name.as_str()),
+        merge_partner("box_a", hally, "Hosts", &known).map(|entity| entity.name.as_str()),
         Some("box_a")
     );
     assert!(merge_partner("G9", box_a, "Hosts", &known).is_none());
-    assert!(merge_partner("Phil", gerty, "Hosts", &known).is_none());
-    assert!(merge_partner("box_a", gerty, "Projects", &known).is_none());
-    let mention = "GERTY (old box_a/G9, 11.22.33.45) serves Qwen 27B";
-    assert!(names_share_mention("GERTY", "box_a", mention));
-    assert!(names_share_mention("GERTY", "G9", mention));
-    assert!(!names_share_mention("GERTY", "box_a", "box_a was rebooted"));
+    assert!(merge_partner("Dana", hally, "Hosts", &known).is_none());
+    assert!(merge_partner("box_a", hally, "Projects", &known).is_none());
+    let mention = "HALLY (old box_a/G9, 11.22.33.45) serves Qwen 27B";
+    assert!(names_share_mention("HALLY", "box_a", mention));
+    assert!(names_share_mention("HALLY", "G9", mention));
+    assert!(!names_share_mention("HALLY", "box_a", "box_a was rebooted"));
     assert!(!names_share_mention("g9", "host", "g90 host"));
 }
 

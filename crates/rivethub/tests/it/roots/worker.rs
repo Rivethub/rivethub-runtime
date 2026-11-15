@@ -13,9 +13,10 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use wire::JsonObject;
 
-use super::{
-    TestResult, install_queue, interrupt, provider_at, provider_config, terminate, write_state,
-};
+use crate::pgdb::install_queue;
+use crate::process::provider_at;
+
+use super::{TestResult, interrupt, provider_config, terminate, write_state};
 
 #[derive(Debug, sqlx::FromRow)]
 struct JobTally {
@@ -233,13 +234,17 @@ async fn worker_blocked_on_a_provider_releases_the_job_on_sigint() -> TestResult
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     install_queue(&pool).await?;
-    let sink = super::blackhole().await?;
+    let sink = crate::process::blackhole().await?;
     let before = seed_embed(&pool).await?;
     let url = db.served_url().await?;
     let home = tempfile::tempdir()?;
     write_state(
         home.path(),
-        &provider_at(home.path(), &url, &format!("http://{}", sink.address), ""),
+        &provider_at(
+            home.path(),
+            &format!("http://{}", sink.address),
+            &format!("memory:\n  postgres:\n    connection_string: {url}\n"),
+        ),
     )?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
         .args(["worker", "--role", "embedder"])

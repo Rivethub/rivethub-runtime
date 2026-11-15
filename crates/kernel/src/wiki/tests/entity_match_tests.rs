@@ -51,22 +51,22 @@ fn below_the_threshold_holds_and_a_sure_choice_binds() {
 
 #[test]
 fn an_exact_name_binds_across_types_and_a_person_stays_apart() {
-    let host = candidate(1, "gpubox", "Hosts", 1.0, 0.0);
-    let project = candidate(2, "gpubox", "Projects", 1.0, 0.0);
+    let host = candidate(1, "tinbox", "Hosts", 1.0, 0.0);
+    let project = candidate(2, "tinbox", "Projects", 1.0, 0.0);
     let mixed = [host.clone(), project];
     assert_eq!(
-        exact_id("Hosts", "GPUBox", &[], &mixed),
+        exact_id("Hosts", "TinBox", &[], &mixed),
         Some(Uuid::from_u128(1))
     );
     assert_eq!(
-        exact_id("Projects", "gpubox", &[], &mixed),
+        exact_id("Projects", "tinbox", &[], &mixed),
         Some(Uuid::from_u128(1)),
         "a project with the host's name is the host"
     );
-    let person = candidate(3, "Phil", "People", 1.0, 0.0);
-    let product = candidate(4, "Phil", "Software", 1.0, 0.0);
+    let person = candidate(3, "Dana", "People", 1.0, 0.0);
+    let product = candidate(4, "Dana", "Software", 1.0, 0.0);
     assert_eq!(
-        exact_id("Software", "phil", &[], &[person, product.clone()]),
+        exact_id("Software", "dana", &[], &[person, product.clone()]),
         Some(product.id)
     );
     assert_eq!(
@@ -90,7 +90,7 @@ fn the_same_normalized_name_is_one_entity_except_a_person() {
             "Hugging Face",
             true,
         ),
-        ("Hosts", "datahub", "Software", "datahub", true),
+        ("Hosts", "mailhub", "Software", "mailhub", true),
         ("Agents", "rivet-glm", "Software", "rivet-glm", true),
         ("Agents", "rivet-claude", "Hosts", "rivet-claude", true),
         ("Software", "T3 Code", "Projects", "T3 Code", true),
@@ -111,8 +111,8 @@ fn the_same_normalized_name_is_one_entity_except_a_person() {
             false,
         ),
         ("Services", "postgresql", "Databases", "Postgres", false),
-        ("Services", "datahub", "Hosts", "acme/datahub", true),
-        ("Services", "datahub", "Hosts", "datahub-extra", false),
+        ("Services", "mailhub", "Hosts", "acme/mailhub", true),
+        ("Services", "mailhub", "Hosts", "mailhub-extra", false),
         ("Services", "web", "Repos", "acme/web", false),
     ];
     for (left_type, left_name, right_type, right_name, same) in pairs {
@@ -124,7 +124,7 @@ fn the_same_normalized_name_is_one_entity_except_a_person() {
     }
     let repo = "bottlecapai/ThinkingCap-Qwen3.8-Flash-Next";
     assert!(!names_bind("ThinkingCap", repo));
-    assert!(identity_keys("acme/datahub").contains(&"datahub".to_owned()));
+    assert!(identity_keys("acme/mailhub").contains(&"mailhub".to_owned()));
     assert!(!identity_keys("acme/web").contains(&"web".to_owned()));
     assert_eq!(canonical_key("PostgreSQL"), "postgresql");
     assert_eq!(dominant_type(&[]), None);
@@ -141,16 +141,16 @@ fn the_same_normalized_name_is_one_entity_except_a_person() {
 #[test]
 fn a_ref_is_verified_only_when_the_name_is_already_that_entity() {
     let aliases = vec!["g9".to_owned(), "srv9".to_owned()];
-    assert!(ref_verified("G9", "gpubox", &aliases));
-    assert!(ref_verified("GPU Box", "gpubox", &[]));
-    assert!(!ref_verified("gerty", "gpubox", &aliases));
-    assert!(!ref_verified("gerty", "gpubox", &[]));
-    assert!(!ref_verified("", "gpubox", &aliases));
+    assert!(ref_verified("G9", "tinbox", &aliases));
+    assert!(ref_verified("TIN Box", "tinbox", &[]));
+    assert!(!ref_verified("hally", "tinbox", &aliases));
+    assert!(!ref_verified("hally", "tinbox", &[]));
+    assert!(!ref_verified("", "tinbox", &aliases));
 }
 
 #[test]
 fn weak_scores_are_not_candidates() {
-    let weak = candidate(1, "gerty", "Hosts", 0.1, 0.2);
+    let weak = candidate(1, "hally", "Hosts", 0.1, 0.2);
     let strong = candidate(2, "g9", "Hosts", 0.1, 0.7);
     let ranked = rank_candidates(vec![weak, strong.clone()]);
     assert_eq!(ranked.len(), 1);
@@ -176,20 +176,20 @@ fn markers_keep_identifiers_and_skip_plain_words() {
     let texts = vec![
         "box9".to_owned(),
         "G9".to_owned(),
-        "gerty".to_owned(),
+        "hally".to_owned(),
         "at 11.22.33.44".to_owned(),
-        "https://gpubox.local/status".to_owned(),
-        "acme/datahub".to_owned(),
+        "https://tinbox.local/status".to_owned(),
+        "acme/mailhub".to_owned(),
         "web".to_owned(),
     ];
     let markers = surface_markers(&texts);
     assert!(markers.iter().any(|item| item == "box9"));
     assert!(markers.iter().any(|item| item == "11.22.33.44"));
-    assert!(markers.iter().any(|item| item == "gpubox.local"));
-    assert!(markers.iter().any(|item| item == "acme/datahub"));
+    assert!(markers.iter().any(|item| item == "tinbox.local"));
+    assert!(markers.iter().any(|item| item == "acme/mailhub"));
     assert!(
         markers
             .iter()
-            .all(|item| item != "G9" && item != "gerty" && item != "web")
+            .all(|item| item != "G9" && item != "hally" && item != "web")
     );
 }

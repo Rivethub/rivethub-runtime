@@ -35,7 +35,6 @@ async fn listed(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn another_person_neither_lists_nor_marks_an_import(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let session = phils_session()?;
     import(&PostgresMemory::new(pool.clone()), "alice", &session).await?;
     let key = receiver_key("alice", &session)?;
@@ -98,7 +97,6 @@ async fn another_person_neither_lists_nor_marks_an_import(pool: PgPool) -> TestR
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn only_the_owner_keeps_an_import(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let session = phils_session()?;
     import(&PostgresMemory::new(pool.clone()), "alice", &session).await?;
     let key = receiver_key("alice", &session)?;

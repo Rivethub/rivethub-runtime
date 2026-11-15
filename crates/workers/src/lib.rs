@@ -56,7 +56,6 @@ pub use filing::handle_file;
 pub use filing::plan_filing;
 pub use outage::OutageCause;
 pub use role::ProcessRole;
-pub use role::accepts;
 pub use role::jobs_for;
 pub use runner::EMBED_CONCURRENCY;
 pub use runner::POLL_INTERVAL;

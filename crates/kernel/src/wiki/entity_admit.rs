@@ -17,18 +17,5 @@ pub use screen::identified_by;
 pub use screen::screen_observations;
 
 #[cfg(test)]
-use super::entity_pass::EntityObservation;
-#[cfg(test)]
-use super::entity_pass::KnownEntity;
-#[cfg(test)]
-use classify::CLIS;
-#[cfg(test)]
-use classify::FILE_SUFFIXES;
-#[cfg(test)]
-use classify::GENERICS;
-#[cfg(test)]
-use classify::TOOLS;
-
-#[cfg(test)]
 #[path = "tests/entity_admit_tests.rs"]
 mod tests;

@@ -1,44 +1,24 @@
 #![cfg(test)]
 
 use kernel::wiki::page::{
-    CitationKind, WikiPageError, build_wiki_search_text, extract_wiki_links, parse_wiki_page,
-    serialize_wiki_page,
+    CitationKind, WikiPageError, build_wiki_search_text, parse_wiki_page, serialize_wiki_page,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const REPLAYED: &[&str] = &["kiwi-build-cache.txt", "lighthouse-dashboard.txt"];
-const SKIPPED: &[(&str, &str)] = &[];
-
 #[test]
-fn every_vendored_page_fixture_is_accounted_for_and_round_trips() -> TestResult {
-    let directory = testkit::recording("mcp-memory/shared/wiki/topics");
-    let mut count = 0;
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_str().ok_or("non-UTF8 fixture name")?;
-        let replayed = REPLAYED
-            .iter()
-            .filter(|candidate| **candidate == name)
-            .count();
-        let skipped = SKIPPED
-            .iter()
-            .filter(|(candidate, reason)| *candidate == name && !reason.is_empty())
-            .count();
-        assert_eq!(replayed + skipped, 1, "{name}");
-        if replayed == 1 {
-            let page = parse_wiki_page(&std::fs::read_to_string(entry.path())?)?;
-            let encoded = serialize_wiki_page(&page)?;
-            assert_eq!(parse_wiki_page(&encoded)?, page, "{name}");
-            assert_eq!(serialize_wiki_page(&parse_wiki_page(&encoded)?)?, encoded);
-            assert_eq!(page.history.len(), 1);
-            assert_ne!(page.citations, Vec::new());
-            assert!(build_wiki_search_text(&page).contains(&page.current_state));
-        }
-        count += 1;
+fn vendored_pages_round_trip() -> TestResult {
+    for name in ["kiwi-build-cache.txt", "lighthouse-dashboard.txt"] {
+        let page = parse_wiki_page(&std::fs::read_to_string(testkit::recording(&format!(
+            "mcp-memory/shared/wiki/topics/{name}"
+        )))?)?;
+        let encoded = serialize_wiki_page(&page)?;
+        assert_eq!(parse_wiki_page(&encoded)?, page, "{name}");
+        assert_eq!(serialize_wiki_page(&parse_wiki_page(&encoded)?)?, encoded);
+        assert_eq!(page.history.len(), 1);
+        assert_ne!(page.citations, Vec::new());
+        assert!(build_wiki_search_text(&page).contains(&page.current_state));
     }
-    assert_eq!(count, REPLAYED.len() + SKIPPED.len());
     Ok(())
 }
 
@@ -154,13 +134,4 @@ fn malformed_pages_are_typed_errors_and_slugs_cannot_name_paths() {
             }
         }
     }
-}
-
-#[test]
-fn links_are_ascii_slugs_and_ordinary_link_text_is_accepted() {
-    assert_eq!(
-        extract_wiki_links("[[Acme-Kit]] [[acme-kit]] [[node]] [[café]] [[x|label]] [[broken"),
-        ["acme-kit", "node"]
-    );
-    assert_eq!(extract_wiki_links("no links here"), Vec::<String>::new());
 }

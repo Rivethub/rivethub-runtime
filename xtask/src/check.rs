@@ -75,17 +75,11 @@ pub fn sqlx_prepare_check(root: &Path) -> Result<()> {
     sqlx_prepare_check_with(root, "cargo-sqlx")
 }
 
-fn nextest_list_command(root: &Path, program: &str, args: &[&str]) -> Command {
-    let mut command = Command::new(program);
-    command
+fn nextest_list_with(root: &Path, program: &str, args: &[&str]) -> Result<()> {
+    let status = Command::new(program)
         .current_dir(root)
         .args(args)
-        .env("SQLX_OFFLINE", "true");
-    command
-}
-
-fn nextest_list_with(root: &Path, program: &str, args: &[&str]) -> Result<()> {
-    let status = nextest_list_command(root, program, args)
+        .env("SQLX_OFFLINE", "true")
         .status()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -118,17 +112,11 @@ fn database_url_set() -> bool {
     std::env::vars_os().any(|(name, _)| name == OsStr::new("DATABASE_URL"))
 }
 
-fn sqlx_prepare_command(root: &Path, program: &str) -> Command {
-    let mut command = Command::new(program);
-    command
+fn sqlx_prepare_check_with(root: &Path, program: &str) -> Result<()> {
+    let status = Command::new(program)
         .current_dir(root)
         .args(["sqlx", "prepare", "--workspace", "--check"])
-        .env("SQLX_OFFLINE", "false");
-    command
-}
-
-fn sqlx_prepare_check_with(root: &Path, program: &str) -> Result<()> {
-    let status = sqlx_prepare_command(root, program)
+        .env("SQLX_OFFLINE", "false")
         .status()
         .map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -280,12 +268,8 @@ pub fn copy_hooks(root: &Path, binary: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::machete_with;
-    use super::nextest_list_command;
     use super::nextest_list_with;
-    use super::offline_cargo;
     use super::sqlx_prepare_check_with;
-    use super::sqlx_prepare_command;
-    use std::ffi::OsStr;
     use std::path::Path;
 
     #[test]
@@ -330,41 +314,6 @@ mod tests {
     }
 
     #[test]
-    fn cargo_children_run_offline() {
-        let command = offline_cargo(Path::new("."), &["clippy", "--workspace"]);
-        assert_eq!(command.get_program(), OsStr::new("cargo"));
-        let envs: Vec<_> = command.get_envs().collect();
-        assert_eq!(
-            envs,
-            [(OsStr::new("SQLX_OFFLINE"), Some(OsStr::new("true")))],
-            "every cargo child command must run offline"
-        );
-    }
-
-    #[test]
-    fn sqlx_prepare_child_runs_against_the_database() {
-        let command = sqlx_prepare_command(Path::new("."), "cargo-sqlx");
-        assert_eq!(command.get_program(), OsStr::new("cargo-sqlx"));
-        let envs: Vec<_> = command.get_envs().collect();
-        assert_eq!(
-            envs,
-            [(OsStr::new("SQLX_OFFLINE"), Some(OsStr::new("false")))],
-            "the sqlx child must read the live database, not the cache"
-        );
-        let args: Vec<_> = command.get_args().collect();
-        assert_eq!(
-            args,
-            [
-                OsStr::new("sqlx"),
-                OsStr::new("prepare"),
-                OsStr::new("--workspace"),
-                OsStr::new("--check")
-            ],
-            "the direct spawn follows cargo's external-subcommand convention: cargo-sqlx sqlx <args>"
-        );
-    }
-
-    #[test]
     fn missing_nextest_names_the_install_command() {
         let error = nextest_list_with(
             Path::new("."),
@@ -388,32 +337,6 @@ mod tests {
             matches!(error, crate::error::Error::Command { ref command, .. }
                 if command == "cargo nextest xtask-nextest-fails"),
             "a test target that does not speak the list protocol must fail the gate, got: {error}"
-        );
-    }
-
-    #[test]
-    fn nextest_list_child_runs_offline() {
-        let command = nextest_list_command(
-            Path::new("."),
-            "cargo-nextest",
-            &["nextest", "list", "--workspace"],
-        );
-        assert_eq!(command.get_program(), OsStr::new("cargo-nextest"));
-        let args: Vec<_> = command.get_args().collect();
-        assert_eq!(
-            args,
-            [
-                OsStr::new("nextest"),
-                OsStr::new("list"),
-                OsStr::new("--workspace")
-            ],
-            "the direct spawn follows cargo's external-subcommand convention: cargo-nextest nextest <args>"
-        );
-        let envs: Vec<_> = command.get_envs().collect();
-        assert_eq!(
-            envs,
-            [(OsStr::new("SQLX_OFFLINE"), Some(OsStr::new("true")))],
-            "the nextest child must run offline like every other cargo step"
         );
     }
 }

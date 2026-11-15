@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use wire::stream::openai::{EmbeddingRequest, EmbeddingResponse, EmbeddingRow};
 
-use super::{TestResult, provider_base, start, stop, write_config};
+use super::{TestResult, provider_at, start, stop, write_state};
 
 const CONVERSATION: &str = "0199e2a0-7b3c-7a00-8000-0000000000d1";
 const MESSAGE: &str = "0199e2a0-7b3c-7a00-8000-0000000000d2";
@@ -83,9 +83,9 @@ async fn local_workers_embed_rows_that_were_never_queued() -> TestResult {
     let port = testkit::ports::claim()?;
     let database = home.path().join(".rivethub").join("memory.sqlite");
     seed_unembedded(&database)?;
-    write_config(
+    write_state(
         home.path(),
-        &provider_base(
+        &provider_at(
             home.path(),
             &format!("http://{}/v1", server.addr),
             &format!(

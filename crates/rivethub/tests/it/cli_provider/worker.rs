@@ -20,7 +20,7 @@ struct Payload {
 async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();
-    install_queue(&pool).await?;
+    crate::pgdb::install_queue(&pool).await?;
     let home = tempfile::tempdir()?;
     let (config, _) = configured(home.path(), config::ProviderType::ClaudeCli, "")?;
     let store = Arc::new(memory_postgres::PostgresMemory::new(pool.clone()));
@@ -140,27 +140,5 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
         Some("agent-model")
     );
     store.close().await?;
-    Ok(())
-}
-
-async fn install_queue(pool: &sqlx::PgPool) -> TestResult {
-    let present: bool = sqlx::query_scalar("SELECT to_regnamespace('graphile_worker') IS NOT NULL")
-        .fetch_one(pool)
-        .await?;
-    if present {
-        return Ok(());
-    }
-    let mut setup = pool.begin().await?;
-    let search_path: String = sqlx::query_scalar("SHOW search_path")
-        .fetch_one(&mut *setup)
-        .await?;
-    sqlx::raw_sql(include_str!("../../fixtures/graphile_worker.txt"))
-        .execute(&mut *setup)
-        .await?;
-    sqlx::query("SELECT set_config('search_path', $1, false)")
-        .bind(search_path)
-        .execute(&mut *setup)
-        .await?;
-    setup.commit().await?;
     Ok(())
 }

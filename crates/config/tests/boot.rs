@@ -239,23 +239,6 @@ fn config_with_connection_string(text: &str) -> Result<Config, Box<dyn std::erro
 }
 
 #[test]
-fn memory_postgres_url_prefers_the_config_over_the_env() -> Result<(), Box<dyn std::error::Error>> {
-    let config = config_with_connection_string(
-        "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\nmemory:\n  postgres:\n    connection_string: postgres://config-db/rivet\n",
-    )?;
-    let env = env_from(&[
-        ("RIVETHUB_PG_URL", "postgres://new-db/rivet"),
-        ("RIVETOS_PG_URL", "postgres://env-db/rivet"),
-    ]);
-    assert_eq!(
-        config.memory_postgres_url(&env).as_deref(),
-        Some("postgres://config-db/rivet")
-    );
-    assert_eq!(env.legacy_notices(), [] as [String; 0]);
-    Ok(())
-}
-
-#[test]
 fn memory_postgres_url_falls_back_to_the_env() -> Result<(), Box<dyn std::error::Error>> {
     let config = config_with_connection_string(
         "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\n",

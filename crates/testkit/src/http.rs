@@ -4,7 +4,6 @@ use std::path::Path;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
-use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
@@ -35,15 +34,6 @@ pub struct Response {
 }
 
 impl Response {
-    pub fn json(status: u16, body: &impl Serialize) -> Result<Self, serde_json::Error> {
-        let bytes = serde_json::to_vec(body)?;
-        Ok(Self {
-            status,
-            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
-            body: bytes,
-        })
-    }
-
     pub fn bytes(status: u16, content_type: &str, body: impl Into<Vec<u8>>) -> Self {
         Self {
             status,
@@ -54,21 +44,13 @@ impl Response {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Handshake {
-    pub status: Option<u16>,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequestHead {
+struct RequestHead {
     pub method: String,
     pub target: String,
     pub headers: Vec<(String, String)>,
 }
 
-#[must_use]
-pub fn parse_head(head: &str) -> Option<RequestHead> {
+fn parse_head(head: &str) -> Option<RequestHead> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_HEADERS];
     let mut request = httparse::Request::new(&mut headers);
     match request.parse(head.as_bytes()) {
@@ -95,7 +77,7 @@ pub fn parse_head(head: &str) -> Option<RequestHead> {
     })
 }
 
-pub fn status_of(status_line: &str) -> Result<u16, Mismatch> {
+fn status_of(status_line: &str) -> Result<u16, Mismatch> {
     let mut line = String::with_capacity(status_line.len() + 4);
     line.push_str(status_line);
     line.push_str("\r\n\r\n");
@@ -112,7 +94,7 @@ pub fn status_of(status_line: &str) -> Result<u16, Mismatch> {
         .ok_or_else(|| Mismatch::new("HTTP status", "missing status code"))
 }
 
-pub type HeaderPair = (String, String);
+type HeaderPair = (String, String);
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RequestRecord {
@@ -138,26 +120,6 @@ pub struct ResponseRecord {
     pub body_base64: Option<String>,
     #[serde(rename = "bodySha256", default)]
     pub body_sha256: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct HandshakeRecord {
-    #[serde(rename = "statusLine", default)]
-    pub status_line: String,
-    #[serde(default)]
-    pub headers: Vec<HeaderPair>,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(rename = "noResponse", default)]
-    pub no_response: bool,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ClientCloseRecord {
-    #[serde(default)]
-    pub client: String,
-    #[serde(default)]
-    pub code: Option<u16>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

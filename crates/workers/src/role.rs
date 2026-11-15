@@ -57,10 +57,6 @@ pub fn jobs_for(role: WorkerRole) -> Vec<JobName> {
     role.task_list().to_vec()
 }
 
-pub fn accepts(role: WorkerRole, name: &JobName) -> bool {
-    jobs_for(role).iter().any(|job| job == name)
-}
-
 fn role_has_handler(role: WorkerRole) -> bool {
     jobs_for(role).iter().all(handler_ready)
 }

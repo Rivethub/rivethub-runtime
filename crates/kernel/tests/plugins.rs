@@ -64,12 +64,9 @@ fn routes_need_the_permission_their_family_names() {
         (true, "/api/plugins"),
         (false, "/api/plugins/files/enable"),
         (false, "/api/memory/tags"),
-        (false, "/api/tasks"),
-        (true, "/api/tasks/abc"),
         (true, "/api/files/list"),
         (false, "/api/sessions/abc/anything"),
         (true, "/api/sessions/abc/messages"),
-        (true, "/mesh.json"),
     ] {
         assert_eq!(
             access(refused.0, refused.1),
@@ -77,12 +74,6 @@ fn routes_need_the_permission_their_family_names() {
             "{refused:?}"
         );
     }
-}
-
-#[test]
-fn the_agent_catalog_is_gone() {
-    assert_eq!(access(true, "/api/catalog/agents"), PluginAccess::Refused);
-    assert_eq!(access(true, "/api/catalog"), PluginAccess::Refused);
 }
 
 #[test]

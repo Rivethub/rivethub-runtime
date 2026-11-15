@@ -4,6 +4,7 @@ mod logs;
 mod proxy;
 
 use crate::process::guard::SpawnGuarded;
+use crate::process::{TestResult, provider_config, terminate, write_state};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -25,8 +26,6 @@ use wire::gateway::HealthzResponse;
 use logs::Logs;
 use proxy::Proxy;
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
 const TASK_DOWN: &str = "summary watch: database unreachable; reconnecting";
 const TASK_UP: &str = "summary watch: database connection restored";
 const JOB_DOWN: &str = "job notifications: database unreachable; reconnecting";
@@ -41,43 +40,6 @@ struct Running {
 struct Tally {
     n: i64,
     attempts: Option<i64>,
-}
-
-fn provider_config(home: &Path, postgres: &str, extra: &str) -> String {
-    format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\n    model: m\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1\n    model: m\nmemory:\n  postgres:\n    connection_string: {postgres}\n{extra}",
-        home.display()
-    )
-}
-
-fn write_state(home: &Path, body: &str) -> TestResult {
-    let state = home.join(".rivethub");
-    std::fs::create_dir_all(&state)?;
-    std::fs::write(state.join("config.yaml"), body)?;
-    Ok(())
-}
-
-fn terminate(pid: u32) -> TestResult {
-    let pid = i32::try_from(pid)?;
-    nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(pid),
-        nix::sys::signal::Signal::SIGTERM,
-    )?;
-    Ok(())
-}
-
-async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let present: bool =
-        sqlx::query_scalar("SELECT to_regclass('graphile_worker._private_jobs') IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
-    if present {
-        return Ok(());
-    }
-    sqlx::raw_sql(include_str!("../fixtures/graphile_worker.txt"))
-        .execute(pool)
-        .await?;
-    Ok(())
 }
 
 async fn front(db: &crate::pgdb::TestDb) -> TestResult<(Proxy, String)> {
@@ -361,7 +323,7 @@ async fn worker_stays_up_and_claims_after_the_database_returns() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
-    install_queue(&pool).await?;
+    crate::pgdb::install_queue(&pool).await?;
     let (proxy, url) = front(&db).await?;
     let home = tempfile::tempdir()?;
     write_state(home.path(), &provider_config(home.path(), &url, ""))?;
@@ -464,40 +426,4 @@ fn tool<'a>(
         .iter()
         .find(|tool| tool.definition().name.as_ref() == name)
         .ok_or_else(|| format!("missing tool {name}").into())
-}
-
-#[tokio::test]
-async fn local_sqlite_stays_healthy_when_postgres_backends_die() -> TestResult {
-    let db = crate::pgdb::TestDb::bare().await?;
-    let pool = db.pool();
-    migrate::postgres_pool(&pool).await?;
-    let home = tempfile::tempdir()?;
-    let port = testkit::ports::claim()?;
-    let port_text = port.to_string();
-    let mut running = spawn_rh(
-        home.path(),
-        &["local", "--no-lan", "--port", &port_text],
-        "gateway listening on ",
-    )
-    .await?;
-    let client = client(home.path())?;
-    let base = format!("http://127.0.0.1:{port}");
-    wait_http(&client, &format!("{base}/healthz"), 200).await?;
-    sqlx::query(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-         WHERE datname = current_database() AND pid <> pg_backend_pid() \
-           AND backend_type = 'client backend'",
-    )
-    .execute(&pool)
-    .await?;
-    let health = wait_http(&client, &format!("{base}/healthz"), 200).await?;
-    let parsed: HealthzResponse = serde_json::from_str(&health)?;
-    assert!(parsed.ok);
-    assert_eq!(parsed.degraded, None);
-    wait_http(&client, &format!("{base}/api/memory/browse"), 200).await?;
-    alive(&mut running.child)?;
-    assert_eq!(running.logs.count(TASK_DOWN).await, 0);
-    assert_eq!(running.logs.count(JOB_DOWN).await, 0);
-    stop(running, "gateway stopped").await?;
-    Ok(())
 }

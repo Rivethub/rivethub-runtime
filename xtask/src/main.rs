@@ -4,7 +4,6 @@ use std::process::ExitCode;
 
 use xtask::check;
 use xtask::error::{Error, Result};
-use xtask::recmcp;
 
 enum Mode {
     Check {
@@ -21,7 +20,6 @@ enum Mode {
         range: String,
     },
     InstallHooks,
-    RecordMcp(recmcp::Invocation),
 }
 
 fn parse(args: &[String]) -> Result<Mode> {
@@ -46,12 +44,6 @@ fn parse(args: &[String]) -> Result<Mode> {
                 list_tests,
             })
         }
-        Some("record-mcp") => {
-            let rest = args
-                .get(1..)
-                .ok_or_else(|| Error::Usage(recmcp::USAGE.to_owned()))?;
-            Ok(Mode::RecordMcp(recmcp::parse(rest)?))
-        }
         Some("baseline") if args.len() == 2 && args.get(1).is_some_and(|arg| arg == "--write") => Ok(Mode::Baseline),
         Some("pre-commit") => Ok(Mode::PreCommit),
         Some("commit-msg") => {
@@ -72,7 +64,7 @@ fn parse(args: &[String]) -> Result<Mode> {
         }
         Some("install-hooks") => Ok(Mode::InstallHooks),
         _ => Err(Error::Usage(
-            "usage: cargo xtask check [--locked] [--no-nextest-list]|baseline --write|record-mcp --out DIR [--script FILE] -- COMMAND [ARGS...]|pre-commit|commit-msg FILE|commits RANGE|install-hooks"
+            "usage: cargo xtask check [--locked] [--no-nextest-list]|baseline --write|pre-commit|commit-msg FILE|commits RANGE|install-hooks"
                 .to_owned(),
         )),
     }
@@ -117,7 +109,6 @@ fn main() -> ExitCode {
         Mode::CommitMsg { file } => check::commit_msg(&root, &file),
         Mode::Commits { range } => check::commits(&root, &range),
         Mode::InstallHooks => check::install_hooks(&root),
-        Mode::RecordMcp(invocation) => recmcp::dispatch(&invocation),
     });
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

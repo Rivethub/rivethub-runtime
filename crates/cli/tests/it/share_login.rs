@@ -222,7 +222,7 @@ async fn signed_in(node: &Node, host: &str) -> Result<Approval, cli::Error> {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
     let served = serve().await;
     let base = format!("http://{}", served.host);
@@ -279,24 +279,7 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
     assert!(node.logins().contains(&served.host), "{}", node.logins());
 }
 
-#[tokio::test]
-async fn a_server_without_metadata_offers_no_device_sign_in() {
-    let served = serve().await;
-    served.auth.0.lock().metadata = None;
-    let node = node();
-
-    let error = desk::start(&node.env, Some(&served.host), "RivetHub test")
-        .await
-        .expect_err("no metadata, no device flow");
-
-    assert!(
-        error.to_string().contains("offers no device sign-in"),
-        "{error}"
-    );
-    assert_eq!(served.auth.paths(), Vec::<String>::new());
-}
-
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn denied_and_expired_approvals_end_the_login() {
     for (code, wanted) in [
         ("access_denied", Approval::Denied),
@@ -316,7 +299,7 @@ async fn denied_and_expired_approvals_end_the_login() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn slow_down_adds_five_seconds_to_the_interval() {
     let served = serve().await;
     served.auth.queue("/api/auth/device/code", [device(1)]);
@@ -407,7 +390,7 @@ async fn a_hub_that_disables_the_cloud_gives_the_desk_no_server_to_sign_in_to() 
     assert!(servers.servers.is_empty(), "{:?}", servers.servers);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn token_replies_never_reach_an_error() {
     let unparsable = ok(
         r#"{"access_token":"rhca_LEAKED","token_type":"Bearer","expires_in":"900","refresh_token":"rhcr_LEAKED","scope":"drops:write"}"#,

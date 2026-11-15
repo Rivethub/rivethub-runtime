@@ -1,69 +1,17 @@
 use crate::process::guard::SpawnGuarded;
 use std::collections::BTreeSet;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use super::{TestResult, interrupt, provider_config, terminate, write_state};
-
-#[derive(Deserialize)]
-struct Catalog {
-    tools: Vec<NamedTool>,
-}
-
-#[derive(Deserialize)]
-struct NamedTool {
-    name: String,
-}
-
-fn expected_tool_names() -> TestResult<BTreeSet<String>> {
-    let catalog: Catalog =
-        serde_json::from_slice(&std::fs::read(testkit::recording("mcp/tools-list.json"))?)?;
-    let omitted: BTreeSet<&str> = super::OMITTED
-        .iter()
-        .copied()
-        .filter(|name| *name != "categorizer" && *name != "wiki-builder")
-        .collect();
-    let recorded: BTreeSet<String> = catalog.tools.into_iter().map(|tool| tool.name).collect();
-    assert!(
-        omitted.iter().all(|name| recorded.contains(*name)),
-        "recording is missing an omitted tool"
-    );
-    Ok(recorded
-        .into_iter()
-        .filter(|name| !omitted.contains(name.as_str()))
-        .chain(std::iter::once("memory_team".to_owned()))
-        .chain(STDIO_ONLY.iter().map(|name| (*name).to_owned()))
-        .collect())
-}
-
-const STDIO_ONLY: [&str; 3] = ["session_find", "session_sanitize", "session_import"];
-
-fn served_names(tools: &[Arc<dyn kernel::tool::Tool>]) -> BTreeSet<String> {
-    tools
-        .iter()
-        .map(|tool| tool.definition().name.into_owned())
-        .collect()
-}
+use super::{TestResult, provider_config, terminate, write_state};
 
 #[tokio::test]
-async fn mcp_lists_recorded_tools_over_stdio_and_stops_on_sigterm() -> TestResult {
+async fn mcp_lists_its_tools_over_stdio_and_stops_on_sigterm() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
-    stop_mcp(&db, false).await
-}
-
-#[tokio::test]
-async fn mcp_with_a_stdio_client_exits_within_the_grace_on_sigint() -> TestResult {
-    let db = crate::pgdb::TestDb::bare().await?;
-    stop_mcp(&db, true).await
-}
-
-async fn stop_mcp(db: &crate::pgdb::TestDb, interrupt_process: bool) -> TestResult {
     let pool = db.pool();
     migrate::postgres_pool(&pool).await?;
     let url = db.served_url().await?;
@@ -96,14 +44,22 @@ async fn stop_mcp(db: &crate::pgdb::TestDb, interrupt_process: bool) -> TestResu
     let tools = tokio::time::timeout(Duration::from_secs(30), client.tools())
         .await?
         .map_err(|error| format!("tools/list failed: {error}"))?;
-    assert_eq!(served_names(&tools), expected_tool_names()?);
+    let names: BTreeSet<_> = tools
+        .iter()
+        .map(|tool| tool.definition().name.into_owned())
+        .collect();
+    for name in [
+        "memory_search",
+        "memory_team",
+        "session_find",
+        "session_sanitize",
+        "session_import",
+    ] {
+        assert!(names.contains(name), "{names:?}");
+    }
     let pid = child.id().ok_or("mcp already stopped")?;
     let started = tokio::time::Instant::now();
-    if interrupt_process {
-        interrupt(pid)?;
-    } else {
-        terminate(pid)?;
-    }
+    terminate(pid)?;
     let waited = tokio::time::timeout(kernel::shutdown::SHUTDOWN_GRACE, child.wait()).await;
     let elapsed = started.elapsed();
     let Ok(status) = waited else {
@@ -118,12 +74,7 @@ async fn stop_mcp(db: &crate::pgdb::TestDb, interrupt_process: bool) -> TestResu
         "{elapsed:?}\n{text}"
     );
     assert!(status.success(), "mcp exit: {status}\n{text}");
-    let phrase = if interrupt_process {
-        "SIGINT received — shutting down"
-    } else {
-        "SIGTERM received — shutting down"
-    };
-    assert!(text.contains(phrase), "{text}");
+    assert!(text.contains("SIGTERM received — shutting down"), "{text}");
     assert!(text.contains("mcp stopped"), "{text}");
     drop(client);
     Ok(())

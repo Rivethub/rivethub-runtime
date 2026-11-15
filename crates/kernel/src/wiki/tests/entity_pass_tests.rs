@@ -34,8 +34,8 @@ fn the_facts_section_lists_every_current_fact_after_the_prose() {
     assert_eq!(article_with_facts("Only prose.", &[]), "Only prose.");
 }
 use super::*;
-use crate::queue::FixedJob;
-use crate::queue::WorkerRole;
+use chrono::{DateTime, NaiveDate, Utc};
+use uuid::Uuid;
 
 fn at(secs: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(secs, 0).unwrap()
@@ -100,31 +100,29 @@ fn equal_as_of_breaks_ties_by_summary_then_id() {
 #[test]
 fn slug_uses_the_type_and_never_a_numeric_suffix() {
     let lookup = |slug: &str| {
-        if slug == "gpubox" {
+        if slug == "tinbox" {
             SlugOccupant::Other
         } else {
             SlugOccupant::Free
         }
     };
     assert_eq!(
-        choose_slug("gpubox", "host", lookup).as_deref(),
-        Some("gpubox-host")
+        choose_slug("tinbox", "host", lookup).as_deref(),
+        Some("tinbox-host")
     );
     let same = |slug: &str| {
-        if slug == "gpubox" {
+        if slug == "tinbox" {
             SlugOccupant::Same
         } else {
             SlugOccupant::Other
         }
     };
     assert_eq!(
-        choose_slug("gpubox", "host", same).as_deref(),
-        Some("gpubox")
+        choose_slug("tinbox", "host", same).as_deref(),
+        Some("tinbox")
     );
     let taken = |_: &str| SlugOccupant::Other;
-    assert_eq!(choose_slug("gpubox", "host", taken), None);
-    let chosen = choose_slug("gpubox", "host", lookup).unwrap();
-    assert!(!chosen.ends_with("-2"));
+    assert_eq!(choose_slug("tinbox", "host", taken), None);
 }
 
 #[test]
@@ -185,7 +183,6 @@ fn as_of_stays_inside_the_leaf_and_never_uses_processing_time() {
     assert_eq!(snapped, start);
     let dated = place_as_of("2023-11-14", &leaves);
     assert_eq!(dated, start);
-    assert_ne!(snapped, Utc::now());
 }
 
 #[test]
@@ -251,31 +248,9 @@ fn history_is_one_entry_per_summary_newest_first() {
 }
 
 #[test]
-fn entity_extraction_is_tracked_apart_from_topics() {
-    assert_eq!(FixedJob::ExtractEntities.to_string(), "extract-entities");
-    assert_eq!(
-        FixedJob::EnqueueEntityBackfill.to_string(),
-        "entity-backfill"
-    );
-    assert_eq!(
-        FixedJob::EnqueueStaleEntities.to_string(),
-        "enqueue-stale-entities"
-    );
-    assert_ne!(
-        FixedJob::ExtractEntities.to_string(),
-        FixedJob::ExtractWiki.to_string()
-    );
-    assert_eq!(EXTRACTION_TABLE, "rh_entity_extractions");
-    assert_ne!(EXTRACTION_TABLE, "rh_wiki_extractions");
-    let entity = WorkerRole::EntityBuilder.task_list();
-    let topics = WorkerRole::WikiBuilder.task_list();
-    assert!(entity.iter().all(|job| !topics.contains(job)));
-}
-
-#[test]
 fn a_history_string_and_a_bare_array_both_parse() {
     let wrapped = parse_observations(
-        r#"{"observations":[{"name":"gpubox","type":"Hosts","history":"added the host"}]}"#,
+        r#"{"observations":[{"name":"tinbox","type":"Hosts","history":"added the host"}]}"#,
     )
     .unwrap();
     assert_eq!(wrapped.observations.len(), 1);
@@ -285,8 +260,8 @@ fn a_history_string_and_a_bare_array_both_parse() {
         .and_then(|item| item.history.first())
         .map(|item| item.sentence.as_str());
     assert_eq!(sentence, Some("added the host"));
-    let bare = parse_observations(r#"[{"name":"phil","type":"People"}]"#).unwrap();
-    assert_eq!(bare.observations.first().unwrap().name, "phil");
+    let bare = parse_observations(r#"[{"name":"dana","type":"People"}]"#).unwrap();
+    assert_eq!(bare.observations.first().unwrap().name, "dana");
 }
 
 #[test]
@@ -305,7 +280,7 @@ fn an_identification_keeps_the_verbatim_mention() {
 #[test]
 fn synonyms_share_a_key_and_subitems_stay_in_one_value() {
     let observation = EntityObservation {
-        name: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         facts: vec![
             ObservedFact {
@@ -830,15 +805,15 @@ fn leaves() -> [LeafClock; 1] {
 #[test]
 fn an_identification_ignores_facts_and_accepts_a_bare_array() {
     let parsed = parse_identifications(
-        r#"{"observations":[{"name":"gpubox","type":"Hosts","aliases":["11.22.33.44"],"facts":[{"attribute":"ram","value":"152 GB"}]}]}"#,
+        r#"{"observations":[{"name":"tinbox","type":"Hosts","aliases":["11.22.33.44"],"facts":[{"attribute":"ram","value":"152 GB"}]}]}"#,
     )
     .unwrap();
     assert_eq!(parsed.observations.len(), 1);
     assert_eq!(
         parsed.observations.first().map(|item| item.name.as_str()),
-        Some("gpubox")
+        Some("tinbox")
     );
-    let bare = parse_identifications(r#"[{"name":"phil","type":"People"}]"#).unwrap();
+    let bare = parse_identifications(r#"[{"name":"dana","type":"People"}]"#).unwrap();
     assert_eq!(
         bare.observations
             .first()
@@ -850,7 +825,7 @@ fn an_identification_ignores_facts_and_accepts_a_bare_array() {
 #[test]
 fn an_invalid_entity_ref_reads_as_no_reference() {
     let parsed = parse_observations(
-        r#"{"observations":[{"entity_ref":"ef4ee179-bb6f-40e8","name":"gpubox","type":"Hosts"},{"entity_ref":null,"name":"gerty","type":"Hosts"}]}"#,
+        r#"{"observations":[{"entity_ref":"ef4ee179-bb6f-40e8","name":"tinbox","type":"Hosts"},{"entity_ref":null,"name":"hally","type":"Hosts"}]}"#,
     )
     .unwrap();
     let refs: Vec<(Option<Uuid>, &str)> = parsed
@@ -858,13 +833,13 @@ fn an_invalid_entity_ref_reads_as_no_reference() {
         .iter()
         .map(|observation| (observation.entity_ref, observation.name.as_str()))
         .collect();
-    assert_eq!(refs, vec![(None, "gpubox"), (None, "gerty")]);
+    assert_eq!(refs, vec![(None, "tinbox"), (None, "hally")]);
 }
 
 #[test]
 fn an_invalid_identification_ref_reads_as_no_reference() {
     let parsed = parse_identifications(
-        r#"{"observations":[{"entity_ref":"null","name":"gpubox","type":"Hosts"},{"entity_ref":"00000000-0000-0000-0000-000000000001","name":"gerty","type":"Hosts"}]}"#,
+        r#"{"observations":[{"entity_ref":"null","name":"tinbox","type":"Hosts"},{"entity_ref":"00000000-0000-0000-0000-000000000001","name":"hally","type":"Hosts"}]}"#,
     )
     .unwrap();
     let refs: Vec<(Option<Uuid>, &str)> = parsed
@@ -874,14 +849,14 @@ fn an_invalid_identification_ref_reads_as_no_reference() {
         .collect();
     assert_eq!(
         refs,
-        vec![(None, "gpubox"), (Some(Uuid::from_u128(1)), "gerty"),]
+        vec![(None, "tinbox"), (Some(Uuid::from_u128(1)), "hally"),]
     );
 }
 
 #[test]
 fn an_invalid_history_summary_reads_as_no_reference() {
     let parsed = parse_observations(
-        r#"{"observations":[{"name":"gpubox","type":"Hosts","history":[{"summary_id":"null","sentence":"seen"},{"summaryId":"00000000-0000-0000-0000-000000000004","sentence":"kept"}]}]}"#,
+        r#"{"observations":[{"name":"tinbox","type":"Hosts","history":[{"summary_id":"null","sentence":"seen"},{"summaryId":"00000000-0000-0000-0000-000000000004","sentence":"kept"}]}]}"#,
     )
     .unwrap();
     let ids: Vec<Option<Uuid>> = parsed

@@ -39,7 +39,6 @@ async fn cite(pool: &PgPool, key: &str, settings: &str, slug: &str) -> Result<Uu
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn citations_carry_the_importing_author(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     for slug in ["acme", "mine"] {
         sqlx::query("INSERT INTO rh_wiki_topics (slug, title) VALUES ($1, $1)")
             .bind(slug)
@@ -95,7 +94,6 @@ async fn citations_carry_the_importing_author(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn summary_hits_of_an_import_carry_its_provenance(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     sqlx::query("INSERT INTO rh_wiki_topics (slug, title) VALUES ('acme', 'acme')")
         .execute(&pool)
         .await?;

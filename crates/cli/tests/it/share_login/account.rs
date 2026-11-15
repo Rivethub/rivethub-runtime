@@ -1,6 +1,6 @@
 use super::*;
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn node_account_and_cli_share_one_login() {
     use gateway::account::{AccountLogin as _, LoginProgress};
     let node = node();
@@ -52,7 +52,7 @@ async fn node_account_and_cli_share_one_login() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn node_account_reports_expiry_and_refusal_without_a_login() {
     use gateway::account::{AccountLogin as _, LoginProgress};
     for (code, denied) in [("expired_token", false), ("access_denied", true)] {
@@ -81,7 +81,7 @@ async fn node_account_reports_expiry_and_refusal_without_a_login() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn cli_login_refresh_and_cloud_failure_are_observed_by_the_node() {
     use gateway::account::AccountLogin as _;
     let node = node();

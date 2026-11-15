@@ -9,7 +9,7 @@ use kernel::wiki::entity_pass::LiveFact;
 use kernel::wiki::entity_pass::RewriteFact;
 use uuid::Uuid;
 
-use super::stored_rewrite;
+use super::run::stored_rewrite;
 use crate::WorkerError;
 
 fn stamp() -> chrono::DateTime<Utc> {
@@ -32,8 +32,8 @@ fn leaf() -> EntityLeaf {
 fn view() -> EntityView {
     EntityView {
         id: Uuid::from_u128(3),
-        name: "gpubox".to_owned(),
-        slug: "gpubox".to_owned(),
+        name: "tinbox".to_owned(),
+        slug: "tinbox".to_owned(),
         type_name: "Hosts".to_owned(),
         type_slug: "hosts".to_owned(),
         aliases: Vec::new(),
@@ -61,11 +61,11 @@ fn page_with_ram() -> EntityPage {
 
 #[test]
 fn an_older_session_is_told_the_page_reflects_later_sessions() {
-    let prompt = super::rewrite_prompt(true);
+    let prompt = super::run::rewrite_prompt(true);
     assert!(prompt.contains("later sessions"));
     assert!(prompt.contains("no newer counterpart"));
     assert!(prompt.contains("date order"));
-    assert!(!super::rewrite_prompt(false).contains("no newer counterpart"));
+    assert!(!super::run::rewrite_prompt(false).contains("no newer counterpart"));
 }
 
 #[test]
@@ -168,37 +168,6 @@ fn an_omitted_fact_is_carried_forward() {
     assert_eq!(ram.value, "152 GB available");
     let sentence = body.history.map(|line| line.sentence).unwrap_or_default();
     assert_eq!(sentence, "RAM is 152 GB.");
-}
-
-#[test]
-fn the_rewrite_prompt_keeps_facts_the_session_does_not_mention() {
-    let prompt = super::super::ENTITY_REWRITE_SYSTEM_PROMPT;
-    assert!(
-        prompt.contains(
-            "not mentioned, not re-verified, or not observed in this session stays current"
-        )
-    );
-    assert!(
-        prompt.contains(
-            "Only a renamed attribute or a contradiction from this session can retire it"
-        )
-    );
-    assert!(prompt.contains("kind is renamed or contradicted"));
-    assert!(!prompt.contains("was wrong"));
-    assert!(!prompt.contains("no longer true"));
-    assert!(!prompt.contains("current_facts or in retired"));
-    assert!(!prompt.contains("Current facts come from"));
-    assert!(!prompt.contains("only include facts supported by the passages"));
-    assert!(prompt.contains(
-        "New facts come from what this session's tool output shows or what the user states as fact now"
-    ));
-    assert!(prompt.contains(
-        "summary is one or two sentences in the present tense that say what the entity is"
-    ));
-    assert!(prompt.contains("summary does not report what this session did"));
-    assert!(prompt.contains(
-        "When this session's passages state a different value, current_facts records that observed value under the same attribute"
-    ));
 }
 
 #[test]

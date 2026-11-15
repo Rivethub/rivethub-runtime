@@ -21,28 +21,6 @@ async fn worker_check_accepts_an_unreachable_postgres_url() -> TestResult {
 }
 
 #[tokio::test]
-async fn the_wiki_builder_role_has_a_handler() -> TestResult {
-    let home = tempfile::tempdir()?;
-    write_state(
-        home.path(),
-        &provider_config(home.path(), DEAD_POSTGRES, ""),
-    )?;
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
-            .args(["worker", "--role", "wiki-builder", "--check"])
-            .env_clear()
-            .env("HOME", home.path())
-            .env("RIVETHUB_WIKI_EXTRACTION", "1")
-            .output(),
-    )
-    .await??;
-    let text = stderr(&output);
-    assert!(output.status.success(), "wiki-builder: {text}");
-    Ok(())
-}
-
-#[tokio::test]
 async fn mcp_check_does_not_bind_or_connect() -> TestResult {
     let home = tempfile::tempdir()?;
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -63,69 +41,28 @@ async fn mcp_check_does_not_bind_or_connect() -> TestResult {
 }
 
 #[tokio::test]
-async fn mcp_check_rejects_an_empty_host() -> TestResult {
+async fn mcp_check_refuses_an_empty_host_a_relative_socket_and_a_missing_bearer() -> TestResult {
     let home = tempfile::tempdir()?;
-    write_state(
-        home.path(),
-        &provider_config(
-            home.path(),
-            DEAD_POSTGRES,
-            "transports:\n  mcp:\n    host: \"\"\n    auth_token: token\n",
+    for (mcp, refusal) in [
+        ("host: \"\"\n    auth_token: token", "mcp host is empty"),
+        ("socket: relative.sock", "mcp socket path must be absolute"),
+        (
+            "require_bearer_on_socket: true",
+            "mcp socket bearer is required",
         ),
-    )?;
-    let output = run_rh(home.path(), &["mcp", "--check"]).await?;
-    let text = stderr(&output);
-    assert_eq!(output.status.code(), Some(1), "{text}");
-    assert!(text.contains("mcp host is empty"), "{text}");
-    Ok(())
-}
-
-#[tokio::test]
-async fn mcp_check_rejects_a_relative_socket_and_a_missing_bearer() -> TestResult {
-    let home = tempfile::tempdir()?;
-    write_state(
-        home.path(),
-        &provider_config(
+    ] {
+        write_state(
             home.path(),
-            DEAD_POSTGRES,
-            "transports:\n  mcp:\n    socket: relative.sock\n",
-        ),
-    )?;
-    let relative = run_rh(home.path(), &["mcp", "--check"]).await?;
-    let text = stderr(&relative);
-    assert!(!relative.status.success(), "{text}");
-    assert!(text.contains("mcp socket path must be absolute"), "{text}");
-
-    write_state(
-        home.path(),
-        &provider_config(
-            home.path(),
-            DEAD_POSTGRES,
-            "transports:\n  mcp:\n    require_bearer_on_socket: true\n",
-        ),
-    )?;
-    let bearer = run_rh(home.path(), &["mcp", "--check"]).await?;
-    let text = stderr(&bearer);
-    assert_eq!(bearer.status.code(), Some(1), "{text}");
-    assert!(text.contains("mcp socket bearer is required"), "{text}");
-    Ok(())
-}
-
-#[tokio::test]
-async fn gateway_check_succeeds_without_a_certificate_authority() -> TestResult {
-    let home = tempfile::tempdir()?;
-    write_state(
-        home.path(),
-        &provider_config(
-            home.path(),
-            DEAD_POSTGRES,
-            "gateway:\n  host: 127.0.0.1\n  port: 9\n",
-        ),
-    )?;
-    let output = run_rh(home.path(), &["gateway", "--check"]).await?;
-    let text = stderr(&output);
-    assert!(output.status.success(), "{text}");
-    assert!(text.contains("gateway configuration valid"), "{text}");
-    assert!(!home.path().join(".rivethub").join("ca").exists());
+            &provider_config(
+                home.path(),
+                DEAD_POSTGRES,
+                &format!("transports:\n  mcp:\n    {mcp}\n"),
+            ),
+        )?;
+        let output = run_rh(home.path(), &["mcp", "--check"]).await?;
+        let text = stderr(&output);
+        assert_eq!(output.status.code(), Some(1), "{text}");
+        assert!(text.contains(refusal), "{text}");
+    }
     Ok(())
 }

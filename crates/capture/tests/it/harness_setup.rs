@@ -366,12 +366,10 @@ fn connecting_recall_edits_each_format_in_place() -> TestResult {
 }
 
 #[test]
-fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult {
+fn grok_capture_writes_its_own_hook_file() -> TestResult {
     let machine = machine()?;
     machine.write(".grok/.keep", "")?;
-    machine.write(".config/opencode/.keep", "")?;
     machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
-    machine.connect("opencode", Some(ConnectPart::Capture), false)?;
     let hooks = json_text(&machine.read(".grok/hooks/rivethub-capture.json")?)?;
     assert_eq!(
         hooks.run("PreCompact", 0).map(|run| run.args.clone()),
@@ -386,15 +384,7 @@ fn grok_capture_writes_its_own_hook_file_and_opencode_its_plugin() -> TestResult
         hooks.run("Stop", 0).map(|run| run.command.as_str()),
         Some(RH)
     );
-    let plugin = machine.read(".config/opencode/plugins/rivethub-capture.ts")?;
-    assert!(
-        plugin.starts_with("export default { id: 'rivethub-capture' }\nconst COMMAND: string = ")
-    );
-    assert!(plugin.contains("capture hook --harness opencode"));
-    assert!(plugin.contains(RH));
-    assert!(!plugin.contains("__COMMAND__"));
     assert!(machine.probe("grok-build")?.capture_installed);
-    assert!(machine.probe("opencode")?.capture_installed);
     let again = machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
     assert_eq!(again.diff, "");
     Ok(())

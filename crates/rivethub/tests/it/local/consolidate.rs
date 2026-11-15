@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::{TestResult, provider, start, stop, write_config};
+use super::{TestResult, provider, start, stop, write_state};
 
 const STAMP: &str = "2026-10-01T00:00:00.000Z";
 
@@ -12,7 +12,7 @@ async fn local_folds_a_session_variant_topic_into_its_parent_and_redirects() -> 
     let wiki = home.path().join("wiki");
     std::fs::create_dir_all(&wiki)?;
     seed_topics(&database)?;
-    write_config(
+    write_state(
         home.path(),
         &provider(
             home.path(),

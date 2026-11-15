@@ -120,6 +120,28 @@ impl TestDb {
 
 pub(crate) const SERVICE: &str = "rh_test_service";
 
+pub(crate) async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let present: bool =
+        sqlx::query_scalar("SELECT to_regclass('graphile_worker._private_jobs') IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
+    if present {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await?;
+    let path: String = sqlx::query_scalar("SHOW search_path")
+        .fetch_one(&mut *transaction)
+        .await?;
+    sqlx::raw_sql(include_str!("../fixtures/graphile_worker.txt"))
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("SELECT set_config('search_path', $1, false)")
+        .bind(path)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await
+}
+
 impl Deref for TestDb {
     type Target = PgPool;
 

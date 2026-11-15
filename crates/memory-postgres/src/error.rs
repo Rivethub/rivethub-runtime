@@ -282,21 +282,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn ssl_request_garbage_is_unavailable() {
-        let error = Error::operation(
-            "claim",
-            sqlx::Error::Protocol(
-                "unexpected response from SSLRequest: 0x00 (sqlx_postgres::connection::tls:95)"
-                    .into(),
-            ),
-        );
-        assert!(matches!(
-            JobQueueError::from(error),
-            JobQueueError::Unavailable(_)
-        ));
-    }
-
     fn assert_queue(error: Error) {
         let text = error.to_string();
         let JobQueueError::Unavailable(source) = JobQueueError::from(error) else {

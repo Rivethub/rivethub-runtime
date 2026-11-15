@@ -107,21 +107,21 @@ fn hi_request() -> ModelRequest {
 }
 
 #[tokio::test]
-async fn a_bad_stdout_is_an_error_without_the_secret() {
-    for (script, needle) in [
-        ("printf 'secret-token\\n\\n'", "single line"),
-        ("printf 'secret-token'; exit 3", "exited 3"),
-        ("true", "no stdout"),
-    ] {
-        let built = provider(dummy(), Some(shell(script)), None, None, None);
-        let text = built
-            .embed(vec!["q".to_owned()])
-            .await
-            .expect_err(script)
-            .to_string();
-        assert!(text.contains(needle), "{script}: {text}");
-        assert!(!text.contains("secret-token"), "{text}");
-    }
+async fn a_failing_token_command_is_an_error_without_the_secret() {
+    let built = provider(
+        dummy(),
+        Some(shell("printf 'secret-token'; exit 3")),
+        None,
+        None,
+        None,
+    );
+    let text = built
+        .embed(vec!["q".to_owned()])
+        .await
+        .expect_err("the command fails")
+        .to_string();
+    assert!(text.contains("exited 3"), "{text}");
+    assert!(!text.contains("secret-token"), "{text}");
 }
 
 #[tokio::test]

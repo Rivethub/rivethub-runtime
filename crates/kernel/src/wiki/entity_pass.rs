@@ -87,14 +87,5 @@ pub use types::TypeBrief;
 pub use types::older_than_mark;
 
 #[cfg(test)]
-use chrono::DateTime;
-#[cfg(test)]
-use chrono::NaiveDate;
-#[cfg(test)]
-use chrono::Utc;
-#[cfg(test)]
-use uuid::Uuid;
-
-#[cfg(test)]
 #[path = "tests/entity_pass_tests.rs"]
 mod tests;

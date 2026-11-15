@@ -1,5 +1,3 @@
-use crate::common;
-
 use kernel::flagged::FlaggedJobs as _;
 use kernel::queue::ClaimSelector;
 use kernel::queue::FixedJob;
@@ -56,7 +54,6 @@ async fn queued(pool: &PgPool) -> Result<i64, sqlx::Error> {
 async fn failures_count_across_re_adds_and_flag_the_job_out_of_the_queue(
     pool: PgPool,
 ) -> TestResult {
-    common::install_graphile(&pool).await?;
     let queue = PostgresQueue::connect(pool.clone())
         .await?
         .flagging_after(3);
@@ -104,7 +101,6 @@ async fn failures_count_across_re_adds_and_flag_the_job_out_of_the_queue(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn the_sweep_flags_jobs_that_already_ran_out_of_attempts(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let queue = PostgresQueue::connect(pool.clone()).await?;
     queue.enqueue(job("dead", 2)?).await?;
     queue.enqueue(job("live", 2)?).await?;

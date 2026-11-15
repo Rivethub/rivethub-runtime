@@ -407,28 +407,6 @@ async fn the_bearer_scheme_is_case_insensitive_and_a_wrong_scheme_is_refused() -
     Ok(())
 }
 
-#[tokio::test]
-async fn a_refusal_carries_the_bearer_challenge() -> TestResult {
-    let app = gateway_router(false);
-    let mut request = Request::builder()
-        .uri("/api/memory/stats")
-        .header("host", HOST)
-        .body(Body::empty())?;
-    request
-        .extensions_mut()
-        .insert(ConnectInfo(LOCAL.parse::<std::net::SocketAddr>()?));
-    let response = app.oneshot(request).await?;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        response
-            .headers()
-            .get("www-authenticate")
-            .and_then(|value| value.to_str().ok()),
-        Some("Bearer realm=\"rivethub\"")
-    );
-    Ok(())
-}
-
 async fn healthz_body(
     app: &axum::Router,
     headers: &[(&str, &str)],

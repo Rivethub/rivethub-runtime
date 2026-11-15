@@ -19,7 +19,6 @@ async fn page_stores(
     ),
     Box<dyn std::error::Error>,
 > {
-    testkit::install_graphile_worker(&pool).await?;
     let directory = tempfile::tempdir()?;
     let memory = PostgresMemory::new(pool).with_wiki_directory(directory.path().join("wiki"));
     let queue = memory.queue().await?;
@@ -296,7 +295,6 @@ async fn samples_show_each_session_s_current_title(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn upkeep_counts_filings_entities_and_finished_jobs(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let memory = PostgresMemory::new(pool);
     let queue = memory.queue().await?;
     testkit::tidy::upkeep_counts_filings_entities_and_finished_jobs(&memory, &queue).await

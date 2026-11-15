@@ -627,15 +627,15 @@ mod tests {
     fn an_entity_page_does_not_take_a_numbered_slug_when_the_name_is_taken() {
         let mut entity = Vec::new();
         for attempt in 1..=super::SLUG_ATTEMPTS {
-            let Some(slug) = allocated_page_slug("gpubox", TopicKind::Entity, attempt) else {
+            let Some(slug) = allocated_page_slug("tinbox", TopicKind::Entity, attempt) else {
                 break;
             };
             entity.push(slug);
         }
-        assert_eq!(entity, vec!["gpubox".to_owned()]);
+        assert_eq!(entity, vec!["tinbox".to_owned()]);
         assert_eq!(
-            allocated_page_slug("gpubox", TopicKind::Work, 2).as_deref(),
-            Some("gpubox-2")
+            allocated_page_slug("tinbox", TopicKind::Work, 2).as_deref(),
+            Some("tinbox-2")
         );
     }
 }

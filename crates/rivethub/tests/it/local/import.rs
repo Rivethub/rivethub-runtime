@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use memory_sqlite::import::ImportTable;
 
-use super::{TestResult, provider, start, stop, write_config};
+use super::{TestResult, provider, start, stop, write_state};
 
 fn configure(home: &Path, dump: Option<&Path>) -> TestResult<testkit::ports::ClaimedPort> {
     let mut memory = "memory:\n  postgres:\n    embedded: {}\n".to_owned();
@@ -13,7 +13,7 @@ fn configure(home: &Path, dump: Option<&Path>) -> TestResult<testkit::ports::Cla
     }
     let port = testkit::ports::claim()?;
     write!(memory, "gateway:\n  host: 127.0.0.1\n  port: {port}\n")?;
-    write_config(home, &provider(home, &memory))?;
+    write_state(home, &provider(home, &memory))?;
     Ok(port)
 }
 

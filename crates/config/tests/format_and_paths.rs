@@ -110,20 +110,3 @@ fn shared_dir(env: &config::Environment, _segments: &[String]) -> PathBuf {
 fn shared_dir_replay() -> Result<(), Box<dyn std::error::Error>> {
     replay_paths("shared_dir", shared_dir)
 }
-
-#[test]
-fn removed_path_helpers_have_named_recording_skips() -> Result<(), Box<dyn std::error::Error>> {
-    let skipped = [
-        ("shared_path", "unused path concatenation API removed"),
-        ("install_path", "unused installation path API removed"),
-        (
-            "install_root",
-            "unused legacy installation root API removed",
-        ),
-    ];
-    for (name, reason) in skipped {
-        assert_ne!(reason, "");
-        assert!(!common::read_cases(name)?.is_empty(), "{name}");
-    }
-    Ok(())
-}

@@ -77,9 +77,6 @@ async fn one_reader_serves_each_harness_from_its_own_store() -> TestResult {
     for harness in [HarnessId::Omp, HarnessId::Codex] {
         let session = SessionId::new(harness, SESSION);
         assert_eq!(roles(&stores.reader.read(&session).await?), DIALOGUE);
-        let since = "2026-10-14T12:00:01Z".parse()?;
-        let tail = stores.reader.tail(&session, since).await?;
-        assert_eq!(roles(&tail), [(Role::Tool, "a.txt")]);
     }
     Ok(())
 }

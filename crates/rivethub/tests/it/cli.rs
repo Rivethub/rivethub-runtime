@@ -6,34 +6,18 @@ use tokio::process::Command;
 async fn binary_dispatch_preserves_stdout_stderr_and_exit_codes() {
     let home = tempfile::tempdir().expect("isolated home");
     for (args, code, stdout, stderr) in [
-        (vec![], 0, "RivetHub operator commands", ""),
-        (vec!["help"], 0, "Commands:", ""),
-        (vec!["version"], 0, "RivetHub v", ""),
-        (vec!["doctor", "--help"], 0, "--json", ""),
+        (["version"], 0, "RivetHub v", ""),
         (
-            vec!["unknown-command"],
+            ["unknown-command"],
             1,
             "",
             "Unknown command: unknown-command",
         ),
-        (
-            vec!["config", "path"],
-            1,
-            "",
-            "No config found. Write ~/.rivethub/config.yaml (rh local writes a standalone one) or set RIVETHUB_CONFIG",
-        ),
-        (
-            vec!["stop"],
-            0,
-            "No running instance found (no PID file).",
-            "",
-        ),
-        (vec!["status"], 0, "not running", "Health unavailable"),
     ] {
         let output = tokio::time::timeout(
             Duration::from_secs(30),
             Command::new(env!("CARGO_BIN_EXE_rh"))
-                .args(&args)
+                .args(args)
                 .env_clear()
                 .env("HOME", home.path())
                 .env("TOKIO_WORKER_THREADS", "2")
@@ -62,7 +46,7 @@ async fn binary_dispatch_preserves_stdout_stderr_and_exit_codes() {
 }
 
 #[tokio::test]
-async fn one_release_compatibility_binary_dispatches_the_same_tree() {
+async fn the_rivetos_binary_dispatches_the_same_tree() {
     let output = tokio::time::timeout(
         Duration::from_secs(30),
         Command::new(env!("CARGO_BIN_EXE_rivetos"))

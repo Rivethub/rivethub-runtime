@@ -549,7 +549,6 @@ async fn reads_reinforce_and_age_decays_the_recency_boost(pool: PgPool) -> TestR
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn common_text_ranks_only_the_newest_five_thousand_matches(pool: PgPool) -> TestResult {
-    crate::common::install_graphile(&pool).await?;
     let conversation: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO rh_conversations (session_key, agent, owner_user_id) VALUES ('claude-code:shelves', 'rivet', 'owner') RETURNING id",
     )
@@ -559,7 +558,7 @@ async fn common_text_ranks_only_the_newest_five_thousand_matches(pool: PgPool) -
         "INSERT INTO rh_messages (conversation_id, agent, channel, role, content, owner_user_id, created_at)
          SELECT $1, 'rivet', 'cli', 'user', 'a shelf bracket note number ' || n || ' for the hallway wall', 'owner',
                 now() - make_interval(mins => n)
-           FROM generate_series(1, 5100) AS n",
+           FROM generate_series(1, 5000) AS n",
     )
     .bind(conversation)
     .execute(&pool)

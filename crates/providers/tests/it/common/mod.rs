@@ -283,7 +283,7 @@ pub(crate) fn scenario_record(scenario: &str) -> ProviderScenario {
             continue;
         }
         let stripped = demand(
-            testkit::strip_b8_deltas(&request.body),
+            testkit::strip_server_side_fields(&request.body),
             "recorded body strips",
         );
         request.body = stripped;

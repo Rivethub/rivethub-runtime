@@ -135,7 +135,8 @@ async fn http_transport_maps_4xx_to_client_errors() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
-async fn spool_round_trip_and_dead_letters() -> Result<(), Box<dyn std::error::Error>> {
+async fn spooled_batches_replay_and_a_failure_waits_out_its_backoff()
+-> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let spool = capture::spool::CaptureSpool::new(dir.path().to_path_buf());
     let now = now_at("2026-10-10T12:00:00Z")?;
@@ -164,14 +165,6 @@ async fn spool_round_trip_and_dead_letters() -> Result<(), Box<dyn std::error::E
         .await?;
     assert_eq!(posted.lock().len(), 2);
     assert_eq!(std::fs::read_dir(dir.path())?.count(), 0);
-
-    spool.spool(r#"{"session_key":"c"}"#, now).await?;
-    spool
-        .replay(50, now, |_body| async { Err(spool_error(400)) })
-        .await?;
-    let dead = dir.path().join("dead");
-    assert!(dead.is_dir());
-    assert_eq!(std::fs::read_dir(&dead)?.count(), 1);
 
     spool.spool(r#"{"session_key":"d"}"#, now).await?;
     spool

@@ -18,7 +18,6 @@ struct Seeded {
 
 impl Seeded {
     async fn new(pool: PgPool) -> TestResult<Self> {
-        testkit::install_graphile_worker(&pool).await?;
         let directory = tempfile::tempdir()?;
         let job = summarized(&pool, wiki_routes::SESSION_KEY).await?;
         let memory = PostgresMemory::new(pool).with_wiki_directory(directory.path().join("wiki"));

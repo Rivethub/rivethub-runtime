@@ -1,5 +1,3 @@
-use crate::common;
-
 use std::collections::BTreeMap;
 
 use kernel::memory::CaptureBatchRequest;
@@ -91,9 +89,7 @@ async fn rows(pool: &PgPool, sql: &str) -> Result<Vec<(String, String)>, sqlx::E
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestResult {
-    common::install_graphile(&pool).await?;
     let source_pool = source_database(&pool).await?;
-    common::install_graphile(&source_pool).await?;
     let family = PostgresMemory::new(pool.clone());
     let source = PostgresMemory::new(source_pool.clone());
     capture(

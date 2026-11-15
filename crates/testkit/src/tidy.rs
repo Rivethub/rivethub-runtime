@@ -274,8 +274,8 @@ where
 {
     let jest = store.create(new_topic("Jest", &[], None)?).await?;
     let vitest = store.create(new_topic("Vitest", &[], None)?).await?;
-    let gerty = store.create(new_topic("Gerty", &[], None)?).await?;
-    let stored = store.propose(moot_batch(&vitest, &jest, &gerty)?).await?;
+    let hally = store.create(new_topic("Hally", &[], None)?).await?;
+    let stored = store.propose(moot_batch(&vitest, &jest, &hally)?).await?;
     let [merge, delete, rename] = stored
         .proposals
         .iter()
@@ -314,7 +314,7 @@ where
             .collect::<Vec<_>>(),
         vec![(delete, "the topic it changes is already gone")],
     )?;
-    old_names_found(store, [("Vitest", &jest, "Jest"), ("Gerty", &gerty, "g9")]).await
+    old_names_found(store, [("Vitest", &jest, "Jest"), ("Hally", &hally, "g9")]).await
 }
 
 async fn old_names_found<S>(store: &S, kept: [(&str, &Topic, &str); 2]) -> Outcome
@@ -349,7 +349,7 @@ where
 fn moot_batch(
     vitest: &Topic,
     jest: &Topic,
-    gerty: &Topic,
+    hally: &Topic,
 ) -> Result<Batch, kernel::tidy::TidyError> {
     let mut batch = Batch::new(Proposer::Categorizer, at(1));
     batch.add(
@@ -367,7 +367,7 @@ fn moot_batch(
     );
     batch.add(
         TreeEdit::Rename {
-            topic: gerty.id,
+            topic: hally.id,
             name: TopicName::new("g9")?,
         },
         Reason::new("the host is called g9")?,

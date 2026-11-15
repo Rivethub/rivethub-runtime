@@ -1,4 +1,3 @@
-use crate::process::guard::SpawnGuarded;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
@@ -18,11 +17,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use tempfile::tempdir;
 use testkit::Json;
-use tokio::io::AsyncBufReadExt;
-use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use wire::capture::CaptureBatchRequest;
-use wire::gateway::HealthzResponse;
 use wire::gateway::memory::MemoryBrowseResponse;
 use wire::gateway::memory::MemoryHitSource;
 use wire::gateway::memory::MemorySearchResponse;
@@ -367,159 +363,4 @@ async fn get_full_text(
         return Err("memory_get_full answered with a non-text result".into());
     };
     Ok(text)
-}
-
-#[tokio::test]
-async fn the_real_binary_answers_healthz_and_exits_cleanly_on_sigterm() -> TestResult {
-    let db = crate::pgdb::TestDb::bare().await?;
-    let pool = db.pool();
-    migrate::postgres_pool(&pool).await?;
-    let url = db.served_url().await?;
-    let home = tempdir()?;
-    let hub_home = home.path().join(".rivethub");
-    std::fs::create_dir_all(&hub_home)?;
-    let port = testkit::ports::claim()?;
-    let config_text = format!(
-        "runtime:\n  workspace: {}\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    type: openai-compatible\n    base_url: http://127.0.0.1:1\n    model: m\nmemory:\n  postgres:\n    connection_string: {url}\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
-        home.path().display()
-    );
-    std::fs::write(hub_home.join("config.yaml"), config_text)?;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
-        .arg("start")
-        .env("HOME", home.path())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn_guarded()?;
-
-    let base = format!("http://127.0.0.1:{port}");
-    let client = reqwest::Client::new();
-    let stderr = child.stderr.take().ok_or("child stderr is missing")?;
-    let mut lines = tokio::io::BufReader::new(stderr).lines();
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while let Some(line) = lines.next_line().await? {
-            if line.contains("gateway listening on") {
-                return Ok::<_, Box<dyn Error>>(());
-            }
-        }
-        Err("gateway exited before readiness".into())
-    })
-    .await??;
-    let health: HealthzResponse = client
-        .get(format!("{base}/healthz"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let status = Command::new(env!("CARGO_BIN_EXE_rh"))
-        .arg("status")
-        .env("HOME", home.path())
-        .output()
-        .await?;
-    assert!(status.status.success());
-    assert_eq!(
-        String::from_utf8(status.stdout)?,
-        format!("RivetHub is running (v{})\n", env!("CARGO_PKG_VERSION"))
-    );
-    assert!(health.ok);
-    assert_ne!(health.node, "");
-    assert_ne!(health.name, "");
-
-    let pid = child.id().ok_or("the child process is gone")?;
-    std::fs::write(hub_home.join("rivethub.pid"), pid.to_string())?;
-    let stopped = Command::new(env!("CARGO_BIN_EXE_rh"))
-        .arg("stop")
-        .env("HOME", home.path())
-        .output()
-        .await?;
-    assert!(stopped.status.success());
-    assert_eq!(
-        String::from_utf8(stopped.stdout)?,
-        format!("Sent SIGTERM to PID {pid}\n")
-    );
-    let status = tokio::time::timeout(Duration::from_secs(30), child.wait()).await??;
-    assert_eq!(status.code(), Some(0), "SIGTERM must exit cleanly");
-    Ok(())
-}
-
-fn minimal_config(port: u16) -> String {
-    format!(
-        "runtime:\n  workspace: /home/user/work\n  default_agent: main\nagents:\n  main:\n    provider: p\nproviders:\n  p:\n    model: m\ngateway:\n  host: 127.0.0.1\n  port: {port}\n"
-    )
-}
-
-#[tokio::test]
-async fn first_start_moves_legacy_state_and_the_alias_names_the_new_variable() -> TestResult {
-    let home = tempdir()?;
-    let legacy = home.path().join(".rivetos");
-    std::fs::create_dir_all(legacy.join("nested"))?;
-    let port = testkit::ports::claim()?;
-    std::fs::write(legacy.join("config.yaml"), minimal_config(port.number()))?;
-    std::fs::write(legacy.join("nested").join("marker"), "kept")?;
-
-    let output = tokio::time::timeout(
-        Duration::from_secs(30),
-        Command::new(env!("CARGO_BIN_EXE_rh"))
-            .arg("gateway")
-            .env_clear()
-            .env("HOME", home.path())
-            .output(),
-    )
-    .await
-    .map_err(|_| "rh did not exit within 30s")??;
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "missing postgres url exits 1"
-    );
-    assert!(home.path().join(".rivethub/config.yaml").is_file());
-    assert_eq!(
-        std::fs::read_to_string(home.path().join(".rivethub/nested/marker"))?,
-        "kept"
-    );
-    assert!(!legacy.exists());
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("moved legacy state"), "{stderr}");
-    assert!(stderr.contains(config::POSTGRES_URL_VARIABLE), "{stderr}");
-    assert!(
-        rivethub::service::StartupError::Url
-            .to_string()
-            .contains(config::POSTGRES_URL_VARIABLE)
-    );
-
-    let mut again = Command::new(env!("CARGO_BIN_EXE_rivetos"))
-        .arg("gateway")
-        .env_clear()
-        .env("HOME", home.path())
-        .env("RIVETOS_PG_URL", "postgres://127.0.0.1:1/none")
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn_guarded()?;
-    let mut lines =
-        tokio::io::BufReader::new(again.stderr.take().ok_or("child stderr is missing")?).lines();
-    let stderr = tokio::time::timeout(Duration::from_secs(30), async {
-        let mut seen = String::new();
-        while let Some(line) = lines.next_line().await? {
-            seen.push_str(&line);
-            seen.push('\n');
-            if line.contains("gateway listening on") {
-                return Ok::<_, Box<dyn Error>>(seen);
-            }
-        }
-        Err(format!("rivetos exited before listening: {seen}").into())
-    })
-    .await
-    .map_err(|_| "rivetos was not listening within 30s")??;
-    again.kill().await?;
-    assert!(
-        !stderr.contains("moved legacy state"),
-        "the directory is moved once: {stderr}"
-    );
-    assert!(stderr.contains("RIVETOS_PG_URL is deprecated"), "{stderr}");
-    assert!(stderr.contains(config::POSTGRES_URL_VARIABLE), "{stderr}");
-    assert!(
-        stderr.contains("the memory database is unreachable; memory stays unavailable"),
-        "an unreachable database no longer stops the gateway: {stderr}"
-    );
-    Ok(())
 }

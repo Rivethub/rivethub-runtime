@@ -1,10 +1,7 @@
-use crate::common;
-
 use kernel::memory::MemoryScope;
 use kernel::memory::jobs::MemoryJobStore as _;
 use kernel::memory::{Limit, MemoryStore as _, SearchMode, SearchQuery};
 use kernel::queue::{ClaimSelector, JobQueue as _, WorkerRole};
-use kernel::wiki::WikiRedLink;
 use memory_postgres::{PostgresMemory, PostgresQueue};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -12,37 +9,6 @@ use uuid::Uuid;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const CONVERSATION: &str = "00000000-0000-4000-8000-0000000000aa";
-
-const PREVIOUS_UNCHUNKED: &str = "SELECT m.id FROM rh_messages m
-     CROSS JOIN LATERAL (SELECT
-         length(btrim(coalesce(m.content, ''), E' \\t\\n\\r\\f\\x0B')) AS content_chars,
-         length(btrim(coalesce(m.tool_result, ''), E' \\t\\n\\r\\f\\x0B')) AS tool_chars) l
-     WHERE NOT EXISTS (SELECT 1 FROM rh_message_chunks c WHERE c.message_id = m.id)
-       AND COALESCE(m.embed_status, '') <> 'unembeddable'
-       AND (CASE WHEN l.content_chars = 0 THEN least(l.tool_chars, $2)
-                 WHEN l.tool_chars = 0 THEN l.content_chars
-                 ELSE l.content_chars + least(l.tool_chars, $2) + 1 END) > $1
-     ORDER BY m.created_at DESC LIMIT $3";
-
-const PREVIOUS_RED_LINKS: &str =
-    "SELECT entity, array_agg(DISTINCT t.slug ORDER BY t.slug) AS referenced_by
-     FROM rh_wiki_topics t CROSS JOIN LATERAL unnest(t.entities) entity
-     WHERE NOT EXISTS (
-         SELECT 1 FROM rh_wiki_topics known
-         WHERE lower(known.slug) = lower(entity) OR lower(known.title) = lower(entity)
-         OR EXISTS (SELECT 1 FROM unnest(known.aliases) alias WHERE lower(alias) = lower(entity))
-     ) AND NOT EXISTS (
-         SELECT 1 FROM rh_wiki_redirects r WHERE lower(r.from_slug) = lower(entity)
-     )
-     GROUP BY entity ORDER BY count(DISTINCT t.slug) DESC, entity LIMIT $1";
-
-const PREVIOUS_CLAIM_ORDER: &str = "SELECT j.id FROM graphile_worker._private_jobs j
-     JOIN graphile_worker._private_tasks t ON t.id = j.task_id
-     WHERE t.identifier = ANY($1)
-       AND j.attempts < j.max_attempts
-       AND (j.locked_at IS NULL OR j.locked_at < now() - interval '4 hours')
-       AND j.run_at <= now()
-     ORDER BY j.priority, j.run_at, j.id";
 
 async fn conversation(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -331,7 +297,7 @@ async fn a_tool_hit_shows_the_output_it_matched_on(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn unchunked_returns_the_rows_of_the_full_length_scan(pool: PgPool) -> TestResult {
+async fn unchunked_counts_trimmed_characters_and_caps_tool_output(pool: PgPool) -> TestResult {
     conversation(&pool).await?;
     let memory = PostgresMemory::new(pool.clone());
     let wide = "\u{e9}".repeat(15);
@@ -365,34 +331,28 @@ async fn unchunked_returns_the_rows_of_the_full_length_scan(pool: PgPool) -> Tes
     .bind(chunked.ok_or("no fixture rows")?)
     .execute(&pool)
     .await?;
-    for (chars, cap, limit) in [
-        (20u32, 32_768u32, 100u32),
-        (20, 15, 100),
-        (20, 4, 100),
-        (5, 2, 100),
-        (20, 32_768, 3),
-        (0, 0, 100),
+    for (chars, cap, limit, expected) in [
+        (20u32, 32_768u32, 100u32, &[15u128, 14, 12, 10, 8, 4][..]),
+        (20, 15, 100, &[14, 12, 10, 4]),
+        (20, 4, 100, &[14, 12, 4]),
+        (5, 2, 100, &[14, 12, 11, 10, 9, 5, 4, 3, 2]),
+        (20, 32_768, 3, &[15, 14, 12]),
+        (0, 0, 100, &[14, 12, 11, 10, 9, 5, 4, 3, 2]),
     ] {
-        let previous: Vec<Uuid> = sqlx::query_scalar(PREVIOUS_UNCHUNKED)
-            .bind(i64::from(chars))
-            .bind(i64::from(cap))
-            .bind(i64::from(limit))
-            .fetch_all(&pool)
-            .await?;
         let current: Vec<Uuid> = memory
             .unchunked(limit, chars, cap)
             .await?
             .into_iter()
             .map(|row| row.id)
             .collect();
-        assert!(!previous.is_empty(), "{chars}/{cap}/{limit}");
-        assert_eq!(current, previous, "{chars}/{cap}/{limit}");
+        let expected: Vec<Uuid> = expected.iter().copied().map(Uuid::from_u128).collect();
+        assert_eq!(current, expected, "{chars}/{cap}/{limit}");
     }
     Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn wiki_red_links_match_the_per_entity_scan(pool: PgPool) -> TestResult {
+async fn red_links_skip_known_titles_aliases_and_redirects(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool.clone());
     let topics: [(&str, &str, &[&str], &[&str]); 5] = [
         (
@@ -430,42 +390,24 @@ async fn wiki_red_links_match_the_per_entity_scan(pool: PgPool) -> TestResult {
     sqlx::query("INSERT INTO rh_wiki_redirects (from_slug, to_slug) VALUES ('MOVED', 'nas')")
         .execute(&pool)
         .await?;
-    for limit in [1u32, 2, 200] {
-        let previous: Vec<(String, Vec<String>)> = sqlx::query_as(PREVIOUS_RED_LINKS)
-            .bind(i64::from(limit))
-            .fetch_all(&pool)
-            .await?;
-        let expected: Vec<WikiRedLink> = previous
-            .into_iter()
-            .map(|(entity, referenced_by)| WikiRedLink {
-                entity,
-                referenced_by,
-            })
-            .collect();
-        assert_eq!(
-            memory.wiki_gaps(limit).await?.red_links,
-            expected,
-            "{limit}"
-        );
-    }
-    let mut all: Vec<(String, usize)> = memory
+    assert_eq!(memory.wiki_gaps(2).await?.red_links.len(), 2);
+    let all: Vec<(String, usize)> = memory
         .wiki_gaps(200)
         .await?
         .red_links
         .into_iter()
         .map(|link| (link.entity, link.referenced_by.len()))
         .collect();
-    all.sort();
     assert_eq!(
         all,
         [
             ("Ghost".to_owned(), 3),
-            ("Orphan".to_owned(), 1),
             ("ZFS".to_owned(), 2),
+            ("zfs".to_owned(), 2),
+            ("Orphan".to_owned(), 1),
             ("ghost".to_owned(), 1),
             ("m.2 Drive".to_owned(), 1),
             ("rivethub".to_owned(), 1),
-            ("zfs".to_owned(), 2),
         ]
     );
     Ok(())
@@ -481,16 +423,8 @@ struct FixtureJob {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn job_claims_follow_the_previous_priority_order_and_reclaim_stale_locks(
-    pool: PgPool,
-) -> TestResult {
-    common::install_graphile(&pool).await?;
+async fn job_claims_follow_priority_order_and_reclaim_stale_locks(pool: PgPool) -> TestResult {
     let queue = PostgresQueue::connect(pool.clone()).await?;
-    let names: Vec<String> = queue
-        .task_names(WorkerRole::Embedder)
-        .iter()
-        .map(ToString::to_string)
-        .collect();
     let jobs = [
         FixtureJob {
             priority: 0,
@@ -573,6 +507,7 @@ async fn job_claims_follow_the_previous_priority_order_and_reclaim_stale_locks(
             queue: Some("serial"),
         },
     ];
+    let mut ids = Vec::new();
     for job in jobs {
         let id: i64 = sqlx::query_scalar(
             "SELECT (graphile_worker.add_job('embed-target', '{}'::json, $1, priority => $2)).id",
@@ -596,12 +531,12 @@ async fn job_claims_follow_the_previous_priority_order_and_reclaim_stale_locks(
         .bind(job.locked_minutes_ago)
         .execute(&pool)
         .await?;
+        ids.push(id);
     }
-    let expected: Vec<i64> = sqlx::query_scalar(PREVIOUS_CLAIM_ORDER)
-        .bind(&names)
-        .fetch_all(&pool)
-        .await?;
-    assert_eq!(expected.len(), 6);
+    let expected: Vec<i64> = [4, 2, 0, 1, 7, 9]
+        .iter()
+        .filter_map(|index| ids.get(*index).copied())
+        .collect();
     let selector = ClaimSelector::matching(queue.task_names(WorkerRole::Embedder));
     let mut claimed = Vec::new();
     while let Some(job) = queue.claim(&selector).await? {

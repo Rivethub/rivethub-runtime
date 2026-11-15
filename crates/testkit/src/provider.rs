@@ -3,10 +3,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::Error;
-use crate::Mismatch;
 use crate::json::Json;
-use crate::json::Masks;
-use crate::json::json_masked_eq;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Canned {
@@ -46,7 +43,7 @@ pub const B8_OMITTED_REQUEST_FIELDS: &[(&str, WireDelta)] = &[
     ("tool_choice", WireDelta::ServerDefaultToolChoice),
 ];
 
-pub fn strip_b8_deltas(body: &str) -> Result<String, Error> {
+pub fn strip_server_side_fields(body: &str) -> Result<String, Error> {
     let mut parsed: Json = serde_json::from_str(body)
         .map_err(|error| Error::format(Path::new("providers request body"), error.to_string()))?;
     let Json::Object(ref mut object) = parsed else {
@@ -141,111 +138,4 @@ pub fn load_scenario(scenario: &Path) -> Result<ProviderScenario, Error> {
         requests,
         chunks,
     })
-}
-
-pub fn replay(
-    scenario: &ProviderScenario,
-    run: impl FnOnce(Vec<Canned>) -> ProviderTurn,
-) -> Result<(), Mismatch> {
-    let turn = run(scenario.canned.clone());
-    if turn.requests.len() != scenario.requests.len() {
-        return Err(Mismatch::new(
-            &scenario.name,
-            format!(
-                "{} request(s), recorded {}",
-                turn.requests.len(),
-                scenario.requests.len()
-            ),
-        ));
-    }
-    let masks = Masks::default();
-    for (want, got) in scenario.requests.iter().zip(&turn.requests) {
-        let id = format!("{}/request-{}", scenario.name, want.index);
-        compare_request(&id, want, got, &masks)?;
-    }
-    compare_chunks(scenario, &turn.chunks, &masks)
-}
-
-fn compare_request(
-    id: &str,
-    want: &RequestRecord,
-    got: &CapturedRequest,
-    masks: &Masks,
-) -> Result<(), Mismatch> {
-    if want.method != got.method {
-        return Err(Mismatch::new(
-            id,
-            format!("method {} != recorded {}", got.method, want.method),
-        ));
-    }
-    if want.target != got.target {
-        return Err(Mismatch::new(
-            id,
-            format!("target {} != recorded {}", got.target, want.target),
-        ));
-    }
-    if let Some(recorded_auth) = want.header("authorization") {
-        match got.header("authorization") {
-            Some(sent) if sent == recorded_auth => {}
-            Some(sent) => {
-                return Err(Mismatch::new(
-                    id,
-                    format!("authorization header {sent:?} != recorded {recorded_auth:?}"),
-                ));
-            }
-            None => {
-                return Err(Mismatch::new(
-                    id,
-                    format!("authorization header missing, recorded {recorded_auth:?}"),
-                ));
-            }
-        }
-    }
-    if want.body.is_empty() {
-        if !got.body.is_empty() {
-            return Err(Mismatch::new(
-                id,
-                "request body mismatch\n    recorded: <none>\n    actual:   non-empty",
-            ));
-        }
-        return Ok(());
-    }
-    let Ok(want_body) = serde_json::from_str(&want.body) else {
-        return Err(Mismatch::new(id, "recorded request body unreadable"));
-    };
-    let Ok(got_body) = serde_json::from_str(&got.body) else {
-        return Err(Mismatch::new(id, "actual request body is not JSON"));
-    };
-    if !json_masked_eq(&want_body, &got_body, masks)? {
-        return Err(Mismatch::new(
-            id,
-            format!("request body mismatch\n    recorded: {want_body}\n    actual:   {got_body}"),
-        ));
-    }
-    Ok(())
-}
-
-fn compare_chunks(
-    scenario: &ProviderScenario,
-    actual: &[Json],
-    masks: &Masks,
-) -> Result<(), Mismatch> {
-    let Some(recorded) = &scenario.chunks else {
-        return Ok(());
-    };
-    if recorded.len() != actual.len() {
-        return Err(Mismatch::new(
-            &scenario.name,
-            format!("{} chunk(s), recorded {}", actual.len(), recorded.len()),
-        ));
-    }
-    for (index, (want, got)) in recorded.iter().zip(actual).enumerate() {
-        if !json_masked_eq(want, got, masks)? {
-            return Err(Mismatch::new(
-                format!("{}/chunk-{index}", scenario.name),
-                format!("chunk mismatch\n    recorded: {want}\n    actual:   {got}"),
-            ));
-        }
-    }
-    Ok(())
 }

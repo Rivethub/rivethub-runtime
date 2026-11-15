@@ -162,33 +162,3 @@ impl Config {
             .map(str::to_owned)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::OpenaiProvider;
-
-    #[test]
-    fn openrouter_fields_deserialize() {
-        let text = "\
-base_url: https://openrouter.ai/api/v1
-model: qwen/qwen3.8-flash
-api_key: ${OPENROUTER_API_KEY}
-api_key_file: /run/secrets/openrouter_api_key
-reasoning: false
-";
-        let provider: OpenaiProvider = serde_yaml_ng::from_str(text).expect("provider");
-        assert_eq!(
-            provider.base_url.as_deref(),
-            Some("https://openrouter.ai/api/v1")
-        );
-        assert_eq!(provider.model.as_deref(), Some("qwen/qwen3.8-flash"));
-        assert_eq!(provider.api_key.as_deref(), Some("${OPENROUTER_API_KEY}"));
-        assert_eq!(
-            provider.api_key_file,
-            Some(PathBuf::from("/run/secrets/openrouter_api_key"))
-        );
-        assert_eq!(provider.reasoning, Some(false));
-    }
-}

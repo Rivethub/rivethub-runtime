@@ -23,11 +23,7 @@ pub(in crate::entity_builder) use run::StoredPage;
 pub(in crate::entity_builder) use run::TouchedEntity;
 #[cfg(test)]
 pub(in crate::entity_builder) use run::accepted_rewrite;
-#[cfg(test)]
-use run::rewrite_prompt;
 pub(in crate::entity_builder) use run::rewrite_touched;
-#[cfg(test)]
-use run::stored_rewrite;
 
 #[cfg(test)]
 #[path = "tests/entity_rewrite_tests.rs"]
