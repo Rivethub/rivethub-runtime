@@ -6,7 +6,7 @@ use config::{Config, Environment};
 use rivethub::composition::Composition;
 use tokio_util::sync::CancellationToken;
 
-use super::{ALEX, Hub, PHIL, SPACE, TestResult, users};
+use super::{DANA, Hub, INES, SPACE, TestResult, users};
 
 #[tokio::test]
 async fn a_second_node_with_a_stale_users_file_stops_instead_of_rewriting_memberships() -> TestResult
@@ -20,7 +20,7 @@ async fn a_second_node_with_a_stale_users_file_stops_instead_of_rewriting_member
         .as_mut()
         .and_then(|spaces| spaces.get_mut(SPACE))
     {
-        space.members = vec![PHIL.to_owned(), ALEX.to_owned()];
+        space.members = vec![DANA.to_owned(), INES.to_owned()];
     }
     tokio::fs::write(&users_file, serde_json::to_vec(&stale)?).await?;
     let env = Environment::from_vars([

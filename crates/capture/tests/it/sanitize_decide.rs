@@ -125,7 +125,7 @@ pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     repeat.tool_args.clone_from(&tool.tool_args);
     let session = BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:c1".to_owned(),
@@ -157,7 +157,7 @@ pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
     };
     let raw = capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         DateTime::UNIX_EPOCH,

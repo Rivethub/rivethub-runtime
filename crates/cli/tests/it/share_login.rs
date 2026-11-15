@@ -134,7 +134,7 @@ async fn me(State(auth): State<Auth>, uri: Uri, headers: HeaderMap) -> Response 
         });
         script.me.clone()
     };
-    let reply = reply.unwrap_or_else(|| ok(r#"{"user":"phil"}"#));
+    let reply = reply.unwrap_or_else(|| ok(r#"{"user":"dana"}"#));
     (
         reply.status,
         [("content-type", "application/json")],
@@ -330,7 +330,7 @@ async fn a_team_login_is_checked_with_api_me() {
         .await
         .expect("team login");
 
-    assert_eq!(user, "phil");
+    assert_eq!(user, "dana");
     let seen = served.auth.seen();
     assert_eq!(served.auth.paths(), ["/api/me"]);
     assert_eq!(

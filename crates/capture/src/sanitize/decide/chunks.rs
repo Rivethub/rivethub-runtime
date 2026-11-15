@@ -371,7 +371,7 @@ mod tests {
         );
         assert!(!is_id_suffixed("pattern") && !is_id_suffixed("command"));
         assert!(is_identifier(
-            "~/.claude/projects/-home-phil-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl"
+            "~/.claude/projects/-home-dana-work/6b0404f2-b094-90b8-6b01-a1c12a3a2107.jsonl"
         ));
         assert!(!is_identifier(
             "~/clients/beaumont-family-trust/tax-2025.pdf"

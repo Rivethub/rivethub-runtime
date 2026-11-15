@@ -110,7 +110,7 @@ fn session(
 ) -> Result<BundledSession, serde_json::Error> {
     Ok(BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: NODE.to_owned(),
             conversation_id: conversation.to_owned(),
             session_key: format!("claude-code:{conversation}"),
@@ -168,7 +168,7 @@ fn corpus() -> Result<BundledSession, Box<dyn std::error::Error>> {
 fn raw(sessions: Vec<BundledSession>) -> Result<SessionBundle, Box<dyn std::error::Error>> {
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: NODE.to_owned(),
         },
         at()?,
@@ -197,10 +197,10 @@ fn every_planted_secret_is_gone() -> TestResult {
     let parsed = capture::bundle::parse(&file)?;
     assert_eq!(parsed, sanitized.sealed.bundle);
     assert_eq!(sanitize::secrets(&parsed), Vec::new());
-    assert_eq!(parsed.manifest.exported_by.user, "phil");
+    assert_eq!(parsed.manifest.exported_by.user, "dana");
     assert_eq!(parsed.manifest.exported_by.node, "<node>");
     let first = first(&parsed)?;
-    assert_eq!(first.origin.author, "phil");
+    assert_eq!(first.origin.author, "dana");
     assert_eq!(first.origin.node, "<node>");
     let Sanitization::Sanitized(stamp) = &parsed.manifest.sanitization else {
         panic!("the output is stamped sanitized");

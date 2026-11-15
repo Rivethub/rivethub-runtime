@@ -1,7 +1,7 @@
 use crate::common;
 use crate::import::at;
+use crate::import::danas_session;
 use crate::import::import;
-use crate::import::phils_session;
 use crate::import::receiver_key;
 
 use kernel::memory::SessionActivity;
@@ -35,7 +35,7 @@ async fn listed(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn another_person_neither_lists_nor_marks_an_import(pool: PgPool) -> TestResult {
-    let session = phils_session()?;
+    let session = danas_session()?;
     import(&PostgresMemory::new(pool.clone()), "alice", &session).await?;
     let key = receiver_key("alice", &session)?;
     let scoped = PostgresMemory::new(common::probe(&pool).await?);
@@ -97,7 +97,7 @@ async fn another_person_neither_lists_nor_marks_an_import(pool: PgPool) -> TestR
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn only_the_owner_keeps_an_import(pool: PgPool) -> TestResult {
-    let session = phils_session()?;
+    let session = danas_session()?;
     import(&PostgresMemory::new(pool.clone()), "alice", &session).await?;
     let key = receiver_key("alice", &session)?;
     let scoped = PostgresMemory::new(common::probe(&pool).await?);

@@ -120,7 +120,7 @@ impl Node {
         let users = directory.path().join("users.json");
         std::fs::write(
             &users,
-            r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+            r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
         )
         .expect("users file");
         support::config(
@@ -306,7 +306,7 @@ fn session(
     let key = format!("claude-code:s{index}");
     wire::capture::BundledSession {
         origin: wire::capture::SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("c{index}"),
             session_key: key.clone(),
@@ -340,7 +340,7 @@ fn session(
 fn sealed(sessions: Vec<wire::capture::BundledSession>) -> Vec<u8> {
     capture::bundle::seal(
         wire::capture::BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         chrono::DateTime::UNIX_EPOCH,

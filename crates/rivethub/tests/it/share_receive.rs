@@ -99,7 +99,7 @@ async fn rig() -> Result<Rig, Box<dyn std::error::Error>> {
     let receiver = NodeReceiver::new(
         &loaded.config,
         &env,
-        Owner::new("alex".to_owned())?,
+        Owner::new("ines".to_owned())?,
         "desk".to_owned(),
         store.clone(),
     );
@@ -114,7 +114,7 @@ async fn rig() -> Result<Rig, Box<dyn std::error::Error>> {
 }
 
 fn session(number: usize, content: &str) -> BundledSession {
-    session_by("phil", number, content)
+    session_by("dana", number, content)
 }
 
 fn session_by(author: &str, number: usize, content: &str) -> BundledSession {
@@ -169,7 +169,7 @@ fn share_signed(
 ) -> Result<ReceiveCode, Box<dyn std::error::Error>> {
     let sealed = capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         chrono::DateTime::UNIX_EPOCH,
@@ -406,14 +406,14 @@ async fn a_session_by_someone_else_is_not_verified_by_the_senders_key() -> TestR
     let signer = capture::sign::NodeKey::load_or_create(&keys.path().join("node.key"))?;
     let trusted = rig
         .receiver
-        .trust("phil".to_owned(), signer.public_key().to_string())
+        .trust("dana".to_owned(), signer.public_key().to_string())
         .await?;
-    assert_eq!(trusted.name, "phil");
+    assert_eq!(trusted.name, "dana");
     let code = share_signed(
         &rig,
         ID,
         vec![
-            session_by("phil", 1, "mine"),
+            session_by("dana", 1, "mine"),
             session_by("carol", 2, "forwarded"),
         ],
         Some(&signer),
@@ -421,7 +421,7 @@ async fn a_session_by_someone_else_is_not_verified_by_the_senders_key() -> TestR
     let report = rig.receiver.inspect(again(&code)).await?;
     assert_eq!(report.verification, Verification::Verified);
     let authors: Vec<Option<String>> = report.sessions.iter().map(|s| s.author.clone()).collect();
-    assert_eq!(authors, [Some("phil".to_owned()), Some("carol".to_owned())]);
+    assert_eq!(authors, [Some("dana".to_owned()), Some("carol".to_owned())]);
     let done = rig
         .receiver
         .import(again(&code), import(Vec::new(), false, true))

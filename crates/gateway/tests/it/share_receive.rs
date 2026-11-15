@@ -113,7 +113,7 @@ fn inspected(findings: usize, secret: bool) -> Inspected {
         bundle: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
         server: "rivethub.cloud".to_owned(),
         downloaded: true,
-        author: "alex".to_owned(),
+        author: "ines".to_owned(),
         node: "desk".to_owned(),
         verification: Verification::UnknownKey,
         reason: "unverified: signed by ed25519:abc".to_owned(),
@@ -123,7 +123,7 @@ fn inspected(findings: usize, secret: bool) -> Inspected {
         }),
         sessions: vec![Inbound {
             number: 1,
-            author: Some("phil".to_owned()),
+            author: Some("dana".to_owned()),
             title: "fix the reader".to_owned(),
             agent: "rivet".to_owned(),
             messages: 4,
@@ -143,7 +143,7 @@ fn imported() -> Imported {
     Imported {
         bundle: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
         received_at: chrono::Utc::now(),
-        author: "alex".to_owned(),
+        author: "ines".to_owned(),
         verification: Verification::Unsigned,
         signer: None,
         sessions: vec![ImportedSession {
@@ -385,7 +385,7 @@ async fn trust_routes_list_add_and_remove_a_sender() -> TestResult {
         &app,
         Method::POST,
         "/api/share/trust",
-        r#"{"name":"alex","key":"ed25519:abc"}"#,
+        r#"{"name":"ines","key":"ed25519:abc"}"#,
     )
     .await?;
     assert_eq!(status, StatusCode::CREATED, "{text}");
@@ -394,7 +394,7 @@ async fn trust_routes_list_add_and_remove_a_sender() -> TestResult {
     assert_eq!(
         listed.senders,
         vec![body::TrustedSender {
-            name: "alex".to_owned(),
+            name: "ines".to_owned(),
             key: "ed25519:abc".to_owned(),
             fingerprint: "fp-ed25519:abc".to_owned(),
         }]
@@ -403,7 +403,7 @@ async fn trust_routes_list_add_and_remove_a_sender() -> TestResult {
         &app,
         Method::DELETE,
         "/api/share/trust",
-        r#"{"name":"alex"}"#,
+        r#"{"name":"ines"}"#,
     )
     .await?;
     assert_eq!(status, StatusCode::OK, "{text}");

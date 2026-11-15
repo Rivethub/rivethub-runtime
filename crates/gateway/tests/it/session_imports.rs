@@ -59,7 +59,7 @@ fn imported() -> SessionRecord<SessionKey> {
         gist: None,
         cwd: None,
         origin: Some(ImportOrigin {
-            author: Some("alex".to_owned()),
+            author: Some("ines".to_owned()),
             created_at: Some(at("2026-11-02T09:14:00Z")),
             updated_at: Some(at("2026-11-02T10:01:00Z")),
             receipt: Some(ImportReceipt {
@@ -164,7 +164,7 @@ async fn the_node_person_lists_an_import_labelled_with_its_author_date_and_verif
     assert_eq!(
         row.origin,
         Some(SessionOriginLabel {
-            author: Some("alex".to_owned()),
+            author: Some("ines".to_owned()),
             created_at: Some(at("2026-11-02T09:14:00Z")),
             updated_at: Some(at("2026-11-02T10:01:00Z")),
             verification: Some(ReceiptVerification::Verified),
@@ -316,7 +316,7 @@ async fn an_import_detail_has_its_label_and_no_resume_command() {
             .origin
             .and_then(|origin| origin.author)
             .as_deref(),
-        Some("alex")
+        Some("ines")
     );
 }
 

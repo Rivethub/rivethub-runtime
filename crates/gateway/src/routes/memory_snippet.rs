@@ -37,11 +37,11 @@ mod tests {
 
     #[test]
     fn a_snippet_shows_the_passage_around_the_first_match() {
-        assert_eq!(snippet("short text", "gpubox"), "short text");
-        let long = format!("{}gpubox answered{}", "é ".repeat(400), " tail".repeat(200));
-        let shown = snippet(&long, "GPUBOX vllm");
+        assert_eq!(snippet("short text", "tinbox"), "short text");
+        let long = format!("{}tinbox answered{}", "é ".repeat(400), " tail".repeat(200));
+        let shown = snippet(&long, "TINBOX vllm");
         assert!(shown.starts_with('…') && shown.ends_with('…'));
-        assert!(shown.contains("gpubox answered"));
+        assert!(shown.contains("tinbox answered"));
         assert_eq!(shown.chars().count(), 482);
         let plain = snippet(&"word ".repeat(200), "nothing");
         assert!(plain.starts_with("word") && plain.chars().count() == 481);

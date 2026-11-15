@@ -560,7 +560,7 @@ fn server_mappings() -> Vec<Mapping> {
             None,
         ),
         (
-            DeskError::Failed("/home/phil/secret path".to_owned()),
+            DeskError::Failed("/home/dana/secret path".to_owned()),
             500,
             RefusalReason::Failed,
             None,
@@ -581,7 +581,7 @@ async fn desk_errors_map_to_one_status_and_reason() -> TestResult {
         let refused = refusal(&body)?;
         assert_eq!(refused.reason, reason, "{label}");
         assert_eq!(refused.upstream_status, upstream, "{label}");
-        assert!(!body.contains("/home/phil"), "{label}: {body}");
+        assert!(!body.contains("/home/dana"), "{label}: {body}");
     }
     Ok(())
 }

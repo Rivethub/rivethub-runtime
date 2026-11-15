@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const GPUBOX: Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000068");
+const TINBOX: Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000068");
 const KEPT: Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000069");
 const SHARED_ENTITY: Uuid = uuid::uuid!("00000000-0000-4000-8000-00000000006a");
 const SHARED_WORK: Uuid = uuid::uuid!("00000000-0000-4000-8000-00000000006b");
@@ -45,8 +45,8 @@ async fn apply_binding(pool: &PgPool) -> TestResult {
 }
 
 async fn seed(pool: &PgPool) -> TestResult {
-    topic(pool, GPUBOX, "entity", "gpubox", None).await?;
-    page(pool, "gpubox", None).await?;
+    topic(pool, TINBOX, "entity", "tinbox", None).await?;
+    page(pool, "tinbox", None).await?;
     topic(pool, KEPT, "entity", "kept", None).await?;
     page(pool, "kept-bound", Some(KEPT)).await?;
     page(pool, "kept", None).await?;
@@ -63,7 +63,7 @@ async fn seed(pool: &PgPool) -> TestResult {
 }
 
 async fn assert_bound(pool: &PgPool) -> TestResult {
-    assert_eq!(binding(pool, "gpubox").await?, Some(GPUBOX));
+    assert_eq!(binding(pool, "tinbox").await?, Some(TINBOX));
     assert_eq!(binding(pool, "kept-bound").await?, Some(KEPT));
     assert_eq!(binding(pool, "kept").await?, None);
     assert_eq!(binding(pool, "shared").await?, None);

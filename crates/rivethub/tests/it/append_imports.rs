@@ -29,7 +29,7 @@ const MEMBER: &str = "member-token";
 fn imported() -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:c1".to_owned(),

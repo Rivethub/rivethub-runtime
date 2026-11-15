@@ -200,7 +200,7 @@ pub(super) fn bundle_with(
     batch.messages = vec![message];
     let session = BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: node.clone(),
             conversation_id: "conv-1".to_owned(),
             session_key,
@@ -213,7 +213,7 @@ pub(super) fn bundle_with(
     };
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node,
         },
         at()?,

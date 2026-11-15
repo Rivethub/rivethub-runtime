@@ -258,9 +258,9 @@ fn listing(directory: &Path) -> Vec<String> {
     names
 }
 
-pub(crate) fn chosen(phil: &Node) -> TestResult<(String, String, String)> {
+pub(crate) fn chosen(dana: &Node) -> TestResult<(String, String, String)> {
     let id = |key: &str| -> TestResult<String> {
-        phil.column(&format!(
+        dana.column(&format!(
             "SELECT id FROM ros_conversations WHERE session_key = '{key}'"
         ))?
         .pop()
@@ -279,8 +279,8 @@ fn choices(alpha: &str, gamma: &str) -> String {
     )
 }
 
-async fn refused(phil: &Node, server: &mcp::Server, foreign: &str, trashed: &str) -> TestResult {
-    let before = listing(&phil.share());
+async fn refused(dana: &Node, server: &mcp::Server, foreign: &str, trashed: &str) -> TestResult {
+    let before = listing(&dana.share());
     for id in [foreign, trashed] {
         let (refused, reply) = call(
             server,
@@ -296,11 +296,11 @@ async fn refused(phil: &Node, server: &mcp::Server, foreign: &str, trashed: &str
             )
         );
     }
-    assert_eq!(listing(&phil.share()), before);
+    assert_eq!(listing(&dana.share()), before);
     Ok(())
 }
 
-async fn blocked(phil: &Node, server: &mcp::Server, gamma: &str) -> TestResult {
+async fn blocked(dana: &Node, server: &mcp::Server, gamma: &str) -> TestResult {
     let (refused, reply) = call(
         server,
         "session_sanitize",
@@ -316,7 +316,7 @@ async fn blocked(phil: &Node, server: &mcp::Server, gamma: &str) -> TestResult {
     assert!(refused, "{reply}");
     assert!(reply.contains("withholds 1 flagged chunk(s)"), "{reply}");
 
-    std::fs::write(phil.share().join("again.review.local.json"), "kept")?;
+    std::fs::write(dana.share().join("again.review.local.json"), "kept")?;
     let (refused, reply) = call(
         server,
         "session_sanitize",
@@ -328,12 +328,12 @@ async fn blocked(phil: &Node, server: &mcp::Server, gamma: &str) -> TestResult {
         reply.contains("again.review.local.json already exists"),
         "{reply}"
     );
-    assert!(!phil.share().join("again.json").exists());
-    assert!(!phil.share().join("again.report.md").exists());
+    assert!(!dana.share().join("again.json").exists());
+    assert!(!dana.share().join("again.report.md").exists());
     Ok(())
 }
 
-async fn cli_matches(phil: &Node, server: &mcp::Server, alpha: &str, gamma: &str) -> TestResult {
+async fn cli_matches(dana: &Node, server: &mcp::Server, alpha: &str, gamma: &str) -> TestResult {
     let (refused, reply) = call(
         server,
         "session_sanitize",
@@ -344,18 +344,18 @@ async fn cli_matches(phil: &Node, server: &mcp::Server, alpha: &str, gamma: &str
     )
     .await?;
     assert!(!refused, "{reply}");
-    let users = phil.home.path().join("users.json");
+    let users = dana.home.path().join("users.json");
     std::fs::write(
         &users,
-        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+        r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
     )?;
     let env = config::Environment::from_vars([
-        (OsStr::new("HOME"), phil.home.path().as_os_str()),
+        (OsStr::new("HOME"), dana.home.path().as_os_str()),
         (OsStr::new("RIVETHUB_NODE_NAME"), OsStr::new("desk")),
         (OsStr::new("RIVETHUB_USERS_FILE"), users.as_os_str()),
     ]);
-    let out = phil.home.path().join("cli.json");
-    let (redact, database) = (format!("{gamma}={RISKY}"), path_text(&phil.database));
+    let out = dana.home.path().join("cli.json");
+    let (redact, database) = (format!("{gamma}={RISKY}"), path_text(&dana.database));
     let args = [
         "rh",
         "memory",
@@ -386,7 +386,7 @@ async fn cli_matches(phil: &Node, server: &mcp::Server, alpha: &str, gamma: &str
     };
     assert_eq!(
         read(&out)?.sessions,
-        read(&phil.share().join("plain.json"))?.sessions
+        read(&dana.share().join("plain.json"))?.sessions
     );
     Ok(())
 }
@@ -401,12 +401,12 @@ async fn imported(ana: &Node, bundle: &Path) -> TestResult {
     assert!(!refused, "{reply}");
     assert_eq!(
         reply,
-        "ingested 2 sessions from phil: 4 inserted, 0 skipped\n"
+        "ingested 2 sessions from dana: 4 inserted, 0 skipped\n"
     );
     let credited = ana.column(
         "SELECT owner_user_id || ' ' || json_extract(settings, '$.origin.author') || '@' || json_extract(settings, '$.origin.node') FROM ros_conversations WHERE session_key LIKE 'import:%'",
     )?;
-    assert_eq!(credited, ["ana phil@desk", "ana phil@desk"]);
+    assert_eq!(credited, ["ana dana@desk", "ana dana@desk"]);
     let mut dates = ana
         .column("SELECT created_at FROM ros_messages")?
         .iter()
@@ -433,12 +433,12 @@ async fn chosen_sessions_go_from_one_node_to_another_without_a_raw_file() -> Tes
     )
     .await?;
     let url = format!("http://{}", model.addr);
-    let phil = Node::new("phil", &url, &sessions()).await?;
-    let store = memory_sqlite::SqliteStore::open(&phil.database)?;
+    let dana = Node::new("dana", &url, &sessions()).await?;
+    let store = memory_sqlite::SqliteStore::open(&dana.database)?;
     let ana_owner = kernel::owner::Owner::new("ana".to_owned())?;
     let foreign = batch(
         "claude-code:anas",
-        "Not phil's",
+        "Not dana's",
         "claude-code",
         vec![said("evt-e1", "ana's notes", "2026-10-17T09:00:00Z")],
     );
@@ -449,18 +449,18 @@ async fn chosen_sessions_go_from_one_node_to_another_without_a_raw_file() -> Tes
         Some("desk"),
     )
     .await?;
-    rusqlite::Connection::open(&phil.database)?.execute(
+    rusqlite::Connection::open(&dana.database)?.execute(
         "INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('claude-code:delta', '2026-10-18T09:00:00.000Z')",
         [],
     )?;
-    let (alpha, gamma, trashed) = chosen(&phil)?;
-    let foreign = phil
+    let (alpha, gamma, trashed) = chosen(&dana)?;
+    let foreign = dana
         .column("SELECT id FROM ros_conversations WHERE owner_user_id = 'ana'")?
         .pop()
         .ok_or("ana's session")?;
-    let server = phil.server(false)?;
-    refused(&phil, &server, &foreign, &trashed).await?;
-    assert_eq!(listing(&phil.share()), Vec::<String>::new());
+    let server = dana.server(false)?;
+    refused(&dana, &server, &foreign, &trashed).await?;
+    assert_eq!(listing(&dana.share()), Vec::<String>::new());
 
     let (refused, reply) = call(
         &server,
@@ -479,28 +479,28 @@ async fn chosen_sessions_go_from_one_node_to_another_without_a_raw_file() -> Tes
     );
     assert!(!reply.contains(RISKY), "{reply}");
     assert_eq!(
-        listing(&phil.share()),
+        listing(&dana.share()),
         [
             "work.clean.json",
             "work.clean.report.md",
             "work.clean.review.local.json"
         ]
     );
-    let bundle = std::fs::read_to_string(phil.share().join("work.clean.json"))?;
+    let bundle = std::fs::read_to_string(dana.share().join("work.clean.json"))?;
     for absent in [RISKY, OUTPUT, "codex:beta", "Deploy notes"] {
         assert!(!bundle.contains(absent), "{absent} in the bundle");
     }
     assert!(bundle.contains("[REDACTED:drop_tool_outputs]"));
     assert!(bundle.contains("cat payroll.csv"));
-    let report = std::fs::read_to_string(phil.share().join("work.clean.report.md"))?;
+    let report = std::fs::read_to_string(dana.share().join("work.clean.report.md"))?;
     assert!(report.contains("| session_term |"), "{report}");
     assert!(report.contains("| drop_tool_outputs |"), "{report}");
     assert!(!report.contains(RISKY), "{report}");
 
-    blocked(&phil, &server, &gamma).await?;
-    cli_matches(&phil, &server, &alpha, &gamma).await?;
+    blocked(&dana, &server, &gamma).await?;
+    cli_matches(&dana, &server, &alpha, &gamma).await?;
     let ana = Node::new("ana", &url, &[]).await?;
-    imported(&ana, &phil.share().join("work.clean.json")).await?;
+    imported(&ana, &dana.share().join("work.clean.json")).await?;
     model.close().await?;
     Ok(())
 }
@@ -518,9 +518,9 @@ async fn find_redacts_secrets_in_titles_and_excerpts() -> TestResult {
             "2026-10-16T09:00:00Z",
         )],
     )];
-    let phil = Node::new("phil", "http://127.0.0.1:9", &seed).await?;
+    let dana = Node::new("dana", "http://127.0.0.1:9", &seed).await?;
     let (refused, reply) = call(
-        &phil.server(false)?,
+        &dana.server(false)?,
         "session_find",
         r#"{"query":"rotation"}"#,
     )

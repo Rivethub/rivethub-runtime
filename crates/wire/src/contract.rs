@@ -475,7 +475,7 @@ fn bundle(contract: Contract, direction: &str) -> Schema {
     let definitions = generator.take_definitions(true);
     json_schema!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": format!("https://github.com/philbert440/rivethub-runtime/contract/{VERSION}/{direction}.schema.json"),
+        "$id": format!("https://github.com/Rivethub/rivethub-runtime/contract/{VERSION}/{direction}.schema.json"),
         "title": format!("RivetHub contract ({direction} by the runtime)"),
         "version": VERSION,
         "$defs": definitions,

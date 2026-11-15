@@ -82,7 +82,7 @@ fn sealed_with(
     let at = instant("2026-10-14T09:00:00Z")?;
     let session = BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "0195f0c2-0000-7000-8000-000000000001".to_owned(),
             session_key: "claude-code:one".to_owned(),
@@ -100,7 +100,7 @@ fn sealed_with(
         },
     };
     let author = BundleAuthor {
-        user: "phil".to_owned(),
+        user: "dana".to_owned(),
         node: "desk".to_owned(),
     };
     Ok(capture::bundle::seal(author, at, Sanitization::Raw, vec![session])?.bundle)
@@ -218,7 +218,7 @@ fn a_bundle_with_an_edited_manifest_is_rejected() -> TestResult {
     let text = serde_json::to_string(&sealed()?)?;
     let edits = [
         (
-            r#""user":"phil","node":"desk"}"#,
+            r#""user":"dana","node":"desk"}"#,
             r#""user":"mallory","node":"desk"}"#,
         ),
         (

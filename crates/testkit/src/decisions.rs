@@ -23,14 +23,14 @@ pub async fn decisions_are_the_topic_page_decisions_section(stores: PageStores<'
     let first = Decision::new(
         root.id,
         text("Use step-ca")?,
-        "phil",
+        "dana",
         Some(session("decide")?),
         at(1),
     );
     store.keep_decisions(std::slice::from_ref(&first)).await?;
     same("kept", store.decision(first.id).await?, Some(first.clone()))?;
     let edited = first.edit(text("Use step-ca for mesh certificates")?, at(2))?;
-    let replacement = Decision::new(root.id, text("Renew every 7 days")?, "phil", None, at(3));
+    let replacement = Decision::new(root.id, text("Renew every 7 days")?, "dana", None, at(3));
     let superseded = edited.supersede(Some(&replacement), at(3))?;
     store
         .keep_decisions(&[replacement.clone(), superseded.clone()])
@@ -68,8 +68,8 @@ pub async fn decisions_are_the_topic_page_decisions_section(stores: PageStores<'
         (
             None,
             "Decisions",
-            "- ~~Use step-ca for mesh certificates~~ superseded (phil, 2026-09-21)\n\
-             - Renew every 7 days (phil, 2026-09-21)\n\
+            "- ~~Use step-ca for mesh certificates~~ superseded (dana, 2026-09-21)\n\
+             - Renew every 7 days (dana, 2026-09-21)\n\
              - One CA per mesh (ana, 2026-09-21)\n\n\
              ### Certificates\n\n\
              - Keep the root offline (ana, 2026-09-21)",

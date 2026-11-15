@@ -11,7 +11,7 @@ use wire::message::Role;
 fn session(node: &str, conversation_id: &str, first_event: &str) -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: node.to_owned(),
             conversation_id: conversation_id.to_owned(),
             session_key: "claude-code:shared".to_owned(),
@@ -72,9 +72,9 @@ fn an_import_names_its_origin_and_keeps_the_original_key_in_its_settings() -> Te
 fn the_receiver_key_hashes_the_owner_with_the_origin() -> TestResult {
     let known = session("desk", "c1", "evt-1");
 
-    let key = owned("alex", &known)?;
+    let key = owned("ines", &known)?;
 
-    let digest = hex::encode(Sha256::digest(r#"["alex","desk","c1"]"#));
+    let digest = hex::encode(Sha256::digest(r#"["ines","desk","c1"]"#));
     assert_eq!(key, format!("import:{digest}"));
     assert_ne!(key, owned("bob", &known)?);
     Ok(())
@@ -93,15 +93,15 @@ fn origins_that_join_to_the_same_text_get_different_keys() -> TestResult {
 fn a_version_one_key_is_a_stable_hash_of_what_the_session_carries() -> TestResult {
     let first = session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-1");
 
-    let key = owned("alex", &first)?;
+    let key = owned("ines", &first)?;
 
     let digest = hex::encode(Sha256::digest(
-        r#"["alex","unknown","claude-code:shared","rivet","evt-1"]"#,
+        r#"["ines","unknown","claude-code:shared","rivet","evt-1"]"#,
     ));
     assert_eq!(key, format!("import:{digest}"));
     assert_ne!(
         key,
-        owned("alex", &session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-9"))?
+        owned("ines", &session(UNKNOWN_ORIGIN, UNKNOWN_ORIGIN, "evt-9"))?
     );
     Ok(())
 }
@@ -135,7 +135,7 @@ fn re_exporting_an_undated_import_leaves_its_dates_absent() -> TestResult {
         origin: undated.origin.clone(),
         batch: undated.import_batch()?,
     };
-    stored.batch.session_key = owned("alex", &undated)?;
+    stored.batch.session_key = owned("ines", &undated)?;
     let imported_at = chrono::DateTime::parse_from_rfc3339("2026-11-09T12:00:00Z")?.to_utc();
     stored.batch.created_at = Some(imported_at);
     stored.batch.updated_at = Some(imported_at);
@@ -152,13 +152,13 @@ fn re_exporting_an_undated_import_leaves_its_dates_absent() -> TestResult {
 fn a_sanitized_identity_keys_the_conversation_instead_of_its_display_id() -> TestResult {
     let mut first = session("desk", "conv-<lan-ip>", "evt-1");
     let mut second = session("desk", "conv-<lan-ip>", "evt-2");
-    assert_eq!(owned("alex", &first)?, owned("alex", &second)?);
+    assert_eq!(owned("ines", &first)?, owned("ines", &second)?);
     first.origin.identity = Some("a".repeat(64));
     second.origin.identity = Some("b".repeat(64));
-    assert_ne!(owned("alex", &first)?, owned("alex", &second)?);
-    let preimage = serde_json::to_string(&["alex", "desk", &"a".repeat(64)])?;
+    assert_ne!(owned("ines", &first)?, owned("ines", &second)?);
+    let preimage = serde_json::to_string(&["ines", "desk", &"a".repeat(64)])?;
     assert_eq!(
-        owned("alex", &first)?,
+        owned("ines", &first)?,
         format!("import:{}", hex::encode(Sha256::digest(preimage)))
     );
     Ok(())

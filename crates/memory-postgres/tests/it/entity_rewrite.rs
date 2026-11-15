@@ -87,7 +87,7 @@ async fn rewrite_case(pool: PgPool) -> TestResult {
     let older = seed_leaf(&pool, conversation, at("2026-11-01T00:00:00Z")).await?;
     let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
     let entity = Uuid::new_v4();
-    let slug = format!("gpubox-{entity}");
+    let slug = format!("tinbox-{entity}");
     seed_entity(&pool, entity, &slug).await?;
     seed_fact(&pool, entity, "ram", "87 GB available", older, conversation).await?;
     seed_fact(&pool, entity, "ip", "11.22.33.44", older, conversation).await?;
@@ -123,7 +123,7 @@ async fn mention_case(pool: PgPool) -> TestResult {
     let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
     let later = seed_leaf(&pool, conversation, at("2026-11-08T00:00:00Z")).await?;
     let entity = Uuid::new_v4();
-    let slug = format!("gpubox-{entity}");
+    let slug = format!("tinbox-{entity}");
     seed_entity(&pool, entity, &slug).await?;
     seed_fact(&pool, entity, "ram", "87 GB available", older, conversation).await?;
     let directory = tempfile::tempdir()?;
@@ -194,7 +194,7 @@ async fn ordered_case(pool: PgPool) -> TestResult {
     let older = seed_leaf(&pool, conversation, at("2026-11-01T00:00:00Z")).await?;
     let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
     let entity = Uuid::new_v4();
-    let slug = format!("gpubox-{entity}");
+    let slug = format!("tinbox-{entity}");
     seed_entity(&pool, entity, &slug).await?;
     let directory = tempfile::tempdir()?;
     let memory =
@@ -228,7 +228,7 @@ async fn concurrent_case(pool: PgPool) -> TestResult {
     let older = seed_leaf(&pool, conversation, at("2026-11-01T00:00:00Z")).await?;
     let newer = seed_leaf(&pool, conversation, at("2026-11-07T00:00:00Z")).await?;
     let entity = Uuid::new_v4();
-    let slug = format!("gpubox-{entity}");
+    let slug = format!("tinbox-{entity}");
     seed_entity(&pool, entity, &slug).await?;
     let directory = tempfile::tempdir()?;
     let memory =
@@ -988,7 +988,7 @@ async fn seed_entity(pool: &PgPool, id: Uuid, slug: &str) -> Result<(), sqlx::Er
     let mut tx = deferred(pool).await?;
     sqlx::query(
         "INSERT INTO rh_topics (id, kind, slug, name, created_at, updated_at, owner_user_id)
-         VALUES ($1, 'entity', $2, 'gpubox', $3, $3, 'owner')",
+         VALUES ($1, 'entity', $2, 'tinbox', $3, $3, 'owner')",
     )
     .bind(id)
     .bind(slug)

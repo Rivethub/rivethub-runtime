@@ -233,7 +233,7 @@ fn a_share_code_key_never_survives_any_redaction_setting() -> Result<(), Box<dyn
     let texts = [
         format!("send {code} privately"),
         format!("password={code}"),
-        format!("https://alex:{code}@team.example.com/x"),
+        format!("https://ines:{code}@team.example.com/x"),
         format!("{{\"token\": \"{code}\"}}"),
         format!("https://u:{}@team.example.com/x", code.replace('#', "%23")),
         format!("{code}_x"),

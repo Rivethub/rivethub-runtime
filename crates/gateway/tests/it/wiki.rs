@@ -126,7 +126,7 @@ async fn api_page_names_the_author_of_an_imported_citation() {
     let mut imported = stored(page());
     let provenance = kernel::memory::Provenance {
         team_owner: None,
-        author: Some("phil".to_owned()),
+        author: Some("dana".to_owned()),
         origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
         verification: kernel::memory::Verification::Unreceived,
         checks: None,
@@ -144,7 +144,7 @@ async fn api_page_names_the_author_of_an_imported_citation() {
             .first()
             .and_then(|citation| citation.imported.clone()),
         Some(wire::memory::Provenance {
-            author: Some("phil".to_owned()),
+            author: Some("dana".to_owned()),
             origin_date: Some("2026-10-14T09:12:00Z".parse().unwrap()),
             verification: wire::memory::Verification::Unreceived,
             checks: None,

@@ -8,7 +8,7 @@ edition = "2024"
 license = "Apache-2.0"
 publish = false
 version = "0.8.3"
-repository = "https://github.com/philbert440/rivethub-runtime"
+repository = "https://github.com/danaexample/rivethub-runtime"
 rust-version = "1.99"
 
 [workspace.metadata.dylint]

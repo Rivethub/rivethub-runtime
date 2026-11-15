@@ -141,7 +141,7 @@
         ]
       },
       "opts": {
-        "ownerUserId": "phil"
+        "ownerUserId": "dana"
       },
       "result": {
         "ok": true,
@@ -216,7 +216,7 @@
       "settings": {},
       "task_id": null,
       "active": true,
-      "owner_user_id": "phil",
+      "owner_user_id": "dana",
       "created_at": "2026-10-10T19:04:06.136Z",
       "updated_at": "<now-or-max>"
     },
@@ -327,7 +327,7 @@
         "event_id": "o1"
       },
       "created_at": "2026-10-10T12:06:00.000Z",
-      "owner_user_id": "phil",
+      "owner_user_id": "dana",
       "content_hash": null,
       "content_len": 5
     },

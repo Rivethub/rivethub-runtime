@@ -19,9 +19,9 @@ use kernel::owner::Owner;
 use wire::capture::BundleAuthor;
 use wire::message::Role;
 
-fn phil() -> BundleAuthor {
+fn dana() -> BundleAuthor {
     BundleAuthor {
-        user: "phil".to_owned(),
+        user: "dana".to_owned(),
         node: "desk".to_owned(),
     }
 }
@@ -30,8 +30,8 @@ fn phil() -> BundleAuthor {
 async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_owner_and_node()
 -> TestResult {
     let source = fresh_store()?;
-    let phil_owner = Owner::new("phil".to_owned())?;
-    let alex = Owner::new("alex".to_owned())?;
+    let dana_owner = Owner::new("dana".to_owned())?;
+    let ines = Owner::new("ines".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut first = batch("claude-code:one", "rivet", "claude-code");
     first.title = Some("pairing".to_owned());
@@ -45,13 +45,13 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
     ));
     source
         .store
-        .capture(first, &phil_owner, Some("laptop"), now)
+        .capture(first, &dana_owner, Some("laptop"), now)
         .await?;
     let mut legacy = batch("codex:legacy", "rivet-gpt", "codex");
     legacy
         .messages
         .push(message("evt-3", Role::User, "captured before owners"));
-    let legacy = source.store.capture(legacy, &phil_owner, None, now).await?;
+    let legacy = source.store.capture(legacy, &dana_owner, None, now).await?;
     execute(
         &source.store,
         &format!(
@@ -60,16 +60,16 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
         ),
     )
     .await?;
-    let mut private = batch("claude-code:alex-private", "rivet", "claude-code");
+    let mut private = batch("claude-code:ines-private", "rivet", "claude-code");
     private
         .messages
-        .push(message("evt-4", Role::User, "alex private note"));
-    let private = source.store.capture(private, &alex, None, now).await?;
+        .push(message("evt-4", Role::User, "ines private note"));
+    let private = source.store.capture(private, &ines, None, now).await?;
 
-    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None).await?;
 
     let text = serde_json::to_string(&exported)?;
-    assert!(!text.contains("alex private note"));
+    assert!(!text.contains("ines private note"));
     assert!(!text.contains("owner_user_id"));
     let mut origins: Vec<(&str, &str, &str)> = exported
         .iter()
@@ -85,8 +85,8 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
     assert_eq!(
         origins,
         [
-            ("claude-code:one", "phil", "laptop"),
-            ("codex:legacy", "phil", "desk"),
+            ("claude-code:one", "dana", "laptop"),
+            ("codex:legacy", "dana", "desk"),
         ]
     );
     let pairing = exported
@@ -105,7 +105,7 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
     );
     let named = source
         .store
-        .bundled_sessions(phil(), Some(vec![private.conversation_id]))
+        .bundled_sessions(dana(), Some(vec![private.conversation_id]))
         .await?;
     assert_eq!(named, Vec::new());
     Ok(())
@@ -114,7 +114,7 @@ async fn export_takes_only_the_node_owners_sessions_and_credits_their_stored_own
 #[tokio::test]
 async fn a_bundled_batch_is_recorded_as_the_receivers_own() -> TestResult {
     let source = fresh_store()?;
-    let phil_owner = Owner::new("phil".to_owned())?;
+    let dana_owner = Owner::new("dana".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut first = batch("claude-code:one", "rivet", "claude-code");
     first
@@ -125,8 +125,8 @@ async fn a_bundled_batch_is_recorded_as_the_receivers_own() -> TestResult {
         Role::Assistant,
         "the file names its author",
     ));
-    source.store.capture(first, &phil_owner, None, now).await?;
-    let exported = source.store.bundled_sessions(phil(), None).await?;
+    source.store.capture(first, &dana_owner, None, now).await?;
+    let exported = source.store.bundled_sessions(dana(), None).await?;
     let pairing = exported.first().ok_or("pairing session")?;
 
     let received: CaptureBatchRequest =
@@ -148,23 +148,23 @@ async fn a_bundled_batch_is_recorded_as_the_receivers_own() -> TestResult {
 #[tokio::test]
 async fn export_by_id_keeps_settings() -> TestResult {
     let source = fresh_store()?;
-    let phil_owner = Owner::new("phil".to_owned())?;
+    let dana_owner = Owner::new("dana".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut wanted = batch("claude-code:wanted", "rivet", "claude-code");
     wanted.settings = Some(object(r#"{"model":"opus","cwd":"/work/rivethub"}"#)?);
     wanted
         .messages
         .push(message("evt-1", Role::User, "export me"));
-    let kept = source.store.capture(wanted, &phil_owner, None, now).await?;
+    let kept = source.store.capture(wanted, &dana_owner, None, now).await?;
     let mut other = batch("claude-code:other", "rivet", "claude-code");
     other
         .messages
         .push(message("evt-2", Role::User, "leave me"));
-    source.store.capture(other, &phil_owner, None, now).await?;
+    source.store.capture(other, &dana_owner, None, now).await?;
 
     let exported = source
         .store
-        .bundled_sessions(phil(), Some(vec![kept.conversation_id.clone()]))
+        .bundled_sessions(dana(), Some(vec![kept.conversation_id.clone()]))
         .await?;
 
     assert_eq!(exported.len(), 1);
@@ -177,7 +177,7 @@ async fn export_by_id_keeps_settings() -> TestResult {
     );
     let none = source
         .store
-        .bundled_sessions(phil(), Some(vec!["no-such-conversation".to_owned()]))
+        .bundled_sessions(dana(), Some(vec!["no-such-conversation".to_owned()]))
         .await?;
     assert_eq!(none, Vec::new());
     Ok(())
@@ -186,28 +186,28 @@ async fn export_by_id_keeps_settings() -> TestResult {
 #[tokio::test]
 async fn a_trashed_session_is_exported_only_when_named() -> TestResult {
     let source = fresh_store()?;
-    let phil_owner = Owner::new("phil".to_owned())?;
+    let dana_owner = Owner::new("dana".to_owned())?;
     let now = instant("2026-11-02T18:00:00.000Z")?;
     let mut kept = batch("claude-code:kept", "rivet", "claude-code");
     kept.messages.push(message("evt-k", Role::User, "kept"));
-    let kept = source.store.capture(kept, &phil_owner, None, now).await?;
+    let kept = source.store.capture(kept, &dana_owner, None, now).await?;
     let mut trashed = batch("claude-code:trashed", "rivet", "claude-code");
     trashed
         .messages
         .push(message("evt-t", Role::User, "trashed"));
     let trashed = source
         .store
-        .capture(trashed, &phil_owner, None, now)
+        .capture(trashed, &dana_owner, None, now)
         .await?;
     source
         .store
         .trash_session("claude-code:trashed", None, now)
         .await?;
 
-    let everything = source.store.bundled_sessions(phil(), None).await?;
+    let everything = source.store.bundled_sessions(dana(), None).await?;
     let named = source
         .store
-        .bundled_sessions(phil(), Some(vec![trashed.conversation_id.clone()]))
+        .bundled_sessions(dana(), Some(vec![trashed.conversation_id.clone()]))
         .await?;
 
     let ids = |sessions: &[wire::capture::BundledSession]| -> Vec<String> {
@@ -239,7 +239,7 @@ async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_ro
     )
     .await?;
 
-    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None).await?;
 
     let order: Vec<(&str, Vec<&str>)> = exported
         .iter()
@@ -269,7 +269,7 @@ async fn export_orders_sessions_by_creation_then_id_and_messages_by_time_then_ro
 #[tokio::test]
 async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
     let source = fresh_store()?;
-    let phil_owner = Owner::new("phil".to_owned())?;
+    let dana_owner = Owner::new("dana".to_owned())?;
     let mut shared = batch("claude-code:shared", "rivet", "claude-code");
     shared
         .messages
@@ -278,12 +278,12 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
         .store
         .capture(
             shared,
-            &phil_owner,
+            &dana_owner,
             None,
             instant("2026-10-14T09:00:00.000Z")?,
         )
         .await?;
-    let exported = source.store.bundled_sessions(phil(), None).await?;
+    let exported = source.store.bundled_sessions(dana(), None).await?;
     let session = exported.first().ok_or("exported session")?;
     let received: CaptureBatchRequest =
         serde_json::from_str(&serde_json::to_string(&session.import_batch()?)?)?;
@@ -345,7 +345,7 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
     assert!(
         browsed
             .iter()
-            .all(|row| row.author.as_deref() == Some("phil"))
+            .all(|row| row.author.as_deref() == Some("dana"))
     );
     Ok(())
 }
@@ -353,7 +353,7 @@ async fn an_imported_session_keeps_its_origin_and_dates() -> TestResult {
 #[tokio::test]
 async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult {
     let store = fresh_store()?;
-    let alex = Owner::new("alex".to_owned())?;
+    let ines = Owner::new("ines".to_owned())?;
     let tied = instant("2026-10-14T09:00:00.123Z")?;
     let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
     let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
@@ -366,7 +366,7 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
         .store
         .capture(
             tied_batch,
-            &alex,
+            &ines,
             None,
             instant("2026-11-08T12:00:00.000Z")?,
         )
@@ -376,7 +376,7 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
         .store
         .bundled_sessions(
             BundleAuthor {
-                user: "alex".to_owned(),
+                user: "ines".to_owned(),
                 node: "team".to_owned(),
             },
             None,
@@ -398,7 +398,7 @@ async fn messages_sharing_a_millisecond_export_in_capture_order() -> TestResult 
 async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_titles() -> TestResult
 {
     let store = fresh_store()?;
-    let alex = Owner::new("alex".to_owned())?;
+    let ines = Owner::new("ines".to_owned())?;
     let tied = instant("2026-10-14T09:00:00.123Z")?;
     let steps: Vec<String> = (1..=8).map(|step| format!("step-{step}")).collect();
     let mut tied_batch = batch("claude-code:tied", "rivet", "claude-code");
@@ -411,7 +411,7 @@ async fn messages_sharing_a_time_keep_capture_order_in_summaries_context_and_tit
         .store
         .capture(
             tied_batch,
-            &alex,
+            &ines,
             None,
             instant("2026-11-08T12:00:00.000Z")?,
         )
@@ -456,7 +456,7 @@ fn imported(
         .push(message("evt-1", Role::User, "move the bundle reader"));
     let session = wire::capture::BundledSession {
         origin: wire::capture::SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "7b0e7d1c-0000-4000-8000-000000000001".to_owned(),
             session_key: "claude-code:shared".to_owned(),
@@ -600,17 +600,17 @@ async fn an_older_bundle_keeps_a_newer_title() -> TestResult {
 #[tokio::test]
 async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named() -> TestResult {
     let store = fresh_store()?;
-    let alex = Owner::new("alex".to_owned())?;
+    let ines = Owner::new("ines".to_owned())?;
     let now = instant("2026-11-08T12:00:00.000Z")?;
     let posted = imported("2026-10-14T11:30:00.000Z", "opus")?;
-    let key = wire::capture::owned_import_key("alex", &posted.session_key)?.ok_or("import key")?;
+    let key = wire::capture::owned_import_key("ines", &posted.session_key)?.ok_or("import key")?;
     let first = store
         .store
-        .capture(posted.clone(), &alex, None, now)
+        .capture(posted.clone(), &ines, None, now)
         .await?;
-    store.store.trash_session(&key, Some("alex"), now).await?;
+    store.store.trash_session(&key, Some("ines"), now).await?;
 
-    let again = store.store.capture(posted, &alex, None, now).await?;
+    let again = store.store.capture(posted, &ines, None, now).await?;
 
     assert_eq!(again.conversation_id, first.conversation_id);
     assert_eq!((again.inserted, again.skipped), (0, 1));
@@ -622,7 +622,7 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
             .contains_key(&key)
     );
     let team = BundleAuthor {
-        user: "alex".to_owned(),
+        user: "ines".to_owned(),
         node: "team".to_owned(),
     };
     let everything = store.store.bundled_sessions(team.clone(), None).await?;
@@ -636,7 +636,7 @@ async fn a_trashed_import_stays_trashed_on_reimport_and_exports_only_when_named(
         .next()
         .ok_or("the named trashed import")?
         .forwarding_stored_origin();
-    assert_eq!(forwarded.origin.author, "phil");
+    assert_eq!(forwarded.origin.author, "dana");
     assert_eq!(forwarded.batch.session_key, "claude-code:shared");
     Ok(())
 }

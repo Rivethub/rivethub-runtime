@@ -3,7 +3,7 @@ use std::time::Duration;
 use memory_postgres::MissingModels;
 use wire::gateway::memory_models::{ModelHealth, ModelJob};
 
-use super::{Hub, PHIL, TestResult};
+use super::{DANA, Hub, TestResult};
 
 const NO_MODEL_CONFIG: &str = "memory:\n  postgres:\n    connection_string: postgres://hub@127.0.0.1:1/hub\ngateway:\n  host: 127.0.0.1\n  port: 5975\n";
 
@@ -59,7 +59,7 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
     .await?;
     let before = queued(&hub).await?;
     hub.capture(
-        PHIL,
+        DANA,
         "claude-code:00000000-0000-4000-8000-00000000d001",
         &[
             "a message long enough to be chunked and embedded later on",
@@ -72,11 +72,11 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
         before,
         "capture queued no embedding job"
     );
-    let reply = hub.get(PHIL, "/api/memory/models").await?;
+    let reply = hub.get(DANA, "/api/memory/models").await?;
     assert_eq!(reply.status, 200, "{}", reply.body);
     let jobs: Vec<ModelJob> = serde_json::from_value(reply.body)?;
     let client = reqwest::Client::builder()
-        .default_headers(super::headers(PHIL)?)
+        .default_headers(super::headers(DANA)?)
         .build()?;
     crate::store_routes::none_unavailable(&client, &hub.base).await?;
     assert_eq!(jobs.len(), 5, "one row per role");
@@ -92,7 +92,7 @@ async fn a_hub_without_a_model_queues_nothing_it_cannot_run_and_reports_each_rol
     let before = queued(&modelled).await?;
     modelled
         .capture(
-            PHIL,
+            DANA,
             "claude-code:00000000-0000-4000-8000-00000000d002",
             &[
                 "a message long enough to be chunked and embedded later on",

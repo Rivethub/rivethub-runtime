@@ -113,7 +113,7 @@ fn message(event_id: &str, content: &str) -> CaptureMessage {
 fn session(number: usize, title: &str, messages: Vec<CaptureMessage>) -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("00000000-0000-4000-8000-{number:012}"),
             session_key: format!("claude-code:{number}"),
@@ -140,7 +140,7 @@ fn session(number: usize, title: &str, messages: Vec<CaptureMessage>) -> Bundled
 fn bundle(sessions: Vec<BundledSession>) -> Result<SessionBundle, capture::bundle::BundleError> {
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         DateTime::<Utc>::UNIX_EPOCH,

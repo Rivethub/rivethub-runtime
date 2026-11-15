@@ -207,14 +207,14 @@ fn history_is_one_entry_per_summary_newest_first() {
 #[test]
 fn an_identification_keeps_the_verbatim_mention() {
     let parsed = parse_identifications(
-        r#"{"observations":[{"name":"node_a","type":"Hosts","mention":"agent CTs 113/116/117/118/112/107"}]}"#,
+        r#"{"observations":[{"name":"node_a","type":"Hosts","mention":"build VMs 213/216/217/218/212/207"}]}"#,
     )
     .unwrap();
     let mention = parsed
         .observations
         .first()
         .map(|item| item.mention.as_str());
-    assert_eq!(mention, Some("agent CTs 113/116/117/118/112/107"));
+    assert_eq!(mention, Some("build VMs 213/216/217/218/212/207"));
 }
 
 #[test]

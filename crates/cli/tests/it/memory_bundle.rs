@@ -30,7 +30,7 @@ fn node(extra: &[(&str, &str)]) -> Node {
     let users = directory.path().join("users.json");
     std::fs::write(
         &users,
-        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+        r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
     )
     .expect("users file");
     let mut environment = support::environment(&home)
@@ -113,11 +113,11 @@ async fn bundle_takes_every_repeated_session_and_credits_the_node_owner() {
     let bundle = bundle_at(&out);
     assert_eq!(bundle.version, 2);
     assert_eq!(bundle.manifest.session_count, 2);
-    assert_eq!(bundle.manifest.exported_by.user, "phil");
+    assert_eq!(bundle.manifest.exported_by.user, "dana");
     assert_eq!(bundle.manifest.exported_by.node, "desk");
     assert_eq!(session_keys(&bundle), ["claude-code:one", "codex:three"]);
     let first = bundle.sessions.first().expect("first session");
-    assert_eq!(first.origin.author, "phil");
+    assert_eq!(first.origin.author, "dana");
     assert_eq!(
         first.batch.settings,
         Some(serde_json::from_str(r#"{"model":"opus"}"#).expect("settings"))
@@ -289,9 +289,9 @@ async fn a_dry_run_lists_every_session_and_its_author() {
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
     assert_eq!(
         report.stdout,
-        "claude-code:one (rivet): 1 message from phil, 2026-10-14 to 2026-10-14\n\
-         codex:three (rivet-gpt): 1 message from phil, 2026-10-16 to 2026-10-16\n\
-         would ingest 2 sessions from phil (raw bundle; ingest needs --force); nothing written\n"
+        "claude-code:one (rivet): 1 message from dana, 2026-10-14 to 2026-10-14\n\
+         codex:three (rivet-gpt): 1 message from dana, 2026-10-16 to 2026-10-16\n\
+         would ingest 2 sessions from dana (raw bundle; ingest needs --force); nothing written\n"
     );
 }
 
@@ -378,9 +378,9 @@ async fn captured(store: &PostgresMemory, owner: &str, session_key: &str) -> Str
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPool) {
     let store = PostgresMemory::new(pool.clone());
-    let mine = captured(&store, "phil", "claude-code:mine").await;
-    let other = captured(&store, "phil", "claude-code:other").await;
-    let alexs = captured(&store, "alex", "claude-code:alex").await;
+    let mine = captured(&store, "dana", "claude-code:mine").await;
+    let other = captured(&store, "dana", "claude-code:other").await;
+    let iness = captured(&store, "ines", "claude-code:ines").await;
     let url = pool.connect_options().to_url_lossy().to_string();
     let node = node(&[("RIVETHUB_PG_URL", &url)]);
     let out = node.directory.path().join("s.json");
@@ -407,18 +407,18 @@ async fn postgres_bundle_exports_only_the_node_owners_named_sessions(pool: PgPoo
         bundle
             .sessions
             .iter()
-            .all(|session| session.origin.author == "phil")
+            .all(|session| session.origin.author == "dana")
     );
 
     let refused = run(
-        &["memory", "bundle", "--out", &out_text, "--session", &alexs],
+        &["memory", "bundle", "--out", &out_text, "--session", &iness],
         &node.environment,
     )
     .await;
     assert_eq!(refused.exit, Exit::Failure);
     assert_eq!(
         refused.stderr,
-        format!("Error: no session this node can export has the id {alexs}\n")
+        format!("Error: no session this node can export has the id {iness}\n")
     );
     assert_eq!(bundle_at(&out), bundle);
 }
@@ -428,7 +428,7 @@ const PLANTED_TOKEN: &str = concat!("ghp_", "Zq8RmT2vLx9WcN4bKp7HyJ3dFs6GtA1eUo5
 fn planted_bundle(directory: &Path, sanitization: wire::capture::Sanitization) -> String {
     let session = wire::capture::BundledSession {
         origin: wire::capture::SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:one".to_owned(),
@@ -461,7 +461,7 @@ fn planted_bundle(directory: &Path, sanitization: wire::capture::Sanitization) -
     };
     let sealed = capture::bundle::seal(
         wire::capture::BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         chrono::DateTime::UNIX_EPOCH,
@@ -544,7 +544,7 @@ async fn a_sanitized_bundle_passes_the_ingest_scan_without_force() {
     assert!(
         ingest
             .stdout
-            .ends_with("would ingest 1 session from phil; nothing written\n"),
+            .ends_with("would ingest 1 session from dana; nothing written\n"),
         "{}",
         ingest.stdout
     );
@@ -609,7 +609,7 @@ async fn a_forged_sanitized_stamp_is_held_when_a_secret_still_matches() {
     assert!(
         spans
             .stdout
-            .ends_with("would ingest 1 session from phil (spans held in 1); nothing written\n"),
+            .ends_with("would ingest 1 session from dana (spans held in 1); nothing written\n"),
         "{}",
         spans.stdout
     );

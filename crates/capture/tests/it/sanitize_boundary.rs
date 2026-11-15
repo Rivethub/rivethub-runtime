@@ -40,7 +40,7 @@ fn message(event_id: &str, content: &str) -> CaptureMessage {
 fn session(key: &str, messages: Vec<CaptureMessage>) -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("conv-{key}"),
             session_key: key.to_owned(),
@@ -67,7 +67,7 @@ fn session(key: &str, messages: Vec<CaptureMessage>) -> BundledSession {
 fn raw(sessions: Vec<BundledSession>) -> Result<SessionBundle, Box<dyn std::error::Error>> {
     Ok(capture::bundle::seal(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         at()?,

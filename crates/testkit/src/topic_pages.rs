@@ -318,14 +318,14 @@ pub async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(
     let decided = Decision::new(
         topic.id,
         DecisionText::new("Smoke daily")?,
-        "phil",
+        "dana",
         None,
         at(12),
     );
     let sub_decided = Decision::new(
         sub.id,
         DecisionText::new("Smoke before merge")?,
-        "phil",
+        "dana",
         None,
         at(12),
     );

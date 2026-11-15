@@ -19,7 +19,7 @@ fn owner(name: &str) -> Result<Owner, kernel::owner::InvalidOwner> {
 fn session() -> BundledSession {
     BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:c1".to_owned(),
@@ -89,9 +89,9 @@ async fn seeded() -> Result<Seeded, Box<dyn std::error::Error>> {
     };
     let batch = session().received_batch(&receipt)?;
     let key =
-        wire::capture::owned_import_key("phil", &batch.session_key)?.ok_or("an import key")?;
+        wire::capture::owned_import_key("dana", &batch.session_key)?.ok_or("an import key")?;
     let posted: CaptureBatchRequest = serde_json::from_str(&serde_json::to_string(&batch)?)?;
-    kernel::memory::MemoryStore::capture(&store, posted, &owner("phil")?, None).await?;
+    kernel::memory::MemoryStore::capture(&store, posted, &owner("dana")?, None).await?;
     Ok(Seeded {
         store,
         key,
@@ -133,7 +133,7 @@ async fn contents(
 #[tokio::test]
 async fn nobody_appends_into_a_received_import() -> TestResult {
     let seeded = seeded().await?;
-    for name in ["coco", "phil"] {
+    for name in ["cleo", "dana"] {
         let refused = seeded
             .store
             .append(
@@ -156,16 +156,16 @@ async fn an_append_never_enters_another_owners_session() -> TestResult {
     let native = "claude-code:mine";
     seeded
         .store
-        .append(&owner("phil")?, vec![entry(native, "rivet", "mine")])
+        .append(&owner("dana")?, vec![entry(native, "rivet", "mine")])
         .await?;
 
     let refused = seeded
         .store
-        .append(&owner("coco")?, vec![entry(native, "rivet", "not yours")])
+        .append(&owner("cleo")?, vec![entry(native, "rivet", "not yours")])
         .await;
     seeded
         .store
-        .append(&owner("phil")?, vec![entry(native, "rivet", "again")])
+        .append(&owner("dana")?, vec![entry(native, "rivet", "again")])
         .await?;
 
     assert!(refused.is_err());
@@ -191,12 +191,12 @@ async fn a_session_that_carries_a_receipt_refuses_appends_under_any_key() -> Tes
     )?;
     batch.settings = Some(settings);
     let posted: CaptureBatchRequest = serde_json::from_str(&serde_json::to_string(&batch)?)?;
-    kernel::memory::MemoryStore::capture(&seeded.store, posted, &owner("phil")?, None).await?;
+    kernel::memory::MemoryStore::capture(&seeded.store, posted, &owner("dana")?, None).await?;
 
     let refused = seeded
         .store
         .append(
-            &owner("phil")?,
+            &owner("dana")?,
             vec![entry("claude-code:stamped", "rivet", "forged")],
         )
         .await;

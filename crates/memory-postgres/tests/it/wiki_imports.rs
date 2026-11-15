@@ -49,7 +49,7 @@ async fn citations_carry_the_importing_author(pool: PgPool) -> TestResult {
     let imported = cite(
         &pool,
         IMPORT_KEY,
-        r#"{"origin":{"author":"phil"},"receipt":{"verification":"verified"}}"#,
+        r#"{"origin":{"author":"dana"},"receipt":{"verification":"verified"}}"#,
         "acme",
     )
     .await?;
@@ -77,7 +77,7 @@ async fn citations_carry_the_importing_author(pool: PgPool) -> TestResult {
         .collect();
     assert_eq!(marked.len(), 2);
     assert!(marked.contains(&(native.to_string(), None)));
-    assert!(marked.contains(&(imported.to_string(), Some("phil"))));
+    assert!(marked.contains(&(imported.to_string(), Some("dana"))));
 
     let authors = memory
         .wiki_imported_authors(vec!["acme".to_owned(), "mine".to_owned()])
@@ -100,7 +100,7 @@ async fn summary_hits_of_an_import_carry_its_provenance(pool: PgPool) -> TestRes
     cite(
         &pool,
         IMPORT_KEY,
-        r#"{"origin":{"author":"phil"},"receipt":{"verification":"unsigned"}}"#,
+        r#"{"origin":{"author":"dana"},"receipt":{"verification":"unsigned"}}"#,
         "acme",
     )
     .await?;
@@ -130,7 +130,7 @@ async fn summary_hits_of_an_import_carry_its_provenance(pool: PgPool) -> TestRes
         .values()
         .find_map(|detail| detail.provenance.as_ref())
         .ok_or("a summary detail with provenance")?;
-    assert_eq!(provenance.author.as_deref(), Some("phil"));
+    assert_eq!(provenance.author.as_deref(), Some("dana"));
     assert_eq!(provenance.verification, Verification::Unsigned);
     Ok(())
 }

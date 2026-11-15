@@ -132,7 +132,7 @@ fn the_cap_keeps_the_latest_passages() {
 
 #[test]
 fn a_mention_matches_when_the_name_never_appears() {
-    let quote = "agent CTs 113/116/117/118/112/107";
+    let quote = "build VMs 213/216/217/218/212/207";
     #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let hostname = serde_json::json!({"command": "hostname"});
     let messages = vec![
@@ -155,7 +155,7 @@ fn a_mention_matches_when_the_name_never_appears() {
             Some(&Tool {
                 name: "Read",
                 args: None,
-                result: Some("guests: agent CTs 113/116/117/118/112/107\n"),
+                result: Some("guests: build VMs 213/216/217/218/212/207\n"),
             }),
         ),
     ];
@@ -170,15 +170,15 @@ fn a_mention_matches_through_markdown_and_whitespace() {
     let messages = vec![said(
         1,
         "2026-11-07T12:00:00Z",
-        "plan:\n\nagent **CTs**\n113/116/117/118/112/107",
+        "plan:\n\nbuild **VMs**\n213/216/217/218/212/207",
     )];
     let text = passages(
         &messages,
         "node_a",
         &[],
-        "agent CTs 113/116/117/118/112/107",
+        "build VMs 213/216/217/218/212/207",
     );
-    assert!(text.contains("**CTs**"));
+    assert!(text.contains("**VMs**"));
     assert_eq!(passages(&messages, "node_a", &[], ""), "");
 }
 

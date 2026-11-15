@@ -1,4 +1,4 @@
-use crate::import::phils_session;
+use crate::import::danas_session;
 
 use kernel::memory::MemoryEntry;
 use kernel::memory::MemoryStore as _;
@@ -42,7 +42,7 @@ async fn contents(pool: &PgPool, key: &str) -> Result<Vec<String>, sqlx::Error> 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn nobody_appends_into_a_received_import(pool: PgPool) -> TestResult {
     let store = PostgresMemory::new(pool.clone());
-    let session = phils_session()?;
+    let session = danas_session()?;
     let receipt = Receipt {
         bundle_id: "rhb1:t".to_owned(),
         received_at: "2026-11-09T00:00:00Z".parse()?,

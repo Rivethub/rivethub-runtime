@@ -64,7 +64,7 @@ fn session(n: u8) -> TestResult<BundledSession> {
     let key = format!("claude-code:s{n}");
     Ok(BundledSession {
         origin: SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: format!("00000000-0000-4000-8000-00000000000{n}"),
             session_key: key.clone(),
@@ -125,7 +125,7 @@ async fn sanitized_sessions(
 ) -> TestResult<(Outcome, String)> {
     let chosen = share::chosen(
         BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         sessions,

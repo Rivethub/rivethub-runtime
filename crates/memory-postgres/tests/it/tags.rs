@@ -119,13 +119,13 @@ async fn add_tag_accepts_ids_and_session_keys(pool: PgPool) -> TestResult {
             },
             display: Some("Deploy".to_string()),
             reason: Some("user picked it".to_string()),
-            decided_by: Some("phil".to_string()),
+            decided_by: Some("dana".to_string()),
         })
         .await?;
     assert_eq!(added.state, TagState::Accepted);
     assert_eq!(added.source, "user");
     assert_eq!(added.display, "Deploy");
-    assert_eq!(added.decided_by.as_deref(), Some("phil"));
+    assert_eq!(added.decided_by.as_deref(), Some("dana"));
     assert!(
         added.decided_at.is_some(),
         "a decided add stamps decided_at"
@@ -351,7 +351,7 @@ async fn decide_tags_updates_exactly_the_given_ids(pool: PgPool) -> TestResult {
         .decide_tags(
             vec![TagId::from_uuid(first)],
             TagDecision::Accept,
-            Some("phil".to_string()),
+            Some("dana".to_string()),
         )
         .await?;
     assert_eq!(changed, 1, "only the requested id changes");
@@ -373,7 +373,7 @@ async fn decide_tags_updates_exactly_the_given_ids(pool: PgPool) -> TestResult {
     );
     assert_eq!(
         first_row.try_get::<String, _>("decided_by").unwrap(),
-        "phil"
+        "dana"
     );
     assert!(first_row.try_get::<bool, _>("stamped").unwrap());
 
@@ -456,7 +456,7 @@ async fn taxonomy_upsert_decide_and_merge(pool: PgPool) -> TestResult {
                 value: "current".to_string(),
             }],
             decision: TagDecision::Reject,
-            decided_by: Some("phil".to_string()),
+            decided_by: Some("dana".to_string()),
         })
         .await?;
     assert_eq!(changed, 1);

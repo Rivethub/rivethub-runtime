@@ -38,7 +38,7 @@ fn node(decide_url: Option<&str>) -> Node {
     let users = directory.path().join("users.json");
     std::fs::write(
         &users,
-        r#"{"ownerUserId":"phil","unmappedIsOwner":true,"users":{}}"#,
+        r#"{"ownerUserId":"dana","unmappedIsOwner":true,"users":{}}"#,
     )
     .expect("users file");
     let decide = decide_url.map_or_else(String::new, |url| {
@@ -98,7 +98,7 @@ fn raw_bundle(directory: &Path) -> String {
     };
     let session = wire::capture::BundledSession {
         origin: wire::capture::SessionOrigin {
-            author: "phil".to_owned(),
+            author: "dana".to_owned(),
             node: "desk".to_owned(),
             conversation_id: "c1".to_owned(),
             session_key: "claude-code:one".to_owned(),
@@ -125,7 +125,7 @@ fn raw_bundle(directory: &Path) -> String {
     };
     let sealed = capture::bundle::seal(
         wire::capture::BundleAuthor {
-            user: "phil".to_owned(),
+            user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
         chrono::DateTime::UNIX_EPOCH,
@@ -233,7 +233,7 @@ async fn an_advisory_flag_stays_in_the_bundle_and_ingest_goes_ahead() {
     assert_eq!(ingest.exit, Exit::Ok, "{}", ingest.stderr);
     assert!(
         ingest.stdout.ends_with(
-            "would ingest 1 session from phil (1 advisory flags unreviewed); nothing written\n"
+            "would ingest 1 session from dana (1 advisory flags unreviewed); nothing written\n"
         ),
         "{}",
         ingest.stdout
@@ -340,7 +340,7 @@ async fn resolve_applies_a_map_mark_learns_the_rule_and_converges() {
     assert!(
         ingest
             .stdout
-            .ends_with("would ingest 1 session from phil; nothing written\n"),
+            .ends_with("would ingest 1 session from dana; nothing written\n"),
         "{}",
         ingest.stdout
     );

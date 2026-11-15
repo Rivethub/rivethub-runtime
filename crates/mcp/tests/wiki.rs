@@ -209,11 +209,11 @@ async fn citations_name_imported_authors() {
     mixed.citations = vec![
         citing(
             "00000000-0000-4000-8000-000000000001",
-            Some(imported("phil", "unsigned")),
+            Some(imported("dana", "unsigned")),
         ),
         citing(
             "00000000-0000-4000-8000-000000000002",
-            Some(imported("alex", "verified")),
+            Some(imported("ines", "verified")),
         ),
         citing("00000000-0000-4000-8000-000000000003", None),
     ];
@@ -223,10 +223,10 @@ async fn citations_name_imported_authors() {
     let read = support::call(&server, "wiki_read", r#"{"slug":"mixed"}"#).await;
     let view = text(&read);
     assert!(view.starts_with(
-        "Built partly from imported sessions: phil (unverified), alex (verified).\n\n---\n"
+        "Built partly from imported sessions: dana (unverified), ines (verified).\n\n---\n"
     ));
-    assert!(view.contains("| Decision 🦀 (imported from phil, unverified) |"));
-    assert!(view.contains("| Second (imported from alex, verified) |"));
+    assert!(view.contains("| Decision 🦀 (imported from dana, unverified) |"));
+    assert!(view.contains("| Second (imported from ines, verified) |"));
     assert!(view.contains("| Third |"));
     assert_eq!(view.matches("imported from").count(), 2);
 
@@ -236,7 +236,7 @@ async fn citations_name_imported_authors() {
     let search = support::call(&server, "wiki_search", r#"{"query":"日本語"}"#).await;
     assert_eq!(
         text(&search),
-        "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀\n\n## Acme 日本語 (mixed) — verified 2026-10-14\nBuilt partly from imported sessions: phil (unverified), alex (verified).\nReady 🦀"
+        "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀\n\n## Acme 日本語 (mixed) — verified 2026-10-14\nBuilt partly from imported sessions: dana (unverified), ines (verified).\nReady 🦀"
     );
     let requests = store.requests().await;
     let lookups = requests

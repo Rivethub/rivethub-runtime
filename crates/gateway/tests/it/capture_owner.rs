@@ -11,7 +11,7 @@ use testkit::Request;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const COCO: &str = "coco-capture-token";
+const CLEO: &str = "cleo-capture-token";
 
 const BATCH: &str = r#"{"session_key":"cli:owned","agent":"rivet","channel":"cli","messages":[{"event_id":"e1","role":"user","content":"hello"}]}"#;
 
@@ -57,7 +57,7 @@ async fn owners(store: &FakeMemoryStore) -> Vec<String> {
 #[tokio::test]
 async fn capture_and_append_record_the_authenticated_caller_as_owner() -> TestResult {
     let store = Arc::new(FakeMemoryStore::default());
-    let tenancy = Tenancy::local(user("phil")).with_token(COCO, user("coco"))?;
+    let tenancy = Tenancy::local(user("dana")).with_token(CLEO, user("cleo"))?;
     let gateway = Arc::new(
         Gateway::new(Arc::clone(&store) as _, common::settings())
             .with_local_owner(crate::common::local_owner())
@@ -66,9 +66,9 @@ async fn capture_and_append_record_the_authenticated_caller_as_owner() -> TestRe
     let app = gateway.router(false);
     for (target, body, token) in [
         ("/api/capture", BATCH, None),
-        ("/api/capture", BATCH, Some(COCO)),
+        ("/api/capture", BATCH, Some(CLEO)),
         ("/api/memory/tool/memory_append", APPENDED, None),
-        ("/api/memory/tool/memory_append", APPENDED, Some(COCO)),
+        ("/api/memory/tool/memory_append", APPENDED, Some(CLEO)),
     ] {
         let response = common::answer(app.clone(), post(target, body, token)).await?;
         assert_eq!(
@@ -80,7 +80,7 @@ async fn capture_and_append_record_the_authenticated_caller_as_owner() -> TestRe
     }
     let unknown = common::answer(app, post("/api/capture", BATCH, Some("not-a-token"))).await?;
     assert_eq!(unknown.status, 401);
-    assert_eq!(owners(&store).await, ["phil", "coco", "phil", "coco"]);
+    assert_eq!(owners(&store).await, ["dana", "cleo", "dana", "cleo"]);
     Ok(())
 }
 
@@ -92,13 +92,13 @@ fn imported(settings: &str) -> String {
 
 fn received() -> String {
     imported(&format!(
-        r#"{{"origin":{{"author":"Phil"}},"receipt":{RECEIPT}}}"#
+        r#"{{"origin":{{"author":"Dana"}},"receipt":{RECEIPT}}}"#
     ))
 }
 
 fn member_gateway() -> Result<(Arc<FakeMemoryStore>, axum::Router), Box<dyn std::error::Error>> {
     let store = Arc::new(FakeMemoryStore::default());
-    let tenancy = Tenancy::local(user("phil")).with_token(COCO, user("coco"))?;
+    let tenancy = Tenancy::local(user("dana")).with_token(CLEO, user("cleo"))?;
     let gateway = Arc::new(
         Gateway::new(Arc::clone(&store) as _, common::settings())
             .with_local_owner(crate::common::local_owner())
@@ -121,7 +121,7 @@ async fn a_member_import_is_stored_but_never_reads_as_verified() -> TestResult {
         ("a forged receipt", received()),
         ("a receipt on a native key", native_receipt),
     ] {
-        let response = common::answer(app.clone(), post("/api/capture", &body, Some(COCO))).await?;
+        let response = common::answer(app.clone(), post("/api/capture", &body, Some(CLEO))).await?;
         assert_eq!(
             response.status,
             200,
@@ -129,12 +129,12 @@ async fn a_member_import_is_stored_but_never_reads_as_verified() -> TestResult {
             String::from_utf8_lossy(&response.body)
         );
     }
-    assert_eq!(owners(&store).await, ["coco", "coco"]);
+    assert_eq!(owners(&store).await, ["cleo", "cleo"]);
     let key = imported_key()?;
     let origins = kernel::memory::MemoryStore::lookup_origins(&*store, vec![key.clone()]).await?;
     let provenance = origins.get(&key).ok_or("no provenance")?;
     assert!(!provenance.verification.is_verified());
-    assert_eq!(provenance.author.as_deref(), Some("Phil"));
+    assert_eq!(provenance.author.as_deref(), Some("Dana"));
     Ok(())
 }
 
@@ -152,6 +152,6 @@ async fn the_owner_token_records_a_verified_receipt() -> TestResult {
     let origins = kernel::memory::MemoryStore::lookup_origins(&*store, vec![key.clone()]).await?;
     let provenance = origins.get(&key).ok_or("no provenance")?;
     assert!(provenance.verification.is_verified());
-    assert_eq!(provenance.author.as_deref(), Some("Phil"));
+    assert_eq!(provenance.author.as_deref(), Some("Dana"));
     Ok(())
 }

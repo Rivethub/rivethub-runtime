@@ -17,8 +17,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const FAMILY_ONLY: &str = "claude-code:00000000-0000-4000-8000-0000000000d1";
 const BOTH_SMALLER: &str = "claude-code:00000000-0000-4000-8000-0000000000d2";
 const BOTH_LARGER: &str = "claude-code:00000000-0000-4000-8000-0000000000d3";
-const COCO_ONLY: &str = "claude-code:00000000-0000-4000-8000-0000000000d4";
-const PHILS_IN_COCO: &str = "claude-code:00000000-0000-4000-8000-0000000000d5";
+const CLEO_ONLY: &str = "claude-code:00000000-0000-4000-8000-0000000000d4";
+const DANAS_IN_CLEO: &str = "claude-code:00000000-0000-4000-8000-0000000000d5";
 
 fn batch(session: &str, count: usize) -> CaptureBatchRequest {
     CaptureBatchRequest {
@@ -94,34 +94,34 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     let source = PostgresMemory::new(source_pool.clone());
     capture(
         &family,
-        "phil",
+        "dana",
         &[(FAMILY_ONLY, 1), (BOTH_SMALLER, 3), (BOTH_LARGER, 1)],
     )
     .await?;
     capture(
         &source,
-        "coco",
+        "cleo",
         &[
             (BOTH_SMALLER, 2),
             (BOTH_LARGER, 4),
-            (COCO_ONLY, 2),
-            (PHILS_IN_COCO, 1),
+            (CLEO_ONLY, 2),
+            (DANAS_IN_CLEO, 1),
         ],
     )
     .await?;
     let moved: Uuid = sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
-        .bind(PHILS_IN_COCO)
+        .bind(DANAS_IN_CLEO)
         .fetch_one(&source_pool)
         .await?;
     sqlx::query(
         "INSERT INTO rh_wiki_topics (slug, title, current_state, article, search_text, created_at, updated_at, owner_user_id)
-         VALUES ('sourdough', 'Sourdough', 'Fed twice a day.', '', 'sourdough', now(), now(), 'coco')",
+         VALUES ('sourdough', 'Sourdough', 'Fed twice a day.', '', 'sourdough', now(), now(), 'cleo')",
     )
     .execute(&source_pool)
     .await?;
     let request = MergeRequest {
-        owner: Owner::new("coco".to_owned())?,
-        moves: BTreeMap::from([(moved, Owner::new("phil".to_owned())?)]),
+        owner: Owner::new("cleo".to_owned())?,
+        moves: BTreeMap::from([(moved, Owner::new("dana".to_owned())?)]),
         dry_run: false,
     };
     let cancel = CancellationToken::new();
@@ -139,11 +139,11 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     assert_eq!(
         found,
         vec![
-            (format!("{FAMILY_ONLY} phil private"), "1".to_owned()),
-            (format!("{BOTH_SMALLER} phil private"), "3".to_owned()),
-            (format!("{BOTH_LARGER} phil private"), "4".to_owned()),
-            (format!("{COCO_ONLY} coco private"), "2".to_owned()),
-            (format!("{PHILS_IN_COCO} phil private"), "1".to_owned()),
+            (format!("{FAMILY_ONLY} dana private"), "1".to_owned()),
+            (format!("{BOTH_SMALLER} dana private"), "3".to_owned()),
+            (format!("{BOTH_LARGER} dana private"), "4".to_owned()),
+            (format!("{CLEO_ONLY} cleo private"), "2".to_owned()),
+            (format!("{DANAS_IN_CLEO} dana private"), "1".to_owned()),
         ]
     );
     let owners = rows(
@@ -154,8 +154,8 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     assert_eq!(
         owners,
         vec![
-            ("coco".to_owned(), "2".to_owned()),
-            ("phil".to_owned(), "9".to_owned())
+            ("cleo".to_owned(), "2".to_owned()),
+            ("dana".to_owned(), "9".to_owned())
         ]
     );
     let types = rows(
@@ -182,8 +182,8 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     assert_eq!(
         pages,
         vec![(
-            "coco-sourdough sourdough".to_owned(),
-            "users/coco coco".to_owned()
+            "cleo-sourdough sourdough".to_owned(),
+            "users/cleo cleo".to_owned()
         )],
         "a merged page becomes its owner's page under its original file name"
     );

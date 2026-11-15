@@ -591,7 +591,7 @@ mod tests {
                 "{line}"
             );
         }
-        assert_eq!(mark_line("Marked by Phil"), None);
+        assert_eq!(mark_line("Marked by Dana"), None);
     }
 
     #[test]

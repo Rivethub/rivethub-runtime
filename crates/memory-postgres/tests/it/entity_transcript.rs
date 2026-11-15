@@ -60,7 +60,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
             content: "Bash",
             tool_name: Some("Bash"),
             tool_args: Some(serde_json::json!({"command": "hostname"})),
-            tool_result: Some("gpubox\n"),
+            tool_result: Some("tinbox\n"),
             created_at: at("2026-10-10T13:05:00Z"),
         },
     )
@@ -130,7 +130,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
             .and_then(|value| value.as_str()),
         Some("hostname")
     );
-    assert_eq!(tool.tool_result.as_deref(), Some("gpubox\n"));
+    assert_eq!(tool.tool_result.as_deref(), Some("tinbox\n"));
     assert_eq!(tool.at, at("2026-10-10T13:05:00Z"));
     Ok(())
 }

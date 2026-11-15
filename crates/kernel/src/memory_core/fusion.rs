@@ -262,7 +262,7 @@ mod tests {
         for literal in [
             "crates/kernel",
             "main.rs",
-            "rivet@host",
+            "admin@host",
             "host:5441",
             "snake_case",
             "203.0.113.12",
