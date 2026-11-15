@@ -35,6 +35,7 @@ mod share_policy;
 mod spool_and_transport;
 mod spool_recovery;
 mod stop_reply;
+mod store_history;
 mod store_hook;
 mod store_paths;
 mod store_readers;
