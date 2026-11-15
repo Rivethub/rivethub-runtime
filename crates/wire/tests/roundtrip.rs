@@ -10,10 +10,6 @@ fn golden(rel: &str) -> PathBuf {
     Path::new(GOLDEN_DIR).join(rel)
 }
 
-fn recording(rel: &str) -> PathBuf {
-    testkit::recording(rel)
-}
-
 fn load(rel: &str, path: &Path) -> Result<Value, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{rel}: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("{rel}: {e}"))
@@ -145,7 +141,7 @@ fn roundtrip_exchange_file(rel: &str, path: &Path, errors: &mut Vec<String>) -> 
 }
 
 fn roundtrip_capture_batches(rel: &str, errors: &mut Vec<String>) -> Result<(), String> {
-    let doc = load(rel, &recording(rel))?;
+    let doc = load(rel, &testkit::recording(rel))?;
     let Some(entries) = doc.as_array() else {
         return Ok(());
     };
@@ -170,7 +166,7 @@ fn roundtrip_capture_batches(rel: &str, errors: &mut Vec<String>) -> Result<(), 
 
 fn roundtrip_capture_results(errors: &mut Vec<String>) -> Result<(), String> {
     let rel = "capture/writer/results.json";
-    let doc = load(rel, &recording(rel))?;
+    let doc = load(rel, &testkit::recording(rel))?;
     let Some(results) = doc.as_object() else {
         return Ok(());
     };
@@ -195,7 +191,7 @@ fn provider_chat_request(label: &str, body: &str) -> Result<(), String> {
 
 fn provider_requests(server: &str, scenario: &str, errors: &mut Vec<String>) -> Result<(), String> {
     let rel = format!("providers/{server}/{scenario}/requests.json");
-    let doc = load(&rel, &recording(&rel))?;
+    let doc = load(&rel, &testkit::recording(&rel))?;
     let Some(entries) = doc.as_array() else {
         return Ok(());
     };
@@ -228,7 +224,7 @@ fn provider_responses(
     errors: &mut Vec<String>,
 ) -> Result<(), String> {
     let dir = format!("providers/{server}/{scenario}");
-    let dir_path = recording(&dir);
+    let dir_path = testkit::recording(&dir);
     let entries = std::fs::read_dir(&dir_path).map_err(|e| format!("{dir}: {e}"))?;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -302,7 +298,7 @@ fn gateway_http_bodies_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     roundtrip_exchange_file(
         "gateway/http-plain.json",
-        &recording("gateway/http-plain.json"),
+        &testkit::recording("gateway/http-plain.json"),
         &mut errors,
     )?;
     check(&errors)
@@ -326,7 +322,7 @@ fn capture_batches_roundtrip() -> Result<(), String> {
         "capture/writer/finalize_multi_chunk.input.json",
         "capture/writer/elide_tool_args.input.json",
     ] {
-        let body = load(name, &recording(name))?;
+        let body = load(name, &testkit::recording(name))?;
         errors.push_result(roundtrip_as::<wire::capture::CaptureBatchRequest>(
             name,
             &body.to_string(),

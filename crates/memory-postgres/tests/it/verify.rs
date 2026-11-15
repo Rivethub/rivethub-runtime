@@ -1,9 +1,6 @@
-use std::sync::Arc;
-
 use memory_postgres::Error;
 use memory_postgres::PostgresMemory;
 use memory_postgres::SCHEMA_VERSION;
-use parking_lot::Mutex;
 use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
 
@@ -69,10 +66,15 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
     )
     .execute(&pool)
     .await?;
-    let (guard, lines) = warnings();
+    let (guard, lines) = testkit::logs::recorded();
     PostgresMemory::connect(&url(&pool)).await?;
     drop(guard);
-    let lines = lines.lock().clone();
+    let lines: Vec<String> = lines
+        .lock()
+        .iter()
+        .filter(|line| line.starts_with("WARN "))
+        .cloned()
+        .collect();
     let [line] = lines.as_slice() else {
         return Err(format!("exactly one rolling-update warning, got {lines:?}").into());
     };
@@ -83,40 +85,6 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
         "the warning must name the rolling update: {line}"
     );
     Ok(())
-}
-
-struct WarningRecorder(Arc<Mutex<Vec<String>>>);
-
-struct MessageVisitor(Arc<Mutex<Vec<String>>>);
-
-impl tracing::field::Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.0.lock().push(format!("{value:?}"));
-        }
-    }
-}
-
-impl<S> tracing_subscriber::Layer<S> for WarningRecorder
-where
-    S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
-{
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _context: tracing_subscriber::layer::Context<'_, S>,
-    ) {
-        if *event.metadata().level() == tracing::Level::WARN {
-            event.record(&mut MessageVisitor(self.0.clone()));
-        }
-    }
-}
-
-fn warnings() -> (tracing::subscriber::DefaultGuard, Arc<Mutex<Vec<String>>>) {
-    use tracing_subscriber::layer::SubscriberExt as _;
-    let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-    let subscriber = tracing_subscriber::registry().with(WarningRecorder(lines.clone()));
-    (tracing::subscriber::set_default(subscriber), lines)
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

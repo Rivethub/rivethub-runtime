@@ -29,7 +29,6 @@ fn base_config(server: &FixedStatusServer) -> EmbedConfig {
         api_key: None,
         expected_dims: None,
         timeout_ms: Some(5_000),
-        query_instruction: None,
     }
 }
 
@@ -71,7 +70,6 @@ async fn a_well_formed_response_is_one_embedding_per_input() {
     let embedder = embedder(EmbedConfig {
         api_key: Some("embed-key".to_owned()),
         expected_dims: Some(8),
-        query_instruction: Some("Instruct: retrieve\nQuery: ".to_owned()),
         ..base_config(&server)
     });
     let out = within(embedder.embed(vec!["hello world".to_owned()]))

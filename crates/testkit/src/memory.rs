@@ -52,7 +52,6 @@ pub struct FakeMemoryStore {
     wiki_pages: Mutex<BTreeMap<String, kernel::wiki::WikiPageResponse>>,
     wiki_redirects: Mutex<BTreeMap<String, String>>,
     wiki_error: Mutex<Option<MemoryStoreError>>,
-    tag_entities: Mutex<BTreeMap<String, Uuid>>,
     embeddings_armed: std::sync::atomic::AtomicBool,
     summary_dags: Mutex<BTreeMap<SummaryOwner, SummaryDag>>,
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
@@ -76,10 +75,6 @@ impl FakeMemoryStore {
         activity: Vec<kernel::harness_setup::CaptureActivity>,
     ) {
         *self.capture_activity.lock().await = activity;
-    }
-
-    pub async fn script_session_entity(&self, session: String, entity: Uuid) {
-        self.tag_entities.lock().await.insert(session, entity);
     }
 
     pub async fn fail_next_wiki_request(&self, error: MemoryStoreError) {
@@ -471,15 +466,11 @@ impl MemoryStore for FakeMemoryStore {
             entity_type: add.entity_type,
             entity_id: match &add.entity {
                 TagEntity::Id(id) => id.to_string(),
-                TagEntity::SessionKey(session) => self
-                    .tag_entities
-                    .lock()
-                    .await
-                    .get(session)
-                    .ok_or_else(|| MemoryStoreError::InvalidRequest {
+                TagEntity::SessionKey(session) => {
+                    return Err(MemoryStoreError::InvalidRequest {
                         message: format!("no scripted entity for session {session}"),
-                    })?
-                    .to_string(),
+                    });
+                }
             },
             key: add.tag.key,
             value: add.tag.value,

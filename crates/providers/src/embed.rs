@@ -22,7 +22,6 @@ pub struct EmbedConfig {
     pub api_key: Option<String>,
     pub expected_dims: Option<u32>,
     pub timeout_ms: Option<u64>,
-    pub query_instruction: Option<String>,
 }
 
 #[derive(Debug, Error)]

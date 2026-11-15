@@ -96,7 +96,6 @@ pub struct HarnessSessionResponse {
     pub summary: HarnessSessionSummary,
     pub redirected_to: Option<SessionId>,
     pub switches: Option<SessionSwitches>,
-    pub running_elsewhere: Option<bool>,
 }
 
 #[derive(

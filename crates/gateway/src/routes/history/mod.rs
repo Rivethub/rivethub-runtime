@@ -139,7 +139,6 @@ async fn summary(
         summary,
         switches: None,
         redirected_to: resolved.redirected_to,
-        running_elsewhere: None,
     }))
 }
 
@@ -247,7 +246,6 @@ async fn rename(
         summary,
         switches: None,
         redirected_to: resolved.redirected_to,
-        running_elsewhere: None,
     }))
 }
 

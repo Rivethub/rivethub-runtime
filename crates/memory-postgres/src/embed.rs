@@ -311,38 +311,6 @@ mod tests {
         }
     }
 
-    struct WarningRecorder(Arc<Mutex<Vec<String>>>);
-
-    struct MessageVisitor(Arc<Mutex<Vec<String>>>);
-
-    impl tracing::field::Visit for MessageVisitor {
-        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-            if field.name() == "message" {
-                self.0.lock().push(format!("{value:?}"));
-            }
-        }
-    }
-
-    impl<S> tracing_subscriber::Layer<S> for WarningRecorder
-    where
-        S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
-    {
-        fn on_event(
-            &self,
-            event: &tracing::Event<'_>,
-            _context: tracing_subscriber::layer::Context<'_, S>,
-        ) {
-            event.record(&mut MessageVisitor(self.0.clone()));
-        }
-    }
-
-    fn warnings() -> (tracing::subscriber::DefaultGuard, Arc<Mutex<Vec<String>>>) {
-        use tracing_subscriber::layer::SubscriberExt as _;
-        let lines: Arc<Mutex<Vec<String>>> = Arc::default();
-        let subscriber = tracing_subscriber::registry().with(WarningRecorder(lines.clone()));
-        (tracing::subscriber::set_default(subscriber), lines)
-    }
-
     #[tokio::test]
     async fn embed_failure_reasons_come_from_the_typed_provider_cases() {
         for (script, want) in [
@@ -453,7 +421,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn dropped_vector_arms_warn_at_most_once_per_minute() {
-        let (guard, lines) = warnings();
+        let (guard, lines) = testkit::logs::recorded();
         let Harness { arm, .. } = harness(vec![Script::EmbedHttpStatus(500); 3], None);
         let drop_once = || async {
             let attempt = arm.query_vector("deploy").await;
@@ -484,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn warn_only_failures_warn_without_counting() {
-        let (guard, lines) = warnings();
+        let (guard, lines) = testkit::logs::recorded();
         let arm = harness(vec![Script::EmbedNetwork], None).arm;
         let EmbedAttempt::Failed { failure, .. } = arm.query_vector("query").await else {
             panic!("provider must fail")

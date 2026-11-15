@@ -18,7 +18,6 @@ struct Session {
 pub(crate) struct Harness {
     sessions: Mutex<BTreeMap<SessionId, Session>>,
     pub(crate) requests: Mutex<Vec<SessionSpec>>,
-    pub(crate) prompts: Mutex<Vec<TurnInput>>,
     pub(crate) options: Mutex<Vec<SessionOption>>,
     pub(crate) events: Vec<SessionEvent>,
 }
@@ -49,11 +48,7 @@ impl HarnessAdapter for Harness {
         Ok(session)
     }
 
-    async fn prompt(
-        &self,
-        session: &SessionId,
-        input: TurnInput,
-    ) -> Result<(), HarnessAdapterError> {
+    async fn prompt(&self, session: &SessionId, _: TurnInput) -> Result<(), HarnessAdapterError> {
         let output = self
             .sessions
             .lock()
@@ -62,7 +57,6 @@ impl HarnessAdapter for Harness {
             .ok_or_else(|| HarnessAdapterError::UnknownSession(session.clone()))?
             .output
             .clone();
-        self.prompts.lock().await.push(input);
         for event in &self.events {
             output
                 .send(event.clone())

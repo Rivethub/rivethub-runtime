@@ -18,25 +18,15 @@ pub fn is_prompt_tool(name: &str) -> bool {
     name.trim().to_lowercase().parse::<PromptTool>().is_ok()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreviewKind {
-    Said,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preview {
-    pub kind: PreviewKind,
     pub text: String,
     pub at: DateTime<Utc>,
 }
 
 impl Preview {
-    pub fn new(kind: PreviewKind, text: &str, at: DateTime<Utc>) -> Option<Self> {
-        one_line(text).map(|text| Self { kind, text, at })
-    }
-
     pub fn said(reply: &str, at: DateTime<Utc>) -> Option<Self> {
-        Self::new(PreviewKind::Said, last_line(reply)?, at)
+        one_line(last_line(reply)?).map(|text| Self { text, at })
     }
 
     pub fn from_transcript(
@@ -106,8 +96,8 @@ mod tests {
         ];
         let said = Preview::from_transcript(&turns, now);
         assert_eq!(
-            said.map(|said| (said.kind, said.text, said.at.timestamp_millis())),
-            Some((PreviewKind::Said, "All four checks pass.".into(), 1_000))
+            said.map(|said| (said.text, said.at.timestamp_millis())),
+            Some(("All four checks pass.".into(), 1_000))
         );
         let long = "x".repeat(PREVIEW_CHARS + 50);
         let clipped = Preview::said(&long, now)

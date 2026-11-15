@@ -9,6 +9,7 @@ pub mod filing_bulk;
 pub mod graphile_schema;
 pub mod http;
 pub mod json;
+pub mod logs;
 pub mod mcp_text;
 pub mod memory;
 mod memory_request;

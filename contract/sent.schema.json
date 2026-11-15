@@ -3083,12 +3083,6 @@
             }
           ]
         },
-        "runningElsewhere": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "sessionId": {
           "$ref": "#/$defs/SessionId"
         },

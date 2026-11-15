@@ -46,7 +46,7 @@ async fn an_unreachable_provider_stops_claiming_until_it_recovers() {
         2,
         Arc::clone(&flaky) as Arc<dyn ModelProvider>,
     );
-    let (guard, lines) = warnings();
+    let (guard, lines) = testkit::logs::recorded();
     let ids = seed(&rig, &["a", "b", "c", "d", "e", "f"]).await;
     let (cancel, run) = spawn(&rig);
     assert_held(&rig, &ids, 2).await;
@@ -86,7 +86,7 @@ async fn provider_outages_hold_jobs_without_spending_attempts() {
             1,
             Arc::clone(&flaky) as Arc<dyn ModelProvider>,
         );
-        let (guard, lines) = warnings();
+        let (guard, lines) = testkit::logs::recorded();
         let ids = seed(&rig, &["a", "b", "c"]).await;
         let (cancel, run) = spawn(&rig);
         assert_held(&rig, &ids, 1).await;
@@ -396,44 +396,6 @@ fn kind_refused() -> ModelProviderError {
             "tcp",
         )),
     }
-}
-
-struct WarningRecorder(Arc<Mutex<Vec<String>>>);
-
-struct MessageVisitor(Arc<Mutex<Vec<String>>>);
-
-impl tracing::field::Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.0.lock().push(format!("{value:?}"));
-        }
-    }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            self.0.lock().push(value.to_owned());
-        }
-    }
-}
-
-impl<S> tracing_subscriber::Layer<S> for WarningRecorder
-where
-    S: tracing::Subscriber + for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
-{
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _context: tracing_subscriber::layer::Context<'_, S>,
-    ) {
-        event.record(&mut MessageVisitor(Arc::clone(&self.0)));
-    }
-}
-
-fn warnings() -> (tracing::subscriber::DefaultGuard, Arc<Mutex<Vec<String>>>) {
-    use tracing_subscriber::layer::SubscriberExt as _;
-    let lines = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::registry().with(WarningRecorder(Arc::clone(&lines)));
-    (tracing::subscriber::set_default(subscriber), lines)
 }
 
 fn mentions(lines: &Mutex<Vec<String>>, needle: &str) -> usize {

@@ -35,7 +35,6 @@ sqlx = { workspace = true, features = ["macros"] }
 strum = { workspace = true }
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "test-util"] }
-tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

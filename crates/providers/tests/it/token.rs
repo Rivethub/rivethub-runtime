@@ -398,7 +398,6 @@ async fn the_memory_embedder_sends_its_provider_bearer_and_remints_on_401() {
             api_key: None,
             expected_dims: None,
             timeout_ms: Some(5_000),
-            query_instruction: None,
         })
         .and_then(|embedder| embedder.with_provider_auth(&source)),
         "the embedder builds",

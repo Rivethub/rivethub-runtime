@@ -32,7 +32,6 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
-tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

@@ -301,7 +301,6 @@ pub(crate) fn embedder(endpoint: String) -> providers::embed::Embedder {
         api_key: None,
         expected_dims: None,
         timeout_ms: Some(5000),
-        query_instruction: None,
     })
     .expect("embedder")
 }
