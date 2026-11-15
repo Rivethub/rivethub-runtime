@@ -222,7 +222,7 @@ async fn signed_in(node: &Node, host: &str) -> Result<Approval, cli::Error> {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
     let served = serve().await;
     let base = format!("http://{}", served.host);
@@ -279,7 +279,7 @@ async fn discovered_endpoints_get_form_bodies_and_a_pending_login_signs_in() {
     assert!(node.logins().contains(&served.host), "{}", node.logins());
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn denied_and_expired_approvals_end_the_login() {
     for (code, wanted) in [
         ("access_denied", Approval::Denied),
@@ -299,7 +299,7 @@ async fn denied_and_expired_approvals_end_the_login() {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn slow_down_adds_five_seconds_to_the_interval() {
     let served = serve().await;
     served.auth.queue("/api/auth/device/code", [device(1)]);
@@ -390,7 +390,7 @@ async fn a_hub_that_disables_the_cloud_gives_the_desk_no_server_to_sign_in_to() 
     assert!(servers.servers.is_empty(), "{:?}", servers.servers);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn token_replies_never_reach_an_error() {
     let unparsable = ok(
         r#"{"access_token":"rhca_LEAKED","token_type":"Bearer","expires_in":"900","refresh_token":"rhcr_LEAKED","scope":"drops:write"}"#,
