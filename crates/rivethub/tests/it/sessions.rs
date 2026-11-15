@@ -209,7 +209,7 @@ impl Node {
             cli::memory::SessionStore::Sqlite(store.clone()),
         )?;
         Ok(
-            mcp::Server::builder(Arc::new(store), false, CancellationToken::new())
+            mcp::Server::builder(Arc::new(store), CancellationToken::new())
                 .sessions(kit)
                 .build()?,
         )

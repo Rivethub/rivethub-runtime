@@ -396,7 +396,7 @@ pub(crate) async fn node(
         owner,
         node: "desk".to_owned(),
     };
-    let server = Server::builder(store.clone(), false, CancellationToken::new())
+    let server = Server::builder(store.clone(), CancellationToken::new())
         .sessions(kit)
         .build()
         .expect("server");

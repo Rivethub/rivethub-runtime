@@ -49,7 +49,6 @@ struct SessionEntry {
     events: Option<Receiver<SessionEvent>>,
     exited: Arc<AtomicBool>,
     shutdown: CancellationToken,
-    images: bool,
 }
 
 impl Drop for SessionEntry {
@@ -66,7 +65,6 @@ struct SessionSnapshot {
     options: Arc<SessionOptions>,
     turn_end: mpsc::UnboundedSender<crate::context::TurnEnd>,
     exited: Arc<AtomicBool>,
-    images: bool,
 }
 
 #[derive(Debug)]
@@ -155,7 +153,6 @@ impl AcpHarnessAdapter {
             options: Arc::clone(&entry.options),
             turn_end: entry.turn_end.clone(),
             exited: entry.exited.clone(),
-            images: entry.images,
         });
         drop(sessions);
         snapshot.ok_or_else(|| HarnessAdapterError::UnknownSession(session.clone()))
@@ -176,7 +173,6 @@ impl AcpHarnessAdapter {
                 events: Some(agent.events_rx),
                 exited: agent.exited,
                 shutdown: agent.shutdown,
-                images: agent.capabilities.prompt_capabilities.image,
             },
         );
     }
@@ -367,9 +363,12 @@ impl HarnessAdapter for AcpHarnessAdapter {
                 method: "session/prompt",
             }));
         }
-        let content = crate::prompt::content(input, snapshot.images)
-            .await
-            .map_err(port)?;
+        let TurnInput::Text(text) = input;
+        let content = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![acp::ContentBlock::from(text)]
+        };
         let responded = request(&snapshot.commands, |reply| SessionCommand::Prompt {
             acp_session: snapshot.acp_session.clone(),
             content,

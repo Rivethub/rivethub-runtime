@@ -43,7 +43,6 @@ fn request() -> ModelRequest {
                 tool_call_id: None,
             },
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
     }
@@ -65,9 +64,7 @@ async fn collect(
             ModelChunk::Text { delta } => text.push_str(&delta),
             ModelChunk::Usage { usage: received } => usage = Some(received),
             ModelChunk::Done => done = true,
-            ModelChunk::Reasoning { .. }
-            | ModelChunk::ToolCallStart { .. }
-            | ModelChunk::ToolCallDelta { .. } => {}
+            ModelChunk::Reasoning { .. } => {}
         }
     }
     (text, usage, done)
@@ -94,16 +91,6 @@ async fn a_text_stream_parses_into_chunks_usage_and_done() {
     assert!(done);
 }
 
-const B_TOOL_SSE: &str = concat!(
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"call_golden_echo_1\",\"type\":\"function\",\"index\":0,\"function\":{\"name\":\"echo\",\"arguments\":\"\"}}]},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"text\\\":\\\"hi\\\",\"}}]},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"n\\\":1.0}\"}}]},\"logprobs\":null,\"finish_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{},\"logprobs\":null,\"finish_reason\":\"tool_calls\",\"stop_reason\":null}]}\n\n",
-    "data: {\"id\":\"chatcmpl-golden-vllm-B-1\",\"object\":\"chat.completion.chunk\",\"created\":1791590400,\"model\":\"test-model\",\"choices\":[],\"usage\":{\"prompt_tokens\":60,\"total_tokens\":78,\"completion_tokens\":18}}\n\n",
-    "data: [DONE]\n\n",
-);
-
 #[tokio::test]
 async fn chat_assembles_the_llm_response() {
     let server = repeating_server(A_TEXT_SSE.to_owned()).await;
@@ -113,55 +100,6 @@ async fn chat_assembles_the_llm_response() {
     assert_eq!(response.content.as_deref(), Some("Hi there!"));
     assert_eq!(response.usage.map(|usage| usage.prompt_tokens), Some(25));
     assert!(response.tool_calls.is_none());
-}
-
-#[tokio::test]
-async fn chat_assembles_tool_calls_from_the_streamed_fragments() {
-    let server = repeating_server(B_TOOL_SSE.to_owned()).await;
-    let provider = chat_provider(server.addr);
-    let response = provider.chat(request()).await.expect("the chat completes");
-    assert_eq!(response.r#type, kernel::model::LlmResponseKind::ToolCalls);
-    assert_eq!(response.content, None);
-    let calls = response.tool_calls.unwrap_or_default();
-    let call = calls.first().expect("the tool call is assembled");
-    assert_eq!(call.id, "call_golden_echo_1");
-    assert_eq!(call.name, "echo");
-    let arguments = call.arguments.get("text").and_then(testkit::Json::as_str);
-    assert_eq!(arguments, Some("hi"));
-    assert_eq!(
-        call.arguments.get("n").and_then(testkit::Json::as_f64),
-        Some(1.0)
-    );
-    assert_eq!(
-        response.usage.map(|usage| usage.completion_tokens),
-        Some(18)
-    );
-}
-
-#[tokio::test]
-async fn a_restarted_tool_call_index_is_a_stream_error() {
-    let restarted = B_TOOL_SSE.replacen(
-        "{\"index\":0,\"function\":{\"arguments\":\"{\\\"text\\\":\\\"hi\\\",\"}}",
-        "{\"id\":\"call_again\",\"type\":\"function\",\"index\":0,\"function\":{\"name\":\"echo\",\"arguments\":\"\"}}",
-        1,
-    );
-    let server = repeating_server(restarted).await;
-    let provider = chat_provider(server.addr);
-    let error = provider
-        .chat(request())
-        .await
-        .expect_err("the restarted tool call fails");
-    match error {
-        ModelProviderError::Stream { message, .. } => {
-            assert!(
-                message.contains("restarted tool call index 0"),
-                "the failure is named: {message}"
-            );
-        }
-        ModelProviderError::Request { .. } => {
-            panic!("a mid-stream failure is a stream error")
-        }
-    }
 }
 
 #[tokio::test]

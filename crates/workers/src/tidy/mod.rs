@@ -399,7 +399,6 @@ async fn chat(env: &TidyEnv<'_>, user: &str) -> Result<Option<String>, WorkerErr
             text_message(Role::System, TIDY_SYSTEM_PROMPT),
             text_message(Role::User, user),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(MAX_TIDY_TOKENS),
     };

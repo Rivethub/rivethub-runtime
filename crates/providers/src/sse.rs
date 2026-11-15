@@ -11,9 +11,6 @@ use kernel::model::ModelProviderError;
 use kernel::model::ModelStreamItem;
 use wire::stream::openai::ChatCompletionChunk;
 use wire::stream::openai::FinishReason as ChunkFinish;
-use wire::stream::openai::StreamedToolCall;
-
-use crate::error::StreamFault;
 
 pub const STREAM_CAPACITY: usize = 64;
 
@@ -73,10 +70,7 @@ async fn forward(
         }
     };
     let mut translated = Vec::new();
-    if let Err(fault) = translate(&chunk, &mut translated, finish) {
-        send_failure(tx, fault.into()).await;
-        return false;
-    }
+    translate(&chunk, &mut translated, finish);
     for chunk in translated {
         if tx.send(Ok(chunk)).await.is_err() {
             return false;
@@ -142,11 +136,7 @@ fn stream_event_error(source: EventStreamError<reqwest::Error>) -> ModelProvider
     }
 }
 
-fn translate(
-    chunk: &ChatCompletionChunk,
-    out: &mut Vec<ModelChunk>,
-    finish: Option<&AtomicU8>,
-) -> Result<(), StreamFault> {
+fn translate(chunk: &ChatCompletionChunk, out: &mut Vec<ModelChunk>, finish: Option<&AtomicU8>) {
     for choice in chunk.choices.iter().take(1) {
         if let Some(reason) = choice.finish_reason {
             note_finish(finish, reason);
@@ -160,33 +150,6 @@ fn translate(
             out.push(ModelChunk::Reasoning {
                 delta: reasoning.to_owned(),
             });
-        }
-        for call in choice.delta.tool_calls.iter().flatten() {
-            let call = match call {
-                StreamedToolCall::Function(tagged) => match tagged {
-                    wire::stream::openai::FunctionToolCallTag::Function(plain) => plain,
-                },
-                StreamedToolCall::Plain(plain) => plain,
-            };
-            let index = call.index.ok_or(StreamFault::ToolCallWithoutIndex)?;
-            if let Some(name) = non_empty(call.function.name.as_deref()) {
-                let id = call
-                    .id
-                    .as_deref()
-                    .filter(|id| !id.is_empty())
-                    .ok_or(StreamFault::ToolCallWithoutId)?;
-                out.push(ModelChunk::ToolCallStart {
-                    index,
-                    id: id.to_owned(),
-                    name: name.to_owned(),
-                });
-            }
-            if let Some(arguments) = non_empty(call.function.arguments.as_deref()) {
-                out.push(ModelChunk::ToolCallDelta {
-                    index,
-                    arguments_delta: arguments.to_owned(),
-                });
-            }
         }
     }
     if let Some(usage) = &chunk.usage {
@@ -207,7 +170,6 @@ fn translate(
             },
         });
     }
-    Ok(())
 }
 
 fn note_finish(slot: Option<&AtomicU8>, reason: ChunkFinish) {
@@ -272,7 +234,7 @@ mod tests {
         let chunk: ChatCompletionChunk = serde_json::from_str(raw).expect("chunk");
         let slot = AtomicU8::new(0);
         let mut out = Vec::new();
-        translate(&chunk, &mut out, Some(&slot)).expect("translate");
+        translate(&chunk, &mut out, Some(&slot));
         assert_eq!(
             decode_finish(slot.load(Ordering::Relaxed)),
             Some(FinishReason::Length)
@@ -285,7 +247,7 @@ mod tests {
         let raw = r#"{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"delta":{},"finish_reason":"stop"}]}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(raw).expect("chunk");
         let mut out = Vec::new();
-        translate(&chunk, &mut out, None).expect("translate");
+        translate(&chunk, &mut out, None);
         assert_eq!(out, Vec::<ModelChunk>::new());
     }
 

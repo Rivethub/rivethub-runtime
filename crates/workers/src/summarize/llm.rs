@@ -22,7 +22,6 @@ pub(super) async fn chat(
             text_message(Role::System, system),
             text_message(Role::User, user),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(max_tokens),
     };

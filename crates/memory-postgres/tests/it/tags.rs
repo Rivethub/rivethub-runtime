@@ -401,76 +401,6 @@ async fn decide_tags_updates_exactly_the_given_ids(pool: PgPool) -> TestResult {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn decide_tag_removals_follows_the_removal_rules(pool: PgPool) -> TestResult {
-    let memory = store(&pool);
-    let conversation = seed_conversation(&pool, "claude-code:removal").await?;
-    let accept_me = insert_tag(&pool, conversation, "topic", "stale", "accepted", "model").await?;
-    let reject_me = insert_tag(&pool, conversation, "topic", "kept", "accepted", "model").await?;
-    for id in [accept_me, reject_me] {
-        sqlx::query(
-            "UPDATE rh_tags SET removal_state = 'suggested', removal_reason = 'no longer true' WHERE id = $1",
-        )
-        .bind(id)
-        .execute(&pool)
-        .await?;
-    }
-
-    let changed = memory
-        .decide_tag_removals(
-            vec![TagId::from_uuid(accept_me)],
-            TagDecision::Accept,
-            Some("phil".to_string()),
-        )
-        .await?;
-    assert_eq!(changed, 1);
-
-    let accepted =
-        sqlx::query("SELECT state::text AS state, removal_state FROM rh_tags WHERE id = $1")
-            .bind(accept_me)
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(
-        accepted.try_get::<String, _>("state").unwrap(),
-        "rejected",
-        "accepting a removal rejects the tag"
-    );
-    assert!(
-        accepted
-            .try_get::<Option<String>, _>("removal_state")
-            .unwrap()
-            .is_none(),
-        "accepting a removal clears removal_state"
-    );
-
-    let changed = memory
-        .decide_tag_removals(vec![TagId::from_uuid(reject_me)], TagDecision::Reject, None)
-        .await?;
-    assert_eq!(changed, 1);
-    let rejected = sqlx::query(
-        "SELECT state::text AS state, removal_state::text AS removal_state FROM rh_tags WHERE id = $1",
-    )
-    .bind(reject_me)
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(
-        rejected.try_get::<String, _>("state").unwrap(),
-        "accepted",
-        "a rejected removal keeps the tag"
-    );
-    assert_eq!(
-        rejected.try_get::<String, _>("removal_state").unwrap(),
-        "rejected"
-    );
-
-    let untouched = insert_tag(&pool, conversation, "topic", "plain", "accepted", "model").await?;
-    let changed = memory
-        .decide_tag_removals(vec![TagId::from_uuid(untouched)], TagDecision::Accept, None)
-        .await?;
-    assert_eq!(changed, 0, "tags without a suggested removal are untouched");
-    Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn taxonomy_upsert_decide_and_merge(pool: PgPool) -> TestResult {
     let memory = store(&pool);
     let conversation = seed_conversation(&pool, "claude-code:taxonomy").await?;
@@ -660,11 +590,6 @@ async fn pre_0019_databases_get_empty_reads_and_refused_writes(pool: PgPool) -> 
 
     let refused = memory
         .decide_tags(Vec::new(), TagDecision::Accept, None)
-        .await;
-    assert!(matches!(refused, Err(MemoryStoreError::TagTablesMissing)));
-
-    let refused = memory
-        .decide_tag_removals(Vec::new(), TagDecision::Reject, None)
         .await;
     assert!(matches!(refused, Err(MemoryStoreError::TagTablesMissing)));
 

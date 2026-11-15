@@ -2,12 +2,10 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::owner::Owner;
-use kernel::topics::Slug;
 use kernel::wiki::builder::BACKFILL_PRIORITY;
 use kernel::wiki::builder::BackfillBudget;
 use kernel::wiki::builder::DeferredWiki;
 use kernel::wiki::builder::ExtractWiki;
-use kernel::wiki::builder::HeldEntity;
 use kernel::wiki::builder::WIKI_PIPELINE_VERSION;
 use kernel::wiki::builder::WikiBuilderStore;
 use kernel::wiki::builder::WikiRouting;
@@ -68,20 +66,6 @@ impl WikiBuilderStore for SqliteStore {
     ) -> Result<(), WikiStoreError> {
         let error = error.to_owned();
         blocking(self, move |conn| fail(conn, summary_id, &error, now)).await
-    }
-
-    async fn hold_entity(&self, held: HeldEntity) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        blocking(self, move |conn| wiki_held::hold(conn, &held)).await
-    }
-
-    async fn held_entities(&self, key: &Slug) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        let key = key.clone();
-        blocking(self, move |conn| wiki_held::candidates(conn, &key)).await
-    }
-
-    async fn release_entity(&self, held: &[HeldEntity]) -> Result<(), WikiStoreError> {
-        let held = held.to_vec();
-        blocking(self, move |conn| wiki_held::release(conn, &held)).await
     }
 
     async fn defer_wiki(&self, deferred: DeferredWiki) -> Result<(), WikiStoreError> {

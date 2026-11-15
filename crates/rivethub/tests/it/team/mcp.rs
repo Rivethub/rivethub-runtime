@@ -91,7 +91,7 @@ async fn a_pinned_login_recalls_what_its_person_may_read_and_nothing_trashed() -
     let alex = Scope::Viewer(tenancy.viewer_of(&Owner::new(ALEX.to_owned())?).await?);
     let server = alex
         .clone()
-        .enter(|| mcp::Server::new(memory.clone(), false, CancellationToken::new()))?;
+        .enter(|| mcp::Server::new(memory.clone(), CancellationToken::new()))?;
     let phils = "phil asks how the";
     let toms = "tom keeps his notes";
     assert_eq!(

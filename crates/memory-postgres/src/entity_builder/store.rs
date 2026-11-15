@@ -328,10 +328,6 @@ impl EntityStore for PostgresMemory {
         super::types::remember_type_alias(&self.pool, type_name, alias).await
     }
 
-    async fn type_names(&self) -> Result<Vec<String>, EntityStoreError> {
-        type_paths(&self.pool).await
-    }
-
     async fn record_decision(
         &self,
         summary: Uuid,

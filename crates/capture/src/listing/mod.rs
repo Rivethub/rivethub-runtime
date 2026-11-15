@@ -12,7 +12,6 @@ mod history;
 mod kimi;
 mod omp;
 mod roots;
-mod running;
 mod text;
 pub(crate) mod time;
 mod title;
@@ -380,27 +379,6 @@ impl SessionLister for StoreSessionLister {
         let roots = Arc::clone(&self.roots);
         let native = native.to_owned();
         blocking(move || permission_mode_of(&roots, harness, &native)).await
-    }
-
-    async fn running_elsewhere(
-        &self,
-        harness: HarnessId,
-        native: &str,
-    ) -> Result<Option<u32>, TranscriptReaderError> {
-        let Some(root) = self
-            .roots
-            .single(harness)
-            .filter(|_| harness == HarnessId::ClaudeCode)
-            .map(Path::to_path_buf)
-        else {
-            return Ok(None);
-        };
-        let native = native.to_owned();
-        blocking(move || {
-            running::claude_running(&root, &native)
-                .map_err(|error| files::read_failure(&root.join("sessions"), error))
-        })
-        .await
     }
 
     async fn transcript(

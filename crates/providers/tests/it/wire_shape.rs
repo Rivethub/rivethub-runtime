@@ -71,54 +71,6 @@ async fn thinking_off_on_the_generic_variant_sends_no_vllm_flag() {
 }
 
 #[tokio::test]
-async fn a_tool_without_a_description_is_sent_without_one() {
-    let recorded = scenario_record("A-text");
-    let server = scenario_server(recorded.canned.clone()).await;
-    let provider = config::provider::OpenaiProvider {
-        model: Some("test-model".to_owned()),
-        base_url: Some(format!("http://{}", server.addr)),
-        ..config::provider::OpenaiProvider::default()
-    };
-    let built = providers::OpenAiCompatible::build(
-        config::provider::ProviderType::OpenaiCompatible,
-        &provider,
-    )
-    .expect("the generic provider builds");
-    let tool: rmcp::model::Tool = serde_json::from_str(
-        "{\"name\":\"bare\",\"description\":\"has one\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"required\":[]}}",
-    )
-    .expect("described tool parses");
-    let mut undescribed = tool.clone();
-    undescribed.description = None;
-    let request = kernel::model::ModelRequest {
-        options: kernel::model::ModelOptions::default(),
-        model: "test-model".to_owned(),
-        messages: Vec::new(),
-        tools: vec![undescribed, tool],
-        thinking: None,
-        max_tokens: None,
-    };
-    let mut rx = built
-        .stream(request)
-        .await
-        .expect("the undescribed tool is sent");
-    while rx.recv().await.is_some() {}
-    let call = server
-        .recorder
-        .lock()
-        .first()
-        .cloned()
-        .expect("the chat request is captured");
-    let sent: Json = serde_json::from_str(&call.body).expect("sent body parses");
-    let expected: Json = serde_json::from_str(
-        "[{\"type\":\"function\",\"function\":{\"name\":\"bare\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[]}}},\
-         {\"type\":\"function\",\"function\":{\"name\":\"bare\",\"description\":\"has one\",\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[]}}}]",
-    )
-    .expect("expected tools parse");
-    assert_eq!(sent.get("tools"), Some(&expected));
-}
-
-#[tokio::test]
 async fn the_request_max_tokens_overrides_the_model_server_default() {
     let recorded = scenario_record("A-text");
     let server = scenario_server(recorded.canned.clone()).await;
@@ -141,7 +93,6 @@ async fn the_request_max_tokens_overrides_the_model_server_default() {
         },
         model: "test-model".to_owned(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(999),
     };
@@ -215,7 +166,6 @@ fn openrouter_request() -> kernel::model::ModelRequest {
         },
         model: "qwen/qwen3.8-flash".to_owned(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(64),
     }

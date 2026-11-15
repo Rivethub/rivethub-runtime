@@ -5,7 +5,6 @@ use std::time::Duration;
 use axum::body::{Body, Bytes};
 use axum::response::IntoResponse as _;
 use kernel::model::{ModelChunk, ModelProvider, ModelProviderError};
-use providers::error::StreamFault;
 use tokio::sync::Notify;
 
 const TEXT: &str = "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
@@ -15,40 +14,9 @@ fn request() -> kernel::model::ModelRequest {
         options: kernel::model::ModelOptions::default(),
         model: "m".to_owned(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
     }
-}
-
-#[tokio::test]
-async fn missing_tool_indices_report_the_translation_error() {
-    let body = "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"m\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call\",\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]}}]}\n\n";
-    let server = common::fixed_status_server(200, body.to_owned()).await;
-    let provider = common::chat_provider(server.addr, None);
-    let mut stream = provider.stream(request()).await.expect("stream");
-    let error = tokio::time::timeout(Duration::from_secs(5), stream.recv())
-        .await
-        .expect("error arrives")
-        .expect("error item")
-        .expect_err("missing index");
-    let ModelProviderError::Stream { source, message } = error else {
-        panic!("translation is a stream error");
-    };
-    assert!(matches!(
-        source.downcast_ref::<StreamFault>(),
-        Some(StreamFault::ToolCallWithoutIndex)
-    ));
-    assert_eq!(
-        message,
-        "the model server sent a tool call chunk without an index"
-    );
-    assert!(
-        tokio::time::timeout(Duration::from_secs(5), stream.recv())
-            .await
-            .expect("stream closes")
-            .is_none()
-    );
 }
 
 #[tokio::test]

@@ -177,15 +177,6 @@ impl MemoryStore for SqliteStore {
         self.tags_decide(ids, decision, decided_by).await
     }
 
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.tags_decide_removals(ids, decision, decided_by).await
-    }
-
     async fn add_tag(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {
         self.tags_add(add).await
     }

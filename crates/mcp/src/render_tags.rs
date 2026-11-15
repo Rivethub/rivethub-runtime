@@ -32,10 +32,7 @@ pub(crate) fn list(tags: &[TagWire]) -> String {
 }
 
 pub(crate) fn pending(tags: &[PendingTagWire]) -> Result<String, Error> {
-    let mut lines = vec![format!(
-        "{} pending (decide with action=decide, ids=[…], state=accepted|rejected):",
-        tags.len()
-    )];
+    let mut lines = vec![format!("{} pending:", tags.len())];
     for entry in tags {
         let tag = &entry.tag;
         let mut line = format!("{}  {}", tag.id, label(tag));

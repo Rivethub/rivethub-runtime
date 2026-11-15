@@ -135,14 +135,6 @@ impl StatusError {
 
 #[derive(Debug, Error)]
 pub enum StreamFault {
-    #[error("the model server restarted tool call index {index}")]
-    RestartedToolCall { index: u32 },
-    #[error("the model server streamed arguments for unknown tool call {index}")]
-    UnknownToolCall { index: u32 },
-    #[error("the model server sent a tool call chunk without an index")]
-    ToolCallWithoutIndex,
-    #[error("the model server started a tool call without an id")]
-    ToolCallWithoutId,
     #[error("the model stream ended before Done")]
     EndedBeforeDone,
 }

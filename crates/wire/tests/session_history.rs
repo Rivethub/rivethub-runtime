@@ -11,7 +11,7 @@ use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTranscriptResponse, HarnessTranscriptTool,
     HarnessTranscriptTurn, MessageUsage, SessionMessageRole, TranscriptBlock, TranscriptToolStatus,
 };
-use wire::harness::{HarnessCode, HarnessId, HarnessSessionStatus, RosterCommand};
+use wire::harness::{HarnessCode, HarnessId, HarnessSessionStatus};
 use wire::session_id::{
     DecodedSegment, SegmentError, SessionId, SessionRef, decode_segment, encode_segment,
 };
@@ -190,66 +190,14 @@ fn encode_segment_text(text: &str) -> String {
 }
 
 #[test]
-fn roster_commands_map_to_harness_ids_both_ways() {
-    let table = [
-        (HarnessId::ClaudeCode, "claude"),
-        (HarnessId::GrokBuild, "grok"),
-        (HarnessId::KimiCode, "kimi"),
-        (HarnessId::Hermes, "hermes"),
-        (HarnessId::Codex, "codex"),
-        (HarnessId::Opencode, "opencode"),
-        (HarnessId::Omp, "omp"),
-        (HarnessId::Dsh, "dsh"),
-        (HarnessId::Cursor, "cursor"),
-        (HarnessId::Cowork, "cowork"),
-    ];
-    for (harness, command) in table {
-        let roster = RosterCommand::from(harness);
-        assert_eq!(roster.to_string(), command);
-        assert_eq!(serde_json::to_value(roster).unwrap(), json!(command));
-        assert_eq!(command.parse::<RosterCommand>().unwrap(), roster);
-        assert_eq!(HarnessId::from(roster), harness);
-    }
-}
-
-#[test]
-fn harness_codes_carry_status_and_retryable() {
-    let table = [
-        (
-            HarnessCode::InvalidSessionId,
-            "invalid_session_id",
-            400,
-            false,
-        ),
-        (HarnessCode::BadRequest, "bad_request", 400, false),
-        (
-            HarnessCode::SessionIdCollision,
-            "session_id_collision",
-            409,
-            false,
-        ),
-        (HarnessCode::TurnInFlight, "turn_in_flight", 409, true),
-        (
-            HarnessCode::CapabilityUnsupported,
-            "capability_unsupported",
-            501,
-            false,
-        ),
-        (HarnessCode::UnknownApproval, "unknown_approval", 404, false),
-        (HarnessCode::UnknownPrompt, "unknown_prompt", 404, false),
-        (HarnessCode::TurnFailed, "turn_failed", 502, false),
-        (
-            HarnessCode::SessionRunningElsewhere,
-            "session_running_elsewhere",
-            409,
-            false,
-        ),
-    ];
-    for (code, name, status, retryable) in table {
+fn harness_codes_serialize_by_name() {
+    for (code, name) in [
+        (HarnessCode::InvalidSessionId, "invalid_session_id"),
+        (HarnessCode::BadRequest, "bad_request"),
+        (HarnessCode::CapabilityUnsupported, "capability_unsupported"),
+    ] {
         assert_eq!(roundtrip::<HarnessCode>(&json!(name)), code);
         assert_eq!(code.to_string(), name);
-        assert_eq!(code.status(), status);
-        assert_eq!(code.retryable(), retryable);
     }
 }
 
@@ -454,11 +402,6 @@ fn every_way_of_naming_a_session_decodes_to_the_same_reference() {
     for segment in [import.clone(), import.replace(':', "%3A")] {
         let decoded = decode_segment(&segment).unwrap();
         assert_eq!(decoded.session, SessionRef::Import(import.parse().unwrap()));
-        assert_eq!(
-            decoded.session.key().map(|key| key.to_string()),
-            Some(import.clone())
-        );
     }
-    assert_eq!(decode_segment(UUID).unwrap().session.key(), None);
     invalid("import:short");
 }

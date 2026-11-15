@@ -93,19 +93,11 @@ async fn method_not_allowed(request: Request) -> Response {
     refusal(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
 }
 
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let text = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = text.trim().split_once(' ')?;
-    let token = token.trim();
-    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
-}
-
 fn holder(gateway: &Gateway, headers: &HeaderMap) -> Result<UserId, Turned> {
     if !headers.contains_key(header::AUTHORIZATION) {
         return Err(Turned::NoToken);
     }
-    let (user, scope) = bearer(headers)
+    let (user, scope) = crate::auth::bearer(headers)
         .and_then(|token| gateway.tenancy.user_for_token(token))
         .ok_or(Turned::InvalidToken)?;
     if scope.allows(TokenScope::DropsWrite) {

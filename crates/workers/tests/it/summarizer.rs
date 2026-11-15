@@ -42,7 +42,6 @@ use workers::LEAF_SYSTEM_PROMPT;
 use workers::ROOT_SYSTEM_PROMPT;
 use workers::SummarizeEnv;
 use workers::SummarizeOutcome;
-use workers::SummaryHealth;
 use workers::SummaryParts;
 use workers::SummarySettings;
 use workers::SummaryTrigger;
@@ -51,7 +50,6 @@ use workers::handle_enqueue_idle;
 use workers::handle_enqueue_stale;
 use workers::handle_reap;
 use workers::handle_summarize;
-use workers::summary_health;
 
 const LEAF_TEXT: &str = "The team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.";
 const BRANCH_TEXT: &str = "Branch summary: several deploy sessions for AcmeKit settled on blue-green releases with a health-check gate.";
@@ -75,7 +73,6 @@ struct Fixture {
 #[derive(Debug, Deserialize)]
 struct Scenario {
     name: String,
-    steps: Vec<Step>,
     #[serde(default)]
     chat_calls: Option<ChatCalls>,
     #[serde(default)]
@@ -93,35 +90,11 @@ struct ChatCall {
 }
 
 #[derive(Debug, Deserialize)]
-struct Step {
-    result: StepResult,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum ChatCalls {
     Calls(Vec<ChatCall>),
     #[expect(dead_code)]
     Count(u64),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum StepResult {
-    #[expect(dead_code)]
-    Count(u64),
-    Health(HealthSnap),
-    #[expect(dead_code)]
-    Rows(Vec<wire::Extra>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct HealthSnap {
-    eligible: u64,
-    #[serde(rename = "activeTail")]
-    active_tail: u64,
-    #[serde(rename = "belowFloor")]
-    below_floor: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -224,17 +197,6 @@ fn chat_calls(scenario: &Scenario) -> Vec<ChatCall> {
         Some(ChatCalls::Calls(calls)) => calls.clone(),
         Some(ChatCalls::Count(_)) | None => Vec::new(),
     }
-}
-
-fn health_steps(scenario: &Scenario) -> Vec<HealthSnap> {
-    scenario
-        .steps
-        .iter()
-        .filter_map(|step| match &step.result {
-            StepResult::Health(health) => Some(health.clone()),
-            StepResult::Count(_) | StepResult::Rows(_) => None,
-        })
-        .collect()
 }
 
 fn at(text: &str) -> DateTime<Utc> {

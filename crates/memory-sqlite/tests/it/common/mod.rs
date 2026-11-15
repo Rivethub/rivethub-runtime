@@ -53,7 +53,6 @@ pub(crate) struct Scenario {
     pub(crate) steps: Vec<Step>,
     #[serde(default)]
     pub(crate) tables: HashMap<String, Vec<Json>>,
-    pub(crate) logs: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

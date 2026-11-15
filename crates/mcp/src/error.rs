@@ -40,8 +40,6 @@ pub enum Error {
     #[error("MCP initialization failed: {0}")]
     Initialize(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)]
-    Service(#[from] rmcp::service::ServiceError),
-    #[error(transparent)]
     Path(#[from] crate::sessions::PathRefusal),
     #[error(transparent)]
     Share(#[from] kernel::memory::share::ShareFailure),

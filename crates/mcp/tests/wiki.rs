@@ -14,7 +14,7 @@ pub mod support;
 
 fn setup() -> (Server, Arc<FakeMemoryStore>) {
     let store = Arc::new(FakeMemoryStore::default());
-    let server = Server::new(store.clone(), false, CancellationToken::new()).expect("server");
+    let server = Server::new(store.clone(), CancellationToken::new()).expect("server");
     (server, store)
 }
 

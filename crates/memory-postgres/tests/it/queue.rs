@@ -4,7 +4,6 @@ use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue as _;
 use kernel::queue::WorkerRole;
-use memory_postgres::PostgresMemory;
 use memory_postgres::PostgresQueue;
 use sqlx::PgPool;
 use wire::JsonObject;
@@ -44,10 +43,6 @@ struct ExtractWikiPayload<'a> {
 
 async fn queue(pool: &PgPool) -> Result<PostgresQueue, Box<dyn std::error::Error>> {
     Ok(PostgresQueue::connect(pool.clone()).await?)
-}
-
-fn store(pool: &PgPool) -> PostgresMemory {
-    PostgresMemory::new(pool.clone())
 }
 
 async fn stored_jobs(
@@ -324,26 +319,6 @@ async fn role_scoping_keeps_the_task_lists_apart(pool: PgPool) -> TestResult {
         Some(0),
         "revive resets attempts"
     );
-
-    sqlx::query(
-        "UPDATE graphile_worker._private_jobs
-            SET attempts = max_attempts, key = null,
-                updated_at = now() - interval '8 days'",
-    )
-    .execute(&pool)
-    .await?;
-    let reaped = jobs
-        .reap_dead_corpses(
-            &[
-                JobName::Fixed(FixedJob::ExtractWiki),
-                JobName::Fixed(FixedJob::SummarizeConversation),
-                JobName::Fixed(FixedJob::EmbedTarget),
-            ],
-            200,
-        )
-        .await?;
-    assert_eq!(reaped, 1, "the keyless corpse is reaped");
-    assert_eq!(stored_jobs(&pool).await?, Vec::new());
     Ok(())
 }
 
@@ -383,7 +358,6 @@ async fn queue_health_reports_buckets(pool: PgPool) -> TestResult {
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn queue_availability_follows_the_queue_schema(pool: PgPool) -> TestResult {
-    assert!(store(&pool).queue_available().await?);
     sqlx::query("DROP SCHEMA graphile_worker CASCADE")
         .execute(&pool)
         .await?;
@@ -391,44 +365,7 @@ async fn queue_availability_follows_the_queue_schema(pool: PgPool) -> TestResult
         PostgresQueue::connect(pool.clone()).await,
         Err(memory_postgres::Error::QueueAbsent)
     ));
-    assert!(!store(&pool).queue_available().await?);
     Ok(())
-}
-
-#[test]
-fn crontab_and_task_lists_follow_the_roles() {
-    let embedder = PostgresQueue::crontab(WorkerRole::Embedder);
-    assert_eq!(embedder.len(), 2);
-    assert_eq!(
-        embedder.first().map(|entry| entry.schedule.as_str()),
-        Some("*/10 * * * *")
-    );
-    assert_eq!(
-        embedder.get(1).map(|entry| entry.identifier.as_str()),
-        Some("unchunked-sweep")
-    );
-    let summarizer = PostgresQueue::crontab(WorkerRole::Summarizer);
-    assert_eq!(summarizer.len(), 5);
-    assert_eq!(
-        PostgresQueue::crontab(WorkerRole::Categorizer)
-            .iter()
-            .map(|entry| (entry.identifier.as_str(), entry.schedule.as_str()))
-            .collect::<Vec<_>>(),
-        [("tidy-sweep", "0 * * * *")]
-    );
-
-    assert_eq!(
-        PostgresQueue::task_list(WorkerRole::Embedder),
-        &[
-            JobName::Fixed(FixedJob::EmbedTarget),
-            JobName::Fixed(FixedJob::EnqueueUnembedded),
-            JobName::Fixed(FixedJob::EnqueueUnchunked)
-        ]
-    );
-    assert!(
-        PostgresQueue::task_list(WorkerRole::Summarizer)
-            .contains(&JobName::Fixed(FixedJob::SummarizeConversation))
-    );
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

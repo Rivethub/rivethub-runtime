@@ -14,7 +14,6 @@ use tokio::sync::Notify;
 
 mod script;
 
-use script::Chunk;
 use script::Selection;
 use script::Step;
 
@@ -31,8 +30,6 @@ struct FakeArgs {
     hang_until_cancel: bool,
     #[arg(long)]
     list_sessions: bool,
-    #[arg(long, default_value = "plain")]
-    prompt: PromptMode,
     #[arg(long)]
     usage: bool,
     #[arg(long)]
@@ -49,13 +46,6 @@ enum EffortOption {
     Absent,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum PromptMode {
-    Plain,
-    Echo,
-    EchoImages,
-}
-
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum CrashPoint {
     Prompt,
@@ -67,7 +57,6 @@ struct AgentState {
     crash_on: Option<CrashPoint>,
     hang_until_cancel: bool,
     list_sessions: bool,
-    prompt: PromptMode,
     usage: bool,
     record_new: Option<std::path::PathBuf>,
     record_delete: Option<std::path::PathBuf>,
@@ -99,7 +88,6 @@ fn prepare(args: FakeArgs) -> Option<AgentState> {
         crash_on: args.crash_on,
         hang_until_cancel: args.hang_until_cancel,
         list_sessions: args.list_sessions,
-        prompt: args.prompt,
         usage: args.usage,
         record_new: args.record_new,
         record_delete: args.record_delete,
@@ -132,20 +120,16 @@ fn on_initialize(
 ) -> Result<(), acp::Error> {
     responder.respond(
         acp::InitializeResponse::new(request.protocol_version).agent_capabilities(
-            acp::AgentCapabilities::new()
-                .prompt_capabilities(
-                    acp::PromptCapabilities::new().image(state.prompt == PromptMode::EchoImages),
-                )
-                .session_capabilities(
-                    acp::SessionCapabilities::new()
-                        .list(state.list_sessions.then(acp::SessionListCapabilities::new))
-                        .delete(
-                            state
-                                .record_delete
-                                .is_some()
-                                .then(acp::SessionDeleteCapabilities::new),
-                        ),
-                ),
+            acp::AgentCapabilities::new().session_capabilities(
+                acp::SessionCapabilities::new()
+                    .list(state.list_sessions.then(acp::SessionListCapabilities::new))
+                    .delete(
+                        state
+                            .record_delete
+                            .is_some()
+                            .then(acp::SessionDeleteCapabilities::new),
+                    ),
+            ),
         ),
     )
 }
@@ -206,16 +190,6 @@ fn spawn_prompt(
     let task_connection = connection.clone();
     connection.spawn(async move {
         let session_id = request.session_id;
-        if state.prompt != PromptMode::Plain {
-            for block in &request.prompt {
-                script::emit_text(
-                    &task_connection,
-                    &session_id,
-                    &described(block),
-                    Chunk::Agent,
-                )?;
-            }
-        }
         let executed = execute_prompt(&state, &task_connection, &session_id).await;
         match executed {
             Ok(stop) => responder.respond(ended(stop, state.usage)),
@@ -234,25 +208,6 @@ fn ended(stop: acp::StopReason, usage: bool) -> acp::PromptResponse {
         )
     } else {
         response
-    }
-}
-
-fn described(block: &acp::ContentBlock) -> String {
-    match block {
-        acp::ContentBlock::Text(text) => format!("text:{}", text.text),
-        acp::ContentBlock::Image(image) => format!(
-            "image:{}:{}:{}",
-            image.mime_type,
-            image.data.len(),
-            image.uri.as_deref().unwrap_or_default()
-        ),
-        acp::ContentBlock::ResourceLink(link) => format!(
-            "link:{}:{}:{}",
-            link.name,
-            link.mime_type.as_deref().unwrap_or_default(),
-            link.uri
-        ),
-        acp::ContentBlock::Audio(_) | acp::ContentBlock::Resource(_) | _ => "other".to_owned(),
     }
 }
 

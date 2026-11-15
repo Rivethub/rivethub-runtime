@@ -21,8 +21,6 @@ pub enum ApiError {
     #[error(transparent)]
     Transcript(#[from] kernel::transcript::TranscriptReaderError),
     #[error(transparent)]
-    Harness(#[from] kernel::harness::HarnessAdapterError),
-    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Task(#[from] tokio::task::JoinError),
@@ -91,7 +89,6 @@ impl ApiError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 GatewayError::new(error.to_string()),
             ),
-            Self::Harness(error) => adapter_failure(&error),
             Self::Io(_) | Self::Task(_) | Self::Serialize(_) | Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 GatewayError::new(INTERNAL_ERROR),
@@ -177,7 +174,7 @@ fn harness_error(code: wire::harness::HarnessCode, message: String) -> (StatusCo
         harness_status(code),
         GatewayError::new(message)
             .code(code.to_string())
-            .retryable(code.retryable()),
+            .retryable(false),
     )
 }
 
@@ -186,12 +183,7 @@ pub fn harness_status(code: wire::harness::HarnessCode) -> StatusCode {
     use wire::harness::HarnessCode;
     match code {
         HarnessCode::InvalidSessionId | HarnessCode::BadRequest => StatusCode::BAD_REQUEST,
-        HarnessCode::UnknownApproval | HarnessCode::UnknownPrompt => StatusCode::NOT_FOUND,
-        HarnessCode::SessionIdCollision
-        | HarnessCode::TurnInFlight
-        | HarnessCode::SessionRunningElsewhere => StatusCode::CONFLICT,
         HarnessCode::CapabilityUnsupported => StatusCode::NOT_IMPLEMENTED,
-        HarnessCode::TurnFailed => StatusCode::BAD_GATEWAY,
     }
 }
 
@@ -238,32 +230,4 @@ fn insufficient_scope() -> (StatusCode, GatewayError) {
         StatusCode::FORBIDDEN,
         GatewayError::new("the token's scope does not cover this route").code("insufficient_scope"),
     )
-}
-
-fn adapter_failure(error: &kernel::harness::HarnessAdapterError) -> (StatusCode, GatewayError) {
-    if matches!(
-        error,
-        kernel::harness::HarnessAdapterError::SteeringUnsupported
-    ) {
-        return harness_error(
-            wire::harness::HarnessCode::CapabilityUnsupported,
-            error.to_string(),
-        );
-    }
-    (adapter_status(error), GatewayError::new(error.to_string()))
-}
-
-fn adapter_status(error: &kernel::harness::HarnessAdapterError) -> StatusCode {
-    use kernel::harness::HarnessAdapterError;
-    match error {
-        HarnessAdapterError::OptionUnavailable { .. }
-        | HarnessAdapterError::OptionRejected { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-        HarnessAdapterError::SteeringUnsupported => StatusCode::NOT_IMPLEMENTED,
-        HarnessAdapterError::ReleaseUnsupported
-        | HarnessAdapterError::InvalidSession(_)
-        | HarnessAdapterError::UnknownSession(_)
-        | HarnessAdapterError::TurnInFlight(_)
-        | HarnessAdapterError::EventStreamTaken(_)
-        | HarnessAdapterError::Failed { .. } => StatusCode::SERVICE_UNAVAILABLE,
-    }
 }

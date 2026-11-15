@@ -16,7 +16,6 @@ pub fn event_stream(
                 role: None,
                 content: Some(content.into()),
                 reasoning_content: None,
-                tool_calls: None,
             },
             logprobs: None,
             finish_reason,

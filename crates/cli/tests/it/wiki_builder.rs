@@ -338,7 +338,7 @@ async fn wiki_backfill_tops_up_missing_and_failed_leaves_and_never_reruns_done(
     }
     assert_eq!(actual, expected);
     assert_eq!(model.chat_requests().await.len(), 0);
-    let crons = PostgresQueue::crontab(WorkerRole::WikiBuilder);
+    let crons = WorkerRole::WikiBuilder.crontab(false);
     assert!(crons.iter().any(
         |cron| cron.task == JobName::Fixed(FixedJob::EnqueueWikiBackfill)
             && cron.schedule == "*/1 * * * *"

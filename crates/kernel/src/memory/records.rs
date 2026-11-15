@@ -140,7 +140,6 @@ pub enum MemoryBrowseOrder {
     Deserialize,
     strum::Display,
     strum::EnumString,
-    strum::EnumIter,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -267,33 +266,5 @@ impl SummaryKind {
             2.. => Some(Self::Root),
             _ => None,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum BrowseWindowError {
-    #[error("window is empty")]
-    Empty,
-    #[error("unknown window {raw:?}; expected {expected}")]
-    Unknown { raw: String, expected: String },
-}
-
-impl BrowseWindow {
-    pub fn parse(raw: &str) -> Result<Self, BrowseWindowError> {
-        let normalized = raw.trim().to_ascii_lowercase().replace(' ', "_");
-        if normalized.is_empty() {
-            return Err(BrowseWindowError::Empty);
-        }
-        std::str::FromStr::from_str(&normalized).map_err(|_| BrowseWindowError::Unknown {
-            raw: raw.to_owned(),
-            expected: Self::expected(),
-        })
-    }
-
-    fn expected() -> String {
-        <Self as strum::IntoEnumIterator>::iter()
-            .map(|window| window.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 }

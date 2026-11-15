@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use kernel::topics::Slug;
 use kernel::wiki::builder::{
-    DeferredWiki, ExtractWiki, HeldEntity, WikiBuilderStore, WikiRouting, WikiStoreError, WikiWork,
+    DeferredWiki, ExtractWiki, WikiBuilderStore, WikiRouting, WikiStoreError, WikiWork,
 };
 use kernel::wiki::page::WikiPatch;
 use kernel::wiki::page::WikiSlug;
@@ -72,18 +71,6 @@ impl WikiBuilderStore for WikiStore {
         _error: &str,
         _now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError> {
-        Ok(())
-    }
-
-    async fn hold_entity(&self, held: HeldEntity) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        Ok(vec![held])
-    }
-
-    async fn held_entities(&self, _key: &Slug) -> Result<Vec<HeldEntity>, WikiStoreError> {
-        Ok(Vec::new())
-    }
-
-    async fn release_entity(&self, _held: &[HeldEntity]) -> Result<(), WikiStoreError> {
         Ok(())
     }
 

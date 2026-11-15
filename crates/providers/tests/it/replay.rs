@@ -14,11 +14,6 @@ async fn a_text_replays_against_the_recording() {
 }
 
 #[tokio::test]
-async fn b_tool_replays_against_the_recording() {
-    drive("B-tool").await;
-}
-
-#[tokio::test]
 async fn c_reasoning_replays_against_the_recording() {
     drive("C-reasoning").await;
 }
@@ -26,11 +21,6 @@ async fn c_reasoning_replays_against_the_recording() {
 #[tokio::test]
 async fn d_thinking_off_replays_against_the_recording() {
     drive("D-thinking-off").await;
-}
-
-#[tokio::test]
-async fn e_reasoning_tool_replays_against_the_recording() {
-    drive("E-reasoning-tool").await;
 }
 
 #[tokio::test]

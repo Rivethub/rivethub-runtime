@@ -177,8 +177,8 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         "native changed: {native_before:?} -> {after:?}"
     );
 
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let untagged = |found: &[(String, String)]| {
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(
@@ -385,8 +385,8 @@ async fn two_users_importing_one_bundle_each_get_a_conversation_of_their_own(poo
             ("bob".to_owned(), "bob".to_owned())
         ]
     );
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let found = hits(&search, "wombat-plan").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {
@@ -418,8 +418,8 @@ async fn origins_whose_node_and_conversation_share_a_colon_stay_apart(pool: PgPo
     );
     let stored = conversations(&pool).await;
     assert_eq!(stored.len(), 2, "{stored:?}");
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let phil_hits = hits(&search, "phil-quokkas").await;
     assert!(
         phil_hits
@@ -493,8 +493,8 @@ async fn a_session_passed_from_user_to_user_stays_credited_to_its_first_author(p
         assert_eq!(session.batch.session_key, phils_origin.session_key);
         assert_eq!(session.batch.created_at, phils_origin.created_at);
     }
-    let search = mcp::Server::new(Arc::clone(&store) as _, false, CancellationToken::new())
-        .expect("mcp server");
+    let search =
+        mcp::Server::new(Arc::clone(&store) as _, CancellationToken::new()).expect("mcp server");
     let found = hits(&search, "numbat-notes").await;
     assert_eq!(found.len(), 2, "{found:?}");
     for (heading, _) in &found {

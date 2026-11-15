@@ -131,7 +131,6 @@ async fn recorded_memory_text() -> TestResult {
         Arc::new(
             memory_postgres::PostgresMemory::new(pool).with_wiki_directory(wiki.path().to_owned()),
         ),
-        false,
         shutdown.clone(),
     )
     .display_zone(chrono_tz::Tz::UTC)
@@ -236,7 +235,6 @@ async fn tool_calls_see_the_owner_rows_through_row_security() -> TestResult {
     let server = owner.clone().enter(|| {
         mcp::Server::new(
             Arc::new(memory_postgres::PostgresMemory::new(probe)),
-            false,
             shutdown.clone(),
         )
     })?;
@@ -273,7 +271,6 @@ async fn summary_tree_and_source_messages_render_from_adopted_rows() -> TestResu
     seed(&pool).await?;
     let server = mcp::Server::new(
         Arc::new(memory_postgres::PostgresMemory::new(pool)),
-        false,
         CancellationToken::new(),
     )?;
     let mut request = CallToolRequestParams::new("memory_search");
@@ -331,7 +328,7 @@ async fn chunk_matches_keep_their_source_range_and_unicode_preview() -> TestResu
             None,
         ),
     ));
-    let server = mcp::Server::new(memory.clone(), false, CancellationToken::new())?;
+    let server = mcp::Server::new(memory.clone(), CancellationToken::new())?;
     let mut request = CallToolRequestParams::new("memory_search");
     request.arguments = Some(serde_json::from_str(
         r#"{"query":"unicode tool","mode":"vector","scope":"messages","limit":1}"#,
@@ -380,7 +377,6 @@ async fn wiki_files_follow_redirects_and_refuse_sibling_traversal_and_symlinks()
             memory_postgres::PostgresMemory::new(pool)
                 .with_wiki_directory(root.path().to_path_buf()),
         ),
-        false,
         CancellationToken::new(),
     )?;
     let mut request = CallToolRequestParams::new("wiki_read");

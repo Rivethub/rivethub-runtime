@@ -5,13 +5,11 @@ use wire::message::MessageContent;
 use wire::message::Role;
 use wire::stream::openai::ChatCompletionRequest;
 use wire::stream::openai::ChatTemplateKwargs;
-use wire::stream::openai::FunctionDef;
 use wire::stream::openai::JsonSchemaFormat;
 use wire::stream::openai::MessageToolCall;
 use wire::stream::openai::ResponseFormat;
 use wire::stream::openai::StreamOptions;
 use wire::stream::openai::StructuredOutputs;
-use wire::stream::openai::Tool;
 
 use crate::Variant;
 use crate::error::Unsupported;
@@ -121,7 +119,6 @@ pub fn chat_body(
     for message in messages {
         wire_messages.push(wire_message(&message)?);
     }
-    let tools = tools(&request.tools)?;
     let response_format = request
         .options
         .json_schema
@@ -143,8 +140,6 @@ pub fn chat_body(
         temperature: request.options.temperature,
         enable_thinking: request.options.enable_thinking,
         messages: wire_messages,
-        tools,
-        tool_choice: None,
         stream: Some(true),
         stream_options: Some(StreamOptions {
             include_usage: true,
@@ -224,34 +219,6 @@ fn wire_tool_call(call: &wire::message::ToolCall) -> Result<MessageToolCall, Mod
     ))
 }
 
-fn tools(tools: &[rmcp::model::Tool]) -> Result<Option<Vec<Tool>>, ModelProviderError> {
-    if tools.is_empty() {
-        return Ok(None);
-    }
-    let mut converted = Vec::with_capacity(tools.len());
-    for tool in tools {
-        let schema = serde_json::to_value(tool.input_schema.as_ref()).map_err(|source| {
-            ModelProviderError::Request {
-                message: format!("tool \"{}\" has an unreadable input schema", tool.name),
-                source: Box::new(source),
-            }
-        })?;
-        let parameters: wire::JsonObject =
-            serde_json::from_value(schema).map_err(|source| ModelProviderError::Request {
-                message: format!("tool \"{}\" has an unreadable input schema", tool.name),
-                source: Box::new(source),
-            })?;
-        converted.push(Tool::Function {
-            function: FunctionDef {
-                name: tool.name.to_string(),
-                description: tool.description.as_deref().map(str::to_owned),
-                parameters,
-            },
-        });
-    }
-    Ok(Some(converted))
-}
-
 #[cfg(test)]
 mod url_tests {
     use super::{chat_url, embeddings_url, models_url, normalize_api_prefix};
@@ -294,7 +261,6 @@ mod url_tests {
             },
             model: "thinkingcap-flash-next".to_owned(),
             messages: Vec::new(),
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(4_000),
         };

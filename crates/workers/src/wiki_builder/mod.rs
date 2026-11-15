@@ -309,7 +309,6 @@ async fn extract(
             ),
             message(Role::User, user),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(WIKI_EXTRACT_MAX_TOKENS),
     };

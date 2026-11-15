@@ -378,7 +378,6 @@ fn fixed(job: FixedJob) -> JobName {
 fn port_max_attempts(name: &JobName) -> u32 {
     match name {
         JobName::Fixed(fixed) => fixed_attempts(*fixed),
-        JobName::Heartbeat { .. } => 1,
     }
 }
 

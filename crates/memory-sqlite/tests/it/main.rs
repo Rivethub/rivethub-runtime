@@ -16,7 +16,6 @@ mod queue_port;
 mod reembed;
 mod replay_capture;
 mod replay_hybrid;
-mod replay_jobs;
 mod replay_read;
 mod replay_search;
 mod replay_suggest;

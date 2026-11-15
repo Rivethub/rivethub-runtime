@@ -21,17 +21,6 @@ pub enum SessionRef {
     Bare(String),
 }
 
-impl SessionRef {
-    #[must_use]
-    pub fn key(&self) -> Option<SessionKey> {
-        match self {
-            Self::Canonical(session) => Some(SessionKey::Harness(session.clone())),
-            Self::Import(key) => Some(SessionKey::Import(key.clone())),
-            Self::Bare(_) => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedSegment {
     pub requested: String,

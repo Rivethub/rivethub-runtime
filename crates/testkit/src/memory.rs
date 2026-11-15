@@ -458,21 +458,6 @@ impl MemoryStore for FakeMemoryStore {
         Ok(0)
     }
 
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.record(MemoryRequest::DecideTagRemovals {
-            ids,
-            decision,
-            decided_by,
-        })
-        .await;
-        Ok(0)
-    }
-
     async fn add_tag(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {
         self.record(MemoryRequest::AddTag(add.clone())).await;
         let display = match add.display.as_deref().map(str::trim) {

@@ -5,31 +5,6 @@ enum RecordedChunk {
     Text { delta: String },
     #[serde(rename = "reasoning")]
     Reasoning { delta: String },
-    #[serde(rename = "tool_call_start")]
-    ToolCallStart {
-        #[serde(rename = "toolCall")]
-        tool_call: RecordedStart,
-    },
-    #[serde(rename = "tool_call_delta")]
-    ToolCallDelta {
-        delta: String,
-        #[serde(rename = "toolCall")]
-        tool_call: RecordedIndex,
-    },
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RecordedStart {
-    index: u32,
-    id: String,
-    name: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RecordedIndex {
-    index: u32,
 }
 
 fn recorded_chunk(chunk: &ModelChunk) -> Json {
@@ -39,20 +14,6 @@ fn recorded_chunk(chunk: &ModelChunk) -> Json {
         },
         ModelChunk::Reasoning { delta } => RecordedChunk::Reasoning {
             delta: delta.clone(),
-        },
-        ModelChunk::ToolCallStart { index, id, name } => RecordedChunk::ToolCallStart {
-            tool_call: RecordedStart {
-                index: *index,
-                id: id.clone(),
-                name: name.clone(),
-            },
-        },
-        ModelChunk::ToolCallDelta {
-            index,
-            arguments_delta,
-        } => RecordedChunk::ToolCallDelta {
-            delta: arguments_delta.clone(),
-            tool_call: RecordedIndex { index: *index },
         },
         ModelChunk::Usage { .. } | ModelChunk::Done => {
             halt("usage and done chunks are filtered before the comparison")
@@ -69,7 +30,6 @@ pub(crate) fn model_request(scenario: &str, body: &Json) -> ModelRequest {
         options: kernel::model::ModelOptions::default(),
         model: demand_some(body.get("model").and_then(Json::as_str), "recorded model").to_owned(),
         messages: decode_messages(body.get("messages")),
-        tools: decode_tools(body.get("tools")),
         thinking: Some(thinking(scenario)),
         max_tokens: None,
     }
@@ -151,37 +111,6 @@ impl RecordedToolCall {
     }
 }
 
-fn decode_tools(value: Option<&Json>) -> Vec<rmcp::model::Tool> {
-    let Some(Json::Array(rows)) = value else {
-        return Vec::new();
-    };
-    rows.iter()
-        .map(|row| {
-            let function = demand_some(row.get("function"), "recorded tool function");
-            let parameters: wire::JsonObject = demand(
-                serde_json::from_value(demand_some(
-                    function.get("parameters").cloned(),
-                    "recorded tool parameters",
-                )),
-                "recorded tool parameters parse",
-            );
-            rmcp::model::Tool::new(
-                demand_some(
-                    function.get("name").and_then(Json::as_str),
-                    "recorded tool name",
-                )
-                .to_owned(),
-                demand_some(
-                    function.get("description").and_then(Json::as_str),
-                    "recorded tool description",
-                )
-                .to_owned(),
-                parameters.as_map().clone(),
-            )
-        })
-        .collect()
-}
-
 fn expected_usage(scenario: &str) -> Vec<LlmUsage> {
     let built =
         |prompt: u64, completion: u64, reasoning: Option<u64>, cached: Option<u64>| LlmUsage {
@@ -195,8 +124,6 @@ fn expected_usage(scenario: &str) -> Vec<LlmUsage> {
     match scenario {
         "A-text" | "D-thinking-off" => vec![built(25, 5, None, Some(10))],
         "C-reasoning" => vec![built(25, 30, Some(22), None)],
-        "B-tool" => vec![built(60, 18, None, None), built(90, 9, None, None)],
-        "E-reasoning-tool" => vec![built(60, 40, Some(20), None), built(110, 9, None, None)],
         other => halt(&format!("no recorded usage table for {other}")),
     }
 }
@@ -222,10 +149,9 @@ pub(crate) async fn drive(scenario: &'static str) {
             match demand(item, "the stream item is a chunk") {
                 ModelChunk::Done => done = true,
                 ModelChunk::Usage { usage: received } => usage.push(received),
-                other @ (ModelChunk::Text { .. }
-                | ModelChunk::Reasoning { .. }
-                | ModelChunk::ToolCallStart { .. }
-                | ModelChunk::ToolCallDelta { .. }) => chunks.push(recorded_chunk(&other)),
+                other @ (ModelChunk::Text { .. } | ModelChunk::Reasoning { .. }) => {
+                    chunks.push(recorded_chunk(&other));
+                }
             }
         }
         assert!(done, "scenario {scenario}: the stream ended without Done");

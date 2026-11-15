@@ -100,7 +100,6 @@ fn hi_request() -> ModelRequest {
             tool_calls: None,
             tool_call_id: None,
         }],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
     }

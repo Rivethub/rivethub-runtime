@@ -173,34 +173,6 @@ pub(crate) async fn start_new(
     Ok(connected.finish(session_id, options, response.models))
 }
 
-pub async fn initialize_handshake(
-    command: &AcpCommand,
-    working_dir: &Path,
-) -> Result<(), AcpError> {
-    let connected = connect(command, working_dir).await?;
-    let Connecting {
-        reaped,
-        tasks,
-        shutdown,
-        guard,
-        ..
-    } = connected;
-    shutdown.cancel();
-    drop(guard.disarm());
-    let outcome = reaped.await;
-    tasks.wait().await;
-    match outcome {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(source)) => Err(AcpError::Launch {
-            program: command.program.display().to_string(),
-            source,
-        }),
-        Err(_) => Err(AcpError::Closed {
-            method: "initialize",
-        }),
-    }
-}
-
 async fn connect(command: &AcpCommand, working_dir: &Path) -> Result<Connecting, AcpError> {
     let pipes = process::spawn_child(command, working_dir)?;
     let (events_tx, events_rx) = mpsc::channel(EVENT_CAPACITY);

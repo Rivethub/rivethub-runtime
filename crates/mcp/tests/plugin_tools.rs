@@ -7,8 +7,9 @@ use kernel::plugins::{
     PluginToolResult, PluginTools,
 };
 use mcp::Server;
-use mcp::client::Client;
 use mcp::transport::{Bearer, serve_tcp};
+use rmcp::ServiceExt as _;
+use rmcp::model::ClientConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use tokio_util::sync::CancellationToken;
@@ -67,7 +68,6 @@ async fn plugin_tools_follow_the_nine_and_answer_calls() {
     };
     let server = Server::builder(
         Arc::new(testkit::FakeMemoryStore::default()),
-        false,
         CancellationToken::new(),
     )
     .plugins(Arc::new(FixturePlugin { list }))
@@ -97,7 +97,7 @@ async fn plugin_tools_follow_the_nine_and_answer_calls() {
     let config = StreamableHttpClientTransportConfig::with_uri(url).auth_header("plugin-secret");
     let client = tokio::time::timeout(
         Duration::from_secs(10),
-        Client::connect(
+        ClientConfig::default().serve_with_ct(
             StreamableHttpClientTransport::with_client(reqwest::Client::new(), config),
             shutdown.child_token(),
         ),
@@ -105,26 +105,21 @@ async fn plugin_tools_follow_the_nine_and_answer_calls() {
     .await
     .expect("deadline")
     .expect("connect");
-    let names: Vec<String> = client
-        .tools()
-        .await
-        .expect("tools")
-        .iter()
-        .map(|tool| tool.definition().name.to_string())
-        .collect();
+    let listed = client.list_all_tools().await.expect("tools");
+    let names: Vec<String> = listed.iter().map(|tool| tool.name.to_string()).collect();
     assert_eq!(names.last().map(String::as_str), Some("fixture-kit-echo"));
     assert!(names.contains(&"memory_search".to_owned()));
-    let listed = client.tools().await.expect("tools");
     let echo = listed
         .iter()
-        .find(|tool| tool.definition().name == "fixture-kit-echo")
-        .expect("echo")
-        .definition();
+        .find(|tool| tool.name == "fixture-kit-echo")
+        .expect("echo");
     assert_eq!(
-        echo.annotations.and_then(|hints| hints.read_only_hint),
+        echo.annotations
+            .as_ref()
+            .and_then(|hints| hints.read_only_hint),
         Some(true)
     );
-    client.close().await.expect("close");
+    client.cancel().await.expect("close");
     shutdown.cancel();
     task.await.expect("task").expect("serve");
 }

@@ -380,17 +380,6 @@ async fn init_refuses_escape_links_traversal_and_non_directories() {
             .await
             .is_err()
     );
-    let unit = Unit::new(
-        Path::new("/opt/rh"),
-        Path::new("/home/user/.env"),
-        Scope::User,
-        NodeKind::Node,
-    )
-    .expect("unit");
-    assert!(matches!(
-        unit.install(fixture.home.path().join("../escape")).await,
-        Err(ServiceError::Path(_))
-    ));
 }
 
 #[tokio::test]
@@ -545,33 +534,6 @@ read -r line <&3
         Err(ServiceError::Cancelled)
     ));
     assert_eq!(stream.read(&mut [0]).await.expect("closed socket"), 0);
-}
-
-#[tokio::test]
-async fn concurrent_initializers_publish_exactly_one_complete_unit() {
-    let fixture = Fixture::new();
-    let new_unit = || {
-        Unit::new(
-            Path::new("/opt/rh"),
-            Path::new("/home/user/.env"),
-            Scope::User,
-            NodeKind::Node,
-        )
-        .expect("unit")
-    };
-    let expected = new_unit().to_string();
-    let (first, second) = tokio::join!(
-        new_unit().install(fixture.home.path().to_path_buf()),
-        new_unit().install(fixture.home.path().to_path_buf())
-    );
-    assert!(matches!(
-        (first, second),
-        (Ok(_), Err(ServiceError::Exists(_))) | (Err(ServiceError::Exists(_)), Ok(_))
-    ));
-    assert_eq!(
-        std::fs::read_to_string(Scope::User.unit_path(fixture.home.path())).expect("unit"),
-        expected
-    );
 }
 
 #[test]

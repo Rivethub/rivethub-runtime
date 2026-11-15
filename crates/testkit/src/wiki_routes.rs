@@ -22,7 +22,6 @@ use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::TranscriptWindow;
 use kernel::wiki::WikiLookup;
 use kernel::wiki::builder::ExtractWiki;
-use kernel::wiki::builder::HeldEntity;
 use kernel::wiki::builder::WikiBuilderStore;
 use kernel::wiki::builder::WikiWork;
 use kernel::wiki::merge::PageMerger;
@@ -192,23 +191,6 @@ impl RouteStores<'_> {
             .find(&TopicKey::Slug(kind, Slug::fold(name)?))
             .await?)
     }
-
-    pub(crate) async fn mentioned_elsewhere(
-        &self,
-        job: &ExtractWiki,
-        patch: &WikiPatch,
-    ) -> Outcome {
-        self.wiki
-            .hold_entity(HeldEntity {
-                key: Slug::fold(&patch.title)?,
-                source: "claude-code:00000000-0000-4000-8000-000000000099".to_owned(),
-                summary_id: job.summary_id,
-                patch: patch.clone(),
-                at: at(2),
-            })
-            .await?;
-        Ok(())
-    }
 }
 
 pub(crate) fn patch(slug: &str, title: &str, summary: &str) -> Found<WikiPatch> {
@@ -319,7 +301,6 @@ pub async fn a_typed_entity_mention_does_not_create_a_page(
     job: &ExtractWiki,
 ) -> Outcome {
     let host = host("The build box runs the nightly AcmeKit builds.")?;
-    stores.mentioned_elsewhere(job, &host).await?;
     stores.route(job, vec![host]).await?;
     same(
         "no entity page",
@@ -496,7 +477,6 @@ pub async fn a_deleted_entity_is_not_recreated(
         .await?;
     stores.pages.topics.delete(entity.id).await?;
     let host = host("Still here.")?;
-    stores.mentioned_elsewhere(job, &host).await?;
     stores.route(job, vec![host]).await?;
     same(
         "tombstoned",

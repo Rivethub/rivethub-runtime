@@ -66,11 +66,9 @@ pub use capture::MAX_CONTENT_CHARS;
 pub use error::SqliteError;
 pub use queue::ClaimedSqliteJob;
 pub use queue::FailOutcome;
-pub use queue::JobCount;
 pub use queue::JobInsert;
 pub use queue::JobPayload;
 pub use queue::JobState;
-pub use queue::retry_delay_ms;
 pub use reembed::ReembedReport;
 
 #[derive(Clone)]

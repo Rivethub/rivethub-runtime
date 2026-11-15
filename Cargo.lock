@@ -2018,7 +2018,6 @@ version = "0.8.3"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
- "base64 0.22.1",
  "chrono",
  "clap",
  "config",
@@ -2702,7 +2701,6 @@ dependencies = [
  "chrono-tz",
  "parking_lot",
  "regex",
- "rmcp",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -2714,6 +2712,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
  "values",
 ]
@@ -3503,7 +3502,6 @@ dependencies = [
  "kernel",
  "parking_lot",
  "reqwest",
- "rmcp",
  "serde",
  "serde_json",
  "tempfile",

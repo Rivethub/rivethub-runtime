@@ -13,7 +13,6 @@ use crate::BoxError;
 use crate::filing::Target;
 use crate::owner::Owner;
 use crate::queue::JobId;
-use crate::topics::Slug;
 use crate::topics::TopicId;
 
 pub const WIKI_PIPELINE_VERSION: i32 = 4;
@@ -115,15 +114,6 @@ impl RouteLease {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HeldEntity {
-    pub key: Slug,
-    pub source: String,
-    pub summary_id: Uuid,
-    pub patch: WikiPatch,
-    pub at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeferredWiki {
     pub summary_id: Uuid,
     pub waits: Target,
@@ -181,12 +171,6 @@ pub trait WikiBuilderStore: Send + Sync {
         error: &str,
         now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError>;
-
-    async fn hold_entity(&self, held: HeldEntity) -> Result<Vec<HeldEntity>, WikiStoreError>;
-
-    async fn held_entities(&self, key: &Slug) -> Result<Vec<HeldEntity>, WikiStoreError>;
-
-    async fn release_entity(&self, held: &[HeldEntity]) -> Result<(), WikiStoreError>;
 
     async fn defer_wiki(&self, deferred: DeferredWiki) -> Result<(), WikiStoreError>;
 

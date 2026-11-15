@@ -104,10 +104,6 @@ pub trait EntityStore: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<(), EntityStoreError>;
 
-    async fn type_names(&self) -> Result<Vec<String>, EntityStoreError> {
-        Ok(Vec::new())
-    }
-
     async fn record_decision(
         &self,
         _summary: Uuid,

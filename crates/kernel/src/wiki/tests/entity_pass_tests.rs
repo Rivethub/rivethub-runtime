@@ -45,24 +45,6 @@ fn uid(n: u128) -> Uuid {
     Uuid::from_u128(n)
 }
 
-fn fact(id: u128, as_of: i64, summary: u128, value: &str) -> FactRecord {
-    FactRecord {
-        id: uid(id),
-        entity: uid(1),
-        attribute: "port".to_owned(),
-        value: value.to_owned(),
-        as_of: at(as_of),
-        summary: uid(summary),
-        superseded_by: None,
-    }
-}
-
-fn current_value(rows: &[FactRecord]) -> Option<&str> {
-    rows.iter()
-        .find(|row| row.superseded_by.is_none())
-        .map(|row| row.value.as_str())
-}
-
 fn clock(id: u128, start: i64, end: i64) -> LeafClock {
     LeafClock {
         id: uid(id),
@@ -70,31 +52,6 @@ fn clock(id: u128, start: i64, end: i64) -> LeafClock {
         start: at(start),
         end: at(end),
     }
-}
-
-#[test]
-fn latest_as_of_wins_in_either_order_and_a_rerun_adds_nothing() {
-    let older = fact(10, 100, 2, "port 22");
-    let newer = fact(11, 200, 3, "port 443");
-    let forward = integrate(std::slice::from_ref(&older), newer.clone());
-    let backward = integrate(std::slice::from_ref(&newer), older);
-    assert_eq!(current_value(&forward), Some("port 443"));
-    assert_eq!(current_value(&backward), Some("port 443"));
-    let again = integrate(&forward, newer);
-    assert_eq!(again.len(), forward.len());
-    assert_eq!(current_value(&again), Some("port 443"));
-    let loser = forward.iter().find(|row| row.value == "port 22").unwrap();
-    let winner = forward.iter().find(|row| row.value == "port 443").unwrap();
-    assert_eq!(loser.superseded_by, Some(winner.id));
-    assert_eq!(winner.superseded_by, None);
-}
-
-#[test]
-fn equal_as_of_breaks_ties_by_summary_then_id() {
-    let left = fact(10, 100, 2, "left");
-    let right = fact(11, 100, 4, "right");
-    let rows = integrate(&[left], right);
-    assert_eq!(current_value(&rows), Some("right"));
 }
 
 #[test]
@@ -245,23 +202,6 @@ fn history_is_one_entry_per_summary_newest_first() {
     assert_eq!(rendered.first().unwrap().body, "later");
     assert_eq!(rendered.get(1).unwrap().body, "first");
     assert_eq!(rendered.first().unwrap().title, "");
-}
-
-#[test]
-fn a_history_string_and_a_bare_array_both_parse() {
-    let wrapped = parse_observations(
-        r#"{"observations":[{"name":"tinbox","type":"Hosts","history":"added the host"}]}"#,
-    )
-    .unwrap();
-    assert_eq!(wrapped.observations.len(), 1);
-    let sentence = wrapped
-        .observations
-        .first()
-        .and_then(|item| item.history.first())
-        .map(|item| item.sentence.as_str());
-    assert_eq!(sentence, Some("added the host"));
-    let bare = parse_observations(r#"[{"name":"dana","type":"People"}]"#).unwrap();
-    assert_eq!(bare.observations.first().unwrap().name, "dana");
 }
 
 #[test]
@@ -823,20 +763,6 @@ fn an_identification_ignores_facts_and_accepts_a_bare_array() {
 }
 
 #[test]
-fn an_invalid_entity_ref_reads_as_no_reference() {
-    let parsed = parse_observations(
-        r#"{"observations":[{"entity_ref":"ef4ee179-bb6f-40e8","name":"tinbox","type":"Hosts"},{"entity_ref":null,"name":"hally","type":"Hosts"}]}"#,
-    )
-    .unwrap();
-    let refs: Vec<(Option<Uuid>, &str)> = parsed
-        .observations
-        .iter()
-        .map(|observation| (observation.entity_ref, observation.name.as_str()))
-        .collect();
-    assert_eq!(refs, vec![(None, "tinbox"), (None, "hally")]);
-}
-
-#[test]
 fn an_invalid_identification_ref_reads_as_no_reference() {
     let parsed = parse_identifications(
         r#"{"observations":[{"entity_ref":"null","name":"tinbox","type":"Hosts"},{"entity_ref":"00000000-0000-0000-0000-000000000001","name":"hally","type":"Hosts"}]}"#,
@@ -851,18 +777,4 @@ fn an_invalid_identification_ref_reads_as_no_reference() {
         refs,
         vec![(None, "tinbox"), (Some(Uuid::from_u128(1)), "hally"),]
     );
-}
-
-#[test]
-fn an_invalid_history_summary_reads_as_no_reference() {
-    let parsed = parse_observations(
-        r#"{"observations":[{"name":"tinbox","type":"Hosts","history":[{"summary_id":"null","sentence":"seen"},{"summaryId":"00000000-0000-0000-0000-000000000004","sentence":"kept"}]}]}"#,
-    )
-    .unwrap();
-    let ids: Vec<Option<Uuid>> = parsed
-        .observations
-        .first()
-        .map(|item| item.history.iter().map(|line| line.summary_id).collect())
-        .unwrap_or_default();
-    assert_eq!(ids, vec![None, Some(Uuid::from_u128(4))]);
 }

@@ -371,7 +371,6 @@ async fn chat(env: &FilingEnv<'_>, user: &str) -> Result<String, WorkerError> {
             text_message(Role::System, FILING_SYSTEM_PROMPT),
             text_message(Role::User, user),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(MAX_FILING_TOKENS),
     };

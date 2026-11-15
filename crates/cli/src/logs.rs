@@ -32,34 +32,26 @@ pub async fn execute(
     env: &Environment,
     shutdown: &CancellationToken,
 ) -> Result<Report, Error> {
-    let notice = env.legacy_notice("RIVETHUB_BARE_METAL", "RIVETOS_BARE_METAL");
     match parse(args)? {
-        Parsed::Help => Ok(noted(notice, Report::success(help()))),
-        Parsed::Unknown(token) => Ok(noted(notice, unknown(&token))),
-        Parsed::Command(command) => run(scope, command, notice, env, shutdown).await,
+        Parsed::Help => Ok(Report::success(help())),
+        Parsed::Unknown(token) => Ok(unknown(&token)),
+        Parsed::Command(command) => run(scope, command, env, shutdown).await,
     }
 }
 
 async fn run(
     scope: Scope,
     command: LogsCommand,
-    notice: Option<String>,
     env: &Environment,
     shutdown: &CancellationToken,
 ) -> Result<Report, Error> {
-    let follow = command.follow;
-    if follow && let Some(notice) = &notice {
-        write_notice(notice)?;
-    }
     let arguments = journal_args(&command);
-    let report = match scope.read_journal(&arguments, follow, env, shutdown).await {
-        Ok(report) => report,
-        Err(error) => Report::failure(&Error::from(error)),
-    };
-    if follow {
-        Ok(report)
-    } else {
-        Ok(noted(notice, report))
+    match scope
+        .read_journal(&arguments, command.follow, env, shutdown)
+        .await
+    {
+        Ok(report) => Ok(report),
+        Err(error) => Ok(Report::failure(&Error::from(error))),
     }
 }
 
@@ -189,20 +181,6 @@ fn syslog(text: &str) -> Result<(), Error> {
         | "1" | "2" | "3" | "4" | "5" | "6" | "7" => Ok(()),
         _ => Err(Error::LevelUnknown(text.to_owned())),
     }
-}
-
-fn noted(notice: Option<String>, mut report: Report) -> Report {
-    if let Some(notice) = notice {
-        report.stderr = format!("warning: {notice}\n{}", report.stderr);
-    }
-    report
-}
-
-fn write_notice(notice: &str) -> Result<(), Error> {
-    use std::io::Write;
-    let mut stderr = std::io::stderr().lock();
-    stderr.write_all(format!("warning: {notice}\n").as_bytes())?;
-    Ok(())
 }
 
 fn unknown(token: &str) -> Report {

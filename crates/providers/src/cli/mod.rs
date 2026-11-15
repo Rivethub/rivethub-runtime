@@ -98,7 +98,6 @@ impl ModelProvider for CliBacked {
     ) -> Result<Receiver<ModelStreamItem>, ModelProviderError> {
         let prompt = HeadlessInput {
             messages: &request.messages,
-            tools: &request.tools,
             system_prompt: self.config.system_prompt.as_deref(),
             max_tokens: request.max_tokens,
         };
@@ -169,7 +168,6 @@ impl ModelProvider for CliBacked {
 #[derive(Serialize)]
 struct HeadlessInput<'a> {
     messages: &'a [wire::message::Message],
-    tools: &'a [rmcp::model::Tool],
     #[serde(skip_serializing_if = "Option::is_none")]
     system_prompt: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

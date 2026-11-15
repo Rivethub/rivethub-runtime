@@ -75,23 +75,6 @@ pub(super) fn assert_sources(written: &[NewSummary], messages: &[WindowMessage])
     assert_eq!(cursor, messages.len());
 }
 
-pub(super) async fn assert_health(
-    store: &MemStore,
-    settings: &SummarySettings,
-    expected: &HealthSnap,
-) {
-    let health =
-        summary_health(&store.pending().await.expect("pending"), settings).expect("health");
-    assert_eq!(
-        health,
-        SummaryHealth {
-            eligible: expected.eligible,
-            active_tail: expected.active_tail,
-            below_floor: expected.below_floor,
-        }
-    );
-}
-
 impl MemStore {
     pub(super) fn new(windows: Vec<ConversationWindow>) -> Self {
         Self {
@@ -535,7 +518,6 @@ fn default_attempts(name: &JobName) -> u32 {
         JobName::Fixed(FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall) => 3,
         JobName::Fixed(FixedJob::FileConversation | FixedJob::ExtractWiki) => 2,
         JobName::Fixed(FixedJob::EmbedTarget) => 5,
-        JobName::Heartbeat { .. } => 1,
         JobName::Fixed(_) => 25,
     }
 }

@@ -154,15 +154,6 @@ impl FactState {
             Self::Ended => "ended",
         }
     }
-
-    #[must_use]
-    pub fn parse(text: &str) -> Self {
-        if text.eq_ignore_ascii_case("ended") {
-            Self::Ended
-        } else {
-            Self::Current
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
@@ -451,17 +442,6 @@ pub struct BindRequest {
     pub entity_ref: Option<Uuid>,
     pub ref_exists: bool,
     pub type_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FactRecord {
-    pub id: Uuid,
-    pub entity: Uuid,
-    pub attribute: String,
-    pub value: String,
-    pub as_of: DateTime<Utc>,
-    pub summary: Uuid,
-    pub superseded_by: Option<Uuid>,
 }
 
 #[derive(Debug, Error)]

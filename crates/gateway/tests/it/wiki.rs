@@ -324,9 +324,6 @@ async fn auth_origin_preflight_and_methods_use_existing_gateway_policy() {
     for path in ["/api/wiki/topics", "/api/wiki/release", "/wiki/release"] {
         let mut remote = request("GET", path);
         remote.via = Some("remote".to_owned());
-        remote
-            .headers
-            .push(("x-rivetos-user".to_owned(), "owner".to_owned()));
         assert_eq!(answer(&app, remote).await.status, 401);
         let mut hostile = request("GET", path);
         hostile

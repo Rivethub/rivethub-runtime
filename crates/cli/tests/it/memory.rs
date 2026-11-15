@@ -173,16 +173,8 @@ async fn a_sqlite_node_keeps_postgres_commands_off_a_stray_database_url() {
 }
 
 #[tokio::test]
-async fn cloud_import_exits_2_and_sqlite_wins() {
-    let (_home, environment) =
-        env(&[("RIVETHUB_PG_URL", "postgres://user:secret@rivetos.cloud/db")]);
-    let refused = memory(&["import", "/no/such/memory.dump"], &environment, false).await;
-    assert_eq!(refused.exit, Exit::Memory);
-    assert_eq!(refused.stdout, "");
-    assert_eq!(
-        refused.stderr,
-        "RIVETHUB_PG_URL host is rivetos.cloud; tenant roles cannot import summaries/wiki. Use `rh cloud import <file>` instead.\n"
-    );
+async fn sqlite_import_wins_over_a_postgres_url() {
+    let (_home, environment) = env(&[("RIVETHUB_PG_URL", "postgres://user:secret@db.example/db")]);
     let directory = tempfile::tempdir().expect("directory");
     let database = migrated(directory.path());
     let imported = memory(
@@ -797,16 +789,6 @@ async fn export_round_trip_refuses_a_full_target_and_userinfo_is_local(pool: PgP
     assert_eq!(body, BODY);
     let occupied = run(&["memory", "import", &out_text], &environment).await;
     assert!(occupied.stderr.contains("not empty"));
-    let mut disguised: url::Url = pool.connect_options().as_ref().to_url_lossy();
-    disguised.set_username("rivetos.cloud").expect("user");
-    let (_home, disguised_env) = env(&[("RIVETHUB_PG_URL", disguised.as_ref())]);
-    let local = run(&["memory", "import", &out_text], &disguised_env).await;
-    assert_eq!(local.exit, Exit::Failure, "{}", local.stderr);
-    assert!(
-        !local.stderr.contains("tenant roles cannot import"),
-        "{}",
-        local.stderr
-    );
 }
 
 async fn seed_round_trip(pool: &PgPool) -> Uuid {

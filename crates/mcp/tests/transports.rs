@@ -1,14 +1,12 @@
 #![cfg(test)]
 
-use kernel::{ToolContext, tool::Tool};
-use mcp::{
-    client::Client,
-    transport::{Bearer, bind_unix, serve_tcp, serve_unix},
-};
+use mcp::transport::{Bearer, bind_unix, serve_tcp, serve_unix};
+use rmcp::ServiceExt as _;
+use rmcp::model::{CallToolRequestParams, ClientConfig};
+use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::{
     StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
 };
-use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
@@ -19,37 +17,25 @@ async fn remote(
     url: String,
     token: Option<&str>,
     shutdown: CancellationToken,
-) -> Client {
+) -> RunningService<RoleClient, ClientConfig> {
     let config = StreamableHttpClientTransportConfig::with_uri(url);
     let config = match token {
         Some(token) => config.auth_header(token),
         None => config,
     };
-    Client::connect(
-        StreamableHttpClientTransport::with_client(http, config),
-        shutdown,
-    )
-    .await
-    .expect("connect")
-}
-
-async fn search(tools: &[Arc<dyn Tool>]) {
-    let search = tools
-        .iter()
-        .find(|tool| tool.definition().name == "memory_search")
-        .expect("memory_search");
-    let context = ToolContext {
-        agent_id: None,
-        working_dir: None,
-        session: None,
-    };
-    let result = search
-        .call(
-            Some(serde_json::from_str(r#"{"query":"remote ✓"}"#).expect("arguments")),
-            context,
+    ClientConfig::default()
+        .serve_with_ct(
+            StreamableHttpClientTransport::with_client(http, config),
+            shutdown,
         )
         .await
-        .expect("remote call");
+        .expect("connect")
+}
+
+async fn search(client: &RunningService<RoleClient, ClientConfig>) {
+    let mut request = CallToolRequestParams::new("memory_search");
+    request.arguments = Some(serde_json::from_str(r#"{"query":"remote ✓"}"#).expect("arguments"));
+    let result = client.call_tool(request).await.expect("remote call");
     let [block] = result.content.as_slice() else {
         panic!("one result block")
     };
@@ -94,30 +80,14 @@ async fn tcp_auth_client_bridge_and_shutdown() {
             );
         }
         let client = remote(http, url, Some("test-secret"), shutdown.child_token()).await;
-        let tools = client.tools().await.expect("tools");
-        assert_eq!(
-            tools
-                .iter()
-                .map(|tool| tool.definition())
-                .collect::<Vec<_>>(),
-            expected
-        );
-        tokio::join!(search(&tools), search(&tools));
-        client.close().await.expect("close");
+        assert_eq!(client.list_all_tools().await.expect("tools"), expected);
+        tokio::join!(search(&client), search(&client));
+        let peer = client.peer().clone();
+        client.cancel().await.expect("close");
         shutdown.cancel();
         task.await.expect("task").expect("serve");
         assert!(
-            tools
-                .first()
-                .expect("tool")
-                .call(
-                    None,
-                    ToolContext {
-                        agent_id: None,
-                        working_dir: None,
-                        session: None
-                    }
-                )
+            peer.call_tool(CallToolRequestParams::new("memory_search"))
                 .await
                 .is_err()
         );
@@ -162,8 +132,8 @@ async fn unix_socket_serves_with_and_without_a_bearer() {
                 shutdown.child_token(),
             )
             .await;
-            search(&client.tools().await.expect("tools")).await;
-            client.close().await.expect("close");
+            search(&client).await;
+            client.cancel().await.expect("close");
             shutdown.cancel();
             task.await.expect("task").expect("serve");
         }
@@ -241,13 +211,13 @@ async fn host_origin_duplicate_credentials_and_open_connection_shutdown() {
             .build()
             .expect("client");
         let client = remote(http, url, Some("policy-secret"), shutdown.child_token()).await;
-        search(&client.tools().await.expect("tools")).await;
+        search(&client).await;
         let idle = tokio::net::TcpStream::connect(address)
             .await
             .expect("idle connection");
         shutdown.cancel();
         task.await.expect("task").expect("shutdown");
-        client.close().await.expect("close");
+        client.cancel().await.expect("close");
         drop(idle);
     })
     .await

@@ -197,6 +197,5 @@ fn ceiling(name: &JobName) -> i32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::Heartbeat { .. } => 1,
     }
 }

@@ -18,11 +18,9 @@ use wire::JsonObject;
 pub use settings::SummaryParts;
 pub use settings::SummarySettings;
 pub use settings::SummaryTrigger;
-pub use sweep::SummaryHealth;
 pub use sweep::handle_enqueue_idle;
 pub use sweep::handle_enqueue_stale;
 pub use sweep::handle_reap;
-pub use sweep::summary_health;
 
 pub(crate) use llm::llm_error;
 

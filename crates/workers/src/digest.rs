@@ -55,7 +55,6 @@ pub async fn handle_digest_day(
             crate::tool_synthesis::message_text(Role::System, DIGEST_SYSTEM_PROMPT.to_owned()),
             crate::tool_synthesis::message_text(Role::User, digest_prompt(request.day, &changes)),
         ],
-        tools: Vec::new(),
         thinking: None,
         max_tokens: Some(400),
     };

@@ -328,15 +328,9 @@ impl<'a> CaptureWriter<'a> {
     }
 }
 
-pub(crate) fn char_prefix(text: &str, max: usize) -> &str {
-    text.char_indices()
-        .nth(max)
-        .map_or(text, |(end, _)| &text[..end])
-}
-
 fn capped(text: &str) -> Result<(String, Option<u64>), Error> {
     let text = text.replace('\0', "");
-    let kept = char_prefix(&text, MAX_CONTENT_CHARS);
+    let kept = kernel::memory::budget::char_prefix(&text, MAX_CONTENT_CHARS);
     let full = (kept.len() < text.len())
         .then(|| u64::try_from(text.chars().count()))
         .transpose()?;

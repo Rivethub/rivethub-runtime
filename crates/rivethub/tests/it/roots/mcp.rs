@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use std::process::Stdio;
 use std::time::Duration;
 
+use rmcp::ServiceExt as _;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio_util::sync::CancellationToken;
 
 use super::{TestResult, provider_config, terminate, write_state};
 
@@ -37,16 +37,16 @@ async fn mcp_lists_its_tools_over_stdio_and_stops_on_sigterm() -> TestResult {
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(
         Duration::from_secs(30),
-        mcp::client::Client::connect((stdout, stdin), CancellationToken::new()),
+        rmcp::model::ClientConfig::default().serve((stdout, stdin)),
     )
     .await?
     .map_err(|error| format!("mcp connect failed: {error}"))?;
-    let tools = tokio::time::timeout(Duration::from_secs(30), client.tools())
+    let tools = tokio::time::timeout(Duration::from_secs(30), client.list_all_tools())
         .await?
         .map_err(|error| format!("tools/list failed: {error}"))?;
     let names: BTreeSet<_> = tools
-        .iter()
-        .map(|tool| tool.definition().name.into_owned())
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
         .collect();
     for name in [
         "memory_search",

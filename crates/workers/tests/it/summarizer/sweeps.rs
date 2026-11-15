@@ -96,12 +96,6 @@ async fn idle_and_stale_floors_follow_the_recording() {
     );
     assert_eq!(handle_enqueue_idle(&early).await.expect("early idle"), 0);
     assert_eq!(handle_enqueue_stale(&early).await.expect("early stale"), 0);
-    assert_health(
-        &store,
-        &settings,
-        health_steps(recorded).first().expect("early health"),
-    )
-    .await;
     let idle = bind(
         &store,
         &script,
@@ -140,12 +134,6 @@ async fn idle_and_stale_floors_follow_the_recording() {
     assert_eq!(outcome.summaries, 1);
     assert_calls(&script.calls.lock().await, &chat_calls(recorded));
     assert_rows(&store.written.lock().await, &recorded.tables.summaries);
-    assert_health(
-        &store,
-        &settings,
-        health_steps(recorded).get(1).expect("later health"),
-    )
-    .await;
 }
 
 #[test]

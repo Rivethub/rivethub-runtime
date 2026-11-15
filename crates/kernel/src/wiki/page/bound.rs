@@ -157,11 +157,6 @@ fn cut_point(text: &str, budget: usize) -> usize {
     line.unwrap_or(cut)
 }
 
-#[must_use]
-pub fn dropped(before: &str, after: &str) -> String {
-    missing(before, &normal(after))
-}
-
 fn missing(before: &str, after: &str) -> String {
     blocks(before)
         .into_iter()

@@ -385,10 +385,6 @@ async fn run_gateway(
     Ok(())
 }
 
-pub async fn start(env: &Environment) -> Exit {
-    Box::pin(start_with_check(env, false)).await
-}
-
 pub async fn start_with_check(env: &Environment, check: bool) -> Exit {
     if check {
         return match check_config(env).await {

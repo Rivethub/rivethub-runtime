@@ -56,7 +56,7 @@ fn wiki_extraction(env: &Environment) -> bool {
 
 fn require_wiki_extraction(env: &Environment, role: ProcessRole) -> Result<(), RootError> {
     if role
-        .claim_roles()?
+        .selected()
         .contains(&kernel::queue::WorkerRole::WikiBuilder)
         && !wiki_extraction(env)
     {
@@ -280,7 +280,6 @@ pub fn with_models<Q: JobQueue + 'static>(
     shutdown: &CancellationToken,
     activities: &Activities,
 ) -> Result<ComposedRunner<Q>, RootError> {
-    role.claim_roles()?;
     let cancel = shutdown.child_token();
     let bindings = role_bindings(config, factory, &cancel)?;
     check_embeddings(role, &bindings)?;

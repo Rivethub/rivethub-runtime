@@ -34,7 +34,6 @@ fn usage() -> LlmUsage {
 #[derive(serde::Deserialize)]
 struct HeadlessInput {
     messages: Vec<wire::message::Message>,
-    tools: Vec<rmcp::model::Tool>,
     system_prompt: String,
 }
 
@@ -72,7 +71,19 @@ async fn one_turn_preserves_context_and_maps_events_then_releases() -> TestResul
         .await
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
-    verify_mapped_chunks(&chunks)?;
+    assert_eq!(
+        chunks,
+        [
+            ModelChunk::Reasoning {
+                delta: "考える 🦀".into()
+            },
+            ModelChunk::Text {
+                delta: "Hello 🦀".into()
+            },
+            ModelChunk::Usage { usage: usage() },
+            ModelChunk::Done,
+        ]
+    );
     let Action::New(spec, canonical) = action(&mut actions).await else {
         panic!("new session")
     };
@@ -86,50 +97,10 @@ async fn one_turn_preserves_context_and_maps_events_then_releases() -> TestResul
     assert_eq!(session, canonical);
     let prompt: HeadlessInput = serde_json::from_str(&prompt)?;
     assert_eq!(prompt.messages, input.messages);
-    assert_eq!(prompt.tools, input.tools);
     assert_eq!(prompt.system_prompt, "Preserve quoted input");
     assert!(matches!(action(&mut actions).await, Action::Release(id) if id == canonical));
     provider.shutdown().await;
     assert!(harness.is_empty());
-    Ok(())
-}
-
-fn verify_mapped_chunks(chunks: &[ModelChunk]) -> TestResult {
-    let [reasoning, start, arguments, content, tokens, done] = chunks else {
-        panic!("six mapped chunks")
-    };
-    assert_eq!(
-        reasoning,
-        &ModelChunk::Reasoning {
-            delta: "考える 🦀".into()
-        }
-    );
-    assert_eq!(
-        start,
-        &ModelChunk::ToolCallStart {
-            index: 0,
-            id: "call-1".into(),
-            name: "echo".into()
-        }
-    );
-    let ModelChunk::ToolCallDelta {
-        index,
-        arguments_delta,
-    } = arguments
-    else {
-        panic!("tool arguments")
-    };
-    assert_eq!(*index, 0);
-    let parsed: wire::JsonObject = serde_json::from_str(arguments_delta)?;
-    assert_eq!(parsed, serde_json::from_str(r#"{"text":"hi","n":1.0}"#)?);
-    assert_eq!(
-        content,
-        &ModelChunk::Text {
-            delta: "Hello 🦀".into()
-        }
-    );
-    assert_eq!(tokens, &ModelChunk::Usage { usage: usage() });
-    assert_eq!(done, &ModelChunk::Done);
     Ok(())
 }
 

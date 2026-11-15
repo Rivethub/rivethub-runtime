@@ -167,15 +167,6 @@ impl Queue {
         self.add(name, payload, 0, max_attempts, false).await
     }
 
-    pub(crate) async fn push_any(
-        &self,
-        name: JobName,
-        payload: JsonObject,
-        max_attempts: u32,
-    ) -> JobId {
-        self.add(name, payload, 0, max_attempts, true).await
-    }
-
     pub(crate) async fn fail_next_claim(&self) {
         let error = JobQueueError::Unavailable(Box::new(std::io::Error::other("queue down")));
         *self.claim_error.lock().await = Some(error);
@@ -403,7 +394,6 @@ fn default_max_attempts(name: &JobName) -> u32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::Heartbeat { .. } => 1,
     }
 }
 

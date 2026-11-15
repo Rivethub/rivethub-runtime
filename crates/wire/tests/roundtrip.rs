@@ -352,14 +352,7 @@ fn capture_batches_roundtrip() -> Result<(), String> {
 fn provider_payloads_roundtrip() -> Result<(), String> {
     let mut errors = Vec::new();
     let server = "vllm";
-    for scenario in [
-        "A-text",
-        "B-tool",
-        "C-reasoning",
-        "D-thinking-off",
-        "E-reasoning-tool",
-        "probe",
-    ] {
+    for scenario in ["A-text", "C-reasoning", "D-thinking-off", "probe"] {
         provider_requests(server, scenario, &mut errors)?;
         provider_responses(server, scenario, &mut errors)?;
     }

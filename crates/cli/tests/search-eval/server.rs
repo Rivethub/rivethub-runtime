@@ -46,7 +46,7 @@ fn main() -> ExitCode {
 async fn serve(args: &Args) -> Result<(), Failure> {
     let store: Arc<dyn MemoryStore> = Arc::new(SqliteStore::open(&args.sqlite)?);
     let shutdown = CancellationToken::new();
-    let server = mcp::Server::new(Arc::clone(&store), false, shutdown.clone())?;
+    let server = mcp::Server::new(Arc::clone(&store), shutdown.clone())?;
     let outcome = mcp::transport::serve_stdio(server, shutdown).await;
     let closed = store.close().await;
     outcome?;

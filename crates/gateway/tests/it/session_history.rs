@@ -34,7 +34,6 @@ struct Stores {
     cwd: BTreeMap<String, String>,
     limits: Mutex<Vec<usize>>,
     later: Mutex<BTreeMap<String, Vec<HarnessTranscriptTurn>>>,
-    elsewhere: BTreeMap<String, u32>,
 }
 
 #[async_trait]
@@ -71,14 +70,6 @@ impl SessionLister for Stores {
         native: &str,
     ) -> Result<Option<String>, TranscriptReaderError> {
         Ok(self.cwd.get(native).cloned())
-    }
-
-    async fn running_elsewhere(
-        &self,
-        _harness: HarnessId,
-        native: &str,
-    ) -> Result<Option<u32>, TranscriptReaderError> {
-        Ok(self.elsewhere.get(native).copied())
     }
 
     async fn transcript(
@@ -533,14 +524,6 @@ async fn a_harness_without_a_transcript_reader_is_unsupported() {
 
 fn nth<T>(items: &[T], index: usize) -> &T {
     items.get(index).expect("listed item")
-}
-
-#[test]
-fn harness_codes_map_to_their_statuses() {
-    use strum::IntoEnumIterator as _;
-    for code in wire::harness::HarnessCode::iter() {
-        assert_eq!(gateway::error::harness_status(code).as_u16(), code.status());
-    }
 }
 
 fn previewed(body: &[u8]) -> Vec<(SessionId, SessionPreviewKind, String)> {

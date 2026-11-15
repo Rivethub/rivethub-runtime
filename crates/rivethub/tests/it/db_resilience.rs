@@ -14,8 +14,8 @@ use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
 use kernel::queue::JobName;
 use kernel::queue::JobQueue;
-use kernel::tool::Tool;
 use memory_postgres::PostgresMemory;
+use rmcp::ServiceExt as _;
 use sqlx::PgPool;
 use tokio::io::BufReader;
 use tokio::process::Child;
@@ -369,37 +369,27 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     let stdin = child.stdin.take().ok_or("missing stdin")?;
     let client = tokio::time::timeout(
         Duration::from_secs(30),
-        mcp::client::Client::connect((stdout, stdin), tokio_util::sync::CancellationToken::new()),
+        rmcp::model::ClientConfig::default().serve((stdout, stdin)),
     )
     .await?
     .map_err(|error| format!("mcp connect failed: {error}"))?;
-    let tools = client.tools().await.map_err(|error| format!("{error}"))?;
-    let stats_tool = tool(&tools, "memory_stats")?;
-    let context = kernel::ToolContext {
-        agent_id: None,
-        working_dir: None,
-        session: None,
+    let memory_stats = || {
+        let mut request = rmcp::model::CallToolRequestParams::new("memory_stats");
+        request.arguments = Some(rmcp::model::JsonObject::new());
+        client.call_tool(request)
     };
-    let healthy = stats_tool
-        .call(Some(rmcp::model::JsonObject::new()), context.clone())
-        .await?;
+    let healthy = memory_stats().await?;
     assert_ne!(healthy.is_error, Some(true), "{healthy:?}");
     proxy.pause().await;
     alive(&mut child)?;
-    let failed = tokio::time::timeout(
-        Duration::from_secs(20),
-        stats_tool.call(Some(rmcp::model::JsonObject::new()), context.clone()),
-    )
-    .await?
-    .map_err(|error| format!("{error}"))?;
+    let failed = tokio::time::timeout(Duration::from_secs(20), memory_stats())
+        .await?
+        .map_err(|error| format!("{error}"))?;
     assert_eq!(failed.is_error, Some(true), "{failed:?}");
     proxy.resume();
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
-            let restored = stats_tool
-                .call(Some(rmcp::model::JsonObject::new()), context.clone())
-                .await
-                .map_err(|error| format!("{error}"))?;
+            let restored = memory_stats().await.map_err(|error| format!("{error}"))?;
             if restored.is_error != Some(true) {
                 return Ok::<(), String>(());
             }
@@ -416,14 +406,4 @@ async fn mcp_stats_fail_while_postgres_is_down_and_succeed_after() -> TestResult
     drop(client);
     drop(proxy);
     Ok(())
-}
-
-fn tool<'a>(
-    tools: &'a [std::sync::Arc<dyn Tool>],
-    name: &str,
-) -> TestResult<&'a std::sync::Arc<dyn Tool>> {
-    tools
-        .iter()
-        .find(|tool| tool.definition().name.as_ref() == name)
-        .ok_or_else(|| format!("missing tool {name}").into())
 }

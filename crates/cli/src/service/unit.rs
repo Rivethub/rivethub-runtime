@@ -29,10 +29,6 @@ impl Unit {
         })
     }
 
-    pub async fn install(self, home: PathBuf) -> Result<PathBuf, ServiceError> {
-        tokio::task::spawn_blocking(move || self.write(&home)).await?
-    }
-
     pub(crate) fn place(&self, home: &Path) -> Result<Placement, ServiceError> {
         let rendered = self.to_string();
         let destination = self.scope.unit_path(home);

@@ -49,7 +49,6 @@ impl TitleCall<'_> {
                 message(Role::System, TITLE_SYSTEM_PROMPT.to_owned()),
                 message(Role::User, input(summaries)),
             ],
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(TITLE_MAX_TOKENS),
         };

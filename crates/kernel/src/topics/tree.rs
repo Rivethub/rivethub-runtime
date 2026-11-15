@@ -46,11 +46,6 @@ impl TopicTree {
     }
 
     #[must_use]
-    pub fn root(&self, id: TopicId) -> TopicId {
-        self.ancestors(id).last().unwrap_or(id)
-    }
-
-    #[must_use]
     pub fn within(&self, id: TopicId, ancestor: TopicId) -> bool {
         id == ancestor || self.ancestors(id).any(|above| above == ancestor)
     }

@@ -72,13 +72,6 @@ impl NodeKey {
             .map_err(|_| SignError::Invalid(path.to_path_buf()))
     }
 
-    pub fn load(path: &Path) -> Result<Self, SignError> {
-        let pkcs8 = PrivateFile::new(path, KEY_NAME, PKCS8_CAP).read()?;
-        Ed25519KeyPair::from_pkcs8(&pkcs8)
-            .map(Self)
-            .map_err(|_| SignError::Invalid(path.to_path_buf()))
-    }
-
     #[must_use]
     pub fn public_key(&self) -> PublicKey {
         let mut bytes = [0u8; PUBLIC_KEY_BYTES];

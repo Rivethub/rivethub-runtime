@@ -19,8 +19,6 @@ pub(crate) fn replay(recorded: &ProviderScenario, actual: &ProviderTurn) {
                 demand(serde_json::from_str(&actual.body), "actual request");
             assert_eq!(expected.model, actual.model);
             assert_eq!(expected.max_tokens, actual.max_tokens);
-            assert_eq!(expected.tools, actual.tools);
-            assert_eq!(expected.tool_choice, actual.tool_choice);
             assert_eq!(expected.stream, actual.stream);
             assert_eq!(expected.stream_options, actual.stream_options);
             assert_eq!(expected.chat_template_kwargs, actual.chat_template_kwargs);

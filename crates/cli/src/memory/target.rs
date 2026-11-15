@@ -69,10 +69,6 @@ pub(super) fn sqlite_origin() -> Result<Origin, Error> {
     })
 }
 
-pub(super) fn cloud_url(url: &str) -> Result<bool, Error> {
-    Ok(postgres_host(url)? == "rivetos.cloud")
-}
-
 pub(super) fn load(env: &Environment) -> Result<Option<Config>, Error> {
     let Some(location) = config::resolve_config_path(env)? else {
         return Ok(None);
@@ -137,15 +133,7 @@ fn machine_name() -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::Source;
-    use super::cloud_url;
     use super::origin_for_url;
-
-    #[test]
-    fn cloud_host_is_exact_and_userinfo_does_not_hide_it() {
-        assert!(cloud_url("postgres://user:secret@rivetos.cloud/db").unwrap());
-        assert!(!cloud_url("postgres://rivetos.cloud@127.0.0.1/db").unwrap());
-        assert!(!cloud_url("postgres://user@rivetos.cloud.example/db").unwrap());
-    }
 
     #[test]
     fn datahub_hosts_are_tagged_and_other_hosts_are_local() {

@@ -60,11 +60,6 @@ pub enum AcpError {
     },
     #[error("the agent behind {method} is gone")]
     Closed { method: &'static str },
-    #[error("failed to read attachment {path}: {source}")]
-    Attachment {
-        path: std::path::PathBuf,
-        source: std::io::Error,
-    },
     #[error("session {session} is already active")]
     SessionActive {
         session: wire::session_id::SessionId,
@@ -114,10 +109,6 @@ pub enum AcpError {
     UsageMeta { source: serde_json::Error },
     #[error("the startup context did not encode as session/new _meta: {source}")]
     StartupMeta { source: serde_json::Error },
-    #[error("the agent advertised _meta.steering that is not {{ supported: bool }}: {source}")]
-    SteeringMeta { source: serde_json::Error },
-    #[error("the agent could not steer the running turn: {}", reason.as_deref().unwrap_or("no reason given"))]
-    SteerFailed { reason: Option<String> },
     #[error(
         "no working directory: the request, the launch command and runtime.workspace all leave it unset"
     )]
@@ -151,9 +142,6 @@ impl AcpError {
             | Self::ToolInput { .. }
             | Self::UsageMeta { .. }
             | Self::StartupMeta { .. }
-            | Self::SteeringMeta { .. }
-            | Self::SteerFailed { .. }
-            | Self::Attachment { .. }
             | Self::WorkingDir => ProviderRecovery::Permanent,
         }
     }

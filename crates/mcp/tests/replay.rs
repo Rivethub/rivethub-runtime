@@ -53,7 +53,6 @@ const NOT_SERVED: &[&str] = &[
 fn recording_server() -> Server {
     Server::builder(
         std::sync::Arc::new(testkit::FakeMemoryStore::default()),
-        false,
         CancellationToken::new(),
     )
     .build()

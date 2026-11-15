@@ -53,7 +53,6 @@ fn request() -> kernel::model::ModelRequest {
         options: kernel::model::ModelOptions::default(),
         model: "test-model".to_owned(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
     }

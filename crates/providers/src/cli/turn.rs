@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -92,7 +91,6 @@ impl Turn {
         tokio::pin!(prompt);
         let mut prompt_finished = false;
         let mut turn_ended = false;
-        let mut calls = BTreeSet::new();
         while !prompt_finished || !turn_ended {
             tokio::select! {
                 result = &mut prompt, if !prompt_finished => {
@@ -100,40 +98,18 @@ impl Turn {
                     prompt_finished = true;
                 }
                 event = next_event(&mut events), if !turn_ended => {
-                    turn_ended = self.emit(session, event?, &mut calls).await?;
+                    turn_ended = self.emit(session, event?).await?;
                 }
             }
         }
         Ok(())
     }
 
-    async fn emit(
-        &self,
-        session: &SessionId,
-        event: SessionEvent,
-        calls: &mut BTreeSet<String>,
-    ) -> Result<bool, CliError> {
+    async fn emit(&self, session: &SessionId, event: SessionEvent) -> Result<bool, CliError> {
         let chunk = match event {
             SessionEvent::AgentMessageChunk { text } => ModelChunk::Text { delta: text },
             SessionEvent::AgentThoughtChunk { text } => ModelChunk::Reasoning { delta: text },
             SessionEvent::Usage { usage } => ModelChunk::Usage { usage },
-            SessionEvent::ToolCall(call) => {
-                let index = u32::try_from(calls.len())?;
-                if !calls.insert(call.tool_call_id.clone()) {
-                    return Err(CliError::DuplicateTool(call.tool_call_id));
-                }
-                let arguments_delta = serde_json::to_string(&call.input)?;
-                self.send(ModelChunk::ToolCallStart {
-                    index,
-                    id: call.tool_call_id,
-                    name: call.name,
-                })
-                .await?;
-                ModelChunk::ToolCallDelta {
-                    index,
-                    arguments_delta,
-                }
-            }
             SessionEvent::Exited { code } => return Err(CliError::Exited { code }),
             SessionEvent::TurnEnded => return Ok(true),
             SessionEvent::Permission(request) => {
@@ -144,13 +120,12 @@ impl Turn {
                 return Ok(false);
             }
             SessionEvent::UserMessageChunk { .. }
+            | SessionEvent::ToolCall(_)
             | SessionEvent::Context(_)
             | SessionEvent::ToolCallUpdate(_)
             | SessionEvent::Plan(_)
             | SessionEvent::AvailableCommands(_)
-            | SessionEvent::CurrentMode { .. }
-            | SessionEvent::TerminalBytes { .. }
-            | SessionEvent::TerminalResize { .. } => return Ok(false),
+            | SessionEvent::CurrentMode { .. } => return Ok(false),
         };
         self.send(chunk).await?;
         Ok(false)

@@ -12,6 +12,7 @@ mod excerpt;
 mod select;
 mod shape;
 
+pub(in crate::entity_builder) use budget::as_u64;
 pub(in crate::entity_builder) use budget::passage_report;
 pub(in crate::entity_builder) use select::passages;
 

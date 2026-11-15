@@ -22,8 +22,6 @@ fn uuid_harnesses_accept_hyphenated_uuids() {
         HarnessId::Codex,
     ] {
         let parsed = NativeSession::parse(harness, UUID).expect("uuid accepted");
-        assert_eq!(parsed.harness(), harness);
-        assert_eq!(parsed.native(), UUID);
         assert_eq!(
             parsed.canonical(),
             SessionId::from_str(&canonical(harness, UUID)).expect("canonical parses")
@@ -157,34 +155,6 @@ fn opencode_accepts_ses_prefixed_ids_with_twenty_alphanumerics() {
             "opencode must reject {native:?}"
         );
     }
-}
-
-#[test]
-fn canonical_ids_round_trip_through_the_native_parser() {
-    for (harness, native) in [
-        (HarnessId::ClaudeCode, UUID),
-        (HarnessId::GrokBuild, "0198c0de-7a5b-7000-8000-000000000001"),
-        (HarnessId::Hermes, "20260102_030405_abc123"),
-        (
-            HarnessId::KimiCode,
-            "session_00000000-0000-4000-8000-000000000000",
-        ),
-        (HarnessId::Opencode, "ses_0123456789abcdef0123"),
-        (HarnessId::Codex, UUID),
-    ] {
-        let session = SessionId::from_str(&canonical(harness, native)).expect("canonical parses");
-        let parsed = harness_acp::identity::from_canonical(&session).expect("round trip");
-        assert_eq!(parsed.harness(), harness);
-        assert_eq!(parsed.native(), native);
-        assert_eq!(parsed.canonical(), session);
-    }
-}
-
-#[test]
-fn a_canonical_id_with_a_malformed_native_part_is_rejected() {
-    let session = SessionId::from_str("claude-code:not-a-uuid").expect("canonical parses");
-    let parsed = harness_acp::identity::from_canonical(&session);
-    assert!(matches!(parsed, Err(IdentityError::Shape { .. })));
 }
 
 #[test]

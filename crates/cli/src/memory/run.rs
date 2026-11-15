@@ -286,11 +286,6 @@ async fn import(
     shutdown: &CancellationToken,
 ) -> Result<Report, Error> {
     let target = resolve(env, sqlite, Kind::Either)?;
-    if let Target::Postgres(url) = &target
-        && super::target::cloud_url(url)?
-    {
-        return Ok(io::cloud_refusal());
-    }
     let keep_file = matches!(target, Target::Sqlite(_));
     let loaded = io::read_dump(&path, keep_file).await?;
     let header = io::preamble(&loaded.text)?;

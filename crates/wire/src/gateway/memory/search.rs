@@ -49,50 +49,6 @@ pub enum SummaryKind {
     Root,
 }
 
-impl SummaryKind {
-    #[must_use]
-    pub const fn depth(self) -> i32 {
-        match self {
-            Self::Leaf => 0,
-            Self::Branch => 1,
-            Self::Root => 2,
-        }
-    }
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Leaf => "leaf",
-            Self::Branch => "branch",
-            Self::Root => "root",
-        }
-    }
-
-    #[must_use]
-    pub const fn from_depth(depth: i64) -> Option<Self> {
-        match depth {
-            0 => Some(Self::Leaf),
-            1 => Some(Self::Branch),
-            2.. => Some(Self::Root),
-            _ => None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod summary_kind_tests {
-    use super::SummaryKind;
-
-    #[test]
-    fn canonical_depths_round_trip_and_deeper_rows_are_roots() {
-        for kind in [SummaryKind::Leaf, SummaryKind::Branch, SummaryKind::Root] {
-            assert_eq!(SummaryKind::from_depth(i64::from(kind.depth())), Some(kind));
-        }
-        assert_eq!(SummaryKind::from_depth(4), Some(SummaryKind::Root));
-        assert_eq!(SummaryKind::from_depth(-1), None);
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureStatus {

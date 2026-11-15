@@ -18,6 +18,7 @@ use kernel::memory::Limit;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::MemoryEntry;
 use kernel::memory::MemoryStatsResponse;
+use kernel::memory::MemoryStore as _;
 use memory_sqlite::SqliteStore;
 use serde::Deserialize;
 use testkit::Json;

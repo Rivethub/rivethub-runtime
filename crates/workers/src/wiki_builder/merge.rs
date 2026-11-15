@@ -48,7 +48,6 @@ impl ModelMerger<'_> {
                 ),
                 message(Role::User, user),
             ],
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(WIKI_MERGE_MAX_TOKENS),
         };

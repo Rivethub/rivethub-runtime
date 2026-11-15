@@ -139,7 +139,6 @@ pub struct DeviceLogin {
 pub struct PendingLogin {
     server: ShareServer,
     interval: Arc<AtomicU64>,
-    expires_at: DateTime<Utc>,
     cancel: CancellationToken,
     task: Option<AbortOnDropHandle<Result<Approval, Error>>>,
 }
@@ -160,11 +159,6 @@ impl PendingLogin {
     #[must_use]
     pub fn interval(&self) -> Duration {
         Duration::from_secs(self.interval.load(Ordering::Relaxed).max(1))
-    }
-
-    #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
-        self.expires_at
     }
 
     pub async fn poll(&mut self) -> Result<Option<Approval>, Error> {
@@ -246,7 +240,6 @@ pub async fn start(
         pending: PendingLogin {
             server: host,
             interval,
-            expires_at,
             cancel,
             task: Some(AbortOnDropHandle::new(task)),
         },

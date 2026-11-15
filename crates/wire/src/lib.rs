@@ -3,7 +3,6 @@ pub mod contract;
 pub mod events;
 pub mod gateway;
 pub mod harness;
-pub mod hooks;
 pub mod json;
 pub mod levels;
 pub mod memory;

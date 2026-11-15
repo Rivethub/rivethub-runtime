@@ -64,13 +64,6 @@ impl Placement {
 
 impl PlacementOutcome {
     #[must_use]
-    pub fn placement(&self) -> &Placement {
-        match self {
-            Self::Placed(placement) | Self::Kept(placement) => placement,
-        }
-    }
-
-    #[must_use]
     pub fn into_placement(self) -> Placement {
         match self {
             Self::Placed(placement) | Self::Kept(placement) => placement,

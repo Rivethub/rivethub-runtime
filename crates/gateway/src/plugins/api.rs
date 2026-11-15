@@ -75,7 +75,8 @@ async fn authorize(
     mut request: Request,
     next: Next,
 ) -> Response {
-    let Some((plugin, granted)) = bearer(&request).and_then(|token| host.authenticate(token))
+    let Some((plugin, granted)) =
+        crate::auth::bearer(request.headers()).and_then(|token| host.authenticate(token))
     else {
         return refusal(
             StatusCode::UNAUTHORIZED,
@@ -133,17 +134,6 @@ async fn authorize(
 enum Unattributed {
     TooLarge(String),
     Invalid(String),
-}
-
-fn bearer(request: &Request) -> Option<&str> {
-    let value = request.headers().get(header::AUTHORIZATION)?;
-    match value.to_str() {
-        Ok(text) => text.strip_prefix("Bearer "),
-        Err(error) => {
-            tracing::debug!(%error, "plug-in authorization header is not text");
-            None
-        }
-    }
 }
 
 async fn attribute(

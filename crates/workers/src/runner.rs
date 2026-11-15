@@ -61,15 +61,6 @@ impl RunnerConfig {
             poll_interval: POLL_INTERVAL,
         })
     }
-
-    #[must_use]
-    pub fn embedder() -> Self {
-        Self {
-            role: ProcessRole::Embedder,
-            concurrency: EMBED_CONCURRENCY,
-            poll_interval: POLL_INTERVAL,
-        }
-    }
 }
 
 #[expect(missing_debug_implementations)]
@@ -276,7 +267,7 @@ where
     }
 
     pub async fn run(&self, cancel: CancellationToken) -> Result<(), WorkerError> {
-        let roles = self.config.role.claim_roles()?;
+        let roles = self.config.role.selected();
         if self.wiki.is_none() && roles.contains(&WorkerRole::WikiBuilder) {
             return Err(WorkerError::MissingDependencies {
                 role: ProcessRole::WikiBuilder,

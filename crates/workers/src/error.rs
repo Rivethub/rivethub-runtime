@@ -35,10 +35,6 @@ pub enum WorkerError {
     WikiJson(#[source] serde_json::Error),
     #[error("wiki model failed: {0}")]
     WikiModel(#[source] kernel::model::ModelProviderError),
-    #[error("unknown worker role: {text}; expected {expected}")]
-    UnknownRole { text: String, expected: String },
-    #[error("{role} has no handler in this build")]
-    RoleUnavailable { role: ProcessRole },
     #[error("{role} dependencies were not supplied")]
     MissingDependencies { role: ProcessRole },
     #[error("worker concurrency must be at least 1")]

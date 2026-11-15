@@ -115,18 +115,6 @@ async fn an_entity_page_is_not_written_by_the_topic_router(pool: PgPool) -> Test
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_held_entity_mention_is_left_for_the_entity_worker(pool: PgPool) -> TestResult {
-    let earlier = summarized(&pool, testkit::wiki_mentions::EARLIER_KEY).await?;
-    let seeded = Seeded::new(pool).await?;
-    testkit::wiki_mentions::a_held_entity_mention_is_left_for_the_entity_worker(
-        seeded.stores(),
-        &seeded.job,
-        &earlier,
-    )
-    .await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn an_entity_type_path_does_not_create_a_page(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
     testkit::wiki_mentions::an_entity_type_path_does_not_create_a_page(seeded.stores(), &seeded.job)
@@ -266,16 +254,6 @@ async fn updates_keep_the_lead_and_replace_only_the_currently_sentence(pool: PgP
 async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin(pool: PgPool) -> TestResult {
     let seeded = Seeded::new(pool).await?;
     testkit::wiki_facts::an_entity_patch_records_its_facts_and_never_overwrites_a_pin(
-        seeded.stores(),
-        &seeded.job,
-    )
-    .await
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn a_held_candidate_keeps_its_own_session_for_its_facts(pool: PgPool) -> TestResult {
-    let seeded = Seeded::new(pool).await?;
-    testkit::wiki_facts::a_held_candidate_keeps_its_own_session_for_its_facts(
         seeded.stores(),
         &seeded.job,
     )

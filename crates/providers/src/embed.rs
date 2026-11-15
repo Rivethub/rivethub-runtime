@@ -63,7 +63,6 @@ pub struct Embedder {
     model: String,
     auth: Arc<Auth>,
     dimensions: Option<usize>,
-    query_instruction: Option<String>,
     client: reqwest::Client,
 }
 
@@ -101,7 +100,6 @@ impl Embedder {
             model: config.model,
             auth: Arc::new(Auth::static_key(config.api_key)),
             dimensions,
-            query_instruction: config.query_instruction,
             client,
         })
     }
@@ -123,14 +121,8 @@ impl Embedder {
             model,
             auth,
             dimensions: None,
-            query_instruction: None,
             client,
         }
-    }
-
-    #[must_use]
-    pub fn query_instruction(&self) -> Option<&str> {
-        self.query_instruction.as_deref()
     }
 
     pub async fn embed(&self, texts: Vec<String>) -> Result<Vec<Embedding>, EmbedError> {

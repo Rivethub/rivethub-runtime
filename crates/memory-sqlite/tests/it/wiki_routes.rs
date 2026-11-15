@@ -12,8 +12,6 @@ use crate::common::execute;
 
 const CONVERSATION: &str = "00000000-0000-4000-8000-0000000000c1";
 const SUMMARY: &str = "00000000-0000-4000-8000-0000000000d1";
-const EARLIER_CONVERSATION: &str = "00000000-0000-4000-8000-0000000000c2";
-const EARLIER_SUMMARY: &str = "00000000-0000-4000-8000-0000000000d2";
 const SUBAGENT_CONVERSATION: &str = "00000000-0000-4000-8000-0000000000c3";
 const SUBAGENT_SUMMARY: &str = "00000000-0000-4000-8000-0000000000d3";
 const SECOND_SUMMARY: &str = "00000000-0000-4000-8000-0000000000d4";
@@ -93,33 +91,6 @@ async fn an_entity_page_is_not_written_by_the_topic_router() -> TestResult {
     let (_directory, store, job) = seeded().await?;
     testkit::wiki_mentions::an_entity_page_is_not_written_by_the_topic_router(stores(&store), &job)
         .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_held_entity_mention_is_left_for_the_entity_worker() -> TestResult {
-    let (_directory, store, job) = seeded().await?;
-    execute(
-        &store,
-        &format!(
-            "INSERT INTO ros_conversations (id, session_key, agent, title, created_at, updated_at, owner_user_id)
-             VALUES ('{EARLIER_CONVERSATION}', '{}', 'rivet', 'Lab rack', '2026-10-10T11:00:00.000Z', '2026-10-10T11:00:00.000Z', 'owner');
-             INSERT INTO ros_summaries (id, conversation_id, content, created_at)
-             VALUES ('{EARLIER_SUMMARY}', '{EARLIER_CONVERSATION}', 'Lab notes.', '2026-10-10T11:00:00.000Z');",
-            testkit::wiki_mentions::EARLIER_KEY
-        ),
-    )
-    .await?;
-    let earlier = ExtractWiki {
-        summary_id: Uuid::parse_str(EARLIER_SUMMARY)?,
-        conversation_id: Some(Uuid::parse_str(EARLIER_CONVERSATION)?),
-    };
-    testkit::wiki_mentions::a_held_entity_mention_is_left_for_the_entity_worker(
-        stores(&store),
-        &job,
-        &earlier,
-    )
-    .await?;
     Ok(())
 }
 
@@ -285,13 +256,5 @@ async fn an_entity_patch_records_its_facts_and_never_overwrites_a_pin() -> TestR
         &job,
     )
     .await?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_held_candidate_keeps_its_own_session_for_its_facts() -> TestResult {
-    let (_directory, store, job) = seeded().await?;
-    testkit::wiki_facts::a_held_candidate_keeps_its_own_session_for_its_facts(stores(&store), &job)
-        .await?;
     Ok(())
 }

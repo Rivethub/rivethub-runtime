@@ -5,11 +5,6 @@ use crate::environment::Environment;
 
 const DEFAULT_SHARED_DIR: &str = "/rivet-shared";
 
-#[must_use]
-pub fn temporary_directory() -> PathBuf {
-    std::env::temp_dir()
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigLocation {
     Current(PathBuf),

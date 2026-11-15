@@ -83,10 +83,9 @@ pub use provenance::origins_of;
 pub use provenance::quote;
 pub use provenance::resolve_origins;
 pub use records::{
-    BrowseWindow, BrowseWindowError, MemoryBrowseOrder, MemoryChunkMatch, MemoryDegraded,
-    MemoryEntry, MemoryFallback, MemoryHitSource, MemoryMessageTally, MemoryScope,
-    MemorySearchResult, MemoryStatsResponse, MemorySummaryNode, RecentSession, SearchMode,
-    SummaryKind, TopTool, VectorState,
+    BrowseWindow, MemoryBrowseOrder, MemoryChunkMatch, MemoryDegraded, MemoryEntry, MemoryFallback,
+    MemoryHitSource, MemoryMessageTally, MemoryScope, MemorySearchResult, MemoryStatsResponse,
+    MemorySummaryNode, RecentSession, SearchMode, SummaryKind, TopTool, VectorState,
 };
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
@@ -566,13 +565,6 @@ pub trait MemoryStore: Send + Sync {
     ) -> Result<Vec<TagTaxonomyEntry>, MemoryStoreError>;
 
     async fn decide_tags(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError>;
-
-    async fn decide_tag_removals(
         &self,
         ids: Vec<TagId>,
         decision: TagDecision,

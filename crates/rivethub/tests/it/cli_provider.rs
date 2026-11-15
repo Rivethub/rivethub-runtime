@@ -121,7 +121,6 @@ fn turn(model: &str) -> ModelRequest {
     ModelRequest {
         model: model.into(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
         options: kernel::model::ModelOptions::default(),

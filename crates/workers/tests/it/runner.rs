@@ -18,8 +18,6 @@ use crate::common::wait_bool;
 use crate::common::width;
 use kernel::model::ModelProvider;
 use kernel::queue::FixedJob;
-use kernel::queue::JobName;
-use kernel::queue::WorkerRole;
 use testkit::FakeProvider;
 use testkit::Script;
 use tokio_util::sync::CancellationToken;
@@ -33,21 +31,7 @@ use workers::WorkerDeps;
 use workers::WorkerError;
 
 #[test]
-fn unknown_roles_list_the_enum_and_zero_concurrency_is_rejected() {
-    assert_eq!(
-        ProcessRole::parse("embedder").expect("role"),
-        ProcessRole::Embedder
-    );
-    assert_eq!(
-        ProcessRole::parse("wiki-builder").expect("role"),
-        ProcessRole::WikiBuilder
-    );
-    assert_eq!(ProcessRole::parse("all").expect("role"), ProcessRole::All);
-    let error = ProcessRole::parse("wiki_builder").expect_err("unknown");
-    assert_eq!(
-        error.to_string(),
-        "unknown worker role: wiki_builder; expected embedder, summarizer, categorizer, wiki-builder, entity-builder, all"
-    );
+fn zero_concurrency_is_rejected() {
     assert!(matches!(
         RunnerConfig::new(ProcessRole::Embedder, 0),
         Err(WorkerError::Concurrency)
@@ -56,10 +40,6 @@ fn unknown_roles_list_the_enum_and_zero_concurrency_is_rejected() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn missing_wiki_dependencies_refuse_to_start() {
-    let summarizer = ProcessRole::Summarizer
-        .claim_roles()
-        .expect("the summarizer has a handler");
-    assert_eq!(summarizer, vec![WorkerRole::Summarizer]);
     let wiki = rig(ProcessRole::WikiBuilder, 1, fnv_provider());
     let error = wiki
         .runner
@@ -95,31 +75,6 @@ async fn all_refuses_to_start_when_wiki_dependencies_are_missing() {
         }
     ));
     assert_eq!(rig.queue.claims(), 0);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn an_unhandled_claim_is_failed() {
-    let rig = rig(ProcessRole::Embedder, 1, fnv_provider());
-    let id = rig
-        .queue
-        .push_any(
-            JobName::Heartbeat {
-                agent: "edge".into(),
-                index: 0,
-            },
-            JsonObject::default(),
-            1,
-        )
-        .await;
-    let (cancel, run) = spawn(&rig);
-    rig.queue.wait_phase(id, Phase::Dead).await;
-    let job = rig.queue.view(id).await;
-    assert_eq!(
-        job.error.as_deref(),
-        Some("no handler for job heartbeat-edge-0")
-    );
-    assert_ne!(job.phase, Phase::Done);
-    finish(cancel, run).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

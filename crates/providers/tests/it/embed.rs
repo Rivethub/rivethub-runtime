@@ -83,10 +83,6 @@ async fn a_well_formed_response_is_one_embedding_per_input() {
             vector: RECORDED_VECTOR.to_vec()
         }]
     );
-    assert_eq!(
-        embedder.query_instruction(),
-        Some("Instruct: retrieve\nQuery: ")
-    );
     let call = server
         .recorder
         .lock()
@@ -366,7 +362,6 @@ async fn an_embed_provider_embeds_and_refuses_chat() {
         options: kernel::model::ModelOptions::default(),
         model: "bge-m3".to_owned(),
         messages: Vec::new(),
-        tools: Vec::new(),
         thinking: None,
         max_tokens: None,
     };

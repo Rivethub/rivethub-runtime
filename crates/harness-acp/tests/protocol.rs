@@ -12,7 +12,6 @@ use kernel::harness::SessionSpec;
 use kernel::harness::ToolCallInfo;
 use kernel::harness::ToolCallStatus;
 use kernel::harness::ToolCallUpdate;
-use kernel::harness::TurnAttachment;
 use kernel::harness::TurnInput;
 use serde::Deserialize;
 use serde::Serialize;
@@ -488,64 +487,5 @@ fn raw_array_tool_input_has_no_event_form() {
             .await
             .expect("events before turn end");
         assert_eq!(collected, vec![SessionEvent::TurnEnded]);
-    });
-}
-
-#[test]
-fn attachments_reach_the_agent_as_image_and_link_blocks() {
-    run(async {
-        let cwd = tempdir().expect("cwd");
-        let image = cwd.path().join("shot.png");
-        std::fs::write(&image, b"png").expect("image");
-        let notes = cwd.path().join("notes.md");
-        std::fs::write(&notes, b"# notes").expect("notes");
-        let inline = format!("image:image/png:4:file://{}", image.display());
-        let linked = format!("link:shot.png:image/png:file://{}", image.display());
-        for (extra, image_block) in [
-            (["--prompt", "echo-images"], inline),
-            (["--prompt", "echo"], linked),
-        ] {
-            let adapter = AcpHarnessAdapter::with_launch_table(launch(&[], &extra));
-            let session = adapter
-                .new_session(spec(cwd.path()))
-                .await
-                .expect("new session");
-            let mut events = adapter.events(&session).await.expect("events");
-            let attachments = vec![
-                TurnAttachment {
-                    path: image.clone(),
-                    media_type: "image/png".to_owned(),
-                    name: "shot.png".to_owned(),
-                },
-                TurnAttachment {
-                    path: notes.clone(),
-                    media_type: "text/markdown".to_owned(),
-                    name: "notes.md".to_owned(),
-                },
-            ];
-            adapter
-                .prompt(
-                    &session,
-                    TurnInput::Attached {
-                        text: "look".to_owned(),
-                        attachments,
-                    },
-                )
-                .await
-                .expect("prompt");
-            let collected = collect_until_turn_end(&mut events)
-                .await
-                .expect("events before turn end");
-            let expected: Vec<SessionEvent> = [
-                "text:look".to_owned(),
-                image_block,
-                format!("link:notes.md:text/markdown:file://{}", notes.display()),
-            ]
-            .into_iter()
-            .map(|text| SessionEvent::AgentMessageChunk { text })
-            .chain([SessionEvent::TurnEnded])
-            .collect();
-            assert_eq!(collected, expected);
-        }
     });
 }

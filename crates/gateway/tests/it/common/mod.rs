@@ -229,15 +229,6 @@ impl MemoryStore for FailingStore {
         unavailable()
     }
 
-    async fn decide_tag_removals(
-        &self,
-        _ids: Vec<kernel::memory::TagId>,
-        _decision: kernel::memory::TagDecision,
-        _decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        unavailable()
-    }
-
     async fn add_tag(
         &self,
         _add: kernel::memory::TagAdd,
@@ -450,17 +441,6 @@ impl MemoryStore for GatedStore {
         self.inner.decide_tags(ids, decision, decided_by).await
     }
 
-    async fn decide_tag_removals(
-        &self,
-        ids: Vec<TagId>,
-        decision: TagDecision,
-        decided_by: Option<String>,
-    ) -> Result<u64, MemoryStoreError> {
-        self.inner
-            .decide_tag_removals(ids, decision, decided_by)
-            .await
-    }
-
     async fn add_tag(&self, add: TagAdd) -> Result<kernel::memory::TagWire, MemoryStoreError> {
         self.inner.add_tag(add).await
     }
@@ -591,8 +571,7 @@ pub(crate) async fn answer(app: axum::Router, request: Recorded) -> Result<Respo
 
 const CORS_LISTED: [&str; 2] = ["https://hub.example.test", "app://bundle"];
 const CORS_METHODS: &str = "GET,POST,PATCH,DELETE";
-const CORS_HEADERS: &str =
-    "authorization,content-type,x-rh-csrf,x-rivet-conversation,x-rivet-title";
+const CORS_HEADERS: &str = "authorization,content-type,x-rh-csrf";
 
 pub(crate) fn expect_cors(case: &mut testkit::http::HttpCase) {
     let mut lines = case.request.head.lines();

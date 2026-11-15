@@ -44,11 +44,6 @@ struct RescheduledJobs {
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct ReapedJobs {
-    count: i64,
-}
-
-#[derive(Debug, sqlx::FromRow)]
 struct HealthRow {
     total: i64,
     pending: i64,
@@ -297,36 +292,6 @@ impl GraphileQueue {
         count(rescheduled.rescheduled)
     }
 
-    pub(crate) async fn reap_dead_corpses(
-        &self,
-        allowlist: &[JobName],
-        limit: u32,
-    ) -> Result<u64, Error> {
-        let allowlist: Vec<String> = allowlist.iter().map(ToString::to_string).collect();
-        let reaped: ReapedJobs = sqlx::query_as(
-            "with deleted as (
-                delete from graphile_worker._private_jobs
-                 where ctid in (
-                   select ctid from graphile_worker._private_jobs j
-                    where j.key is null
-                      and j.attempts >= j.max_attempts
-                      and j.locked_at is null
-                      and j.updated_at < now() - interval '7 days'
-                      and j.task_id in (select id from graphile_worker._private_tasks where identifier = any($1::text[]))
-                    order by j.updated_at asc
-                    limit $2
-                 )
-                 returning 1
-             ) select count(*)::bigint as count from deleted",
-        )
-        .bind(&allowlist)
-        .bind(i64::from(limit.min(200)))
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|source| Error::operation("reap dead jobs", source))?;
-        count(reaped.count)
-    }
-
     pub(crate) async fn queue_health(
         &self,
         task: &JobName,
@@ -433,6 +398,5 @@ pub(crate) fn attempts_for(name: &JobName) -> i32 {
             | FixedJob::ProposeTidy
             | FixedJob::PurgeDeletedSessions => 25,
         },
-        JobName::Heartbeat { .. } => 1,
     }
 }

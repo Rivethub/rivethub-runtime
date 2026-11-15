@@ -30,7 +30,6 @@ impl ModelCall<'_> {
             options: ModelOptions::default(),
             model: self.model.to_owned(),
             messages: vec![message(Role::System, system), message(Role::User, user)],
-            tools: Vec::new(),
             thinking: None,
             max_tokens: Some(max_tokens),
         };
