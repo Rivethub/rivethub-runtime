@@ -30,13 +30,7 @@ pub struct QueryEmbed {
     ef_search: u64,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) cannot format the provider trait object; the impl deliberately skips it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for QueryEmbed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryEmbed")
@@ -117,13 +111,7 @@ pub(crate) struct EmbedArm {
     dropped: AtomicU64,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) cannot format the provider trait object; the impl deliberately skips it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for EmbedArm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EmbedArm")

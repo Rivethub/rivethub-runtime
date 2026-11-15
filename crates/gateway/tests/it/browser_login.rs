@@ -536,13 +536,7 @@ async fn a_session_idle_past_its_limit_is_refused() -> TestResult {
     let browser = login(&rig).await?;
     let probe = || rig.call("GET", "/api/memory/stats").browser(&browser);
     assert_eq!(probe().send().await?.status, StatusCode::OK);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "tower-sessions expires on inactivity against the wall clock, which a paused tokio clock does not move"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
     tokio::time::sleep(Duration::from_millis(2100)).await;
     assert_eq!(probe().send().await?.status, StatusCode::UNAUTHORIZED);
     Ok(())

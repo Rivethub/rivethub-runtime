@@ -1,8 +1,5 @@
 #[path = "common/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "the harness module is included whole by every test binary and this one uses a subset"
-)]
+#[expect(dead_code)]
 mod common;
 
 use common::fixed_status_server;
@@ -59,10 +56,7 @@ fn chat_provider(addr: std::net::SocketAddr) -> OpenAiCompatible {
     common::chat_provider(addr, None)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "a stream test collects chunks and treats a terminal error as a test failure"
-)]
+#[expect(clippy::expect_used)]
 async fn collect(
     mut rx: tokio::sync::mpsc::Receiver<kernel::model::ModelStreamItem>,
 ) -> (String, Option<LlmUsage>, bool) {

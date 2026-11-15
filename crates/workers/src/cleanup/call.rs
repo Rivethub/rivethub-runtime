@@ -11,10 +11,7 @@ use wire::message::Role;
 use crate::error::WorkerError;
 use crate::summarize::llm_error;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 pub struct ModelCall<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,

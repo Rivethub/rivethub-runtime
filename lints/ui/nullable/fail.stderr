@@ -1,4 +1,4 @@
-warning: Option<Option<T>> outside a *Patch/*Update type (use Option<T> with skip_serializing_if) → docs/PATTERNS.md#nullable
+warning: Option<Option<T>> outside a *Patch/*Update type (use Option<T> with skip_serializing_if)
   --> $DIR/fail.rs:4:5
    |
 LL |     pub title: Option<Option<String>>,

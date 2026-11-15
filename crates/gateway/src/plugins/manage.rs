@@ -68,13 +68,7 @@ async fn forward_summaries(
         };
         match summary {
             Ok(summary) => {
-                #[cfg_attr(
-                    dylint_lib = "rr_lints",
-                    expect(
-                        fallback,
-                        reason = "PATTERNS FALLBACK: a real absence: rh leaves sessionId out when the key is not a canonical session id"
-                    )
-                )]
+                #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
                 let session_id = summary.session_key.parse().ok();
                 host.publish(&PluginEvent::SummaryWritten {
                     summary_id: summary.id.to_string(),

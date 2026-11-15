@@ -1,13 +1,7 @@
 #![cfg(test)]
 
-#[expect(
-    unreachable_pub,
-    reason = "the harness is a private module of each test binary"
-)]
-#[expect(
-    dead_code,
-    reason = "each test binary uses a different subset of the harness"
-)]
+#[expect(unreachable_pub)]
+#[expect(dead_code)]
 mod common;
 
 use std::sync::Arc;

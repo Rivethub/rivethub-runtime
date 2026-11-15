@@ -30,10 +30,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const SESSION: &str = "claude-code:entity-serve";
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario covering the committed page, the topic page, the entity article and the list"
-)]
+#[expect(clippy::too_many_lines)]
 async fn a_committed_entity_page_is_served_with_its_type_and_history() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();

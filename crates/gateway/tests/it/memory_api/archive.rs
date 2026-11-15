@@ -31,10 +31,7 @@ impl MemoryExport for RecordingExport {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "an in-process request that cannot be answered must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn get(app: &axum::Router, path: &str) -> testkit::Response {
     block_on(answer(app.clone(), recorded("GET", path, Vec::new()))).expect("in-process answer")
 }
@@ -47,10 +44,7 @@ fn header<'a>(response: &'a testkit::Response, name: &str) -> Option<&'a str> {
         .map(|(_, value)| value.as_str())
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the test literals are constants; a malformed literal must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn at(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
         .expect("RFC 3339 literal")

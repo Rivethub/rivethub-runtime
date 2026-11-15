@@ -283,13 +283,7 @@ pub(super) fn read(locator: &Locator, hooks: &HookFileSpec, version: Option<Vers
     let Some(target) = locator.target(hooks.file) else {
         return Trust::Unknown;
     };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: rh says nothing about Codex hook trust when it cannot read or parse Codex's hooks.json or config.toml"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let trust = assess_files(&target, version).unwrap_or(Trust::Unknown);
     trust
 }

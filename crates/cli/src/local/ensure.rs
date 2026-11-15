@@ -194,13 +194,7 @@ pub(crate) async fn ensure(
             origin: target.origin,
         });
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B9: a node that answers its health check is running even when its pid file is unreadable, so pid is null"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let pid = match process::read_pid(env).await {
         Ok(pid) => pid.map(Pid::as_raw),
         Err(_) => None,

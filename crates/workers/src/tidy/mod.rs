@@ -46,10 +46,7 @@ const MAX_TIDY_TOKENS: u32 = 2_000;
 const CORRECTION_EXAMPLES: u32 = 8;
 const SAMPLES: usize = 3;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the topic and tidy ports and the model provider are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct TidyEnv<'a> {
     pub topics: &'a SessionTopics,
     pub tidy: &'a dyn TidyStore,

@@ -1,29 +1,5 @@
 use testkit::wiki_golden::{Skip, SkipKind};
 
-pub(crate) const UNPORTED: &[(&str, &str)] = &[
-    (
-        "cluster_slugs_by_stem",
-        "no production caller: identity.js:clusterSlugsByStem",
-    ),
-    (
-        "entities_overlap",
-        "no production caller: identity.js:entitiesOverlap",
-    ),
-    (
-        "merge_article_bodies",
-        "no production caller: page.js:mergeArticleBodies",
-    ),
-    ("merge_pages", "no production caller: page.js:mergePages"),
-    (
-        "prefer_canonical_slug",
-        "no production caller: identity.js:preferCanonicalSlug",
-    ),
-    (
-        "slug_token_prefix",
-        "no production caller: identity.js:slugTokenPrefix",
-    ),
-];
-
 const ESCAPED_PIPE: &str = "a citation note may hold the \\| that serialize_wiki_page writes for a pipe; Rust reads it back as a pipe and keeps the row, where the TS parser drops the whole citation";
 
 pub(crate) const SKIPS: &[Skip] = &[

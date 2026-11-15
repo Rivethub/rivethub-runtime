@@ -2,25 +2,13 @@ use super::super::entity_match::TypeRoot;
 use super::super::entity_match::type_root;
 use super::super::entity_pass::compact_key;
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 pub(super) const FILE_SUFFIXES: &[&str] = &[
     "cfg", "conf", "css", "csv", "env", "html", "ini", "js", "json", "jsonl", "jsx", "lock", "log",
     "md", "parquet", "py", "rs", "sh", "sql", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 pub(super) const TOOLS: &[&str] = &[
     "bash",
     "edit",
@@ -46,13 +34,7 @@ pub(super) const TOOLS: &[&str] = &[
     "write",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 pub(super) const CLIS: &[&str] = &[
     "apt",
     "awk",
@@ -148,13 +130,7 @@ pub(super) const CLIS: &[&str] = &[
     "xargs",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 pub(super) const GENERICS: &[&str] = &[
     "command", "config", "data", "default", "false", "file", "index", "input", "kernel", "log",
     "logs", "none", "null", "output", "path", "root", "session", "summary", "temp", "tmp", "tool",
@@ -336,13 +312,7 @@ fn is_index(name: &str) -> bool {
 }
 
 fn device_index(lower: &str) -> bool {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            strset,
-            reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
     const PREFIXES: &[&str] = &[
         "gpu", "disk", "cpu", "nvme", "core", "slot", "cuda", "numa", "eth", "wlan", "br",
     ];

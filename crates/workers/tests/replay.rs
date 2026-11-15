@@ -1,13 +1,7 @@
 #![cfg(test)]
 
-#[expect(
-    unreachable_pub,
-    reason = "the harness is a private module of each test binary"
-)]
-#[expect(
-    dead_code,
-    reason = "each test binary uses a different subset of the harness"
-)]
+#[expect(unreachable_pub)]
+#[expect(dead_code)]
 mod common;
 
 use std::str::FromStr;
@@ -43,19 +37,10 @@ const FILES: [&str; 5] = [
     "capture/pg/errors.json",
 ];
 
-const SKIPPED: [(&str, &str); 3] = [
-    (
-        "routed-without-0013",
-        "schema m0011 has no graphile_worker dump",
-    ),
-    (
-        "routed-half-0013",
-        "schema half0013 has no graphile_worker dump",
-    ),
-    (
-        "task-id-absent-column",
-        "schema pre0011 has no graphile_worker dump",
-    ),
+const SKIPPED: [&str; 3] = [
+    "routed-without-0013",
+    "routed-half-0013",
+    "task-id-absent-column",
 ];
 
 #[test]
@@ -67,8 +52,7 @@ fn recorded_scope_is_partitioned() {
         .iter()
         .flat_map(|recording| recording.scenarios.iter())
     {
-        if let Some(reason) = skip_reason(&scenario.name) {
-            assert!(!reason.is_empty(), "{}", scenario.name);
+        if skipped(&scenario.name) {
             assert_graphile_absent(scenario).expect("skipped scenario");
             skipped_names.push(scenario.name.clone());
         } else {
@@ -79,7 +63,7 @@ fn recorded_scope_is_partitioned() {
     assert_eq!(replayed, 27);
     assert_eq!(skipped_names.len(), SKIPPED.len());
     assert_eq!(replayed + skipped_names.len(), 30);
-    for (name, _) in SKIPPED {
+    for name in SKIPPED {
         assert!(skipped_names.iter().any(|seen| seen == name), "{name}");
     }
 }
@@ -91,7 +75,7 @@ async fn recorded_embed_jobs_replay_against_their_messages() {
         .iter()
         .flat_map(|recording| recording.scenarios.iter())
     {
-        if skip_reason(&scenario.name).is_some() {
+        if skipped(&scenario.name) {
             continue;
         }
         for step in &scenario.steps {
@@ -111,11 +95,8 @@ fn recordings() -> Result<Vec<Recording>, String> {
         .collect()
 }
 
-fn skip_reason(name: &str) -> Option<&'static str> {
-    SKIPPED
-        .iter()
-        .find(|(scenario, _)| *scenario == name)
-        .map(|(_, reason)| *reason)
+fn skipped(name: &str) -> bool {
+    SKIPPED.contains(&name)
 }
 
 fn assert_graphile_absent(scenario: &ScenarioRecord) -> Result<(), String> {
@@ -174,10 +155,7 @@ async fn seed_messages(messages: &[Json]) -> Result<Store, String> {
     for message in messages {
         let row: RecordedMessage =
             serde_json::from_value(message.clone()).map_err(|error| format!("message: {error}"))?;
-        #[expect(
-            clippy::manual_unwrap_or_default,
-            reason = "a null content column is an empty embed body (CONTRACT B4)"
-        )]
+        #[expect(clippy::manual_unwrap_or_default)]
         let content = match row.content.as_deref() {
             Some(text) => text,
             None => "",

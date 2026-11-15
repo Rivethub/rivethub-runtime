@@ -612,7 +612,7 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
 }
 
 const V080_BUNDLE: &str = include_str!("../fixtures/decide-v0.8.0/bundle.json");
-const V080_REPORT: &str = include_str!("../fixtures/decide-v0.8.0/report.md");
+const V080_REPORT: &str = include_str!("../fixtures/decide-v0.8.0/report.txt");
 const V080_LOCAL: &str = include_str!("../fixtures/decide-v0.8.0/review.local.json");
 
 #[test]

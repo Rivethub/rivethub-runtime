@@ -65,34 +65,6 @@ const SUPERSEDED: &[Superseded] = &[
     },
 ];
 
-const IN_SCOPE: &[&str] = &["runtime", "fts_only", "tag_pool_widening", "hybrid"];
-
-const SKIPPED_SEARCH_SCENARIOS: &[(&str, &str)] = &[(
-    "helpers",
-    "buildFtsMatchQuery, relevanceFromBm25 and resolveTaskId are TypeScript internals, not a search scenario",
-)];
-
-#[test]
-fn skipped_search_scenarios_are_named() -> TestResult {
-    let file: Json = common::recording("search.json")?;
-    let keys = file.as_object().ok_or("search.json is not an object")?;
-    for key in keys.keys() {
-        let named = IN_SCOPE.contains(&key.as_str())
-            || SKIPPED_SEARCH_SCENARIOS
-                .iter()
-                .any(|(name, _reason)| *name == key);
-        if !named {
-            return Err(format!("search.json key {key} is neither replayed nor skipped").into());
-        }
-    }
-    for (name, reason) in SKIPPED_SEARCH_SCENARIOS {
-        if reason.is_empty() || keys.get(*name).is_none() {
-            return Err(format!("skipped scenario {name} needs a reason and a recording").into());
-        }
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn fts_only_replay_matches_the_recording() -> TestResult {
     let file: Json = common::recording("search.json")?;

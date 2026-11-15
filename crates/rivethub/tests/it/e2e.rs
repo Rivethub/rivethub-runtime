@@ -184,10 +184,7 @@ async fn post_recorded_batches(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
-)]
+#[expect(clippy::too_many_lines)]
 async fn recorded_batches_land_and_read_back_through_the_memory_api() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();

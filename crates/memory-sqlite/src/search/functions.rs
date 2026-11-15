@@ -65,10 +65,7 @@ fn similarity(left: &str, right: &str) -> rusqlite::Result<f64> {
     let count = |value| {
         u32::try_from(value).map_err(|error| rusqlite::Error::UserFunctionError(Box::new(error)))
     };
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "B6 pg_trgm returns float32 similarity before the SQL threshold comparison"
-    )]
+    #[expect(clippy::cast_possible_truncation)]
     let ratio = (f64::from(count(shared)?) / f64::from(count(union)?)) as f32;
     Ok(f64::from(ratio))
 }

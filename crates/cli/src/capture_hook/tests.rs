@@ -67,7 +67,7 @@ struct Row {
     needle: &'static str,
 }
 
-#[expect(clippy::too_many_lines, reason = "one table, one loop")]
+#[expect(clippy::too_many_lines)]
 #[tokio::test]
 async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothing() {
     let rows = [

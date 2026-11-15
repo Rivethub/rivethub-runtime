@@ -17,15 +17,9 @@ use kernel::owner::Owner;
 use testkit::Json;
 use wire::message::Role;
 
-const SKIPPED_SCENARIOS: [(&str, &str); 2] = [
-    (
-        "project rule tag at capture",
-        "the project rule resolves cwd through the filesystem and writes tags; project tagging is outside this slice",
-    ),
-    (
-        "captured messages queued for embedding, then drained",
-        "embedding job enqueue and drain are outside this slice",
-    ),
+const SKIPPED_SCENARIOS: [&str; 2] = [
+    "project rule tag at capture",
+    "captured messages queued for embedding, then drained",
 ];
 
 const HISTORY_SKIP: &str = "session and task history reads are not part of this slice";
@@ -557,11 +551,7 @@ async fn capture_and_append_replay_the_recorded_scenarios() -> TestResult {
     let file: ScenarioFile = common::recording("capture.json")?;
     let mut replayed = Vec::new();
     for mut scenario in file.scenarios {
-        if let Some((name, reason)) = SKIPPED_SCENARIOS
-            .iter()
-            .find(|(name, _)| *name == scenario.name)
-        {
-            eprintln!("skipped scenario {name}: {reason}");
+        if SKIPPED_SCENARIOS.contains(&scenario.name.as_str()) {
             continue;
         }
         let plan = plan(&scenario.name)?

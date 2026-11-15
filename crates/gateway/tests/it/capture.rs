@@ -311,10 +311,7 @@ fn message(edit: impl FnOnce(&mut CaptureMessage)) -> CaptureMessage {
     message
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the test literals are constants; a malformed literal must fail the test, not store an empty object"
-)]
+#[expect(clippy::expect_used)]
 fn object(raw: &str) -> JsonObject {
     serde_json::from_str(raw).expect("the test literal parses as an object")
 }
@@ -379,10 +376,7 @@ fn writer_scenarios() -> Vec<(String, CaptureBatchRequest)> {
     ]
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the capture fixture uses a constant instant"
-)]
+#[expect(clippy::expect_used)]
 fn single_scenario() -> (String, CaptureBatchRequest) {
     (
         "single".to_owned(),

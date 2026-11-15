@@ -34,10 +34,7 @@ pub enum Action {
 pub const REDACTED: &str = "[REDACTED]";
 const COMBINED_SIZE_LIMIT: usize = 32 << 20;
 
-#[expect(
-    clippy::expect_used,
-    reason = "a constant class; every mapping test compiles it"
-)]
+#[expect(clippy::expect_used)]
 static NON_ASCII_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\w&&[^\x00-\x7F]]").expect("the class compiles"));
 

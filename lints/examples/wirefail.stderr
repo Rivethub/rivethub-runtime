@@ -1,4 +1,4 @@
-warning: private field on a wire payload struct (wire payloads have pub fields; validated newtypes are exempt) → docs/PATTERNS.md#wirepub
+warning: private field on a wire payload struct (wire payloads have pub fields; validated newtypes are exempt)
   --> $DIR/wirefail.rs:5:5
    |
 LL |     hidden: u8,

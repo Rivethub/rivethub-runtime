@@ -126,14 +126,8 @@ fn main() -> ExitCode {
     }
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the failure exit code stands"
-)]
-#[expect(
-    clippy::let_underscore_untyped,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the failure exit code stands"
-)]
+#[expect(clippy::let_underscore_must_use)]
+#[expect(clippy::let_underscore_untyped)]
 fn best_effort_report(error: &Error) -> ExitCode {
     let stderr = std::io::stderr();
     let mut out = stderr.lock();

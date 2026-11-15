@@ -93,13 +93,7 @@ pub(crate) async fn batch(
 
 async fn meta(transcript: &Path) -> Meta {
     let path = transcript.with_extension("meta.json");
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a subagent whose meta file is absent or unreadable is still captured, without the link fields"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let found: Option<Meta> = tokio::fs::read(&path)
         .await
         .ok()

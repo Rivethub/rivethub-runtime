@@ -54,10 +54,7 @@ pub(crate) struct GuardState {
     pub(crate) secure: bool,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the store port is a trait object without Debug, so the derive does not compile and a hand-written impl trips the manualderive rule"
-)]
+#[expect(missing_debug_implementations)]
 pub struct Gateway {
     store: Arc<dyn MemoryStore>,
     settings: Settings,

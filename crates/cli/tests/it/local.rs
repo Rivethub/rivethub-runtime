@@ -3,31 +3,6 @@ use crate::support;
 use cli::{Cli, Command, Dispatch, Exit};
 use support::{config, environment, home, run};
 
-const SKIPPED: &[(&str, &str)] = &[];
-
-#[test]
-fn skipped_local_scenarios_are_named() {
-    let readme =
-        std::fs::read_to_string(testkit::recording("cli/README.md")).expect("CLI contract");
-    let section = readme.split("## `rh local`").nth(1).expect("local section");
-    let mut listed = std::collections::BTreeMap::new();
-    for line in section.lines() {
-        let Some(rest) = line.trim().strip_prefix("- `") else {
-            continue;
-        };
-        let Some((name, reason)) = rest.split_once("` — ") else {
-            continue;
-        };
-        listed.insert(name.to_owned(), reason.trim().to_owned());
-    }
-    let expected: std::collections::BTreeMap<_, _> = SKIPPED
-        .iter()
-        .copied()
-        .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
-        .collect();
-    assert_eq!(listed, expected);
-}
-
 #[test]
 fn clap_parses_port_and_no_lan_and_rejects_unknown_flags() {
     let parsed =

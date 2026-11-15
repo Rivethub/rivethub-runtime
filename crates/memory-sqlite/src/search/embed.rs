@@ -13,13 +13,7 @@ pub struct QueryEmbed {
     cancellation: CancellationToken,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the provider trait object has no Debug implementation"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for QueryEmbed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QueryEmbed")

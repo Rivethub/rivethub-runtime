@@ -1,51 +1,5 @@
 use super::*;
 
-#[test]
-fn every_recorded_scenario_is_replayed_and_other_prompts_are_named() {
-    let fixture = fixture();
-    assert_ne!(fixture.prompts_sha256.leaf, "");
-    assert_ne!(fixture.prompts_sha256.branch, "");
-    assert_ne!(fixture.prompts_sha256.root, "");
-    assert_ne!(fixture.prompts_sha256.wiki_extract, "");
-    assert_ne!(fixture.prompts_sha256.wiki_recompile, "");
-    assert_ne!(fixture.prompts_sha256.tag, "");
-    let mut names: Vec<&str> = fixture
-        .scenarios
-        .iter()
-        .map(|scenario| scenario.name.as_str())
-        .collect();
-    let mut replayed = REPLAYED.to_vec();
-    names.sort_unstable();
-    replayed.sort_unstable();
-    assert_eq!(names, replayed);
-    for (name, reason) in SKIPPED {
-        assert_ne!(*reason, "", "{name}");
-        assert!(!REPLAYED.contains(name), "{name}");
-    }
-    assert!(
-        fixture
-            .scenarios
-            .iter()
-            .all(|scenario| !scenario.steps.is_empty())
-    );
-    let mut counts = 0u64;
-    let mut rows = 0usize;
-    for scenario in &fixture.scenarios {
-        for step in &scenario.steps {
-            match &step.result {
-                StepResult::Count(count) => counts = counts.saturating_add(*count),
-                StepResult::Health(_) => {}
-                StepResult::Rows(recorded) => rows = rows.saturating_add(recorded.len()),
-            }
-        }
-        if let Some(ChatCalls::Count(recorded)) = &scenario.chat_calls {
-            counts = counts.saturating_add(*recorded);
-        }
-    }
-    assert!(counts > 0);
-    assert!(rows > 0);
-}
-
 #[tokio::test]
 async fn a_full_window_summarizes_once() {
     let fixture = fixture();

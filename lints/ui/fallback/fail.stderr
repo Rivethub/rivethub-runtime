@@ -1,4 +1,4 @@
-warning: FALLBACK ok → docs/PATTERNS.md#fallback
+warning: FALLBACK ok
   --> $DIR/fail.rs:4:5
    |
 LL |     value.ok()
@@ -6,103 +6,103 @@ LL |     value.ok()
    |
    = note: `#[warn(fallback)]` on by default
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:8:13
    |
 LL |     let _ = value.unwrap_or(42);
    |             ^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or_else → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or_else
   --> $DIR/fail.rs:9:13
    |
 LL |     let _ = value.unwrap_or_else(|_| 42);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or_default → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or_default
   --> $DIR/fail.rs:10:13
    |
 LL |     let _ = value.unwrap_or_default();
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK map_or → docs/PATTERNS.md#fallback
+warning: FALLBACK map_or
   --> $DIR/fail.rs:11:13
    |
 LL |     let _ = value.map_or(42, |n| n + 1);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK map_or_else → docs/PATTERNS.md#fallback
+warning: FALLBACK map_or_else
   --> $DIR/fail.rs:12:13
    |
 LL |     let _ = value.map_or_else(|_| 42, |n| n + 1);
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK ok → docs/PATTERNS.md#fallback
+warning: FALLBACK ok
   --> $DIR/fail.rs:13:13
    |
 LL |     let _ = Result::ok(value);
    |             ^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:17:13
    |
 LL |     let _ = value.unwrap_or("");
    |             ^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:18:13
    |
 LL |     let _ = value.unwrap_or("unknown");
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or_else → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or_else
   --> $DIR/fail.rs:19:13
    |
 LL |     let _ = value.unwrap_or_else(|| "default");
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:20:13
    |
 LL |     let _ = number.unwrap_or(0);
    |             ^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:21:13
    |
 LL |     let _ = number.unwrap_or(-1);
    |             ^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK Err(..) => value → docs/PATTERNS.md#fallback
+warning: FALLBACK Err(..) => value
   --> $DIR/fail.rs:27:19
    |
 LL |         Err(_) => 7,
    |                   ^
 
-warning: FALLBACK Err(..) => value → docs/PATTERNS.md#fallback
+warning: FALLBACK Err(..) => value
   --> $DIR/fail.rs:34:19
    |
 LL |         Err(_) => {},
    |                   ^^
 
-warning: FALLBACK let Ok(..) = .. else → docs/PATTERNS.md#fallback
+warning: FALLBACK let Ok(..) = .. else
   --> $DIR/fail.rs:39:5
    |
 LL |     let Ok(value) = value else { return 7 };
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK let Ok(..) = .. else → docs/PATTERNS.md#fallback
+warning: FALLBACK let Ok(..) = .. else
   --> $DIR/fail.rs:45:9
    |
 LL |         let Ok(_value) = value else { continue };
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK unwrap_or → docs/PATTERNS.md#fallback
+warning: FALLBACK unwrap_or
   --> $DIR/fail.rs:50:13
    |
 LL |     let _ = value.unwrap_or(42);
    |             ^^^^^^^^^^^^^^^^^^^
 
-warning: FALLBACK Err(..) => value → docs/PATTERNS.md#fallback
+warning: FALLBACK Err(..) => value
   --> $DIR/fail.rs:57:23
    |
 LL |         Failure(_) => 42,

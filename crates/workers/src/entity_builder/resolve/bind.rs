@@ -338,13 +338,7 @@ pub(super) fn interpret(
     if ranked.is_empty() {
         return MatchStep::Ready(prepared.clone());
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a failed decision holds the entity"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(decision) = decision else {
         return MatchStep::Held {
             confidence: 0.0,

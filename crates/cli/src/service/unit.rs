@@ -365,13 +365,7 @@ fn decode_quoted(inner: &str) -> Option<String> {
                 '"' => out.push('"'),
                 'x' => {
                     let hex: String = chars.by_ref().take(2).collect();
-                    #[cfg_attr(
-                        dylint_lib = "rr_lints",
-                        expect(
-                            fallback,
-                            reason = "PATTERNS FALLBACK: an ExecStart escape that is not a hex byte is not a path this rh generated"
-                        )
-                    )]
+                    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
                     let byte = u8::from_str_radix(&hex, 16).ok()?;
                     if !byte.is_ascii() {
                         return None;

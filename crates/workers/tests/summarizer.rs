@@ -1,13 +1,7 @@
 #![cfg(test)]
 
-#[expect(
-    unreachable_pub,
-    reason = "the harness is a private module of each test binary"
-)]
-#[expect(
-    dead_code,
-    reason = "each test binary uses a different subset of the harness"
-)]
+#[expect(unreachable_pub)]
+#[expect(dead_code)]
 mod common;
 
 use std::sync::Arc;
@@ -81,45 +75,8 @@ const REPLAYED: &[&str] = &[
     "below the floor until idle/stale",
 ];
 
-const SKIPPED: &[(&str, &str)] = &[
-    (
-        "synthesize-tool-call",
-        "no recording of this job; synthesis has dedicated database fixtures and provider retry tests",
-    ),
-    (
-        "WIKI_EXTRACT_SYSTEM_PROMPT",
-        "wiki extraction belongs to the wiki builder",
-    ),
-    (
-        "WIKI_RECOMPILE_SYSTEM_PROMPT",
-        "wiki recompile belongs to the wiki builder",
-    ),
-    (
-        "TAG_SYSTEM_PROMPT",
-        "tag suggestion belongs to the categorizer",
-    ),
-];
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PromptHashes {
-    #[serde(rename = "LEAF_SYSTEM_PROMPT")]
-    leaf: String,
-    #[serde(rename = "BRANCH_SYSTEM_PROMPT")]
-    branch: String,
-    #[serde(rename = "ROOT_SYSTEM_PROMPT")]
-    root: String,
-    #[serde(rename = "WIKI_EXTRACT_SYSTEM_PROMPT")]
-    wiki_extract: String,
-    #[serde(rename = "WIKI_RECOMPILE_SYSTEM_PROMPT")]
-    wiki_recompile: String,
-    #[serde(rename = "TAG_SYSTEM_PROMPT")]
-    tag: String,
-}
-
 #[derive(Debug, Deserialize)]
 struct Fixture {
-    prompts_sha256: PromptHashes,
     scenarios: Vec<Scenario>,
 }
 
@@ -139,6 +96,7 @@ struct Scenario {
 #[serde(untagged)]
 enum ChatCalls {
     Calls(Vec<ChatCall>),
+    #[expect(dead_code)]
     Count(u64),
 }
 
@@ -161,8 +119,10 @@ struct Step {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum StepResult {
+    #[expect(dead_code)]
     Count(u64),
     Health(HealthSnap),
+    #[expect(dead_code)]
     Rows(Vec<wire::Extra>),
 }
 

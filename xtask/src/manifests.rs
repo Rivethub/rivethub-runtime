@@ -218,7 +218,7 @@ pub fn lint_policy(root: &Path, findings: &mut Vec<String>) -> Result<()> {
     });
     if !policy_matches {
         findings.push(
-            "LINTPOLICY [workspace.lints] differs from xtask/lints-policy.toml (lint policy changes only in a reviewed commit) → docs/PATTERNS.md#lintpolicy"
+            "LINTPOLICY [workspace.lints] differs from xtask/lints-policy.toml (lint policy changes only in a reviewed commit)"
                 .to_owned(),
         );
     }
@@ -274,26 +274,17 @@ pub fn identity_ok(root: &Path, name: &str, email: &str) -> Result<bool> {
     Ok(file.sha256.contains(&digest))
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the blocked-trailer pattern is a constant; the authorship tests match it"
-)]
+#[expect(clippy::expect_used)]
 static BLOCKED_TRAILERS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?im)^(Co-authored-by|Claude-Session|Signed-off-by):")
         .expect("the blocked-trailer pattern is a constant")
 });
-#[expect(
-    clippy::expect_used,
-    reason = "the blocked-text pattern is a constant; the authorship tests match it"
-)]
+#[expect(clippy::expect_used)]
 static BLOCKED_TEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(claude|anthropic|cursor|copilot|chatgpt|openai|generated with)")
         .expect("the blocked-text pattern is a constant")
 });
-#[expect(
-    clippy::expect_used,
-    reason = "the AI-text pattern is a constant; the authorship tests match it"
-)]
+#[expect(clippy::expect_used)]
 static AI_TEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(generated with|session_|co-authored)")
         .expect("the AI-text pattern is a constant")

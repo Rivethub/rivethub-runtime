@@ -195,13 +195,7 @@ impl Hub {
             if members == 3 {
                 return Ok(());
             }
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    sleep,
-                    reason = "the space sync is a background retry loop that signals nothing"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         Err("the hub never saved its space".into())

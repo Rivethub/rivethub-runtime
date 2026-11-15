@@ -62,13 +62,7 @@ pub struct LocalKey {
     format: MacFormat,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the local sanitize key never leaves the machine; deriving Debug would print its bytes into logs and reports"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for LocalKey {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "LocalKey(.., {:?})", self.format)

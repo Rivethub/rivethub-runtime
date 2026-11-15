@@ -25,13 +25,13 @@ fn fatal(value: Result<u32, ()>) -> u32 {
 }
 
 fn documented(value: Result<u32, ()>) -> u32 {
-    #[expect(fallback, reason = "CONTRACT B10: the configured default is 42")]
+    #[expect(fallback)]
     let number = value.unwrap_or(42);
     number
 }
 
 fn documented_pattern(value: Result<u32, ()>) -> u32 {
-    #[expect(fallback, reason = "PATTERNS FALLBACK: the final report uses a count of zero")]
+    #[expect(fallback)]
     let number = value.unwrap_or(0);
     number
 }

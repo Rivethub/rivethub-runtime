@@ -1,4 +1,4 @@
-warning: KNOWN: table of protocol strings (one enum with methods for each property; messages list values from the enum) → docs/PATTERNS.md#strset
+warning: KNOWN: table of protocol strings (one enum with methods for each property; messages list values from the enum)
   --> $DIR/fail.rs:3:1
    |
 LL | pub const KNOWN: [&str; 2] = ["vllm", "ollama"];

@@ -24,10 +24,7 @@ fn request(method: &str, target: &str) -> Request {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "request failures must fail the test helper immediately, never produce fallback responses"
-)]
+#[expect(clippy::expect_used)]
 async fn answer(app: &axum::Router, request: Request) -> Response {
     tokio::time::timeout(Duration::from_secs(3), common::answer(app.clone(), request))
         .await
@@ -35,18 +32,12 @@ async fn answer(app: &axum::Router, request: Request) -> Response {
         .expect("request succeeds")
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the fixture page is the contract's shape, which the kernel's page record shares"
-)]
+#[expect(clippy::expect_used)]
 fn stored(page: WikiPageResponse) -> kernel::wiki::WikiPageResponse {
     serde_json::from_value(serde_json::to_value(page).expect("page")).expect("kernel page")
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the page fixture uses a constant calendar date and instant"
-)]
+#[expect(clippy::expect_used)]
 fn page() -> WikiPageResponse {
     WikiPageResponse {
         slug: "release".to_owned(),

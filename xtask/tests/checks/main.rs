@@ -14,10 +14,8 @@ use xtask::labpath;
 use xtask::lang;
 use xtask::manifests;
 use xtask::pathcontain;
-use xtask::patterns;
 use xtask::privacy;
 use xtask::privilege;
-use xtask::reasons;
 use xtask::toolconfig;
 use xtask::utf16;
 use xtask::waivers;
@@ -102,7 +100,6 @@ globs = ["crates/*/tests/golden/*.json", "xtask/data/*.json"]
 
 fn seed_languages(repo: &Repo) -> Result<(), Box<dyn std::error::Error>> {
     repo.write("xtask/languages.toml", ALLOW)?;
-    repo.write("docs/PATTERNS.md", "")?;
     repo.write("README.md", "runtime\n")?;
     Ok(())
 }
@@ -240,7 +237,6 @@ fn comment_fires_and_passes() {
 #[test]
 fn size_ceiling_fires() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
-    repo.write("docs/PATTERNS.md", "")?;
     let mut big = String::new();
     for index in 0..610 {
         big.push_str("pub fn item_");
@@ -268,7 +264,6 @@ fn size_ceiling_fires() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn naming_file_names_fires() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
-    repo.write("docs/PATTERNS.md", "")?;
     repo.write("crates/mcp/src/den.rs", "pub fn a() {}\n")?;
     repo.write("crates/mcp/src/gateway.rs", "pub fn a() {}\n")?;
     repo.track()?;
@@ -792,93 +787,6 @@ fn commits_mode_reports_range() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn patterns_registry() -> String {
-    let mut text = String::from(
-        "# Patterns\n\n## COMMENT\nAnti-pattern: comments. Pattern: none. Check: xtask `COMMENT`.\n\n\
-         ## UNTYPED\nAnti-pattern: raw serde values. Pattern: typed structs. Check: dylint `untyped`, clippy `disallowed-types`.\n\n",
-    );
-    text.push_str("## COUNTTYPE\n... Check: dylint `counttype`.\n");
-    for lint in patterns::dylint_lints() {
-        if *lint != "untyped" && *lint != "counttype" {
-            let heading = lint.to_ascii_uppercase();
-            text.push_str("## ");
-            text.push_str(&heading);
-            text.push_str("\n... Check: dylint `");
-            text.push_str(lint);
-            text.push_str("`.\n");
-        }
-    }
-    for check in patterns::checks() {
-        if *check != "COMMENT" {
-            let heading = check.to_ascii_uppercase();
-            text.push_str("## ");
-            text.push_str(&heading);
-            text.push_str("\n... Check: xtask `");
-            text.push_str(check);
-            text.push_str("`.\n");
-        }
-    }
-    text
-}
-
-#[test]
-fn complete_registry_passes() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repo::new()?;
-    repo.write("docs/PATTERNS.md", &patterns_registry())?;
-    repo.track()?;
-    let mut findings = Vec::new();
-    patterns::check(repo.root(), &mut findings)?;
-    assert!(
-        findings.is_empty(),
-        "complete registry passes: {findings:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn missing_entry_fires() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repo::new()?;
-    repo.write(
-        "docs/PATTERNS.md",
-        "## COMMENT\n... Check: xtask `COMMENT`.\n\n## UNTYPED\n... Check: dylint `untyped`.\n",
-    )?;
-    repo.track()?;
-    let mut findings = Vec::new();
-    patterns::check(repo.root(), &mut findings)?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("dylint lint `counttype`")),
-        "a lint without an entry is reported: {findings:?}"
-    );
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("check `LANGUAGES`")),
-        "a check without an entry is reported: {findings:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn entry_without_check_line_fires() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repo::new()?;
-    repo.write(
-        "docs/PATTERNS.md",
-        "## COMMENT\n... Check: xtask `COMMENT`.\n\n## STRSET\nAnti-pattern: string tables. Pattern: enums.\n",
-    )?;
-    repo.track()?;
-    let mut findings = Vec::new();
-    patterns::check(repo.root(), &mut findings)?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("STRSET: entry has no Check: line")),
-        "an entry without a Check line is reported: {findings:?}"
-    );
-    Ok(())
-}
-
 #[test]
 fn dupfixture_cross_crate_duplicate_fires() -> Result<(), Box<dyn std::error::Error>> {
     let repo = Repo::new()?;
@@ -960,7 +868,6 @@ fn dupfixture_one_crate_copies_pass() -> Result<(), Box<dyn std::error::Error>> 
 fn labpath_fires_and_passes() -> Result<(), Box<dyn std::error::Error>> {
     let needle = concat!("/rivet-shared", "/plans/rust-rewrite/golden");
     let repo = Repo::new()?;
-    repo.write("docs/PATTERNS.md", "")?;
     repo.write(
         "crates/memory-postgres/tests/capture_pg.rs",
         &format!("const GOLDEN_PG: &str = \"{needle}\";\n"),
@@ -1241,7 +1148,7 @@ fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Err
         waivers::check,
         &[(
             "crates/demo/src/lib.rs",
-            "#![expect(dead_code, reason = \"subset\")]\n\npub fn start() {}\n",
+            "#![expect(dead_code)]\n\npub fn start() {}\n",
         )],
     )?;
     assert!(
@@ -1269,42 +1176,12 @@ fn waiver_scan_fires_on_inner_attributes() -> Result<(), Box<dyn std::error::Err
         waivers::check,
         &[(
             "crates/demo/src/lib.rs",
-            "#[expect(clippy::manual_div_ceil, reason = \"the divisor is a power of two\")]\npub fn start() {}\n",
+            "#[expect(clippy::manual_div_ceil)]\npub fn start() {}\n",
         )],
     )?;
     assert!(
         findings.is_empty(),
         "an item-level expectation passes: {findings:?}"
-    );
-    Ok(())
-}
-
-#[test]
-fn reason_scan_fires_on_imitation() -> Result<(), Box<dyn std::error::Error>> {
-    let findings = scan_findings(
-        reasons::check,
-        &[(
-            "crates/kernel/src/scoring.rs",
-            "#[expect(clippy::suboptimal_flops, reason = \"mirrors the TypeScript scoring\")]\npub fn score(a: f64, b: f64) -> f64 {\n    a * b + b\n}\n",
-        )],
-    )?;
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.contains("mirror") && finding.contains("TypeScript")),
-        "an imitation reason is reported: {findings:?}"
-    );
-
-    let findings = scan_findings(
-        reasons::check,
-        &[(
-            "crates/kernel/src/scoring.rs",
-            "#[expect(clippy::suboptimal_flops, reason = \"CONTRACT 2 exception: the event-id hash requires the harness's exact JSON number spelling\")]\npub fn score(a: f64, b: f64) -> f64 {\n    a.mul_add(b, b)\n}\n",
-        )],
-    )?;
-    assert!(
-        findings.is_empty(),
-        "a reason stating the rule passes, JSON included: {findings:?}"
     );
     Ok(())
 }
@@ -1618,18 +1495,10 @@ fn ast_distinguishes_syntax_from_raw_strings_and_nested_attributes()
         waivers::check,
         &[(
             "crates/sample/src/lib.rs",
-            "mod nested { #![cfg_attr(test, expect(dead_code, reason = r#\"subset\"#))] fn item() {} }",
+            "mod nested { #![cfg_attr(test, expect(dead_code))] fn item() {} }",
         )],
     )?;
     assert_eq!(inner.len(), 1);
-    let reason = scan_findings(
-        reasons::check,
-        &[(
-            "crates/sample/src/lib.rs",
-            "#[cfg_attr(test, cfg_attr(unix, expect(dead_code, reason = r#\"mirrors JavaScript\"#)))] fn item() {}",
-        )],
-    )?;
-    assert_eq!(reason.len(), 1);
     Ok(())
 }
 

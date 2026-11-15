@@ -71,13 +71,7 @@ impl Params {
 pub(super) fn ordinals(records: &[RawLine]) -> Result<BTreeMap<u64, i64>, TranscriptReaderError> {
     let mut events: Vec<(u64, Params)> = Vec::new();
     for record in records {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B3: a Grok log line that is not JSON takes no ordinal, as the kit skips it, and map_updates reports it as an unparseable record"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let event = serde_json::from_str::<Event>(&record.text).ok();
         if let Some(params) = event.and_then(|event| event.params) {
             events.push((record.number, params));

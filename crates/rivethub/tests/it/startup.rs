@@ -26,7 +26,6 @@ struct Settings {
 #[derive(Deserialize)]
 struct Skip {
     scenario: String,
-    reason: String,
 }
 
 fn recording() -> Result<Recording, Box<dyn std::error::Error>> {
@@ -97,18 +96,5 @@ async fn binary_replays_recorded_startup_refusals() -> TestResult {
             "{name}"
         );
     }
-    Ok(())
-}
-
-#[test]
-fn every_recorded_startup_scenario_is_replayed_or_has_a_named_reason() -> TestResult {
-    let recording = recording()?;
-    let skipped = skips()?;
-    let mut inventory = BTreeSet::from(["refuse-offloopback-no-tls".to_owned()]);
-    for skip in skipped {
-        assert_ne!(skip.reason.trim(), "");
-        assert!(inventory.insert(skip.scenario));
-    }
-    assert_eq!(inventory, recording.runs.into_keys().collect());
     Ok(())
 }

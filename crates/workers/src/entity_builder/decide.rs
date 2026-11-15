@@ -37,13 +37,7 @@ pub struct MatcherSettings {
     pub threshold: f32,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the embed endpoint and threshold are chosen defaults"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for MatcherSettings {
     fn default() -> Self {
         Self {
@@ -162,10 +156,7 @@ pub(super) struct RawDecision {
 
 #[async_trait]
 pub(super) trait EntityDecider: Send + Sync {
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "ThinkingCap borrows the configured model name, so this return is not 'static"
-    )]
+    #[expect(clippy::unnecessary_literal_bound)]
     fn backend_name(&self) -> &str {
         "decider"
     }
@@ -206,10 +197,7 @@ pub(super) struct JevDecider {
 
 #[async_trait]
 impl EntityDecider for JevDecider {
-    #[expect(
-        clippy::unnecessary_literal_bound,
-        reason = "ThinkingCap borrows the configured model name, so this return is not 'static"
-    )]
+    #[expect(clippy::unnecessary_literal_bound)]
     fn backend_name(&self) -> &str {
         "jev"
     }

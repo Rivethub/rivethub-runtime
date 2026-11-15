@@ -83,13 +83,7 @@ pub struct Shared {
     pub code: String,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the share code's key is a secret; Debug shows only the drop id part"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Shared {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let id = self
@@ -150,13 +144,7 @@ pub struct PendingLogin {
     task: Option<AbortOnDropHandle<Result<Approval, Error>>>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the device code never leaves rh; Debug names only the server"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for PendingLogin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "PendingLogin({})", self.server)

@@ -130,13 +130,7 @@ fn local_arguments(cmdline: &[u8]) -> Option<Vec<String>> {
             .filter(|argument| !argument.is_empty())
             .map(|argument| OsStr::from_bytes(argument).to_owned()),
     );
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a real absence, a process whose command line rh does not parse as `rh local` is not a node rh local started, so update leaves it running and says so"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let parsed = Cli::parse_args(argv).ok();
     match parsed {
         Some(Cli {

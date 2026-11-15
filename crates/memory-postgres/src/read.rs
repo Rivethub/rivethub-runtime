@@ -102,13 +102,7 @@ fn stored_tool_args(raw: Option<String>) -> Result<Option<JsonObject>, Error> {
             ToolArguments::Object(arguments) => return Ok(Some(arguments)),
             ToolArguments::Encoded(legacy) => legacy,
         };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B6 (decision 26): a legacy tool_args string that holds no JSON object is read without arguments"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let decoded = serde_json::from_str(&legacy).ok();
     Ok(decoded)
 }
@@ -241,7 +235,7 @@ impl crate::PostgresMemory {
         Ok(record)
     }
 
-    #[expect(clippy::too_many_lines, reason = "three sections built in order")]
+    #[expect(clippy::too_many_lines)]
     pub async fn context_for_turn(
         &self,
         session: &str,

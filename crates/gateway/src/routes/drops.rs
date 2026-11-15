@@ -94,13 +94,7 @@ async fn method_not_allowed(request: Request) -> Response {
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule: rh treats an authorization header that is not text as no token, which refuses the upload with 401"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let text = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = text.trim().split_once(' ')?;
     let token = token.trim();
@@ -137,13 +131,7 @@ async fn drain(stream: &mut BodyDataStream, cap: u64) {
 }
 
 fn declared_length(headers: &HeaderMap) -> Option<u64> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule: rh reads a content-length that is not a number as none declared, so the upload reserves max_bytes"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let length: u64 = headers
         .get(header::CONTENT_LENGTH)?
         .to_str()
@@ -257,13 +245,7 @@ async fn upload(
 }
 
 fn drop_id(segment: Result<Path<String>, PathRejection>) -> Option<DropId> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule: rh answers a malformed drop id, invalid UTF-8 included, with the same 404 as an unknown one"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let id = segment.ok()?.0.parse().ok()?;
     Some(id)
 }

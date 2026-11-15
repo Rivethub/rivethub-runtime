@@ -24,60 +24,27 @@ use testkit::Json;
 use wire::gateway::memory::MemoryBrowseToolArgs;
 use wire::message::Role;
 
-const SKIPPED_STATS_SCENARIOS: [(&str, &str); 2] = [
-    (
-        "embedding endpoint: queued, then drained, queues and buckets",
-        "embedding job enqueue, drain and summarization are outside this slice",
-    ),
-    (
-        "embedding keeps failing → degraded; old failures age out",
-        "embedding job retries and the dead-job sweep are outside this slice",
-    ),
+const SKIPPED_STATS_SCENARIOS: [&str; 2] = [
+    "embedding endpoint: queued, then drained, queues and buckets",
+    "embedding keeps failing → degraded; old failures age out",
 ];
-
-const READ_SET_SKIP: &str =
-    "the read-only tool set's refusals and argument checks belong to the mcp crate";
 
 const HEALTH_SKIP: &str = "health() is outside this slice";
 
-const SKIPPED_TOOL_CALLS: [(&str, &str); 4] = [
-    ("memory_search", "search is outside this slice"),
-    (
-        "memory_append",
-        "the memory_append tool (argument checks, event-id hashing, env attribution) belongs to the mcp crate",
-    ),
-    (
-        "memory_ingest_session",
-        "the memory_ingest_session tool belongs to the mcp crate",
-    ),
-    ("memory_tags", "tags are outside this slice"),
+const SKIPPED_TOOL_CALLS: [&str; 4] = [
+    "memory_search",
+    "memory_append",
+    "memory_ingest_session",
+    "memory_tags",
 ];
 
-const SKIPPED_TOOL_LABELS: [(&str, &str); 6] = [
-    (
-        "get_full branch summary",
-        "MemoryStore::get_full returns a MemoryEntry; summaries are outside this slice",
-    ),
-    (
-        "get_full leaf summary",
-        "MemoryStore::get_full returns a MemoryEntry; summaries are outside this slice",
-    ),
-    (
-        "get_full big (tail only)",
-        "the row is written by the memory_append tool, which belongs to the mcp crate",
-    ),
-    (
-        "get_full no id",
-        "argument validation is the mcp tool's job",
-    ),
-    (
-        "browse bad window",
-        "the recorded error is a TypeScript throw from window parsing; BrowseWindow rejects an unknown window before the store",
-    ),
-    (
-        "browse bad since",
-        "timestamp argument parsing is the mcp tool's job",
-    ),
+const SKIPPED_TOOL_LABELS: [&str; 6] = [
+    "get_full branch summary",
+    "get_full leaf summary",
+    "get_full big (tail only)",
+    "get_full no id",
+    "browse bad window",
+    "browse bad since",
 ];
 
 fn helper_batch() -> TestResult<kernel::memory::CaptureBatchRequest> {
@@ -108,11 +75,7 @@ async fn stats_replay_the_recorded_scenarios() -> TestResult {
     let file: ScenarioFile = common::recording("stats-health.json")?;
     let mut replayed = 0;
     for scenario in file.scenarios {
-        if let Some((name, reason)) = SKIPPED_STATS_SCENARIOS
-            .iter()
-            .find(|(name, _)| *name == scenario.name)
-        {
-            eprintln!("skipped scenario {name}: {reason}");
+        if SKIPPED_STATS_SCENARIOS.contains(&scenario.name.as_str()) {
             continue;
         }
         let fresh = fresh_store()?;
@@ -479,18 +442,10 @@ async fn read_tools_replay_browse_get_full_and_stats() -> TestResult {
     )?;
     let mut replayed = 0;
     for call in &recording.calls {
-        let skipped = SKIPPED_TOOL_CALLS
-            .iter()
-            .find(|(tool, _)| *tool == call.tool)
-            .or_else(|| {
-                SKIPPED_TOOL_LABELS
-                    .iter()
-                    .find(|(label, _)| *label == call.label)
-            })
-            .map(|(_, reason)| *reason)
-            .or_else(|| call.label.starts_with("read ").then_some(READ_SET_SKIP));
-        if let Some(reason) = skipped {
-            eprintln!("skipped call {}: {reason}", call.label);
+        let skipped = SKIPPED_TOOL_CALLS.contains(&call.tool.as_str())
+            || SKIPPED_TOOL_LABELS.contains(&call.label.as_str())
+            || call.label.starts_with("read ");
+        if skipped {
             continue;
         }
         let output = call.output.as_deref().ok_or("recorded tool output")?;

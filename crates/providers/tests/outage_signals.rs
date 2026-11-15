@@ -1,8 +1,5 @@
 #[path = "common/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "each test binary uses a subset of the HTTP harness"
-)]
+#[expect(dead_code)]
 mod common;
 
 use std::time::Duration;

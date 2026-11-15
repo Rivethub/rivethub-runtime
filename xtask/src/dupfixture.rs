@@ -31,9 +31,7 @@ pub fn check(root: &Path, findings: &mut Vec<String>) -> Result<usize> {
                 if left_owner == right_owner {
                     continue;
                 }
-                findings.push(format!(
-                    "DUPFIXTURE {left}: bytes equal {right} → docs/PATTERNS.md#dupfixture"
-                ));
+                findings.push(format!("DUPFIXTURE {left}: bytes equal {right}"));
                 count += 1;
             }
         }

@@ -107,10 +107,7 @@ pub async fn seed(
     Ok((deleted, sibling))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one scenario whose delete, resend and append steps read in order"
-)]
+#[expect(clippy::too_many_lines)]
 pub async fn capture_for_a_deleted_session_writes_nothing(
     memory: &dyn MemoryStore,
     deletions: &dyn SessionDeletion,

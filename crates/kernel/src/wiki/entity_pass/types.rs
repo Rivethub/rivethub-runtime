@@ -46,13 +46,7 @@ pub struct EntityLeaf {
 pub struct TranscriptMessage {
     pub id: Uuid,
     pub at: DateTime<Utc>,
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            stringly,
-            reason = "a transcript speaker is harness text, not the worker Role enum"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
     pub role: String,
     pub tool_name: Option<String>,
     pub content: String,
@@ -93,13 +87,7 @@ where
     let Some(value) = text else {
         return Ok(None);
     };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a model uuid that does not parse is no id"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let parsed = Uuid::parse_str(value.trim()).ok();
     Ok(parsed)
 }
@@ -119,13 +107,7 @@ pub struct EntityObservations {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct EntityObservation {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            customserde,
-            reason = "the model sends a uuid, a string, or nothing for one field"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
     #[serde(default, alias = "entityRef", deserialize_with = "lenient_uuid")]
     #[schemars(with = "Option<String>")]
     pub entity_ref: Option<Uuid>,
@@ -185,13 +167,7 @@ impl FactState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ObservedHistory {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            customserde,
-            reason = "the model sends a uuid, a string, or nothing for one field"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
     #[serde(default, alias = "summaryId", deserialize_with = "lenient_uuid")]
     #[schemars(with = "Option<String>")]
     pub summary_id: Option<Uuid>,
@@ -215,13 +191,7 @@ pub struct EntityIdentifications {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct EntityIdentification {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            customserde,
-            reason = "the model sends a uuid, a string, or nothing for one field"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
     #[serde(default, alias = "entityRef", deserialize_with = "lenient_uuid")]
     #[schemars(with = "Option<String>")]
     pub entity_ref: Option<Uuid>,
@@ -274,13 +244,7 @@ pub struct RetiredFact {
 impl RetiredFact {
     #[must_use]
     pub fn reason(&self) -> String {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                dispatch,
-                reason = "the model sends a free-text tag, checked against the known words"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(dispatch))]
         match self.kind.as_str() {
             RENAMED => format!("renamed to {}", self.detail.trim()),
             CONTRADICTED => format!("contradicted: {}", self.detail.trim()),

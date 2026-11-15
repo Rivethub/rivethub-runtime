@@ -69,13 +69,7 @@ pub fn place_as_of(raw: &str, leaves: &[LeafClock]) -> DateTime<Utc> {
         }
     }
     let prefix = raw.trim().get(..10);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stamp that is not a date keeps the leaf time"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let day = prefix.and_then(|text| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok());
     if let Some(day) = day
         && let Some(leaf) = leaves

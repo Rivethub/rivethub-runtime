@@ -79,13 +79,7 @@ pub use reembed::ReembedReport;
 #[derive(Clone)]
 struct SharedClock(Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "derive(Debug) cannot format a function object; the impl names the clock and skips the closure"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for SharedClock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_tuple("SharedClock").finish_non_exhaustive()

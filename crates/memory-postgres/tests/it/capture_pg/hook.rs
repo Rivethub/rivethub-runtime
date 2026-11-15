@@ -4,7 +4,7 @@ use super::{
     title_of, tool_result_of,
 };
 
-#[expect(clippy::too_many_lines, reason = "one hook narrative per call")]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn ingest_hook_event(
     pool: &PgPool,
     payload: &Value,

@@ -74,16 +74,10 @@ pub enum RuleError {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct File {
-    #[expect(
-        dead_code,
-        reason = "parsed only so deny_unknown_fields accepts the upstream file"
-    )]
+    #[expect(dead_code)]
     title: Option<String>,
     #[serde(rename = "minVersion")]
-    #[expect(
-        dead_code,
-        reason = "parsed only so deny_unknown_fields accepts the upstream file"
-    )]
+    #[expect(dead_code)]
     min_version: Option<String>,
     gitleaks: Option<Upstream>,
     names: Option<names::RawNames>,
@@ -147,10 +141,7 @@ pub(crate) enum Decode {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RawAllowlist {
-    #[expect(
-        dead_code,
-        reason = "parsed only so deny_unknown_fields accepts the upstream file"
-    )]
+    #[expect(dead_code)]
     description: Option<String>,
     #[serde(default)]
     regexes: Vec<String>,
@@ -252,10 +243,7 @@ pub struct Ruleset {
     budget: usize,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the rule files are embedded constants; every_rule_compiles_and_the_upstream_pin_holds runs load() in CI"
-)]
+#[expect(clippy::expect_used)]
 static RULESET: LazyLock<Ruleset> =
     LazyLock::new(|| load().expect("the embedded secret rules compile"));
 

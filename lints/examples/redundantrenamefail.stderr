@@ -1,4 +1,4 @@
-warning: serde rename equal to the field name → docs/PATTERNS.md#redundantrename
+warning: serde rename equal to the field name
   --> $DIR/redundantrenamefail.rs:6:5
    |
 LL |     max_tokens: u32,

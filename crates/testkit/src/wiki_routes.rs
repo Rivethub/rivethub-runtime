@@ -46,10 +46,7 @@ pub const SESSION_TITLE: &str = "AcmeKit release prep";
 
 type Found<T> = Result<T, Box<dyn std::error::Error>>;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the stores are kernel ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone, Copy)]
 pub struct RouteStores<'a> {
     pub pages: PageStores<'a>,

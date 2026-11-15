@@ -34,13 +34,7 @@ pub(crate) fn claude_running(root: &Path, native: &str) -> io::Result<Option<u32
 }
 
 fn registered(path: &Path) -> Option<ClaudeProcess> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B12: a Claude process file being written or removed while it is read names no running session"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let process = fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<ClaudeProcess>(&bytes).ok());
@@ -48,13 +42,7 @@ fn registered(path: &Path) -> Option<ClaudeProcess> {
 }
 
 fn alive(process: &ClaudeProcess) -> bool {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B12: a pid with no process entry has exited"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let stat = fs::read_to_string(format!("/proc/{}/stat", process.pid)).ok();
     let started = stat
         .as_deref()

@@ -40,10 +40,7 @@ pub(crate) fn demand_some<T>(value: Option<T>, what: &str) -> T {
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "the harness panics when a fixture or a local stub fails to set up"
-)]
+#[expect(clippy::panic)]
 pub(crate) fn halt(what: &str) -> ! {
     panic!("{what}");
 }

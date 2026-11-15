@@ -1,4 +1,4 @@
-warning: `DenServer` carries the old den/room name (gateway, session, view; wire strings are serde renames) → docs/PATTERNS.md#naming
+warning: `DenServer` carries the old den/room name (gateway, session, view; wire strings are serde renames)
   --> $DIR/fail.rs:3:1
    |
 LL | pub struct DenServer;
@@ -6,7 +6,7 @@ LL | pub struct DenServer;
    |
    = note: `#[warn(naming)]` on by default
 
-warning: `room_state` carries the old den/room name (gateway, session, view; wire strings are serde renames) → docs/PATTERNS.md#naming
+warning: `room_state` carries the old den/room name (gateway, session, view; wire strings are serde renames)
   --> $DIR/fail.rs:5:1
    |
 LL | pub fn room_state() {}

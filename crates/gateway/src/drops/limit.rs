@@ -28,13 +28,7 @@ pub struct Rates {
     pub uploads_per_user: Rate,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the default rates are the rivethub.cloud drop limits, not the derive's zeros"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for Rates {
     fn default() -> Self {
         const MINUTE: Duration = Duration::from_secs(60);

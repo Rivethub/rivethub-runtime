@@ -311,13 +311,7 @@ fn one_line(text: &str) -> String {
 }
 
 fn count_of(len: usize) -> u64 {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: an example count that does not fit saturates"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let count = u64::try_from(len).unwrap_or(u64::MAX);
     count
 }

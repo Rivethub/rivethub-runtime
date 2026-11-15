@@ -232,13 +232,7 @@ fn collapse_restatements(facts: &mut Vec<PreparedFact>) {
 }
 
 fn preferred_restatement(facts: &[PreparedFact], group: &[usize]) -> usize {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            strset,
-            reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
     const WEAK: &[&str] = &["role", "location", "state", "identity"];
     let Some(first) = group.first().copied() else {
         return 0;

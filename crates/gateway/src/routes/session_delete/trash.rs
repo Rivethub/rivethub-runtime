@@ -58,13 +58,7 @@ async fn described(
     };
     let mut wanted: BTreeMap<HarnessId, Vec<String>> = BTreeMap::new();
     for key in empty {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B1: a memory session key that is not a canonical session id is never a trash candidate"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(session) = key.parse::<SessionId>() else {
             continue;
         };

@@ -281,11 +281,11 @@ fn remote_browsers_get_the_html_gate_off_api_paths() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-fn documented_origin_example(doc: &str) -> Option<&str> {
-    doc.split("```yaml\n")
-        .nth(1)
-        .and_then(|rest| rest.split("```").next())
-}
+const DEV_ORIGINS: &str = "gateway:
+  allowed_origins:
+    - http://127.0.0.1:5273
+    - http://localhost:5273
+";
 
 fn loopback_check(origin: &str) -> OriginCheck<'_> {
     OriginCheck {
@@ -297,11 +297,8 @@ fn loopback_check(origin: &str) -> OriginCheck<'_> {
 }
 
 #[test]
-fn the_documented_vite_dev_origin_example_admits_exactly_that_origin() {
-    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/CLI.md"))
-        .expect("CLI doc");
-    let example = documented_origin_example(&doc).expect("documented allowed_origins example");
-    let config: config::Config = serde_yaml_ng::from_str(example).expect("documented config");
+fn allowed_origins_for_a_dev_server_admit_exactly_those_origins() {
+    let config: config::Config = serde_yaml_ng::from_str(DEV_ORIGINS).expect("config");
     let home = tempfile::tempdir().expect("home");
     let env = config::Environment::from_vars([("HOME", home.path().to_str().expect("utf-8 home"))]);
     let settings = gateway::Settings::from_config_in(

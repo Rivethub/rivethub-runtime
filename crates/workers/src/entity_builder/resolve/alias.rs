@@ -342,13 +342,7 @@ pub(super) struct AliasFilter {
 
 pub(super) struct ConfirmedMerge {
     pub(super) other_id: Uuid,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the partner name is asserted by the merge detection tests"
-        )
-    )]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(super) other_name: String,
     pub(super) score: f32,
 }

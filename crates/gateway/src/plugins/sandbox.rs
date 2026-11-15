@@ -216,13 +216,7 @@ pub(super) fn resolve(request: &Request) -> Result<Policy, String> {
         &request.folders.install,
         request.search.as_deref(),
     )?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a real absence, a node without a resolver configuration has none for host.network to allow"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let resolver = std::fs::canonicalize(RESOLVER).ok();
     Ok(policy(
         &request.permissions,

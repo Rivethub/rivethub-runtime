@@ -389,7 +389,7 @@ fn corpus_holds(corpus: &str) -> TestResult {
     }
     assert!(
         found.is_empty(),
-        "{corpus}: {} failures over {runs} runs of {} cases (see {FIXTURES}/README.md)\nshape | position | where | value\n{}",
+        "{corpus}: {} failures over {runs} runs of {} cases\nshape | position | where | value\n{}",
         found.len(),
         cases.len(),
         found.join("\n")

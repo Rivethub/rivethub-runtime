@@ -11,7 +11,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) DUPNAMES,
     Warn,
-    "match table mapping each variant to its string (derive strum Display/EnumString with serde's rename rule) → docs/PATTERNS.md#dupnames",
+    "match table mapping each variant to its string (derive strum Display/EnumString with serde's rename rule)",
     Dupnames::default()
 );
 
@@ -65,7 +65,7 @@ impl<'tcx> LateLintPass<'tcx> for Dupnames {
                     DUPNAMES,
                     *hir_id,
                     *span,
-                    "match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule) → docs/PATTERNS.md#dupnames"
+                    "match table mapping variants to their strings (one naming rule on the enum: strum Display/EnumString with serde's rename rule)"
                         .to_owned(),
                 );
             }

@@ -164,15 +164,6 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
                     .map_or_else(String::new, |segment| segment.ident.to_string()),
             );
         }
-        for meta in waivers {
-            if meta.path().is_ident("expect")
-                && let Some(reason) = reason(meta)
-                && let Some(word) = crate::reasons::imitation_word(&reason)
-            {
-                self.hits
-                    .push("REASON", attr.span(), format!("\"{reason}\" ({word})"));
-            }
-        }
     }
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
@@ -193,10 +184,7 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
     }
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "syn expressions outside receiver chains cannot be path conversions"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn path_string(expr: &Expr) -> bool {
     match expr {
         Expr::Paren(expr) => path_string(&expr.expr),
@@ -243,10 +231,7 @@ impl<'ast> Visit<'ast> for Privileged {
     }
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "only named fields and transparent receiver chains identify a privilege default"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn privilege_receiver(expr: &Expr) -> Option<String> {
     let name = match expr {
         Expr::Field(field) => match &field.member {
@@ -284,22 +269,4 @@ pub(crate) fn waiver_meta(meta: &Meta, out: &mut Vec<Meta>) {
             waiver_meta(child, out);
         }
     }
-}
-
-pub(crate) fn reason(meta: Meta) -> Option<String> {
-    let Meta::List(list) = meta else { return None };
-    let nested = list
-        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-        .ok()?;
-    nested.into_iter().find_map(|meta| {
-        if let Meta::NameValue(pair) = meta
-            && pair.path.is_ident("reason")
-            && let Expr::Lit(lit) = pair.value
-            && let syn::Lit::Str(value) = lit.lit
-        {
-            Some(value.value())
-        } else {
-            None
-        }
-    })
 }

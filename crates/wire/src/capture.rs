@@ -440,13 +440,7 @@ pub struct SessionOrigin {
 impl SessionOrigin {
     #[must_use]
     pub fn of(settings: &JsonObject) -> Option<Self> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B3: a stored origin that does not parse counts as the earliest when an import merges settings"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let origin = serde_json::from_value(settings.get("origin")?.clone()).ok();
         origin
     }

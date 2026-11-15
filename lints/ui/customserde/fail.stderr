@@ -1,4 +1,4 @@
-warning: hand-written impl Serialize/Deserialize (derive it; validated newtypes take #[serde(try_from/into)]) → docs/PATTERNS.md#customserde
+warning: hand-written impl Serialize/Deserialize (derive it; validated newtypes take #[serde(try_from/into)])
   --> $DIR/fail.rs:9:1
    |
 LL | impl serde::Serialize for V {}

@@ -20,14 +20,8 @@ async fn serve(args: &[String]) -> xtask::error::Result<()> {
     xtask::recmcp::run(&invocation).await
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the failure exit code stands"
-)]
-#[expect(
-    clippy::let_underscore_untyped,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the failure exit code stands"
-)]
+#[expect(clippy::let_underscore_must_use)]
+#[expect(clippy::let_underscore_untyped)]
 fn best_effort_report(error: &xtask::error::Error) {
     let stderr = std::io::stderr();
     let mut out = stderr.lock();

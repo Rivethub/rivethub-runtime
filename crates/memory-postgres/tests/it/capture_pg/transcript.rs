@@ -30,7 +30,7 @@ struct UserLine {
     at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[expect(clippy::too_many_lines, reason = "one transcript grammar per pass")]
+#[expect(clippy::too_many_lines)]
 fn parse_lines(lines: &[Value]) -> Transcript {
     let mut parsed = Transcript {
         assistants: Vec::new(),
@@ -124,10 +124,7 @@ fn parse_lines(lines: &[Value]) -> Transcript {
     parsed
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the transcript ingest is one narrative"
-)]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn ingest_transcript(
     pool: &PgPool,
     path: &str,

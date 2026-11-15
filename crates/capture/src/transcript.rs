@@ -277,10 +277,7 @@ fn read_error(path: &Path, error: std::io::Error) -> TranscriptReaderError {
     }
 }
 
-#[expect(
-    clippy::indexing_slicing,
-    reason = "the over-cap branch slices at TRANSCRIPT_MAX_BYTES, proven below the length, and the cut at a line end is at most the length"
-)]
+#[expect(clippy::indexing_slicing)]
 fn capped_text(bytes: &[u8]) -> String {
     if bytes.len() <= TRANSCRIPT_MAX_BYTES {
         return String::from_utf8_lossy(bytes).into_owned();

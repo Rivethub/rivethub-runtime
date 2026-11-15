@@ -1,4 +1,4 @@
-warning: value tree with a Null variant (deserialize into typed structs and enums) → docs/PATTERNS.md#dynvalue
+warning: value tree with a Null variant (deserialize into typed structs and enums)
   --> $DIR/fail.rs:3:1
    |
 LL | / pub enum Node {

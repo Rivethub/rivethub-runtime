@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) STRSET,
     Warn,
-    "table of protocol strings (use an enum with methods; unknown keys come from serde) → docs/PATTERNS.md#strset",
+    "table of protocol strings (use an enum with methods; unknown keys come from serde)",
     Strset::default()
 );
 
@@ -34,7 +34,7 @@ impl<'tcx> LateLintPass<'tcx> for Strset {
                 item.hir_id(),
                 item.span,
                 format!(
-                    "{}: table of protocol strings (one enum with methods for each property; messages list values from the enum) → docs/PATTERNS.md#strset",
+                    "{}: table of protocol strings (one enum with methods for each property; messages list values from the enum)",
                     name.unwrap_or_default()
                 ),
             );

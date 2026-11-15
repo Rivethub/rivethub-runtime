@@ -7,7 +7,7 @@ use kernel::wiki::page::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const REPLAYED: &[&str] = &["kiwi-build-cache.md", "lighthouse-dashboard.md"];
+const REPLAYED: &[&str] = &["kiwi-build-cache.txt", "lighthouse-dashboard.txt"];
 const SKIPPED: &[(&str, &str)] = &[];
 
 #[test]
@@ -45,7 +45,7 @@ fn every_vendored_page_fixture_is_accounted_for_and_round_trips() -> TestResult 
 #[test]
 fn legacy_condensed_citations_keep_their_kind() -> TestResult {
     let page = parse_wiki_page(&std::fs::read_to_string(testkit::recording(
-        "mcp-memory/shared/wiki/topics/lighthouse-dashboard.md",
+        "mcp-memory/shared/wiki/topics/lighthouse-dashboard.txt",
     ))?)?;
     assert_eq!(
         page.citations

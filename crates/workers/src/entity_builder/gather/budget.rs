@@ -105,13 +105,7 @@ fn tally_of(units: &[&Unit], sent: &str) -> Tally {
 }
 
 fn as_u64(len: usize) -> u64 {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a passage length that does not fit saturates the tally"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let len = u64::try_from(len).unwrap_or(u64::MAX);
     len
 }

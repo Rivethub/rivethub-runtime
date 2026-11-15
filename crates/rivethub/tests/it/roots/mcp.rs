@@ -26,7 +26,7 @@ fn expected_tool_names() -> TestResult<BTreeSet<String>> {
         serde_json::from_slice(&std::fs::read(testkit::recording("mcp/tools-list.json"))?)?;
     let omitted: BTreeSet<&str> = super::OMITTED
         .iter()
-        .map(|(name, _)| *name)
+        .copied()
         .filter(|name| *name != "categorizer" && *name != "wiki-builder")
         .collect();
     let recorded: BTreeSet<String> = catalog.tools.into_iter().map(|tool| tool.name).collect();

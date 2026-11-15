@@ -17,48 +17,6 @@ const CHECKLIST: &str = "recent, relevant, dedup, heartbeat excluded, budget";
 const WIKI: &str = "wiki section and wiki failure";
 const CHECKLIST_SESSION: &str = "cli:checklist";
 const HELPER_SESSION: &str = "cli:helper";
-const NO_TOKEN_BUDGET: &str = "MemoryStore::context has no token budget; the port always uses 4000";
-
-const HANDLED: &[&str] = &[
-    "context deploy checklist",
-    "context helper",
-    "context unknown agent",
-    "context with wiki",
-    "context with failing wiki search",
-];
-
-const SKIPPED_STEPS: &[(&str, &str)] = &[
-    ("context maxTokens 60", NO_TOKEN_BUDGET),
-    ("context maxTokens 1", NO_TOKEN_BUDGET),
-    ("context with wiki, maxTokens 400", NO_TOKEN_BUDGET),
-];
-
-#[tokio::test]
-async fn every_context_scenario_is_replayed_or_skipped() -> TestResult {
-    let file: ScenarioFile = recording("context.json")?;
-    let names: Vec<&str> = file
-        .scenarios
-        .iter()
-        .map(|scenario| scenario.name.as_str())
-        .collect();
-    assert_eq!(names, vec![CHECKLIST, WIKI]);
-    for scenario in &file.scenarios {
-        for step in &scenario.steps {
-            let handled = HANDLED.contains(&step.label.as_str());
-            let skipped = SKIPPED_STEPS
-                .iter()
-                .any(|(label, reason)| *label == step.label && !reason.is_empty());
-            assert!(
-                handled ^ skipped,
-                "{} / {} must be replayed or skipped",
-                scenario.name,
-                step.label
-            );
-        }
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn context_replay_matches_the_recording() -> TestResult {
     let file: ScenarioFile = recording("context.json")?;

@@ -54,14 +54,8 @@ pub async fn pump(
         }
     }
     if complete {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "the receiver is already gone"
-        )]
-        #[expect(
-            clippy::let_underscore_untyped,
-            reason = "the receiver is already gone"
-        )]
+        #[expect(clippy::let_underscore_must_use)]
+        #[expect(clippy::let_underscore_untyped)]
         let _ = tx.send(Ok(ModelChunk::Done)).await;
     }
 }
@@ -92,31 +86,13 @@ async fn forward(
 }
 
 fn undecodable(data: &str, source: serde_json::Error) -> ModelProviderError {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stream error that is not JSON is reported as the decode error"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let reported = serde_json::from_str::<serde_json::Value>(data)
         .ok()
         .and_then(|value| value.get("error").cloned());
     if let Some(error) = reported {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                untyped,
-                reason = "tool arguments and model JSON are arbitrary objects"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
         let message = error
             .get("message")
             .and_then(serde_json::Value::as_str)
@@ -139,14 +115,8 @@ fn undecodable(data: &str, source: serde_json::Error) -> ModelProviderError {
 }
 
 async fn send_failure(tx: &tokio::sync::mpsc::Sender<ModelStreamItem>, error: ModelProviderError) {
-    #[expect(
-        clippy::let_underscore_must_use,
-        reason = "the receiver is already gone"
-    )]
-    #[expect(
-        clippy::let_underscore_untyped,
-        reason = "the receiver is already gone"
-    )]
+    #[expect(clippy::let_underscore_must_use)]
+    #[expect(clippy::let_underscore_untyped)]
     let _ = tx.send(Err(error)).await;
 }
 

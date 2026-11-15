@@ -107,13 +107,7 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
 }
 
 async fn capture_activity(env: &Environment) -> Option<Vec<CaptureActivity>> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: capture history is left off the line when the node cannot be read"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let (_, loaded) = crate::configuration::load(env).await.ok()?;
     let config = loaded.config;
     if config.sqlite_selected() {
@@ -128,44 +122,20 @@ async fn sqlite_activity(config: &Config) -> Option<Vec<CaptureActivity>> {
     if path.as_path() == std::path::Path::new(":memory:") || !path.exists() {
         return Some(Vec::new());
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let store = tokio::task::spawn_blocking(move || memory_sqlite::SqliteStore::open(path))
         .await
         .ok()?
         .ok()?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     return store.capture_activity_read().await.ok();
 }
 
 async fn postgres_activity(config: &Config, env: &Environment) -> Option<Vec<CaptureActivity>> {
     let url = config.memory_postgres_url(env)?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let store = memory_postgres::PostgresMemory::connect(&url).await.ok()?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: capture history is left off the line when the store cannot be read"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     return store.read_capture_activity().await.ok();
 }
 

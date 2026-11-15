@@ -235,10 +235,7 @@ async fn article(
 }
 
 fn filter(query: WikiQuery) -> WikiFilter {
-    #[expect(
-        clippy::manual_unwrap_or_default,
-        reason = "CONTRACT B1: an absent offset selects the first page; serde rejects invalid offsets"
-    )]
+    #[expect(clippy::manual_unwrap_or_default)]
     let offset = match query.offset {
         Some(offset) => offset,
         None => 0,

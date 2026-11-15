@@ -50,10 +50,7 @@ pub struct PendingUpdate {
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is a JSON field of GET /api/account"
-)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct Account {
     #[serde(default)]
     pub email: Option<String>,
@@ -87,13 +84,7 @@ pub struct AccountUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        opaque,
-        reason = "device sign-in has no input fields; deny_unknown_fields rejects rather than discards contents"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(opaque))]
 pub struct SignInRequest {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

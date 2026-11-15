@@ -101,13 +101,7 @@ pub struct DraftReport {
     pub flags: Vec<Flag>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "a draft report carries flagged text; Debug shows counts only"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for DraftReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -171,13 +165,7 @@ pub struct Flag {
     pub state: FlagState,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "flagged text leaves rh only in the share report body; Debug never prints it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for Flag {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -207,13 +195,7 @@ pub enum FlagState {
     Map { term: String, placeholder: String },
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "a mapped term is flagged text; Debug names the state only"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for FlagState {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -249,13 +231,7 @@ pub enum MarkChoice {
     Map { term: String, placeholder: String },
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "a mapped term is flagged text; Debug names the choice only"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for MarkChoice {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -300,13 +276,7 @@ pub struct SentReply {
     pub signed: Option<String>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the share code's key is a secret; Debug shows only the drop id part"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for SentReply {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let id = self
@@ -360,13 +330,7 @@ pub enum LoginRequest {
     Team { origin: String, token: String },
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "a team token never reaches a log; Debug names only the server"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for LoginRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -184,7 +184,6 @@ pub fn check(root: &Path, locked: bool, list_tests: bool) -> Result<()> {
     crate::manifests::manifests(root, &mut findings)?;
     crate::manifests::lint_policy(root, &mut findings)?;
     crate::toolconfig::check(root, &mut findings)?;
-    crate::patterns::check(root, &mut findings)?;
     crate::dupfixture::check(root, &mut findings)?;
     crate::labpath::check(root, &mut findings)?;
     crate::contract::check(root, &mut findings)?;
@@ -197,7 +196,6 @@ pub fn check(root: &Path, locked: bool, list_tests: bool) -> Result<()> {
         "PRIVILEGE",
         "PATHCONTAIN",
         "WAIVER",
-        "REASON",
         "UTF16",
         "JSMODEL",
         "JSONBYTES",

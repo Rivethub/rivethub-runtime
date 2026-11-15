@@ -3,7 +3,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) REDUNDANT_RENAME,
     Warn,
-    "serde rename equal to the field name (drop the attribute; rename_all on the container; alias for a second spelling) → docs/PATTERNS.md#redundantrename",
+    "serde rename equal to the field name (drop the attribute; rename_all on the container; alias for a second spelling)",
     RedundantRename::default()
 );
 
@@ -31,7 +31,7 @@ impl<'tcx> rustc_lint::LateLintPass<'tcx> for RedundantRename {
                     REDUNDANT_RENAME,
                     field.hir_id,
                     field.span,
-                    "serde rename equal to the field name → docs/PATTERNS.md#redundantrename"
+                    "serde rename equal to the field name"
                         .to_owned(),
                 );
             }

@@ -15,13 +15,7 @@ pub struct UsersRegistry {
     pub spaces: Option<BTreeMap<String, crate::gateway::tenancy::SpaceConfig>>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "B11: the users registry default requires the named owner id; derive would use an empty id"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for UsersRegistry {
     fn default() -> Self {
         Self {

@@ -171,10 +171,7 @@ fn score32(value: f64) -> f32 {
     if !value.is_finite() || value <= 0.0 {
         return 0.0;
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a similarity score only needs f32 precision inside 0..=1"
-    )]
+    #[expect(clippy::cast_possible_truncation)]
     let score = value.clamp(0.0, 1.0) as f32;
     score
 }

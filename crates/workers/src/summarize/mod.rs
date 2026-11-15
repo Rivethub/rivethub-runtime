@@ -42,10 +42,7 @@ pub struct SummarizeOutcome {
     pub reenqueued: bool,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the summary store, model provider and job queue are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct SummarizeEnv<'a> {
     pub store: &'a dyn SummaryStore,
     pub provider: &'a dyn ModelProvider,

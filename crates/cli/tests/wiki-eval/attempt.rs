@@ -50,10 +50,7 @@ pub(crate) struct LeadEnd {
     pub(crate) failed: Option<String>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(sleep, reason = "the wait is the fixture")
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
 pub(crate) async fn run_lead(
     ctx: &Ctx,
     lead: &Leaf,
@@ -115,10 +112,7 @@ enum Step {
     Hard,
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "every worker error other than an outage or a busy route fails the job the way production settle does"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn classify(error: &WorkerError) -> Step {
     match error {
         WorkerError::ProviderOutage { .. } => Step::Outage,

@@ -58,10 +58,7 @@ async fn get(
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
-)]
+#[expect(clippy::too_many_lines)]
 async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();

@@ -51,13 +51,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
         note("user", "window start", "2026-10-10T13:00:00Z"),
     )
     .await?;
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let window_end = seed_message(
         &pool,
         conversation,
@@ -165,13 +159,7 @@ async fn seed_conversation(pool: &PgPool, session: &str) -> Result<Uuid, sqlx::E
     Ok(id)
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 struct Message<'a> {
     role: &'a str,
     content: &'a str,

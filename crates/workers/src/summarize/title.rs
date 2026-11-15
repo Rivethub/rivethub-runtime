@@ -28,10 +28,7 @@ pub enum Named {
     Unfit(String),
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 pub struct TitleCall<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,

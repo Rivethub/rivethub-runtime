@@ -3766,6 +3766,12 @@
             "null"
           ]
         },
+        "replyText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "role": {
           "$ref": "#/$defs/SessionMessageRole"
         },

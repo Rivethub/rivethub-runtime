@@ -86,13 +86,7 @@ impl TurnMetadata {
     }
 
     fn parse(raw: &str) -> Option<Self> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B3: a malformed x-codex-turn-metadata header is ignored and the call keeps its session"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let parsed = serde_json::from_str::<Self>(raw).ok()?;
         Self::of(parsed.turn_id, parsed.request_kind)
     }

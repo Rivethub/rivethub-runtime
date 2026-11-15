@@ -182,13 +182,7 @@ async fn ask(
     input: &MergeInput,
     report: &mut RecompileReport,
 ) -> Option<Merged> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a merge that fails leaves the text to the writer's budget trim, so recompiling never fails for size"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let merged = pages.merge(input).await.ok();
     let merged = merged
         .filter(|merged| !merged.summary.trim().is_empty() || !merged.article.trim().is_empty());

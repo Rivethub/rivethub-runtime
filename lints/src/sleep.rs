@@ -7,7 +7,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) SLEEP,
     Warn,
-    "tokio::time::sleep in test code (tests await the event with a timeout; a genuine timing test carries an expect) → docs/PATTERNS.md#sleep",
+    "tokio::time::sleep in test code (tests await the event with a timeout; a genuine timing test carries an expect)",
     Sleep::default()
 );
 
@@ -60,7 +60,7 @@ impl<'tcx> LateLintPass<'tcx> for Sleep {
             expr.hir_id,
             expr.span,
             format!(
-                "{shown} sleeps a test: wait for the event with a timeout, or carry #[cfg_attr(dylint_lib = \"rr_lints\", expect(sleep, reason = \"…\"))] on the statement → docs/PATTERNS.md#sleep"
+                "{shown} sleeps a test: wait for the event with a timeout, or carry #[cfg_attr(dylint_lib = \"rr_lints\", expect(sleep, reason = \"…\"))] on the statement"
             ),
         );
     }

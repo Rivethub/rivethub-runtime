@@ -34,10 +34,7 @@ use crate::summarize::SummarySettings;
 use crate::wiki_builder::WikiBuilderDeps;
 
 #[derive(Clone)]
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 pub struct RoleModel {
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,
@@ -75,10 +72,7 @@ impl RunnerConfig {
     }
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider and the summary and embedding stores are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct WorkerDeps {
     pub targets: Arc<dyn EmbeddingStore>,
     pub summaries: Arc<dyn SummaryStore>,
@@ -90,10 +84,7 @@ pub struct WorkerDeps {
     pub scopes: Option<crate::OwnerScopes>,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the model provider and the summary and embedding stores are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct Runner<Q> {
     job_settings: crate::MemoryJobSettings,
     schedules: bool,

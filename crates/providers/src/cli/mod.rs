@@ -31,13 +31,7 @@ pub struct CliBacked {
     tasks: Mutex<TaskTracker>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "PATTERNS MANUALDERIVE: HarnessAdapter is not Debug; this implementation exposes only the harness id"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for CliBacked {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

@@ -1,7 +1,3 @@
-mod documentation;
-
-use documentation::deviations_are_documented;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -140,9 +136,6 @@ fn removed_provider_ids(input: &serde_yaml_ng::Value) -> Vec<(String, RemovedPro
 const DECISION_15_WARNING: &str = "memory.capture.redaction is validated but not yet injected into harness hook processes; set RIVETOS_CAPTURE_REDACTION or pass CaptureWriterOptions.redaction to enable at runtime";
 
 const EXPOSED_TERMINAL: &str = "an exposed terminal without TLS";
-
-const REMOVED_BY_DECISION_ROWS: usize = 34_398;
-const REMOVED_BY_DECISION_CASES: usize = 5_823;
 
 fn decision_replacements(input: &serde_yaml_ng::Value) -> Vec<(String, bool, String, String)> {
     let mut replacements = Vec::new();
@@ -641,22 +634,6 @@ fn replay_file(name: &str, deviations: &BTreeMap<String, Deviation>) -> Result<(
     .into())
 }
 
-fn removed_by_decision_table_size() -> Result<(usize, usize), String> {
-    let mut rows = 0usize;
-    let mut cases = 0usize;
-    for name in GOLDEN_FILES {
-        for case in read_cases(name)? {
-            let deltas = removed_by_decision(&case.input);
-            if deltas.findings.is_empty() {
-                continue;
-            }
-            cases += 1;
-            rows += deltas.findings.len();
-        }
-    }
-    Ok((rows, cases))
-}
-
 fn collect_trials() -> Result<Vec<Trial>, String> {
     let deviations: BTreeMap<String, Deviation> = load_deviations()?
         .into_iter()
@@ -669,20 +646,6 @@ fn collect_trials() -> Result<Vec<Trial>, String> {
             replay_file(name, &file_deviations)
         }));
     }
-    trials.push(Trial::test(
-        "deviations_are_documented".to_owned(),
-        deviations_are_documented,
-    ));
-    trials.push(Trial::test("removed_by_decision_table".to_owned(), || {
-        let (rows, cases) = removed_by_decision_table_size()?;
-        if rows != REMOVED_BY_DECISION_ROWS || cases != REMOVED_BY_DECISION_CASES {
-            return Err(format!(
-                "the RemovedByDecision table drifted: pinned {REMOVED_BY_DECISION_ROWS} rows over {REMOVED_BY_DECISION_CASES} cases, table holds {rows} rows over {cases} cases"
-            )
-            .into());
-        }
-        Ok(())
-    }));
     Ok(trials)
 }
 

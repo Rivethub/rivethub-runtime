@@ -61,10 +61,7 @@ pub(crate) async fn fresh(admin: &str, db: &str, secrets: &[String]) -> Result<(
             last = Some(database(&error, secrets));
             continue;
         }
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(sleep, reason = "the wait is the fixture")
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
         if let Err(error) = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE IF EXISTS \"{db}\""
         )))
@@ -75,10 +72,7 @@ pub(crate) async fn fresh(admin: &str, db: &str, secrets: &[String]) -> Result<(
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
         }
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(sleep, reason = "the wait is the fixture")
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
         match sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{db}\"")))
             .execute(&pool)
             .await

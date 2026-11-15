@@ -64,13 +64,7 @@ fn messages_render_in_time_order_with_their_own_timestamps() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn shell_calls_keep_the_command_and_cap_the_result() {
     let head = "h".repeat(TOOL_RESULT_CAP - 500);
     let tail = "t".repeat(900);
@@ -112,13 +106,7 @@ fn shell_calls_keep_the_command_and_cap_the_result() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn a_non_shell_call_keeps_compact_args() {
     let mut tool = message(5, 11, "tool", "Read");
     tool.tool_name = Some("Read".to_owned());
@@ -546,13 +534,7 @@ fn memory_lookup_matches_the_case_table() {
 }
 
 #[test]
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn a_rendered_transcript_keeps_the_lookup_call_and_drops_the_result() {
     let user = message(1, 0, "user", "how many gpus");
     let mut tool = message(2, 10, "tool", "[tool call] Bash");

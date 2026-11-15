@@ -22,13 +22,7 @@ pub struct LocalReview {
     pub unreviewed_sha256: String,
     pub flags: Vec<LocalFlag>,
     pub fields: Vec<BaseField>,
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            customserde,
-            reason = "format 1 is the absence of the field, so an explicit \"v1\" must not deserialize"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(customserde))]
     #[serde(
         default = "v1",
         deserialize_with = "only_v2",
@@ -51,10 +45,7 @@ fn only_v2<'de, D: Deserializer<'de>>(deserializer: D) -> Result<MacFormat, D::E
     }
 }
 
-#[expect(
-    clippy::trivially_copy_pass_by_ref,
-    reason = "serde calls skip_serializing_if with a reference to the field"
-)]
+#[expect(clippy::trivially_copy_pass_by_ref)]
 fn is_v1(format: &MacFormat) -> bool {
     *format == MacFormat::V1
 }

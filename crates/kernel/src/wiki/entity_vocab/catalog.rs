@@ -3,13 +3,7 @@ use serde::Serialize;
 use super::super::entity_match::TypeRoot;
 use super::super::entity_match::type_root;
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const HOST_KEYS: &[&str] = &[
     "identity",
     "ip",
@@ -33,13 +27,7 @@ const HOST_KEYS: &[&str] = &[
     "incidents",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const HARDWARE_KEYS: &[&str] = &[
     "identity",
     "vendor",
@@ -53,13 +41,7 @@ const HARDWARE_KEYS: &[&str] = &[
     "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const SERVICE_KEYS: &[&str] = &[
     "unit",
     "host",
@@ -74,13 +56,7 @@ const SERVICE_KEYS: &[&str] = &[
     "rollback",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const MODEL_KEYS: &[&str] = &[
     "identifier",
     "family",
@@ -94,36 +70,18 @@ const MODEL_KEYS: &[&str] = &[
     "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const SOFTWARE_KEYS: &[&str] = &[
     "identity", "version", "purpose", "host", "command", "config", "repo", "language", "license",
     "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const REPO_KEYS: &[&str] = &[
     "identity", "host", "remote", "branch", "language", "license", "project", "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const PERSON_KEYS: &[&str] = &[
     "role",
     "contact",
@@ -133,13 +91,7 @@ const PERSON_KEYS: &[&str] = &[
     "relationships",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const ORG_KEYS: &[&str] = &[
     "identity",
     "members",
@@ -148,66 +100,30 @@ const ORG_KEYS: &[&str] = &[
     "relationships",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const PROJECT_KEYS: &[&str] = &[
     "identity", "goal", "status", "owners", "repos", "services", "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const PLACE_KEYS: &[&str] = &[
     "identity", "address", "location", "contains", "access", "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const AGENT_KEYS: &[&str] = &[
     "identity", "role", "host", "model", "tools", "config", "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const CONTAINER_KEYS: &[&str] = &[
     "identity", "image", "host", "command", "config", "ports", "state",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const DOMAIN_KEYS: &[&str] = &["identity", "registrar", "nameservers", "host", "state"];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const DATABASE_KEYS: &[&str] = &["identity", "engine", "host", "port", "size", "state"];
 
 const HOST_SYNONYMS: &[(&str, &str)] = &[

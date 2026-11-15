@@ -1,4 +1,4 @@
-warning: serde_json::Map outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm) → docs/PATTERNS.md#untyped
+warning: serde_json::Map outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm)
   --> $DIR/fail.rs:19:12
    |
 LL |     pub v: serde_json::Map<String, serde_json::Value>,
@@ -6,13 +6,13 @@ LL |     pub v: serde_json::Map<String, serde_json::Value>,
    |
    = note: `#[warn(untyped)]` on by default
 
-warning: serde_json::Value outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm) → docs/PATTERNS.md#untyped
+warning: serde_json::Value outside its sanctioned holder (a typed struct, wire::JsonObject, or config::FreeForm)
   --> $DIR/fail.rs:19:36
    |
 LL |     pub v: serde_json::Map<String, serde_json::Value>,
    |                                    ^^^^^^^^^^^^^^^^^
 
-warning: serde_json::json builds untyped JSON — a typed serde struct or enum (or the crate's own protocol types) instead of json! → docs/PATTERNS.md#untyped
+warning: serde_json::json builds untyped JSON — a typed serde struct or enum (or the crate's own protocol types) instead of json!
   --> $DIR/fail.rs:23:5
    |
 LL |     serde_json::json!({"kind": "ping"})

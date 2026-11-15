@@ -129,10 +129,7 @@ async fn seed(pool: &PgPool) -> TestResult {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
-)]
+#[expect(clippy::too_many_lines)]
 async fn recorded_memory_text() -> TestResult {
     let db = crate::pgdb::TestDb::bare().await?;
     let pool = db.pool();
@@ -143,7 +140,9 @@ async fn recorded_memory_text() -> TestResult {
         let entry = entry?;
         std::fs::copy(
             entry.path(),
-            wiki.path().join("topics").join(entry.file_name()),
+            wiki.path()
+                .join("topics")
+                .join(std::path::Path::new(&entry.file_name()).with_extension("md")),
         )?;
     }
     let shutdown = CancellationToken::new();

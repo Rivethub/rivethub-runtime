@@ -47,13 +47,7 @@ fn hook_in(
     ))
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        sleep,
-        reason = "paused clock: Claude Code writes its last reply to the transcript just after the Stop hook starts"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
 async fn claude_writes_the_reply_late(transcript: &Path) -> std::io::Result<()> {
     tokio::time::sleep(Duration::from_millis(250)).await;
     std::fs::write(transcript, format!("{PROMPT_LINE}\n{REPLY_LINE}\n"))

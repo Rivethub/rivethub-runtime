@@ -12,10 +12,7 @@ use kernel::tidy::{TidyStore, UpkeepStore};
 use kernel::topics::{DecisionStore, TopicPageStore, TopicStore};
 
 #[derive(Clone)]
-#[expect(
-    missing_debug_implementations,
-    reason = "every field is a port trait object without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct StorePorts {
     topics: Arc<dyn TopicStore>,
     filing: Arc<dyn FilingStore>,

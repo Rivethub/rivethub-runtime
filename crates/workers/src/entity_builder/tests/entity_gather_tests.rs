@@ -13,13 +13,7 @@ fn at(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 struct Tool<'a> {
     name: &'a str,
     args: Option<serde_json::Value>,
@@ -63,13 +57,7 @@ fn an_alias_matches_on_a_word_boundary() {
 
 #[test]
 fn a_matched_call_keeps_its_result_and_a_matched_result_keeps_its_call() {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let hostname = serde_json::json!({"command": "hostname"});
     let call_only = vec![
         line(
@@ -145,13 +133,7 @@ fn the_cap_keeps_the_latest_passages() {
 #[test]
 fn a_mention_matches_when_the_name_never_appears() {
     let quote = "agent CTs 113/116/117/118/112/107";
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let hostname = serde_json::json!({"command": "hostname"});
     let messages = vec![
         line(
@@ -200,13 +182,7 @@ fn a_mention_matches_through_markdown_and_whitespace() {
     assert_eq!(passages(&messages, "node_a", &[], ""), "");
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn bash(
     id: u128,
     stamp: &str,

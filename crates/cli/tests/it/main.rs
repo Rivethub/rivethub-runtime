@@ -7,7 +7,6 @@ mod auth;
 mod bundle_import;
 mod capture_hook;
 mod cleanup_guard;
-mod cli_docs;
 mod contract;
 mod db;
 mod harness_connect;

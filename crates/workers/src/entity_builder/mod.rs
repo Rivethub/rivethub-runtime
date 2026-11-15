@@ -54,10 +54,7 @@ const OBSERVE_MAX_TOKENS: u32 = 12_000;
 const RECENT_PRIORITY: i16 = -10;
 const MANUAL_PRIORITY: i16 = 10;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the entity store is an injected trait object"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone)]
 pub struct EntityBuilderDeps {
     pub store: Arc<dyn EntityStore>,
@@ -66,10 +63,7 @@ pub struct EntityBuilderDeps {
     pub settings: MatcherSettings,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the entity store and model provider are injected trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct EntityBuilderEnv<'a> {
     pub store: &'a dyn EntityStore,
     pub provider: &'a dyn ModelProvider,

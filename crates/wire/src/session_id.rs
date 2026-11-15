@@ -58,13 +58,7 @@ pub fn encode_segment(session: &SessionId) -> String {
 
 pub fn decode_segment(segment: &str) -> Result<DecodedSegment, SegmentError> {
     let decoded = percent_decode_str(segment).decode_utf8();
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: segment decode keeps the raw segment when percent-decoding fails"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let text: &str = match &decoded {
         Ok(text) => text,
         Err(_) => segment,

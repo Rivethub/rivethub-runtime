@@ -7,10 +7,7 @@ use uuid::Uuid;
 
 use crate::error::WorkerError;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the tenancy store is a trait object"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone)]
 pub struct OwnerScopes {
     pub store: Arc<dyn TenancyStore>,

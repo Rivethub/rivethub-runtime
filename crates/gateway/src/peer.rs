@@ -52,13 +52,7 @@ fn is_trusted(trusted: &[TrustedProxy], address: IpAddr) -> bool {
 }
 
 fn forwarded_client(headers: &HeaderMap, trusted: &[TrustedProxy]) -> Option<IpAddr> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule: rh has an X-Forwarded-For value that is not UTF-8 contribute no hops"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let values: Vec<&str> = headers
         .get_all("x-forwarded-for")
         .iter()
@@ -78,13 +72,7 @@ fn hop_address(hop: &str) -> Option<IpAddr> {
         .strip_prefix('[')
         .and_then(|rest| rest.strip_suffix(']'))
         .unwrap_or(hop);
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a stated rule: rh skips an X-Forwarded-For hop that does not parse and walks on"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let address = bare
         .parse::<IpAddr>()
         .or_else(|_| hop.parse::<SocketAddr>().map(|socket| socket.ip()))

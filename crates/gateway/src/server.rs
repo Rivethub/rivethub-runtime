@@ -78,13 +78,7 @@ pub struct ServeOptions {
     pub tls_handshake_timeout: Duration,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the defaults are the Node 22 server values, not the derive's zeros"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for ServeOptions {
     fn default() -> Self {
         Self {

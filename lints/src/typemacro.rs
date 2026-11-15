@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) TYPEMACRO,
     Warn,
-    "macro_rules! stamping out types (write each type out with its derives) → docs/PATTERNS.md#typemacro",
+    "macro_rules! stamping out types (write each type out with its derives)",
     Typemacro::default()
 );
 
@@ -27,7 +27,7 @@ impl<'tcx> LateLintPass<'tcx> for Typemacro {
                 TYPEMACRO,
                 item.hir_id(),
                 item.span,
-                "macro_rules! in production code (write the types and impls out) → docs/PATTERNS.md#typemacro"
+                "macro_rules! in production code (write the types and impls out)"
                     .to_owned(),
             );
         }

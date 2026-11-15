@@ -240,13 +240,7 @@ impl Provenance {
 }
 
 fn parsed<T: serde::de::DeserializeOwned>(settings: &JsonObject, key: &str) -> Option<T> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "CONTRACT B6: a stored origin or receipt that does not parse reads as unattributed and unverified, and the recall still succeeds"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let parsed =
         serde_json::from_value(settings.get(key).filter(|value| value.is_object())?.clone()).ok();
     parsed

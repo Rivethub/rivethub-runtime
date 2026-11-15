@@ -1,4 +1,4 @@
-warning: $DIR/fail.rs:3: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
+warning: $DIR/fail.rs:3: FALLBACK expectation must be on a statement
   --> $DIR/fail.rs:4:1
    |
 LL | / fn too_broad(value: Result<u32, ()>) -> u32 {
@@ -8,7 +8,7 @@ LL | | }
    |
    = note: `#[warn(fallback_waiver)]` on by default
 
-warning: $DIR/fail.rs:9: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
+warning: $DIR/fail.rs:8: FALLBACK expectation must be on a statement
   --> $DIR/fail.rs:4:1
    |
 LL | / fn too_broad(value: Result<u32, ()>) -> u32 {
@@ -16,21 +16,5 @@ LL | |     value.unwrap_or(42)
 LL | | }
    | |_^
 
-warning: $DIR/fail.rs:15: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
-  --> $DIR/fail.rs:4:1
-   |
-LL | / fn too_broad(value: Result<u32, ()>) -> u32 {
-LL | |     value.unwrap_or(42)
-LL | | }
-   | |_^
-
-warning: $DIR/fail.rs:21: FALLBACK expectation must be on a statement and cite a CONTRACT row or PATTERNS id → docs/PATTERNS.md#fallback
-  --> $DIR/fail.rs:4:1
-   |
-LL | / fn too_broad(value: Result<u32, ()>) -> u32 {
-LL | |     value.unwrap_or(42)
-LL | | }
-   | |_^
-
-warning: 4 warnings emitted
+warning: 2 warnings emitted
 

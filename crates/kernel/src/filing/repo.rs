@@ -9,10 +9,7 @@ use crate::topics::TopicKind;
 use crate::topics::TopicListing;
 use crate::topics::fold;
 
-#[expect(
-    clippy::expect_used,
-    reason = "the repo reference pattern is a constant; the filing tests match it"
-)]
+#[expect(clippy::expect_used)]
 static REPO: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)github\.com/[\w.-]+/([\w.-]+)|(?:^|[\s(`'\x22])[~.]?/((?:[\w.-]+/)*[\w.-]+)|\b([\w.-]+)\s*(?:#\d+|\bPRs?\s*#?\d+|\bpull request)|\b(?:PR|pull request)\s*#?\d+\s+(?:in|on|for|of|to)\s+(?:the\s+)?([\w.-]+)",

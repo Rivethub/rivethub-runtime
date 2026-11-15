@@ -18,10 +18,7 @@ pub(crate) fn reader() -> std::io::Result<StdinPipe> {
     })
 }
 
-#[expect(
-    deprecated,
-    reason = "RUSTSEC-2026-0386 covers fds closed while registered; AsyncFd owns this File and the workspace forbids the unsafe replacement"
-)]
+#[expect(deprecated)]
 fn nonblocking(file: File, interest: Interest) -> std::io::Result<tokio::io::unix::AsyncFd<File>> {
     let bits = nix::fcntl::fcntl(&file, nix::fcntl::FcntlArg::F_GETFL)?;
     let flags = nix::fcntl::OFlag::from_bits_retain(bits) | nix::fcntl::OFlag::O_NONBLOCK;

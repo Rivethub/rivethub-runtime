@@ -664,10 +664,7 @@ fn page_rewrite(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the passages are the evidence a contradicted retirement must quote"
-)]
+#[expect(clippy::too_many_arguments)]
 fn reconciled_body(
     type_name: &str,
     page: &[LiveFact],

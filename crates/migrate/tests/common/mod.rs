@@ -310,10 +310,7 @@ impl PartialEq for Cell {
             (Self::Integer(left), Self::Integer(right)) => left == right,
             (Self::Real(left), Self::Real(right)) => left == right,
             (Self::Integer(left), Self::Real(right)) | (Self::Real(right), Self::Integer(left)) => {
-                #[expect(
-                    clippy::cast_precision_loss,
-                    reason = "an integer row value compares equal to its real rendering"
-                )]
+                #[expect(clippy::cast_precision_loss)]
                 let widened = *left as f64;
                 widened == *right
             }

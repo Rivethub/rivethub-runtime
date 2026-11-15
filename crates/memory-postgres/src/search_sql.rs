@@ -449,7 +449,7 @@ impl crate::PostgresMemory {
         Ok(rows)
     }
 
-    #[expect(clippy::too_many_lines, reason = "one SQL builder covers both tables")]
+    #[expect(clippy::too_many_lines)]
     async fn arm_table(
         &self,
         context: &ArmContext<'_>,

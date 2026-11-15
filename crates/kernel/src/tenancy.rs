@@ -168,13 +168,7 @@ impl Scope {
 
     #[must_use]
     pub fn current() -> Option<Self> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a real absence: rh runs work outside any scope with no viewer, and the stores fail closed"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let current = SCOPE.try_with(Self::clone).ok();
         current
     }

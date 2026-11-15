@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) DYNVALUE,
     Warn,
-    "home-made dynamic value model (deserialize into typed structs) → docs/PATTERNS.md#dynvalue",
+    "home-made dynamic value model (deserialize into typed structs)",
     Dynvalue::default()
 );
 
@@ -30,7 +30,7 @@ impl<'tcx> LateLintPass<'tcx> for Dynvalue {
                         DYNVALUE,
                         item.hir_id(),
                         item.span,
-                        "value tree with a Null variant (deserialize into typed structs and enums) → docs/PATTERNS.md#dynvalue"
+                        "value tree with a Null variant (deserialize into typed structs and enums)"
                             .to_owned(),
                     );
                 }
@@ -45,7 +45,7 @@ impl<'tcx> LateLintPass<'tcx> for Dynvalue {
                         DYNVALUE,
                         item.hir_id(),
                         item.span,
-                        "hand-written Deserializer (deserialize straight into typed structs) → docs/PATTERNS.md#dynvalue"
+                        "hand-written Deserializer (deserialize straight into typed structs)"
                             .to_owned(),
                     );
                 }

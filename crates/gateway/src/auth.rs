@@ -352,13 +352,7 @@ fn html_unauthorized(refusal: &ApiError) -> Response {
 }
 
 pub(crate) fn cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS#fallback: a configured origin that is not a valid header value lists no origin, as normalize_origin does"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let listed: Vec<HeaderValue> = origins
         .iter()
         .map(String::as_str)

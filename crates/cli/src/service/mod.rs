@@ -196,24 +196,12 @@ impl Scope {
     }
 
     pub(crate) async fn replaced_binary_hint(self, env: &Environment) -> Option<String> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a status that cannot resolve its home gives no service hint and still reports health"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(paths) = Paths::new(env) else {
             return None;
         };
         let path = self.unit_path(paths.home());
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a unit that is missing or unreadable gives no service hint and status still reports health"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let Ok(text) = tokio::fs::read_to_string(&path).await else {
             return None;
         };
@@ -254,13 +242,7 @@ impl Scope {
             )
             .await
             .and_then(command::require_success)?;
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a MainPID that is not a number is not the detached node, so the service still stops that node"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         if main.stdout.trim().parse::<u32>().ok() == Some(pid) {
             return Ok(String::new());
         }
@@ -319,13 +301,7 @@ fn process_gone(pid: i32) -> Result<bool, nix::errno::Errno> {
 }
 
 fn zombie(pid: i32) -> bool {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a missing /proc stat is not a zombie, so the service keeps waiting until the process is gone"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };
@@ -352,13 +328,7 @@ pub(crate) fn executable() -> std::io::Result<PathBuf> {
 }
 
 fn repair_unit(scope: Scope, env: &Environment) -> Result<String, ServiceError> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a service start that cannot resolve its home leaves the unit unchanged and still starts"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(paths) = Paths::new(env) else {
         return Ok(String::new());
     };
@@ -375,13 +345,7 @@ fn repair_unit(scope: Scope, env: &Environment) -> Result<String, ServiceError> 
         }
         Ok(_) => {}
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a service start that cannot read its config leaves the unit unchanged and still starts"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(kind) = crate::configuration::node_kind(env) else {
         return Ok(String::new());
     };
@@ -402,10 +366,7 @@ fn finish_line(message: String) -> String {
     }
 }
 
-#[expect(
-    clippy::wildcard_enum_match_arm,
-    reason = "every other CLI error is reported as text from the service command"
-)]
+#[expect(clippy::wildcard_enum_match_arm)]
 fn process_error(error: crate::Error) -> ServiceError {
     match error {
         crate::Error::Config(error) => ServiceError::Config(error),

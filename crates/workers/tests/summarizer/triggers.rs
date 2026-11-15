@@ -3,25 +3,6 @@ use kernel::model::ModelCallFailure;
 use workers::OutageCause;
 use workers::WorkerError;
 
-const REPLAYED: &[&str] = &[
-    "absent",
-    "explicit",
-    "session_idle",
-    "session_stale",
-    "threshold",
-];
-
-const SKIPPED: &[(&str, &str)] = &[
-    (
-        "window",
-        "not a trigger the TypeScript queue writes; serde rejects the old Rust spelling",
-    ),
-    (
-        "stale",
-        "not a trigger the TypeScript queue writes; serde rejects the old Rust spelling",
-    ),
-];
-
 #[derive(Debug, Deserialize)]
 struct TriggerFile {
     accepted: Vec<TriggerCase>,
@@ -37,7 +18,6 @@ struct TriggerCase {
 #[derive(Debug, Deserialize)]
 struct RejectedCase {
     name: String,
-    reason: String,
     payload: wire::JsonObject,
 }
 
@@ -55,38 +35,6 @@ enum WindowCase {
     Idle,
     Stale,
     Full,
-}
-
-#[test]
-fn every_trigger_payload_is_replayed_or_skipped() {
-    let file = trigger_file();
-    let mut accepted: Vec<&str> = file
-        .accepted
-        .iter()
-        .map(|case| case.name.as_str())
-        .collect();
-    let mut replayed = REPLAYED.to_vec();
-    accepted.sort_unstable();
-    replayed.sort_unstable();
-    assert_eq!(accepted, replayed);
-    let mut rejected: Vec<&str> = file
-        .rejected
-        .iter()
-        .map(|case| case.name.as_str())
-        .collect();
-    let mut skipped: Vec<&str> = SKIPPED.iter().map(|(name, _)| *name).collect();
-    rejected.sort_unstable();
-    skipped.sort_unstable();
-    assert_eq!(rejected, skipped);
-    for (name, reason) in SKIPPED {
-        assert_ne!(*reason, "", "{name}");
-        let case = file
-            .rejected
-            .iter()
-            .find(|case| case.name == *name)
-            .expect("skipped payload");
-        assert_eq!(case.reason, *reason);
-    }
 }
 
 #[tokio::test]

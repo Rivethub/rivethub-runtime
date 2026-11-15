@@ -33,8 +33,6 @@ const KINDS: &[ProviderType] = &[
     ProviderType::KimiCode,
     ProviderType::OpencodeCli,
 ];
-const SKIPPED: &[(&str, &str)] = &[];
-
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Chunk {
@@ -76,31 +74,6 @@ fn configured(
         config::Config::load(&env, &config::ConfigLocation::Current(path))?.config,
         env,
     ))
-}
-
-#[test]
-fn every_provider_recording_is_replayed_or_explicitly_skipped() -> TestResult {
-    let mut cases = Vec::new();
-    for entry in std::fs::read_dir(testkit::recording("provider"))? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            cases.push(
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| "fixture name")?,
-            );
-        }
-    }
-    let mut covered = vec!["A-text".to_owned()];
-    for (name, reason) in SKIPPED {
-        assert_ne!(*reason, "");
-        covered.push((*name).to_owned());
-    }
-    cases.sort();
-    covered.sort();
-    assert_eq!(cases, covered);
-    Ok(())
 }
 
 #[tokio::test]

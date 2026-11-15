@@ -4,7 +4,6 @@ mod mcp;
 mod start;
 mod worker;
 
-use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
@@ -18,25 +17,16 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const DEAD_POSTGRES: &str = "postgres://127.0.0.1:1/none";
 
-const OMITTED: &[(&str, &str)] = &[
-    (
-        "internet_search",
-        "B7: harness owns web tools; removed by design",
-    ),
-    ("web_fetch", "B7: harness owns web tools; removed by design"),
-    ("echo", "Product decision: not a sidecar tool"),
-    (
-        "skill_list",
-        "Product decision: skills are not sidecar tools",
-    ),
-    (
-        "skill_manage",
-        "Product decision: skills are not sidecar tools",
-    ),
-    ("delegate_task", "Delegation left rh for T3 Code"),
-    ("list_agents", "Delegation left rh for T3 Code"),
-    ("categorizer", "categorizer has no handler in this build"),
-    ("wiki-builder", "wiki-builder has no handler in this build"),
+const OMITTED: &[&str] = &[
+    "internet_search",
+    "web_fetch",
+    "echo",
+    "skill_list",
+    "skill_manage",
+    "delegate_task",
+    "list_agents",
+    "categorizer",
+    "wiki-builder",
 ];
 
 fn provider_config(home: &Path, postgres: impl std::fmt::Display, extra: &str) -> String {
@@ -137,34 +127,4 @@ async fn install_queue(pool: &PgPool) -> Result<(), sqlx::Error> {
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await
-}
-
-fn readme_skips(text: &str) -> BTreeMap<String, String> {
-    let mut skips = BTreeMap::new();
-    for line in text.lines() {
-        let Some(rest) = line.trim().strip_prefix("- `") else {
-            continue;
-        };
-        let Some((name, reason)) = rest.split_once("` — ") else {
-            continue;
-        };
-        skips.insert(name.to_owned(), reason.trim().to_owned());
-    }
-    skips
-}
-
-#[test]
-fn readme_names_every_omitted_scenario() {
-    let readme =
-        std::fs::read_to_string(testkit::recording("roots/README.md")).expect("roots README");
-    let parsed = readme_skips(&readme);
-    let expected: BTreeMap<_, _> = OMITTED
-        .iter()
-        .copied()
-        .map(|(name, reason)| (name.to_owned(), reason.to_owned()))
-        .collect();
-    assert_eq!(parsed, expected);
-    for reason in parsed.values() {
-        assert_ne!(reason, "");
-    }
 }

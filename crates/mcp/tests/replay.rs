@@ -41,23 +41,14 @@ enum Outcome {
     ProtocolError { code: i32, message: String },
 }
 
-const SKIPPED: &[(&str, &str)] = &[
-    (
-        "internet_search",
-        "B7: harness owns web tools; removed by design",
-    ),
-    ("web_fetch", "B7: harness owns web tools; removed by design"),
-    ("echo", "Product decision: not a sidecar tool"),
-    (
-        "skill_list",
-        "Product decision: skills are not sidecar tools",
-    ),
-    (
-        "skill_manage",
-        "Product decision: skills are not sidecar tools",
-    ),
-    ("delegate_task", "Delegation left rh for T3 Code"),
-    ("list_agents", "Delegation left rh for T3 Code"),
+const SKIPPED: &[&str] = &[
+    "internet_search",
+    "web_fetch",
+    "echo",
+    "skill_list",
+    "skill_manage",
+    "delegate_task",
+    "list_agents",
 ];
 
 fn recording_server() -> Server {
@@ -109,8 +100,7 @@ async fn recordings_over_stdio_framing() {
         let mut skips = BTreeSet::new();
         let mut tools = Vec::new();
         for mut tool in expected.tools {
-            if let Some((name, reason)) = SKIPPED.iter().find(|(name, _)| *name == tool.name) {
-                assert_ne!(*reason, "");
+            if let Some(name) = SKIPPED.iter().find(|name| **name == tool.name) {
                 assert!(skips.insert(*name));
             } else {
                 tool.description = tool
@@ -154,7 +144,7 @@ async fn recordings_over_stdio_framing() {
             tools
         );
         for call in calls.calls {
-            if SKIPPED.iter().any(|(name, _)| *name == call.request.name) {
+            if SKIPPED.iter().any(|name| *name == call.request.name) {
                 continue;
             }
             let result = client.call_tool(call.request).await;
@@ -171,7 +161,7 @@ async fn recordings_over_stdio_framing() {
                 }
             }
         }
-        assert_eq!(skips, SKIPPED.iter().map(|(name, _)| *name).collect());
+        assert_eq!(skips, SKIPPED.iter().copied().collect());
         client.cancel().await.expect("client closed");
         shutdown.cancel();
         task.await.expect("task").expect("server closed");
@@ -211,7 +201,7 @@ fn recorded_product_names_translate_without_changing_prose() {
 #[tokio::test]
 async fn omitted_tools_have_no_handlers() {
     let server = support::server();
-    for (name, _) in SKIPPED {
+    for name in SKIPPED {
         let error = server
             .call(CallToolRequestParams::new(*name))
             .await

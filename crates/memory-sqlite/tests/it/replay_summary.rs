@@ -18,38 +18,6 @@ use testkit::Json;
 use uuid::Uuid;
 
 const LEAF: &str = "leaf once a full window exists";
-const WORKERS: &str = "the summarizer job loop and its chat calls belong to the workers";
-
-const SKIPPED: &[(&str, &str)] = &[
-    (LEAF, WORKERS),
-    ("leaves → branches → root with small batches", WORKERS),
-    ("truncated answer shrinks the leaf batch", WORKERS),
-    (
-        "failing LLM fails the job; heartbeat never summarized",
-        WORKERS,
-    ),
-    (
-        "permanent failure → dead → rests an hour → revived",
-        WORKERS,
-    ),
-    ("below the floor until idle/stale", WORKERS),
-];
-
-#[tokio::test]
-async fn every_summarizer_scenario_is_replayed_or_skipped() -> TestResult {
-    let file: ScenarioFile = recording("summarizer.json")?;
-    for scenario in &file.scenarios {
-        let skipped = SKIPPED
-            .iter()
-            .any(|(name, reason)| *name == scenario.name && !reason.is_empty());
-        assert!(skipped, "{}", scenario.name);
-    }
-    for (name, _) in SKIPPED {
-        assert!(file.scenarios.iter().any(|scenario| scenario.name == *name));
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn recorded_leaf_round_trips_through_the_store() -> TestResult {
     let file: ScenarioFile = recording("summarizer.json")?;

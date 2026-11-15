@@ -32,10 +32,7 @@ pub enum ModelError {
     Paths(#[from] config::ConfigError),
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel harness ports do not implement Debug"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Default)]
 pub struct ModelFactory {
     harnesses: BTreeMap<String, Arc<dyn HarnessAdapter>>,
@@ -61,10 +58,7 @@ impl ModelTasks {
     }
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "kernel model ports do not implement Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct ModelBinding {
     pub provider: Arc<dyn ModelProvider>,
     pub model: String,

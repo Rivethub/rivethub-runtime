@@ -43,13 +43,7 @@ pub enum SignError {
 
 pub struct NodeKey(Ed25519KeyPair);
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the node signing key never leaves the machine; deriving Debug would print it"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl fmt::Debug for NodeKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "NodeKey({})", self.public_key())

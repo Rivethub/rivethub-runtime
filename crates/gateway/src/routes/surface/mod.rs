@@ -57,13 +57,7 @@ fn no_app_page(method: &Method) -> Response {
     } else {
         axum::body::Body::from(NO_APP_PAGE)
     };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: the page headers are static ASCII, so building this response does not fail"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     return Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")

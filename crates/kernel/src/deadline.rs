@@ -26,13 +26,7 @@ impl Deadline {
 
     #[must_use]
     pub fn remaining() -> Option<Duration> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a real absence, as work outside a bounded request has no deadline and its statements keep the server's own limit"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let at = DEADLINE.try_with(|at| *at).ok().flatten();
         at.map(|at| at.saturating_duration_since(Instant::now()))
     }

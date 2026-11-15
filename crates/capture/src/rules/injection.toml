@@ -1,8 +1,5 @@
 title = "RivetHub prompt-injection rules"
 
-# A received bundle is checked against these rules, plus the secret rules, before anything is written.
-# Every rule names its family and says why it is suspicious. A rule that fires does not call the bundle
-# hostile; it asks the person receiving it to decide.
 
 [allowlist]
 description = "image hosts that carry a query in a badge URL"

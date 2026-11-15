@@ -11,21 +11,6 @@ use testkit::wiki_golden::{Tally, never_thrown};
 
 use crate::{TestResult, corpus};
 
-pub(crate) const REPLAYED: &[&str] = &[
-    "normalize_slug",
-    "extract_wiki_links",
-    "demote_h2_headings",
-    "split_article_sections",
-    "join_article_sections",
-    "apply_article_patches",
-    "parse_see_also",
-    "parse_citations",
-    "merge_summary_text",
-    "cap_summary",
-    "is_slug_variant",
-    "find_stem_match",
-];
-
 #[derive(serde::Deserialize)]
 struct CapArgs(String, #[serde(default)] Option<usize>);
 

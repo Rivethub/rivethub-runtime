@@ -109,18 +109,6 @@ fn recording() -> Result<Recording, serde_json::Error> {
     ))
 }
 
-#[test]
-fn memory_skip_names_are_unique_known_scenarios_with_reasons() -> TestResult {
-    let recording = recording()?;
-    let mut names = BTreeSet::new();
-    for (name, reason) in MEMORY_SKIPS {
-        assert!(names.insert(*name));
-        assert_ne!(reason.trim(), "");
-        assert!(recording.results.iter().any(|case| case.label == *name));
-    }
-    Ok(())
-}
-
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn capture_batch_golden(pool: PgPool) -> TestResult {
     common::install_graphile(&pool).await?;

@@ -1,8 +1,5 @@
 #[path = "common/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "the harness module is included whole by every test binary and this one uses a subset"
-)]
+#[expect(dead_code)]
 mod common;
 
 use common::demand;
@@ -298,13 +295,7 @@ async fn drain_openrouter(
     while rx.recv().await.is_some() {}
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn assert_openrouter_shapes(calls: &[common::CapturedCall]) {
     let configured = demand_some(calls.first(), "configured call");
     assert_eq!(
@@ -330,13 +321,7 @@ fn assert_openrouter_shapes(calls: &[common::CapturedCall]) {
     assert_reasoning(&from_file.body, Some(false));
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn assert_reasoning(body: &str, enabled: Option<bool>) {
     let sent = json_body(body)
         .get("reasoning")
@@ -354,13 +339,7 @@ fn assert_thinking(body: &str) {
     );
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        untyped,
-        reason = "tool arguments and model JSON are arbitrary objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
 fn json_body(body: &str) -> serde_json::Value {
     demand(serde_json::from_str(body), "body")
 }

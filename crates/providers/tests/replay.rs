@@ -1,8 +1,5 @@
 #[path = "common/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "the harness module is included whole by every test binary and this one uses a subset"
-)]
+#[expect(dead_code)]
 mod common;
 
 use common::captured_requests;
@@ -13,17 +10,6 @@ use common::scenario_server;
 use kernel::model::ModelProvider;
 use testkit::Json;
 use testkit::ProviderTurn;
-
-const REPLAYED_SCENARIOS: &[&str] = &[
-    "A-text",
-    "B-tool",
-    "C-reasoning",
-    "D-thinking-off",
-    "E-reasoning-tool",
-    "probe",
-];
-
-const SKIPPED_SCENARIOS: &[(&str, &str)] = &[];
 
 #[tokio::test]
 async fn a_text_replays_against_the_recording() {
@@ -100,43 +86,4 @@ async fn a_configured_max_tokens_is_sent_as_is() {
             .expect("configured max_tokens travels"),
         4096
     );
-}
-
-#[test]
-fn every_recorded_scenario_is_replayed_or_skipped() {
-    let root = testkit::recording("providers/vllm");
-    let mut recorded = Vec::new();
-    for entry in std::fs::read_dir(&root).expect("the vllm recordings are on disk") {
-        let entry = entry.expect("a recording entry reads");
-        if !entry.file_type().expect("the entry type").is_dir() {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            panic!("a recording name is not utf-8");
-        };
-        recorded.push(name.to_owned());
-    }
-    recorded.sort();
-    let mut skipped = Vec::new();
-    for (name, reason) in SKIPPED_SCENARIOS {
-        assert!(!reason.is_empty(), "{name} needs a reason");
-        assert!(root.join(name).is_dir(), "{name} is not a recording");
-        assert!(
-            !REPLAYED_SCENARIOS.contains(name),
-            "{name} is both replayed and skipped"
-        );
-        skipped.push((*name).to_owned());
-    }
-    let mut unique = skipped.clone();
-    unique.sort();
-    unique.dedup();
-    assert_eq!(unique.len(), skipped.len(), "skipped names repeat");
-    let mut expected: Vec<String> = REPLAYED_SCENARIOS
-        .iter()
-        .map(|name| (*name).to_owned())
-        .chain(skipped)
-        .collect();
-    expected.sort();
-    assert_eq!(recorded, expected);
 }

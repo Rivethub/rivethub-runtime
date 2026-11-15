@@ -16,13 +16,7 @@ pub enum TopicKey {
 
 impl TopicKey {
     pub fn parse(text: &str) -> Result<Self, TopicError> {
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "PATTERNS FALLBACK: a topic key that is not a topic id is a slug"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let key = match text.trim().parse::<TopicId>() {
             Ok(id) => Self::Id(id),
             Err(_) => Self::Slug(TopicKind::Work, Slug::fold(text)?),

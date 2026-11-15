@@ -3,10 +3,7 @@ use super::*;
 const SIGNED: &str = "signed";
 const PLAIN: &str = "plain";
 
-#[expect(
-    clippy::expect_used,
-    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn bundled(author: &str, conversation: &str, created: &str) -> wire::capture::BundledSession {
     let at = |text: &str| text.parse().expect("date");
     wire::capture::BundledSession {
@@ -44,10 +41,7 @@ fn bundled(author: &str, conversation: &str, created: &str) -> wire::capture::Bu
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn import(
     store: &testkit::FakeMemoryStore,
     session: &wire::capture::BundledSession,
@@ -68,10 +62,7 @@ fn import(
     session_key
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the fixtures are constants, so a failure here is a broken fixture that must fail the test"
-)]
+#[expect(clippy::expect_used)]
 fn get(app: &axum::Router, target: &str) -> testkit::Response {
     let response =
         block_on(answer(app.clone(), recorded("GET", target, Vec::new()))).expect("answer");

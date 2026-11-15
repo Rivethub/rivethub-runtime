@@ -500,13 +500,7 @@ impl MemoryStore for FakeMemoryStore {
             Some(text) if !text.is_empty() => text.to_owned(),
             _ => add.tag.value.clone(),
         };
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag reason is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let reason = add.reason.as_deref().unwrap_or("").to_owned();
         Ok(TagWire {
             id: Uuid::new_v4().to_string(),
@@ -568,21 +562,9 @@ impl MemoryStore for FakeMemoryStore {
     ) -> Result<TagTaxonomyEntry, MemoryStoreError> {
         self.record(MemoryRequest::UpsertTagTaxonomy(upsert.clone()))
             .await;
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag display is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let display = upsert.display.as_deref().unwrap_or("").to_owned();
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                fallback,
-                reason = "CONTRACT B6: omitted tag reason is stored as empty text"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
         let reason = upsert.reason.as_deref().unwrap_or("").to_owned();
         Ok(TagTaxonomyEntry {
             key: upsert.key,

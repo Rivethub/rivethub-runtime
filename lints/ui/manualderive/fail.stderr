@@ -1,4 +1,4 @@
-warning: hand-written impl PartialEq for (what #[derive(PartialEq)] writes) → docs/PATTERNS.md#manualderive
+warning: hand-written impl PartialEq for (what #[derive(PartialEq)] writes)
   --> $DIR/fail.rs:5:1
    |
 LL | / impl PartialEq for A {

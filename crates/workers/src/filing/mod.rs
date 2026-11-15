@@ -53,10 +53,7 @@ use crate::summarize::llm_error;
 const MAX_FILING_TOKENS: u32 = 8_192;
 const CORRECTION_EXAMPLES: u32 = 8;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the topic, filing and lineage stores are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone)]
 pub struct SessionTopics {
     pub store: Arc<dyn TopicStore>,
@@ -64,10 +61,7 @@ pub struct SessionTopics {
     pub lineage: Arc<dyn SessionLister>,
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the topic ports and the model provider are trait objects"
-)]
+#[expect(missing_debug_implementations)]
 pub struct FilingEnv<'a> {
     pub topics: &'a SessionTopics,
     pub provider: &'a dyn ModelProvider,

@@ -32,10 +32,7 @@ pub enum Family {
     Budget,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "injection.toml is an embedded constant; every_injection_rule_compiles runs load() in CI"
-)]
+#[expect(clippy::expect_used)]
 static RULESET: LazyLock<Ruleset> =
     LazyLock::new(|| load().expect("the embedded injection rules compile"));
 

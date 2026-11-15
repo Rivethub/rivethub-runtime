@@ -192,7 +192,7 @@ async fn fixture_keeps_history_article_frontmatter_and_sources_through_apply() -
     let directory = tempfile::tempdir()?;
     tokio::fs::create_dir(directory.path().join("topics")).await?;
     let fixture = tokio::fs::read_to_string(testkit::recording(
-        "mcp-memory/shared/wiki/topics/kiwi-build-cache.md",
+        "mcp-memory/shared/wiki/topics/kiwi-build-cache.txt",
     ))
     .await?;
     let before = parse_wiki_page(&fixture)?;

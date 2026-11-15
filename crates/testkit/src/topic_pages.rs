@@ -37,10 +37,7 @@ use crate::topics::new_topic;
 use crate::topics::same;
 use crate::topics::session;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "the stores are kernel ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 #[derive(Clone, Copy)]
 pub struct PageStores<'a> {
     pub topics: &'a dyn TopicStore,
@@ -289,10 +286,7 @@ pub async fn syncing_twice_changes_nothing(stores: PageStores<'_>) -> Outcome {
     Ok(())
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one topic deletion, from its page to its placed and sub-topic sessions"
-)]
+#[expect(clippy::too_many_lines)]
 pub async fn a_deleted_topic_leaves_its_sessions_forming_and_its_page_unbound(
     stores: PageStores<'_>,
 ) -> Outcome {

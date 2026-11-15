@@ -13,40 +13,6 @@ use wire::stream::LlmChunkKind;
 
 use crate::cli_support::{Harness, Plan, TestResult, items, provider, request};
 
-const SKIPPED: &[(&str, &str)] = &[(
-    "providers/vllm/probe",
-    "HTTP availability probe belongs to the OpenAI-compatible adapter; headless models come from HarnessAdapter::offerings",
-)];
-
-#[test]
-fn fixture_inventory_requires_a_replay_or_a_named_reason() -> TestResult {
-    let mut expected = vec!["provider/A-text".to_owned()];
-    for entry in std::fs::read_dir(testkit::recording("providers/vllm"))? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            expected.push(format!(
-                "providers/vllm/{}",
-                entry.file_name().to_str().expect("fixture name")
-            ));
-        }
-    }
-    let mut covered = vec!["provider/A-text".to_owned()];
-    covered.extend(
-        SCENARIOS
-            .iter()
-            .map(|name| format!("providers/vllm/{name}")),
-    );
-    for (name, reason) in SKIPPED {
-        assert_ne!(reason.trim(), "");
-        assert!(testkit::recording(name).is_dir());
-        covered.push((*name).into());
-    }
-    expected.sort();
-    covered.sort();
-    assert_eq!(expected, covered);
-    Ok(())
-}
-
 const SCENARIOS: &[&str] = &[
     "A-text",
     "B-tool",

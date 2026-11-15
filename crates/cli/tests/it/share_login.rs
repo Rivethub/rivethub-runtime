@@ -217,13 +217,7 @@ async fn signed_in(node: &Node, host: &str) -> Result<Approval, cli::Error> {
             return Ok(approval);
         }
         assert!(tokio::time::Instant::now() < deadline, "login never ended");
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                sleep,
-                reason = "this stands in for rivethub-desktop, which polls the desk on its own clock"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -337,13 +331,7 @@ async fn slow_down_adds_five_seconds_to_the_interval() {
     let mut pending = started.pending;
     assert_eq!(pending.interval(), Duration::from_secs(1));
 
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "the first token poll answers slow_down at once; the next one waits six seconds, so half a second lands between them"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
     tokio::time::sleep(Duration::from_millis(500)).await;
     let polled = pending.poll().await.expect("poll");
 

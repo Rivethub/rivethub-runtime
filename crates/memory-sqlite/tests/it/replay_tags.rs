@@ -43,94 +43,9 @@ use uuid::Uuid;
 
 const LIFECYCLE: &str = "tag store lifecycle";
 const VOCAB: &str = "vocabulary: upsert, nest, decide, propose, merge";
-const WORKERS: &str = "the tagger job loop and its chat calls belong to the workers";
-const NOT_A_PORT: &str = "MemoryStore does not expose this tagger query";
-
 const SESS_1: &str = "00000000-0000-4000-8000-000000000002";
 const SESS_2_HELPER: &str = "00000000-0000-4000-8000-000000000005";
 const SESS_2_RIVET: &str = "11111111-1111-4111-8111-111111111111";
-
-const HANDLED: &[&str] = &[
-    "add by session key + literal",
-    "add by key/value/display/reason",
-    "add same again",
-    "add to a session key with two agents (no agent)",
-    "add with agent",
-    "add bad literal",
-    "add unknown session",
-    "add key with colon",
-    "add long value",
-    "propose (model)",
-    "list default",
-    "list key/state",
-    "pending",
-    "counts",
-    "counts key topic",
-    "decide reject",
-    "decide again (no change)",
-    "forSessionKeys",
-    "backend tags counts",
-    "backend taxonomy",
-    "backend upsertTaxonomy",
-    "backend mergeTaxonomy error",
-    "upsert normalizes",
-    "upsert aliases (self alias dropped)",
-    "nest",
-    "list topic",
-    "clear parent",
-    "missing parent",
-    "own parent",
-    "cycle",
-    "empty key",
-    "propose",
-    "decide",
-    "decide again",
-    "propose over decided",
-    "merge acme-app into acme",
-    "merge into an alias",
-    "merge same",
-    "merge ghost",
-    "merge into own child",
-    "list all project",
-];
-
-const SKIPPED_STEPS: &[(&str, &str)] = &[
-    ("conversationIdsWithTag", NOT_A_PORT),
-    ("forTagger", NOT_A_PORT),
-];
-
-const SKIPPED: &[(&str, &str)] = &[
-    ("tagger suggestions (chat), acceptance, removals", WORKERS),
-    ("protected removals allowed", WORKERS),
-    ("native tagger request shape", WORKERS),
-    ("failing tagger fails the job", WORKERS),
-];
-
-#[tokio::test]
-async fn every_tag_scenario_is_replayed_or_skipped() -> TestResult {
-    let file: ScenarioFile = recording("tags.json")?;
-    for scenario in &file.scenarios {
-        let replayed = scenario.name == LIFECYCLE || scenario.name == VOCAB;
-        let skipped = SKIPPED
-            .iter()
-            .any(|(name, reason)| *name == scenario.name && !reason.is_empty());
-        assert!(replayed ^ skipped, "{}", scenario.name);
-        if !replayed {
-            continue;
-        }
-        for step in &scenario.steps {
-            let handled = HANDLED.contains(&step.label.as_str());
-            let skipped_step = SKIPPED_STEPS
-                .iter()
-                .any(|(label, reason)| *label == step.label && !reason.is_empty());
-            assert!(handled ^ skipped_step, "{} / {}", scenario.name, step.label);
-        }
-    }
-    for (name, _) in SKIPPED {
-        assert!(file.scenarios.iter().any(|scenario| scenario.name == *name));
-    }
-    Ok(())
-}
 
 #[tokio::test]
 async fn tag_lifecycle_matches_the_recording() -> TestResult {

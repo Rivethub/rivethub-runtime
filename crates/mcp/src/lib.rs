@@ -51,13 +51,7 @@ pub struct Builder {
     sessions: Option<sessions::Sessions>,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects and the tool catalog"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Server {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Server")
@@ -68,13 +62,7 @@ impl std::fmt::Debug for Server {
     }
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "MemoryStore and PluginTools are kernel trait objects without Debug; the formatter omits the trait objects"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Builder")

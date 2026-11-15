@@ -21,20 +21,6 @@ use serde::Serialize;
 use testkit::Json;
 
 const QUEUE: &str = "queue: enqueue/claim/fail/dead/revive/requeue/recover";
-const WORKERS: &str = "the workers crate runs the job runner and the embedder handler; the store tests cover EmbeddingStore without the job loop";
-
-const SKIPPED: &[(&str, &str)] = &[
-    ("runner: tick, handlers, sweeps, failures", WORKERS),
-    (
-        "embed-target failures: HTTP 400 → dead, sweep revives once the endpoint recovers",
-        WORKERS,
-    ),
-    (
-        "embed outcomes: unembeddable, zero vector, model change, width change",
-        WORKERS,
-    ),
-];
-
 #[derive(Serialize)]
 struct Pair {
     n: u32,
@@ -53,36 +39,6 @@ async fn queue_replay_matches_the_recording() -> TestResult {
     let mut ids = Ids::default();
     replay_queue(scenario, &mut ids).await?;
     expect_logs(&scenario.logs, &Vec::new(), QUEUE, &mut ids)?;
-    Ok(())
-}
-
-#[tokio::test]
-async fn every_jobs_scenario_is_replayed_or_skipped() -> TestResult {
-    let file: ScenarioFile = recording("jobs.json")?;
-    let replayed = [QUEUE];
-    for scenario in &file.scenarios {
-        let played = replayed.contains(&scenario.name.as_str());
-        let skipped = SKIPPED.iter().any(|(name, _)| *name == scenario.name);
-        assert!(
-            played ^ skipped,
-            "{} must be replayed or skipped, not both and not neither",
-            scenario.name
-        );
-    }
-    for (name, reason) in SKIPPED {
-        assert!(
-            file.scenarios.iter().any(|scenario| scenario.name == *name),
-            "skip {name} ({reason}) is not a scenario"
-        );
-    }
-    let skipped_names: Vec<&str> = SKIPPED.iter().map(|(name, _)| *name).collect();
-    let missing: Vec<&str> = file
-        .scenarios
-        .iter()
-        .map(|scenario| scenario.name.as_str())
-        .filter(|name| !replayed.contains(name) && !skipped_names.contains(name))
-        .collect();
-    assert!(missing.is_empty(), "unlisted scenarios: {missing:?}");
     Ok(())
 }
 

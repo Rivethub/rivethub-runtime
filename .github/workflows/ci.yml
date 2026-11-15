@@ -49,16 +49,12 @@ jobs:
             install -m 755 "${RUNNER_TEMP}/${archive%.tar.gz}/${tool}" "${CARGO_HOME:-$HOME/.cargo}/bin/${tool}"
           done
           cargo dylint --version
-          # The dylint_driver build clones rust-clippy and checks out `master`, which upstream
-          # renamed to `main`. Serve it a mirror whose `master` is `main`.
           clippy="${RUNNER_TEMP}/rust-clippy.git"
           git clone --quiet --bare https://github.com/rust-lang/rust-clippy "${clippy}"
           git -C "${clippy}" branch master main
           git -C "${clippy}" symbolic-ref HEAD refs/heads/master
           git config --global url."${clippy}".insteadOf https://github.com/rust-lang/rust-clippy
       - name: cargo xtask check
-        # The Tests job compiles and runs every test binary, so the gate skips
-        # the nextest list compile; a local `cargo xtask check` still runs it.
         run: cargo xtask check --locked --no-nextest-list
 
   commits:
@@ -97,7 +93,6 @@ jobs:
           for _ in $(seq 1 30); do "$(brew --prefix postgresql@17)/bin/pg_isready" -h 127.0.0.1 && break; sleep 1; done
           echo "DATABASE_URL=postgres://$(whoami)@127.0.0.1:5432/postgres" >> "$GITHUB_ENV"
       - name: Build rh
-        # Debug is enough to prove rh builds on macOS; release.yml ships the release binaries.
         run: cargo build --locked -p rivethub --bin rh
       - name: cli tests
         run: cargo nextest run --locked -p cli --all-features --profile macos --no-fail-fast
@@ -129,7 +124,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
-          # xtask tests run `cargo deny`.
           tool: cargo-nextest,cargo-llvm-cov,cargo-deny@0.20.2
       - name: sqlx-cli
         run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres

@@ -124,10 +124,7 @@ fn push_alias(aliases: &mut Vec<String>, alias: &str) {
 }
 
 fn known_cap() -> usize {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(fallback, reason = "PATTERNS FALLBACK: the known-entity cap is 60")
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let cap = usize::try_from(KNOWN_LIMIT).unwrap_or(60);
     cap
 }

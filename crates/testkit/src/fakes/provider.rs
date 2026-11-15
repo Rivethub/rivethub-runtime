@@ -89,10 +89,7 @@ fn fnv_token_vector(text: &str, dims: usize) -> Embedding {
         .filter(|token| !token.is_empty())
     {
         let index = fnv1a32(token.as_bytes()) as usize % dims;
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "the index is a hash modulo the vector width"
-        )]
+        #[expect(clippy::indexing_slicing)]
         {
             vector[index] += 1.0;
         }

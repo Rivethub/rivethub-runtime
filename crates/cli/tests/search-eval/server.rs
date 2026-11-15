@@ -54,14 +54,8 @@ async fn serve(args: &Args) -> Result<(), Failure> {
     Ok(())
 }
 
-#[expect(
-    clippy::let_underscore_must_use,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the error exit code stands"
-)]
-#[expect(
-    clippy::let_underscore_untyped,
-    reason = "the failure report is the process's last write: a broken stderr cannot be reported anywhere else, and the error exit code stands"
-)]
+#[expect(clippy::let_underscore_must_use)]
+#[expect(clippy::let_underscore_untyped)]
 fn last_report(error: &Failure) -> ExitCode {
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(stderr, "search-eval-server: {error}");

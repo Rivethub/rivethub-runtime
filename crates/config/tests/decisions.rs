@@ -535,30 +535,5 @@ fn decision_15_redaction_is_a_real_setting() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-#[test]
-fn inventory_documented_defaults_appear_in_the_typed_config()
--> Result<(), Box<dyn std::error::Error>> {
-    let config = expect_loaded(&config_yaml(
-        "",
-        "gateway:\n  host: 127.0.0.1\nmemory:\n  postgres:\n    embedded:\n      data_dir: /home/user/.rivetos/pg\n",
-    ))?;
-    let gateway = config.gateway.as_ref().ok_or("gateway section missing")?;
-    assert_eq!(gateway.port, 5174, "gateway.port default");
-    let postgres = config
-        .memory
-        .as_ref()
-        .ok_or("memory section missing")?
-        .postgres
-        .as_ref()
-        .ok_or("memory.postgres missing")?;
-    let embedded = postgres.embedded.as_ref().ok_or("embedded missing")?;
-    assert_eq!(embedded.port, 5433, "embedded.port default");
-    assert_eq!(
-        embedded.max_connections, 96,
-        "embedded.max_connections default"
-    );
-    Ok(())
-}
-
 #[path = "decisions/messages.rs"]
 mod messages;

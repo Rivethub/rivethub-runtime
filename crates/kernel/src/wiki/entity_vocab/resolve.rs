@@ -91,13 +91,7 @@ fn other_specific(folded: &str) -> Option<&str> {
 }
 
 fn folded(text: &str) -> Option<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: text that is not a slug is no vocabulary key"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let slug = Slug::fold(text).ok();
     slug.map(|slug| slug.as_str().to_owned())
         .filter(|slug| !slug.is_empty())

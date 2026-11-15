@@ -16,13 +16,7 @@ pub(super) const TRANSCRIPT_CHAR_BUDGET: usize = TRANSCRIPT_TOKEN_BUDGET * CHARS
 pub(super) const TOOL_RESULT_CAP: usize = 16_000;
 const TOOL_RESULT_TAIL: usize = 800;
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const SHELL_TOOLS: &[&str] = &[
     "bash",
     "cmd",
@@ -37,26 +31,14 @@ const SHELL_TOOLS: &[&str] = &[
     "zsh",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const COMMAND_KEYS: &[&str] = &["command", "cmd", "script"];
 
 pub(super) const MEMORY_LOOKUP_OMITTED: &str = "[memory lookup result omitted]";
 
 const HEADER_CAP: usize = 4_000;
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const LOOKUP_TOOLS: &[&str] = &[
     "memory_browse",
     "memory_get_full",
@@ -67,13 +49,7 @@ const LOOKUP_TOOLS: &[&str] = &[
     "wiki_search",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const CARRIER_TOOLS: &[&str] = &[
     "bash",
     "bat",
@@ -103,13 +79,7 @@ const CARRIER_TOOLS: &[&str] = &[
     "zsh",
 ];
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        strset,
-        reason = "free-text vocabulary matched against transcripts, not a protocol enum"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(strset))]
 const PAYLOAD_KEYS: &[&str] = &[
     "article",
     "body",
@@ -279,13 +249,7 @@ fn is_lookup_message(message: &TranscriptMessage) -> bool {
     let Some(name) = tool_label(message) else {
         return false;
     };
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: tool arguments that do not encode are an empty lookup"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let args = message
         .tool_args
         .as_ref()
@@ -363,13 +327,7 @@ fn shell_command(name: &str, args: &Value) -> Option<String> {
     if !is_shell(name) {
         return None;
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: a shell argument that is not JSON stays the raw value"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let parsed = args
         .as_str()
         .and_then(|text| serde_json::from_str::<Value>(text).ok());
@@ -531,13 +489,7 @@ fn field_str(value: &Value, key: &str) -> Option<String> {
 }
 
 fn compact_args(value: &Value) -> Option<String> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     if value.is_null()
         || value.as_str().is_some_and(|text| text.trim().is_empty())
         || value.as_object().is_some_and(serde_json::Map::is_empty)
@@ -545,13 +497,7 @@ fn compact_args(value: &Value) -> Option<String> {
     {
         return None;
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: tool arguments that do not encode are omitted"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let encoded = serde_json::to_string(value).ok();
     encoded
 }

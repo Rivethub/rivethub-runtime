@@ -91,13 +91,7 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        runtime,
-        reason = "rivethub-migrate is an operator binary and its own composition root, like the rivethub main"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(runtime))]
 fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -105,18 +99,12 @@ fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
         .map_err(Failure::Runtime)
 }
 
-#[expect(
-    clippy::print_stderr,
-    reason = "the migrate binary is an operator tool: failures are reported on stderr and mapped to the exit code"
-)]
+#[expect(clippy::print_stderr)]
 fn report(failure: &Failure) {
     eprintln!("rivethub-migrate: {failure}");
 }
 
-#[expect(
-    clippy::print_stdout,
-    reason = "the migrate binary is an operator tool: the status report is its output"
-)]
+#[expect(clippy::print_stdout)]
 fn run(cli: &Cli, runtime: &tokio::runtime::Runtime) -> Result<(), Failure> {
     match &cli.command {
         Command::Postgres { url } => {
@@ -212,10 +200,7 @@ fn load(cli: &Cli, env: &Environment) -> Result<config::Config, Failure> {
     Ok(loaded.config)
 }
 
-#[expect(
-    clippy::print_stderr,
-    reason = "the migrate binary is an operator tool: each config warning is printed once on stderr before the config is used"
-)]
+#[expect(clippy::print_stderr)]
 fn report_loaded(loaded: &config::Loaded) {
     for finding in &loaded.warnings {
         eprintln!("rivethub-migrate: {}", finding_line(finding));

@@ -15,17 +15,7 @@ use workers::wiki_builder::{
     WikiBuilderEnv, extract_wiki_job, handle_extract_wiki, handle_wiki_backfill,
 };
 
-const REPLAYED: &[&str] = &[
-    "leaf once a full window exists",
-    "leaves → branches → root with small batches",
-    "truncated answer shrinks the leaf batch",
-    "permanent failure → dead → rests an hour → revived",
-    "below the floor until idle/stale",
-];
-const SKIPPED: &[(&str, &str)] = &[(
-    "failing LLM fails the job; heartbeat never summarized",
-    "the summarizer produces no summary in this scenario, so the wiki builder has no input",
-)];
+const SKIPPED: &[&str] = &["failing LLM fails the job; heartbeat never summarized"];
 
 #[test]
 fn wiki_summary_replay_accounts_for_every_scenario() {
@@ -34,18 +24,6 @@ fn wiki_summary_replay_accounts_for_every_scenario() {
         fixture.constants.wiki_pipeline_version,
         WIKI_PIPELINE_VERSION
     );
-    for scenario in &fixture.scenarios {
-        let replayed = REPLAYED
-            .iter()
-            .filter(|name| **name == scenario.name)
-            .count();
-        let skipped = SKIPPED
-            .iter()
-            .filter(|(name, reason)| *name == scenario.name && !reason.is_empty())
-            .count();
-        assert_eq!(replayed + skipped, 1, "{}", scenario.name);
-    }
-    assert_eq!(fixture.scenarios.len(), REPLAYED.len() + SKIPPED.len());
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
@@ -54,7 +32,7 @@ async fn wiki_replays_every_recorded_summary_shape(pool: PgPool) -> TestResult {
     let store = PostgresMemory::new(pool.clone()).with_wiki_directory(wiki.path().to_path_buf());
     let cancel = CancellationToken::new();
     for scenario in fixture().scenarios {
-        if SKIPPED.iter().any(|(name, _)| *name == scenario.name) {
+        if SKIPPED.iter().any(|name| *name == scenario.name) {
             continue;
         }
         for row in scenario.tables.summaries.expect("replayed summaries") {

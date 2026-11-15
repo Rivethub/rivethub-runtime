@@ -568,13 +568,7 @@ async fn load_invariants(
 }
 
 async fn dump_db(pool: &PgPool, secrets: &[String]) -> Result<String, Failure> {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     let mut root = serde_json::Map::new();
     for (table, order) in DUMP_TABLES {
         let value = fetch_table(pool, table, order, secrets).await?;

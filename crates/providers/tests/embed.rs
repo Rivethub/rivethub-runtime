@@ -1,8 +1,5 @@
 #[path = "common/mod.rs"]
-#[expect(
-    dead_code,
-    reason = "the harness module is included whole by every test binary and this one uses a subset"
-)]
+#[expect(dead_code)]
 mod common;
 
 use std::future::Future;

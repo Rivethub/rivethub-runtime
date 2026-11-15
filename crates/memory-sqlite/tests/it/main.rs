@@ -1,7 +1,4 @@
-#[expect(
-    dead_code,
-    reason = "integration binaries share fixtures and use different subsets"
-)]
+#[expect(dead_code)]
 mod common;
 mod search_support;
 

@@ -51,10 +51,7 @@ struct TlsMaterial {
     connector: TlsConnector,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 fn tls_material() -> TlsMaterial {
     let key_pair = rcgen::KeyPair::generate().expect("test key");
     let params =
@@ -85,10 +82,7 @@ fn tls_material() -> TlsMaterial {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn plain_server_with(options: ServeOptions) -> (SocketAddr, CancellationToken, ServerHandle) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -106,10 +100,7 @@ async fn plain_server_with(options: ServeOptions) -> (SocketAddr, CancellationTo
     (addr, token, server)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn tls_server_with(
     options: ServeOptions,
 ) -> (SocketAddr, CancellationToken, ServerHandle, TlsMaterial) {
@@ -139,10 +130,7 @@ async fn tls_server_with(
     (addr, token, server, material)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn stop(token: CancellationToken, server: ServerHandle) {
     token.cancel();
     let outcome = tokio::time::timeout(Duration::from_secs(5), server)
@@ -152,10 +140,7 @@ async fn stop(token: CancellationToken, server: ServerHandle) {
     assert!(outcome.is_ok());
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn exchange(addr: SocketAddr, request: &[u8]) -> String {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     stream.write_all(request).await.expect("request written");
@@ -164,10 +149,7 @@ async fn exchange(addr: SocketAddr, request: &[u8]) -> String {
     String::from_utf8_lossy(&raw).into_owned()
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn tls_exchange(connector: TlsConnector, addr: SocketAddr) -> String {
     let stream = TcpStream::connect(addr).await.expect("connect");
     let mut tls_stream = connector
@@ -186,10 +168,7 @@ async fn tls_exchange(connector: TlsConnector, addr: SocketAddr) -> String {
     String::from_utf8_lossy(&raw).into_owned()
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn read_response(stream: &mut TcpStream) -> String {
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
@@ -218,10 +197,7 @@ async fn read_response(stream: &mut TcpStream) -> String {
     format!("{text}{}", String::from_utf8_lossy(&body))
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test helper; the clippy.toml exemption only reaches #[test] functions"
-)]
+#[expect(clippy::expect_used)]
 async fn round_trip(stream: &mut TcpStream, request: &[u8]) -> String {
     stream.write_all(request).await.expect("request written");
     read_response(stream).await
@@ -334,13 +310,7 @@ async fn graceful_shutdown_finishes_in_flight_requests() {
             refused = true;
             break;
         }
-        #[cfg_attr(
-            dylint_lib = "rr_lints",
-            expect(
-                sleep,
-                reason = "the listener publishes no awaitable refusal event; the 20 ms poll is bounded by the deadline"
-            )
-        )]
+        #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(refused, "listener still accepting after cancellation");
@@ -425,13 +395,7 @@ async fn trickled_request_body_hits_the_request_deadline() {
             if writer.write_all(b"a").await.is_err() {
                 break;
             }
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    sleep,
-                    reason = "the request deadline is exercised by a body that trickles; the 200 ms gaps are the fixture"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
     });
@@ -509,13 +473,7 @@ async fn held_request_survives_the_keep_alive_idle_window() {
         .await
         .expect("search entered the store")
         .expect("watch alive");
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "the assertion is that the connection outlives the configured 250 ms idle window; the wait must exceed it"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
     tokio::time::sleep(Duration::from_millis(400)).await;
     let mut probe = [0u8; 1];
     let survival = tokio::time::timeout(Duration::from_millis(150), stream.read(&mut probe)).await;
@@ -565,13 +523,7 @@ async fn pipelined_request_held_past_the_idle_window_is_not_dropped() {
         .await
         .expect("search entered the store")
         .expect("watch alive");
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "the assertion is that the pipelined request outlives the configured 250 ms idle window; the wait must exceed it"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
     tokio::time::sleep(Duration::from_millis(400)).await;
     store.release.add_permits(1);
     let healthz = tokio::time::timeout(Duration::from_secs(5), read_response(&mut stream))

@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) CUSTOMSERDE,
     Warn,
-    "hand-written serde (use derives, #[serde(try_from/into)], strum, serde_with) → docs/PATTERNS.md#customserde",
+    "hand-written serde (use derives, #[serde(try_from/into)], strum, serde_with)",
     Customserde::default()
 );
 
@@ -42,7 +42,7 @@ fn check_attrs(cx: &LateContext<'_>, hir_id: HirId, attrs: &[rustc_attr_ir::Attr
             .map(rustc_attr_ir::Attribute::span)
             .next()
             .unwrap_or(rustc_span::DUMMY_SP),
-        format!("{violation} → docs/PATTERNS.md#customserde"),
+        format!("{violation}"),
     );
 }
 
@@ -61,7 +61,7 @@ impl<'tcx> LateLintPass<'tcx> for Customserde {
                 CUSTOMSERDE,
                 item.hir_id(),
                 item.span,
-                "hand-written impl Serialize/Deserialize (derive it; validated newtypes take #[serde(try_from/into)]) → docs/PATTERNS.md#customserde"
+                "hand-written impl Serialize/Deserialize (derive it; validated newtypes take #[serde(try_from/into)])"
                     .to_owned(),
             );
         }

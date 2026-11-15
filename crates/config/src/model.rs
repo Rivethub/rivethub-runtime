@@ -390,13 +390,7 @@ fn unmapped(net: ipnet::IpNet) -> ipnet::IpNet {
         v6.prefix_len().checked_sub(96),
     ) {
         (Some(network), Some(prefix)) => {
-            #[cfg_attr(
-                dylint_lib = "rr_lints",
-                expect(
-                    fallback,
-                    reason = "PATTERNS FALLBACK: a stated rule: rh reads a mapped block as its IPv4 block; a v6 prefix of at most 128 leaves an IPv4 prefix of at most 32, so the entry is never kept as written"
-                )
-            )]
+            #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
             let unmapped = ipnet::Ipv4Net::new(network, prefix).map_or(net, ipnet::IpNet::V4);
             unmapped
         }
@@ -420,13 +414,7 @@ pub struct DropsSection {
     pub per_user_bytes: u64,
 }
 
-#[cfg_attr(
-    dylint_lib = "rr_lints",
-    expect(
-        manualderive,
-        reason = "the drop box defaults are the rivethub.cloud limits, not the derive's zeros"
-    )
-)]
+#[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl Default for DropsSection {
     fn default() -> Self {
         Self {

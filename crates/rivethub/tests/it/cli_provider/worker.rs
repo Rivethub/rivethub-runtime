@@ -16,10 +16,7 @@ struct Payload {
 }
 
 #[tokio::test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end scenario; the sqlx::test macro had hidden its length"
-)]
+#[expect(clippy::too_many_lines)]
 async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
     let db = crate::pgdb::TestDb::migrated().await?;
     let pool = db.pool();

@@ -70,10 +70,7 @@ pub(crate) async fn local_owner(
     Ok(Arc::new(holder))
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "Gateway contains kernel ports without Debug"
-)]
+#[expect(missing_debug_implementations)]
 pub struct Composition {
     gateway: Arc<Gateway>,
     tasks: JoinSet<Result<(), ComposeError>>,

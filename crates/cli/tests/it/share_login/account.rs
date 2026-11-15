@@ -147,12 +147,6 @@ async fn cli_login_refresh_and_cloud_failure_are_observed_by_the_node() {
 }
 
 async fn poll_interval() {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            sleep,
-            reason = "this models the app polling the node's progress while the node owns OAuth timing"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(sleep))]
     tokio::time::sleep(Duration::from_millis(50)).await;
 }

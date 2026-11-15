@@ -285,7 +285,7 @@ mod url_tests {
 
     #[derive(schemars::JsonSchema)]
     struct Probe {
-        #[expect(dead_code, reason = "the field exists so the schema is an object")]
+        #[expect(dead_code)]
         ok: bool,
     }
 

@@ -126,13 +126,7 @@ fn one_observation(mut value: Value) -> Result<EntityObservation, serde_json::Er
 }
 
 fn normalize_history(value: Value) -> Value {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     match value {
         Value::String(sentence) => Value::Array(vec![serde_json::json!({ "sentence": sentence })]),
         Value::Array(items) => Value::Array(items.into_iter().map(history_item).collect()),
@@ -141,13 +135,7 @@ fn normalize_history(value: Value) -> Value {
 }
 
 fn history_item(value: Value) -> Value {
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            untyped,
-            reason = "tool arguments and model JSON are arbitrary objects"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]
     match value {
         Value::String(sentence) => serde_json::json!({ "sentence": sentence }),
         other @ (Value::Null

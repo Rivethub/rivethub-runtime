@@ -38,13 +38,7 @@ pub(super) async fn embed_text(base: &str, model: &str, text: &str) -> Option<Ve
     if root.is_empty() || text.trim().is_empty() {
         return None;
     }
-    #[cfg_attr(
-        dylint_lib = "rr_lints",
-        expect(
-            fallback,
-            reason = "PATTERNS FALLBACK: an embedding client that cannot be built leaves the vector absent"
-        )
-    )]
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(client) = http_client(EMBED_TIMEOUT) else {
         tracing::warn!("entity embedding client could not be built");
         return None;

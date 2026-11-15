@@ -10,7 +10,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) DUPTYPE,
     Warn,
-    "the same enum defined in several modules (one definition, imported where needed) → docs/PATTERNS.md#duptype",
+    "the same enum defined in several modules (one definition, imported where needed)",
     Duptype::default()
 );
 
@@ -70,7 +70,7 @@ impl<'tcx> LateLintPass<'tcx> for Duptype {
                 *hir_id,
                 *span,
                 format!(
-                    "same enum defined {} times ({}) — one definition, imported where needed → docs/PATTERNS.md#duptype",
+                    "same enum defined {} times ({}) — one definition, imported where needed",
                     group.len(),
                     group.join(", ")
                 ),

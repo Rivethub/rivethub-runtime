@@ -6,7 +6,7 @@ use crate::util;
 dylint_linting::impl_late_lint!(
     pub(crate) NULLABLE,
     Warn,
-    "Option<Option<T>> outside a *Patch/*Update body (absent and null are the same unless null means \"clear\") → docs/PATTERNS.md#nullable",
+    "Option<Option<T>> outside a *Patch/*Update body (absent and null are the same unless null means \"clear\")",
     Nullable::default()
 );
 
@@ -40,7 +40,7 @@ impl<'tcx> LateLintPass<'tcx> for Nullable {
             NULLABLE,
             field.hir_id,
             field.span,
-            "Option<Option<T>> outside a *Patch/*Update type (use Option<T> with skip_serializing_if) → docs/PATTERNS.md#nullable"
+            "Option<Option<T>> outside a *Patch/*Update type (use Option<T> with skip_serializing_if)"
                 .to_owned(),
         );
     }
