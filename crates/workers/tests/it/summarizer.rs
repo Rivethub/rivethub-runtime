@@ -77,7 +77,7 @@ struct Scenario {
     name: String,
     steps: Vec<Step>,
     #[serde(default)]
-    chat_calls: Option<Recorded<Vec<ChatCall>>>,
+    chat_calls: Option<ChatCalls>,
     #[serde(default)]
     tables: Tables,
 }
@@ -94,14 +94,25 @@ struct ChatCall {
 
 #[derive(Debug, Deserialize)]
 struct Step {
-    result: Recorded<HealthSnap>,
+    result: StepResult,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum Recorded<T> {
-    Read(T),
-    Other(serde::de::IgnoredAny),
+enum ChatCalls {
+    Calls(Vec<ChatCall>),
+    #[expect(dead_code)]
+    Count(u64),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum StepResult {
+    #[expect(dead_code)]
+    Count(u64),
+    Health(HealthSnap),
+    #[expect(dead_code)]
+    Rows(Vec<wire::Extra>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -209,10 +220,9 @@ fn scenario<'a>(fixture: &'a Fixture, name: &str) -> &'a Scenario {
 }
 
 fn chat_calls(scenario: &Scenario) -> Vec<ChatCall> {
-    if let Some(Recorded::Read(calls)) = &scenario.chat_calls {
-        calls.clone()
-    } else {
-        Vec::new()
+    match &scenario.chat_calls {
+        Some(ChatCalls::Calls(calls)) => calls.clone(),
+        Some(ChatCalls::Count(_)) | None => Vec::new(),
     }
 }
 
@@ -221,8 +231,8 @@ fn health_steps(scenario: &Scenario) -> Vec<HealthSnap> {
         .steps
         .iter()
         .filter_map(|step| match &step.result {
-            Recorded::Read(snap) => Some(snap.clone()),
-            Recorded::Other(_) => None,
+            StepResult::Health(health) => Some(health.clone()),
+            StepResult::Count(_) | StepResult::Rows(_) => None,
         })
         .collect()
 }
