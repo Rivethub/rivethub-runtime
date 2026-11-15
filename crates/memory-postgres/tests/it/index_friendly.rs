@@ -391,13 +391,15 @@ async fn red_links_skip_known_titles_aliases_and_redirects(pool: PgPool) -> Test
         .execute(&pool)
         .await?;
     assert_eq!(memory.wiki_gaps(2).await?.red_links.len(), 2);
-    let all: Vec<(String, usize)> = memory
+    let mut all: Vec<(String, usize)> = memory
         .wiki_gaps(200)
         .await?
         .red_links
         .into_iter()
         .map(|link| (link.entity, link.referenced_by.len()))
         .collect();
+    assert!(all.is_sorted_by(|a, b| a.1 >= b.1), "{all:?}");
+    all.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     assert_eq!(
         all,
         [
