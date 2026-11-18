@@ -16,7 +16,13 @@ async fn only_a_shared_hub_introduces_the_viewer_and_teammates() {
     .expect("identity")
     .build()
     .expect("server");
-    assert_eq!(server.get_info().instructions, None);
+    assert_eq!(
+        server.get_info().instructions.as_deref(),
+        Some(concat!(
+            "For memory_search: ",
+            "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords."
+        ))
+    );
     let reply = support::call(&server, "memory_team", "{}").await;
     assert_eq!(reply.is_error, None);
     assert!(

@@ -58,6 +58,11 @@ async fn memory_help_and_unknown_words_exit_clean() {
         assert_eq!(report.exit, Exit::Ok, "{parts:?}");
         assert_eq!(report.stderr, "");
         assert!(report.stdout.contains("queue-status"));
+        assert!(
+            report
+                .stdout
+                .contains(wire::gateway::memory::SEARCH_QUERY_GUIDANCE)
+        );
         assert!(!report.stdout.contains("doctor"));
     }
 }

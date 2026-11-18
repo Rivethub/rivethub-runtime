@@ -281,7 +281,11 @@ impl ServerHandler for Server {
             "rivethub-mcp-server",
             env!("CARGO_PKG_VERSION"),
         ));
-        info.instructions.clone_from(&self.instructions);
+        let guidance = wire::gateway::memory::SEARCH_QUERY_GUIDANCE;
+        info.instructions = Some(match &self.instructions {
+            Some(introduction) => format!("{introduction}\n\nFor memory_search: {guidance}"),
+            None => format!("For memory_search: {guidance}"),
+        });
         info
     }
 

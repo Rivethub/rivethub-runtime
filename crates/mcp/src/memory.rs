@@ -14,7 +14,7 @@ use wire::message::Role;
 #[schemars(!deny_unknown_fields)]
 #[serde(deny_unknown_fields)]
 pub struct Search {
-    #[schemars(description = "Search query — natural language question or keywords")]
+    #[schemars(description = wire::gateway::memory::SEARCH_QUERY_GUIDANCE)]
     query: String,
     #[serde(default)]
     #[schemars(description = "Search mode (default hybrid). hybrid: fuses full-text + trigram + vector with RRF — best general recall, robust to dotted/literal terms (domains, IPs, model ids). fts: full-text only. trigram: fuzzy/literal-token match. regex: pattern match. vector: pure semantic (ANN over HNSW).", transform = crate::catalog::search_mode_order)]
@@ -47,7 +47,7 @@ pub struct Search {
 
 impl crate::catalog::ToolInput for Search {
     const NAME: &'static str = "memory_search";
-    const DESCRIPTION: &'static str = "Search RivetHub persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions, prior context, or \"what did we say about X\" before asking the user. Mirrors the in-process `memory_search` tool exposed to local agents. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload.";
+    const DESCRIPTION: &'static str = "Search RivetHub persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload.";
     fn annotations() -> Option<rmcp::model::ToolAnnotations> {
         Some(rmcp::model::ToolAnnotations::from_raw(
             None,

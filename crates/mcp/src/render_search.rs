@@ -206,15 +206,16 @@ fn empty(query: &SearchQuery) -> String {
             bounds.push(format!("before=\"{}\"", before.rfc3339_z()));
         }
     }
+    let guidance = wire::gateway::memory::SEARCH_QUERY_GUIDANCE;
     if bounds.is_empty() {
         format!(
-            "No results found for query \"{}\".\n\nIf you expected a hit: retry with `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings), or vary the angle (service / host / subnet / role) and try two more queries before trusting the empty result. For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses.",
+            "No results found for query \"{}\".\n\n{guidance} Try `mode=\"trigram\"` for literal tokens (IPs, hostnames, error strings). For time-bounded questions (\"today\", \"yesterday\", \"last week\"), prefer `memory_browse` with window= — search ANDs the query with any date filter and returns empty when FTS misses.",
             query.text
         )
     } else {
         let bounds = bounds.join(", ");
         format!(
-            "No results found for query \"{}\" with {bounds}.\n\nFor chronological browsing of a date window without a topic filter, call `memory_browse({bounds})` instead — that returns every message in the window, no FTS match required.",
+            "No results found for query \"{}\" with {bounds}.\n\n{guidance} For chronological browsing of a date window without a topic filter, call `memory_browse({bounds})` instead — that returns every message in the window, no FTS match required.",
             query.text
         )
     }

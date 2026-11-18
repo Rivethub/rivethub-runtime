@@ -3,6 +3,8 @@ use crate::message::Role;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+pub const SEARCH_QUERY_GUIDANCE: &str = "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords.";
+
 #[derive(
     schemars::JsonSchema,
     Debug,
@@ -69,6 +71,7 @@ pub struct MemorySearchToolArgs {
     pub window: Option<BrowseWindow>,
     pub expand: Option<bool>,
     pub synthesize: Option<bool>,
+    #[schemars(description = SEARCH_QUERY_GUIDANCE)]
     pub query: String,
     pub mode: Option<SearchMode>,
     pub scope: Option<MemoryScope>,

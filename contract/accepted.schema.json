@@ -5111,6 +5111,7 @@
           ]
         },
         "query": {
+          "description": "Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords.",
           "type": "string"
         },
         "role": {
