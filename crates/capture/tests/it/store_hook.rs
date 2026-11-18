@@ -226,7 +226,7 @@ fn opencode_store(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
             "prt_4",
             "msg_2",
             1_791_979_201_200,
-            r#"{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"echo pong"},"output":"pong"}}"#,
+            r#"{"type":"tool","tool":"bash","callID":"call-pong","state":{"status":"completed","input":{"command":"echo pong"},"output":"pong"}}"#,
         ),
         (
             "prt_5",
@@ -288,6 +288,12 @@ async fn an_idle_opencode_session_posts_its_parts_under_their_part_ids() -> Test
     assert_eq!(at(&batch, "/channel"), "opencode");
     assert_eq!(at(&batch, "/title"), "Pong reply and session summary");
     assert_eq!(at(&batch, "/settings/cwd"), "/work/local");
+    assert_eq!(at(&batch, "/messages/2/metadata/tool_use_id"), "call-pong");
+    assert_eq!(at(&batch, "/messages/2/metadata/session_store_position"), 5);
+    assert_eq!(
+        at(&batch, "/messages/2/metadata/store_format"),
+        "opencode-part"
+    );
     let rows: Vec<(&str, &str, &str)> = at(&batch, "/messages")
         .as_array()
         .ok_or("messages")?
@@ -406,6 +412,7 @@ async fn a_codex_turn_end_posts_its_rollout_items() -> TestResult {
     assert_eq!(at(messages, "/4/tool_args/command/0"), "ls");
     assert_eq!(at(messages, "/5/tool_result"), r#"{"error":"no"}"#);
     assert_eq!(at(messages, "/0/metadata/session_jsonl_line"), 3);
+    assert_eq!(at(messages, "/2/metadata/tool_use_id"), "call_1");
     let end: Json = serde_json::from_str(end)?;
     assert_eq!(at(&end, "/finalize"), true);
     Ok(())
@@ -514,5 +521,6 @@ async fn a_dsh_turn_end_posts_its_transcript() -> TestResult {
     assert_eq!(at(messages, "/3/tool_result"), "a.txt");
     assert_eq!(at(messages, "/4/tool_result"), "boom");
     assert_eq!(at(messages, "/0/metadata/session_jsonl_line"), 1);
+    assert_eq!(at(messages, "/3/metadata/tool_use_id"), "call_1");
     Ok(())
 }

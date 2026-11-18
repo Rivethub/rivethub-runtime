@@ -2,7 +2,6 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use uuid::Uuid;
 use values::{JsonObject, Role};
 
@@ -14,23 +13,24 @@ pub struct MessagePosition<'a> {
     role: Role,
     metadata: Option<&'a JsonObject>,
     conversation: Option<Uuid>,
-    path: Option<&'a str>,
+    stream: NativeStream<'a>,
+    hook: Option<(&'a str, u64)>,
     line: Option<u64>,
 }
 
 impl<'a> MessagePosition<'a> {
     pub fn new(stamp: DateTime<Utc>, role: Role, metadata: Option<&'a JsonObject>) -> Self {
-        let path = text(metadata, "session_jsonl_path");
-        let line = metadata
-            .and_then(|object| object.get("session_jsonl_line"))
-            .and_then(Value::as_u64);
+        let (stream, line) = native_position(metadata);
+        let hook = text(metadata, "hook_producer")
+            .zip(number(metadata, "hook_sequence").filter(|sequence| *sequence > 0));
         Self {
             stamp,
             role,
             metadata,
             conversation: None,
-            path,
+            stream,
             line,
+            hook,
         }
     }
 
@@ -45,11 +45,13 @@ impl<'a> MessagePosition<'a> {
         self.line.is_some()
     }
 
+    #[must_use]
+    pub const fn has_order_evidence(self) -> bool {
+        self.has_line() || self.hook.is_some()
+    }
+
     fn line_key(self) -> (Option<u64>, Option<u64>, u8) {
-        let ordinal = self
-            .metadata
-            .and_then(|object| object.get("ordinal"))
-            .and_then(Value::as_u64);
+        let ordinal = number(self.metadata, "ordinal");
         let role = match self.role {
             Role::Assistant => 0,
             Role::Tool => 2,
@@ -78,6 +80,31 @@ impl<'a> MessagePosition<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum NativeStream<'a> {
+    Default,
+    Jsonl(&'a str),
+    Sqlite { path: &'a str, format: &'a str },
+}
+
+fn native_position(metadata: Option<&JsonObject>) -> (NativeStream<'_>, Option<u64>) {
+    let line = number(metadata, "session_jsonl_line");
+    if line.is_none()
+        && let Some(position) = number(metadata, "session_store_position")
+        && let Some(path) = text(metadata, "session_sqlite_path")
+        && let Some(format) = text(metadata, "store_format")
+    {
+        return (NativeStream::Sqlite { path, format }, Some(position));
+    }
+    let stream =
+        text(metadata, "session_jsonl_path").map_or(NativeStream::Default, NativeStream::Jsonl);
+    (stream, line)
+}
+
+fn number(metadata: Option<&JsonObject>, key: &str) -> Option<u64> {
+    metadata?.get(key)?.as_u64()
+}
+
 fn text<'a>(metadata: Option<&'a JsonObject>, key: &str) -> Option<&'a str> {
     metadata?.get(key)?.as_str().filter(|text| !text.is_empty())
 }
@@ -94,7 +121,7 @@ enum Correlation<'a> {
     Turn(&'a str),
 }
 
-type Stream<'a> = (Option<Uuid>, Option<&'a str>);
+type Stream<'a> = (Option<Uuid>, NativeStream<'a>);
 type AnchorKey<'a> = (Stream<'a>, Correlation<'a>);
 type TimeKey = (DateTime<Utc>, usize);
 type Positioned<'a> = (MessagePosition<'a>, usize);
@@ -109,9 +136,10 @@ fn anchors<'a>(rows: &[Positioned<'a>]) -> HashMap<AnchorKey<'a>, Anchor> {
     let mut anchors = HashMap::new();
     for &(position, index) in rows.iter().filter(|(position, _)| position.line.is_some()) {
         for correlation in position.correlation().into_iter().flatten() {
-            for path in std::iter::once(None).chain(position.path.map(Some)) {
+            let named = (position.stream != NativeStream::Default).then_some(position.stream);
+            for stream in std::iter::once(NativeStream::Default).chain(named) {
                 anchors
-                    .entry(((position.conversation, path), correlation))
+                    .entry(((position.conversation, stream), correlation))
                     .and_modify(|anchor| *anchor = Anchor::Ambiguous)
                     .or_insert(Anchor::Unique(index));
             }
@@ -124,15 +152,15 @@ fn partition(rows: Vec<Positioned<'_>>) -> (Vec<Vec<TimeKey>>, HashMap<usize, Ve
     let anchors = anchors(&rows);
     let mut streams = BTreeMap::<Stream<'_>, Vec<Positioned<'_>>>::new();
     let mut fallback = Vec::new();
+    let mut producers = BTreeMap::<_, Vec<_>>::new();
     let mut attached = HashMap::<usize, Vec<TimeKey>>::new();
     for (position, index) in rows {
-        let stream = (position.conversation, position.path);
+        let stream = (position.conversation, position.stream);
         let time = (position.stamp, index);
         if position.line.is_some() {
             streams.entry(stream).or_default().push((position, index));
             continue;
         }
-        // A matching ID kind decides the attachment, even when its match is ambiguous.
         let anchor = position
             .correlation()
             .into_iter()
@@ -140,6 +168,11 @@ fn partition(rows: Vec<Positioned<'_>>) -> (Vec<Vec<TimeKey>>, HashMap<usize, Ve
             .find_map(|key| anchors.get(&(stream, key)));
         if let Some(Anchor::Unique(anchor)) = anchor {
             attached.entry(*anchor).or_default().push(time);
+        } else if let Some((producer, sequence)) = position.hook {
+            producers
+                .entry((position.conversation, producer))
+                .or_default()
+                .push((sequence, time));
         } else {
             fallback.push(time);
         }
@@ -154,7 +187,14 @@ fn partition(rows: Vec<Positioned<'_>>) -> (Vec<Vec<TimeKey>>, HashMap<usize, Ve
             .map(|(position, index)| (position.stamp, index))
             .collect()
     });
-    (streams.chain([fallback]).collect(), attached)
+    let producers = producers.into_values().map(|mut stream| {
+        stream.sort_unstable();
+        stream.into_iter().map(|(_, time)| time).collect()
+    });
+    (
+        streams.chain(producers).chain([fallback]).collect(),
+        attached,
+    )
 }
 
 pub fn order_messages<T>(
@@ -165,7 +205,7 @@ pub fn order_messages<T>(
     let positions: Vec<_> = legacy_rows.iter().map(position).zip(0..).collect();
     if positions
         .iter()
-        .all(|(position, _)| position.line.is_none())
+        .all(|(position, _)| !position.has_order_evidence())
     {
         return legacy_rows;
     }

@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt as _;
 
+use super::sequence;
 use crate::store_path::single_component;
 
 const DIR: &str = "claude-pending";
@@ -19,6 +20,14 @@ pub(crate) struct Pending {
     pub(crate) key: String,
     pub(crate) prompt: String,
     pub(crate) at: DateTime<Utc>,
+    #[serde(default)]
+    pub(super) position: Option<sequence::Position>,
+}
+
+impl Pending {
+    pub(super) fn event_id(&self, session_key: &str) -> String {
+        format!("{session_key}:hook:{}", self.key)
+    }
 }
 
 #[derive(Debug)]
@@ -77,12 +86,53 @@ impl PendingPrompts {
         .map_err(std::io::Error::other)?
     }
 
-    pub(crate) async fn add(&self, native: &str, pending: &Pending) -> std::io::Result<()> {
+    async fn locked_position(
+        &self,
+        native: &str,
+        event_id: String,
+        locked: Locked,
+    ) -> std::io::Result<(sequence::Position, Locked)> {
+        let path = self.dir.join(format!("{native}.sequence"));
+        tokio::task::spawn_blocking(move || {
+            let position = sequence::position(&path, event_id)?;
+            Ok((position, locked))
+        })
+        .await
+        .map_err(std::io::Error::other)?
+    }
+
+    pub(super) async fn position(
+        &self,
+        native: &str,
+        event_id: String,
+    ) -> std::io::Result<sequence::Position> {
+        if !single_component(native) {
+            return Err(std::io::Error::other("invalid session for hook sequence"));
+        }
+        let (position, _) = self
+            .locked_position(native, event_id, self.lock(native).await?)
+            .await?;
+        Ok(position)
+    }
+
+    pub(super) async fn add(
+        &self,
+        session: &wire::session_id::SessionId,
+        mut pending: Pending,
+    ) -> std::io::Result<()> {
+        let native = session.native();
         let Some(file) = self.file(native) else {
             return Ok(());
         };
-        let _locked = self.lock(native).await?;
-        let mut line = serde_json::to_string(pending)?;
+        let (position, _locked) = self
+            .locked_position(
+                native,
+                pending.event_id(session.as_str()),
+                self.lock(native).await?,
+            )
+            .await?;
+        pending.position = Some(position);
+        let mut line = serde_json::to_string(&pending)?;
         line.push('\n');
         let mut handle = tokio::fs::OpenOptions::new()
             .append(true)

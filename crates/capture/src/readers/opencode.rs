@@ -29,6 +29,7 @@ use super::message::TranscriptSlice;
 use super::message::arguments;
 use super::message::assemble;
 use super::message::blocking;
+use super::message::json_failed;
 use super::message::native;
 use super::message::project_turns;
 use super::message::push_mapped;
@@ -94,7 +95,7 @@ impl OpencodeTranscriptReader {
         let rows = HarnessDb::opencode_transcript(&path, native_id, cursor)
             .await
             .map_err(read_error)?;
-        let (format, slice) = match rows {
+        let (format, mut slice) = match rows {
             OpencodeTranscript::Unreadable => (FORMAT, TranscriptSlice::empty(offset)),
             OpencodeTranscript::Parts(rows) => (FORMAT, map_parts(session, &rows, offset, mode)?),
             OpencodeTranscript::Events(rows) => (
@@ -102,6 +103,9 @@ impl OpencodeTranscriptReader {
                 opencode_events::map_events(session, &rows, offset, mode)?,
             ),
         };
+        if mode == Mode::Capture {
+            capture_positions(&path, &mut slice)?;
+        }
         report(format, &slice.skipped);
         Ok(slice)
     }
@@ -160,6 +164,27 @@ pub(crate) async fn subagent_link(
     .await
 }
 
+fn capture_positions(
+    path: &Path,
+    slice: &mut TranscriptSlice,
+) -> Result<(), TranscriptReaderError> {
+    let path = path.display().to_string();
+    for row in &mut slice.messages {
+        if let Some(metadata) = &mut row.metadata
+            && let Some(value) = metadata.get("position")
+            && let Some(position) = value.as_u64()
+        {
+            metadata
+                .insert("session_store_position", position)
+                .map_err(json_failed)?;
+            metadata
+                .insert("session_sqlite_path", &path)
+                .map_err(json_failed)?;
+        }
+    }
+    Ok(())
+}
+
 fn located(store: &Path, native_id: &str) -> Result<Option<PathBuf>, TranscriptReaderError> {
     require_component(native_id)?;
     database_file(store, FILE)
@@ -186,7 +211,12 @@ fn map_parts(
         let mapped = match map_part(session, position, row, mode)? {
             Mapped::Draft(mut draft) => {
                 draft.message.event_id.clone_from(&row.part_id);
-                Mapped::Draft(draft)
+                Mapped::Draft(draft).with_metadata(|metadata| {
+                    if let Some(id) = row.tool_use_id.as_deref().filter(|id| !id.is_empty()) {
+                        metadata.insert("tool_use_id", id)?;
+                    }
+                    Ok(())
+                })?
             }
             mapped @ (Mapped::Skip(_) | Mapped::None) => mapped,
         };

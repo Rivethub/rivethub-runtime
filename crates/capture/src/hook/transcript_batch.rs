@@ -16,7 +16,6 @@ use super::pending::Pending;
 use crate::event_id::OccurrenceKind;
 use crate::event_id::occurrence_digest;
 use crate::event_id::occurrence_event_id;
-use crate::records::HookEventMetadata;
 use crate::records::SOURCE;
 use crate::records::TranscriptMetadata;
 use crate::transcript::Block;
@@ -62,7 +61,46 @@ enum RowKind {
 
 struct Results {
     text: HashMap<String, String>,
-    first_line: HashMap<String, usize>,
+    first_position: HashMap<String, ToolPosition>,
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+pub(super) struct ToolPosition {
+    session_jsonl_line: usize,
+    ordinal: usize,
+}
+
+impl ToolPosition {
+    fn on(line: &Line, index: usize) -> Self {
+        Self {
+            session_jsonl_line: line.number.saturating_sub(1),
+            ordinal: index.saturating_add(1),
+        }
+    }
+}
+
+pub(super) fn tool_anchor<'a>(
+    transcript: &'a [Line],
+    tool_use_id: &str,
+) -> Option<(ToolPosition, Option<&'a str>)> {
+    let mut calls = transcript
+        .iter()
+        .filter(|line| line.r#type == LineKind::Assistant && line.is_meta != Some(true))
+        .flat_map(|line| {
+            line.tool_uses()
+                .into_iter()
+                .enumerate()
+                .map(move |(index, tool)| (line, index, tool))
+        })
+        .filter(|(_, _, tool)| tool.id == tool_use_id);
+    let (line, index, _) = calls.next()?;
+    if calls.next().is_some() {
+        return None;
+    }
+    let position = result_blocks(transcript)
+        .find_map(|(id, _, position)| (id == tool_use_id).then_some(position))
+        .unwrap_or_else(|| ToolPosition::on(line, index));
+    Some((position, line.uuid.as_deref()))
 }
 
 struct Source<'a> {
@@ -94,8 +132,13 @@ pub(super) fn build(
                 .messages
                 .push(source.text_row(message, event_id, Role::Assistant)?);
         }
-        for tool in &message.tools {
-            let row = source.tool_row(message, tool, &results)?;
+        for (index, tool) in message.tools.iter().enumerate() {
+            let position = results
+                .first_position
+                .get(tool.id)
+                .copied()
+                .unwrap_or_else(|| ToolPosition::on(message.line, index));
+            let row = source.tool_row(message, tool, &results, position)?;
             if row.tool_result.is_some() || finalize {
                 batch.messages.push(row);
             }
@@ -113,17 +156,17 @@ pub(super) fn build(
             .any(|message| message.prompt() && message.content == prompt.prompt)
         {
             batch.messages.push(CaptureMessage {
-                event_id: format!("{session_key}:hook:{}", prompt.key),
+                event_id: prompt.event_id(session_key),
                 role: Role::User,
                 content: prompt.prompt.clone(),
                 tool_name: None,
                 tool_args: None,
                 tool_result: None,
-                metadata: Some(JsonObject::from_serialize(&HookEventMetadata {
-                    source: SOURCE,
-                    hook_event: "UserPromptSubmit",
-                    ingest_key: &prompt.key,
-                })?),
+                metadata: Some(JsonObject::from_serialize(&super::observed_hook(
+                    "UserPromptSubmit",
+                    &prompt.key,
+                    prompt.position.as_ref(),
+                ))?),
                 created_at: Some(prompt.at),
             });
         }
@@ -222,31 +265,43 @@ fn result_text(content: &LineContent) -> String {
     }
 }
 
+fn result_blocks(transcript: &[Line]) -> impl Iterator<Item = (&str, &LineContent, ToolPosition)> {
+    transcript.iter().flat_map(|line| {
+        let blocks = match &line.message {
+            Some(message) => match &message.content {
+                LineContent::Blocks(blocks) => blocks.as_slice(),
+                LineContent::Text(_) => &[],
+            },
+            None => &[],
+        };
+        blocks
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, block)| match block {
+                Block::ToolResult {
+                    tool_use_id: Some(id),
+                    content,
+                } => Some((id.as_str(), content, ToolPosition::on(line, index))),
+                Block::Text { .. }
+                | Block::ToolUse { .. }
+                | Block::ToolResult { .. }
+                | Block::Thinking { .. }
+                | Block::Other => None,
+            })
+    })
+}
+
 fn results(transcript: &[Line]) -> Results {
     let mut found = Results {
         text: HashMap::new(),
-        first_line: HashMap::new(),
+        first_position: HashMap::new(),
     };
-    for line in transcript {
-        let Some(message) = &line.message else {
-            continue;
-        };
-        let LineContent::Blocks(blocks) = &message.content else {
-            continue;
-        };
-        for block in blocks {
-            if let Block::ToolResult {
-                tool_use_id: Some(id),
-                content,
-            } = block
-            {
-                found.text.insert(id.clone(), result_text(content));
-                found
-                    .first_line
-                    .entry(id.clone())
-                    .or_insert_with(|| line.number.saturating_sub(1));
-            }
-        }
+    for (id, content, position) in result_blocks(transcript) {
+        found.text.insert(id.to_owned(), result_text(content));
+        found
+            .first_position
+            .entry(id.to_owned())
+            .or_insert(position);
     }
     found
 }
@@ -272,6 +327,7 @@ impl Source<'_> {
         line: usize,
         message: &Folded<'_>,
         kind: RowKind,
+        tool: Option<(&str, usize)>,
     ) -> Result<JsonObject, HookError> {
         Ok(JsonObject::from_serialize(&TranscriptMetadata {
             source: SOURCE,
@@ -282,6 +338,9 @@ impl Source<'_> {
                 .then(|| message.line.is_sidechain.unwrap_or(false)),
             hook_event: (kind == RowKind::Tool).then_some("PostToolUse"),
             recovered: (kind != RowKind::Assistant).then_some(true),
+            tool_use_id: tool.map(|(id, _)| id),
+            assistant_uuid: tool.and(message.line.uuid.as_deref()),
+            ordinal: tool.map(|(_, ordinal)| ordinal),
         })?)
     }
 
@@ -303,7 +362,7 @@ impl Source<'_> {
             tool_name: None,
             tool_args: None,
             tool_result: None,
-            metadata: Some(self.metadata(message.file_line(), message, kind)?),
+            metadata: Some(self.metadata(message.file_line(), message, kind, None)?),
             created_at: instant(message.line.timestamp.as_deref())?,
         })
     }
@@ -313,15 +372,11 @@ impl Source<'_> {
         message: &Folded<'_>,
         tool: &ToolUse<'_>,
         results: &Results,
+        position: ToolPosition,
     ) -> Result<CaptureMessage, HookError> {
         let content = format!("{TOOL_CALL} {}", tool.name);
         let digest = occurrence_digest(OccurrenceKind::Tool, &content, tool.name, Some(tool.input));
         self.occurrence(digest);
-        let line = results
-            .first_line
-            .get(tool.id)
-            .copied()
-            .unwrap_or_else(|| message.file_line());
         Ok(CaptureMessage {
             event_id: format!("{}:tool:{}", self.session_key, tool.id),
             role: Role::Tool,
@@ -329,7 +384,12 @@ impl Source<'_> {
             tool_name: Some(tool.name.to_owned()),
             tool_args: Some(tool.input.arguments().clone()),
             tool_result: results.text.get(tool.id).cloned(),
-            metadata: Some(self.metadata(line, message, RowKind::Tool)?),
+            metadata: Some(self.metadata(
+                position.session_jsonl_line,
+                message,
+                RowKind::Tool,
+                Some((tool.id, position.ordinal)),
+            )?),
             created_at: instant(message.line.timestamp.as_deref())?,
         })
     }

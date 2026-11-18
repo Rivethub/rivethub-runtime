@@ -537,3 +537,12 @@ async fn out_of_range_stored_session_timestamp_returns_an_error(pool: PgPool) ->
     }
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn new_hook_coordinates_reach_session_and_summary_readers(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::session_and_summary_readers_use_hook_coordinates(
+        &memory, &memory, &memory,
+    )
+    .await
+}

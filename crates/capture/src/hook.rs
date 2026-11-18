@@ -1,7 +1,9 @@
 pub(crate) mod file;
 mod pending;
+mod sequence;
 pub mod store;
 mod subagents;
+mod tool;
 mod transcript_batch;
 
 use std::os::unix::fs::PermissionsExt as _;
@@ -19,14 +21,8 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
-use wire::capture::CaptureMessage;
-use wire::message::Role;
 use wire::session_id::SessionId;
 
-use crate::event_id::OccurrenceKind;
-use crate::event_id::ToolInput;
-use crate::event_id::occurrence_digest;
-use crate::event_id::occurrence_event_id;
 use crate::payload::HookEvent;
 use crate::payload::HookPayload;
 use crate::records::HookEventMetadata;
@@ -158,9 +154,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             return HookRun::done();
         }
         if event == HookEvent::UserPromptSubmit {
-            return self
-                .hold_prompt(&payload, session.native(), now, ingest_key)
-                .await;
+            return self.hold_prompt(&payload, &session, now, ingest_key).await;
         }
         let transcript = match event {
             HookEvent::Stop => settled_transcript(&payload).await,
@@ -172,7 +166,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         };
         let (batch, claim) = match event {
             HookEvent::PostToolUse => (
-                tool_batch(&payload, session.as_str(), &transcript, ingest_key),
+                tool::batch(&payload, &session, &transcript, ingest_key, &self.pending).await,
                 None,
             ),
             HookEvent::Stop | HookEvent::SubagentStop | HookEvent::SessionEnd => {
@@ -313,7 +307,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
     async fn hold_prompt(
         &self,
         payload: &HookPayload,
-        native: &str,
+        session: &SessionId,
         now: DateTime<Utc>,
         ingest_key: &str,
     ) -> HookRun {
@@ -328,8 +322,9 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             key: ingest_key.to_owned(),
             prompt: prompt.clone(),
             at: now,
+            position: None,
         };
-        match self.pending.add(native, &pending).await {
+        match self.pending.add(session, pending).await {
             Ok(()) => HookRun::done(),
             Err(error) => HookRun::failed(format!("prompt was not held for capture: {error}")),
         }
@@ -465,75 +460,26 @@ fn settings_for(
     Ok(settings)
 }
 
-fn event_metadata(event: &str, ingest_key: &str) -> Result<JsonObject, HookError> {
-    Ok(JsonObject::from_serialize(&HookEventMetadata {
-        source: SOURCE,
-        hook_event: event,
-        ingest_key,
-    })?)
+#[derive(serde::Serialize)]
+struct ObservedHook<'a> {
+    #[serde(flatten)]
+    event: HookEventMetadata<'a>,
+    #[serde(flatten)]
+    position: Option<&'a sequence::Position>,
 }
 
-fn tool_batch(
-    payload: &HookPayload,
-    session_key: &str,
-    transcript: &[Line],
-    ingest_key: &str,
-) -> Result<CaptureBatchRequest, HookError> {
-    let mut batch = base_batch(session_key);
-    batch.title = Some(FALLBACK_TITLE.to_owned());
-    let tool_name = payload
-        .tool_name
-        .as_ref()
-        .ok_or(HookError::Missing("tool_name"))?;
-    let input = payload
-        .tool_input
-        .as_ref()
-        .ok_or(HookError::Missing("tool_input"))?;
-    let content = format!("[tool call] {tool_name}");
-    let event_id = if let Some(id) = &payload.tool_use_id {
-        format!("{session_key}:tool:{id}")
-    } else {
-        let digest = occurrence_digest(OccurrenceKind::Tool, &content, tool_name, Some(input));
-        occurrence_event_id(
-            session_key,
-            &digest,
-            prior_occurrences(transcript, tool_name, input),
-        )
-    };
-    batch.messages.push(CaptureMessage {
-        event_id,
-        role: Role::Tool,
-        content,
-        tool_name: Some(tool_name.clone()),
-        tool_args: Some(input.arguments().clone()),
-        tool_result: tool_result_text(payload)?,
-        metadata: Some(event_metadata("PostToolUse", ingest_key)?),
-        created_at: None,
-    });
-    Ok(batch)
-}
-
-fn prior_occurrences(transcript: &[Line], tool_name: &str, input: &ToolInput) -> usize {
-    transcript
-        .iter()
-        .flat_map(Line::tool_uses)
-        .filter(|tool_use| {
-            tool_use.name == tool_name && tool_use.input.spelling() == input.spelling()
-        })
-        .count()
-}
-
-fn tool_result_text(payload: &HookPayload) -> Result<Option<String>, HookError> {
-    if let Some(result) = &payload.tool_result {
-        return Ok(Some(result.clone()));
-    }
-    let Some(raw) = &payload.tool_response else {
-        return Ok(None);
-    };
-    match serde_json::from_str::<String>(raw.get()) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.is_data() => Ok(Some(serde_json::to_string(raw)?)),
-        Err(error) => Err(error.into()),
+fn observed_hook<'a>(
+    event: &'a str,
+    ingest_key: &'a str,
+    position: Option<&'a sequence::Position>,
+) -> ObservedHook<'a> {
+    ObservedHook {
+        event: HookEventMetadata {
+            source: SOURCE,
+            hook_event: event,
+            ingest_key,
+        },
+        position,
     }
 }
 

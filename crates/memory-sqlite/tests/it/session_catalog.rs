@@ -297,3 +297,12 @@ async fn session_with_two_messages(
         .ok_or("conversation ID")?;
     Ok((key, conversation))
 }
+
+#[tokio::test]
+async fn new_hook_coordinates_reach_session_and_summary_readers() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::session_and_summary_readers_use_hook_coordinates(
+        &memory, &memory, &memory,
+    )
+    .await
+}

@@ -31,6 +31,8 @@ struct Pointer<'a> {
     source: &'static str,
     session_jsonl_path: &'a str,
     session_jsonl_line: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_use_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -421,6 +423,7 @@ fn message(row: Row, file: &str) -> Result<CaptureMessage, TranscriptReaderError
         source: SOURCE,
         session_jsonl_path: file,
         session_jsonl_line: row.line,
+        tool_use_id: row.call_id.as_deref(),
     })
     .map_err(|error| TranscriptReaderError::Read {
         message: format!("dsh capture JSON failed: {error}"),

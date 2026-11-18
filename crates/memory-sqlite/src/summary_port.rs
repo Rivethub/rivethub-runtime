@@ -351,7 +351,8 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
         )
         .collect::<Result<Vec<_>, SqliteError>>()?;
     if messages.iter().any(|(message, metadata)| {
-        MessagePosition::new(message.created_at, message.role, metadata.as_ref()).has_line()
+        MessagePosition::new(message.created_at, message.role, metadata.as_ref())
+            .has_order_evidence()
     }) {
         messages.sort_unstable_by_key(|(message, _)| (message.created_at, message.id));
     }

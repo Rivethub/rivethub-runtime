@@ -44,17 +44,31 @@ impl SqliteStore {
 }
 
 fn has_position(conn: &rusqlite::Connection, keys: &str) -> Result<bool, SqliteError> {
-    // Only parse JSON when the key could be present, including as a JSON escape.
-    // Use the raw JSON number because SQLite can round large unsigned integers.
     let sql = format!(
         "SELECT EXISTS (SELECT 1{SESSION} AND CASE
-          WHEN instr(m.metadata, 'session_jsonl_line') = 0 AND instr(m.metadata, char(92)) = 0 THEN 0
-          WHEN json_valid(m.metadata) THEN
-            (m.metadata -> '$.session_jsonl_line') GLOB '[0-9]*'
-            AND (m.metadata -> '$.session_jsonl_line') NOT GLOB '*[^0-9]*'
-            AND (length(m.metadata -> '$.session_jsonl_line') < 20
-                 OR (length(m.metadata -> '$.session_jsonl_line') = 20
-                     AND (m.metadata -> '$.session_jsonl_line') <= '18446744073709551615'))
+          WHEN instr(m.metadata, 'session_jsonl_line') = 0
+           AND instr(m.metadata, 'session_store_position') = 0
+           AND instr(m.metadata, 'hook_sequence') = 0
+           AND instr(m.metadata, char(92)) = 0 THEN 0
+          WHEN json_valid(m.metadata) THEN EXISTS (
+            SELECT 1 FROM (
+              SELECT m.metadata -> '$.session_jsonl_line' AS coordinate
+              UNION ALL
+              SELECT m.metadata -> '$.session_store_position'
+              WHERE json_type(m.metadata, '$.session_sqlite_path') = 'text'
+                AND m.metadata ->> '$.session_sqlite_path' <> ''
+                AND json_type(m.metadata, '$.store_format') = 'text'
+                AND m.metadata ->> '$.store_format' <> ''
+              UNION ALL
+              SELECT m.metadata -> '$.hook_sequence'
+              WHERE json_type(m.metadata, '$.hook_producer') = 'text'
+                AND m.metadata ->> '$.hook_producer' <> ''
+                AND m.metadata -> '$.hook_sequence' <> '0'
+            )
+            WHERE coordinate GLOB '[0-9]*' AND coordinate NOT GLOB '*[^0-9]*'
+              AND (length(coordinate) < 20
+                OR (length(coordinate) = 20 AND coordinate <= '18446744073709551615'))
+          )
          END)"
     );
     conn.query_row(&sql, [keys], |row| row.get(0))

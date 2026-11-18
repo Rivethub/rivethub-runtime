@@ -22,7 +22,6 @@ const ENTRY_COLUMNS: &str = "m.id::text as id, c.session_key, m.agent, m.channel
      m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata,
      case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings";
 
-// SQLx's binary timestamp decoder panics on values outside Chrono's range.
 const SAFE_STAMP: &str = "case when m.created_at > '-infinity' and m.created_at <= $2 then m.created_at end as created_at";
 const OPERATION: &str = "session messages";
 
@@ -64,8 +63,21 @@ fn failure(source: sqlx::Error) -> Error {
 async fn has_position(conn: &mut PgConnection, keys: &[String]) -> Result<bool, Error> {
     let sql = format!(
         "select exists (select 1{SESSION}
-         and (m.metadata -> 'session_jsonl_line')::text ~ '^[0-9]+$'
-         and (m.metadata -> 'session_jsonl_line') <= '18446744073709551615'::jsonb)"
+         and exists (
+           select 1 from (values
+             (m.metadata -> 'session_jsonl_line'),
+             (case when jsonb_typeof(m.metadata -> 'session_sqlite_path') = 'string'
+                    and m.metadata ->> 'session_sqlite_path' <> ''
+                    and jsonb_typeof(m.metadata -> 'store_format') = 'string'
+                    and m.metadata ->> 'store_format' <> ''
+                   then m.metadata -> 'session_store_position' end),
+             (case when jsonb_typeof(m.metadata -> 'hook_producer') = 'string'
+                    and m.metadata ->> 'hook_producer' <> ''
+                    and m.metadata -> 'hook_sequence' <> '0'::jsonb
+                   then m.metadata -> 'hook_sequence' end)
+           ) evidence(coordinate)
+           where coordinate::text ~ '^[0-9]+$' and coordinate <= '18446744073709551615'::jsonb
+         ))"
     );
     sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(keys)

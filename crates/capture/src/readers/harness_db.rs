@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 
 use chrono::DateTime;
@@ -54,18 +55,7 @@ FROM session_message \
 WHERE session_id = ?1 AND seq >= ?2 \
 ORDER BY seq ASC";
 
-const OPENCODE_EVENT_MESSAGES_WITH_PARTS: &str = "\
-SELECT seq, type, time_created, data, \
-       (SELECT json_group_array(json(ordered.data)) \
-        FROM (SELECT data FROM session_part \
-              WHERE session_part.message_id = session_message.id \
-              ORDER BY session_part.ordinal) AS ordered) AS parts \
-FROM session_message \
-WHERE session_id = ?1 AND seq >= ?2 \
-ORDER BY seq ASC";
-
-const OPENCODE_PART_ROWS: &str =
-    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_part'";
+const OPENCODE_PART_COLUMNS: &str = "SELECT COUNT(*), COUNT(*) FILTER (WHERE name = 'call_id') FROM pragma_table_info('session_part')";
 
 const OPENCODE_LAYOUT: &str =
     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'";
@@ -81,6 +71,7 @@ SELECT part.rowid AS rowid, \
        part.tool_name AS tool_name, \
        part.tool_arguments AS tool_arguments, \
        part.tool_result AS tool_result, \
+       NULL AS tool_use_id, \
        NULL AS tool_status, \
        part.created_at AS created_at \
 FROM part \
@@ -102,6 +93,7 @@ SELECT part.rowid AS rowid, \
        json_extract(part.data, '$.tool') AS tool_name, \
        json_extract(part.data, '$.state.input') AS tool_arguments, \
        COALESCE(json_extract(part.data, '$.state.output'), json_extract(part.data, '$.state.error')) AS tool_result, \
+       json_extract(part.data, '$.callID') AS tool_use_id, \
        json_extract(part.data, '$.state.status') AS tool_status, \
        part.time_created AS created_at \
 FROM part \
@@ -161,6 +153,7 @@ pub(crate) struct OpencodePart {
     pub(crate) tool_name: Option<String>,
     pub(crate) tool_arguments: Option<String>,
     pub(crate) tool_result: Option<String>,
+    pub(crate) tool_use_id: Option<String>,
     pub(crate) tool_failed: bool,
     pub(crate) at: Option<String>,
 }
@@ -517,7 +510,7 @@ fn read_opencode(
             .collect::<Result<Vec<_>, _>>()
             .map(OpencodeTranscript::Parts),
         OpencodeLayout::Events => connection
-            .prepare(event_messages(&connection)?)?
+            .prepare(&event_messages(&connection)?)?
             .query_map(rusqlite::params![session_id, cursor.from_seq], event_row)?
             .collect::<Result<Vec<_>, _>>()
             .map(OpencodeTranscript::Events),
@@ -535,13 +528,30 @@ fn event_row(row: &Row<'_>) -> rusqlite::Result<OpencodeEvent> {
     })
 }
 
-fn event_messages(connection: &Connection) -> rusqlite::Result<&'static str> {
-    let tables: i64 = connection.query_row(OPENCODE_PART_ROWS, [], |row| row.get(0))?;
-    Ok(if tables > 0 {
-        OPENCODE_EVENT_MESSAGES_WITH_PARTS
+fn event_messages(connection: &Connection) -> rusqlite::Result<Cow<'static, str>> {
+    let (columns, call_id): (i64, i64) =
+        connection.query_row(OPENCODE_PART_COLUMNS, [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    if columns == 0 {
+        return Ok(Cow::Borrowed(OPENCODE_EVENT_MESSAGES));
+    }
+    let part_data = if call_id > 0 {
+        "CASE WHEN call_id IS NOT NULL AND json_extract(data, '$.id') IS NULL
+         THEN json_set(data, '$.id', call_id) ELSE data END"
     } else {
-        OPENCODE_EVENT_MESSAGES
-    })
+        "data"
+    };
+    Ok(Cow::Owned(format!(
+        "SELECT seq, type, time_created, data,
+          (SELECT json_group_array(json(ordered.data))
+           FROM (SELECT {part_data} AS data FROM session_part
+                 WHERE session_part.message_id = session_message.id
+                 ORDER BY session_part.ordinal) AS ordered) AS parts
+         FROM session_message
+         WHERE session_id = ?1 AND seq >= ?2
+         ORDER BY seq ASC"
+    )))
 }
 
 fn opencode_row(row: &Row<'_>) -> rusqlite::Result<OpencodePart> {
@@ -558,6 +568,7 @@ fn opencode_row(row: &Row<'_>) -> rusqlite::Result<OpencodePart> {
         tool_name: row.get("tool_name")?,
         tool_arguments: row.get("tool_arguments")?,
         tool_result: row.get("tool_result")?,
+        tool_use_id: row.get("tool_use_id")?,
         tool_failed: row.get::<_, Option<String>>("tool_status")?.as_deref() == Some("error"),
         at: instant(&row.get("created_at")?),
     })

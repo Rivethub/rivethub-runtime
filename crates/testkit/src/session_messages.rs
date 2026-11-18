@@ -397,3 +397,64 @@ pub async fn scoped_browse_keeps_timestamp_window_order(
 fn contents(entries: &[kernel::memory::MemoryEntry]) -> Vec<&str> {
     entries.iter().map(|entry| entry.content.as_str()).collect()
 }
+
+pub async fn session_and_summary_readers_use_hook_coordinates(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+    summaries: &dyn SummaryStore,
+) -> TestResult {
+    let cases = [
+        (
+            "opencode:synthetic-hook-order",
+            [
+                serde_json::json!({"session_store_position": 0, "session_sqlite_path": "opencode.db", "store_format": "opencode-part"}),
+                serde_json::json!({"session_store_position": u64::MAX, "session_sqlite_path": "opencode.db", "store_format": "opencode-part"}),
+            ],
+        ),
+        (
+            "claude-code:00000000-0000-4000-8000-0000000000f2",
+            [
+                serde_json::json!({"hook_sequence": 1, "hook_producer": "producer"}),
+                serde_json::json!({"hook_sequence": u64::MAX, "hook_producer": "producer"}),
+            ],
+        ),
+    ];
+    for (key, [first_meta, second_meta]) in cases {
+        let key = key.parse()?;
+        let mut first = row(2, Role::User, "observed first");
+        first.metadata = Some(JsonObject::from_serialize(&first_meta)?);
+        let mut second = row(1, Role::User, "observed second");
+        second.metadata = Some(JsonObject::from_serialize(&second_meta)?);
+        capture_session_fixture(memory, &key, vec![second, first]).await?;
+
+        let head = catalog
+            .messages(&key, &MessagesQuery::new(None, Some(1)))
+            .await?;
+        let tail = catalog
+            .messages(&key, &MessagesQuery::new(head.next, Some(1)))
+            .await?;
+        let panel: Vec<_> = head
+            .items
+            .into_iter()
+            .chain(tail.items)
+            .map(|row| row.content)
+            .collect();
+        let conversation = catalog
+            .get(&key)
+            .await?
+            .and_then(|row| row.conversation)
+            .ok_or("conversation ID")?;
+        let summary = summaries
+            .conversation(conversation)
+            .await?
+            .ok_or("summary window")?;
+        let summary: Vec<_> = summary
+            .messages
+            .into_iter()
+            .map(|message| message.content)
+            .collect();
+        assert_eq!(panel, ["observed first", "observed second"]);
+        assert_eq!(summary, panel);
+    }
+    Ok(())
+}

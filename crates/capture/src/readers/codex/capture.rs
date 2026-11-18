@@ -97,6 +97,8 @@ struct Pointer<'a> {
     source: &'static str,
     session_jsonl_path: &'a str,
     session_jsonl_line: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_use_id: Option<&'a str>,
 }
 
 struct Row {
@@ -157,7 +159,14 @@ pub(super) fn map_rollout(
                     tool_name: row.tool_name,
                     tool_args: row.tool_args,
                     tool_result: row.tool_result,
-                    metadata: Some(pointer(&file, number)?),
+                    metadata: Some(pointer(
+                        &file,
+                        number,
+                        (row.role == Role::Tool)
+                            .then_some(payload.call_id.as_deref())
+                            .flatten()
+                            .filter(|id| !id.is_empty()),
+                    )?),
                     created_at: line.timestamp,
                 });
             }
@@ -301,11 +310,16 @@ fn result_text(raw: &RawValue) -> Result<String, TranscriptReaderError> {
     Ok(lenient::<String>(raw)?.unwrap_or_else(|| raw.get().to_owned()))
 }
 
-fn pointer(file: &str, number: u64) -> Result<JsonObject, TranscriptReaderError> {
+fn pointer(
+    file: &str,
+    number: u64,
+    tool_use_id: Option<&str>,
+) -> Result<JsonObject, TranscriptReaderError> {
     JsonObject::from_serialize(&Pointer {
         source: SOURCE,
         session_jsonl_path: file,
         session_jsonl_line: number,
+        tool_use_id,
     })
     .map_err(encoding)
 }
