@@ -194,8 +194,8 @@ async fn file_fleet(memory: &PostgresMemory) -> TestResult {
     )
     .bind(leaf.id)
     .bind(&leaf.content)
-    .bind(leaf.start)
-    .bind(leaf.end)
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.start))
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.end))
     .execute(memory.pool())
     .await?;
     memory

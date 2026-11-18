@@ -34,9 +34,12 @@ pub struct MemorySummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-    pub earliest_at: Option<DateTime<Utc>>,
-    pub latest_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub earliest_at: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub latest_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
     pub summary_ordinal: Option<u32>,
     pub source_first: Option<u32>,
     pub source_last: Option<u32>,

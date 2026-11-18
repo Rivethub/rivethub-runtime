@@ -72,7 +72,8 @@ pub struct WikiSummary {
     #[serde(skip)]
     pub owner: Option<Owner>,
     #[serde(skip)]
-    pub created_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
     #[serde(skip)]
     pub delivery: Option<SummaryDelivery>,
 }

@@ -140,11 +140,11 @@ pub(crate) fn push_time_conditions(
     let time = table.time();
     if let Some(since) = options.since {
         query.push(format!(" AND {time} >= "));
-        query.push_bind(since);
+        query.push_bind(crate::time::BindTime::bind_time(since));
     }
     if let Some(before) = options.before {
         query.push(format!(" AND {time} < "));
-        query.push_bind(before);
+        query.push_bind(crate::time::BindTime::bind_time(before));
     }
 }
 
@@ -344,8 +344,10 @@ pub(crate) struct ArmSqlRow {
     conversation_id: Option<String>,
     session_id: Option<String>,
     session_channel: Option<String>,
-    created_at: chrono::DateTime<Utc>,
-    newest: Option<chrono::DateTime<Utc>>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    newest: Option<Timestamp>,
     score: f64,
     semantic: f64,
     age_days: f64,

@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -5,7 +7,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use capture::spool::CaptureSpool;
 use capture::writer::{CaptureTransport, CaptureWriter, PostError};
-use chrono::{DateTime, TimeDelta, Utc};
 use parking_lot::Mutex;
 use wire::capture::{CaptureBatchRequest, CaptureResult};
 
@@ -112,7 +113,7 @@ async fn replay_end_waits_for_backoff_or_ages_out_after_a_dead_predecessor() -> 
             NonZeroUsize::new(950),
             None,
         );
-        let now: DateTime<Utc> = "2026-10-10T12:00:00Z".parse()?;
+        let now: Timestamp = "2026-10-10T12:00:00Z".parse()?;
         assert!(writer.write(&end_batch()?, now).await.is_err());
         assert_eq!(transport.posts.lock().len(), 1);
         let replay = CaptureWriter::new(
@@ -130,7 +131,7 @@ async fn replay_end_waits_for_backoff_or_ages_out_after_a_dead_predecessor() -> 
         } else {
             transport.failures.lock().push_back(network());
             replay.replay(now).await?;
-            replay.replay(now + TimeDelta::seconds(1)).await?;
+            replay.replay(now + SignedDuration::from_secs(1)).await?;
             assert!(
                 transport
                     .posts
@@ -138,7 +139,7 @@ async fn replay_end_waits_for_backoff_or_ages_out_after_a_dead_predecessor() -> 
                     .iter()
                     .all(|batch| batch.finalize.is_none())
             );
-            replay.replay(now + TimeDelta::seconds(31)).await?;
+            replay.replay(now + SignedDuration::from_secs(31)).await?;
         }
         let posts = transport.posts.lock();
         let final_chunk = posts.last().ok_or("final chunk")?;

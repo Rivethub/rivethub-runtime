@@ -314,7 +314,7 @@ fn reject_claim(
     Ok(())
 }
 
-fn release_one(conn: &mut Connection, id: &str, now: DateTime<Utc>) -> Result<(), SqliteError> {
+fn release_one(conn: &mut Connection, id: &str, now: Timestamp) -> Result<(), SqliteError> {
     let tx = crate::summary_replace::immediate(conn).map_err(SqliteError::query("job release"))?;
     let found: Option<(String, String)> = tx
         .query_row(

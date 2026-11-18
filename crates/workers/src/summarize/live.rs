@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use futures::{StreamExt as _, stream};
 use kernel::memory::{
     SummaryKind,
@@ -935,7 +935,7 @@ fn chunk_sources(chunk: &Chunk) -> Vec<Source> {
 
 fn owner_sources(
     row: &PreparedSummaryRecord,
-    times: &BTreeMap<Uuid, DateTime<Utc>>,
+    times: &BTreeMap<Uuid, Timestamp>,
 ) -> Result<Vec<Source>, WorkerError> {
     row.sources
         .iter()

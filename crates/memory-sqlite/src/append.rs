@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryEntry;
 use kernel::owner::Owner;
 use rusqlite::Transaction;
@@ -90,7 +89,7 @@ fn append_one(
     tx: &Transaction<'_>,
     entry: &MemoryEntry,
     owner: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(String, String), SqliteError> {
     let key = ConversationKey {
         session_key: entry.session_id.clone(),

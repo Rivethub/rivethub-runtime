@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::summary_reference::{
     PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummaryReferenceError,
     SummarySectionBounds, embedding_input_hash,
@@ -24,7 +24,7 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_ids: old.iter().copied().map(id).collect(),
         expected_revision: None,
         historical,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         retained_parts: Default::default(),
         part_order: Vec::new(),
         passage_windows: Default::default(),
@@ -227,7 +227,7 @@ async fn top_down_references_swap_keeps_receipts_and_remaps_or_deletes_reference
             },
             Vec::new(),
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await;
     assert!(
@@ -274,7 +274,7 @@ async fn top_down_references_wiki_acceptance_and_receipts_commit_together() -> T
                 input: Some(input),
                 ..WikiRouting::default()
             },
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     store
@@ -397,7 +397,7 @@ async fn check_gone(
                 settled: false,
             },
             owner: None,
-            at: Utc::now(),
+            at: Timestamp::now(),
         }])
         .await;
     assert!(
@@ -407,7 +407,7 @@ async fn check_gone(
     let tags = store
         .store_tag_suggestions(TagSuggestionWrite {
             proposed_by: "fixture".to_owned(),
-            at: Utc::now(),
+            at: Timestamp::now(),
             rows: vec![TagSuggestionRow {
                 kind: TagSuggestKind::Add,
                 entity_type: TagEntityType::Summary,
@@ -648,7 +648,7 @@ async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry() -> TestR
     let (_dir, store) = store(None)?;
     seed(&store).await?;
     let before = snapshot(&store).await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let job = ExtractWiki {
         summary_id: id(11),
         conversation_id: Some(id(1)),

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
 use kernel::model::ModelProvider;
 use uuid::Uuid;
@@ -43,7 +43,7 @@ pub(super) async fn prepare_index(
     provider: &dyn ModelProvider,
     embed: EmbedSettings,
     text: &str,
-    sources: &[(usize, DateTime<Utc>)],
+    sources: &[(usize, Timestamp)],
     sections: &[(std::ops::Range<usize>, std::ops::RangeInclusive<usize>)],
 ) -> Result<SummaryIndex, WorkerError> {
     let chunks = crate::embed::split_embed_text(text, 6000)?;
@@ -104,9 +104,7 @@ pub(super) async fn prepare_index(
     Ok(SummaryIndex { passages, pooled })
 }
 
-fn time_bounds(
-    mut times: impl Iterator<Item = DateTime<Utc>>,
-) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+fn time_bounds(mut times: impl Iterator<Item = Timestamp>) -> Option<(Timestamp, Timestamp)> {
     let first = times.next()?;
     Some(times.fold((first, first), |(min, max), at| (min.min(at), max.max(at))))
 }

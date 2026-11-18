@@ -1,4 +1,4 @@
-use chrono::{TimeDelta, Utc};
+use jiff::Timestamp;
 use kernel::memory::settlement::SettleStatus;
 use kernel::memory::{MemoryStore as _, SummaryStore as _};
 use kernel::owner::Owner;
@@ -75,7 +75,10 @@ async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
         .parse()?;
     let historical: Uuid = store
         .capture(
-            batch("cli:past", vec![message("past", "2026-01-02T01:00:00Z")?]),
+            batch(
+                "cli:past",
+                vec![message("past", "2026-01-02T01:00:00.123456789Z")?],
+            ),
             &alice,
             None,
         )
@@ -107,7 +110,8 @@ async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
     assert!(!store.summary_eligible(beat, 1).await?);
     assert!(store.summary_state(historical).await?.is_none());
     assert!(!store.summary_eligible(live, 1).await?);
-    expire(&store, Utc::now() + TimeDelta::minutes(2), 1).await?;
+    expire(&store, Timestamp::now(), 1).await?;
+    testkit::settlement::expiry_boundary(&store, live).await?;
     assert!(store.summary_eligible(live, 1).await?);
     assert!(store.summary_eligible(historical, 0).await?);
     let state = store
@@ -117,7 +121,7 @@ async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
     assert!(state.historical_only);
     assert_eq!(
         state.last_input_at,
-        "2026-01-02T01:00:00Z".parse::<chrono::DateTime<Utc>>()?
+        "2026-01-02T01:00:00.123456Z".parse::<Timestamp>()?
     );
     let promoted = store
         .mark_summary_settled(&historical.to_string(), &alice)
@@ -180,7 +184,7 @@ async fn older_legacy_end_does_not_override_known_activity_and_late_input_clears
         .await?
         .ok_or("first mark")?;
     store
-        .trash_session(key, Some(owner.as_str()), Utc::now())
+        .trash_session(key, Some(owner.as_str()), Timestamp::now())
         .await?;
     assert!(!store.summary_eligible(id, 0).await?);
     store.restore_session(key).await?;

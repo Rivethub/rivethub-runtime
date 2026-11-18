@@ -21,7 +21,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 async fn capture(
     store: &dyn MemoryStore,
     session: &str,
-    rows: Vec<(String, chrono::DateTime<Utc>)>,
+    rows: Vec<(String, Timestamp)>,
 ) -> Result<Uuid, Box<dyn std::error::Error>> {
     let result = store
         .capture(
@@ -87,7 +87,7 @@ async fn run(
         provider: script,
         queue: &queue,
         settings: &settings,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel: &cancel,
     };
     handle_summarize(
@@ -103,8 +103,8 @@ async fn run(
     .await
 }
 
-fn short(text: &str) -> Vec<(String, chrono::DateTime<Utc>)> {
-    vec![(text.to_owned(), Utc::now())]
+fn short(text: &str) -> Vec<(String, Timestamp)> {
+    vec![(text.to_owned(), Timestamp::now())]
 }
 
 async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResult {
@@ -170,12 +170,12 @@ async fn parts_and_late_input(
     store: &(impl SummaryStore + MemoryStore + WikiBuilderStore),
 ) -> TestResult {
     let session = "ledger-parts";
-    let base = Utc::now() - chrono::TimeDelta::days(1);
+    let base = Timestamp::now() - wire::time::elapsed_days(1);
     let rows = (1..=8)
         .map(|index| {
             (
                 format!("Deposit {index} {}", "chestnut ".repeat(1_750)),
-                base + chrono::TimeDelta::minutes(index),
+                base + jiff::SignedDuration::from_mins(index),
             )
         })
         .collect();
@@ -298,7 +298,7 @@ async fn parts_and_late_input(
 
 async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) -> TestResult {
     let session = "ledger-pause";
-    let base = Utc::now() - chrono::TimeDelta::hours(1);
+    let base = Timestamp::now() - jiff::SignedDuration::from_hours(1);
     let id = capture(
         store,
         session,
@@ -306,7 +306,7 @@ async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) ->
             .map(|i| {
                 (
                     format!("Batch {i} {}", "chestnut ".repeat(1_750)),
-                    base + chrono::TimeDelta::minutes(i),
+                    base + jiff::SignedDuration::from_mins(i),
                 )
             })
             .collect(),
@@ -390,7 +390,7 @@ async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) ->
 
 async fn no_rendered_messages(store: &(impl SummaryStore + MemoryStore)) -> TestResult {
     let owner = testkit::owner()?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let id = capture(store, "ledger-empty", short("")).await?;
     let request = settle(store, "ledger-empty").await?;
     let script = Scripted::live();
@@ -414,7 +414,7 @@ async fn no_rendered_messages(store: &(impl SummaryStore + MemoryStore)) -> Test
     assert!(
         settled
             .settled_at
-            .is_some_and(|at| at >= now - chrono::TimeDelta::seconds(1))
+            .is_some_and(|at| at >= now - jiff::SignedDuration::from_secs(1))
     );
     Ok(())
 }
@@ -473,11 +473,11 @@ async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
             repair_job(queue, store.clone(), id).await
         })
         .await?;
-    let passage: (chrono::DateTime<Utc>, chrono::DateTime<Utc>) = sqlx::query_as(
+    let passage: (memory_postgres::time::PgTimestamp, memory_postgres::time::PgTimestamp) = sqlx::query_as(
         "SELECT p.earliest_at, p.latest_at FROM rh_summary_passages p JOIN rh_summaries s ON s.id = p.record_id
          JOIN rh_conversations c ON c.id = s.conversation_id WHERE c.session_key = 'ledger-short' AND s.kind = 'session'"
     ).fetch_one(&pool).await?;
-    assert!(passage.0 <= passage.1);
+    assert!(passage.0.to_jiff() <= passage.1.to_jiff());
     let hits = Scope::Maintenance
         .run(store.search(SearchQuery {
             text: "saffron".into(),
@@ -524,7 +524,7 @@ async fn complete_wiki(
                 input: Some(input),
                 ..WikiRouting::default()
             },
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     assert!(matches!(
@@ -536,14 +536,14 @@ async fn complete_wiki(
 
 async fn entity_once(store: &(impl EntityStore + MemoryStore + SummaryStore)) -> TestResult {
     let session = "ledger-entity";
-    let now = Utc::now();
+    let now = Timestamp::now();
     let id = capture(
         store,
         session,
         vec![
             (
                 "The turquoise tablet is first.".into(),
-                now - chrono::TimeDelta::minutes(1),
+                now - jiff::SignedDuration::from_mins(1),
             ),
             ("The silver tablet is second.".into(), now),
         ],
@@ -581,7 +581,7 @@ async fn entity_once(store: &(impl EntityStore + MemoryStore + SummaryStore)) ->
             expected
         );
         store
-            .finish_entity_delivery(&[anchor], &[], None, Utc::now())
+            .finish_entity_delivery(&[anchor], &[], None, Timestamp::now())
             .await?;
         assert!(matches!(
             store.entity_work(&job).await?,
@@ -600,7 +600,7 @@ async fn contend(store: &(impl SummaryStore + MemoryStore), separate_workers: bo
             .map(|i| {
                 (
                     format!("{name} deposit {i} {}", "juniper ".repeat(1_975)),
-                    Utc::now() + chrono::TimeDelta::milliseconds(i),
+                    Timestamp::now() + jiff::SignedDuration::from_millis(i),
                 )
             })
             .collect()

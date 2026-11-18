@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::time::Duration;
 
-use chrono::Utc;
 use kernel::memory::summary_conversion::{ConversionOutcome, SummaryConversion};
 
 use super::{SummarizeEnv, live};
@@ -36,7 +36,7 @@ pub async fn handle_conversion_tick(
         return Ok(());
     };
     let summary = SummarizeEnv {
-        now: Utc::now(),
+        now: Timestamp::now(),
         ..*env.summary
     };
     let env = live::LiveEnv {

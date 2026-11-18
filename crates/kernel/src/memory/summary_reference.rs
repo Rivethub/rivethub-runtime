@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -32,8 +33,6 @@ pub fn embedding_input_hash(content: &str) -> String {
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
-
 use super::SummaryKind;
 
 #[derive(Debug, Clone)]
@@ -43,7 +42,7 @@ pub struct PreparedSummaryTree {
     pub expected_ids: BTreeSet<Uuid>,
     pub expected_revision: Option<i64>,
     pub historical: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub records: Vec<PreparedSummaryRecord>,
     pub retained_parts: BTreeSet<Uuid>,
     pub part_order: Vec<Uuid>,

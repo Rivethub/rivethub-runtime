@@ -116,7 +116,7 @@ impl Api {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         let id = uuid::Uuid::new_v4();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         self.store
             .write_summary(NewSummary {
                 id,

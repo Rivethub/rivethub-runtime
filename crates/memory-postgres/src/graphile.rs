@@ -421,7 +421,7 @@ pub(crate) async fn enqueue_on<'e>(
     )
     .bind(job.name.to_string())
     .bind(payload)
-    .bind(job.run_at)
+    .bind(crate::time::BindTime::bind_time(job.run_at))
     .bind(match job.max_attempts {
         Some(attempts) => attempts,
         None => attempts_for(&job.name),

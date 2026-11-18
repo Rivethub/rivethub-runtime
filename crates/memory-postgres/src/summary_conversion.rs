@@ -1,4 +1,5 @@
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::{
     SummaryStoreError,
     summary_backend::{SummaryIndexes, SummaryPermit},
@@ -27,7 +28,7 @@ async fn lock(conn: &mut PgConnection) -> Result<(bool, bool), sqlx::Error> {
         .await
 }
 
-async fn inventory(conn: &mut PgConnection, cutoff: DateTime<Utc>) -> Result<(), sqlx::Error> {
+async fn inventory(conn: &mut PgConnection, cutoff: Timestamp) -> Result<(), sqlx::Error> {
     let page: Vec<Uuid> = sqlx::query_scalar(
         "SELECT c.id FROM rh_conversations c CROSS JOIN rh_summary_conversion ctl
          WHERE ctl.inventory_after IS NULL OR c.id > ctl.inventory_after ORDER BY c.id LIMIT $1",
@@ -50,7 +51,7 @@ async fn inventory(conn: &mut PgConnection, cutoff: DateTime<Utc>) -> Result<(),
 async fn measure(
     conn: &mut PgConnection,
     page: &[Uuid],
-    cutoff: DateTime<Utc>,
+    cutoff: Timestamp,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO rh_summary_conversion_items
@@ -83,7 +84,7 @@ async fn measure(
             estimated_tokens = excluded.estimated_tokens, last_input_at = excluded.last_input_at
          WHERE rh_summary_conversion_items.state IN ('pending', 'waiting_quiet')"
     )))
-    .bind(page).bind(cutoff).execute(&mut *conn).await?;
+    .bind(page).bind(crate::time::BindTime::bind_time(cutoff)).execute(&mut *conn).await?;
     Ok(())
 }
 
@@ -115,7 +116,7 @@ async fn valid(conn: &mut PgConnection, lease: ConversionLease) -> Result<bool, 
         crate::summary_backend::ELIGIBLE.replace("$2", "$3")
     )))
     .bind(lease.conversation)
-    .bind(lease.claimed_at)
+    .bind(crate::time::BindTime::bind_time(lease.claimed_at))
     .bind(lease.revision)
     .fetch_one(conn)
     .await
@@ -126,13 +127,18 @@ async fn bucket(conn: &mut PgConnection) -> Result<ConversionBucket, sqlx::Error
         sqlx::query_as("SELECT rate, bucket_tokens, bucket_at FROM rh_summary_conversion")
             .fetch_one(conn)
             .await?;
-    Ok(ConversionBucket { rate, tokens, at })
+    Ok(ConversionBucket {
+        rate,
+        tokens,
+        at: jiff_sqlx::Timestamp::to_jiff(at),
+    })
 }
 
-async fn now(conn: &mut PgConnection) -> Result<DateTime<Utc>, sqlx::Error> {
-    sqlx::query_scalar("SELECT clock_timestamp()")
+async fn now(conn: &mut PgConnection) -> Result<Timestamp, sqlx::Error> {
+    sqlx::query_scalar::<_, jiff_sqlx::Timestamp>("SELECT clock_timestamp()")
         .fetch_one(conn)
         .await
+        .map(jiff_sqlx::Timestamp::to_jiff)
 }
 
 #[async_trait::async_trait]
@@ -229,7 +235,7 @@ impl SummaryConversion for PostgresMemory {
 
     async fn claim(
         &self,
-        inactivity: TimeDelta,
+        inactivity: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         let active: bool = sqlx::query_scalar("SELECT enabled FROM rh_summary_conversion")
@@ -244,7 +250,7 @@ impl SummaryConversion for PostgresMemory {
             return Ok(None);
         }
         let clock = now(&mut tx).await.map_err(error)?;
-        let cutoff = clock - inactivity;
+        let cutoff = clock.checked_sub(inactivity).unwrap_or(Timestamp::MIN);
         if !scanned {
             inventory(&mut tx, cutoff).await.map_err(error)?;
             tx.commit().await.map_err(error)?;
@@ -254,13 +260,13 @@ impl SummaryConversion for PostgresMemory {
             return Ok(None);
         }
         sqlx::query("UPDATE rh_summary_conversion_items SET state = 'pending', reservation_expires_at = NULL
-            WHERE reservation_expires_at <= $1").bind(clock).execute(&mut *tx).await.map_err(error)?;
+            WHERE reservation_expires_at <= $1").bind(crate::time::BindTime::bind_time(clock)).execute(&mut *tx).await.map_err(error)?;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM rh_summary_conversion_items i USING rh_conversations c
              WHERE i.conversation_id = c.id AND i.state IN ('pending','waiting_quiet','failed') AND (NOT ({INCLUDED}) OR EXISTS (
                  SELECT 1 FROM rh_summary_state s WHERE s.conversation_id = c.id AND NOT s.historical_only))"
         ))).execute(&mut *tx).await.map_err(error)?;
-        let candidate: Option<(Uuid, DateTime<Utc>, bool)> = sqlx::query_as(
+        let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool)> = sqlx::query_as(
             "SELECT c.id, i.last_input_at, coalesce(s.last_input_at <> i.last_input_at, false) FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
@@ -275,7 +281,7 @@ impl SummaryConversion for PostgresMemory {
                AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
              ORDER BY (i.estimated_tokens > $2), greatest(i.last_input_at, i.last_used_at) DESC, i.conversation_id
              LIMIT 1 FOR UPDATE OF c SKIP LOCKED"
-        ).bind(cutoff).bind(GIANT_TOKENS).fetch_optional(&mut *tx).await.map_err(error)?;
+        ).bind(crate::time::BindTime::bind_time(cutoff)).bind(GIANT_TOKENS).fetch_optional(&mut *tx).await.map_err(error)?;
         let lease = if let Some((conversation, last_input, input_changed)) = candidate {
             if input_changed {
                 measure(&mut tx, &[conversation], cutoff)
@@ -289,14 +295,16 @@ impl SummaryConversion for PostgresMemory {
                  VALUES ($1, 0, $2, $3, true) ON CONFLICT (conversation_id) DO UPDATE
                  SET settled_at = coalesce(rh_summary_state.settled_at, excluded.settled_at), unsettled_since = NULL
                  RETURNING input_revision"
-            ).bind(conversation).bind(last_input).bind(clock).fetch_one(&mut *tx).await.map_err(error)?;
+            ).bind(conversation).bind(crate::time::BindTime::bind_time(last_input.to_jiff())).bind(crate::time::BindTime::bind_time(clock)).fetch_one(&mut *tx).await.map_err(error)?;
             sqlx::query(
                 "UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = $2,
                         reservation_expires_at = $3 WHERE conversation_id = $1",
             )
             .bind(conversation)
-            .bind(clock)
-            .bind(clock + LEASE)
+            .bind(crate::time::BindTime::bind_time(clock))
+            .bind(crate::time::BindTime::bind_time(
+                clock.checked_add(LEASE).unwrap_or(Timestamp::MAX),
+            ))
             .execute(&mut *tx)
             .await
             .map_err(error)?;
@@ -330,7 +338,7 @@ impl SummaryConversion for PostgresMemory {
                          charged_tokens = charged_tokens + $3",
             )
             .bind(bucket.tokens)
-            .bind(bucket.at)
+            .bind(crate::time::BindTime::bind_time(bucket.at))
             .bind(if admitted { charge.estimate } else { 0 })
             .execute(&mut *tx)
             .await
@@ -341,7 +349,7 @@ impl SummaryConversion for PostgresMemory {
             }
         }
         sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = $2 WHERE conversation_id = $1")
-            .bind(lease.conversation).bind(clock + LEASE).execute(&mut *tx).await.map_err(error)?;
+            .bind(lease.conversation).bind(crate::time::BindTime::bind_time(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))).execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)?;
         Ok(true)
     }
@@ -403,7 +411,7 @@ impl SummaryConversion for PostgresMemory {
         sqlx::query("UPDATE rh_summary_conversion SET bucket_tokens = $1, bucket_at = $2,
                      charged_tokens = charged_tokens + $3 - $4, provider_input_tokens = provider_input_tokens + $3,
                      provider_output_tokens = provider_output_tokens + $5")
-            .bind(bucket.tokens).bind(bucket.at).bind(usage.input).bind(usage.estimate).bind(usage.output)
+            .bind(bucket.tokens).bind(crate::time::BindTime::bind_time(bucket.at)).bind(usage.input).bind(usage.estimate).bind(usage.output)
             .execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)
     }
@@ -426,7 +434,7 @@ impl SummaryConversion for PostgresMemory {
                      WHERE conversation_id = $1 AND next_at = $2 AND state = 'reserved'",
         )
         .bind(lease.conversation)
-        .bind(lease.claimed_at)
+        .bind(crate::time::BindTime::bind_time(lease.claimed_at))
         .bind(state)
         .bind(failure)
         .execute(&mut *tx)

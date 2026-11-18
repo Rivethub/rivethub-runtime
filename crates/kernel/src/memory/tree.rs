@@ -196,7 +196,7 @@ mod tests {
             message_count: 1,
             earliest_at: at,
             latest_at: at,
-            created_at: DateTime::UNIX_EPOCH,
+            created_at: Timestamp::UNIX_EPOCH,
             summary_ordinal: None,
             source_first: None,
             source_last: None,

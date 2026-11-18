@@ -7,7 +7,7 @@ use crate::{Error, PostgresMemory};
 struct TeamSessionRow {
     owner: String,
     session_key: String,
-    recent: chrono::DateTime<chrono::Utc>,
+    recent: jiff_sqlx::Timestamp,
     title: Option<String>,
     summary: Option<String>,
     first_user: Option<String>,
@@ -66,8 +66,8 @@ impl PostgresMemory {
              LEFT JOIN rh_topics t ON t.id = p.topic_id LEFT JOIN rh_topics parent ON parent.id = t.parent_id
              WHERE r.position <= $3 ORDER BY r.owner, r.recent DESC, r.session_key DESC",
         )
-        .bind(since)
-        .bind(before)
+        .bind(crate::time::BindTime::bind_time(since))
+        .bind(crate::time::BindTime::bind_time(before))
         .bind(i64::from(limit))
         .fetch_all(&self.pool).await
         .map_err(|source| Error::operation("team sessions", source))?;

@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use kernel::memory::{MemoryScope, SearchMode};
 use kernel::model::Embedding;
 use testkit::{FakeProvider, Script};
@@ -34,7 +34,7 @@ async fn seed(store: &memory_sqlite::SqliteStore) -> TestResult {
     Ok(())
 }
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn at(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 
@@ -47,7 +47,10 @@ async fn top_down_search_returns_whole_records_and_filters_by_source_time() -> T
         let mut q = query("clementine", mode);
         q.scope = MemoryScope::Summaries;
         q.before = Some(at("2025-01-01T00:00:00Z")?);
-        let hits = store.search_at(q.clone(), now, &Utc).await?.results;
+        let hits = store
+            .search_at(q.clone(), now, &jiff::tz::TimeZone::UTC)
+            .await?
+            .results;
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|hit| hit.passage.is_none()));
         let session_at = at("2024-01-01T00:00:00Z")?;
@@ -60,13 +63,20 @@ async fn top_down_search_returns_whole_records_and_filters_by_source_time() -> T
                 .any(|hit| hit.id == "part" && hit.content == PART && hit.created_at == part_at)
         );
         q.since = q.before.take();
-        let hits = store.search_at(q, now, &Utc).await?.results;
+        let hits = store
+            .search_at(q, now, &jiff::tz::TimeZone::UTC)
+            .await?
+            .results;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits.first().expect("legacy").content, LEGACY);
     }
     assert_eq!(
         store
-            .search_at(query("sectionduplicate", SearchMode::Fts), now, &Utc)
+            .search_at(
+                query("sectionduplicate", SearchMode::Fts),
+                now,
+                &jiff::tz::TimeZone::UTC
+            )
             .await?
             .results,
         []
@@ -83,7 +93,11 @@ async fn top_down_search_scores_whole_pooled_vectors_using_source_recency() -> T
     seed(&store).await?;
     let now = at("2026-01-01T00:00:00Z")?;
     let hits = store
-        .search_at(query("unmatched", SearchMode::Vector), now, &Utc)
+        .search_at(
+            query("unmatched", SearchMode::Vector),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?
         .results;
     assert_eq!(

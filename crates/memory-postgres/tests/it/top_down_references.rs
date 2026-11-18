@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::summary_reference::{
     PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummaryReferenceError,
     SummarySectionBounds, embedding_input_hash,
@@ -25,7 +25,7 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_ids: old.iter().copied().map(id).collect(),
         expected_revision: None,
         historical,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         retained_parts: Default::default(),
         part_order: Vec::new(),
         passage_windows: Default::default(),
@@ -231,7 +231,7 @@ async fn top_down_references_swap_keeps_receipts_and_remaps_or_deletes_reference
             },
             Vec::new(),
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await;
     assert!(
@@ -285,7 +285,7 @@ async fn top_down_references_wiki_acceptance_and_receipts_commit_together(
                         input: Some(input),
                         ..WikiRouting::default()
                     },
-                    Utc::now(),
+                    Timestamp::now(),
                 )
                 .await?;
             store
@@ -375,7 +375,7 @@ async fn top_down_references_entity_acceptance_is_receipted(pool: PgPool) -> Tes
                 [id(2), id(3)]
             );
             store
-                .finish_entity_delivery(&[leaf], &[], None, Utc::now())
+                .finish_entity_delivery(&[leaf], &[], None, Timestamp::now())
                 .await?;
             store
                 .replace_summary_tree(&tree(&[20], 21, &[2, 3], false))
@@ -530,7 +530,7 @@ async fn check_gone(
                 settled: false,
             },
             owner: None,
-            at: Utc::now(),
+            at: Timestamp::now(),
         }])
         .await;
     assert!(
@@ -540,7 +540,7 @@ async fn check_gone(
     let tags = store
         .store_tag_suggestions(TagSuggestionWrite {
             proposed_by: "fixture".to_owned(),
-            at: Utc::now(),
+            at: Timestamp::now(),
             rows: vec![TagSuggestionRow {
                 kind: TagSuggestKind::Add,
                 entity_type: TagEntityType::Summary,
@@ -644,7 +644,7 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
         .lock()
         .await?;
     repository
-        .fold(&mut page, &[], "Invented wiki page", Utc::now())
+        .fold(&mut page, &[], "Invented wiki page", Timestamp::now())
         .await?;
     repository.release().await?;
     let page_path = directory.path().join("topics/valve.md");
@@ -721,7 +721,7 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
             assert!(legacy.contains("The spring is intact."));
             assert!(!legacy.contains(&id(12).to_string()));
             let recompile = store
-                .recompile_source(&slug, Utc::now())
+                .recompile_source(&slug, Timestamp::now())
                 .await?
                 .ok_or("recompile")?;
             assert!(recompile.page.citations.is_empty());
@@ -864,7 +864,7 @@ async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry(pool: PgPo
                         input: Some(input),
                         ..WikiRouting::default()
                     },
-                    Utc::now(),
+                    Timestamp::now(),
                 )
                 .await;
             assert!(matches!(result, Err(error) if error.obsolete_input()));

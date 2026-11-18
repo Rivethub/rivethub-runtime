@@ -1,4 +1,4 @@
-use chrono::TimeDelta;
+use jiff::SignedDuration;
 
 use super::top_down::{
     prompt::session_ceiling,
@@ -9,7 +9,7 @@ use crate::WorkerError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummarySettings {
     pub model: String,
-    pub inactivity: TimeDelta,
+    pub inactivity: SignedDuration,
     pub context_tokens: u32,
     pub model_concurrency: u32,
     pub model_profile: String,
@@ -23,7 +23,7 @@ impl SummarySettings {
         }
         Ok(Self {
             model,
-            inactivity: TimeDelta::minutes(i64::from(
+            inactivity: SignedDuration::from_mins(i64::from(
                 kernel::memory::settlement::DEFAULT_INACTIVITY_MINUTES,
             )),
             context_tokens: FALLBACK_CONTEXT_TOKENS,

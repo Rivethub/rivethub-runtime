@@ -1,8 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
-use chrono::{TimeDelta, Utc};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
@@ -63,7 +64,7 @@ async fn top_down_conversion_local_cli_and_worker() -> TestResult {
     migrate::sqlite(&database)?;
     let conversation = uuid::Uuid::new_v4().to_string();
     let message = uuid::Uuid::new_v4().to_string();
-    let old = (Utc::now() - TimeDelta::days(3)).to_rfc3339();
+    let old = (Timestamp::now() - wire::time::elapsed_days(3)).rfc3339_offset();
     {
         let conn = rusqlite::Connection::open(&database)?;
         conn.execute(

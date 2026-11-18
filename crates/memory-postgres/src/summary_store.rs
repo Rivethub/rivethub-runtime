@@ -270,8 +270,8 @@ impl SummaryStore for PostgresMemory {
     async fn expire_summary_page(
         &self,
         after: Option<Uuid>,
-        cutoff: DateTime<Utc>,
-        now: DateTime<Utc>,
+        cutoff: Timestamp,
+        now: Timestamp,
         limit: u32,
     ) -> Result<SettlementPage, SummaryStoreError> {
         self.expire_settlement(after, cutoff, now, limit)

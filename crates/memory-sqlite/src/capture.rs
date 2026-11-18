@@ -395,7 +395,7 @@ impl PreparedMessage {
         &self,
         tx: &Transaction<'_>,
         target: &Target<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
         before: &mut Option<Vec<crate::settlement::RenderInput>>,
         compare: bool,
     ) -> Result<Outcome, SqliteError> {

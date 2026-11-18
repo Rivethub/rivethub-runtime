@@ -161,7 +161,7 @@ pub(crate) fn freeze(
                      expected_root = excluded.expected_root, manifest = excluded.manifest
                  WHERE rh_summary_runs.revision <= excluded.revision RETURNING id",
                 params![Uuid::new_v4().to_string(), id.to_string(), revision, root.map(|root| root.to_string()),
-                    manifest.to_string(), crate::time::stamp(chrono::Utc::now())], |row| row.get(0)
+                    manifest.to_string(), crate::time::stamp(jiff::Timestamp::now())], |row| row.get(0)
             ).map_err(error)?;
     stored_uuid(id)
 }

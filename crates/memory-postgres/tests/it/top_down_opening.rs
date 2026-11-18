@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::cleanup::CleanupSource as _;
 use kernel::filing::FilingStore as _;
 use kernel::memory::SummaryStore as _;
@@ -80,7 +80,7 @@ async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_write_it(
             &alice,
             &SessionKey::from(&session),
             Some(&Visibility::Space(household()?)),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     let visible = bob

@@ -17,7 +17,8 @@ pub(super) struct ConversationRow {
     channel: String,
     title: Option<String>,
     cwd: Option<String>,
-    last_active: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    last_active: Timestamp,
     opening: String,
     user_turns: i64,
     task_origin: Option<String>,

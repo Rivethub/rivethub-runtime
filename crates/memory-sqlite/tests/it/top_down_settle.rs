@@ -1,4 +1,4 @@
-use chrono::{TimeDelta, Utc};
+use jiff::Timestamp;
 use kernel::memory::settlement::SettleStatus;
 use kernel::memory::{MemoryStore as _, SummaryStore as _};
 use memory_sqlite::SqliteStore;
@@ -28,7 +28,7 @@ async fn result_fills_and_persistence() -> TestResult {
     let home = tempfile::tempdir()?;
     let path = home.path().join("memory.sqlite");
     let alice = testkit::owner()?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut tool = message("blade", "2026-01-02T01:00:00Z")?;
     tool.role = Role::Tool;
     tool.tool_name = Some("test-tool".to_owned());
@@ -102,7 +102,7 @@ async fn historical_and_live_expiry_across_pages() -> TestResult {
     let home = tempfile::tempdir()?;
     let local = store(&home.path().join("memory.sqlite"))?;
     let alice = testkit::owner()?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let live: Uuid = local
         .capture(
             batch("cli:live", vec![message("live", "2026-01-02T01:00:00Z")?]),
@@ -115,7 +115,10 @@ async fn historical_and_live_expiry_across_pages() -> TestResult {
         .parse()?;
     let historical: Uuid = local
         .capture(
-            batch("cli:past", vec![message("past", "2026-01-02T01:00:00Z")?]),
+            batch(
+                "cli:past",
+                vec![message("past", "2026-01-02T01:00:00.123456789Z")?],
+            ),
             &alice,
             None,
             now,
@@ -139,9 +142,56 @@ async fn historical_and_live_expiry_across_pages() -> TestResult {
     assert!(state.historical_only);
     assert_eq!(
         state.last_input_at,
-        "2026-01-02T01:00:00Z".parse::<chrono::DateTime<Utc>>()?
+        "2026-01-02T01:00:00.123Z".parse::<Timestamp>()?
     );
-    expire(&local, now + TimeDelta::minutes(2), 1).await?;
+    testkit::settlement::expiry_boundary(&local, live).await?;
     assert!(local.summary_eligible(live, 1).await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn settlement_reads_legacy_text_with_its_original_precision() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let path = home.path().join("memory.sqlite");
+    let local = store(&path)?;
+    let now: Timestamp = "2026-01-02T01:00:00.123456789Z".parse()?;
+    let id: Uuid = local
+        .capture(
+            batch(
+                "cli:legacy-stamps",
+                vec![message("legacy", "2026-01-02T01:00:00Z")?],
+            ),
+            &testkit::owner()?,
+            None,
+            now,
+        )
+        .await?
+        .conversation_id
+        .parse()?;
+    assert_eq!(
+        local
+            .summary_state(id)
+            .await?
+            .ok_or("captured state")?
+            .last_input_at,
+        "2026-01-02T01:00:00.123Z".parse::<Timestamp>()?,
+    );
+    let conn = rusqlite::Connection::open(path)?;
+    conn.execute(
+        "UPDATE rh_summary_state SET last_input_at = '2026-01-02T02:00:00+01:00',
+                last_observed_event_at = '2026-01-02T01:00:00.123456789Z' WHERE conversation_id = ?1",
+        [id.to_string()],
+    )?;
+    let state = local.summary_state(id).await?.ok_or("legacy state")?;
+    assert_eq!(
+        state.last_input_at,
+        "2026-01-02T01:00:00Z".parse::<Timestamp>()?
+    );
+    assert_eq!(state.last_observed_event_at, Some(now));
+    conn.execute(
+        "UPDATE rh_summary_state SET last_input_at = '9999-12-31T00:00:01Z' WHERE conversation_id = ?1",
+        [id.to_string()],
+    )?;
+    assert!(local.summary_state(id).await.is_err());
     Ok(())
 }

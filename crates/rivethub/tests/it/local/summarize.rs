@@ -1,8 +1,5 @@
-use jiff::SignedDuration;
-use jiff::Timestamp;
 use std::path::Path;
 use std::time::Duration;
-use wire::time::TimestampFormat as _;
 
 use rusqlite::OptionalExtension as _;
 
@@ -81,7 +78,7 @@ async fn local_publish(multipart: bool) -> TestResult {
     std::fs::create_dir_all(home.join(".rivethub"))?;
     migrate::sqlite(&database)?;
     let store = memory_sqlite::SqliteStore::open(&database)?;
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let messages = (0..if multipart { 6 } else { 1 })
         .map(|position| kernel::memory::MemoryEntry {
             id: None,
@@ -98,7 +95,7 @@ async fn local_publish(multipart: bool) -> TestResult {
             tool_args: None,
             tool_result: None,
             metadata: None,
-            created_at: Some(now + chrono::TimeDelta::milliseconds(position)),
+            created_at: Some(now + jiff::SignedDuration::from_millis(position)),
             provenance: None,
         })
         .collect();

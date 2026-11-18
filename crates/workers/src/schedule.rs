@@ -84,7 +84,7 @@ pub(crate) async fn run(
 
 pub(crate) async fn run_summary_expiry(
     store: &dyn kernel::memory::SummaryStore,
-    inactivity: chrono::TimeDelta,
+    inactivity: jiff::SignedDuration,
     cancel: &CancellationToken,
 ) {
     let mut ticks = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
@@ -95,8 +95,8 @@ pub(crate) async fn run_summary_expiry(
             () = cancel.cancelled() => return,
             _ = ticks.tick() => {}
         }
-        let now = Utc::now();
-        let Some(cutoff) = now.checked_sub_signed(inactivity) else {
+        let now = Timestamp::now();
+        let Ok(cutoff) = now.checked_sub(inactivity) else {
             tracing::error!("summary inactivity cutoff is outside the supported date range");
             return;
         };

@@ -894,7 +894,7 @@ async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn st
             batch(key, vec![message("entry", "2026-01-01T00:00:00Z")?]),
             &owner,
             None,
-            chrono::Utc::now(),
+            jiff::Timestamp::now(),
         )
         .await?;
     let id = captured.conversation_id.parse()?;

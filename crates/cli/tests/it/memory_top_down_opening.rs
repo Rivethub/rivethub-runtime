@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::{sync::Arc, time::Duration};
 
-use chrono::Utc;
 use kernel::filing::FilingStore as _;
 use kernel::memory::{CaptureBatchRequest, CaptureMessage, SummaryStore as _};
 use kernel::model::{FinishReason, LlmResponse, LlmResponseKind, ModelRequest};
@@ -27,7 +27,7 @@ async fn active_capture_titles_and_files_before_the_first_leaf_and_recovers_lost
     migrate::sqlite(&path)?;
     let store = Arc::new(SqliteStore::open(&path)?);
     let owner = testkit::owner()?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let topic = store
         .create(testkit::topics::new_topic("Release planning", &[], None)?)
         .await?;

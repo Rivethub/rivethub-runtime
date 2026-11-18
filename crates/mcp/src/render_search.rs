@@ -303,7 +303,7 @@ fn passage_summary(
     ordinal: u32,
     expand: bool,
     origin: Option<&Provenance>,
-    clock: Clock,
+    clock: Clock<'_>,
 ) -> Result<String, Error> {
     let tags = summary_tags(detail);
     let lead = format!(

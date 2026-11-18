@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use jiff::Timestamp;
 use serde::Deserialize;
 use sqlx::{PgConnection, Postgres, QueryBuilder, types::Json};
 use uuid::Uuid;
@@ -52,12 +52,12 @@ pub(crate) async fn capped_candidates(
         return Ok(None);
     }
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut candidates: Vec<Uuid> = Vec::with_capacity(RANK_CAP);
     let mut upper = None;
     let bounds = SLICE_DAYS
         .iter()
-        .map(|days| Some(now - Duration::days(*days)))
+        .map(|days| Some(now - wire::time::elapsed_days(*days)))
         .chain(std::iter::once(None));
     for lower in bounds {
         let remaining = RANK_CAP - candidates.len();

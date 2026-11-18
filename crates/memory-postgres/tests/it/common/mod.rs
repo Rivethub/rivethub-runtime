@@ -43,8 +43,8 @@ pub(crate) async fn seed_entity_leaf(
     .bind(leaf.conversation_id)
     .bind(&leaf.content)
     .bind(leaf.owner.as_deref())
-    .bind(leaf.start)
-    .bind(leaf.end)
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.start))
+    .bind(memory_postgres::time::PgTimestamp::from(leaf.end))
     .execute(pool)
     .await
     .map(drop)

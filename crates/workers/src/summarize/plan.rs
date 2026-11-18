@@ -1,7 +1,8 @@
+use jiff::Timestamp;
 use std::fmt::Write as _;
 use std::ops::Range;
+use wire::time::LegacyStrftime as _;
 
-use chrono::{DateTime, Utc};
 use kernel::memory::MemoryEntry;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -12,11 +13,13 @@ use wire::message::Role;
 use super::prompt::{self, Mode, Prompt};
 use super::settings::{CARRY_CEILING, Limits};
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Source {
     pub(crate) id: Uuid,
     pub(crate) ordinal: usize,
-    pub(crate) created_at: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) created_at: Timestamp,
     pub(crate) render_key: [u8; 32],
 }
 
@@ -59,7 +62,7 @@ pub(crate) fn render(ordered: &[MemoryEntry]) -> Result<Vec<Block>, PlanError> {
             .ok_or(PlanError::MissingSource)?;
         let ordinal = blocks.len() + 1;
         let tag = tag(ordinal);
-        let stamp = created_at.format("%Y-%m-%d %H:%M");
+        let stamp = created_at.legacy_strftime("%Y-%m-%d %H:%M");
         let mut text = String::new();
         let mut untagged = Sha256::new();
         let mut line = |header: &str, body: &str| {

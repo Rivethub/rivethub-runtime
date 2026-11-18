@@ -21,9 +21,9 @@ use wire::message::Role;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchOptions {
-    pub(crate) since: Option<DateTime<Utc>>,
+    pub(crate) since: Option<Timestamp>,
     pub(crate) summary_index_key: Option<[u8; 32]>,
-    pub(crate) before: Option<DateTime<Utc>>,
+    pub(crate) before: Option<Timestamp>,
     pub(crate) text: String,
     pub(crate) mode: SearchMode,
     pub(crate) scope: MemoryScope,
@@ -113,8 +113,8 @@ pub(crate) struct ArmRow {
     pub(crate) tool_name: Option<String>,
     pub(crate) conversation_id: Option<String>,
     pub(crate) session_id: Option<String>,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) newest: Option<DateTime<Utc>>,
+    pub(crate) created_at: Timestamp,
+    pub(crate) newest: Option<Timestamp>,
     pub(crate) arm_score: f64,
     pub(crate) semantic: f64,
     pub(crate) boost: f64,

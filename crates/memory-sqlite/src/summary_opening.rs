@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::filing::Filable;
 use kernel::memory::summary_opening::{OpeningConsumer, opening_text};
 use kernel::memory::summary_order::{MessagePosition, order_messages};
@@ -16,15 +16,11 @@ use crate::{SqliteError, SqliteStore};
 struct Turn {
     role: Role,
     metadata: Option<JsonObject>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     content: String,
 }
 
-pub(crate) fn refresh(
-    conn: &Connection,
-    id: &str,
-    now: DateTime<Utc>,
-) -> Result<bool, SqliteError> {
+pub(crate) fn refresh(conn: &Connection, id: &str, now: Timestamp) -> Result<bool, SqliteError> {
     let Some(content) = projection(conn, id)? else {
         return Ok(false);
     };
@@ -106,7 +102,7 @@ fn projection(conn: &Connection, id: &str) -> Result<Option<String>, SqliteError
 
 impl SqliteStore {
     pub(crate) async fn undelivered_openings(&self) -> Result<Vec<Job>, SqliteError> {
-        let expired = crate::time::stamp(self.now() - chrono::TimeDelta::hours(4));
+        let expired = crate::time::stamp(self.now() - jiff::SignedDuration::from_hours(4));
         self.with_conn(move |conn| {
             conn.execute(
                 "DELETE FROM ros_jobs

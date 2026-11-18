@@ -2,14 +2,15 @@ use super::SummaryStoreError;
 use super::summary_backend::{SummaryIndexes, SummaryPermit};
 use super::summary_reference::PreparedSummaryTree;
 use async_trait::async_trait;
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use serde::Serialize;
 use uuid::Uuid;
 
 pub const GIANT_TOKENS: i64 = 1_000_000;
 pub const DEFAULT_RATE: i64 = 200_000;
 pub const INVENTORY_PAGE_SIZE: i64 = 200;
-pub const LEASE: TimeDelta = TimeDelta::minutes(20);
+pub const LEASE: SignedDuration = SignedDuration::from_mins(20);
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConversionControl {
@@ -70,7 +71,7 @@ impl ConversionProgress {
 pub struct ConversionLease {
     pub conversation: Uuid,
     pub revision: i64,
-    pub claimed_at: DateTime<Utc>,
+    pub claimed_at: Timestamp,
 }
 
 #[derive(Debug)]
@@ -104,7 +105,7 @@ pub trait SummaryConversion: Send + Sync {
     #[doc(hidden)]
     async fn claim(
         &self,
-        inactivity: TimeDelta,
+        inactivity: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError>;
 
     #[doc(hidden)]
@@ -152,13 +153,13 @@ pub trait SummaryConversion: Send + Sync {
 pub struct ConversionBucket {
     pub rate: i64,
     pub tokens: f64,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[expect(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 impl ConversionBucket {
-    pub fn debit(&mut self, charge: ConversionCharge, now: DateTime<Utc>) -> bool {
-        let elapsed = (now - self.at).num_milliseconds().max(0);
+    pub fn debit(&mut self, charge: ConversionCharge, now: Timestamp) -> bool {
+        let elapsed = (now - self.at).as_millis().max(0);
         let capacity = self.rate.max(charge.capacity).max(charge.estimate) as f64;
         let tokens = (self.tokens + elapsed as f64 * self.rate as f64 / 60_000.0).min(capacity);
         if now < self.at {
@@ -187,8 +188,8 @@ impl ConversionBucket {
         let delay = (deficit * 60_000.0 / self.rate as f64).ceil() as i64;
         self.at = self
             .at
-            .checked_add_signed(TimeDelta::milliseconds(delay.min(i64::MAX / 2)))
-            .unwrap_or(DateTime::<Utc>::MAX_UTC);
+            .checked_add(SignedDuration::from_millis(delay.min(i64::MAX / 2)))
+            .unwrap_or(Timestamp::MAX);
     }
 }
 
@@ -224,5 +225,38 @@ impl ConversionRehearsal {
         let counts = self.tables.entry(name).or_default();
         counts.remapped += remapped;
         counts.deleted += total - remapped;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConversionBucket, ConversionCharge};
+    use jiff::{SignedDuration, Timestamp};
+
+    #[test]
+    fn conversion_bucket_refills_in_whole_milliseconds_and_caps_large_intervals() {
+        let start = Timestamp::UNIX_EPOCH;
+        let mut bucket = ConversionBucket {
+            rate: 60_000,
+            tokens: 2.0,
+            at: start,
+        };
+        let charge = ConversionCharge {
+            estimate: 1,
+            capacity: 60_000,
+        };
+
+        assert!(bucket.debit(charge, start));
+        assert_eq!(bucket.tokens.to_bits(), 1.0_f64.to_bits());
+        let submillisecond = start + SignedDuration::from_micros(999);
+        assert!(bucket.debit(charge, submillisecond));
+        assert_eq!(bucket.tokens.to_bits(), 0.0_f64.to_bits());
+        assert!(!bucket.debit(charge, start));
+        assert!(!bucket.debit(charge, submillisecond));
+        let delayed = submillisecond + SignedDuration::from_millis(1);
+        assert_eq!(bucket.at, delayed);
+        assert!(bucket.debit(charge, delayed));
+        assert!(bucket.debit(charge, Timestamp::MAX));
+        assert_eq!(bucket.tokens.to_bits(), 59_999.0_f64.to_bits());
     }
 }

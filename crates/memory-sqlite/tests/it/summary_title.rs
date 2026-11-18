@@ -181,7 +181,12 @@ async fn capture_keeps_one_opening_and_reorders_it_when_the_start_arrives() -> T
     let earlier = batch(2, "Fix the queue receipt")?;
     fresh
         .store
-        .capture(earlier, &owner, None, now + chrono::TimeDelta::seconds(1))
+        .capture(
+            earlier,
+            &owner,
+            None,
+            now + jiff::SignedDuration::from_secs(1),
+        )
         .await?;
     let duplicate = fresh.store.capture(later, &owner, None, now).await?;
     assert_eq!(duplicate.inserted, 0);

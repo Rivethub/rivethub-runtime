@@ -13,6 +13,7 @@ use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
 use wire::session_id::SessionKey;
+use wire::time::TimestampFormat as _;
 
 use crate::topics::at;
 
@@ -262,11 +263,8 @@ pub async fn inserting_before_the_cursor_requires_restarting_the_session(
     )
     .await?;
     let first = first_cursor(catalog, &key).await?;
-    let legacy = MessageCursor::decode(&format!(
-        "{}.{}",
-        first.created_at.timestamp_micros(),
-        first.id
-    ))?;
+    let legacy =
+        MessageCursor::decode(&format!("{}.{}", first.created_at.epoch_micros(), first.id))?;
     assert_cursor_error(catalog, &key, legacy).await;
     let second = catalog
         .messages(&key, &MessagesQuery::new(None, Some(2)))

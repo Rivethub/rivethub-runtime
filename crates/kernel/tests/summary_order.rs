@@ -1,6 +1,6 @@
 #![cfg(test)]
+use jiff::Timestamp;
 
-use chrono::{DateTime, Utc};
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use values::JsonObject;
@@ -8,7 +8,7 @@ use values::Role;
 
 struct Row {
     id: u8,
-    stamp: DateTime<Utc>,
+    stamp: Timestamp,
     role: Role,
     metadata: JsonObject,
 }
@@ -16,7 +16,7 @@ struct Row {
 fn row(id: u8, stamp: i64, role: Role, metadata: &str) -> Row {
     Row {
         id,
-        stamp: DateTime::from_timestamp(stamp, 0).unwrap(),
+        stamp: Timestamp::new(stamp, 0).unwrap(),
         role,
         metadata: serde_json::from_str(metadata).unwrap(),
     }
@@ -233,7 +233,15 @@ fn out_of_range_cursor_timestamps_are_errors() {
     use kernel::memory::MessageCursor;
     use uuid::Uuid;
 
-    for micros in [i64::MIN, i64::MAX] {
+    use values::time::TimestampFormat as _;
+
+    let min = Timestamp::MIN.epoch_micros();
+    let max = Timestamp::MAX.epoch_micros();
+    for micros in [min, max] {
+        let encoded = format!("{micros}.{}", Uuid::nil());
+        assert_eq!(MessageCursor::decode(&encoded).unwrap().encode(), encoded);
+    }
+    for micros in [i64::MIN, min - 1, max + 1, i64::MAX] {
         let encoded = format!("{micros}.{}", Uuid::nil());
         let error = MessageCursor::decode(&encoded).expect_err("out-of-range cursor time");
         assert_eq!(

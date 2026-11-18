@@ -71,7 +71,7 @@ pub trait EntityStore: Send + Sync {
         leaves: &[EntityLeaf],
         slugs: &[String],
         git_sha: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         let ids: Vec<_> = leaves.iter().map(|leaf| leaf.id).collect();
         self.finish_entities(&ids, slugs, git_sha, now).await

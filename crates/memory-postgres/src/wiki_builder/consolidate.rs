@@ -180,7 +180,7 @@ async fn retire(
     tx: &mut Transaction<'_, Postgres>,
     child: &str,
     parent: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     live: &[uuid::Uuid],
 ) -> Result<(), WikiStoreError> {
     for statement in [

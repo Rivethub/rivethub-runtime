@@ -170,8 +170,8 @@ pub trait SummaryStore: Send + Sync {
     async fn expire_summary_page(
         &self,
         _after: Option<Uuid>,
-        _cutoff: DateTime<Utc>,
-        _now: DateTime<Utc>,
+        _cutoff: Timestamp,
+        _now: Timestamp,
         _limit: u32,
     ) -> Result<super::settlement::SettlementPage, SummaryStoreError> {
         Ok(super::settlement::SettlementPage {

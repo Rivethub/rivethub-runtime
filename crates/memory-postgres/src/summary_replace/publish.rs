@@ -431,7 +431,7 @@ async fn insert_record(
         .bind(record.section.as_ref().map(|bounds| bounds.verified))
         .bind(first)
         .bind(last)
-        .bind(tree.created_at)
+        .bind(crate::time::BindTime::bind_time(tree.created_at))
         .bind(&members)
         .execute(&mut *conn)
         .await
@@ -533,8 +533,8 @@ async fn write_index(
         .bind(row.id)
         .bind(ordinal)
         .bind(vector)
-        .bind(passage.earliest_at)
-        .bind(passage.latest_at)
+        .bind(crate::time::BindTime::bind_time(passage.earliest_at))
+        .bind(crate::time::BindTime::bind_time(passage.latest_at))
         .execute(&mut *conn)
         .await
         .map_err(query)?

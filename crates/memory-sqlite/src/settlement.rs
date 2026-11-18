@@ -1,10 +1,11 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::memory::settlement::{
     SETTLEMENT_PAGE_SIZE, SettleResult, SettleStatus, SettlementPage, SummaryState,
 };
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use uuid::Uuid;
 use wire::capture::SessionObservation;
+use wire::time::TimestampFormat as _;
 
 use crate::summary_port::parse_id;
 use crate::{SqliteError, SqliteStore, time};
@@ -13,7 +14,7 @@ pub(crate) const INCLUDED: &str = "c.session_key NOT LIKE 'heartbeat:%'
     AND NOT EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key)
     AND NOT EXISTS (SELECT 1 FROM rh_session_tombstones t WHERE t.session_key = c.session_key)";
 
-fn seed(conn: &Connection, id: &str, fresh: Option<DateTime<Utc>>) -> Result<(), SqliteError> {
+fn seed(conn: &Connection, id: &str, fresh: Option<Timestamp>) -> Result<(), SqliteError> {
     let last = match fresh {
         Some(at) => at,
         None => {
@@ -104,8 +105,8 @@ fn save(conn: &Connection, state: &SummaryState) -> Result<(), SqliteError> {
     Ok(())
 }
 
-fn observation_stamp(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+fn observation_stamp(at: Timestamp) -> String {
+    at.rfc3339_nanos()
 }
 
 pub(crate) fn prior_observation(
@@ -136,7 +137,7 @@ pub(crate) fn prior_observation(
 pub(crate) fn record_capture(
     conn: &Connection,
     id: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     changed: bool,
     imported: bool,
     observation: Option<&SessionObservation>,
@@ -242,8 +243,8 @@ impl SqliteStore {
     pub(crate) async fn expire_settlement(
         &self,
         after: Option<Uuid>,
-        cutoff: DateTime<Utc>,
-        now: DateTime<Utc>,
+        cutoff: Timestamp,
+        now: Timestamp,
         limit: u32,
     ) -> Result<SettlementPage, SqliteError> {
         let limit = limit.clamp(1, SETTLEMENT_PAGE_SIZE);
@@ -282,7 +283,7 @@ impl SqliteStore {
     }
 }
 
-fn seed_recent(conn: &Connection, cutoff: DateTime<Utc>, limit: u32) -> Result<(), SqliteError> {
+fn seed_recent(conn: &Connection, cutoff: Timestamp, limit: u32) -> Result<(), SqliteError> {
     let mut query = conn
         .prepare(&format!(
             "SELECT c.id FROM ros_conversations c
@@ -331,7 +332,7 @@ pub(crate) fn rendered_inputs(
         render: Option<RenderInput>,
         role: Role,
         metadata: Option<JsonObject>,
-        created_at: DateTime<Utc>,
+        created_at: Timestamp,
     }
 
     let mut statement = conn

@@ -42,7 +42,7 @@ impl PostgresMemory {
         let Some((content, input_key)) = row else {
             return Ok(None);
         };
-        let sources = sqlx::query_as(
+        let sources: Vec<(i32, jiff_sqlx::Timestamp)> = sqlx::query_as(
             "SELECT l.ordinal, m.created_at FROM rh_summary_sources l
              JOIN rh_messages m ON m.id = l.message_id WHERE l.summary_id = $1 ORDER BY l.ordinal",
         )
@@ -73,7 +73,10 @@ impl PostgresMemory {
             id,
             content,
             input_key,
-            sources,
+            sources: sources
+                .into_iter()
+                .map(|(ordinal, at)| (ordinal, at.to_jiff()))
+                .collect(),
             sections,
         }))
     }
@@ -138,7 +141,7 @@ async fn insert_passages(
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
         ).bind(Uuid::new_v4()).bind(id).bind(i32::try_from(ordinal).map_err(error)?)
             .bind(piece.chars.start).bind(piece.chars.end).bind(piece.content)
-            .bind(piece.earliest_at).bind(piece.latest_at).bind(key.as_slice())
+            .bind(crate::time::BindTime::bind_time(piece.earliest_at)).bind(crate::time::BindTime::bind_time(piece.latest_at)).bind(key.as_slice())
             .bind(pgvector::HalfVector::from_f32_slice(&piece.vector))
             .execute(&mut *conn).await.map_err(error)?;
     }

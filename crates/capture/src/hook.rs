@@ -307,7 +307,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         &self,
         payload: &HookPayload,
         session: &SessionId,
-        now: DateTime<Utc>,
+        now: Timestamp,
         ingest_key: &str,
     ) -> HookRun {
         let Some(prompt) = payload

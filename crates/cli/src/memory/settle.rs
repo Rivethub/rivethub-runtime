@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use wire::time::TimestampFormat as _;
 
 use config::Environment;
 use kernel::memory::MemoryStore;
@@ -74,7 +75,7 @@ pub(super) async fn run(args: Args, env: &Environment) -> Result<Report, Error> 
     };
     let at = result
         .settled_at
-        .map(|at| format!(" at {}", at.to_rfc3339()))
+        .map(|at| format!(" at {}", at.rfc3339_offset()))
         .unwrap_or_default();
     Ok(Report::success(format!(
         "{} revision {} {status}{at}\n",

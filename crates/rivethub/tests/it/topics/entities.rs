@@ -306,7 +306,7 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
     assert!(pinned.conflict.is_none(), "your fact resolves the conflict");
     api.store
         .assert_facts(&[NewClaim {
-            at: Utc::now() + TimeDelta::hours(1),
+            at: Timestamp::now() + SignedDuration::from_hours(1),
             ..said(&api, &host, "address", "192.0.2.77", FIRST, 0).await?
         }])
         .await?;

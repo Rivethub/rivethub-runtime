@@ -299,7 +299,7 @@ impl EntityStore for PostgresMemory {
         leaves: &[EntityLeaf],
         slugs: &[String],
         git_sha: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         let ids: Vec<_> = leaves.iter().map(|leaf| leaf.id).collect();
         finish(self, &ids, leaves, slugs, git_sha, now).await
@@ -319,7 +319,7 @@ impl EntityStore for PostgresMemory {
             .bind(summary_id)
             .bind(ENTITY_PIPELINE_VERSION)
             .bind(error)
-            .bind(now)
+            .bind(crate::time::BindTime::bind_time(now))
             .execute(&mut *tx)
             .await
             .map_err(query_error)?;
@@ -406,7 +406,7 @@ impl EntityStore for PostgresMemory {
             .bind(decision.confidence)
             .bind(&decision.model)
             .bind(decision.entity_id)
-            .bind(now)
+            .bind(crate::time::BindTime::bind_time(now))
             .execute(&mut *tx)
             .await
             .map_err(query_error)?;
@@ -455,7 +455,7 @@ impl EntityStore for PostgresMemory {
             .bind(confidence)
             .bind(reason)
             .bind(hold_payload(prepared))
-            .bind(now)
+            .bind(crate::time::BindTime::bind_time(now))
             .execute(&mut *tx)
             .await
             .map_err(query_error)?;
@@ -647,7 +647,7 @@ async fn finish(
     leaves: &[EntityLeaf],
     slugs: &[String],
     git_sha: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), EntityStoreError> {
     let mut tx = store.pool.begin().await.map_err(query_error)?;
     let inputs = summary_replace::shared(&mut tx, ids)
@@ -665,7 +665,7 @@ async fn finish(
             .bind(ENTITY_PIPELINE_VERSION)
             .bind(slugs)
             .bind(git_sha)
-            .bind(now)
+            .bind(crate::time::BindTime::bind_time(now))
             .execute(&mut *tx)
             .await
             .map_err(query_error)?;

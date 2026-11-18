@@ -527,13 +527,18 @@ async fn out_of_range_stored_session_timestamp_returns_an_error(pool: PgPool) ->
     let seeded = session_catalog::seed(&memory).await?;
     let conversation = conversation(&pool, &seeded.alpha).await?;
     let key = SessionKey::from(&seeded.alpha);
-    for metadata in ["{}", r#"{"session_jsonl_line":0}"#] {
-        sqlx::query("UPDATE rh_messages SET created_at = 'infinity', metadata = $2::jsonb WHERE conversation_id = $1")
-            .bind(conversation).bind(metadata).execute(&pool).await?;
-        let page = memory
-            .messages(&key, &MessagesQuery::new(None, Some(1)))
-            .await;
-        assert!(matches!(page, Err(MemoryStoreError::Query { .. })));
+    for stamp in ["infinity", "9999-12-31 00:00:01+00"] {
+        for metadata in ["{}", r#"{"session_jsonl_line":1}"#] {
+            sqlx::query("UPDATE rh_messages SET created_at = $3::text::timestamptz, metadata = $2::jsonb WHERE conversation_id = $1")
+                .bind(conversation).bind(metadata).bind(stamp).execute(&pool).await?;
+            let page = memory
+                .messages(&key, &MessagesQuery::new(None, Some(1)))
+                .await;
+            assert!(
+                matches!(page, Err(MemoryStoreError::Query { .. })),
+                "{stamp} {metadata}"
+            );
+        }
     }
     Ok(())
 }
@@ -592,7 +597,7 @@ async fn identical_positions_use_the_same_id_tie_break_in_both_readers(pool: PgP
              WHEN 'first insert' THEN '90000000-0000-4000-8000-000000000001'::uuid
              ELSE '10000000-0000-4000-8000-000000000002'::uuid END",
     )
-    .bind(at(10))
+    .bind(memory_postgres::time::PgTimestamp::from(at(10)))
     .execute(&pool)
     .await?;
     let first = memory

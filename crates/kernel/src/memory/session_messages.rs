@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 use values::time::TimestampFormat as _;
@@ -21,7 +21,7 @@ pub struct MessageCursor {
 
 impl MessageCursor {
     #[must_use]
-    pub const fn new(created_at: DateTime<Utc>, id: Uuid) -> Self {
+    pub const fn new(created_at: Timestamp, id: Uuid) -> Self {
         Self {
             created_at,
             id,
@@ -31,7 +31,7 @@ impl MessageCursor {
 
     #[must_use]
     pub fn encode(&self) -> String {
-        let key = format!("{}.{}", self.created_at.timestamp_micros(), self.id);
+        let key = format!("{}.{}", self.created_at.epoch_micros(), self.id);
         match self.prefix {
             Some(prefix) => format!("{key}.{}", hex::encode(prefix)),
             None => key,
@@ -51,7 +51,8 @@ impl MessageCursor {
             None => (id, None),
         };
         Ok(Self {
-            created_at: Timestamp::from_microsecond(micros).map_err(|_error| invalid())?,
+            created_at: Timestamp::from_nanosecond(i128::from(micros) * 1_000)
+                .map_err(|_error| invalid())?,
             id: Uuid::parse_str(id).map_err(|_| invalid())?,
             prefix,
         })

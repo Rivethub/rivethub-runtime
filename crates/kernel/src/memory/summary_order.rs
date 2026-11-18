@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use values::{JsonObject, Role};
 
@@ -9,7 +9,7 @@ use super::MemoryBrowseOrder;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MessagePosition<'a> {
-    stamp: DateTime<Utc>,
+    stamp: Timestamp,
     role: Role,
     metadata: Option<&'a JsonObject>,
     conversation: Option<Uuid>,
@@ -19,7 +19,7 @@ pub struct MessagePosition<'a> {
 }
 
 impl<'a> MessagePosition<'a> {
-    pub fn new(stamp: DateTime<Utc>, role: Role, metadata: Option<&'a JsonObject>) -> Self {
+    pub fn new(stamp: Timestamp, role: Role, metadata: Option<&'a JsonObject>) -> Self {
         let (stream, line) = native_position(metadata);
         let hook = text(metadata, "hook_producer")
             .zip(number(metadata, "hook_sequence").filter(|sequence| *sequence > 0));
@@ -123,7 +123,7 @@ enum Correlation<'a> {
 
 type Stream<'a> = (Option<Uuid>, NativeStream<'a>);
 type AnchorKey<'a> = (Stream<'a>, Correlation<'a>);
-type TimeKey = (DateTime<Utc>, usize);
+type TimeKey = (Timestamp, usize);
 type Positioned<'a> = (MessagePosition<'a>, usize);
 
 #[derive(Clone, Copy)]

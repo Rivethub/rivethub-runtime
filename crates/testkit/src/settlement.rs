@@ -1,4 +1,5 @@
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::settlement::SettleStatus;
 use kernel::memory::{CaptureBatchRequest, CaptureMessage, MemoryStore, SummaryStore};
 use kernel::owner::Owner;
@@ -23,7 +24,7 @@ pub fn batch(key: &str, messages: Vec<CaptureMessage>) -> CaptureBatchRequest {
     }
 }
 
-pub fn message(id: &str, at: &str) -> Result<CaptureMessage, chrono::ParseError> {
+pub fn message(id: &str, at: &str) -> Result<CaptureMessage, jiff::Error> {
     Ok(CaptureMessage {
         event_id: id.to_owned(),
         role: Role::User,
@@ -99,7 +100,12 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     assert_eq!(duplicate.last_input_at, initial.last_input_at);
 
     let two = message("two", "2026-01-03T01:01:00Z")?;
-    let reopen = observed(batch(KEY, vec![two]), "Stop", "2026-01-03T01:08:00Z", false)?;
+    let reopen = observed(
+        batch(KEY, vec![two]),
+        "Stop",
+        "2026-01-03T02:08:00.123456+01:00",
+        false,
+    )?;
     store.capture(reopen, owner, None).await?;
     let active = store.summary_state(id).await?.ok_or("reopened state")?;
     assert_eq!(active.input_revision, 2);
@@ -111,7 +117,7 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     let superseded = observed(
         batch(KEY, vec![]),
         "SessionEnd",
-        "2026-01-03T01:07:00Z",
+        "2026-01-03T01:08:00.123455Z",
         true,
     )?;
     store.capture(superseded, owner, None).await?;
@@ -120,7 +126,7 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     let end = observed(
         batch(KEY, vec![]),
         "SessionEnd",
-        "2026-01-03T01:09:00Z",
+        "2026-01-03T01:08:00.123457Z",
         true,
     )?;
     store.capture(end.clone(), owner, None).await?;
@@ -128,6 +134,10 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     assert_eq!(ended.input_revision, 2);
     assert_eq!(ended.last_input_at, active.last_input_at);
     assert_eq!(ended.unsettled_since, None);
+    assert_eq!(
+        ended.last_observed_end_at,
+        Some("2026-01-03T01:08:00.123457Z".parse()?)
+    );
     assert!(ended.last_observed_end_key.is_some());
     assert!(store.summary_eligible(id, 2).await?);
     store.capture(end.clone(), owner, None).await?;
@@ -141,7 +151,7 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     let older_end = observed(
         batch(KEY, vec![]),
         "SessionEnd",
-        "2026-01-03T01:08:30Z",
+        "2026-01-03T01:08:00Z",
         true,
     )?;
     store.capture(older_end, owner, None).await?;
@@ -209,11 +219,11 @@ pub async fn position_fills<S: MemoryStore + SummaryStore>(store: &S, owner: &Ow
     Ok(())
 }
 
-pub async fn expire<S: SummaryStore>(store: &S, from: DateTime<Utc>, limit: u32) -> TestResult {
+pub async fn expire<S: SummaryStore>(store: &S, from: Timestamp, limit: u32) -> TestResult {
     let mut after = None;
     loop {
         let page = store
-            .expire_summary_page(after, from - TimeDelta::minutes(1), from, limit)
+            .expire_summary_page(after, from - SignedDuration::from_mins(1), from, limit)
             .await?;
         if page.next.is_none() {
             return Ok(());
@@ -221,4 +231,48 @@ pub async fn expire<S: SummaryStore>(store: &S, from: DateTime<Utc>, limit: u32)
         assert!(page.next > after);
         after = page.next;
     }
+}
+
+pub async fn expiry_boundary(store: &impl SummaryStore, id: Uuid) -> TestResult {
+    let input = store
+        .summary_state(id)
+        .await?
+        .ok_or("live state")?
+        .last_input_at;
+    let now = input
+        + SignedDuration::from_mins(i64::from(
+            kernel::memory::settlement::DEFAULT_INACTIVITY_MINUTES,
+        ));
+    let just_before = input - SignedDuration::from_micros(1);
+    assert_eq!(
+        store
+            .expire_summary_page(None, just_before, now, 10)
+            .await?
+            .settled,
+        0
+    );
+    assert!(
+        store
+            .summary_state(id)
+            .await?
+            .ok_or("live state")?
+            .settled_at
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .expire_summary_page(None, input, now, 10)
+            .await?
+            .settled,
+        1
+    );
+    assert_eq!(
+        store
+            .summary_state(id)
+            .await?
+            .ok_or("live state")?
+            .settled_at,
+        Some(now)
+    );
+    Ok(())
 }

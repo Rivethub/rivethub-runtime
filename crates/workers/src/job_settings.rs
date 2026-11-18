@@ -97,7 +97,7 @@ pub fn tuned_summary(
     }
     settings.live_limits()?;
     if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_INACTIVITY_MINUTES")? {
-        settings.inactivity = chrono::TimeDelta::minutes(i64::from(minutes));
+        settings.inactivity = jiff::SignedDuration::from_mins(i64::from(minutes));
     }
     Ok(settings)
 }

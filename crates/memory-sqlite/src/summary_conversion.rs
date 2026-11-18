@@ -1,4 +1,5 @@
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::{
     SummaryStoreError,
     summary_backend::{SummaryIndexes, SummaryPermit},
@@ -10,6 +11,7 @@ use kernel::memory::{
     summary_reference::PreparedSummaryTree,
 };
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
+use wire::time::TimestampFormat as _;
 
 use crate::{SqliteError, SqliteStore, settlement::INCLUDED, summary_port::parse_id, time};
 
@@ -29,7 +31,7 @@ fn immediate(conn: &mut Connection) -> Result<Transaction<'_>, SqliteError> {
         .map_err(error)
 }
 
-fn inventory(conn: &Connection, cutoff: DateTime<Utc>) -> Result<(), SqliteError> {
+fn inventory(conn: &Connection, cutoff: Timestamp) -> Result<(), SqliteError> {
     let page = conn
         .prepare(
             "SELECT c.id FROM ros_conversations c CROSS JOIN rh_summary_conversion ctl
@@ -54,7 +56,7 @@ fn inventory(conn: &Connection, cutoff: DateTime<Utc>) -> Result<(), SqliteError
     Ok(())
 }
 
-fn measure(conn: &Connection, page: &[String], cutoff: DateTime<Utc>) -> Result<(), SqliteError> {
+fn measure(conn: &Connection, page: &[String], cutoff: Timestamp) -> Result<(), SqliteError> {
     let ids = serde_json::to_string(page).map_err(|source| SqliteError::Encode {
         column: "conversion inventory page",
         source,
@@ -115,7 +117,7 @@ pub(crate) fn can_publish(conn: &Connection, lease: ConversionLease) -> Result<b
             params![
                 lease.conversation.to_string(),
                 claim_stamp(lease.claimed_at),
-                time::stamp(Utc::now()),
+                time::stamp(Timestamp::now()),
                 lease.revision
             ],
             |row| row.get::<_, bool>(0),
@@ -124,8 +126,8 @@ pub(crate) fn can_publish(conn: &Connection, lease: ConversionLease) -> Result<b
     Ok(eligible && !live_waiting(conn)?)
 }
 
-fn claim_stamp(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+fn claim_stamp(at: Timestamp) -> String {
+    at.rfc3339_nanos()
 }
 
 fn bucket(conn: &Connection) -> Result<ConversionBucket, SqliteError> {
@@ -247,7 +249,7 @@ impl SummaryConversion for SqliteStore {
 
     async fn claim(
         &self,
-        inactivity: TimeDelta,
+        inactivity: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError> {
         self.with_conn(move |conn| {
             let active: bool = conn.query_row("SELECT enabled FROM rh_summary_conversion", [], |row| row.get(0)).map_err(error)?;
@@ -262,8 +264,8 @@ impl SummaryConversion for SqliteStore {
             if !enabled || live_waiting(&tx)? {
                 return Ok(None);
             }
-            let clock = Utc::now();
-            let cutoff = clock - inactivity;
+            let clock = Timestamp::now();
+            let cutoff = clock.checked_sub(inactivity).unwrap_or(Timestamp::MIN);
             if !scanned {
                 inventory(&tx, cutoff)?;
                 tx.commit().map_err(error)?;
@@ -311,7 +313,7 @@ impl SummaryConversion for SqliteStore {
                 ).map_err(error)?;
                 tx.execute("UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = ?2,
                             reservation_expires_at = ?3 WHERE conversation_id = ?1",
-                           params![id, claim_stamp(clock), time::stamp(clock + LEASE)]).map_err(error)?;
+                           params![id, claim_stamp(clock), time::stamp(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))]).map_err(error)?;
                 Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock })
             } else {
                 None
@@ -331,7 +333,7 @@ impl SummaryConversion for SqliteStore {
             if !can_publish(&tx, lease)? {
                 return Ok(false);
             }
-            let clock = Utc::now();
+            let clock = Timestamp::now();
             if let Some(charge) = charge {
                 let mut bucket = bucket(&tx)?;
                 let admitted = bucket.debit(charge, clock);
@@ -344,7 +346,7 @@ impl SummaryConversion for SqliteStore {
                 }
             }
             tx.execute("UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
-                params![lease.conversation.to_string(), time::stamp(clock + LEASE)]).map_err(error)?;
+                params![lease.conversation.to_string(), time::stamp(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))]).map_err(error)?;
             tx.commit().map_err(error)?;
             Ok(true)
         }).await.map_err(store_error)
@@ -416,7 +418,7 @@ impl SummaryConversion for SqliteStore {
                     claim_stamp(lease.claimed_at),
                     state,
                     failure,
-                    claim_stamp(Utc::now())
+                    claim_stamp(Timestamp::now())
                 ],
             )
             .map_err(error)?;

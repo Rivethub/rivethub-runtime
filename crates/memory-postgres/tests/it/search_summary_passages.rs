@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use kernel::memory::{Limit, MemoryScope, MemoryStore as _, SearchMode, SearchQuery, SummaryKind};
 use kernel::tenancy::Scope;
 use memory_postgres::{PostgresMemory, QueryEmbed};
@@ -113,7 +113,7 @@ fn query(text: &str, mode: SearchMode) -> SearchQuery {
     }
 }
 
-fn at(year: u16) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn at(year: u16) -> Result<Timestamp, jiff::Error> {
     format!("{year}-01-01T00:00:00Z").parse()
 }
 
@@ -231,7 +231,7 @@ async fn top_down_search_uses_source_time_and_pins_legacy_scoring(pool: PgPool) 
         return Err("expected only the older passage".into());
     };
     assert_eq!(passage.detail_id(), FIRST_PASSAGE);
-    let age = (Utc::now() - at(2025)?).to_std()?.as_secs_f64() / 86400.0;
+    let age = (Timestamp::now() - at(2025)?).as_secs_f64() / 86400.0;
     let expected = kernel::memory_core::composite_score(
         1.0,
         1.0,

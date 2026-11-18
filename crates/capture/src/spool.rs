@@ -128,14 +128,14 @@ impl CaptureSpool {
         self.dir.join(DEAD_DIR)
     }
 
-    pub async fn spool(&self, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
+    pub async fn spool(&self, body: &str, now: Timestamp) -> Result<PathBuf, SpoolError> {
         write_new(&self.dir, body, now, &Uuid::now_v7().simple().to_string()).await
     }
 
     pub(crate) async fn spool_end(
         &self,
         body: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
         chunk: EndChunk,
     ) -> Result<PathBuf, SpoolError> {
         write_new(&self.dir, body, now, &chunk.id()).await
@@ -452,12 +452,12 @@ fn backoff(attempts: u64) -> SignedDuration {
 async fn write_new(
     dir: &Path,
     body: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     id: &str,
 ) -> Result<PathBuf, SpoolError> {
     fs::create_dir_all(dir).await?;
     set_mode(dir, DIR_MODE).await?;
-    let name = format!("{}-{id}{SUFFIX}", now.timestamp_millis());
+    let name = format!("{}-{id}{SUFFIX}", now.epoch_millis());
     let target = dir.join(&name);
     let temporary = dir.join(format!("{name}.tmp"));
     fs::write(&temporary, body).await?;

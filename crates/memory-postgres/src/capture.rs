@@ -143,7 +143,7 @@ impl<'a> CaptureWriter<'a> {
         .map_err(|source| Error::operation("embed defer", source))?;
         Ok(Self {
             tx,
-            undated_from,
+            undated_from: undated_from.to_jiff(),
             queue_present: queued,
         })
     }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::filing::stored_keys;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::memory::{
@@ -31,7 +31,8 @@ struct PositionRow {
     conversation_id: Uuid,
     role: Json<Role>,
     metadata: Option<Json<JsonObject>>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
 }
 
 pub(crate) async fn summary_messages(
@@ -123,7 +124,7 @@ async fn positioned_page(
     );
     let rows: Vec<_> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(keys)
-        .bind(DateTime::<Utc>::MAX_UTC)
+        .bind(crate::time::BindTime::bind_time(Timestamp::MAX))
         .fetch_all(&mut *conn)
         .await
         .map_err(failure)?;
@@ -161,8 +162,10 @@ async fn keyset_page(
     );
     let rows: Vec<_> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(keys)
-        .bind(DateTime::<Utc>::MAX_UTC)
-        .bind(query.after.map(|cursor| cursor.created_at))
+        .bind(crate::time::BindTime::bind_time(Timestamp::MAX))
+        .bind(crate::time::BindTime::bind_time(
+            query.after.map(|cursor| cursor.created_at),
+        ))
         .bind(query.after.map(|cursor| cursor.id))
         .bind(i64::from(query.limit) + 1)
         .fetch_all(&mut *conn)

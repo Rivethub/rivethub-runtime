@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -9,14 +9,14 @@ pub const SETTLEMENT_PAGE_SIZE: u32 = 200;
 pub struct SummaryState {
     pub conversation_id: Uuid,
     pub input_revision: i64,
-    pub last_input_at: DateTime<Utc>,
-    pub unsettled_since: Option<DateTime<Utc>>,
-    pub settled_at: Option<DateTime<Utc>>,
+    pub last_input_at: Timestamp,
+    pub unsettled_since: Option<Timestamp>,
+    pub settled_at: Option<Timestamp>,
     pub summarized_through: Option<i64>,
     pub failed_revision: Option<i64>,
     pub historical_only: bool,
-    pub last_observed_event_at: Option<DateTime<Utc>>,
-    pub last_observed_end_at: Option<DateTime<Utc>>,
+    pub last_observed_event_at: Option<Timestamp>,
+    pub last_observed_end_at: Option<Timestamp>,
     pub last_observed_end_key: Option<String>,
 }
 
@@ -24,10 +24,10 @@ impl SummaryState {
     #[must_use]
     pub fn record_capture(
         &mut self,
-        now: DateTime<Utc>,
+        now: Timestamp,
         changed: bool,
         imported: bool,
-        observation: Option<(DateTime<Utc>, Option<&str>)>,
+        observation: Option<(Timestamp, Option<&str>)>,
     ) -> bool {
         let mut dirty = changed;
         if changed {
@@ -58,13 +58,13 @@ impl SummaryState {
         dirty
     }
 
-    pub fn settle(&mut self, now: DateTime<Utc>) {
+    pub fn settle(&mut self, now: Timestamp) {
         self.settled_at.get_or_insert(now);
         self.unsettled_since = None;
     }
 
     #[must_use]
-    pub fn manual_settle(&mut self, now: DateTime<Utc>) -> SettleResult {
+    pub fn manual_settle(&mut self, now: Timestamp) -> SettleResult {
         let status = if self.summarized_through == Some(self.input_revision) {
             SettleStatus::AlreadySummarized
         } else {
@@ -98,12 +98,14 @@ pub enum SettleStatus {
     AlreadySummarized,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettleResult {
     pub conversation_id: Uuid,
     pub input_revision: i64,
-    pub settled_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub settled_at: Option<Timestamp>,
     pub status: SettleStatus,
 }
 

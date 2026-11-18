@@ -1,8 +1,6 @@
 use jiff::Timestamp;
 use std::collections::HashSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::wiki::entity_pass::EntityLeaf;
@@ -31,7 +29,8 @@ struct TranscriptRow {
     id: Uuid,
     conversation_id: Uuid,
     metadata: Option<Json<JsonObject>>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     role: Json<Role>,
     tool_name: Option<String>,
     content: String,

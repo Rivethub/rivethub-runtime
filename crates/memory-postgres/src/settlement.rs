@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::memory::settlement::{
     SETTLEMENT_PAGE_SIZE, SettleResult, SettleStatus, SettlementPage, SummaryState,
 };
@@ -54,14 +54,24 @@ async fn state(
             Ok(SummaryState {
                 conversation_id: row.try_get("conversation_id")?,
                 input_revision: row.try_get("input_revision")?,
-                last_input_at: row.try_get("last_input_at")?,
-                unsettled_since: row.try_get("unsettled_since")?,
-                settled_at: row.try_get("settled_at")?,
+                last_input_at: row
+                    .try_get::<jiff_sqlx::Timestamp, _>("last_input_at")?
+                    .to_jiff(),
+                unsettled_since: row
+                    .try_get::<Option<jiff_sqlx::Timestamp>, _>("unsettled_since")?
+                    .map(jiff_sqlx::Timestamp::to_jiff),
+                settled_at: row
+                    .try_get::<Option<jiff_sqlx::Timestamp>, _>("settled_at")?
+                    .map(jiff_sqlx::Timestamp::to_jiff),
                 summarized_through: row.try_get("summarized_through")?,
                 failed_revision: row.try_get("failed_revision")?,
                 historical_only: row.try_get("historical_only")?,
-                last_observed_event_at: row.try_get("last_observed_event_at")?,
-                last_observed_end_at: row.try_get("last_observed_end_at")?,
+                last_observed_event_at: row
+                    .try_get::<Option<jiff_sqlx::Timestamp>, _>("last_observed_event_at")?
+                    .map(jiff_sqlx::Timestamp::to_jiff),
+                last_observed_end_at: row
+                    .try_get::<Option<jiff_sqlx::Timestamp>, _>("last_observed_end_at")?
+                    .map(jiff_sqlx::Timestamp::to_jiff),
                 last_observed_end_key: row.try_get("last_observed_end_key")?,
             })
         })
@@ -79,13 +89,15 @@ async fn save(conn: &mut PgConnection, state: &SummaryState) -> Result<(), Error
     )
     .bind(state.conversation_id)
     .bind(state.input_revision)
-    .bind(state.last_input_at)
-    .bind(state.unsettled_since)
-    .bind(state.settled_at)
+    .bind(crate::time::BindTime::bind_time(state.last_input_at))
+    .bind(crate::time::BindTime::bind_time(state.unsettled_since))
+    .bind(crate::time::BindTime::bind_time(state.settled_at))
     .bind(state.failed_revision)
     .bind(state.historical_only)
-    .bind(state.last_observed_event_at)
-    .bind(state.last_observed_end_at)
+    .bind(crate::time::BindTime::bind_time(
+        state.last_observed_event_at,
+    ))
+    .bind(crate::time::BindTime::bind_time(state.last_observed_end_at))
     .bind(state.last_observed_end_key.as_deref())
     .execute(conn)
     .await
@@ -144,17 +156,18 @@ impl CaptureWriter<'_> {
         observation: Option<&SessionObservation>,
         prior: Option<SessionObservation>,
     ) -> Result<(), Error> {
-        let now: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        let now = sqlx::query_scalar::<_, jiff_sqlx::Timestamp>("SELECT clock_timestamp()")
             .fetch_one(&mut *self.tx)
             .await
-            .map_err(failure)?;
+            .map_err(failure)?
+            .to_jiff();
         let mut current = state(&mut self.tx, id, true).await?;
         if current.is_none() {
             if changed {
                 sqlx::query("INSERT INTO rh_summary_state
                     (conversation_id, input_revision, last_input_at, unsettled_since, historical_only)
                     VALUES ($1, 0, $2, $2, true) ON CONFLICT DO NOTHING")
-                    .bind(id).bind(now).execute(&mut *self.tx).await.map_err(failure)?;
+                    .bind(id).bind(crate::time::BindTime::bind_time(now)).execute(&mut *self.tx).await.map_err(failure)?;
             } else {
                 seed(&mut self.tx, id).await?;
             }
@@ -207,11 +220,11 @@ impl PostgresMemory {
         let Some(mut current) = current else {
             return Ok(None);
         };
-        let now = sqlx::query_scalar("SELECT clock_timestamp()")
+        let now = sqlx::query_scalar::<_, jiff_sqlx::Timestamp>("SELECT clock_timestamp()")
             .fetch_one(&mut *tx)
             .await
             .map_err(failure)?;
-        let result = current.manual_settle(now);
+        let result = current.manual_settle(now.to_jiff());
         if result.status == SettleStatus::Settled {
             save(&mut tx, &current).await?;
         }
@@ -243,8 +256,8 @@ impl PostgresMemory {
     pub(crate) async fn expire_settlement(
         &self,
         after: Option<Uuid>,
-        cutoff: DateTime<Utc>,
-        now: DateTime<Utc>,
+        cutoff: Timestamp,
+        now: Timestamp,
         limit: u32,
     ) -> Result<SettlementPage, Error> {
         let limit = limit.clamp(1, SETTLEMENT_PAGE_SIZE);
@@ -270,7 +283,7 @@ impl PostgresMemory {
              ORDER BY c.id FOR UPDATE OF c"
         )))
         .bind(&page)
-        .bind(cutoff)
+        .bind(crate::time::BindTime::bind_time(cutoff))
         .fetch_all(&mut *tx)
         .await
         .map_err(failure)?;
@@ -281,8 +294,8 @@ impl PostgresMemory {
                AND s.settled_at IS NULL AND s.last_input_at <= $2 AND {INCLUDED}"
         )))
         .bind(&candidates)
-        .bind(cutoff)
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(cutoff))
+        .bind(crate::time::BindTime::bind_time(now))
         .execute(&mut *tx)
         .await
         .map_err(failure)?
@@ -310,11 +323,7 @@ async fn seed_ids(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(), Error> {
     Ok(())
 }
 
-async fn seed_recent(
-    conn: &mut PgConnection,
-    cutoff: DateTime<Utc>,
-    limit: u32,
-) -> Result<(), Error> {
+async fn seed_recent(conn: &mut PgConnection, cutoff: Timestamp, limit: u32) -> Result<(), Error> {
     let ids: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT c.id FROM rh_conversations c
           WHERE c.id IN (SELECT m.conversation_id FROM rh_messages m
@@ -323,7 +332,7 @@ async fn seed_recent(
             AND NOT EXISTS (SELECT 1 FROM rh_summary_state s WHERE s.conversation_id = c.id)
           ORDER BY c.id FOR UPDATE OF c"
     )))
-    .bind(cutoff)
+    .bind(crate::time::BindTime::bind_time(cutoff))
     .bind(i64::from(limit))
     .fetch_all(&mut *conn)
     .await
@@ -346,7 +355,8 @@ pub(crate) async fn rendered_order(conn: &mut PgConnection, id: Uuid) -> Result<
         id: Uuid,
         role: Json<Role>,
         metadata: Option<Json<JsonObject>>,
-        created_at: DateTime<Utc>,
+        #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+        created_at: Timestamp,
         rendered: bool,
     }
 

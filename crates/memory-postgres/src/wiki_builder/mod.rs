@@ -34,7 +34,8 @@ struct SummaryRow {
     content: String,
     session_key: Option<String>,
     owner_user_id: String,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     input_key: Option<Vec<u8>>,
 }
 
@@ -158,7 +159,7 @@ impl WikiBuilderStore for PostgresMemory {
              WHERE rh_wiki_extractions.status = 'failed' OR rh_wiki_extractions.pipeline_version < $2
                 OR (rh_wiki_extractions.status = 'done' AND rh_wiki_extractions.git_sha IS NULL AND cardinality(rh_wiki_extractions.topics_touched) > 0)",
         )
-        .bind(summary_id).bind(WIKI_PIPELINE_VERSION).bind(error).bind(now)
+        .bind(summary_id).bind(WIKI_PIPELINE_VERSION).bind(error).bind(crate::time::BindTime::bind_time(now))
         .execute(&mut *tx).await.map_err(query_error)?;
         tx.commit().await.map_err(query_error)
     }

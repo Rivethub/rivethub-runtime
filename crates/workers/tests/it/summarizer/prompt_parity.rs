@@ -21,7 +21,7 @@ struct Fixture {
 struct Row {
     id: String,
     role: Role,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     content: String,
     tool_name: Option<String>,
     tool_args: Option<JsonObject>,
@@ -394,7 +394,7 @@ fn top_down_prompt_parity_replies() {
         .map(|&ordinal| Source {
             id: Uuid::from_u128(ordinal as u128),
             ordinal,
-            created_at: DateTime::UNIX_EPOCH,
+            created_at: Timestamp::UNIX_EPOCH,
             render_key: [0; 32],
         })
         .collect();

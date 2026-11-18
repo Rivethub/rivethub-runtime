@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::filing::Filable;
 use kernel::memory::summary_opening::{OpeningConsumer, opening_text};
 use kernel::memory::summary_order::{MessagePosition, order_messages};
@@ -17,7 +17,8 @@ use crate::{Error, PostgresMemory};
 struct Turn {
     role: Json<Role>,
     metadata: Option<Json<JsonObject>>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     content: String,
 }
 

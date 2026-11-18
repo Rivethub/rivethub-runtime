@@ -164,9 +164,12 @@ struct DagRow {
     content: Vec<u8>,
     truncated: bool,
     message_count: i32,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     summary_ordinal: Option<i32>,
     source_first: Option<i32>,
     source_last: Option<i32>,
@@ -191,8 +194,10 @@ struct ShapeRow {
     kind: String,
     embedded: bool,
     summary_ordinal: Option<i32>,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

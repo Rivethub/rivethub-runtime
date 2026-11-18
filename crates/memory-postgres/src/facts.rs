@@ -288,7 +288,7 @@ impl FactStore for PostgresMemory {
                 }
                 crate::summary_replace::FenceError::Query(error) => failed("fact source")(error),
             })?;
-        let now = Utc::now();
+        let now = Timestamp::now();
         for claim in claims {
             if let Said::Writer { summary, .. } = &claim.said
                 && let Some(input) = inputs.iter().find(|input| input.id == *summary)

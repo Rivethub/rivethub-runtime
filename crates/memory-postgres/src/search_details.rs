@@ -2,7 +2,6 @@ use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::search::{MemorySearchHit, SearchRead, hit_uuids, passage_ids, whole_summary_ids};
-use chrono::{DateTime, Utc};
 use kernel::memory::MemoryEntry;
 use kernel::memory::{MemoryHitSource, PassageSection, SummaryKind};
 use kernel::memory::{MemoryStoreError, SearchQuery, SummaryDetail, SummaryExcerpt};
@@ -161,8 +160,8 @@ impl SearchRead<'_> {
         )
         .bind(ids)
         .bind(&query.agent)
-        .bind(query.since)
-        .bind(query.before)
+        .bind(crate::time::BindTime::bind_time(query.since))
+        .bind(crate::time::BindTime::bind_time(query.before))
         .fetch_all(&mut *self.tx)
         .await
         .map_err(|source| Error::operation("summary source messages", source))?;
@@ -246,8 +245,8 @@ impl SearchRead<'_> {
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(ids)
             .bind(&query.agent)
-            .bind(query.since)
-            .bind(query.before)
+            .bind(crate::time::BindTime::bind_time(query.since))
+            .bind(crate::time::BindTime::bind_time(query.before))
             .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("passage source messages", source))?;

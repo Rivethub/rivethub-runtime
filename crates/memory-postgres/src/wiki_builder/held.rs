@@ -148,7 +148,7 @@ pub(super) async fn upsert(
     .bind(deferred.waits.conversation())
     .bind(deferred.applied.map(TopicId::uuid))
     .bind(encoded(&deferred.patches)?)
-    .bind(deferred.at)
+    .bind(crate::time::BindTime::bind_time(deferred.at))
     .execute(&mut **tx)
     .await
     .map_err(query_error)?;

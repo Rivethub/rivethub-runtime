@@ -7,6 +7,7 @@ mod sweep;
 mod title;
 pub(crate) mod top_down;
 
+use jiff::Timestamp;
 use kernel::memory::SummaryStore;
 use kernel::model::ModelProvider;
 use kernel::queue::JobQueue;

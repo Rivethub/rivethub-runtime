@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::io::{self, Write as _};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -18,7 +19,8 @@ const CLAIMED: &str = ".claimed-";
 pub(crate) struct Pending {
     pub(crate) key: String,
     pub(crate) prompt: String,
-    pub(crate) at: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) at: Timestamp,
     #[serde(default)]
     pub(super) position: Option<sequence::Position>,
 }

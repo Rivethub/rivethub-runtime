@@ -1,13 +1,15 @@
 use kernel::memory::summary_conversion::{
-    ConversionCharge, ConversionControl, ConversionOutcome, ConversionUsage, SummaryConversion,
+    ConversionCharge, ConversionControl, ConversionLease, ConversionOutcome, ConversionUsage,
+    LEASE, SummaryConversion,
 };
 use kernel::memory::{NewSummary, SummaryKind, SummarySource};
 use tokio::sync::Notify;
+use wire::time::TimestampFormat as _;
 use workers::handle_conversion_tick;
 
 use super::*;
 
-const QUIET: chrono::TimeDelta = chrono::TimeDelta::hours(24);
+const QUIET: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 
 struct Provider {
     script: Scripted,
@@ -86,7 +88,7 @@ async fn tick(
         provider,
         queue: &queue,
         settings: &settings,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel: &cancel,
     };
     handle_conversion_tick(
@@ -102,7 +104,7 @@ async fn tick(
 }
 
 async fn legacy(store: &(impl SummaryStore + MemoryStore)) -> TestResult<(Uuid, Uuid)> {
-    let at = Utc::now() - chrono::TimeDelta::days(3);
+    let at = Timestamp::now() - wire::time::elapsed_days(3);
     let id = capture(
         store,
         "historical-conversion",
@@ -420,8 +422,9 @@ async fn exercise_inventory(
     first: &dyn SummaryConversion,
     second: &(impl SummaryConversion + SummaryStore + MemoryStore),
     preferred: Uuid,
-    giant: Uuid,
+    renewal: impl AsyncFnOnce(ConversionLease) -> TestResult,
 ) -> TestResult {
+    let giant = Uuid::from_u128(201);
     first
         .control(ConversionControl::Start {
             rate: Some(1_000_000),
@@ -464,6 +467,7 @@ async fn exercise_inventory(
         top.conversation, preferred,
         "recent use outranks input age and giant recency"
     );
+    renewal(top).await?;
     second.finish(top, ConversionOutcome::Complete).await?;
     assert_eq!(
         second.status().await?.discovered,
@@ -553,7 +557,7 @@ async fn top_down_conversion_inventory_sqlite() -> TestResult {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("s.sqlite");
     migrate::sqlite(&path)?;
-    let recent = Utc::now().to_rfc3339();
+    let recent = Timestamp::now().rfc3339_offset();
     {
         let mut conn = rusqlite::Connection::open(&path)?;
         let tx = conn.transaction()?;
@@ -581,7 +585,29 @@ async fn top_down_conversion_inventory_sqlite() -> TestResult {
     }
     let first = memory_sqlite::SqliteStore::open(&path)?;
     let second = memory_sqlite::SqliteStore::open(&path)?;
-    exercise_inventory(&first, &second, Uuid::from_u128(42), Uuid::from_u128(201)).await
+    exercise_inventory(&first, &second, Uuid::from_u128(42), async |lease| {
+        let conn = rusqlite::Connection::open(&path)?;
+        let read = || -> rusqlite::Result<(String, String)> {
+            conn.query_row(
+                "SELECT next_at, reservation_expires_at FROM rh_summary_conversion_items WHERE conversation_id = ?1",
+                [lease.conversation.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+        };
+        let (claim, expiry) = read()?;
+        assert_eq!(claim, lease.claimed_at.rfc3339_nanos());
+        assert_eq!(expiry, (lease.claimed_at + LEASE).rfc3339_millis());
+        conn.execute(
+            "UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
+            (lease.conversation.to_string(), (lease.claimed_at + jiff::SignedDuration::from_mins(5)).rfc3339_millis()),
+        )?;
+        assert!(second.admit(lease, None).await?);
+        let (renewed_claim, renewed_expiry) = read()?;
+        assert_eq!(renewed_claim, claim);
+        assert!(renewed_expiry >= expiry);
+        assert!(renewed_expiry <= (Timestamp::now() + LEASE).rfc3339_millis());
+        Ok(())
+    }).await
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
@@ -592,15 +618,15 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
     };
     let first = memory_postgres::PostgresMemory::new(conn().await?);
     let second = memory_postgres::PostgresMemory::new(conn().await?);
-    let new = chrono::DateTime::parse_from_rfc3339("2020-04-01T00:00:00Z")?.to_utc();
-    let old = chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")?.to_utc();
+    let new = wire::time::parse_rfc3339("2020-04-01T00:00:00Z")?;
+    let old = wire::time::parse_rfc3339("2020-01-01T00:00:00Z")?;
     let owner = testkit::owner()?;
     let ids: Vec<_> = (1..=201).map(Uuid::from_u128).collect();
     sqlx::query(
         "INSERT INTO rh_conversations (id, session_key, agent, created_at, updated_at, owner_user_id)
          SELECT id, id::text, 'fixture', CASE WHEN id = $2 THEN $3 ELSE $4 END, $4, $5
          FROM unnest($1::uuid[]) id",
-    ).bind(&ids).bind(Uuid::from_u128(201)).bind(new).bind(old).bind(owner.as_str()).execute(&pool).await?;
+    ).bind(&ids).bind(Uuid::from_u128(201)).bind(memory_postgres::time::PgTimestamp::from(new)).bind(memory_postgres::time::PgTimestamp::from(old)).bind(owner.as_str()).execute(&pool).await?;
     sqlx::query(
         "INSERT INTO rh_messages (conversation_id, agent, channel, role, content, created_at, owner_user_id)
          SELECT id, 'fixture', 'test', 'user', CASE WHEN id = $1 THEN repeat('x', 3000001) ELSE 'invented entry' END,
@@ -618,7 +644,31 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
             &first,
             &second,
             Uuid::from_u128(42),
-            Uuid::from_u128(201),
+            async |lease| {
+                use memory_postgres::time::PgTimestamp;
+                let read = || {
+                    sqlx::query_as::<_, (PgTimestamp, PgTimestamp)>(
+                        "SELECT next_at, reservation_expires_at FROM rh_summary_conversion_items WHERE conversation_id = $1",
+                    )
+                    .bind(lease.conversation)
+                    .fetch_one(&pool)
+                };
+                let (claim, expiry) = read().await?;
+                assert_eq!(claim.to_jiff(), lease.claimed_at);
+                assert_eq!(expiry.to_jiff(), lease.claimed_at + LEASE);
+                sqlx::query(
+                    "UPDATE rh_summary_conversion_items SET reservation_expires_at = next_at + interval '5 minutes' WHERE conversation_id = $1",
+                )
+                .bind(lease.conversation)
+                .execute(&pool)
+                .await?;
+                assert!(second.admit(lease, None).await?);
+                let (renewed_claim, renewed_expiry) = read().await?;
+                assert_eq!(renewed_claim, claim);
+                assert!(renewed_expiry.to_jiff() >= expiry.to_jiff());
+                assert!(renewed_expiry.to_jiff() <= Timestamp::now() + LEASE);
+                Ok(())
+            },
         ))
         .await
 }

@@ -155,7 +155,7 @@ async fn top_down_settle_a_session_end_with_no_turns_posts_an_empty_marker() -> 
         session.join("updates.jsonl"),
         "{\"method\":\"_x.ai/session/update\",\"params\":{\"sessionId\":\"s\",\"update\":{\"sessionUpdate\":\"hook_execution\",\"event_name\":\"session_start\",\"runs\":[]}}}\n",
     )?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     assert_eq!(hook.run(&payload("Stop"), now).await.stderr, "");
     assert!(transport.posts.lock().is_empty());
     assert_eq!(hook.run(&payload("SessionEnd"), now).await.stderr, "");

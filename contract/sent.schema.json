@@ -4472,6 +4472,7 @@
           "type": "string"
         },
         "createdAt": {
+          "default": null,
           "format": "date-time",
           "type": [
             "string",

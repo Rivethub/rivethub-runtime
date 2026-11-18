@@ -357,7 +357,7 @@ where
                 provider: self.summarizer.as_ref(),
                 queue: self.queue.as_ref(),
                 settings: &self.summary,
-                now: chrono::Utc::now(),
+                now: jiff::Timestamp::now(),
                 cancel: &cancel,
             };
             let env = crate::summarize::live::LiveEnv {

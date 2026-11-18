@@ -116,7 +116,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "Ubuntu 22.04",
                 SECOND,
                 "web01 still runs Ubuntu 22.04",
-                now - TimeDelta::hours(3),
+                now - SignedDuration::from_hours(3),
             )
             .await?,
             said(
@@ -126,7 +126,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "Ubuntu 24.04",
                 FIRST,
                 "web01 is on Ubuntu 24.04 now",
-                now - TimeDelta::hours(2),
+                now - SignedDuration::from_hours(2),
             )
             .await?,
             said(
@@ -136,7 +136,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "192.0.2.4",
                 FIRST,
                 "web01 answers on 192.0.2.4",
-                now - TimeDelta::hours(1),
+                now - SignedDuration::from_hours(1),
             )
             .await?,
         ])

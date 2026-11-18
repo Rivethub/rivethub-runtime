@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -8,7 +10,6 @@ use capture::hook::store::{StoreHarness, StoreHook};
 use capture::listing::StoreRoots;
 use capture::spool::CaptureSpool;
 use capture::writer::{CaptureTransport, CaptureWriter, PostError};
-use chrono::{DateTime, TimeDelta, Utc};
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use parking_lot::Mutex;
@@ -84,8 +85,8 @@ fn prompt(content: &str) -> Result<String, serde_json::Error> {
     ))
 }
 
-fn at(seconds: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(seconds)
+fn at(seconds: i64) -> Timestamp {
+    Timestamp::UNIX_EPOCH + SignedDuration::from_secs(seconds)
 }
 
 fn meta<'a>(message: &'a CaptureMessage, key: &str) -> &'a Json {
@@ -96,7 +97,7 @@ fn meta<'a>(message: &'a CaptureMessage, key: &str) -> &'a Json {
         .unwrap_or(&Json::Null)
 }
 
-fn ordered(mut messages: Vec<CaptureMessage>, captured_at: DateTime<Utc>) -> Vec<String> {
+fn ordered(mut messages: Vec<CaptureMessage>, captured_at: Timestamp) -> Vec<String> {
     messages.sort_by_key(|message| {
         (
             message.created_at.unwrap_or(captured_at),
@@ -133,7 +134,7 @@ async fn a_live_tool_keeps_its_place_even_when_the_positioned_replay_is_deduplic
     std::fs::write(&file, [ASK, "", TURN, RESULT, REPLY].join("\n") + "\n")?;
     assert_eq!(capture.run(&stop(&file)?, at(2), "stop").await.stderr, "");
 
-    let captured_at = DateTime::parse_from_rfc3339("2026-10-10T12:05:00Z")?.with_timezone(&Utc);
+    let captured_at = wire::time::parse_rfc3339("2026-10-10T12:05:00Z")?;
     let rows = std::mem::take(&mut *posts.0.lock());
     let live = rows.first().ok_or("live tool post")?;
     assert_eq!(meta(live, "session_jsonl_line"), &2);
@@ -330,7 +331,7 @@ async fn stop_supplies_the_position_of_a_previously_unanchored_tool() -> TestRes
     std::fs::write(&file, format!("{ASK}\n"))?;
     let posts = Posts::default();
     let capture = hook(home.path(), &posts)?;
-    let posted_at = DateTime::parse_from_rfc3339("2026-10-10T12:05:00Z")?.with_timezone(&Utc);
+    let posted_at = wire::time::parse_rfc3339("2026-10-10T12:05:00Z")?;
     assert_eq!(
         capture
             .run(&tool(&file, Some(CALL))?, posted_at, "live")

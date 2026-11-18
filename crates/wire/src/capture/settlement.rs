@@ -1,11 +1,12 @@
-use chrono::{DateTime, Utc};
+use crate::time::TimestampFormat as _;
+use jiff::Timestamp;
 
 use super::CaptureBatchRequest;
 use crate::JsonObject;
 
 #[derive(Debug)]
 pub struct SessionObservation {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub end_key: Option<String>,
 }
 
@@ -30,9 +31,7 @@ impl SessionObservation {
             .as_str()
             .filter(|event| !event.is_empty())?;
         let observed = settings.get("last_ingest_at")?.as_str()?;
-        let at = DateTime::parse_from_rfc3339(observed)
-            .ok()?
-            .with_timezone(&Utc);
+        let at = crate::time::parse_rfc3339(observed).ok()?;
         let end_key = (Self::is_session_end(session_key, Some(settings), finalize)
             && settings
                 .get("summary_end_suppressed")
@@ -43,7 +42,7 @@ impl SessionObservation {
                 .get("last_event_id")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            format!("{source}/{}:{native}", at.to_rfc3339())
+            format!("{source}/{}:{native}", at.rfc3339_offset())
         });
         Some(SessionObservation { at, end_key })
     }

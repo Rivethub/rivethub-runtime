@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -22,12 +22,15 @@ pub struct SummaryRun {
     pub manifest: Value,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct SummaryPassage {
     pub content: String,
     pub chars: std::ops::Range<i32>,
-    pub earliest_at: DateTime<Utc>,
-    pub latest_at: DateTime<Utc>,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub earliest_at: Timestamp,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub latest_at: Timestamp,
     pub vector: Vec<f32>,
 }
 
@@ -64,6 +67,6 @@ pub struct SummaryRepair {
     pub id: Uuid,
     pub content: String,
     pub input_key: Vec<u8>,
-    pub sources: Vec<(i32, DateTime<Utc>)>,
+    pub sources: Vec<(i32, Timestamp)>,
     pub sections: Vec<super::summary_reference::SummarySectionBounds>,
 }
