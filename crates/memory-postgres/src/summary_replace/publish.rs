@@ -76,6 +76,7 @@ impl PostgresMemory {
         &self,
         prepared: &PreparedSummaryTree,
     ) -> Result<(), ReplaceSummaryError> {
+        prepared.validate_index_key(self.summary_index_key)?;
         let mut coverage = prepared
             .coverage()
             .map_err(|error| Error::stored("summary manifest", error))?;
@@ -91,6 +92,25 @@ impl PostgresMemory {
         stage(&mut tx, prepared, &coverage, &old, &retained).await?;
         import_deliveries(&mut tx, prepared).await?;
 
+        let indexed: Vec<_> = prepared
+            .records
+            .iter()
+            .filter(|row| {
+                row.kind.depth() > 0 && row.index_key.is_some() && !retained.contains(&row.id)
+            })
+            .collect();
+        if !indexed.is_empty() {
+            let keys: BTreeSet<_> = indexed.iter().filter_map(|row| row.index_key).collect();
+            let keys: Vec<_> = keys.iter().map(<[_; 32]>::as_slice).collect();
+            let old: Vec<_> = prepared.expected_ids.iter().copied().collect();
+            sqlx::query(include_str!("snapshot_passages.sql"))
+                .bind(old)
+                .bind(keys)
+                .execute(&mut *tx)
+                .await
+                .map_err(query)?;
+        }
+
         let mut records: Vec<_> = prepared.records.iter().collect();
         records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
         for record in records {
@@ -100,20 +120,29 @@ impl PostgresMemory {
                 insert_record(&mut tx, prepared, record, &coverage).await?;
             }
         }
-        let old_owners: Vec<_> = prepared
-            .expected_ids
-            .difference(&retained)
-            .copied()
-            .collect();
-        for record in prepared.records.iter().filter(|row| {
-            row.kind.depth() > 0 && row.index_key.is_some() && !retained.contains(&row.id)
-        }) {
+        for record in indexed {
+            let (starts, ends): (Vec<_>, Vec<_>) = prepared
+                .passage_windows
+                .get(&record.id)
+                .into_iter()
+                .flatten()
+                .map(|range| (range.start, range.end))
+                .unzip();
             sqlx::query(include_str!("reuse_passages.sql"))
                 .bind(record.id)
-                .bind(&old_owners)
+                .bind(starts)
+                .bind(ends)
                 .execute(&mut *tx)
                 .await
                 .map_err(query)?;
+            sqlx::query(
+                "UPDATE rh_summaries SET index_needs_repair = NOT rh_summary_record_indexed(id)
+                 WHERE id = $1",
+            )
+            .bind(record.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(query)?;
         }
         sqlx::raw_sql(include_str!("references.sql"))
             .execute(&mut *tx)

@@ -314,20 +314,29 @@ fn reject_claim(
     Ok(())
 }
 
-fn release_one(conn: &Connection, id: &str, now: DateTime<Utc>) -> Result<(), SqliteError> {
-    let changed = conn
-        .execute(
+fn release_one(conn: &mut Connection, id: &str, now: DateTime<Utc>) -> Result<(), SqliteError> {
+    let tx = crate::summary_replace::immediate(conn).map_err(SqliteError::query("job release"))?;
+    let found: Option<(String, String)> = tx
+        .query_row(
+            "SELECT task, payload FROM ros_jobs WHERE id = ?1 AND state = 'running'",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(SqliteError::query("job release"))?;
+    let (task, payload) = found.ok_or_else(|| SqliteError::MissingJob { id: id.to_owned() })?;
+    if crate::summary_replace::live_job(&tx, &task, &payload)? {
+        tx.execute(
             "UPDATE ros_jobs
                 SET state = 'queued', attempts = MAX(attempts - 1, 0), locked_at = NULL, updated_at = ?2
-              WHERE id = ?1 AND state = 'running'",
+              WHERE id = ?1",
             params![id, time::stamp(now)],
-        )
-        .map_err(SqliteError::query("job release"))?;
-    if changed == 0 {
-        Err(SqliteError::MissingJob { id: id.to_owned() })
+        ).map_err(SqliteError::query("job release"))?;
     } else {
-        Ok(())
+        tx.execute("DELETE FROM ros_jobs WHERE id = ?1", [id])
+            .map_err(SqliteError::query("discard expired summary job"))?;
     }
+    tx.commit().map_err(SqliteError::query("job release"))
 }
 
 fn fail_one(

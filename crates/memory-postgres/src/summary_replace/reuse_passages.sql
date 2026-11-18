@@ -1,43 +1,56 @@
--- Reuse complete windows for identical owner text. An unchanged logical slot
--- with the same ordered evidence keeps the physical passage ID.
-WITH source AS (
-    SELECT old.id, old.kind = 'session' AND dest.kind = 'session'
-        AND ARRAY(SELECT message_id FROM rh_summary_sources WHERE summary_id = old.id ORDER BY ordinal)
-          = ARRAY(SELECT message_id FROM rh_summary_sources WHERE summary_id = dest.id ORDER BY ordinal)
-        AS keep_id
-    FROM rh_summaries dest JOIN rh_summaries old
-      ON old.conversation_id = dest.conversation_id AND old.owner_user_id = dest.owner_user_id
-     AND old.content = dest.content AND old.index_key = dest.index_key
-    WHERE dest.id = $1 AND old.id = ANY($2)
-      AND old.kind IN ('session', 'part') AND NOT old.index_needs_repair
-      AND rh_summary_record_indexed(old.id)
-      AND NOT EXISTS (SELECT 1 FROM rh_summary_passages p
-          WHERE p.record_id = old.id AND (p.index_key IS DISTINCT FROM dest.index_key
-             OR p.content IS DISTINCT FROM substring(dest.content FROM p.char_start + 1 FOR p.char_end - p.char_start)))
-    ORDER BY keep_id DESC, old.id
+WITH dest AS (
+    SELECT * FROM rh_summaries WHERE id = $1
+), identical AS (
+    SELECT old.record_id
+    FROM summary_old_passages old CROSS JOIN dest
+    WHERE cardinality($2::integer[]) = 0 AND old.complete
+      AND old.owner_content = dest.content AND old.index_key = dest.index_key
+    ORDER BY (old.kind = 'session' AND dest.kind = 'session') DESC, old.record_id
     LIMIT 1
+), windows AS (
+    SELECT ordinality::integer - 1 AS ordinal, first AS char_start, last AS char_end
+    FROM unnest($2::integer[], $3::integer[]) WITH ORDINALITY AS w(first, last, ordinality)
+    UNION ALL
+    SELECT old.ordinal, old.char_start, old.char_end
+    FROM summary_old_passages old JOIN identical ON identical.record_id = old.record_id
+), draft AS (
+    SELECT w.*, dest.id AS record_id, dest.index_key, dest.kind, dest.earliest_at, dest.latest_at,
+           substring(dest.content FROM w.char_start + 1 FOR w.char_end - w.char_start) AS content,
+           coalesce(
+               (SELECT array_agg(l.message_id ORDER BY l.ordinal) FROM rh_summary_sources l
+                WHERE l.summary_id = dest.id AND EXISTS (
+                    SELECT 1 FROM rh_summaries s WHERE s.parent_id = dest.id AND s.kind = 'section'
+                      AND w.char_start < s.section_char_end AND w.char_end > s.section_char_start
+                      AND l.ordinal BETWEEN s.source_first AND s.source_last)),
+               ARRAY(SELECT l.message_id FROM rh_summary_sources l
+                     WHERE l.summary_id = dest.id ORDER BY l.ordinal)
+           ) AS messages
+    FROM windows w CROSS JOIN dest
+), chosen AS (
+    SELECT draft.*, old.id AS old_id, old.embedding, old.same_slot
+    FROM draft LEFT JOIN LATERAL (
+        SELECT p.id, p.embedding,
+               draft.kind = 'session' AND p.kind = 'session'
+                   AND draft.ordinal = p.ordinal AND draft.messages = p.messages AS same_slot
+        FROM summary_old_passages p
+        WHERE p.index_key = draft.index_key AND p.content = draft.content
+        ORDER BY same_slot DESC, p.id LIMIT 1
+    ) old ON true
+), prepared AS (
+    SELECT chosen.*,
+           coalesce(times.first, chosen.earliest_at) AS first,
+           coalesce(times.last, chosen.latest_at) AS last
+    FROM chosen LEFT JOIN LATERAL (
+        SELECT min(m.created_at) AS first, max(m.created_at) AS last
+        FROM rh_messages m WHERE m.id = ANY(chosen.messages)
+    ) times ON true
 ), moved AS (
-    UPDATE rh_summary_passages p SET record_id = $1
-    FROM source WHERE source.keep_id AND p.record_id = source.id
-    RETURNING p.id
-), copied AS (
-    INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end, content,
-        earliest_at, latest_at, index_key, embedding)
-    SELECT gen_random_uuid(), dest.id, p.ordinal, p.char_start, p.char_end, p.content,
-        coalesce(evidence.earliest_at, dest.earliest_at),
-        coalesce(evidence.latest_at, dest.latest_at), p.index_key, p.embedding
-    FROM source JOIN rh_summary_passages p ON p.record_id = source.id
-    JOIN rh_summaries dest ON dest.id = $1
-    LEFT JOIN LATERAL (
-        SELECT min(m.created_at) AS earliest_at, max(m.created_at) AS latest_at
-        FROM rh_summaries s
-        CROSS JOIN LATERAL rh_summary_message_ids(s.id) membership
-        JOIN rh_messages m ON m.id = membership.message_id
-        WHERE s.parent_id = dest.id AND s.kind = 'section'
-          AND p.char_start < s.section_char_end AND p.char_end > s.section_char_start
-    ) evidence ON true
-    WHERE NOT source.keep_id
-    RETURNING id
+    UPDATE rh_summary_passages p
+    SET record_id = $1, ordinal = new.ordinal, char_start = new.char_start, char_end = new.char_end,
+        earliest_at = new.first, latest_at = new.last
+    FROM prepared new WHERE new.same_slot AND p.id = new.old_id
 )
-UPDATE rh_summaries SET index_needs_repair = false
-WHERE id = $1 AND (EXISTS (SELECT 1 FROM moved) OR EXISTS (SELECT 1 FROM copied))
+INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end, content,
+    earliest_at, latest_at, index_key, embedding)
+SELECT gen_random_uuid(), $1, ordinal, char_start, char_end, content, first, last, index_key, embedding
+FROM prepared WHERE same_slot IS NOT TRUE

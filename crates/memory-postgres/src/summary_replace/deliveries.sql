@@ -54,3 +54,4 @@ SELECT $1, consumer, message_id, version, anchor_id, version IS NULL AND anchor_
 ON CONFLICT (conversation_id, consumer, message_id) DO UPDATE
 SET completed_version = EXCLUDED.completed_version, anchor_id = NULL, historical_backlog = false
 WHERE rh_summary_deliveries.completed_version IS NULL AND EXCLUDED.completed_version IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM summary_retained WHERE id = rh_summary_deliveries.anchor_id)

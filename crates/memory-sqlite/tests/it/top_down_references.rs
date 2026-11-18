@@ -26,6 +26,8 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         historical,
         created_at: Utc::now(),
         retained_parts: Default::default(),
+        part_order: Vec::new(),
+        passage_windows: Default::default(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -114,6 +116,7 @@ fn initial_parts() -> PreparedSummaryTree {
 fn reopen_parts() -> PreparedSummaryTree {
     let mut next = tree(&[20, 21, 22, 23, 24], 30, &[4, 2, 3], false);
     next.retained_parts.extend([id(21), id(22)]);
+    next.part_order = vec![id(31), id(21), id(22)];
     next.records.extend([
         part(30, 21, 2, 1),
         part(30, 22, 3, 2),
@@ -291,8 +294,18 @@ async fn top_down_references_wiki_acceptance_and_receipts_commit_together() -> T
 async fn top_down_references_related_rows_follow_the_winner() -> TestResult {
     let (_dir, store) = store(None)?;
     seed(&store).await?;
+    let transcript = snapshot(&store).await?;
     store.with_conn(|conn| {
         let at = "2024-01-01T00:00:00Z";
+        conn.execute(
+            "UPDATE ros_wiki_extractions SET topics_touched = '[\"valve\"]'",
+            [],
+        ).map_err(failed)?;
+        conn.execute(
+            "INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, extracted_at, topics_touched)
+             VALUES (?1, 'failed', 8, ?2, '[\"gasket\"]')",
+            params![id(11).to_string(), at],
+        ).map_err(failed)?;
         for statement in [
             "INSERT INTO ros_wiki_provenance (topic_slug, source_kind, source_id, created_at)
              SELECT 'valve', 'summary', id, ?1 FROM ros_summaries",
@@ -342,9 +355,25 @@ async fn top_down_references_related_rows_follow_the_winner() -> TestResult {
                 )
                 .map_err(failed)?;
             assert_eq!(jobs, 0);
+            let extraction: (String, String, String) = conn
+                .query_row(
+                    "SELECT summary_id, status, topics_touched FROM ros_wiki_extractions",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .map_err(failed)?;
+            assert_eq!(
+                extraction,
+                (
+                    id(20).to_string(),
+                    "done".to_owned(),
+                    r#"["gasket","valve"]"#.to_owned()
+                )
+            );
             Ok(())
         })
         .await?;
+    assert_eq!(snapshot(&store).await?, transcript);
     Ok(())
 }
 
@@ -427,6 +456,10 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
                 .collect(),
         });
     }
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
+    prepared.part_order = vec![id(22), id(21)];
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
+    prepared.part_order.clear();
     store.replace_summary_tree(prepared).await?;
     store.with_conn(|conn| {
         let mut query = conn.prepare(
@@ -477,6 +510,9 @@ async fn top_down_references_reopens_parts_and_sections() -> TestResult {
              VALUES (?1, ?2, 'fixture', 'cli', 'user', 'An earlier measurement.', '2023-12-01T00:00:00Z')",
             [id(4).to_string(), id(1).to_string()],
         ).map_err(failed)?;
+        conn.execute("UPDATE ros_summaries SET embedding = X'0000803F00000000',
+                          index_key = input_key, index_needs_repair = 0 WHERE kind = 'part'", [])
+            .map_err(failed)?;
         for part in [id(21), id(22)] {
             conn.execute(
                 "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
@@ -489,20 +525,25 @@ async fn top_down_references_reopens_parts_and_sections() -> TestResult {
     }).await?;
 
     let transcript = snapshot(&store).await?;
-    let before = kept_parts(&store).await?;
-    let mut stale = reopen_parts();
-    stale
-        .records
-        .iter_mut()
-        .find(|row| row.id == id(21))
-        .ok_or("part")?
-        .sources[0]
-        .render_key = Some([3; 32]);
+    let plan = reopen_parts();
+    let update_key = |byte: u8| {
+        store.with_conn(move |conn| {
+            conn.execute(
+                "UPDATE ros_summary_sources SET render_key = ?2 WHERE summary_id = ?1",
+                params![id(21).to_string(), vec![byte; 32]],
+            )
+            .map_err(failed)
+        })
+    };
+    update_key(3).await?;
+    let changed = kept_parts(&store).await?;
     assert!(matches!(
-        store.replace_summary_tree(stale).await,
+        store.replace_summary_tree(plan).await,
         Err(memory_sqlite::SqliteError::SummaryReference(SummaryReferenceError::Stale(uuid))) if uuid == id(21)
     ));
-    assert_eq!(kept_parts(&store).await?, before);
+    assert_eq!(kept_parts(&store).await?, changed);
+    update_key(9).await?;
+    let before = kept_parts(&store).await?;
     assert_eq!(snapshot(&store).await?, transcript);
     store.replace_summary_tree(reopen_parts()).await?;
     assert_eq!(kept_parts(&store).await?, before);
@@ -531,5 +572,117 @@ async fn top_down_references_reopens_parts_and_sections() -> TestResult {
         ]
         .map(|(node, parent)| (node.to_string(), parent.map(|p| p.to_string())))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_writer_and_replacement_contend_across_connections() -> TestResult {
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    let (dir, store) = store(None)?;
+    seed(&store).await?;
+    let writer = SqliteStore::open(dir.path().join("memory.sqlite"))?;
+    let before = snapshot(&store).await?;
+    let (locked, held) = oneshot::channel();
+    let (unlock, release) = oneshot::channel();
+    let writing = tokio::spawn(async move {
+        writer
+            .with_conn(move |conn| {
+                let tx = conn
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                    .map_err(failed)?;
+                tx.execute(
+                    "INSERT INTO ros_wiki_topics (slug, title, created_at, updated_at)
+                 VALUES ('spare', 'Spare', '2024-01-02', '2024-01-02')",
+                    [],
+                )
+                .map_err(failed)?;
+                tx.execute(
+                    "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+                 VALUES ('spare', ?1, 'leaf', 'Written before the swap', '2024-01-02')",
+                    [id(11).to_string()],
+                )
+                .map_err(failed)?;
+                locked
+                    .send(())
+                    .map_err(|()| failed(rusqlite::Error::InvalidQuery))?;
+                release
+                    .blocking_recv()
+                    .map_err(|_| failed(rusqlite::Error::InvalidQuery))?;
+                tx.commit().map_err(failed)
+            })
+            .await
+    });
+    held.await?;
+    let replacing = store.replace_summary_tree(tree(&[10, 11, 12], 20, &[2], true));
+    tokio::pin!(replacing);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut replacing)
+            .await
+            .is_err()
+    );
+    unlock.send(()).map_err(|()| "writer stopped")?;
+    writing.await??;
+    tokio::time::timeout(Duration::from_secs(5), replacing).await??;
+    let cited = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT summary_id FROM ros_wiki_citations WHERE topic_slug = 'spare'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(failed)
+        })
+        .await?;
+    assert_eq!(cited, id(20).to_string());
+    assert_eq!(snapshot(&store).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry() -> TestResult {
+    use kernel::queue::{ClaimSelector, FixedJob, JobName, JobQueue};
+    use memory_sqlite::JobInsert;
+
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    let before = snapshot(&store).await?;
+    let now = Utc::now();
+    let job = ExtractWiki {
+        summary_id: id(11),
+        conversation_id: Some(id(1)),
+    };
+    let payload = serde_json::to_string(&job)?;
+    store
+        .enqueue_job(
+            JobInsert::new("extract-wiki", payload, now)
+                .key(format!("wiki-ext-{}", job.summary_id)),
+        )
+        .await?;
+    let selector = ClaimSelector::matching(vec![JobName::Fixed(FixedJob::ExtractWiki)]);
+    let claimed = store.claim(&selector).await?.ok_or("expected a claim")?;
+    let WikiWork::Pending(input) = store.wiki_work(&job).await? else {
+        return Err("expected running wiki work".into());
+    };
+    store
+        .replace_summary_tree(tree(&[10, 11, 12], 20, &[2], true))
+        .await?;
+    let result = store
+        .apply_wiki(
+            &job,
+            Vec::new(),
+            &WikiRouting {
+                input: Some(input),
+                ..WikiRouting::default()
+            },
+            now,
+        )
+        .await;
+    assert!(matches!(result, Err(error) if error.obsolete_input()));
+    store.release(claimed.id).await?;
+    assert!(store.read(claimed.id).await?.is_none());
+    assert!(store.claim(&selector).await?.is_none());
+    assert_eq!(snapshot(&store).await?, before);
     Ok(())
 }

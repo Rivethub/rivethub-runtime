@@ -33,13 +33,15 @@ pub(super) fn plan(
                 SELECT 1 FROM ros_summaries
                 WHERE id = ?1 AND conversation_id = ?2 AND kind = 'part'
                   AND input_key = ?3 AND content = ?4 AND issued_part_ordinal = ?5
+                  AND summary_ordinal = ?6
             )",
                 params![
                     id,
                     conversation,
                     row.input_key.as_slice(),
                     row.content,
-                    row.issued_part_ordinal
+                    row.issued_part_ordinal,
+                    row.ordinal
                 ],
                 |r| r.get(0),
             )
@@ -127,9 +129,6 @@ pub(super) fn reparent(
     tree: &PreparedSummaryTree,
     retained: &BTreeSet<Uuid>,
 ) -> Result<(), SqliteError> {
-    // The immediate unique root constraint requires deleting the old root
-    // before inserting the new one. Move children first so ON DELETE SET
-    // NULL does not rewrite them, with the new parent checked at commit.
     conn.execute_batch("PRAGMA defer_foreign_keys = ON")
         .map_err(failure)?;
     for row in tree.records.iter().filter(|row| retained.contains(&row.id)) {

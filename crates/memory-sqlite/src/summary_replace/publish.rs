@@ -28,6 +28,7 @@ impl SqliteStore {
         &self,
         mut prepared: PreparedSummaryTree,
     ) -> Result<(), SqliteError> {
+        prepared.validate_index_key(self.summary_index_key)?;
         let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
             message: error.to_string(),
         })?;

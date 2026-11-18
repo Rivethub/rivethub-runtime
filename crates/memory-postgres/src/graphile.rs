@@ -191,11 +191,30 @@ impl GraphileQueue {
         id: JobId,
         delay: Option<std::time::Duration>,
     ) -> Result<u64, Error> {
-        let released: i64 = sqlx::query_scalar(crate::graphile_sql::RELEASE)
-            .bind(i64::from(id))
-            .bind(format!("{}-", self.worker))
-            .bind(delay.map(|delay| delay.as_secs_f64()))
-            .fetch_one(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|source| Error::operation("release", source))?;
+        let worker = format!("{}-", self.worker);
+        let id = i64::from(id);
+        let live = crate::flagged::live_jobs(&mut tx, &[id]).await?;
+        let released: i64 = if live.is_empty() {
+            sqlx::query_scalar(crate::graphile_sql::COMPLETE)
+                .bind(id)
+                .bind(&worker)
+                .fetch_one(&mut *tx)
+                .await
+        } else {
+            sqlx::query_scalar(crate::graphile_sql::RELEASE)
+                .bind(id)
+                .bind(&worker)
+                .bind(delay.map(|delay| delay.as_secs_f64()))
+                .fetch_one(&mut *tx)
+                .await
+        }
+        .map_err(|source| Error::operation("release", source))?;
+        tx.commit()
             .await
             .map_err(|source| Error::operation("release", source))?;
         count(released)

@@ -312,7 +312,7 @@ impl PostgresMemory {
             let text = tokio::fs::read_to_string(path)
                 .await
                 .map_err(Error::WikiIo)?;
-            let text = references::project(text, &[], &[])
+            let text = references::archive(text)
                 .map_err(|source| Error::stored("wiki archive", source))?;
             found.get_or_insert_with(String::new).push_str(&text);
         }

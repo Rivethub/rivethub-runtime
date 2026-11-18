@@ -28,6 +28,7 @@ pub(super) async fn plan(
                 SELECT 1 FROM rh_summaries
                 WHERE id = $1 AND conversation_id = $2 AND owner_user_id = $3 AND kind = 'part'
                   AND input_key = $4 AND content = $5 AND issued_part_ordinal = $6
+                  AND summary_ordinal = $7
             )",
         )
         .bind(row.id)
@@ -36,6 +37,7 @@ pub(super) async fn plan(
         .bind(row.input_key.as_slice())
         .bind(&row.content)
         .bind(row.issued_part_ordinal)
+        .bind(row.ordinal)
         .fetch_one(&mut *conn)
         .await
         .map_err(query)?;

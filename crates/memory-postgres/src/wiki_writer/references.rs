@@ -1,5 +1,3 @@
-//! Git page metadata is a cache. Store-backed reads take summary references from SQL.
-
 use kernel::wiki::page::{
     CitationKind, PageCitation, PageSource, WikiPage, WikiPageError, WikiSourceKind,
     parse_wiki_page, serialize_wiki_page,
@@ -23,13 +21,18 @@ pub(super) fn clear(page: &mut WikiPage) -> bool {
     had_citations || source_count != page.meta.sources.len()
 }
 
+pub(crate) fn archive(markdown: String) -> Result<String, WikiPageError> {
+    let projected = project(markdown, &[], &[])?;
+    Ok(kernel::wiki::page::archive::without_summary_citations(
+        &projected,
+    ))
+}
+
 pub(crate) fn project(
     markdown: String,
     citations: &[WikiCitation],
     sources: &[WikiSource],
 ) -> Result<String, WikiPageError> {
-    // Legacy archives are ordinary Markdown. Some imported archives are whole wiki
-    // pages and carry the same cached fields as current pages.
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let Ok(mut page) = parse_wiki_page(&markdown) else {
         return Ok(markdown);
@@ -53,6 +56,7 @@ pub(crate) fn project(
         sources
             .iter()
             .filter(|source| summary_source(source.kind))
+            .take(64)
             .map(|source| PageSource {
                 kind: source.kind,
                 ids: source.ids.clone(),

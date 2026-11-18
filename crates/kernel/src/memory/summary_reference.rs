@@ -45,9 +45,9 @@ pub struct PreparedSummaryTree {
     pub historical: bool,
     pub created_at: DateTime<Utc>,
     pub records: Vec<PreparedSummaryRecord>,
-    /// Kept parts also appear in `records`, with their stored bytes and original
-    /// manifest, the new root as parent, and their new composition position.
     pub retained_parts: BTreeSet<Uuid>,
+    pub part_order: Vec<Uuid>,
+    pub passage_windows: BTreeMap<Uuid, Vec<std::ops::Range<i32>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +99,18 @@ pub struct SectionIdentity {
 pub type SummaryCoverage = BTreeMap<Uuid, BTreeSet<Uuid>>;
 
 impl PreparedSummaryTree {
+    pub fn validate_index_key(&self, key: Option<[u8; 32]>) -> Result<(), SummaryReferenceError> {
+        if let Some(expected) = key
+            && let Some(row) = self.records.iter().find(|row| {
+                !self.retained_parts.contains(&row.id)
+                    && row.index_key.is_some_and(|index| index != expected)
+            })
+        {
+            return Err(SummaryReferenceError::Stale(row.id));
+        }
+        Ok(())
+    }
+
     pub fn coverage(&self) -> Result<SummaryCoverage, InvalidSummaryManifest> {
         let records: BTreeMap<_, _> = self.records.iter().map(|row| (row.id, row)).collect();
         if records.len() != self.records.len()
@@ -113,6 +125,25 @@ impl PreparedSummaryTree {
                 .any(|id| self.expected_ids.contains(id) && !self.retained_parts.contains(id))
         {
             return Err(InvalidSummaryManifest);
+        }
+        for (id, windows) in &self.passage_windows {
+            let row = records.get(id).ok_or(InvalidSummaryManifest)?;
+            if !matches!(row.kind, SummaryKind::Session | SummaryKind::Part)
+                || self.retained_parts.contains(id)
+                || row.index_key.is_none()
+            {
+                return Err(InvalidSummaryManifest);
+            }
+            let mut end = 0i32;
+            for range in windows {
+                if range.start != end || range.end <= end || range.end - end > 6000 {
+                    return Err(InvalidSummaryManifest);
+                }
+                end = range.end;
+            }
+            if end == 0 || usize::try_from(end).ok() != Some(row.content.chars().count()) {
+                return Err(InvalidSummaryManifest);
+            }
         }
         let mut roots = records
             .values()
@@ -226,6 +257,14 @@ impl PreparedSummaryTree {
             .iter()
             .filter(|row| row.kind == SummaryKind::Part)
             .collect();
+        if !self.part_order.is_empty() {
+            let ids: BTreeSet<_> = parts.iter().map(|row| row.id).collect();
+            if self.part_order.len() != ids.len()
+                || self.part_order.iter().copied().collect::<BTreeSet<_>>() != ids
+            {
+                return Err(InvalidSummaryManifest);
+            }
+        }
         if !parts.is_empty() {
             let part_members: BTreeSet<_> = parts
                 .iter()
@@ -238,7 +277,6 @@ impl PreparedSummaryTree {
         Ok(coverages)
     }
 
-    /// Match a section in the same logical slot using the owner's original tag order.
     #[must_use]
     pub fn section_identity(&self, row: &PreparedSummaryRecord) -> Option<SectionIdentity> {
         let bounds = row.section.as_ref()?;
@@ -261,7 +299,6 @@ impl PreparedSummaryTree {
         })
     }
 
-    /// Apply unique matches to the validated plan without changing its coverage.
     pub fn retain_sections(
         &mut self,
         coverage: &mut SummaryCoverage,
@@ -307,7 +344,17 @@ impl PreparedSummaryTree {
                     .filter(|record| record.kind == SummaryKind::Session),
             );
         }
-        parts.sort_by_key(|record| record.ordinal);
+        if self.part_order.is_empty() {
+            parts.sort_by_key(|record| record.ordinal);
+        } else {
+            let order: BTreeMap<_, _> = self
+                .part_order
+                .iter()
+                .enumerate()
+                .map(|(position, id)| (*id, position))
+                .collect();
+            parts.sort_by_key(|record| order.get(&record.id).copied());
+        }
         let mut anchors = BTreeMap::new();
         for part in parts {
             for entry in &part.sources {

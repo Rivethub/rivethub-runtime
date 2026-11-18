@@ -27,6 +27,8 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         historical,
         created_at: Utc::now(),
         retained_parts: Default::default(),
+        part_order: Vec::new(),
+        passage_windows: Default::default(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -115,6 +117,7 @@ fn initial_parts() -> PreparedSummaryTree {
 fn reopen_parts() -> PreparedSummaryTree {
     let mut next = tree(&[20, 21, 22, 23, 24], 30, &[4, 2, 3], false);
     next.retained_parts.extend([id(21), id(22)]);
+    next.part_order = vec![id(31), id(21), id(22)];
     next.records.extend([
         part(30, 21, 2, 1),
         part(30, 22, 3, 2),
@@ -394,6 +397,15 @@ async fn top_down_references_entity_acceptance_is_receipted(pool: PgPool) -> Tes
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_references_related_rows_follow_the_winner(pool: PgPool) -> TestResult {
     seed(&pool).await?;
+    let transcript = checksum(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_summary_access (summary_id, access_count, last_accessed_at)
+         SELECT id, access_count * 2, '2024-01-01' FROM rh_summaries;
+         UPDATE rh_wiki_extractions SET topics_touched = ARRAY['valve'];
+         INSERT INTO rh_wiki_extractions (summary_id, status, pipeline_version, topics_touched, owner_user_id)
+         SELECT id, 'failed', 8, ARRAY['gasket'], owner_user_id FROM rh_summaries
+         WHERE id = '00000000-0000-0000-0000-00000000000b';",
+    ).execute(&pool).await?;
     let entity: Uuid =
         sqlx::query_scalar("SELECT id FROM rh_topics WHERE kind = 'type' AND slug = 'hardware'")
             .fetch_one(&pool)
@@ -477,6 +489,24 @@ async fn top_down_references_related_rows_follow_the_winner(pool: PgPool) -> Tes
     .fetch_one(&pool)
     .await?;
     assert_eq!(jobs, 0);
+    let access: (Uuid, i32) =
+        sqlx::query_as("SELECT summary_id, access_count FROM rh_summary_access")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(access, (id(20), 10));
+    let extraction: (Uuid, String, Vec<String>) =
+        sqlx::query_as("SELECT summary_id, status, topics_touched FROM rh_wiki_extractions")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(
+        extraction,
+        (
+            id(20),
+            "done".to_owned(),
+            vec!["gasket".to_owned(), "valve".to_owned()]
+        )
+    );
+    assert_eq!(checksum(&pool).await?, transcript);
     Ok(())
 }
 
@@ -559,6 +589,10 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
                 .collect(),
         });
     }
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
+    prepared.part_order = vec![id(22), id(21)];
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
+    prepared.part_order.clear();
     Scope::Maintenance
         .run(store.replace_summary_tree(&prepared))
         .await?;
@@ -621,11 +655,19 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
     let archival_file = archive.join("2024-01.1.md");
     tokio::fs::write(&archival_file, &cached).await?;
 
+    let legacy_archive = directory.path().join("archive/valve.md");
+    tokio::fs::write(
+        &legacy_archive,
+        format!(
+            "## Citations\n- {}\n\n## Earlier notes\n\nThe spring is intact.\n",
+            id(12)
+        ),
+    )
+    .await?;
+
     let store = scoped_store(&pool)
         .await?
         .with_wiki_directory(directory.path().to_path_buf());
-    // A failure at commit is the last point at which the reference rewrite can
-    // roll back. The Git cache remains readable against either SQL snapshot.
     sqlx::raw_sql(
         "CREATE FUNCTION refuse_swap() RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN RAISE EXCEPTION 'interrupted publication'; END $$;
@@ -672,6 +714,12 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
             assert!(archived.citations.is_empty());
             assert!(archived.meta.sources.is_empty());
             assert_eq!(archived.current_state, projected.current_state);
+            let legacy = store
+                .wiki_archive(&slug, None)
+                .await?
+                .ok_or("legacy archive")?;
+            assert!(legacy.contains("The spring is intact."));
+            assert!(!legacy.contains(&id(12).to_string()));
             let recompile = store
                 .recompile_source(&slug, Utc::now())
                 .await?
@@ -716,6 +764,15 @@ async fn top_down_references_reopens_parts_and_sections(pool: PgPool) -> TestRes
     .bind(id(22))
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end,
+            content, earliest_at, latest_at, index_key, embedding)
+         SELECT gen_random_uuid(), id, 0, 0, length(content), content, earliest_at, latest_at,
+                input_key, array_fill(0.25::real, ARRAY[1024])::halfvec
+         FROM rh_summaries WHERE kind = 'part'",
+    )
+    .execute(&pool)
+    .await?;
     let transcript = checksum(&pool).await?;
     let parts = || {
         sqlx::query_scalar::<_, String>(
@@ -723,24 +780,27 @@ async fn top_down_references_reopens_parts_and_sections(pool: PgPool) -> TestRes
             (SELECT jsonb_agg(to_jsonb(s) - 'parent_id' ORDER BY id) FROM rh_summaries s WHERE id IN ($1, $2)),
             (SELECT jsonb_agg(to_jsonb(l) ORDER BY summary_id, ordinal) FROM rh_summary_sources l WHERE summary_id IN ($1, $2)),
             (SELECT jsonb_agg(to_jsonb(c) ORDER BY summary_id) FROM rh_wiki_citations c WHERE summary_id IN ($1, $2)),
-            (SELECT jsonb_agg(to_jsonb(d) ORDER BY consumer, message_id) FROM rh_summary_deliveries d WHERE anchor_id IN ($1, $2))
+            (SELECT jsonb_agg(to_jsonb(d) ORDER BY consumer, message_id) FROM rh_summary_deliveries d WHERE anchor_id IN ($1, $2)),
+            (SELECT jsonb_agg(to_jsonb(p) ORDER BY record_id, ordinal) FROM rh_summary_passages p WHERE record_id IN ($1, $2))
          )::text)",
     ).bind(id(21)).bind(id(22)).fetch_one(&pool)
     };
-    let before = parts().await?;
-    let mut stale = reopen_parts();
-    stale
-        .records
-        .iter_mut()
-        .find(|row| row.id == id(21))
-        .ok_or("part")?
-        .sources[0]
-        .render_key = Some([3; 32]);
+    let plan = reopen_parts();
+    let update_key = |byte: u8| {
+        sqlx::query("UPDATE rh_summary_sources SET render_key = $2 WHERE summary_id = $1")
+            .bind(id(21))
+            .bind(vec![byte; 32])
+            .execute(&pool)
+    };
+    update_key(3).await?;
+    let changed = parts().await?;
     assert!(matches!(
-        Scope::Maintenance.run(store.replace_summary_tree(&stale)).await,
+        Scope::Maintenance.run(store.replace_summary_tree(&plan)).await,
         Err(memory_postgres::ReplaceSummaryError::Reference(SummaryReferenceError::Stale(uuid))) if uuid == id(21)
     ));
-    assert_eq!(parts().await?, before);
+    assert_eq!(parts().await?, changed);
+    update_key(9).await?;
+    let before = parts().await?;
     assert_eq!(checksum(&pool).await?, transcript);
     Scope::Maintenance
         .run(store.replace_summary_tree(&reopen_parts()))
@@ -763,5 +823,124 @@ async fn top_down_references_reopens_parts_and_sections(pool: PgPool) -> TestRes
             (id(33), Some(id(30))),
         ]
     );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry(pool: PgPool) -> TestResult {
+    use kernel::queue::{ClaimSelector, FixedJob, JobName, JobQueue};
+    use memory_postgres::PostgresQueue;
+
+    seed(&pool).await?;
+    let before = checksum(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    let queue = PostgresQueue::connect(pool.clone()).await?;
+    let job = ExtractWiki {
+        summary_id: id(11),
+        conversation_id: Some(id(1)),
+    };
+    sqlx::query(
+        "SELECT graphile_worker.add_job('extract-wiki', json_build_object('summaryId', $1::text),
+            job_key => 'wiki-ext-' || $1::text)",
+    )
+    .bind(job.summary_id)
+    .execute(&pool)
+    .await?;
+    let selector = ClaimSelector::matching(vec![JobName::Fixed(FixedJob::ExtractWiki)]);
+    let claimed = queue.claim(&selector).await?.ok_or("expected a claim")?;
+    Scope::Maintenance
+        .run(async {
+            let WikiWork::Pending(input) = store.wiki_work(&job).await? else {
+                return Err("expected running wiki work".into());
+            };
+            store
+                .replace_summary_tree(&tree(&[10, 11, 12], 20, &[2], true))
+                .await?;
+            let result = store
+                .apply_wiki(
+                    &job,
+                    Vec::new(),
+                    &WikiRouting {
+                        input: Some(input),
+                        ..WikiRouting::default()
+                    },
+                    Utc::now(),
+                )
+                .await;
+            assert!(matches!(result, Err(error) if error.obsolete_input()));
+            queue.release(claimed.id).await?;
+            assert!(queue.read(claimed.id).await?.is_none());
+            assert!(queue.claim(&selector).await?.is_none());
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+        .await?;
+    assert_eq!(checksum(&pool).await?, before);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_wiki_extractions")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(rows, 1);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let transcript = checksum(&pool).await?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_summary_index_key([0xab; 32]);
+    let mut first = tree(&[10, 11, 12], 20, &[2, 3], true);
+    first.records[0].content = "Screw. Clamp.".to_owned();
+    first.records[0].index_key = Some([0xab; 32]);
+    first.passage_windows.insert(id(20), vec![0..7, 7..13]);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&first))
+        .await?;
+    sqlx::raw_sql(
+        "UPDATE rh_summary_passages SET embedding = array_fill((ordinal + 1)::real, ARRAY[1024])::halfvec;
+         UPDATE rh_summaries SET index_needs_repair = false",
+    ).execute(&pool).await?;
+    let passages = || {
+        sqlx::query_as::<_, (Uuid, String, bool)>(
+            "SELECT id, content, embedding IS NOT NULL FROM rh_summary_passages ORDER BY ordinal",
+        )
+        .fetch_all(&pool)
+    };
+    let before = passages().await?;
+    assert_eq!(before.len(), 2);
+    let mut second = tree(&[20], 21, &[2, 3], true);
+    second.records[0].content = "Screw. Clamp. Nut.".to_owned();
+    second.records[0].index_key = Some([0xab; 32]);
+    second
+        .passage_windows
+        .insert(id(21), vec![0..7, 7..13, 13..18]);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&second))
+        .await?;
+    let after = passages().await?;
+    assert_eq!(after.get(..2), Some(before.as_slice()));
+    assert_eq!(
+        after
+            .last()
+            .map(|(_, text, indexed)| (text.as_str(), *indexed)),
+        Some((" Nut.", false))
+    );
+
+    let mut different = tree(&[21], 22, &[2, 3], true);
+    different.records[0]
+        .content
+        .clone_from(&second.records[0].content);
+    different.records[0].index_key = Some([0xcd; 32]);
+    different
+        .passage_windows
+        .insert(id(22), vec![0..7, 7..13, 13..18]);
+    let changed_store = store.with_summary_index_key([0xcd; 32]);
+    Scope::Maintenance
+        .run(changed_store.replace_summary_tree(&different))
+        .await?;
+    assert!(passages().await?.iter().all(|(candidate, _, embedded)| {
+        !embedded && after.iter().all(|(old, _, _)| old != candidate)
+    }));
+    assert_eq!(checksum(&pool).await?, transcript);
     Ok(())
 }

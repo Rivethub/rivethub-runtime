@@ -292,7 +292,10 @@ fn unavailable(error: sqlx::Error) -> FlaggedError {
     FlaggedError::Unavailable(Box::new(error))
 }
 
-async fn live_jobs(tx: &mut Transaction<'_, Postgres>, jobs: &[i64]) -> Result<Vec<i64>, Error> {
+pub(crate) async fn live_jobs(
+    tx: &mut Transaction<'_, Postgres>,
+    jobs: &[i64],
+) -> Result<Vec<i64>, Error> {
     let rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
         "SELECT j.id, t.identifier, j.payload::jsonb FROM graphile_worker._private_jobs j
          JOIN graphile_worker._private_tasks t ON t.id = j.task_id WHERE j.id = ANY($1)",
