@@ -518,3 +518,22 @@ async fn scoped_browse_keeps_timestamp_window_order(pool: PgPool) -> TestResult 
     let memory = PostgresMemory::new(pool);
     testkit::session_messages::scoped_browse_keeps_timestamp_window_order(&memory, &memory).await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn out_of_range_stored_session_timestamp_returns_an_error(pool: PgPool) -> TestResult {
+    use kernel::memory::{MemoryStoreError, MessagesQuery};
+
+    let memory = PostgresMemory::new(pool.clone());
+    let seeded = session_catalog::seed(&memory).await?;
+    let conversation = conversation(&pool, &seeded.alpha).await?;
+    let key = SessionKey::from(&seeded.alpha);
+    for metadata in ["{}", r#"{"session_jsonl_line":0}"#] {
+        sqlx::query("UPDATE rh_messages SET created_at = 'infinity', metadata = $2::jsonb WHERE conversation_id = $1")
+            .bind(conversation).bind(metadata).execute(&pool).await?;
+        let page = memory
+            .messages(&key, &MessagesQuery::new(None, Some(1)))
+            .await;
+        assert!(matches!(page, Err(MemoryStoreError::Query { .. })));
+    }
+    Ok(())
+}

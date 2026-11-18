@@ -151,3 +151,18 @@ fn all_unlined_preserves_legacy_order_for_every_small_timestamp_assignment() {
         );
     }
 }
+
+#[test]
+fn out_of_range_cursor_timestamps_are_errors() {
+    use kernel::memory::MessageCursor;
+    use uuid::Uuid;
+
+    for micros in [i64::MIN, i64::MAX] {
+        let encoded = format!("{micros}.{}", Uuid::nil());
+        let error = MessageCursor::decode(&encoded).expect_err("out-of-range cursor time");
+        assert_eq!(
+            error.to_string(),
+            format!("cursor {encoded:?} is not one this server issued")
+        );
+    }
+}

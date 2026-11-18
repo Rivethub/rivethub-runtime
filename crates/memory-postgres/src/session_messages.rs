@@ -22,6 +22,8 @@ const ENTRY_COLUMNS: &str = "m.id::text as id, c.session_key, m.agent, m.channel
      m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata,
      case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings";
 
+// SQLx's binary timestamp decoder panics on values outside Chrono's range.
+const SAFE_STAMP: &str = "case when m.created_at > '-infinity' and m.created_at <= $2 then m.created_at end as created_at";
 const OPERATION: &str = "session messages";
 
 #[derive(sqlx::FromRow)]
@@ -80,10 +82,11 @@ async fn positioned_page(
     let sql = format!(
         "select m.id, m.conversation_id, to_json(m.role) as role,
          case when jsonb_typeof(m.metadata) = 'object' then m.metadata end as metadata,
-         m.created_at{SESSION} order by m.created_at, m.id"
+         {SAFE_STAMP}{SESSION} order by m.created_at, m.id"
     );
     let rows: Vec<_> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(keys)
+        .bind(DateTime::<Utc>::MAX_UTC)
         .fetch_all(&mut *conn)
         .await
         .map_err(failure)?;
@@ -115,12 +118,13 @@ async fn keyset_page(
     query: &MessagesQuery,
 ) -> Result<SessionMessages, Error> {
     let sql = format!(
-        "select {ENTRY_COLUMNS}, m.created_at{SESSION}
-         and ($2::timestamptz is null or (m.created_at, m.id) > ($2, $3::uuid))
-         order by m.created_at, m.id limit $4"
+        "select {ENTRY_COLUMNS}, {SAFE_STAMP}{SESSION}
+         and ($3::timestamptz is null or (m.created_at, m.id) > ($3, $4::uuid))
+         order by m.created_at, m.id limit $5"
     );
     let rows: Vec<_> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(keys)
+        .bind(DateTime::<Utc>::MAX_UTC)
         .bind(query.after.map(|cursor| cursor.created_at))
         .bind(query.after.map(|cursor| cursor.id))
         .bind(i64::from(query.limit) + 1)
@@ -134,9 +138,12 @@ async fn keyset_page(
                 .id
                 .as_deref()
                 .ok_or_else(|| Error::protocol("message row is missing its id"))?;
-            let created_at = entry
-                .created_at
-                .ok_or_else(|| Error::protocol("message row is missing its time"))?;
+            let created_at = entry.created_at.ok_or_else(|| {
+                Error::stored(
+                    "created_at",
+                    std::io::Error::other("message timestamp is outside the supported range"),
+                )
+            })?;
             let cursor = MessageCursor::new(created_at, Uuid::parse_str(id)?);
             Ok((entry, cursor))
         })
