@@ -91,6 +91,10 @@ fn native() -> SessionRecord {
 }
 
 fn setup() -> Setup {
+    catalog_of(Vec::new())
+}
+
+fn catalog_of(extra: Vec<SessionRecord>) -> Setup {
     let state = tempfile::tempdir().expect("state");
     let registry = SessionRegistry::default();
     let deletion = Arc::new(FakeSessionDeletion::default().with_activity(
@@ -101,9 +105,12 @@ fn setup() -> Setup {
             ..SessionActivity::default()
         },
     ));
-    let catalog = FakeSessionCatalog::new(deletion.clone())
-        .with_entry(imported())
-        .with_record(native());
+    let catalog = extra.into_iter().fold(
+        FakeSessionCatalog::new(deletion.clone())
+            .with_entry(imported())
+            .with_record(native()),
+        FakeSessionCatalog::with_record,
+    );
     let fixture = Fixture::with_catalog(
         registry,
         Some(Arc::new(Stores::default())),
@@ -302,6 +309,54 @@ async fn an_unknown_import_is_not_found_and_a_malformed_one_is_a_bad_request() {
 }
 
 #[tokio::test]
+async fn a_captured_detail_serializes_native_session_id_and_a_received_one_omits_it() {
+    let mut desk = native();
+    desk.id = SessionId::new(HarnessId::Cowork, "desk-1");
+    let setup = catalog_of(vec![desk]);
+
+    let captured = encoded(&SessionKey::from(SessionId::new(
+        HarnessId::ClaudeCode,
+        "solo",
+    )));
+    let (status, body) = call(&setup, "GET", &format!("/api/sessions/{captured}"), "").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("\"nativeSessionId\":\"solo\""), "{text}");
+    let detail: SessionDetail = serde_json::from_slice(&body).expect("captured detail");
+    assert_eq!(detail.native_session_id.as_deref(), Some("solo"));
+    assert_eq!(
+        detail.resume_command.as_deref(),
+        Some("claude --resume solo")
+    );
+
+    let without_resume = encoded(&SessionKey::from(SessionId::new(
+        HarnessId::Cowork,
+        "desk-1",
+    )));
+    let (status, body) = call(
+        &setup,
+        "GET",
+        &format!("/api/sessions/{without_resume}"),
+        "",
+    )
+    .await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("\"nativeSessionId\":\"desk-1\""), "{text}");
+    assert!(!text.contains("resumeCommand"), "{text}");
+    let detail: SessionDetail = serde_json::from_slice(&body).expect("cowork detail");
+    assert_eq!(detail.native_session_id.as_deref(), Some("desk-1"));
+    assert_eq!(detail.resume_command, None);
+
+    let received = encoded(&import_key(DIGEST));
+    let (status, body) = call(&setup, "GET", &format!("/api/sessions/{received}"), "").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let text = String::from_utf8_lossy(&body);
+    assert!(!text.contains("nativeSessionId"), "{text}");
+    assert!(!text.contains("resumeCommand"), "{text}");
+}
+
+#[tokio::test]
 async fn an_import_detail_has_its_label_and_no_resume_command() {
     let setup = setup();
     let path = format!("/api/sessions/{}", encoded(&import_key(DIGEST)));
@@ -309,6 +364,7 @@ async fn an_import_detail_has_its_label_and_no_resume_command() {
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let detail: SessionDetail = serde_json::from_slice(&body).expect("detail");
     assert_eq!(detail.resume_command, None);
+    assert_eq!(detail.native_session_id, None);
     assert_eq!(detail.row.harness, None);
     assert_eq!(
         detail
