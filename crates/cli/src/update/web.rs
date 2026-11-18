@@ -306,24 +306,29 @@ async fn candidate(
     channel: Channel,
     shutdown: &CancellationToken,
 ) -> Result<Option<(Manifest, Url)>, UpdateError> {
-    let Ok(url) = release::asset(release, MANIFEST) else {
-        return Ok(None);
-    };
-    let bytes = match release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await {
-        Ok(bytes) => bytes,
-        Err(UpdateError::AssetSize) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes) else {
-        return Ok(None);
-    };
-    if manifest.validate(version, channel).is_err() {
-        return Ok(None);
+    match described(client, release, version, channel, shutdown).await {
+        Ok(candidate) => Ok(Some(candidate)),
+        Err(UpdateError::Asset { .. } | UpdateError::AssetSize | UpdateError::WebManifest) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
     }
-    let Ok(archive) = release::asset(release, &manifest.asset) else {
-        return Ok(None);
-    };
-    Ok(Some((manifest, archive)))
+}
+
+async fn described(
+    client: &reqwest::Client,
+    release: &release::Release,
+    version: &Version,
+    channel: Channel,
+    shutdown: &CancellationToken,
+) -> Result<(Manifest, Url), UpdateError> {
+    let url = release::asset(release, MANIFEST)?;
+    let bytes = release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await?;
+    let manifest: Manifest =
+        serde_json::from_slice(&bytes).map_err(|_| UpdateError::WebManifest)?;
+    manifest.validate(version, channel)?;
+    let archive = release::asset(release, &manifest.asset)?;
+    Ok((manifest, archive))
 }
 
 fn installed(directory: &Path) -> Result<Manifest, UpdateError> {
