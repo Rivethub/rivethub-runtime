@@ -8,11 +8,11 @@ fn batch_session_dates_accept_relaxed_offsets_and_reject_offset_seconds()
     let batch = capture::batch::parse_batch(raw)?;
     let json = serde_json::to_value(batch)?;
     assert_eq!(
-        json.get("created_at").and_then(serde_json::Value::as_str),
+        json.get("created_at").and_then(Json::as_str),
         Some("2026-01-01T00:02:03.123Z")
     );
     assert_eq!(
-        json.get("updated_at").and_then(serde_json::Value::as_str),
+        json.get("updated_at").and_then(Json::as_str),
         Some("2026-01-01T01:02:03.000Z")
     );
     assert!(capture::batch::parse_batch(&raw.replace(" +0100", "+01:00:00")).is_err());

@@ -132,18 +132,16 @@ async fn codex_capture_keeps_messages_with_unparseable_timestamps()
     let dir = tempfile::tempdir()?;
     let path = dir.path().join(codex_name());
     std::fs::create_dir_all(path.parent().ok_or("rollout directory")?)?;
-    let lines = [
+    let mut lines = Vec::new();
+    for stamp in [
         " 2026-01-01T01:02:03.123456789012 +0100",
         "2026-01-01T01:02:03+01:00:00",
-    ]
-    .map(|stamp| {
-        serde_json::json!({
-            "timestamp": stamp,
-            "type": "response_item",
-            "payload": {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
-        })
-        .to_string()
-    });
+    ] {
+        let stamp = serde_json::to_string(stamp)?;
+        lines.push(format!(
+            r#"{{"timestamp":{stamp},"type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"hello"}}]}}}}"#
+        ));
+    }
     std::fs::write(path, lines.join("\n"))?;
     let StoreReader::Codex(reader) = open(HarnessId::Codex, dir.path())? else {
         return Err("Codex reader".into());
@@ -155,7 +153,7 @@ async fn codex_capture_keeps_messages_with_unparseable_timestamps()
     assert_eq!(
         serde_json::to_value(first)?
             .get("created_at")
-            .and_then(serde_json::Value::as_str),
+            .and_then(testkit::Json::as_str),
         Some("2026-01-01T00:02:03.123Z")
     );
     assert_eq!(second.created_at, None);
