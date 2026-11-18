@@ -136,14 +136,21 @@ fn deserialize_login_expiry<'de, D: serde::Deserializer<'de>>(
 }
 
 fn valid_future_expiry(raw: &str) -> bool {
+    let raw = raw.trim_start();
     let unsigned = match raw.strip_prefix('+') {
         Some(raw) => raw,
         None => raw,
     };
-    let Some((year, rest)) = unsigned.split_once('-') else {
+    let Some((digits, rest)) = unsigned.split_once('-') else {
         return false;
     };
-    let year = match year.parse::<u32>() {
+    let digits = digits.trim_end();
+    if (!raw.starts_with('+') && digits.len() != 4)
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return false;
+    }
+    let year = match digits.parse::<u32>() {
         Ok(year) => year,
         Err(_error) => return false,
     };
@@ -160,8 +167,13 @@ fn legacy_expiry_saturates_but_malformed_login_still_fails() -> Result<(), serde
     let raw = r#"{"expires_at":"+262142-12-31T23:59:59.999999999Z","scope":"drops:write"}"#;
     let record: DeviceRecord = serde_json::from_str(raw)?;
     assert_eq!(record.expires_at, Timestamp::MAX);
-    let raw = r#"{"expires_at":"+262142-02-30T00:00:00Z","scope":"drops:write"}"#;
-    assert!(serde_json::from_str::<DeviceRecord>(raw).is_err());
+    for raw in [
+        r#"{"expires_at":"+262142-02-30T00:00:00Z","scope":"drops:write"}"#,
+        r#"{"expires_at":"++262142-12-31T23:59:59Z","scope":"drops:write"}"#,
+        r#"{"expires_at":"00009999-12-31T23:59:59Z","scope":"drops:write"}"#,
+    ] {
+        assert!(serde_json::from_str::<DeviceRecord>(raw).is_err(), "{raw}");
+    }
     Ok(())
 }
 
