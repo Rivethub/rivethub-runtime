@@ -573,7 +573,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let now = "2026-11-18T00:00:00Z".parse()?;
         assert_eq!(
-            device_deadline(now, Duration::from_secs(5_000_000 * 86_400))?,
+            device_deadline(now, Duration::from_hours(120_000_000))?,
             Timestamp::MAX
         );
         assert!(matches!(
