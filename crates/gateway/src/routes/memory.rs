@@ -104,6 +104,26 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             "/flagged/{id}/dismiss",
             routing::post(super::flagged::dismiss).fallback(super::method_not_allowed),
         )
+        .merge(archive_routes())
+        .route("/tool/memory_search", tool_route(tool_search))
+        .route("/tool/memory_browse", tool_route(tool_browse))
+        .route("/tool/memory_stats", tool_route(tool_stats))
+        .route("/tool/memory_get_full", tool_route(tool_get_full))
+        .route("/tool/memory_append", tool_route(tool_append))
+        .route(
+            "/tool/memory_ingest_session",
+            tool_route(tool_ingest_session),
+        )
+        .route(
+            "/tool/{name}",
+            routing::post(unknown_tool).fallback(super::method_not_allowed),
+        )
+        .nest("/tags", super::tags::router())
+        .fallback(unknown)
+}
+
+fn archive_routes() -> Router<Arc<Gateway>> {
+    Router::new()
         .route(
             "/summaries/{session}",
             routing::get(super::memory_archive::summaries).fallback(super::method_not_allowed),
@@ -129,21 +149,6 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             "/export",
             routing::get(super::memory_archive::export).fallback(super::method_not_allowed),
         )
-        .route("/tool/memory_search", tool_route(tool_search))
-        .route("/tool/memory_browse", tool_route(tool_browse))
-        .route("/tool/memory_stats", tool_route(tool_stats))
-        .route("/tool/memory_get_full", tool_route(tool_get_full))
-        .route("/tool/memory_append", tool_route(tool_append))
-        .route(
-            "/tool/memory_ingest_session",
-            tool_route(tool_ingest_session),
-        )
-        .route(
-            "/tool/{name}",
-            routing::post(unknown_tool).fallback(super::method_not_allowed),
-        )
-        .nest("/tags", super::tags::router())
-        .fallback(unknown)
 }
 
 async fn settle(
