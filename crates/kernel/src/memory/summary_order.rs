@@ -127,16 +127,14 @@ fn partition(rows: Vec<Positioned<'_>>) -> (Vec<Vec<TimeKey>>, HashMap<usize, Ve
             streams.entry(stream).or_default().push((position, index));
             continue;
         }
+        // A matching ID kind decides the attachment, even when its match is ambiguous.
         let anchor = position
             .correlation()
             .into_iter()
             .flatten()
-            .find_map(|key| match anchors.get(&(stream, key)) {
-                Some(Anchor::Unique(index)) => Some(*index),
-                _ => None,
-            });
-        if let Some(anchor) = anchor {
-            attached.entry(anchor).or_default().push(time);
+            .find_map(|key| anchors.get(&(stream, key)));
+        if let Some(Anchor::Unique(anchor)) = anchor {
+            attached.entry(*anchor).or_default().push(time);
         } else {
             fallback.push(time);
         }

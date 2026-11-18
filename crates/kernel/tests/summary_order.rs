@@ -153,6 +153,52 @@ fn all_unlined_preserves_legacy_order_for_every_small_timestamp_assignment() {
 }
 
 #[test]
+fn an_ambiguous_event_does_not_fall_through_to_another_id_kind() {
+    let rows = vec![
+        row(
+            1,
+            30,
+            Role::Tool,
+            r#"{"session_jsonl_line":1,"event_id":"s:tool:x","tool_use_id":"other"}"#,
+        ),
+        row(
+            2,
+            40,
+            Role::Tool,
+            r#"{"session_jsonl_line":2,"event_id":"s:tool:x"}"#,
+        ),
+        row(
+            3,
+            20,
+            Role::Tool,
+            r#"{"event_id":"s:tool:x","tool_use_id":"x"}"#,
+        ),
+    ];
+    assert_eq!(ordered(rows), [3, 1, 2]);
+}
+
+#[test]
+fn keeps_all_identical_positions_and_rows_attached_to_one_anchor() {
+    let mut rows = vec![
+        row(
+            2,
+            30,
+            Role::Assistant,
+            r#"{"session_jsonl_line":0,"uuid":"turn"}"#,
+        ),
+        row(1, 30, Role::Assistant, r#"{"session_jsonl_line":0}"#),
+        row(3, 10, Role::User, r#"{"session_jsonl_line":1}"#),
+    ];
+    rows.extend(
+        (4..100)
+            .rev()
+            .map(|id| row(id, 90, Role::Tool, r#"{"assistant_uuid":"turn"}"#)),
+    );
+    let expected: Vec<_> = [1, 2].into_iter().chain(4..100).chain([3]).collect();
+    assert_eq!(ordered(rows), expected);
+}
+
+#[test]
 fn out_of_range_cursor_timestamps_are_errors() {
     use kernel::memory::MessageCursor;
     use uuid::Uuid;
