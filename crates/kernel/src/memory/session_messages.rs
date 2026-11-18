@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use super::MemoryEntry;
@@ -14,21 +15,44 @@ pub struct CursorError(String);
 pub struct MessageCursor {
     pub created_at: DateTime<Utc>,
     pub id: Uuid,
+    prefix: Option<[u8; 32]>,
 }
 
 impl MessageCursor {
     #[must_use]
+    pub const fn new(created_at: DateTime<Utc>, id: Uuid) -> Self {
+        Self {
+            created_at,
+            id,
+            prefix: None,
+        }
+    }
+
+    #[must_use]
     pub fn encode(&self) -> String {
-        format!("{}.{}", self.created_at.timestamp_micros(), self.id)
+        let key = format!("{}.{}", self.created_at.timestamp_micros(), self.id);
+        match self.prefix {
+            Some(prefix) => format!("{key}.{}", hex::encode(prefix)),
+            None => key,
+        }
     }
 
     pub fn decode(text: &str) -> Result<Self, CursorError> {
         let invalid = || CursorError(text.to_owned());
         let (micros, id) = text.split_once('.').ok_or_else(invalid)?;
         let micros: i64 = micros.parse().map_err(|_| invalid())?;
+        let (id, prefix) = match id.split_once('.') {
+            Some((id, encoded)) => {
+                let mut prefix = [0; 32];
+                hex::decode_to_slice(encoded, &mut prefix).map_err(|_| invalid())?;
+                (id, Some(prefix))
+            }
+            None => (id, None),
+        };
         Ok(Self {
             created_at: DateTime::from_timestamp_micros(micros).ok_or_else(invalid)?,
             id: Uuid::parse_str(id).map_err(|_| invalid())?,
+            prefix,
         })
     }
 }
@@ -50,29 +74,45 @@ impl MessagesQuery {
         }
     }
 
-    #[must_use]
-    pub fn page_after<T>(
+    /// Returns the page's offset, its cursors and one lookahead cursor if available.
+    /// The next cursor commits to every ID already seen in transcript order.
+    pub fn positioned_page(
         &self,
-        mut ordered: Vec<T>,
-        cursor: impl Fn(&T) -> MessageCursor,
-    ) -> Vec<T> {
-        let count = self.limit as usize + 1;
-        let Some(after) = self.after else {
-            ordered.truncate(count);
-            return ordered;
+        mut ordered: impl ExactSizeIterator<Item = MessageCursor>,
+    ) -> Result<(usize, Vec<MessageCursor>), CursorError> {
+        let mut digest = Sha256::new();
+        let start = match self.after {
+            None => 0,
+            Some(after) => {
+                let invalid = || CursorError(after.encode());
+                let expected = after.prefix.ok_or_else(invalid)?;
+                let total = ordered.len();
+                loop {
+                    let cursor = ordered.next().ok_or_else(invalid)?;
+                    digest.update(cursor.id.as_bytes());
+                    if cursor.id == after.id {
+                        break;
+                    }
+                }
+                let actual: [u8; 32] = digest.clone().finalize().into();
+                if actual != expected {
+                    return Err(invalid());
+                }
+                total - ordered.len()
+            }
         };
-        if let Some(index) = ordered.iter().position(|row| {
-            let current = cursor(row);
-            current.id == after.id
-                && current.created_at.timestamp_micros() == after.created_at.timestamp_micros()
-        }) {
-            return ordered.into_iter().skip(index + 1).take(count).collect();
+        let mut page: Vec<_> = ordered.take(self.limit as usize + 1).collect();
+        if page.len() > self.limit as usize
+            && let Some((last, preceding)) = page
+                .get_mut(..self.limit as usize)
+                .and_then(<[_]>::split_last_mut)
+        {
+            for cursor in preceding.iter().chain(std::iter::once(&*last)) {
+                digest.update(cursor.id.as_bytes());
+            }
+            last.prefix = Some(digest.finalize().into());
         }
-        ordered
-            .into_iter()
-            .filter(|row| cursor(row) > after)
-            .take(count)
-            .collect()
+        Ok((start, page))
     }
 }
 

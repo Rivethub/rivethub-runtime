@@ -4,9 +4,12 @@ use kernel::memory::CaptureMessage;
 use kernel::memory::Limit;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::MemoryStore;
+use kernel::memory::MemoryStoreError;
+use kernel::memory::MessageCursor;
 use kernel::memory::MessagesQuery;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SummaryStore;
+use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
 use wire::session_id::SessionKey;
@@ -116,7 +119,7 @@ pub async fn session_and_summary_readers_use_line_order(
     }))?);
     let mut later = row(1, Role::User, "later");
     later.metadata = Some(JsonObject::from_serialize(&serde_json::json!({
-        "session_jsonl_line": 2
+        "session_jsonl_line": u64::MAX
     }))?);
     let mut tool = row(4, Role::Tool, "tool");
     tool.metadata = Some(JsonObject::from_serialize(&serde_json::json!({
@@ -219,6 +222,126 @@ fn positioned(index: u32, path: &str, line: u64, content: &str) -> TestResult<Ca
         "session_jsonl_path": path, "session_jsonl_line": line,
     }))?);
     Ok(message)
+}
+
+async fn first_cursor(catalog: &dyn SessionCatalog, key: &SessionKey) -> TestResult<MessageCursor> {
+    let page = catalog
+        .messages(key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    let cursor = page.next.ok_or("next page")?;
+    Ok(MessageCursor::decode(&cursor.encode())?)
+}
+
+async fn assert_cursor_error(
+    catalog: &dyn SessionCatalog,
+    key: &SessionKey,
+    cursor: MessageCursor,
+) {
+    let result = catalog
+        .messages(key, &MessagesQuery::new(Some(cursor), None))
+        .await;
+    assert!(
+        matches!(result, Err(MemoryStoreError::InvalidRequest { message })
+        if message.contains("is not one this server issued"))
+    );
+}
+
+pub async fn inserting_before_the_cursor_requires_restarting_the_session(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+) -> TestResult {
+    let key: SessionKey = "claude-code:00000000-0000-4000-8000-0000000000e3".parse()?;
+    capture_session_fixture(
+        memory,
+        &key,
+        vec![
+            positioned(40, "b", 1, "first")?,
+            positioned(100, "a", 1, "second")?,
+            positioned(110, "a", 2, "third")?,
+        ],
+    )
+    .await?;
+    let first = first_cursor(catalog, &key).await?;
+    let legacy = MessageCursor::decode(&format!(
+        "{}.{}",
+        first.created_at.timestamp_micros(),
+        first.id
+    ))?;
+    assert_cursor_error(catalog, &key, legacy).await;
+    let second = catalog
+        .messages(&key, &MessagesQuery::new(None, Some(2)))
+        .await?
+        .next
+        .ok_or("next page")?;
+    capture_session_fixture(memory, &key, vec![positioned(500, "b", 0, "insert")?]).await?;
+    assert_cursor_error(catalog, &key, first).await;
+    assert_cursor_error(catalog, &key, second).await;
+    Ok(())
+}
+
+pub async fn deleting_messages_preserves_only_unchanged_positioned_prefixes(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+    delete: impl AsyncFn(Uuid) -> TestResult,
+) -> TestResult {
+    let key: SessionKey = "claude-code:00000000-0000-4000-8000-0000000000e4".parse()?;
+    capture_session_fixture(
+        memory,
+        &key,
+        vec![
+            positioned(100, "a", 1, "cursor")?,
+            positioned(10, "a", 2, "second")?,
+            positioned(20, "a", 3, "third")?,
+            positioned(30, "a", 4, "fourth")?,
+        ],
+    )
+    .await?;
+    let first = first_cursor(catalog, &key).await?;
+    let second = catalog
+        .messages(&key, &MessagesQuery::new(None, Some(2)))
+        .await?
+        .next
+        .ok_or("next page")?;
+    let third = catalog
+        .messages(&key, &MessagesQuery::new(None, Some(3)))
+        .await?
+        .next
+        .ok_or("next page")?;
+    delete(third.id).await?;
+    let tail = catalog
+        .messages(&key, &MessagesQuery::new(Some(second), None))
+        .await?;
+    assert_eq!(tail.items.len(), 1);
+    assert_eq!(tail.items.first().ok_or("last message")?.content, "fourth");
+    delete(first.id).await?;
+    assert_cursor_error(catalog, &key, first).await;
+    assert_cursor_error(catalog, &key, second).await;
+    Ok(())
+}
+
+pub async fn deleted_unpositioned_cursor_uses_the_timestamp_keyset(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+    delete: impl AsyncFn(Uuid) -> TestResult,
+) -> TestResult {
+    let key: SessionKey = "claude-code:00000000-0000-4000-8000-0000000000e5".parse()?;
+    capture_session_fixture(
+        memory,
+        &key,
+        vec![row(10, Role::User, "first"), row(20, Role::User, "second")],
+    )
+    .await?;
+    let first = first_cursor(catalog, &key).await?;
+    delete(first.id).await?;
+    let page = catalog
+        .messages(&key, &MessagesQuery::new(Some(first), None))
+        .await?;
+    assert_eq!(page.total, 1);
+    assert_eq!(
+        page.items.first().ok_or("remaining message")?.content,
+        "second"
+    );
+    Ok(())
 }
 
 pub async fn scoped_browse_keeps_timestamp_window_order(

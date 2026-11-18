@@ -153,8 +153,45 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog() -
 #[tokio::test]
 async fn positioned_messages_reach_session_and_summary_readers() -> TestResult {
     let (_directory, store) = store()?;
-    testkit::session_messages::session_and_summary_readers_use_line_order(
-        &store, &store, &store,
+    testkit::session_messages::session_and_summary_readers_use_line_order(&store, &store, &store)
+        .await
+}
+
+#[tokio::test]
+async fn inserting_before_the_cursor_requires_restarting_the_session() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::inserting_before_the_cursor_requires_restarting_the_session(
+        &memory, &memory,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn deleting_messages_preserves_only_unchanged_positioned_prefixes() -> TestResult {
+    let (directory, memory) = store()?;
+    testkit::session_messages::deleting_messages_preserves_only_unchanged_positioned_prefixes(
+        &memory,
+        &memory,
+        async |id: uuid::Uuid| {
+            connection(&directory)?
+                .execute("DELETE FROM ros_messages WHERE id = ?1", [id.to_string()])?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn deleted_unpositioned_cursor_uses_the_timestamp_keyset() -> TestResult {
+    let (directory, memory) = store()?;
+    testkit::session_messages::deleted_unpositioned_cursor_uses_the_timestamp_keyset(
+        &memory,
+        &memory,
+        async |id: uuid::Uuid| {
+            connection(&directory)?
+                .execute("DELETE FROM ros_messages WHERE id = ?1", [id.to_string()])?;
+            Ok(())
+        },
     )
     .await
 }
@@ -163,4 +200,72 @@ async fn positioned_messages_reach_session_and_summary_readers() -> TestResult {
 async fn scoped_browse_keeps_timestamp_window_order() -> TestResult {
     let (_directory, memory) = store()?;
     testkit::session_messages::scoped_browse_keeps_timestamp_window_order(&memory, &memory).await
+}
+
+#[tokio::test]
+async fn unpositioned_keyset_does_not_decode_off_page_rows() -> TestResult {
+    use kernel::memory::MessagesQuery;
+
+    let (directory, memory) = store()?;
+    let (key, _) = session_with_two_messages(&directory, &memory, false).await?;
+    connection(&directory)?.execute(
+        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at, owner_user_id)
+         SELECT 'off-page', conversation_id, agent, channel, role, 'outside page', 'not JSON',
+                '2030-01-01T00:00:00.000Z', owner_user_id FROM ros_messages LIMIT 1",
+        [],
+    )?;
+    let page = memory
+        .messages(&key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    assert_eq!(page.total, 3);
+    assert_eq!(
+        page.items.first().ok_or("page message")?.content,
+        "second insert"
+    );
+    Ok(())
+}
+
+async fn session_with_two_messages(
+    directory: &TempDir,
+    memory: &SqliteStore,
+    positioned: bool,
+) -> TestResult<(wire::session_id::SessionKey, uuid::Uuid)> {
+    use kernel::memory::CaptureMessage;
+    use testkit::topics::at;
+    use wire::message::Role;
+
+    let key = "claude-code:00000000-0000-4000-8000-0000000000e7".parse()?;
+    let metadata = if positioned {
+        r#"{"session_jsonl_line":0}"#
+    } else {
+        r#"{"session_jsonl_line":"0"}"#
+    };
+    let make = |content: &str| -> TestResult<CaptureMessage> {
+        Ok(CaptureMessage {
+            event_id: content.to_owned(),
+            role: Role::User,
+            content: content.to_owned(),
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: Some(serde_json::from_str(metadata)?),
+            created_at: Some(at(10)),
+        })
+    };
+    for content in ["first insert", "second insert"] {
+        testkit::session_messages::capture_session_fixture(memory, &key, vec![make(content)?])
+            .await?;
+    }
+    connection(directory)?.execute(
+        "UPDATE ros_messages SET id = CASE content
+             WHEN 'first insert' THEN '90000000-0000-4000-8000-000000000001'
+             ELSE '10000000-0000-4000-8000-000000000002' END",
+        [],
+    )?;
+    let conversation = memory
+        .get(&key)
+        .await?
+        .and_then(|row| row.conversation)
+        .ok_or("conversation ID")?;
+    Ok((key, conversation))
 }

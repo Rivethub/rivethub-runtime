@@ -90,6 +90,7 @@ pub use records::{
 };
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
+pub use session_messages::CursorError;
 pub use session_messages::MessageCursor;
 pub use session_messages::MessagesQuery;
 pub use session_messages::SESSION_MESSAGES_DEFAULT;

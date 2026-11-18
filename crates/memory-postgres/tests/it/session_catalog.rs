@@ -464,8 +464,51 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog(
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn positioned_messages_reach_session_and_summary_readers(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool);
-    testkit::session_messages::session_and_summary_readers_use_line_order(
-        &memory, &memory, &memory,
+    testkit::session_messages::session_and_summary_readers_use_line_order(&memory, &memory, &memory)
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn inserting_before_the_cursor_requires_restarting_the_session(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::inserting_before_the_cursor_requires_restarting_the_session(
+        &memory, &memory,
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleting_messages_preserves_only_unchanged_positioned_prefixes(
+    pool: PgPool,
+) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    testkit::session_messages::deleting_messages_preserves_only_unchanged_positioned_prefixes(
+        &memory,
+        &memory,
+        async |id| {
+            sqlx::query("DELETE FROM rh_messages WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await?;
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn deleted_unpositioned_cursor_uses_the_timestamp_keyset(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool.clone());
+    testkit::session_messages::deleted_unpositioned_cursor_uses_the_timestamp_keyset(
+        &memory,
+        &memory,
+        async |id| {
+            sqlx::query("DELETE FROM rh_messages WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await?;
+            Ok(())
+        },
     )
     .await
 }

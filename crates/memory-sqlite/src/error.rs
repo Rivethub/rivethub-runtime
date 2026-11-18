@@ -6,6 +6,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SqliteError {
+    #[error(transparent)]
+    Cursor(#[from] kernel::memory::CursorError),
     #[error("the memory file at {path} could not be opened")]
     Open {
         path: PathBuf,
@@ -119,7 +121,8 @@ impl SqliteError {
 impl From<SqliteError> for MemoryStoreError {
     fn from(error: SqliteError) -> Self {
         match error {
-            SqliteError::InvertedRange
+            SqliteError::Cursor(_)
+            | SqliteError::InvertedRange
             | SqliteError::Regex(_)
             | SqliteError::SynthesisUnconfigured
             | SqliteError::Invalid { .. }

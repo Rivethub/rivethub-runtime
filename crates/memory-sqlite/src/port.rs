@@ -272,7 +272,8 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         SqliteError::PayloadNotObject => Some("job payload is not a JSON object".to_owned()),
         SqliteError::ClaimRejected { message } => Some(message.clone()),
         SqliteError::StoredPayload { source } => Some(source.to_string()),
-        SqliteError::Open { .. }
+        SqliteError::Cursor(_)
+        | SqliteError::Open { .. }
         | SqliteError::NotInitialised { .. }
         | SqliteError::SchemaBehind { .. }
         | SqliteError::Pragma(_)
