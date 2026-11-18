@@ -1,9 +1,8 @@
 use crate::common;
+use jiff::Timestamp;
 
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use common::Ids;
 use common::Scenario;
 use common::ScenarioFile;
@@ -980,8 +979,8 @@ struct TaxonomyRow {
     updated_at: String,
 }
 
-fn parse_time(text: &str) -> TestResult<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+fn parse_time(text: &str) -> TestResult<Timestamp> {
+    Ok(wire::time::parse_rfc3339(text)?)
 }
 
 fn decode_map(value: &Json) -> TestResult<Json> {

@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::{DateTime, Utc};
 use kernel::memory::MemoryStore as _;
 use kernel::wiki::builder::{WikiBuilderStore as _, WikiWriteError};
 use kernel::wiki::merge::{MergeInput, Merged, PageMerger};
@@ -20,11 +20,11 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const SUMMARY_ID: &str = "00000000-0000-4000-8000-000000000001";
 
-fn now() -> Result<DateTime<Utc>, chrono::ParseError> {
+fn now() -> Result<Timestamp, jiff::Error> {
     "2026-10-30T12:00:00Z".parse()
 }
 
-fn patch(slug: &str, article: &str) -> Result<PagePatch, chrono::ParseError> {
+fn patch(slug: &str, article: &str) -> Result<PagePatch, jiff::Error> {
     Ok(PagePatch {
         action: WikiAction::Create,
         slug: slug.to_owned(),
@@ -70,7 +70,7 @@ async fn git(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::E
     Ok(String::from_utf8(output.stdout)?)
 }
 
-fn entry(date: &str, title: &str, body: &str) -> Result<WikiHistoryEntry, chrono::ParseError> {
+fn entry(date: &str, title: &str, body: &str) -> Result<WikiHistoryEntry, jiff::Error> {
     Ok(WikiHistoryEntry {
         date: date.parse()?,
         title: title.to_owned(),

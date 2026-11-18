@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::path::Path;
 
 use capture::listing::StoreRoots;
 use capture::listing::StoreSessionLister;
 use capture::readers::SkipRule;
 use capture::readers::StoreReader;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::ListLimit;
 use kernel::transcript::SessionLister;
 use kernel::transcript::ToolOutputRead;
@@ -138,8 +137,8 @@ fn reader(root: &Path) -> Result<StoreReader, Box<dyn std::error::Error>> {
     StoreReader::open(HarnessId::Opencode, root.to_path_buf()).ok_or_else(|| "reader".into())
 }
 
-fn at(ms: i64) -> Result<DateTime<Utc>, Box<dyn std::error::Error>> {
-    DateTime::from_timestamp_millis(ms).ok_or_else(|| format!("{ms}").into())
+fn at(ms: i64) -> Result<Timestamp, Box<dyn std::error::Error>> {
+    Timestamp::from_millisecond(ms).map_err(|_error| format!("{ms}").into())
 }
 
 fn session(native: &str) -> SessionId {

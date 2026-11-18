@@ -112,10 +112,10 @@ fn imported_rows_carry_provenance_and_are_quoted_over_http() {
             provenance.verification,
             wire::memory::Verification::Verified
         );
-        assert_eq!(
-            provenance.origin_date.map(|date| date.to_rfc3339()),
-            Some("2026-10-14T09:00:00+00:00".to_owned())
-        );
+        let date = provenance
+            .origin_date
+            .map(wire::time::TimestampFormat::rfc3339_offset);
+        assert_eq!(date.as_deref(), Some("2026-10-14T09:00:00+00:00"));
     });
     assert_eq!(lookups, 1, "search batches its origin lookup");
 
@@ -208,9 +208,7 @@ fn imported_summaries_are_quoted_over_http() {
         wire::capture::ReceiptVerification::Verified,
     );
     let conversation = uuid::Uuid::from_u128(0x62);
-    let at = chrono::DateTime::parse_from_rfc3339("2026-10-14T09:10:00Z")
-        .expect("time")
-        .with_timezone(&chrono::Utc);
+    let at = wire::time::parse_rfc3339("2026-10-14T09:10:00Z").expect("time");
     let leaf = kernel::memory::MemorySummaryNode {
         id: "00000000-0000-4000-8000-000000000002".to_owned(),
         parent_id: None,

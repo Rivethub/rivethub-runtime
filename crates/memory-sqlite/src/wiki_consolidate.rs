@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::WikiConsolidateStore;
 use kernel::wiki::consolidate::WikiFold;
@@ -40,7 +39,7 @@ impl WikiConsolidateStore for SqliteStore {
     async fn fold_wiki(
         &self,
         fold: &WikiFold,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let fold = fold.clone();
         blocking(self, move |conn| fold_all(conn, &fold, now)).await
@@ -90,7 +89,7 @@ fn topics(conn: &Connection) -> Result<Vec<WikiTopicStats>, WikiStoreError> {
 fn fold_all(
     conn: &mut Connection,
     fold: &WikiFold,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<String>, WikiStoreError> {
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)

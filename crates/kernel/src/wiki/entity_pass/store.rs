@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use super::super::builder::BackfillBudget;
@@ -49,14 +48,14 @@ pub trait EntityStore: Send + Sync {
         &self,
         leaves: &[EntityLeaf],
         prepared: &PreparedEntity,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<EntityView>, EntityStoreError>;
 
     async fn publish(
         &self,
         view: &EntityView,
         prose: &EntityProse,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError>;
 
     async fn finish_entities(
@@ -64,7 +63,7 @@ pub trait EntityStore: Send + Sync {
         leaves: &[Uuid],
         slugs: &[String],
         git_sha: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError>;
 
     async fn finish_entity_delivery(
@@ -82,7 +81,7 @@ pub trait EntityStore: Send + Sync {
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError>;
 
     async fn entity_backfill(
@@ -103,7 +102,7 @@ pub trait EntityStore: Send + Sync {
         &self,
         entity: Uuid,
         embedding: &[f32],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError>;
 
     async fn hold_candidate(
@@ -112,14 +111,14 @@ pub trait EntityStore: Send + Sync {
         prepared: &PreparedEntity,
         confidence: f32,
         reason: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError>;
 
     async fn record_decision(
         &self,
         _summary: Uuid,
         _decision: &MatchDecision,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Ok(())
     }
@@ -140,7 +139,7 @@ pub trait EntityStore: Send + Sync {
         &self,
         _left: Uuid,
         _right: Uuid,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Option<EntityMerge>, EntityStoreError> {
         Ok(None)
     }
@@ -159,13 +158,13 @@ pub trait EntityLease: Send {
     async fn apply(
         &mut self,
         body: &StoredRewrite,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError>;
 
     async fn record_mention(
         &mut self,
         note: &MentionNote,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError>;
 
     async fn release(&mut self) -> Result<(), EntityStoreError>;

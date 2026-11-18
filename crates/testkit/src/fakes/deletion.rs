@@ -1,23 +1,26 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::DeletedSession;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
 use kernel::memory::SessionDeletion;
 use parking_lot::Mutex;
+use tokio_util::sync::CancellationToken;
 use wire::session_id::{SessionId, SessionKey};
 
-type Tombstone = (DateTime<Utc>, Option<String>);
+type Tombstone = (Timestamp, Option<String>);
 
 #[derive(Debug, Default)]
 pub struct FakeSessionDeletion {
     activity: Mutex<BTreeMap<String, SessionActivity>>,
     tombstones: Mutex<BTreeMap<String, Tombstone>>,
-    keeps: Mutex<BTreeMap<String, DateTime<Utc>>>,
-    trash: Mutex<BTreeMap<String, DateTime<Utc>>>,
+    keeps: Mutex<BTreeMap<String, Timestamp>>,
+    trash: Mutex<BTreeMap<String, Timestamp>>,
+    tombstone_purges: AtomicUsize,
+    cancel_after_tombstones: Option<CancellationToken>,
 }
 
 impl FakeSessionDeletion {
@@ -29,13 +32,13 @@ impl FakeSessionDeletion {
         self
     }
 
-    pub fn tombstone(&self, session: &SessionId, deleted_at: DateTime<Utc>) {
+    pub fn tombstone(&self, session: &SessionId, deleted_at: Timestamp) {
         self.tombstones
             .lock()
             .insert(session.as_str().to_owned(), (deleted_at, None));
     }
 
-    pub fn keep(&self, session: &SessionId, kept_at: DateTime<Utc>) {
+    pub fn keep(&self, session: &SessionId, kept_at: Timestamp) {
         self.keeps
             .lock()
             .insert(session.as_str().to_owned(), kept_at);
@@ -63,6 +66,17 @@ impl FakeSessionDeletion {
             .get(session.into().as_str())
             .map(|(_, deleted_by)| deleted_by.clone())
     }
+
+    #[must_use]
+    pub fn tombstone_purges(&self) -> usize {
+        self.tombstone_purges.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn cancel_after_tombstones(mut self, token: CancellationToken) -> Self {
+        self.cancel_after_tombstones = Some(token);
+        self
+    }
 }
 
 #[async_trait]
@@ -71,7 +85,7 @@ impl SessionDeletion for FakeSessionDeletion {
         &self,
         session_key: &str,
         deleted_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<DeletedSession, MemoryStoreError> {
         self.tombstones
             .lock()
@@ -90,7 +104,7 @@ impl SessionDeletion for FakeSessionDeletion {
     async fn tombstones(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let tombstones = self.tombstones.lock();
         Ok(session_keys
             .iter()
@@ -132,6 +146,10 @@ impl SessionDeletion for FakeSessionDeletion {
     }
 
     async fn purge_tombstoned(&self, _limit: u32) -> Result<DeletedSession, MemoryStoreError> {
+        self.tombstone_purges.fetch_add(1, Ordering::Relaxed);
+        if let Some(token) = &self.cancel_after_tombstones {
+            token.cancel();
+        }
         Ok(DeletedSession::default())
     }
 
@@ -139,7 +157,7 @@ impl SessionDeletion for FakeSessionDeletion {
         &self,
         session_key: &str,
         _kept_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         self.keeps.lock().insert(session_key.to_owned(), now);
         Ok(())
@@ -148,7 +166,7 @@ impl SessionDeletion for FakeSessionDeletion {
     async fn kept(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let keeps = self.keeps.lock();
         Ok(session_keys
             .iter()
@@ -165,7 +183,7 @@ impl SessionDeletion for FakeSessionDeletion {
         &self,
         session_key: &str,
         _trashed_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         self.trash
             .lock()
@@ -182,7 +200,7 @@ impl SessionDeletion for FakeSessionDeletion {
     async fn trashed(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let trash = self.trash.lock();
         Ok(session_keys
             .iter()
@@ -192,7 +210,7 @@ impl SessionDeletion for FakeSessionDeletion {
 
     async fn purge_trashed(
         &self,
-        older_than: DateTime<Utc>,
+        older_than: Timestamp,
         limit: u32,
     ) -> Result<DeletedSession, MemoryStoreError> {
         let due: Vec<String> = self

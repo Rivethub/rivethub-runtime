@@ -1,7 +1,6 @@
 use crate::summary_backend as backend;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;
@@ -672,10 +671,7 @@ fn node(parts: NodeParts) -> Result<SummaryNode, SqliteError> {
     })
 }
 
-fn latest_message(
-    conn: &rusqlite::Connection,
-    id: &str,
-) -> Result<Option<DateTime<Utc>>, SqliteError> {
+fn latest_message(conn: &rusqlite::Connection, id: &str) -> Result<Option<Timestamp>, SqliteError> {
     let text: Option<String> = conn
         .query_row(
             "SELECT max(created_at) FROM ros_messages WHERE conversation_id = ?1",

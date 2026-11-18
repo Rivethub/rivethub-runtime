@@ -16,7 +16,8 @@ confidence-threshold = 0.9
 multiple-versions = "warn"
 wildcards = "deny"
 deny = [
-  { crate = "sqlx", wrappers = ["memory-postgres", "memory-sqlite", "migrate", "testkit", "rivethub", "cli", "pgvector"] },
+  { crate = "sqlx", wrappers = ["memory-postgres", "memory-sqlite", "migrate", "testkit", "rivethub", "cli", "pgvector", "jiff-sqlx"] },
+  { crate = "jiff-sqlx", wrappers = ["memory-postgres"] },
   { crate = "pgvector", wrappers = ["memory-postgres"] },
   { crate = "rusqlite", wrappers = ["memory-postgres", "memory-sqlite", "migrate", "testkit", "rivethub", "cli", "capture"] },
   { crate = "openssl" },

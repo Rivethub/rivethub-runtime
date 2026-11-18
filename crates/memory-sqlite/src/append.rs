@@ -25,7 +25,7 @@ impl SqliteStore {
         &self,
         entries: Vec<MemoryEntry>,
         owner: &Owner,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, SqliteError> {
         if let Some(entry) = entries
             .iter()

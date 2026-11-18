@@ -1,8 +1,6 @@
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
-
-use chrono::Datelike as _;
-use chrono::NaiveDate;
-use chrono::TimeZone;
 
 use super::Change;
 use super::ChangeKind;
@@ -15,7 +13,7 @@ const LEVELS: u8 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityDay {
-    pub date: NaiveDate,
+    pub date: Date,
     pub level: u8,
 }
 
@@ -28,17 +26,17 @@ pub fn learned(changes: &[Change]) -> usize {
 }
 
 #[must_use]
-pub fn headline(learned: usize, day: NaiveDate, today: NaiveDate) -> String {
+pub fn headline(learned: usize, day: Date, today: Date) -> String {
     if learned == 0 {
         return "A quiet day".to_owned();
     }
     let things = if learned == 1 { "thing" } else { "things" };
     let when = if day == today {
         "today".to_owned()
-    } else if today.pred_opt() == Some(day) {
+    } else if today.yesterday().is_ok_and(|yesterday| yesterday == day) {
         "yesterday".to_owned()
     } else {
-        day.format("on %A, %B %-d").to_string()
+        day.strftime("on %A, %B %-d").to_string()
     };
     format!("Your agents learned {learned} {things} {when}")
 }
@@ -90,17 +88,16 @@ pub fn recently_updated(changes: &[Change]) -> Vec<Subject> {
 }
 
 #[must_use]
-pub fn activity<Tz: TimeZone>(changes: &[Change], month: NaiveDate, zone: &Tz) -> Vec<ActivityDay> {
-    let mut counts: BTreeMap<NaiveDate, usize> = BTreeMap::new();
+pub fn activity(changes: &[Change], month: Date, zone: &TimeZone) -> Vec<ActivityDay> {
+    let mut counts: BTreeMap<Date, usize> = BTreeMap::new();
     for change in changes {
         *counts
-            .entry(change.at.with_timezone(zone).date_naive())
+            .entry(change.at.to_zoned_datetime(zone.clone()).date())
             .or_default() += 1;
     }
-    let days: Vec<NaiveDate> = month
-        .with_day(1)
-        .into_iter()
-        .flat_map(|first| first.iter_days())
+    let days: Vec<Date> = month
+        .first_of_month()
+        .series(jiff::Span::new().days(1))
         .take_while(|day| day.month() == month.month())
         .collect();
     let busiest = days.iter().filter_map(|day| counts.get(day)).max().copied();

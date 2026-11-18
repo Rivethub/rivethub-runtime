@@ -3,8 +3,7 @@ mod state;
 
 use ::values::SessionId;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -82,7 +81,7 @@ pub struct NewClaim {
     pub value: FactValue,
     pub said: Said,
     pub owner: Option<Owner>,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,8 +90,8 @@ pub struct Claim {
     pub key: FactKey,
     pub value: FactValue,
     pub said: Said,
-    pub at: DateTime<Utc>,
-    pub recorded_at: DateTime<Utc>,
+    pub at: Timestamp,
+    pub recorded_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,7 +102,7 @@ pub struct SessionLink {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityHistory {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub sentence: String,
     pub session: Option<SessionId>,
 }
@@ -112,8 +111,8 @@ pub struct EntityHistory {
 pub struct FactSession {
     pub session: SessionId,
     pub title: Option<String>,
-    pub started_at: DateTime<Utc>,
-    pub last_at: DateTime<Utc>,
+    pub started_at: Timestamp,
+    pub last_at: Timestamp,
     pub messages: u64,
     pub provenance: Option<Provenance>,
 }

@@ -209,7 +209,7 @@ pub(crate) async fn check_status(
     if status.is_success() {
         return Ok(response);
     }
-    let retry_after = retry_after::hint(response.headers(), chrono::Utc::now());
+    let retry_after = retry_after::hint(response.headers(), jiff::Timestamp::now());
     match response.text().await {
         Ok(body) => Err(StatusError::Body {
             status,

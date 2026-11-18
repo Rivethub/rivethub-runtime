@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryMessageTally;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::MemorySummaryNode;

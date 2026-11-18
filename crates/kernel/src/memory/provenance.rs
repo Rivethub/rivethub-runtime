@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use values::time::LegacyStrftime as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use values::IMPORTED_SESSION_PREFIX;
@@ -126,20 +126,26 @@ pub struct ReceiptChecks {
     pub decision: String,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_owner: Option<String>,
     pub author: Option<String>,
-    pub origin_date: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub origin_date: Option<Timestamp>,
     pub verification: Verification,
     pub checks: Option<Box<ReceiptChecks>>,
 }
 
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 struct StoredOrigin {
     author: Option<String>,
-    created_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    created_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,7 +235,7 @@ impl Provenance {
         }
         let on = self
             .origin_date
-            .map(|date| format!(" on {}", date.format("%Y-%m-%d")))
+            .map(|date| format!(" on {}", date.legacy_strftime("%Y-%m-%d")))
             .unwrap_or_default();
         format!(
             "Imported from {} ({}){on}. {NOT_INSTRUCTIONS}",

@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fs;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use memory_sqlite::SqliteError;
@@ -28,10 +27,11 @@ pub(crate) fn recording<T: DeserializeOwned>(name: &str) -> TestResult<T> {
     serde_json::from_str(&text).map_err(|error| format!("parse {name}: {error}").into())
 }
 
-pub(crate) fn instant(text: &str) -> TestResult<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(text)
-        .map_err(|error| format!("parse instant {text}: {error}"))?
-        .with_timezone(&Utc))
+pub(crate) fn instant(text: &str) -> TestResult<Timestamp> {
+    Ok(
+        wire::time::parse_rfc3339(text)
+            .map_err(|error| format!("parse instant {text}: {error}"))?,
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,10 +114,8 @@ fn structured(text: &str) -> Option<Json> {
         .filter(|value| value.is_object() || value.is_array())
 }
 
-fn timestamp(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|parsed| parsed.with_timezone(&Utc))
+fn timestamp(text: &str) -> Option<Timestamp> {
+    wire::time::parse_rfc3339(text).ok()
 }
 
 impl Ids {
@@ -176,7 +174,8 @@ impl Ids {
                 .try_for_each(|(index, (r, a))| self.same(r, a, &format!("{at}[{index}]"))),
             (Json::String(rec), Json::String(act)) => self.same_text(rec, act, at),
             (Json::String(rec), Json::Number(millis))
-                if timestamp(rec).map(|instant| instant.timestamp_millis()) == millis.as_i64() =>
+                if timestamp(rec).map(wire::time::TimestampFormat::epoch_millis)
+                    == millis.as_i64() =>
             {
                 Ok(())
             }

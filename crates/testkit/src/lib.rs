@@ -112,7 +112,7 @@ pub enum Error {
     #[error("invalid number: {0}")]
     Number(#[from] std::num::ParseIntError),
     #[error("invalid timestamp: {0}")]
-    Timestamp(#[from] chrono::ParseError),
+    Timestamp(#[from] jiff::Error),
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
 }

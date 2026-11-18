@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use regex::Regex;
 use thiserror::Error;
 use values::JsonObject;
@@ -52,9 +51,9 @@ pub struct FlaggedJob {
     pub payload: JsonObject,
     pub error: String,
     pub failures: u32,
-    pub first_failed_at: Option<DateTime<Utc>>,
-    pub last_failed_at: DateTime<Utc>,
-    pub flagged_at: DateTime<Utc>,
+    pub first_failed_at: Option<Timestamp>,
+    pub last_failed_at: Timestamp,
+    pub flagged_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +61,7 @@ pub struct FlaggedGroup {
     pub task: String,
     pub cause: String,
     pub count: u64,
-    pub last_failed_at: DateTime<Utc>,
+    pub last_failed_at: Timestamp,
     pub sample: FlaggedJob,
 }
 
@@ -82,7 +81,7 @@ pub trait FlaggedJobs: Send + Sync {
 
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError>;
 
-    async fn dismiss(&self, id: FlaggedId, at: DateTime<Utc>) -> Result<(), FlaggedError>;
+    async fn dismiss(&self, id: FlaggedId, at: Timestamp) -> Result<(), FlaggedError>;
 }
 
 #[expect(clippy::expect_used)]

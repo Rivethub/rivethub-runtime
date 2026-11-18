@@ -116,7 +116,7 @@ impl GraphileQueue {
         let queued: QueuedJob = sqlx::query_as(crate::graphile_sql::ARM)
             .bind(job.name.to_string())
             .bind(sqlx::types::Json(&job.payload))
-            .bind(job.run_at)
+            .bind(crate::time::BindTime::bind_time(job.run_at))
             .bind(match job.max_attempts {
                 Some(attempts) => attempts,
                 None => attempts_for(&job.name),

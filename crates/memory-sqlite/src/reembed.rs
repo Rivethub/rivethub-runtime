@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::EmbedTable;
 use rusqlite::Connection;
 use rusqlite::TransactionBehavior;
@@ -50,7 +49,7 @@ impl SqliteStore {
     }
 }
 
-fn reset(conn: &Connection, now: DateTime<Utc>) -> Result<ReembedReport, SqliteError> {
+fn reset(conn: &Connection, now: Timestamp) -> Result<ReembedReport, SqliteError> {
     conn.execute(
         "DELETE FROM ros_jobs WHERE task = ?1 AND state <> ?2",
         params![EMBED_TASK, JobState::Running.to_string()],

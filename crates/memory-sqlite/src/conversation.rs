@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 use rusqlite::params;
@@ -19,7 +18,7 @@ pub(crate) struct ConversationKey {
 pub(crate) struct StoredConversation {
     pub(crate) id: String,
     pub(crate) channel: String,
-    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) updated_at: Timestamp,
     pub(crate) owner: Option<String>,
 }
 
@@ -66,8 +65,8 @@ pub(crate) struct NewConversation<'a> {
     pub(crate) settings: Option<&'a str>,
     pub(crate) task_id: Option<&'a str>,
     pub(crate) owner: &'a str,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) updated_at: DateTime<Utc>,
+    pub(crate) created_at: Timestamp,
+    pub(crate) updated_at: Timestamp,
 }
 
 impl NewConversation<'_> {

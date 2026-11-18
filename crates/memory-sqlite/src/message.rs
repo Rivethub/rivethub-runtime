@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryEntry;
 use rusqlite::Row;
 use rusqlite::Transaction;
@@ -25,7 +24,7 @@ pub(crate) struct NewMessage<'a> {
     pub(crate) tool_args: Option<&'a str>,
     pub(crate) tool_result: Option<&'a str>,
     pub(crate) metadata: Option<&'a str>,
-    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) created_at: Timestamp,
     pub(crate) owner: &'a str,
 }
 

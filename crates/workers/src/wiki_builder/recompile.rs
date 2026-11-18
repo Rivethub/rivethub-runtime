@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::model::ModelProvider;
 use kernel::queue::JobQueue;
 use kernel::wiki::recompile::{RecompileWiki, WikiRecompileStore, recompile};
@@ -14,7 +14,7 @@ pub struct RecompileEnv<'a> {
     pub provider: &'a dyn ModelProvider,
     pub queue: &'a dyn JobQueue,
     pub model: &'a str,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }
 

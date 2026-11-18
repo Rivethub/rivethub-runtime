@@ -3,9 +3,9 @@ mod history;
 mod lock;
 pub(crate) mod references;
 
+use jiff::Timestamp;
 use std::path::{Component, Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use kernel::wiki::builder::WikiWriteError;
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::page::bound::{Archived, MergeBase, rebase};
@@ -52,7 +52,7 @@ impl WikiRepository {
     pub async fn history_since(
         &self,
         slug: &WikiSlug,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<kernel::wiki::page::WikiHistoryEntry>, WikiWriteError> {
         let root = tokio::fs::canonicalize(&self.root).await?;
         history::since(&root, slug, since).await
@@ -97,7 +97,7 @@ impl LockedRepository {
         page: &mut WikiPage,
         removed: &[String],
         message: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<String, WikiWriteError> {
         fold_archived(
             &self.root,
@@ -116,7 +116,7 @@ impl LockedRepository {
         page: &mut WikiPage,
         archived: Vec<Archived>,
         message: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<String, WikiWriteError> {
         fold_archived(
             &self.root,
@@ -243,7 +243,7 @@ async fn fold_archived(
     page: &mut WikiPage,
     removed: &[String],
     message: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     extra: Vec<Archived>,
     sql_references: bool,
 ) -> Result<String, WikiWriteError> {

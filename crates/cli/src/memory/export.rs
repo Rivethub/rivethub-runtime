@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryExport;
 use kernel::memory::MemoryStoreError;
 use memory_postgres::PostgresMemory;
@@ -38,7 +37,7 @@ impl MemoryExporter {
 
     pub(super) async fn gzipped(
         &self,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         shutdown: &CancellationToken,
     ) -> Result<Vec<u8>, Error> {
         let plain = match self {
@@ -62,7 +61,7 @@ impl MemoryExporter {
 impl MemoryExport for MemoryExporter {
     async fn export(
         &self,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         cancellation: CancellationToken,
     ) -> Result<Vec<u8>, MemoryStoreError> {
         self.gzipped(since, &cancellation)

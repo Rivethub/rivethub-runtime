@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -280,7 +279,7 @@ async fn idle_batch_from(
         &config::Paths::new(&env)?,
     )
     .ok_or("opencode store")?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let payload = format!(
         r#"{{"session_id":"{session}","hook_event_name":"session.idle","cwd":"/home/user/acmekit"}}"#
     );

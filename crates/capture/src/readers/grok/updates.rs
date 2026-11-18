@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::SecondsFormat;
 use kernel::transcript::TranscriptReaderError;
 use serde::Deserialize;
 use wire::JsonObject;
@@ -253,8 +251,8 @@ impl Reading<'_> {
 
 fn instant(position: u64, millis: Option<i64>) -> Result<String, SkippedRecord> {
     millis
-        .and_then(DateTime::from_timestamp_millis)
-        .map(|at| at.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .and_then(crate::listing::time::from_milliseconds)
+        .map(wire::time::TimestampFormat::rfc3339_millis)
         .ok_or_else(|| SkippedRecord {
             position,
             rule: SkipRule::UnparseableTimestamp,

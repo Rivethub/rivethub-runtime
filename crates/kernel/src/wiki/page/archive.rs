@@ -1,6 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
-
-use chrono::{DateTime, NaiveDate, Utc};
+use values::time::LegacyStrftime as _;
+use values::time::TimestampFormat as _;
 
 use super::bound::{ARCHIVED_TITLE, Archived, blocks, covered, history_line, spill, words};
 use super::limits;
@@ -13,14 +14,14 @@ const MONTH: &str = "%Y-%m";
 pub const SEGMENT_BUDGET: usize = 64 * 1024;
 
 #[must_use]
-pub fn archive_month(at: DateTime<Utc>) -> String {
-    at.format(MONTH).to_string()
+pub fn archive_month(at: Timestamp) -> String {
+    at.legacy_strftime(MONTH)
 }
 
 #[must_use]
 pub fn parse_archive_month(text: &str) -> Option<String> {
     let first = format!("{text}-01");
-    let valid = text.len() == 7 && NaiveDate::parse_from_str(&first, "%Y-%m-%d").is_ok();
+    let valid = text.len() == 7 && values::time::parse_civil_date(&first).is_ok();
     valid.then(|| text.to_owned())
 }
 
@@ -97,8 +98,8 @@ pub fn legacy_archive_path(slug: &str) -> String {
 }
 
 #[must_use]
-pub fn archive_anchor(at: DateTime<Utc>) -> String {
-    format!("a-{}", at.format("%Y%m%dT%H%M%S%3fZ"))
+pub fn archive_anchor(at: Timestamp) -> String {
+    format!("a-{}", at.legacy_strftime("%Y%m%dT%H%M%S%3fZ"))
 }
 
 #[must_use]
@@ -163,11 +164,11 @@ pub fn unarchived(archived: Vec<Archived>, page: &WikiPage, archive: &str) -> Ve
 }
 
 #[must_use]
-pub fn archive_block(at: DateTime<Utc>, inline: Option<&str>, archived: &[Archived]) -> String {
+pub fn archive_block(at: Timestamp, inline: Option<&str>, archived: &[Archived]) -> String {
     let mut block = format!(
         "\n<a id=\"{}\"></a>\n\n## {}",
         archive_anchor(at),
-        at.format("%Y-%m-%d %H:%M UTC")
+        at.legacy_strftime("%Y-%m-%d %H:%M UTC")
     );
     if let Some(sha) = inline {
         block.push_str(" (last inline at ");
@@ -188,7 +189,7 @@ pub fn archive_block(at: DateTime<Utc>, inline: Option<&str>, archived: &[Archiv
 #[must_use]
 pub fn archive_entry(
     slug: &str,
-    at: DateTime<Utc>,
+    at: Timestamp,
     inline: Option<&str>,
     archived: &[Archived],
 ) -> WikiHistoryEntry {
@@ -221,7 +222,7 @@ pub fn archive_entry(
     }
     let line = history_line(&body);
     WikiHistoryEntry {
-        date: at.date_naive(),
+        date: at.utc_date(),
         title: ARCHIVED_TITLE.to_owned(),
         body: line.kept,
     }
@@ -229,14 +230,14 @@ pub fn archive_entry(
 
 pub fn settle_archive(
     page: &mut WikiPage,
-    at: DateTime<Utc>,
+    at: Timestamp,
     inline: Option<&str>,
     archived: &mut Vec<Archived>,
 ) -> Option<String> {
     if archived.is_empty() {
         return None;
     }
-    let today = at.date_naive();
+    let today = at.utc_date();
     let noted = page
         .history
         .iter()

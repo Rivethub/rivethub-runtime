@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::filing::Target;
 use kernel::topics::TopicId;
 use kernel::wiki::builder::{DeferredWiki, ExtractWiki, WikiStoreError};
@@ -17,7 +17,8 @@ struct DeferredRow {
     waits_conversation: Option<Uuid>,
     applied_topic: Option<Uuid>,
     patches: String,
-    deferred_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    deferred_at: Timestamp,
 }
 
 pub(super) async fn defer(pool: &PgPool, deferred: DeferredWiki) -> Result<(), WikiStoreError> {
@@ -72,7 +73,7 @@ pub(super) async fn cite(
     pool: &PgPool,
     summary_id: Uuid,
     slug: &WikiSlug,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let mut tx = pool.begin().await.map_err(query_error)?;
     let job = ExtractWiki {

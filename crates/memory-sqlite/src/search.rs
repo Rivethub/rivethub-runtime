@@ -1,10 +1,9 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::str::FromStr as _;
 
-use chrono::DateTime;
-use chrono::TimeZone;
-use chrono::Utc;
 use kernel::memory::MemoryDegraded;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
@@ -100,7 +99,7 @@ struct Plan {
     before: Option<String>,
     limit: i64,
     fetch_limit: i64,
-    now: DateTime<Utc>,
+    now: Timestamp,
 }
 
 #[derive(Debug, Clone)]
@@ -121,7 +120,7 @@ enum Kind {
 struct Candidate {
     id: String,
     content: String,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     rank: f64,
     kind: Kind,
 }
@@ -134,11 +133,11 @@ struct TagIndex {
 }
 
 impl SqliteStore {
-    pub async fn search_at<Tz: TimeZone + Sync>(
+    pub async fn search_at(
         &self,
         query: SearchQuery,
-        now: DateTime<Utc>,
-        zone: &Tz,
+        now: Timestamp,
+        zone: &TimeZone,
     ) -> Result<SearchOutcome, SqliteError> {
         let mut plan = Plan::prepare(query, now, zone)?;
         plan.summary_index_key = self.summary_index_key;
@@ -187,11 +186,7 @@ impl SqliteStore {
 }
 
 impl Plan {
-    fn prepare<Tz: TimeZone>(
-        query: SearchQuery,
-        now: DateTime<Utc>,
-        zone: &Tz,
-    ) -> Result<Self, SqliteError> {
+    fn prepare(query: SearchQuery, now: Timestamp, zone: &TimeZone) -> Result<Self, SqliteError> {
         if query.synthesize == Some(true) {
             return Err(SqliteError::SynthesisUnconfigured);
         }

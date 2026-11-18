@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
@@ -14,8 +15,6 @@ use capture::sanitize::decide::ResolveError;
 use capture::sanitize::decide::Review;
 use capture::sanitize::marks::MarkProblem;
 use capture::sanitize::marks::ReportError;
-use chrono::DateTime;
-use chrono::Utc;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
@@ -160,15 +159,15 @@ pub(crate) fn bundle() -> Result<SessionBundle, Box<dyn std::error::Error>> {
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Sanitization::Raw,
         vec![session],
     )?;
     Ok(raw.bundle)
 }
 
-pub(crate) fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00.123456789Z")?.with_timezone(&Utc))
+pub(crate) fn at() -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339("2026-11-08T12:00:00.123456789Z")
 }
 
 fn policy() -> Result<Policy, sanitize::mapping::MappingError> {
@@ -592,7 +591,7 @@ async fn a_report_from_another_run_is_refused() -> TestResult {
     let candidates = scrubbed.candidates();
     let scores = sanitize::decide::score(&endpoint(url), &candidates.chunks).await?;
     scrubbed.flag(candidates, &scores, review(20, Mode::Advisory)?)?;
-    let second = scrubbed.seal(&policy, DateTime::UNIX_EPOCH)?;
+    let second = scrubbed.seal(&policy, Timestamp::UNIX_EPOCH)?;
 
     let flags = sanitize::marks::read_flags(&first.report.markdown("s.clean.json", "none"))?;
     let error = sanitize::resolve(

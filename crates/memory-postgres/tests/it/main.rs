@@ -36,6 +36,7 @@ mod summary_dag;
 mod summary_store;
 mod tag_suggest;
 mod tags;
+mod time;
 mod top_down_opening;
 mod top_down_settle;
 mod topics;

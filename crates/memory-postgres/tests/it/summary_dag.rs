@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryMessageTally;
 use kernel::memory::MemoryStore as _;
 use kernel::memory::SummaryDag;
@@ -50,10 +49,8 @@ async fn seed(pool: &PgPool) -> Result<(), sqlx::Error> {
     tx.commit().await
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .expect("timestamp")
-        .with_timezone(&Utc)
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).expect("timestamp")
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]

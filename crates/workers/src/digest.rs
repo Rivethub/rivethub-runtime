@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use kernel::changes::ChangeFeed;
 use kernel::changes::DIGEST_SYSTEM_PROMPT;
 use kernel::changes::DailyDigest;
@@ -80,7 +80,7 @@ pub async fn handle_digest_day(
             owner,
             summary,
             changes: u32::try_from(changes.len()).map_err(|_| WorkerError::Count)?,
-            written_at: Utc::now(),
+            written_at: Timestamp::now(),
         })
         .await?;
     tracing::info!(day = %request.day, changes = changes.len(), "daily digest written");

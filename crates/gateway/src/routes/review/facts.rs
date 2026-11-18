@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::facts::FactKey;
 use kernel::facts::FactState;
 use kernel::facts::FactValue;
@@ -39,7 +38,7 @@ pub(super) struct FactAction {
 pub(super) async fn items(
     gateway: &Gateway,
     topics: &Topics,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<Item>, ApiError> {
     let store = gateway.facts()?;
     let entities: BTreeSet<TopicId> = store

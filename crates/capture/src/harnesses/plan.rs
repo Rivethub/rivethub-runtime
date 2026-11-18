@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::LegacyStrftime as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::harness_setup::ConnectOutcome;
 use kernel::harness_setup::SetupError;
 
@@ -33,13 +33,15 @@ impl Backups {
         Self { directory }
     }
 
-    fn path_for(&self, id: &str, source: &Path, now: DateTime<Utc>) -> PathBuf {
+    fn path_for(&self, id: &str, source: &Path, now: Timestamp) -> PathBuf {
         let name = source.file_name().map_or_else(
             || "config".to_owned(),
             |name| name.to_string_lossy().into_owned(),
         );
-        self.directory
-            .join(format!("{id}-{name}-{}", now.format("%Y%m%dT%H%M%S%3fZ")))
+        self.directory.join(format!(
+            "{id}-{name}-{}",
+            now.legacy_strftime("%Y%m%dT%H%M%S%3fZ")
+        ))
     }
 }
 
@@ -87,7 +89,7 @@ pub(super) fn apply(
     backups: &Backups,
     id: &str,
     dry_run: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ConnectOutcome, SetupError> {
     let diff = unified_diff(edits);
     let mut backup_path = String::new();

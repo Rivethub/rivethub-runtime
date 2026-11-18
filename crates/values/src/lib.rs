@@ -7,7 +7,7 @@ mod model_call;
 mod plugin;
 mod session_id;
 mod session_key;
-mod time;
+pub mod time;
 
 pub use canonical::canonical_json;
 pub use harness::HarnessId;

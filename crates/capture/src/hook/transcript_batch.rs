@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::spoken_title;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
@@ -395,8 +394,8 @@ impl Source<'_> {
     }
 }
 
-fn instant(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, HookError> {
-    raw.map(|text| DateTime::parse_from_rfc3339(text).map(|parsed| parsed.with_timezone(&Utc)))
+fn instant(raw: Option<&str>) -> Result<Option<Timestamp>, HookError> {
+    raw.map(wire::time::parse_rfc3339)
         .transpose()
         .map_err(HookError::Timestamp)
 }

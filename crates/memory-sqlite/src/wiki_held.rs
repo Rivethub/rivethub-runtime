@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::filing::Target;
 use std::str::FromStr;
 
@@ -87,7 +86,7 @@ pub(crate) fn cite(
     conn: &mut Connection,
     summary_id: Uuid,
     slug: &WikiSlug,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let job = ExtractWiki {
         summary_id,
@@ -130,7 +129,7 @@ fn uuid(text: &str) -> Result<Uuid, WikiStoreError> {
     Uuid::parse_str(text).map_err(invalid)
 }
 
-fn stamped(text: &str) -> Result<DateTime<Utc>, WikiStoreError> {
+fn stamped(text: &str) -> Result<Timestamp, WikiStoreError> {
     time::stored(text, "held_at").map_err(|error| WikiStoreError::Query(Box::new(error)))
 }
 

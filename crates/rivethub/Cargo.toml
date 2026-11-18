@@ -21,12 +21,11 @@ name = "rivetos"
 path = "src/bin/rivetos.rs"
 
 [dependencies]
-chrono-tz = { workspace = true }
 cli = { workspace = true }
 async-trait.workspace = true
 axum.workspace = true
 capture.workspace = true
-chrono.workspace = true
+jiff = { workspace = true }
 harness-acp.workspace = true
 providers.workspace = true
 serde.workspace = true

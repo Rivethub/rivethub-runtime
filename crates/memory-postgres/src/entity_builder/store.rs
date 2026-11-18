@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::queue::FixedJob;
 use kernel::queue::JobId;
 use kernel::queue::JobName;
@@ -76,8 +75,10 @@ struct LeafRow {
     id: Uuid,
     conversation_id: Option<Uuid>,
     content: String,
-    start_at: DateTime<Utc>,
-    end_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    start_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    end_at: Timestamp,
     owner_user_id: String,
 }
 
@@ -91,8 +92,10 @@ struct SiblingRow {
     id: Uuid,
     conversation_id: Option<Uuid>,
     content: String,
-    start_at: DateTime<Utc>,
-    end_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    start_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    end_at: Timestamp,
     owner_user_id: String,
     done: bool,
     job_id: Option<i64>,
@@ -102,7 +105,8 @@ struct SiblingRow {
 struct JobRow {
     id: Uuid,
     conversation_id: Option<Uuid>,
-    session_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    session_at: Timestamp,
 }
 
 #[async_trait]
@@ -152,7 +156,7 @@ impl EntityStore for PostgresMemory {
         };
         let rows = sqlx::query_as::<_, SiblingRow>(FOLLOWING)
             .bind(conversation)
-            .bind(lead.start)
+            .bind(crate::time::BindTime::bind_time(lead.start))
             .bind(lead.id)
             .bind(ENTITY_PIPELINE_VERSION)
             .bind(i64::from(limit))
@@ -182,7 +186,7 @@ impl EntityStore for PostgresMemory {
         &self,
         leaves: &[EntityLeaf],
         prepared: &PreparedEntity,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<EntityView>, EntityStoreError> {
         let Some(owner) = leaves.iter().find_map(|leaf| leaf.owner.clone()) else {
             return Ok(None);
@@ -242,7 +246,7 @@ impl EntityStore for PostgresMemory {
         &self,
         view: &EntityView,
         prose: &EntityProse,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         let directory = self.wiki_home("").map_err(store_error)?;
         let mut tx = self.pool.begin().await.map_err(query_error)?;
@@ -285,7 +289,7 @@ impl EntityStore for PostgresMemory {
         leaves: &[Uuid],
         slugs: &[String],
         git_sha: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         finish(self, leaves, &[], slugs, git_sha, now).await
     }
@@ -305,7 +309,7 @@ impl EntityStore for PostgresMemory {
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         summary_replace::shared(&mut tx, &[summary_id])
@@ -381,7 +385,7 @@ impl EntityStore for PostgresMemory {
         &self,
         summary: Uuid,
         decision: &MatchDecision,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         let payload = serde_json::to_string(&decision.candidates)
             .map_err(|error| EntityStoreError::Query(Box::new(error)))?;
@@ -416,7 +420,7 @@ impl EntityStore for PostgresMemory {
         &self,
         entity: Uuid,
         embedding: &[f32],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         if embedding.len() != 1024 {
             return Ok(());
@@ -424,7 +428,7 @@ impl EntityStore for PostgresMemory {
         sqlx::query(REMEMBER)
             .bind(entity)
             .bind(HalfVector::from_f32_slice(embedding))
-            .bind(now)
+            .bind(crate::time::BindTime::bind_time(now))
             .execute(&self.pool)
             .await
             .map_err(query_error)?;
@@ -437,7 +441,7 @@ impl EntityStore for PostgresMemory {
         prepared: &PreparedEntity,
         confidence: f32,
         reason: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         summary_replace::shared(&mut tx, &[summary])
@@ -465,7 +469,7 @@ impl EntityStore for PostgresMemory {
         &self,
         left: Uuid,
         right: Uuid,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<EntityMerge>, EntityStoreError> {
         if left == right {
             return Ok(None);

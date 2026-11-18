@@ -1,8 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::collections::HashSet;
-
-use chrono::DateTime;
-use chrono::Utc;
 
 use super::MemoryMessageTally;
 use super::MemorySummaryNode;
@@ -51,8 +49,8 @@ pub struct SummaryShape {
     pub kind: SummaryKind,
     pub summary_ordinal: Option<u32>,
     pub embedded: bool,
-    pub earliest_at: Option<DateTime<Utc>>,
-    pub latest_at: Option<DateTime<Utc>>,
+    pub earliest_at: Option<Timestamp>,
+    pub latest_at: Option<Timestamp>,
 }
 
 impl From<&MemorySummaryNode> for SummaryShape {
@@ -188,7 +186,7 @@ mod tests {
     use super::*;
 
     fn node(id: &str, parent: Option<&str>, kind: SummaryKind, minute: u32) -> MemorySummaryNode {
-        let at = DateTime::from_timestamp(i64::from(minute) * 60, 0);
+        let at = Timestamp::new(i64::from(minute) * 60, 0).ok();
         MemorySummaryNode {
             id: id.to_owned(),
             parent_id: parent.map(str::to_owned),

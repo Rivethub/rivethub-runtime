@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use rusqlite::Connection;
 use rusqlite::types::ValueRef;
 use serde::Deserialize;
@@ -35,10 +34,10 @@ pub(crate) fn fixture_copy(name: &str) -> TestResult<testkit::FixtureCopy> {
     Ok(testkit::copy_fixture(&recording(name))?)
 }
 
-pub(crate) fn instant(text: &str) -> TestResult<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(text)
-        .map_err(|error| format!("parse instant {text}: {error}"))?
-        .with_timezone(&Utc))
+pub(crate) fn instant(text: &str) -> TestResult<Timestamp> {
+    Ok(text
+        .parse::<Timestamp>()
+        .map_err(|error| format!("parse instant {text}: {error}"))?)
 }
 
 pub(crate) fn connection(path: &Path) -> TestResult<Connection> {

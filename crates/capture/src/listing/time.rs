@@ -1,11 +1,10 @@
+use jiff::Timestamp;
+use jiff::civil::DateTime;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::time::SystemTime;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::NaiveDateTime;
-use chrono::Utc;
 use rusqlite::types::Value as SqlValue;
 
 use super::field::Field;
@@ -68,20 +67,47 @@ pub(crate) fn finite_or_date(time: &RawTime) -> Option<i64> {
     }
 }
 
+fn civil_datetime(text: &str) -> Result<DateTime, jiff::Error> {
+    let (date, time) = text
+        .split_once('T')
+        .ok_or_else(|| jiff::Error::from_args(format_args!("missing transcript time separator")))?;
+    let date = wire::time::parse_civil_date(date)?;
+    let time = if let Some((_, fraction)) = time.rsplit_once('.')
+        && fraction.len() > 9
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let truncated = time.len() - (fraction.len() - 9);
+        time.get(..truncated)
+            .ok_or_else(|| jiff::Error::from_args(format_args!("invalid fractional seconds")))?
+    } else {
+        time
+    };
+    let time = jiff::civil::Time::strptime("%H:%M:%S%.f", time)?;
+    Ok(DateTime::from_parts(date, time))
+}
+
 pub(crate) fn parse_date(text: &str) -> Option<i64> {
     let text = text.trim();
-    if let Ok(at) = DateTime::parse_from_rfc3339(text) {
-        return Some(at.timestamp_millis());
+    if let Ok(at) = wire::time::parse_rfc3339(text) {
+        return Some(at.epoch_millis());
     }
-    if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-        return Some(
-            date.and_time(chrono::NaiveTime::MIN)
-                .and_utc()
-                .timestamp_millis(),
-        );
+    if let Ok(date) = wire::time::parse_civil_date(text) {
+        return match wire::time::date_at_utc(date) {
+            Ok(at) => Some(at.epoch_millis()),
+            Err(error) => {
+                tracing::debug!(%error, "capture date is out of range");
+                None
+            }
+        };
     }
-    if let Ok(naive) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(naive.and_utc().timestamp_millis());
+    if let Ok(naive) = civil_datetime(text) {
+        return match jiff::tz::TimeZone::UTC.to_timestamp(naive) {
+            Ok(at) => Some(at.epoch_millis()),
+            Err(error) => {
+                tracing::debug!(%error, "capture datetime is out of range");
+                None
+            }
+        };
     }
     None
 }
@@ -92,7 +118,18 @@ pub(crate) fn floor_ms(value: f64) -> i64 {
 }
 
 pub(crate) fn system_ms(time: SystemTime) -> i64 {
-    DateTime::<Utc>::from(time).timestamp_millis()
+    let (millis, negative) = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(elapsed) => (elapsed.as_millis(), false),
+        Err(error) => (error.duration().as_nanos().div_ceil(1_000_000), true),
+    };
+    match (i64::try_from(millis), negative) {
+        (Ok(ms), false) => ms,
+        (Ok(ms), true) => -ms,
+        (Err(error), negative) => {
+            tracing::debug!(%error, "file timestamp exceeds epoch millisecond range");
+            if negative { i64::MIN } else { i64::MAX }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,4 +175,51 @@ fn ctime_ms(metadata: &Metadata) -> i64 {
         .ctime()
         .saturating_mul(1000)
         .saturating_add(metadata.ctime_nsec() / 1_000_000)
+}
+
+pub(crate) fn from_milliseconds(millis: i64) -> Option<Timestamp> {
+    match Timestamp::from_millisecond(millis) {
+        Ok(at) => Some(at),
+        Err(error) => {
+            tracing::debug!(%error, millis, "capture timestamp is outside the supported range");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RawTime, epoch_flex, epoch_opencode, parse_date};
+
+    #[test]
+    fn zone_less_transcript_dates_accept_signed_extended_years() {
+        assert_eq!(parse_date("+02026-01-01T00:00:00"), Some(1_767_225_600_000));
+        assert_eq!(parse_date("+02026-01-01 00:00:00"), None);
+        assert_eq!(parse_date("+02026-01-01t00:00:00"), None);
+    }
+
+    #[test]
+    fn source_time_forms_normalize_to_epoch_milliseconds() {
+        for (raw, expected) in [
+            (" 1970-01-01 ", Some(0)),
+            ("1969-12-31T23:59:59.999999999Z", Some(-1)),
+            ("1970-01-01t01:00:00.5+01:00", Some(500)),
+            ("1970-01-01T00:00:00.000999", Some(0)),
+            (" 2026-01-01T01:02:03.123456789012", Some(1_767_229_323_123)),
+            ("1970-01-01 00:00:00.5", None),
+            ("1970-01-01T00:00", None),
+            ("1970-02-29", None),
+        ] {
+            assert_eq!(parse_date(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            epoch_flex(&RawTime::Number(1_000_000_001.5)),
+            1_000_000_001_500
+        );
+        assert_eq!(
+            epoch_opencode(&RawTime::Number(1_000_000_001.5)),
+            1_000_000_001_500
+        );
+        assert_eq!(epoch_flex(&RawTime::Number(-0.5)), -1);
+    }
 }

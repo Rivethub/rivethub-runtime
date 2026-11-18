@@ -224,7 +224,7 @@ fn exits(text: &mut String, record: &PluginRecord) -> fmt::Result {
             text,
             "Last exit: {} at {} UTC; {} restarts since rh started.",
             describe(exit),
-            exit.at.format("%H:%M:%S"),
+            exit.at.strftime("%H:%M:%S"),
             record.restarts
         ),
         None => Ok(()),
@@ -240,7 +240,7 @@ fn log(text: &mut String, lines: &[PluginLogLine]) -> fmt::Result {
         writeln!(
             text,
             "{} {} {}",
-            line.at.format("%H:%M:%S"),
+            line.at.strftime("%H:%M:%S"),
             line.stream,
             line.text
         )?;

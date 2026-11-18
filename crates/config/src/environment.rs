@@ -310,3 +310,16 @@ impl Environment {
         warnings
     }
 }
+
+pub fn host_zone() -> jiff::tz::TimeZone {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let setting = std::env::vars_os().find(|(name, _)| name == "TZ");
+        let tz = setting.as_ref().and_then(|(_, value)| value.to_str());
+        wire::time::resolve_host_zone(std::path::Path::new("/"), tz)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        jiff::tz::TimeZone::system()
+    }
+}

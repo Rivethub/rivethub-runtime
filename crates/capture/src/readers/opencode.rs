@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -142,7 +141,7 @@ impl TranscriptReader for OpencodeTranscriptReader {
     async fn tail(
         &self,
         session: &SessionId,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<Turn>, TranscriptReaderError> {
         Ok(self
             .read(session)

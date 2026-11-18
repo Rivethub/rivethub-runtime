@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_pass::TranscriptMessage;
 use kernel::wiki::entity_pass::normalize_evidence;
 use uuid::Uuid;
@@ -9,8 +8,8 @@ use super::passages;
 use super::select::passages_within;
 use crate::entity_builder::transcript::render_message;
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 #[cfg_attr(dylint_lib = "rr_lints", expect(untyped))]

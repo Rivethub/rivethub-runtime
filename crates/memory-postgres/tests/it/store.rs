@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
@@ -17,8 +18,8 @@ use sqlx::Row as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn stamp(text: &str) -> Result<chrono::DateTime<chrono::Utc>, chrono::ParseError> {
-    Ok(chrono::DateTime::parse_from_rfc3339(text)?.with_timezone(&chrono::Utc))
+fn stamp(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
 fn store(pool: &PgPool) -> memory_postgres::PostgresMemory {
@@ -589,7 +590,7 @@ async fn browse_honours_every_filter_field(pool: PgPool) -> TestResult {
         .map(|entry| {
             entry
                 .created_at
-                .map_or(i64::MAX, |at| at.timestamp_millis())
+                .map_or(i64::MAX, wire::time::TimestampFormat::epoch_millis)
         })
         .collect();
     let ordered = stamps.windows(2).all(|pair| {
@@ -613,7 +614,7 @@ async fn browse_honours_every_filter_field(pool: PgPool) -> TestResult {
     let mut window = base();
     window.window = Some(kernel::memory::BrowseWindow::Last14d);
     let recent = memory
-        .browse(window.resolve_window("2026-10-15T12:00:00Z".parse()?, &chrono::Utc))
+        .browse(window.resolve_window("2026-10-15T12:00:00Z".parse()?, &jiff::tz::TimeZone::UTC))
         .await?;
     assert_eq!(
         recent.len(),

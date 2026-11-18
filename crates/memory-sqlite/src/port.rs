@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use kernel::queue::ClaimSelector;
 use kernel::queue::ClaimedJob;
 use kernel::queue::FixedJob;
@@ -44,7 +44,7 @@ impl JobQueue for SqliteStore {
                 source,
             })
         })?;
-        let insert = job_insert(&job, payload, Utc::now())?;
+        let insert = job_insert(&job, payload, Timestamp::now())?;
         let mode = job.key_mode;
         let (text, wake) = self
             .with_conn(move |conn| enqueue_atomically(conn, &insert, mode))
@@ -66,7 +66,7 @@ impl JobQueue for SqliteStore {
             None => None,
         };
         let tasks = selector.names.iter().map(ToString::to_string).collect();
-        match self.claim_port(tasks, only, Utc::now()).await {
+        match self.claim_port(tasks, only, Timestamp::now()).await {
             Ok(None) => Ok(None),
             Ok(Some(job)) => Ok(Some(self.claimed_port(job)?)),
             Err(error) => match claim_message(&error) {
@@ -92,7 +92,7 @@ impl JobQueue for SqliteStore {
         let text = self
             .text_for_claim(id)
             .map_err(|error| missing(id, error))?;
-        self.release_job(text, Utc::now())
+        self.release_job(text, Timestamp::now())
             .await
             .map_err(|error| missing(id, error))
     }
@@ -102,7 +102,7 @@ impl JobQueue for SqliteStore {
             .text_for_claim(id)
             .map_err(|error| missing(id, error))?;
         let outcome = self
-            .fail_job(text, error.to_owned(), Utc::now())
+            .fail_job(text, error.to_owned(), Timestamp::now())
             .await
             .map_err(|error| missing(id, error))?;
         match outcome {
@@ -111,7 +111,7 @@ impl JobQueue for SqliteStore {
     }
 
     async fn flag_stuck(&self) -> Result<u64, JobQueueError> {
-        let now = crate::time::stamp(Utc::now());
+        let now = crate::time::stamp(Timestamp::now());
         self.with_conn(move |conn| crate::flagged::flag_stuck(conn, &now))
             .await
             .map_err(unavailable)
@@ -180,7 +180,7 @@ fn missing(id: JobId, error: SqliteError) -> JobQueueError {
 pub(crate) fn job_insert(
     job: &Job,
     payload: String,
-    now: chrono::DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<JobInsert, JobQueueError> {
     Ok(JobInsert {
         task: job.name.to_string(),

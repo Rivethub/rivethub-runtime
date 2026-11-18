@@ -1,0 +1,153 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into rh_tag_taxonomy (key, value, display, parent_value, aliases, state, source, reason) values ($1, $2, coalesce($3, ''), $4, $5, 'accepted', 'user', coalesce($6, '')) on conflict (key, value) do update set display = coalesce($3, ''), parent_value = $4, aliases = $5, reason = coalesce($6, ''), updated_at = now() returning key, value, display, parent_value, aliases, state, source, reason, decided_at AS \"decided_at!: crate::time::OptionalTimestamp\", created_at AS \"created_at!: jiff_sqlx::Timestamp\", updated_at AS \"updated_at!: jiff_sqlx::Timestamp\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "value",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "value"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "display",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "display"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "parent_value",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "parent_value"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "aliases",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "aliases"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "source"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "reason",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "reason"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "decided_at!: crate::time::OptionalTimestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "decided_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at!: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at!: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_tag_taxonomy",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5bebbb4c8d10ce8a9d6ce592d6595eb994ca84f0fc9715def6f8618869863ecc"
+}

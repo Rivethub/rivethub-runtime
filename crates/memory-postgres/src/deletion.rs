@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::DeletedSession;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
@@ -25,13 +24,8 @@ RETURNING owner_user_id";
 
 pub(crate) enum Erasure<'a> {
     Sweep,
-    Delete {
-        at: DateTime<Utc>,
-        by: Option<&'a str>,
-    },
-    Trashed {
-        older_than: DateTime<Utc>,
-    },
+    Delete { at: Timestamp, by: Option<&'a str> },
+    Trashed { older_than: Timestamp },
 }
 
 pub(crate) fn count(value: i64) -> Result<u64, Error> {
@@ -39,7 +33,7 @@ pub(crate) fn count(value: i64) -> Result<u64, Error> {
 }
 
 pub(crate) struct Tombstone {
-    pub(crate) deleted_at: DateTime<Utc>,
+    pub(crate) deleted_at: Timestamp,
     pub(crate) owner: Option<String>,
 }
 
@@ -48,14 +42,14 @@ pub(crate) async fn tombstone_at(
     session_key: &str,
 ) -> Result<Option<Tombstone>, Error> {
     sqlx::query!(
-        "SELECT deleted_at, owner_user_id FROM rh_session_tombstones WHERE session_key = $1",
+        "SELECT deleted_at AS \"deleted_at: jiff_sqlx::Timestamp\", owner_user_id FROM rh_session_tombstones WHERE session_key = $1",
         session_key
     )
     .fetch_optional(conn)
     .await
     .map(|row| {
         row.map(|row| Tombstone {
-            deleted_at: row.deleted_at,
+            deleted_at: row.deleted_at.into(),
             owner: row.owner_user_id,
         })
     })
@@ -80,7 +74,7 @@ pub(crate) async fn lift(conn: &mut PgConnection, session_key: &str) -> Result<(
 async fn used_after(
     conn: &mut PgConnection,
     session_key: &str,
-    deleted_at: DateTime<Utc>,
+    deleted_at: Timestamp,
 ) -> Result<bool, Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (
@@ -89,7 +83,7 @@ async fn used_after(
                 WHERE c.session_key = $1 AND m.created_at > $2
            ) AS "used!""#,
         session_key,
-        deleted_at
+        crate::time::BindTime::bind_time(deleted_at) as _
     )
     .fetch_one(conn)
     .await
@@ -260,7 +254,7 @@ impl PostgresMemory {
                     SET deleted_at = EXCLUDED.deleted_at, deleted_by = EXCLUDED.deleted_by
                  RETURNING owner_user_id",
                 session_key,
-                deleted_at,
+                crate::time::BindTime::bind_time(deleted_at) as _,
                 deleted_by
             )
             .fetch_one(&mut *tx)
@@ -269,7 +263,7 @@ impl PostgresMemory {
             Erasure::Trashed { older_than } => {
                 let Some(owner) = sqlx::query_scalar::<_, Option<String>>(TRASH_TO_TOMBSTONE)
                     .bind(session_key)
-                    .bind(older_than)
+                    .bind(crate::time::BindTime::bind_time(older_than))
                     .fetch_optional(&mut *tx)
                     .await
                     .map_err(|source| Error::operation("trash purge tombstone", source))?
@@ -339,7 +333,7 @@ impl SessionDeletion for PostgresMemory {
         &self,
         session_key: &str,
         deleted_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<DeletedSession, MemoryStoreError> {
         self.erase(
             session_key,
@@ -355,9 +349,9 @@ impl SessionDeletion for PostgresMemory {
     async fn tombstones(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let found = sqlx::query!(
-            "SELECT session_key, deleted_at FROM rh_session_tombstones WHERE session_key = ANY($1)",
+            "SELECT session_key, deleted_at AS \"deleted_at: jiff_sqlx::Timestamp\" FROM rh_session_tombstones WHERE session_key = ANY($1)",
             session_keys
         )
         .fetch_all(&self.pool)
@@ -365,7 +359,7 @@ impl SessionDeletion for PostgresMemory {
         .map_err(|source| Error::operation("tombstones", source))?;
         Ok(found
             .into_iter()
-            .map(|row| (row.session_key, row.deleted_at))
+            .map(|row| (row.session_key, row.deleted_at.to_jiff()))
             .collect())
     }
 
@@ -388,7 +382,7 @@ impl SessionDeletion for PostgresMemory {
         &self,
         session_key: &str,
         kept_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         self.keep(session_key, kept_by, now)
             .await
@@ -398,7 +392,7 @@ impl SessionDeletion for PostgresMemory {
     async fn kept(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         self.keeps(session_keys).await.map_err(Into::into)
     }
 
@@ -410,7 +404,7 @@ impl SessionDeletion for PostgresMemory {
         &self,
         session_key: &str,
         trashed_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         self.trash(session_key, trashed_by, now)
             .await
@@ -424,13 +418,13 @@ impl SessionDeletion for PostgresMemory {
     async fn trashed(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         self.trash_marks(session_keys).await.map_err(Into::into)
     }
 
     async fn purge_trashed(
         &self,
-        older_than: DateTime<Utc>,
+        older_than: Timestamp,
         limit: u32,
     ) -> Result<DeletedSession, MemoryStoreError> {
         self.purge_trash(older_than, limit)

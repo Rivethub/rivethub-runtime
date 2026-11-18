@@ -1,5 +1,6 @@
 use kernel::memory::MemoryStore;
 use rmcp::model::CallToolResult;
+use wire::time::LegacyStrftime as _;
 
 use super::Import;
 use super::Sessions;
@@ -130,8 +131,8 @@ fn listed(session: &ListedSession) -> String {
     let dates = match session.dates {
         Some((created, updated)) => format!(
             "{} to {}",
-            created.format("%Y-%m-%d"),
-            updated.format("%Y-%m-%d")
+            created.legacy_strftime("%Y-%m-%d"),
+            updated.legacy_strftime("%Y-%m-%d")
         ),
         None => "undated".to_owned(),
     };

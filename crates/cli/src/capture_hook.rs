@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::time::Duration;
 
 use capture::backfill::Backfill;
@@ -11,8 +12,6 @@ use capture::writer::CaptureTransport;
 use capture::writer::CaptureWriter;
 use capture::writer::HttpCaptureTransport;
 use capture::writer::PostError;
-use chrono::DateTime;
-use chrono::Utc;
 use clap::Subcommand;
 use clap::ValueEnum;
 use config::Environment;
@@ -81,17 +80,19 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
                 return Ok(report(HookRun::done()));
             }
             Ok(match harness {
-                CaptureHarness::ClaudeCode => hook(env, &stdin, Utc::now()).await,
+                CaptureHarness::ClaudeCode => hook(env, &stdin, Timestamp::now()).await,
                 CaptureHarness::GrokBuild => {
-                    store_hook(env, &stdin, Utc::now(), StoreHarness::GrokBuild).await
+                    store_hook(env, &stdin, Timestamp::now(), StoreHarness::GrokBuild).await
                 }
                 CaptureHarness::Opencode => {
-                    store_hook(env, &stdin, Utc::now(), StoreHarness::Opencode).await
+                    store_hook(env, &stdin, Timestamp::now(), StoreHarness::Opencode).await
                 }
                 CaptureHarness::Codex => {
-                    store_hook(env, &stdin, Utc::now(), StoreHarness::Codex).await
+                    store_hook(env, &stdin, Timestamp::now(), StoreHarness::Codex).await
                 }
-                CaptureHarness::Dsh => store_hook(env, &stdin, Utc::now(), StoreHarness::Dsh).await,
+                CaptureHarness::Dsh => {
+                    store_hook(env, &stdin, Timestamp::now(), StoreHarness::Dsh).await
+                }
             })
         }
         CaptureCommand::Backfill {
@@ -100,7 +101,7 @@ pub(crate) async fn run(command: CaptureCommand, env: &Environment) -> Result<Re
             json,
         } => {
             let ids: Vec<HarnessId> = harnesses.into_iter().map(CaptureHarness::id).collect();
-            Ok(backfill(env, &ids, dry_run, json, Utc::now()).await)
+            Ok(backfill(env, &ids, dry_run, json, Timestamp::now()).await)
         }
     }
 }
@@ -110,7 +111,7 @@ pub async fn backfill(
     harnesses: &[HarnessId],
     dry_run: bool,
     json: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Report {
     let (writer, _) = match writer(env).await {
         Ok(found) => found,
@@ -181,11 +182,11 @@ fn failure_lines(totals: &[HarnessTotals]) -> String {
         .collect()
 }
 
-pub async fn hook(env: &Environment, stdin: &str, now: DateTime<Utc>) -> Report {
+pub async fn hook(env: &Environment, stdin: &str, now: Timestamp) -> Report {
     hook_as(env, stdin, now, nix::unistd::getuid().as_raw()).await
 }
 
-async fn hook_as(env: &Environment, stdin: &str, now: DateTime<Utc>, owner_uid: u32) -> Report {
+async fn hook_as(env: &Environment, stdin: &str, now: Timestamp, owner_uid: u32) -> Report {
     match writer_as(env, owner_uid).await {
         Ok((writer, paths)) => report(
             ClaudeHook::new(writer, &paths)
@@ -201,7 +202,7 @@ async fn hook_as(env: &Environment, stdin: &str, now: DateTime<Utc>, owner_uid: 
 pub async fn store_hook(
     env: &Environment,
     stdin: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
     harness: StoreHarness,
 ) -> Report {
     match writer(env).await {
@@ -226,7 +227,7 @@ pub(crate) async fn ingest_bundle(
         Option<wire::capture::ReceiptChecks>,
     )],
     receipt: Option<&wire::capture::Receipt>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<capture::writer::Totals, Error> {
     let (writer, _) = writer(env).await?;
     let mut totals = capture::writer::Totals {
@@ -295,7 +296,7 @@ pub(crate) async fn spool_warning(env: &Environment) -> Result<Option<String>, E
     Ok((!lines.is_empty()).then(|| lines.join("\n")))
 }
 
-pub async fn replay_spool(env: &Environment, now: DateTime<Utc>) -> Result<(), Error> {
+pub async fn replay_spool(env: &Environment, now: Timestamp) -> Result<(), Error> {
     let (writer, _) = writer(env).await?;
     Ok(writer.replay(now).await?)
 }

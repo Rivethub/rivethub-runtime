@@ -1,7 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::TimestampFormat as _;
 
-use chrono::Utc;
 use kernel::wiki::builder::ExtractWiki;
 use kernel::wiki::builder::WikiBuilderStore;
 use kernel::wiki::builder::WikiRouting;
@@ -37,7 +38,7 @@ fn summary_id() -> TestResult<Uuid> {
 
 fn seed_summary(path: &Path, id: Uuid) -> TestResult {
     let conn = rusqlite::Connection::open(path)?;
-    let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = Timestamp::now().rfc3339_millis();
     conn.execute(
         "INSERT OR IGNORE INTO ros_conversations
              (id, session_key, agent, created_at, updated_at, owner_user_id)
@@ -93,7 +94,7 @@ async fn apply_wiki_stores_the_topic_and_a_repeat_returns_it() -> TestResult {
             &job(id),
             vec![patch()?],
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     assert_eq!(created, vec!["acmekit-deploys".to_owned()]);
@@ -109,7 +110,7 @@ async fn apply_wiki_stores_the_topic_and_a_repeat_returns_it() -> TestResult {
             &job(id),
             vec![patch()?],
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     assert_eq!(again, created);
@@ -129,7 +130,7 @@ async fn apply_wiki_adds_a_resolved_patch_as_a_note() -> TestResult {
             &job(first),
             vec![patch()?],
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     let other = WikiPatch {
@@ -145,7 +146,7 @@ async fn apply_wiki_adds_a_resolved_patch_as_a_note() -> TestResult {
             &job(second),
             vec![other],
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     assert_eq!(touched, vec!["acmekit-deploys".to_owned()]);
@@ -175,12 +176,12 @@ async fn fail_wiki_does_not_clobber_a_done_extraction() -> TestResult {
             &job(id),
             vec![patch()?],
             &WikiRouting::default(),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     fixture
         .store
-        .fail_wiki(id, "later failure", Utc::now())
+        .fail_wiki(id, "later failure", Timestamp::now())
         .await?;
     let status = cell(
         &fixture.path,

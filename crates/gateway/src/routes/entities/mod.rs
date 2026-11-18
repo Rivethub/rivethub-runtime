@@ -1,8 +1,10 @@
 mod article;
 pub(super) mod map;
 
+use jiff::Timestamp;
 use std::str::FromStr as _;
 use std::sync::Arc;
+use wire::time::TimestampFormat as _;
 
 use axum::Json;
 use axum::Router;
@@ -10,9 +12,6 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::routing;
-use chrono::DateTime;
-use chrono::SubsecRound as _;
-use chrono::Utc;
 use kernel::facts::Claim;
 use kernel::facts::FactId;
 use kernel::facts::FactKey;
@@ -65,10 +64,12 @@ struct ListParams {
     entity_type: Option<String>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct ShowParams {
-    as_of: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    as_of: Option<Timestamp>,
 }
 
 pub(super) struct Filed {
@@ -212,7 +213,7 @@ async fn set_fact(
         let claims = store.claims(entity.id).await.map_err(map::error)?;
         named(&claims, id, &fact_key)?;
     }
-    let now = Utc::now().trunc_subsecs(3);
+    let now = Timestamp::now().truncate_subseconds(3);
     store
         .assert_facts(&[NewClaim {
             entity: entity.id,

@@ -7,8 +7,6 @@ use std::time::Instant;
 
 use capture::harnesses::HarnessSetupService;
 use capture::harnesses::SetupChange;
-use chrono::TimeZone;
-use chrono::Utc;
 use config::Environment;
 use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::HarnessProbe;
@@ -59,10 +57,7 @@ impl Machine {
     }
 
     fn connect(&self, part: Option<ConnectPart>) -> Result<SetupChange, SetupError> {
-        let now = Utc
-            .with_ymd_and_hms(2026, 11, 14, 12, 0, 0)
-            .single()
-            .unwrap_or_default();
+        let now = wire::time::timestamp_at_utc(2026, 11, 14, 12, 0, 0).unwrap_or_default();
         self.service.connect_now("opencode", part, false, now)
     }
 

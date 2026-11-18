@@ -1,11 +1,10 @@
 mod filter;
 mod format;
 
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::io::Write;
 
-use chrono::DateTime;
-use chrono::Utc;
 use rusqlite::types::Value;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
@@ -21,7 +20,7 @@ pub use kernel::memory::DumpSource;
 impl SqliteStore {
     pub async fn export_pg_dump(
         &self,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         origin: DumpOrigin,
         cancellation: CancellationToken,
     ) -> Result<Vec<u8>, SqliteError> {
@@ -32,7 +31,7 @@ impl SqliteStore {
 
 fn export_dump(
     conn: &mut rusqlite::Connection,
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
     origin: &DumpOrigin,
     cancellation: &CancellationToken,
 ) -> Result<Vec<u8>, SqliteError> {
@@ -70,7 +69,7 @@ fn write_table(
     conn: &rusqlite::Connection,
     out: &mut Vec<u8>,
     table: ImportTable,
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
 ) -> Result<(), SqliteError> {
     let Some(canonical) = table.dump_columns() else {
         return Err(SqliteError::Invalid {
@@ -107,7 +106,7 @@ fn write_rows(
     table: ImportTable,
     relation: &str,
     columns: &[&str],
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
 ) -> Result<(), SqliteError> {
     let order = table.dump_order();
     ident_list(order)?;

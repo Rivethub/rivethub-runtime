@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
@@ -29,6 +28,7 @@ pub enum Proposer {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sample {
@@ -36,7 +36,8 @@ pub struct Sample {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    pub last_active: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub last_active: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,12 +149,12 @@ pub struct Proposal {
     pub id: ProposalId,
     pub batch: BatchId,
     pub by: Proposer,
-    pub proposed_at: DateTime<Utc>,
+    pub proposed_at: Timestamp,
     pub change: TreeEdit,
     pub reason: Reason,
     pub evidence: Evidence,
     pub state: ProposalState,
-    pub decided_at: Option<DateTime<Utc>>,
+    pub decided_at: Option<Timestamp>,
 }
 
 impl Proposal {
@@ -172,13 +173,13 @@ impl Proposal {
 pub struct Batch {
     pub id: BatchId,
     pub by: Proposer,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub proposals: Vec<Proposal>,
 }
 
 impl Batch {
     #[must_use]
-    pub fn new(by: Proposer, at: DateTime<Utc>) -> Self {
+    pub fn new(by: Proposer, at: Timestamp) -> Self {
         Self {
             id: BatchId(Uuid::new_v4()),
             by,

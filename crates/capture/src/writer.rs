@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Serialize;
 use thiserror::Error;
 use wire::JsonObject;
@@ -186,7 +185,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         }
     }
 
-    pub async fn replay(&self, now: DateTime<Utc>) -> Result<(), WriteError> {
+    pub async fn replay(&self, now: Timestamp) -> Result<(), WriteError> {
         self.spool
             .replay(DEFAULT_REPLAY_MAX, now, |body| self.transport.post(body))
             .await?;
@@ -208,7 +207,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
     pub async fn write(
         &self,
         batch: &CaptureBatchRequest,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Totals, WriteError> {
         let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;

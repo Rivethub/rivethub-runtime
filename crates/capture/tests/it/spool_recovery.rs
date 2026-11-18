@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::Duration;
@@ -6,8 +7,6 @@ use async_trait::async_trait;
 use capture::spool::CaptureSpool;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureResult;
@@ -67,7 +66,7 @@ impl capture::writer::CaptureTransport for &RuleTransport {
     }
 }
 
-fn now_at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn now_at(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 
@@ -318,5 +317,41 @@ async fn dead_letters_can_be_requeued_and_delivered() -> Result<(), Box<dyn std:
         .await?;
     assert_eq!(transport.posted(), vec!["poison"]);
     assert_eq!(bodies(dir.path())?, Vec::<String>::new());
+    Ok(())
+}
+
+#[tokio::test]
+async fn spool_retry_deadlines_saturate_for_throttling_and_backoff()
+-> Result<(), Box<dyn std::error::Error>> {
+    use wire::time::TimestampFormat as _;
+
+    let now = Timestamp::MAX;
+    let temp = tempfile::tempdir()?;
+    for throttled in [true, false] {
+        let spool = CaptureSpool::new(temp.path().join(throttled.to_string()));
+        let _path = spool.spool("{}", now).await?;
+        spool
+            .replay(1, now, |_| async {
+                let error = if throttled {
+                    PostError::Throttled {
+                        status: 429,
+                        retry_after_seconds: Some(u32::MAX),
+                    }
+                } else {
+                    PostError::Server { status: 503 }
+                };
+                Err(error)
+            })
+            .await?;
+        let mut entries = std::fs::read_dir(spool.dir())?;
+        let entry = entries.next().transpose()?.ok_or("queued capture")?;
+        assert!(entries.next().is_none());
+        assert!(
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(&format!(".{}.json", now.epoch_millis()))
+        );
+    }
     Ok(())
 }

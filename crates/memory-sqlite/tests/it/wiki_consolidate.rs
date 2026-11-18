@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::Utc;
 use kernel::memory::MemoryStore;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::WikiLookup;
@@ -144,7 +144,7 @@ async fn lookup(store: &SqliteStore, slug: &str) -> TestResult<WikiLookup> {
 #[tokio::test]
 async fn folding_moves_the_child_into_the_parent() -> TestResult {
     let fixture = fixture()?;
-    let folded = fixture.store.fold_wiki(&fold(), Utc::now()).await?;
+    let folded = fixture.store.fold_wiki(&fold(), Timestamp::now()).await?;
     assert_eq!(folded, vec![CHILD.to_owned()]);
     assert_eq!(slugs(&fixture.store).await?, vec![PARENT.to_owned()]);
     let row = |column: &str| {
@@ -187,7 +187,7 @@ async fn folding_moves_the_child_into_the_parent() -> TestResult {
 #[tokio::test]
 async fn the_folded_slug_and_its_aliases_redirect_to_the_parent() -> TestResult {
     let fixture = fixture()?;
-    fixture.store.fold_wiki(&fold(), Utc::now()).await?;
+    fixture.store.fold_wiki(&fold(), Timestamp::now()).await?;
     for slug in [CHILD, "friday-rollout"] {
         match lookup(&fixture.store, slug).await? {
             WikiLookup::Redirect(target) => assert_eq!(target, PARENT),
@@ -217,12 +217,12 @@ async fn the_folded_slug_and_its_aliases_redirect_to_the_parent() -> TestResult 
 #[tokio::test]
 async fn a_repeated_fold_changes_nothing() -> TestResult {
     let fixture = fixture()?;
-    fixture.store.fold_wiki(&fold(), Utc::now()).await?;
+    fixture.store.fold_wiki(&fold(), Timestamp::now()).await?;
     let article = cell(
         &fixture.path,
         "SELECT article FROM ros_wiki_topics WHERE slug = 'acmekit-deploys'",
     )?;
-    let again = fixture.store.fold_wiki(&fold(), Utc::now()).await?;
+    let again = fixture.store.fold_wiki(&fold(), Timestamp::now()).await?;
     assert_eq!(again, Vec::<String>::new());
     assert_eq!(
         cell(
@@ -243,7 +243,7 @@ async fn a_missing_parent_is_an_error() -> TestResult {
         children: vec![CHILD.to_owned()],
         mark: FoldMark::Merged,
     };
-    match fixture.store.fold_wiki(&absent, Utc::now()).await {
+    match fixture.store.fold_wiki(&absent, Timestamp::now()).await {
         Err(WikiStoreError::TopicMissing(slug)) => assert_eq!(slug, "staging-database"),
         other => return Err(format!("unexpected {other:?}").into()),
     }

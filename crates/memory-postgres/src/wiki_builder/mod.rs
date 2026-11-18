@@ -10,7 +10,7 @@ mod topics;
 pub(crate) use topics::store as store_wiki_page;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::wiki::builder::{
     BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, RouteLease,
@@ -111,7 +111,7 @@ impl WikiBuilderStore for PostgresMemory {
         job: &ExtractWiki,
         patches: Vec<WikiPatch>,
         routing: &WikiRouting,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let home = {
             let mut connection = self.pool.acquire().await.map_err(query_error)?;
@@ -144,7 +144,7 @@ impl WikiBuilderStore for PostgresMemory {
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         summary_replace::shared(&mut tx, &[summary_id])
@@ -175,7 +175,7 @@ impl WikiBuilderStore for PostgresMemory {
         &self,
         summary_id: Uuid,
         slug: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let placed = self.place_note_page(slug, None).await?;
         let cited = WikiSlug::try_from(placed.key)
@@ -237,7 +237,7 @@ impl PostgresMemory {
         repository: &mut crate::wiki_writer::LockedRepository,
         work: Work<'_>,
         mut patches: Vec<WikiPatch>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let Work { job, routing, home } = work;
         for patch in &mut patches {
@@ -314,7 +314,7 @@ impl PostgresMemory {
             Some(page) if within(&mut tx, page.as_ref(), home).await? => Some(page),
             Some(_) | None => None,
         };
-        let date: DateTime<Utc> =
+        let date: jiff_sqlx::Timestamp =
             sqlx::query_scalar("SELECT created_at FROM rh_summaries WHERE id = $1")
                 .bind(job.summary_id)
                 .fetch_one(&mut *tx)
@@ -322,7 +322,7 @@ impl PostgresMemory {
                 .map_err(query_error)?;
         let source = topics::Source {
             summary: &summary,
-            date,
+            date: date.to_jiff(),
             topic_page,
             merged: &routing.merged,
             home,

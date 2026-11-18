@@ -1,6 +1,4 @@
-use chrono::Datelike as _;
-use chrono::NaiveDate;
-use chrono::Timelike as _;
+use jiff::civil::{Date, Time};
 use thiserror::Error;
 use uuid::Uuid;
 use wire::harness::HarnessId;
@@ -12,17 +10,14 @@ pub struct NativeSession {
     native: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum IdentityError {
     #[error("{harness} native session id {native:?} does not match the recorded shape")]
     Shape { harness: HarnessId, native: String },
     #[error("{harness} native session id {native:?} is not a version-7 uuid")]
     UuidVersion { harness: HarnessId, native: String },
     #[error("invalid Hermes session timestamp in {native:?}: {source}")]
-    Timestamp {
-        native: String,
-        source: chrono::ParseError,
-    },
+    Timestamp { native: String, source: jiff::Error },
 }
 
 impl NativeSession {
@@ -81,16 +76,13 @@ fn is_hermes(native: &str) -> Result<bool, IdentityError> {
     else {
         return Ok(false);
     };
-    let date =
-        NaiveDate::parse_from_str(day, "%Y%m%d").map_err(|source| IdentityError::Timestamp {
-            native: native.to_owned(),
-            source,
-        })?;
-    let time = chrono::NaiveTime::parse_from_str(clock, "%H%M%S").map_err(|source| {
-        IdentityError::Timestamp {
-            native: native.to_owned(),
-            source,
-        }
+    let date = Date::strptime("%Y%m%d", day).map_err(|source| IdentityError::Timestamp {
+        native: native.to_owned(),
+        source,
+    })?;
+    let time = Time::strptime("%H%M%S", clock).map_err(|source| IdentityError::Timestamp {
+        native: native.to_owned(),
+        source,
     })?;
     Ok(date.year() > 0
         && time.hour() < 24

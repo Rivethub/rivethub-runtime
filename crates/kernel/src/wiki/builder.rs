@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -61,6 +61,7 @@ pub fn extraction_schema() -> schemars::Schema {
     schema
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WikiSummary {
     pub id: Uuid,
@@ -129,7 +130,7 @@ pub struct DeferredWiki {
     pub waits: Target,
     pub applied: Option<TopicId>,
     pub patches: Vec<WikiPatch>,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,14 +185,14 @@ pub trait WikiBuilderStore: Send + Sync {
         job: &ExtractWiki,
         patches: Vec<WikiPatch>,
         routing: &WikiRouting,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError>;
 
     async fn fail_wiki(
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn defer_wiki(&self, deferred: DeferredWiki) -> Result<(), WikiStoreError>;
@@ -202,7 +203,7 @@ pub trait WikiBuilderStore: Send + Sync {
         &self,
         summary_id: Uuid,
         slug: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn uncite_wiki(&self, summary_id: Uuid, slug: &WikiSlug) -> Result<(), WikiStoreError>;

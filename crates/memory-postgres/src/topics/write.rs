@@ -98,9 +98,9 @@ pub(super) async fn insert(conn: &mut PgConnection, topic: &Topic) -> Result<(),
         directory.map(|root| root.kind().to_string()),
         directory.and_then(Root::node),
         directory.map(Root::path),
-        topic.created_at,
-        topic.updated_at,
-        topic.closed_at,
+        crate::time::BindTime::bind_time(topic.created_at) as _,
+        crate::time::BindTime::bind_time(topic.updated_at) as _,
+        crate::time::BindTime::bind_time(topic.closed_at) as _,
         topic.kind.to_string(),
         topic.owner.as_ref().map(Owner::as_str)
     )
@@ -114,8 +114,8 @@ pub(super) async fn closure(conn: &mut PgConnection, topic: &Topic) -> Result<()
     sqlx::query!(
         "UPDATE rh_topics SET closed_at = $2, updated_at = $3 WHERE id = $1",
         topic.id.uuid(),
-        topic.closed_at,
-        topic.updated_at
+        crate::time::BindTime::bind_time(topic.closed_at) as _,
+        crate::time::BindTime::bind_time(topic.updated_at) as _
     )
     .execute(&mut *conn)
     .await
@@ -137,7 +137,7 @@ pub(super) async fn row(conn: &mut PgConnection, topic: &Topic) -> Result<(), To
         directory.map(|root| root.kind().to_string()),
         directory.and_then(Root::node),
         directory.map(Root::path),
-        topic.updated_at
+        crate::time::BindTime::bind_time(topic.updated_at) as _
     )
     .execute(&mut *conn)
     .await
@@ -268,7 +268,7 @@ pub(super) async fn fold_into(
         "UPDATE rh_topics SET parent_id = $2, updated_at = $3 WHERE id = ANY($1::uuid[])",
         &moved,
         into,
-        merged.updated_at
+        crate::time::BindTime::bind_time(merged.updated_at) as _
     )
     .execute(&mut *conn)
     .await
@@ -286,7 +286,7 @@ pub(super) async fn fold_into(
                                           merged_from = EXCLUDED.merged_from",
         plan.redirect.slug.as_str(),
         plan.redirect.topic.uuid(),
-        merged.updated_at,
+            crate::time::BindTime::bind_time(merged.updated_at) as _,
         plan.source_name.as_str()
     )
     .execute(&mut *conn)
@@ -348,7 +348,7 @@ pub(super) async fn rename_redirect(
                                           merged_from = NULL",
         old.as_str(),
         renamed.id.uuid(),
-        renamed.updated_at
+        crate::time::BindTime::bind_time(renamed.updated_at) as _
     )
     .execute(&mut *conn)
     .await
@@ -386,7 +386,7 @@ pub(super) async fn placement(
         placement.session.as_str(),
         placement.topic.uuid(),
         placement.by.to_string(),
-        placement.at,
+            crate::time::BindTime::bind_time(placement.at) as _,
         placement.owner.as_ref().map(Owner::as_str),
         &conversation_keys(&placement.session)
     )

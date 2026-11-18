@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::builder::WikiStoreError;
@@ -34,7 +34,7 @@ pub struct WikiTopicStats {
     pub title: String,
     pub citations: u64,
     pub history: u64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub bound: bool,
 }
 
@@ -53,7 +53,7 @@ pub trait WikiConsolidateStore: Send + Sync {
     async fn fold_wiki(
         &self,
         fold: &WikiFold,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError>;
 }
 

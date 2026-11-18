@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use kernel::wiki::entity_pass::EntityProse;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::EntityView;
@@ -31,7 +31,8 @@ struct EntityHead {
 struct HistoryRow {
     summary_id: Uuid,
     conversation_id: Option<Uuid>,
-    session_on: NaiveDate,
+    #[sqlx(try_from = "jiff_sqlx::Date")]
+    session_on: Date,
     sentence: String,
 }
 

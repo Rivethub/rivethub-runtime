@@ -1,8 +1,6 @@
 use std::borrow::Cow;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::SecondsFormat;
 use kernel::transcript::TranscriptReaderError;
 use rusqlite::Connection;
 use rusqlite::OpenFlags;
@@ -483,9 +481,9 @@ fn hermes_row(row: &Row<'_>) -> rusqlite::Result<HermesMessage> {
 
 fn instant(value: &SqlValue) -> Option<String> {
     let millis = epoch_flex(&RawTime::from_sql(value));
-    DateTime::from_timestamp_millis(millis)
+    crate::listing::time::from_milliseconds(millis)
         .filter(|_| millis != UNKNOWN_TIME)
-        .map(|at| at.to_rfc3339_opts(SecondsFormat::Millis, true))
+        .map(wire::time::TimestampFormat::rfc3339_millis)
 }
 
 fn read_opencode(

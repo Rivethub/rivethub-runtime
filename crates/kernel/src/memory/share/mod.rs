@@ -1,11 +1,10 @@
 pub mod desk;
 pub mod find;
 
+use jiff::Timestamp;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -265,7 +264,7 @@ pub struct ListedSession {
     pub agent: String,
     pub messages: usize,
     pub author: String,
-    pub dates: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub dates: Option<(Timestamp, Timestamp)>,
 }
 
 #[derive(Debug, Error)]

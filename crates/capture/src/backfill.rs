@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Serialize;
 use wire::capture::CaptureBatchRequest;
 use wire::harness::HarnessId;
@@ -81,7 +80,7 @@ impl<T: CaptureTransport> Backfill<T> {
         &self,
         harnesses: &[HarnessId],
         dry_run: bool,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<HarnessTotals> {
         let mut all = Vec::new();
         for harness in HARNESSES.into_iter().filter(|id| harnesses.contains(id)) {
@@ -105,7 +104,7 @@ impl<T: CaptureTransport> Backfill<T> {
         all
     }
 
-    async fn claude(&self, totals: &mut HarnessTotals, dry_run: bool, now: DateTime<Utc>) -> bool {
+    async fn claude(&self, totals: &mut HarnessTotals, dry_run: bool, now: Timestamp) -> bool {
         let Some(root) = self.roots.claude.clone() else {
             return true;
         };
@@ -134,7 +133,7 @@ impl<T: CaptureTransport> Backfill<T> {
         true
     }
 
-    async fn store(&self, totals: &mut HarnessTotals, dry_run: bool, now: DateTime<Utc>) -> bool {
+    async fn store(&self, totals: &mut HarnessTotals, dry_run: bool, now: Timestamp) -> bool {
         let harness = totals.harness;
         let Some(kind) = store_harness(harness) else {
             return true;
@@ -167,7 +166,7 @@ impl<T: CaptureTransport> Backfill<T> {
         session: &str,
         built: Built,
         dry_run: bool,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> bool {
         totals.sessions += 1;
         let batch = match built {

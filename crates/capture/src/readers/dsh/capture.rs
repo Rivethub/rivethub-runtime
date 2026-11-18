@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReaderError;
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -52,7 +51,7 @@ struct Row {
     tool_args: Option<JsonObject>,
     tool_result: Option<String>,
     line: u64,
-    at: Option<DateTime<Utc>>,
+    at: Option<Timestamp>,
 }
 
 struct Parsed {
@@ -167,7 +166,7 @@ fn row(session: &str, number: u64, line: Line) -> Result<Mapped, TranscriptReade
             format!("dsh {kind:?} event has neither an id nor a seq"),
         )));
     };
-    let at = line.time.and_then(DateTime::from_timestamp_millis);
+    let at = line.time.and_then(crate::listing::time::from_milliseconds);
     let base = |kind: Kind, role: Role, content: String| Row {
         kind,
         event_id: event_id.clone(),

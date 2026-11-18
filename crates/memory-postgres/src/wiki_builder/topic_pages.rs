@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::topics::{PageChange, PageEdit, PageSection, TopicId, TopicPage, TopicPageStore};
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold};
@@ -60,7 +60,7 @@ impl TopicPageStore for PostgresMemory {
         &self,
         topic: TopicId,
         page: &TopicPage,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let placed = self.place_note_page(&page.slug, Some(topic.uuid())).await?;
         let directory = placed
@@ -78,7 +78,7 @@ impl TopicPageStore for PostgresMemory {
         &self,
         slug: &WikiSlug,
         edit: &PageEdit,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<bool, WikiStoreError> {
         let bound = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM rh_wiki_topics WHERE slug = $1 AND topic_id IS NOT NULL)",
@@ -112,7 +112,7 @@ impl TopicPageStore for PostgresMemory {
         root: TopicId,
         slug: &WikiSlug,
         change: &PageChange<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let placed = self.place_note_page(slug, Some(root.uuid())).await?;
         let directory = placed
@@ -132,7 +132,7 @@ impl TopicPageStore for PostgresMemory {
         &self,
         from: &WikiSlug,
         to: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         sqlx::query(
             "INSERT INTO rh_wiki_redirects (from_slug, to_slug, created_at)
@@ -143,7 +143,7 @@ impl TopicPageStore for PostgresMemory {
         )
         .bind(from.as_ref())
         .bind(to.as_ref())
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(now))
         .execute(&self.pool)
         .await
         .map_err(query_error)?;
@@ -155,7 +155,7 @@ impl TopicPageStore for PostgresMemory {
         child: &WikiSlug,
         into: &WikiSlug,
         mark: FoldMark,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let fold = WikiFold {
             cluster: into.as_ref().to_owned(),
@@ -218,7 +218,7 @@ impl PostgresMemory {
         slug: &WikiSlug,
         placed: &Placed,
         change: &PageChange<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let before = match repository.read(&placed.local).await? {
             Some(stored) => TopicPage {
@@ -255,7 +255,7 @@ impl PostgresMemory {
         slug: &WikiSlug,
         placed: &Placed,
         edit: &PageEdit,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
@@ -289,7 +289,7 @@ impl PostgresMemory {
         repository: &mut LockedRepository,
         page: &TopicPage,
         placed: &Placed,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {

@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::queue::FixedJob;
 use kernel::queue::JobName;
 
@@ -41,7 +40,7 @@ pub(super) enum MemoryCommand {
     },
     Export {
         out: Option<PathBuf>,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         sqlite: Option<PathBuf>,
     },
     Import {
@@ -590,10 +589,8 @@ fn positive_count(text: &str) -> Result<usize, Error> {
     }
 }
 
-fn timestamp(text: &str) -> Result<DateTime<Utc>, Error> {
-    DateTime::parse_from_rfc3339(text)
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .map_err(|_| Error::SinceInvalid(text.to_owned()))
+fn timestamp(text: &str) -> Result<Timestamp, Error> {
+    wire::time::parse_rfc3339(text).map_err(|_| Error::SinceInvalid(text.to_owned()))
 }
 
 pub(super) fn nonempty(text: &str, missing: Error) -> Result<PathBuf, Error> {

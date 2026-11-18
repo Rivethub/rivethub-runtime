@@ -1,4 +1,5 @@
 use crate::support;
+use jiff::Timestamp;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 const PROMPT: &str = r#"{"session_id":"55555555-5555-5555-5555-555555555555","cwd":"/work/demo","hook_event_name":"UserPromptSubmit","prompt":"list the files"}"#;
 const TOOL: &str = r#"{"session_id":"55555555-5555-5555-5555-555555555555","cwd":"/work/demo","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"toolu_1"}"#;
 
-fn now() -> Result<chrono::DateTime<chrono::Utc>, chrono::ParseError> {
+fn now() -> Result<Timestamp, jiff::Error> {
     "2026-10-10T12:00:00Z".parse()
 }
 

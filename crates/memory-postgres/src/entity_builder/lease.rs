@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::wiki::entity_pass::AppliedMark;
 use kernel::wiki::entity_pass::ENTITY_LOCK_CLASS;
 use kernel::wiki::entity_pass::EntityLease;
@@ -88,7 +87,7 @@ impl EntityLease for PgLease {
     async fn apply(
         &mut self,
         body: &StoredRewrite,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         if body.owner.trim().is_empty() {
             return Err(EntityStoreError::Query(Box::new(std::io::Error::other(
@@ -116,7 +115,7 @@ impl EntityLease for PgLease {
     async fn record_mention(
         &mut self,
         note: &MentionNote,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError> {
         if note.owner.trim().is_empty() {
             return Err(EntityStoreError::Query(Box::new(std::io::Error::other(
@@ -240,7 +239,7 @@ pub(super) async fn commit_page(
     directory: &Path,
     view: &EntityView,
     prose: &EntityProse,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<PublishOutcome, EntityStoreError> {
     let mut page = page_from(view, prose)?;
     let message = format!("entity {}", view.slug);

@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureResult;
@@ -169,7 +168,7 @@ fn writer(home: &Path, gateway: &Gateway) -> capture::writer::CaptureWriter<Gate
     )
 }
 
-fn now() -> Result<DateTime<Utc>, chrono::ParseError> {
+fn now() -> Result<Timestamp, jiff::Error> {
     "2026-10-10T12:05:00Z".parse()
 }
 

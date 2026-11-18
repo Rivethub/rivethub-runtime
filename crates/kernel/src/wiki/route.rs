@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 use values::SessionId;
@@ -106,7 +105,7 @@ pub struct WikiRouter<'a> {
     pub wiki: &'a dyn WikiBuilderStore,
     pub topics: TopicPorts<'a>,
     pub merger: Option<&'a dyn PageMerger>,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 #[derive(Default)]
@@ -438,7 +437,7 @@ impl TopicPorts<'_> {
     async fn filed_target(
         &self,
         waits: &Target,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<TopicTarget>, TopicPageError> {
         let topic = match waits {
             Target::Session(session) => self
@@ -473,7 +472,7 @@ impl TopicPorts<'_> {
     async fn target(
         &self,
         topic: &Topic,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<TopicTarget>, TopicPageError> {
         let Some(owner) = page_owner(self.topics, topic).await? else {
             return Ok(None);

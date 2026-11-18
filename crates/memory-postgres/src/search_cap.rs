@@ -74,10 +74,14 @@ pub(crate) async fn capped_candidates(
             ));
             push_fts_where(&mut slice, context, table, long);
             if let Some(upper) = upper {
-                slice.push(format!(" AND {newest} < ")).push_bind(upper);
+                slice
+                    .push(format!(" AND {newest} < "))
+                    .push_bind(crate::time::BindTime::bind_time(upper));
             }
             if let Some(lower) = lower {
-                slice.push(format!(" AND {newest} >= ")).push_bind(lower);
+                slice
+                    .push(format!(" AND {newest} >= "))
+                    .push_bind(crate::time::BindTime::bind_time(lower));
             }
             slice.push(format!(" ORDER BY {newest} DESC LIMIT {remaining})"));
         }

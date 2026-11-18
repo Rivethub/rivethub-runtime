@@ -5,7 +5,7 @@ use crate::search::TagFilter;
 use crate::search::{SearchOptions, SearchRead};
 use crate::search_literal::Patience;
 use crate::search_literal::literal_tokens;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
 use kernel::memory_core::hybrid_pool;

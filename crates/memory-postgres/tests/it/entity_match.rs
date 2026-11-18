@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::tenancy::Scope;
 use kernel::wiki::entity_pass::CandidateQuery;
 use kernel::wiki::entity_pass::EntityLeaf;
@@ -228,7 +227,9 @@ async fn hostname_match(pool: PgPool) -> TestResult {
     )
     .bind(Uuid::new_v4())
     .bind(hally.id)
-    .bind(at("2026-11-13T02:00:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at(
+        "2026-11-13T02:00:00Z",
+    )))
     .bind(Uuid::new_v4())
     .bind(summary)
     .execute(&pool)
@@ -336,8 +337,8 @@ async fn seed_summary(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(at("2026-11-13T00:00:00Z"))
-    .bind(at("2026-11-13T01:00:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-13T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-13T01:00:00Z")))
     .fetch_one(pool)
     .await
 }
@@ -406,6 +407,6 @@ async fn leaf(pool: &PgPool) -> Result<EntityLeaf, sqlx::Error> {
     Ok(leaf)
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }

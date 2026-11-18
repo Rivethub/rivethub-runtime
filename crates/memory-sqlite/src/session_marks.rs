@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use rusqlite::Connection;
 use rusqlite::params;
 
@@ -11,7 +10,7 @@ use crate::time;
 pub(crate) fn trashed_at(
     conn: &Connection,
     keys: &str,
-) -> Result<BTreeMap<String, DateTime<Utc>>, SqliteError> {
+) -> Result<BTreeMap<String, Timestamp>, SqliteError> {
     let mut statement = conn
         .prepare(
             "SELECT session_key, trashed_at FROM rh_session_trash
@@ -36,7 +35,7 @@ pub(crate) fn trashed_at(
 
 pub(crate) fn due_trash(
     conn: &Connection,
-    older_than: DateTime<Utc>,
+    older_than: Timestamp,
     limit: u32,
 ) -> Result<Vec<String>, SqliteError> {
     let mut statement = conn
@@ -59,7 +58,7 @@ pub(crate) fn due_trash(
 pub(crate) fn kept_at(
     conn: &Connection,
     keys: &str,
-) -> Result<BTreeMap<String, DateTime<Utc>>, SqliteError> {
+) -> Result<BTreeMap<String, Timestamp>, SqliteError> {
     let mut statement = conn
         .prepare(
             "SELECT session_key, kept_at FROM rh_session_keeps

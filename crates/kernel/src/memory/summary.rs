@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 use uuid::Uuid;
 use values::Role;
@@ -30,7 +29,7 @@ pub struct WindowMessage {
     pub role: Role,
     pub content: String,
     pub tool: Option<ToolUse>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,8 +69,8 @@ pub struct SummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-    pub earliest_at: DateTime<Utc>,
-    pub latest_at: DateTime<Utc>,
+    pub earliest_at: Timestamp,
+    pub latest_at: Timestamp,
     pub depth: i32,
 }
 
@@ -82,14 +81,14 @@ pub struct ConversationWindow {
     pub messages: Vec<WindowMessage>,
     pub leaves: Vec<SummaryNode>,
     pub branches: Vec<SummaryNode>,
-    pub latest_message_at: Option<DateTime<Utc>>,
+    pub latest_message_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingConversation {
     pub id: Uuid,
     pub unsummarized: u32,
-    pub latest_message_at: Option<DateTime<Utc>>,
+    pub latest_message_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,11 +105,11 @@ pub struct NewSummary {
     pub depth: i32,
     pub content: String,
     pub message_count: u32,
-    pub earliest_at: DateTime<Utc>,
-    pub latest_at: DateTime<Utc>,
+    pub earliest_at: Timestamp,
+    pub latest_at: Timestamp,
     pub model: String,
     pub pipeline_version: i32,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub sources: Vec<SummarySource>,
     pub child_ids: Vec<Uuid>,
 }

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
+use values::time::TimestampFormat as _;
 
 use super::MemoryEntry;
 
@@ -13,7 +14,7 @@ pub struct CursorError(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MessageCursor {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub id: Uuid,
     prefix: Option<[u8; 32]>,
 }
@@ -50,7 +51,7 @@ impl MessageCursor {
             None => (id, None),
         };
         Ok(Self {
-            created_at: DateTime::from_timestamp_micros(micros).ok_or_else(invalid)?,
+            created_at: Timestamp::from_microsecond(micros).map_err(|_error| invalid())?,
             id: Uuid::parse_str(id).map_err(|_| invalid())?,
             prefix,
         })

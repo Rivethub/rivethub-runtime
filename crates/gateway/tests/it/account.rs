@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -13,7 +14,6 @@ use axum::response::{IntoResponse as _, Response};
 use axum::routing::{get, post};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use chrono::{DateTime, Utc};
 use config::HubEntry;
 use gateway::Gateway;
 use gateway::account::{
@@ -429,7 +429,7 @@ async fn signing_in_keeps_the_install_token_out_of_every_response() -> TestResul
 
     let reads = fake.seen.auth_reads.load(Ordering::SeqCst);
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     assert_eq!(fake.seen.auth_reads.load(Ordering::SeqCst), reads);
     let (status, body) = local(&node.app, Method::POST, "/api/account/signout", "").await?;
@@ -531,7 +531,7 @@ fn report(install_id: Uuid) -> CrashReport {
             line: 12,
         }),
         "",
-        DateTime::<Utc>::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
     )
 }
 
@@ -544,7 +544,7 @@ async fn queued_crash_reports_are_sent_once_and_dropped_when_turned_off() -> Tes
     let install_id = files.read()?.ok_or("missing")?.install_id;
     queue(&files, &report(install_id))?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     let sent = fake.seen.crashes.lock().clone();
     assert_eq!(sent.len(), 1);
@@ -561,7 +561,7 @@ async fn queued_crash_reports_are_sent_once_and_dropped_when_turned_off() -> Tes
     .await?;
     queue(&files, &report(install_id))?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     assert_eq!(fake.seen.crashes.lock().len(), 1);
     assert_eq!(queued(&files)?, Vec::<std::path::PathBuf>::new());
@@ -580,7 +580,7 @@ async fn crash_reports_go_to_the_telemetry_url_and_never_to_the_cloud() -> TestR
         let install_id = files.read()?.ok_or("missing")?.install_id;
         queue(&files, &report(install_id))?;
         node.account
-            .tick(Utc::now(), &CancellationToken::new())
+            .tick(Timestamp::now(), &CancellationToken::new())
             .await;
         assert_eq!(collector.seen.crashes.lock().len(), 1, "{access:?}");
         assert_eq!(cloud.seen.crashes.lock().len(), 0, "{access:?}");
@@ -634,7 +634,7 @@ async fn a_hub_policy_turns_telemetry_off_and_keeps_it_off() -> TestResult {
     let files = node.account.files().clone();
     queue(&files, &report(files.read()?.ok_or("missing")?.install_id))?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     assert!(fake.seen.crashes.lock().is_empty());
     Ok(())
@@ -654,7 +654,7 @@ async fn signed_in(release: Release) -> Result<(tempfile::TempDir, Fake, Node), 
 async fn a_signed_newer_release_becomes_a_pending_update_with_its_archive_kept() -> TestResult {
     let (_root, fake, node) = signed_in(release()).await?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     let pending = account(&node.app)
         .await?
@@ -679,7 +679,7 @@ async fn a_release_whose_signature_fails_is_never_offered() -> TestResult {
     })
     .await?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     assert_eq!(account(&node.app).await?.pending_update, None);
     assert!(
@@ -701,7 +701,7 @@ async fn an_older_release_is_not_pending() -> TestResult {
     })
     .await?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     assert_eq!(account(&node.app).await?.pending_update, None);
     Ok(())
@@ -771,7 +771,7 @@ fn a_crash_report_holds_module_paths_and_line_numbers_only() {
             line: 42,
         }),
         &backtrace,
-        DateTime::<Utc>::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
     );
     assert_eq!(report.location, "serde_json::de:42");
     assert_eq!(
@@ -796,7 +796,7 @@ async fn a_token_the_cloud_revoked_signs_this_install_out() -> TestResult {
     })
     .await?;
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     let shown = account(&node.app).await?;
     assert_eq!(
@@ -839,7 +839,7 @@ async fn a_disabled_cloud_is_never_called_and_refuses_cloud_routes() -> TestResu
     queue(&files, &report(files.read()?.ok_or("missing")?.install_id))?;
     node.account.count(gateway::account::UsageEvent::Search);
     node.account
-        .tick(Utc::now(), &CancellationToken::new())
+        .tick(Timestamp::now(), &CancellationToken::new())
         .await;
     let (status, text) = local(&node.app, Method::POST, "/api/account/signout", "").await?;
     assert_eq!(status, StatusCode::OK, "{text}");

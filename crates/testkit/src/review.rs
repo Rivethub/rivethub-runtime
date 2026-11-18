@@ -9,6 +9,7 @@ use kernel::review::ReviewStore;
 use kernel::topics::Slug;
 use uuid::Uuid;
 use wire::session_id::SessionId;
+use wire::time::TimestampFormat as _;
 
 use crate::topics::at;
 
@@ -18,7 +19,7 @@ pub async fn review_marks_keep_each_owners_decisions(
     let owner = crate::owner()?;
     let conflict = ReviewKey::Conflict {
         fact: FactId::from_uuid(Uuid::parse_str("00000000-0000-4000-8000-0000000000c1")?),
-        version: at(3).timestamp_millis(),
+        version: at(3).epoch_millis(),
     };
     let filing = ReviewKey::Filing {
         session: "claude-code:00000000-0000-4000-8000-0000000000c2".parse::<SessionId>()?,

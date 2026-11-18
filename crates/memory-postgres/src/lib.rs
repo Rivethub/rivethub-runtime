@@ -59,6 +59,7 @@ mod tags;
 mod team;
 mod tenancy;
 mod tidy;
+pub mod time;
 mod title;
 mod topics;
 mod wiki;

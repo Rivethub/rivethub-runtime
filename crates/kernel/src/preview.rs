@@ -1,7 +1,6 @@
 use crate::transcript::HarnessTranscriptTurn;
 use crate::transcript::SessionMessageRole;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 
 pub const PREVIEW_CHARS: usize = 200;
 #[derive(strum::EnumString)]
@@ -21,25 +20,28 @@ pub fn is_prompt_tool(name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preview {
     pub text: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 impl Preview {
-    pub fn said(reply: &str, at: DateTime<Utc>) -> Option<Self> {
+    pub fn said(reply: &str, at: Timestamp) -> Option<Self> {
         one_line(last_line(reply)?).map(|text| Self { text, at })
     }
 
-    pub fn from_transcript(
-        turns: &[HarnessTranscriptTurn],
-        updated: DateTime<Utc>,
-    ) -> Option<Self> {
+    pub fn from_transcript(turns: &[HarnessTranscriptTurn], updated: Timestamp) -> Option<Self> {
         let reply = turns.iter().rev().find(|turn| {
             turn.role == SessionMessageRole::Assistant && last_line(&turn.text).is_some()
         })?;
         let at = reply
             .ended_at_ms
             .or(reply.started_at_ms)
-            .and_then(DateTime::from_timestamp_millis)
+            .and_then(|ms| match Timestamp::from_millisecond(ms) {
+                Ok(stamp) => Some(stamp),
+                Err(error) => {
+                    tracing::debug!(%error, "transcript message time is invalid");
+                    None
+                }
+            })
             .unwrap_or(updated);
         Self::said(&reply.text, at)
     }
@@ -65,10 +67,11 @@ fn one_line(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use values::time::TimestampFormat as _;
 
     #[test]
     fn an_idle_session_shows_the_last_line_of_its_last_reply_on_one_short_line() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let turn = |role, text: &str| HarnessTranscriptTurn {
             role,
             text: text.to_owned(),
@@ -96,7 +99,7 @@ mod tests {
         ];
         let said = Preview::from_transcript(&turns, now);
         assert_eq!(
-            said.map(|said| (said.text, said.at.timestamp_millis())),
+            said.map(|said| (said.text, said.at.epoch_millis())),
             Some(("All four checks pass.".into(), 1_000))
         );
         let long = "x".repeat(PREVIEW_CHARS + 50);

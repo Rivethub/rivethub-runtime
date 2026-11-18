@@ -1,6 +1,4 @@
-use chrono::DateTime;
-use chrono::Local;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::MemoryEntry;
@@ -32,10 +30,10 @@ impl SqliteStore {
     pub async fn browse_at(
         &self,
         filter: BrowseFilter,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<MemoryEntry>, SqliteError> {
         let bounds = match (filter.since, filter.before, filter.window) {
-            (None, None, Some(window)) => resolve_window(window, now, &Local),
+            (None, None, Some(window)) => resolve_window(window, now, &config::host_zone()),
             (since, before, _) => TimeRange { since, before },
         };
         let direction = match filter.order {

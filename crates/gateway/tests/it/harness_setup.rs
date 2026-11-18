@@ -1,3 +1,5 @@
+use jiff::SignedDuration as Duration;
+use jiff::Timestamp;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -6,8 +8,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
-use chrono::Duration;
-use chrono::Utc;
 use gateway::Gateway;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::harness_setup::CaptureActivity;
@@ -98,20 +98,20 @@ async fn node(root: &std::path::Path) -> Result<Node, Box<dyn std::error::Error 
         .with_token("desk", owner)?
         .with_token("other", UserId::new("other".to_owned())?)?;
     let store = Arc::new(testkit::FakeMemoryStore::default());
-    let now = Utc::now();
+    let now = Timestamp::now();
     store
         .script_capture_activity(vec![
             CaptureActivity {
                 key_prefix: "claude-code".to_owned(),
-                last_at: now - Duration::hours(1),
+                last_at: now - Duration::from_hours(1),
             },
             CaptureActivity {
                 key_prefix: "claude-code".to_owned(),
-                last_at: now - Duration::days(30),
+                last_at: now - wire::time::elapsed_days(30),
             },
             CaptureActivity {
                 key_prefix: "codex".to_owned(),
-                last_at: now - Duration::days(10),
+                last_at: now - wire::time::elapsed_days(10),
             },
         ])
         .await;

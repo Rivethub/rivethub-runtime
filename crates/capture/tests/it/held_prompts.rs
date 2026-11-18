@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use capture::hook::ClaudeHook;
 use capture::writer::{CaptureTransport, PostError};
-use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use wire::capture::{CaptureBatchRequest, CaptureResult};
 
@@ -94,8 +94,8 @@ fn hook<T: CaptureTransport>(
     Ok(ClaudeHook::new(writer, &config::Paths::new(&env)?))
 }
 
-fn now() -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp(1_791_656_243, 0).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+fn now() -> Timestamp {
+    Timestamp::new(1_791_656_243, 0).unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 fn held(prompt: &str) -> String {

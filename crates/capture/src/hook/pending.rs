@@ -3,8 +3,6 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -15,6 +13,7 @@ const DIR: &str = "claude-pending";
 const DIR_MODE: u32 = 0o700;
 const CLAIMED: &str = ".claimed-";
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Pending {
     pub(crate) key: String,

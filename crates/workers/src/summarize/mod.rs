@@ -28,6 +28,6 @@ pub struct SummarizeEnv<'a> {
     pub provider: &'a dyn ModelProvider,
     pub queue: &'a dyn JobQueue,
     pub settings: &'a SummarySettings,
-    pub now: chrono::DateTime<chrono::Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }

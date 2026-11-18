@@ -56,6 +56,7 @@ mod wiki_held;
 mod wiki_read;
 mod wiki_topics;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -63,8 +64,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::queue::JobId;
 use parking_lot::Mutex;
 use rusqlite::Connection;
@@ -79,7 +78,7 @@ pub use queue::JobState;
 pub use reembed::ReembedReport;
 
 #[derive(Clone)]
-struct SharedClock(Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>);
+struct SharedClock(Arc<dyn Fn() -> Timestamp + Send + Sync>);
 
 #[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
 impl std::fmt::Debug for SharedClock {
@@ -89,11 +88,11 @@ impl std::fmt::Debug for SharedClock {
 }
 
 impl SharedClock {
-    fn new(clock: impl Fn() -> DateTime<Utc> + Send + Sync + 'static) -> Self {
+    fn new(clock: impl Fn() -> Timestamp + Send + Sync + 'static) -> Self {
         Self(Arc::new(clock))
     }
 
-    fn now(&self) -> DateTime<Utc> {
+    fn now(&self) -> Timestamp {
         (self.0)()
     }
 }
@@ -143,7 +142,7 @@ impl SqliteStore {
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
-        Ok(from_conn(conn, SharedClock::new(Utc::now)))
+        Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
     }
 
     #[must_use]
@@ -165,7 +164,7 @@ impl SqliteStore {
     }
 
     #[must_use]
-    pub fn with_clock(self, clock: impl Fn() -> DateTime<Utc> + Send + Sync + 'static) -> Self {
+    pub fn with_clock(self, clock: impl Fn() -> Timestamp + Send + Sync + 'static) -> Self {
         Self {
             clock: SharedClock::new(clock),
             ..self
@@ -208,7 +207,7 @@ impl SqliteStore {
         self.embed.load(Ordering::Acquire)
     }
 
-    pub(crate) fn now(&self) -> DateTime<Utc> {
+    pub(crate) fn now(&self) -> Timestamp {
         self.clock.now()
     }
 

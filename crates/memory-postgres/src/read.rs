@@ -1,7 +1,6 @@
 use crate::error::Error;
 use crate::memory_jobs::ToolArguments;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::MemoryEntry;
@@ -23,7 +22,8 @@ pub(crate) struct MessageEntryRow {
     pub(crate) tool_args: Option<String>,
     pub(crate) tool_result: Option<String>,
     pub(crate) metadata: Option<String>,
-    pub(crate) created_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    pub(crate) created_at: Option<Timestamp>,
     #[sqlx(default)]
     pub(crate) import_settings: Option<String>,
 }
@@ -173,11 +173,11 @@ impl crate::PostgresMemory {
         let bounds = filter_bounds(filter)?;
         if let Some(since) = bounds.since {
             query.push(" and m.created_at >= ");
-            query.push_bind(since);
+            query.push_bind(crate::time::BindTime::bind_time(since));
         }
         if let Some(before) = bounds.before {
             query.push(" and m.created_at < ");
-            query.push_bind(before);
+            query.push_bind(crate::time::BindTime::bind_time(before));
         }
         let direction = match filter.order {
             MemoryBrowseOrder::Asc => "asc",
@@ -202,13 +202,7 @@ impl crate::PostgresMemory {
         let uuid = Uuid::parse_str(id)?;
         let record = sqlx::query_as!(
             MessageEntryRow,
-            "select m.id::text as id, c.session_key as \"session_key!\", \
-             m.agent as \"agent!\", m.channel as \"channel!\", m.role as role_text, \
-             m.content as \"content!\", m.tool_name, m.tool_args::text as tool_args, \
-             m.tool_result, m.metadata::text as metadata, m.created_at, \
-             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
-             from rh_messages m join rh_conversations c on c.id = m.conversation_id \
-             where m.id = $1",
+            r#"select m.id::text as id, c.session_key as "session_key!", m.agent as "agent!", m.channel as "channel!", m.role as role_text, m.content as "content!", m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at AS "created_at!: crate::time::OptionalTimestamp", case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings from rh_messages m join rh_conversations c on c.id = m.conversation_id where m.id = $1"#,
             uuid
         )
         .fetch_optional(&self.pool)

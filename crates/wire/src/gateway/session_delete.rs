@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::harness::HarnessId;
@@ -58,13 +58,16 @@ pub enum SessionTrashReason {
     OneWordReply,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTrashCandidate {
     pub session: SessionId,
     pub harness: HarnessId,
     pub title: Option<String>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub updated_at: Timestamp,
     pub reason: SessionTrashReason,
     pub user_turns: u64,
     pub reply: Option<String>,

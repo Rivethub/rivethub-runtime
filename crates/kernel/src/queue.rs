@@ -1,7 +1,6 @@
 use crate::BoxError;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
@@ -171,7 +170,7 @@ pub struct Job {
     pub key: Option<String>,
     pub key_mode: JobKeyMode,
     pub priority: i16,
-    pub run_at: Option<DateTime<Utc>>,
+    pub run_at: Option<Timestamp>,
     pub max_attempts: Option<i32>,
 }
 

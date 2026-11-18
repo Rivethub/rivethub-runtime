@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
 use kernel::memory::Limit;
@@ -119,7 +118,7 @@ impl MemoryStore for SqliteStore {
 
     async fn search(&self, query: SearchQuery) -> Result<SearchOutcome, MemoryStoreError> {
         let now = self.now();
-        self.search_at(query, now, &Utc)
+        self.search_at(query, now, &jiff::tz::TimeZone::UTC)
             .await
             .map_err(MemoryStoreError::from)
     }

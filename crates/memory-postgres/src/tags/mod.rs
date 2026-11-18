@@ -1,6 +1,5 @@
 use crate::error::Error;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::Limit;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::PendingTagAction;
@@ -40,9 +39,12 @@ struct TagWireRow {
     pub(crate) proposed_by: String,
     pub(crate) reason: String,
     pub(crate) decided_by: Option<String>,
-    pub(crate) decided_at: Option<DateTime<Utc>>,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    pub(crate) decided_at: Option<Timestamp>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(crate) created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(crate) updated_at: Timestamp,
 }
 
 impl TryFrom<TagWireRow> for TagWire {
@@ -90,9 +92,9 @@ struct PendingTagRow {
     proposed_by: String,
     reason: String,
     decided_by: Option<String>,
-    decided_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    decided_at: Option<Timestamp>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
     is_removal: Option<bool>,
     session_key: Option<String>,
     title: Option<String>,
@@ -247,21 +249,8 @@ async fn pending_tags(
         "tags pending",
         sqlx::query_as!(
             PendingTagRow,
-            "select t.id::text as \"id!\", t.entity_type, t.entity_id::text as \"entity_id!\", \
-                 t.key, t.value, \
-                t.display, t.source, t.state, t.confidence, t.proposed_by, \
-                CASE WHEN t.removal_state = 'suggested' THEN t.removal_reason ELSE t.reason END AS \"reason!\", \
-                t.decided_by, t.decided_at, t.created_at, t.updated_at, \
-                (t.removal_state = 'suggested') as \"is_removal?\", \
-                c.session_key as \"session_key?\", c.title as \"title?\", c.agent as \"agent?\", c.id::text as \"conversation_id?\", \
-                (select left(m.content, 120) from rh_messages m
-                  where m.conversation_id = c.id order by m.created_at asc limit 1) as excerpt \
-           from rh_tags t \
-           left join rh_summaries s on t.entity_type = 'summary' and s.id = t.entity_id \
-           left join rh_conversations c on (t.entity_type = 'conversation' and c.id = t.entity_id) OR c.id = s.conversation_id \
-          where t.state = 'suggested' or t.removal_state = 'suggested' \
-          order by t.created_at desc \
-          limit $1",
+            r#"select t.id::text as "id!", t.entity_type, t.entity_id::text as "entity_id!", t.key, t.value, t.display, t.source, t.state, t.confidence, t.proposed_by, CASE WHEN t.removal_state = 'suggested' THEN t.removal_reason ELSE t.reason END AS "reason!", t.decided_by, t.decided_at AS "decided_at!: crate::time::OptionalTimestamp", t.created_at AS "created_at!: jiff_sqlx::Timestamp", t.updated_at AS "updated_at!: jiff_sqlx::Timestamp", (t.removal_state = 'suggested') as "is_removal?", c.session_key as "session_key?", c.title as "title?", c.agent as "agent?", c.id::text as "conversation_id?", (select left(m.content, 120) from rh_messages m
+                  where m.conversation_id = c.id order by m.created_at asc limit 1) as excerpt from rh_tags t left join rh_summaries s on t.entity_type = 'summary' and s.id = t.entity_id left join rh_conversations c on (t.entity_type = 'conversation' and c.id = t.entity_id) OR c.id = s.conversation_id where t.state = 'suggested' or t.removal_state = 'suggested' order by t.created_at desc limit $1"#,
             i64::from(limit.get())
         )
         .fetch_all(pool)
@@ -432,17 +421,7 @@ async fn add_tag(pool: &PgPool, add: &TagAdd) -> Result<TagWire, MemoryStoreErro
         guard(&mut tx, &[entity_id]).await?;
     }
     let record = sqlx::query!(
-        "insert into rh_tags (entity_type, entity_id, key, value, display, source, state, \
-                              proposed_by, reason, decided_by, decided_at) \
-         values ($1, $2, $3, $4, coalesce($5, ''), 'user', 'accepted', '', coalesce($6, ''), \
-                 $7::text, case when $7::text is null then null else now() end) \
-         on conflict (entity_type, entity_id, key, value) do update set state = 'accepted', \
-           decided_by = coalesce($7::text, rh_tags.decided_by), \
-           decided_at = case when $7::text is null then rh_tags.decided_at else now() end, \
-           updated_at = now() \
-         returning id::text as \"id!\", entity_type, entity_id::text as \"entity_id!\", key, value, \
-                   display, source, state, confidence, proposed_by, reason, decided_by, \
-                   decided_at, created_at, updated_at",
+        r#"insert into rh_tags (entity_type, entity_id, key, value, display, source, state, proposed_by, reason, decided_by, decided_at) values ($1, $2, $3, $4, coalesce($5, ''), 'user', 'accepted', '', coalesce($6, ''), $7::text, case when $7::text is null then null else now() end) on conflict (entity_type, entity_id, key, value) do update set state = 'accepted', decided_by = coalesce($7::text, rh_tags.decided_by), decided_at = case when $7::text is null then rh_tags.decided_at else now() end, updated_at = now() returning id::text as "id!", entity_type, entity_id::text as "entity_id!", key, value, display, source, state, confidence, proposed_by, reason, decided_by, decided_at AS "decided_at!: crate::time::OptionalTimestamp", created_at AS "created_at!: jiff_sqlx::Timestamp", updated_at AS "updated_at!: jiff_sqlx::Timestamp""#,
         add.entity_type.to_string(),
         entity_id,
         add.tag.key.as_str(),
@@ -470,9 +449,9 @@ async fn add_tag(pool: &PgPool, add: &TagAdd) -> Result<TagWire, MemoryStoreErro
         proposed_by: record.proposed_by,
         reason: record.reason,
         decided_by: record.decided_by,
-        decided_at: record.decided_at,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
+        decided_at: record.decided_at.into(),
+        created_at: record.created_at.into(),
+        updated_at: record.updated_at.into(),
     })
 }
 

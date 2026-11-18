@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
@@ -67,11 +68,11 @@ fn contents(hits: &[memory_postgres::search::MemorySearchHit]) -> Vec<String> {
     hits.iter().map(|hit| hit.content.clone()).collect()
 }
 
-fn stamp(text: &str) -> Result<chrono::DateTime<chrono::Utc>, chrono::ParseError> {
-    Ok(chrono::DateTime::parse_from_rfc3339(text)?.with_timezone(&chrono::Utc))
+fn stamp(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
-fn batch(event_id: &str, content: &str) -> Result<CaptureBatchRequest, chrono::ParseError> {
+fn batch(event_id: &str, content: &str) -> Result<CaptureBatchRequest, jiff::Error> {
     Ok(CaptureBatchRequest {
         session_key: "claude-code:vector".to_string(),
         agent: "rivet".to_string(),

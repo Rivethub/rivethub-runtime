@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::search::{MemorySearchHit, SearchRead, hit_uuids, passage_ids, whole_summary_ids};
@@ -16,8 +17,10 @@ struct SummaryRow {
     kind: Json<SummaryKind>,
     record_id: Uuid,
     conversation_id: Uuid,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
     import_settings: Option<String>,
 }
 

@@ -5,8 +5,7 @@ use capture::sanitize::SanitizeError;
 use capture::sanitize::SessionRules;
 use capture::sanitize::mapping::MappingError;
 use capture::sanitize::mapping::RuleProblem;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -83,8 +82,8 @@ fn policy() -> Result<Policy, MappingError> {
     })
 }
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")?.with_timezone(&Utc))
+fn at() -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339("2026-11-08T12:00:00Z")
 }
 
 fn object(text: &str) -> Result<JsonObject, serde_json::Error> {

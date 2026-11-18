@@ -13,7 +13,7 @@ use crate::wiki_builder::{
     WikiBuilderDeps, WikiBuilderEnv, handle_consolidate_wiki, handle_extract_wiki,
     handle_wiki_backfill,
 };
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::{EmbeddingStore, SummaryStore};
 use kernel::model::ModelProvider;
 use kernel::owner::Owner;
@@ -57,7 +57,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         provider: env.summarizer.as_ref(),
         queue,
         settings: &env.summary,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
     };
     match &job.name {
@@ -217,7 +217,7 @@ async fn dispatch_file(
         topics,
         provider: env.categorizer.provider.as_ref(),
         model: &env.categorizer.model,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
     };
     let scope = crate::scopes::conversation_scope(env.scopes.as_ref(), conversation).await?;
@@ -268,7 +268,7 @@ async fn dispatch_purge(env: &JobEnv, cancel: &CancellationToken) -> Result<(), 
     crate::deleted_sessions::handle_purge(
         deletions.as_ref(),
         env.settings.trash_days,
-        Utc::now(),
+        Timestamp::now(),
         cancel,
     )
     .await
@@ -287,7 +287,7 @@ async fn dispatch_tidy(env: &JobEnv, cancel: &CancellationToken) -> Result<(), W
         provider: env.categorizer.provider.as_ref(),
         model: &env.categorizer.model,
         owners,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
     };
     let Some(scopes) = env.scopes.as_ref() else {
@@ -352,7 +352,7 @@ async fn dispatch_wiki<Q: JobQueue>(
         provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
         topics,
     };
@@ -398,7 +398,7 @@ async fn dispatch_recompile<Q: JobQueue>(
         provider: wiki.provider.as_ref(),
         queue,
         model: &wiki.model,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
     };
     crate::wiki_builder::handle_recompile_wiki(&recompile, &job.payload).await
@@ -417,9 +417,15 @@ async fn dispatch_consolidate<Q: JobQueue>(
         .ok_or_else(|| WorkerError::Unhandled {
             name: job.name.to_string(),
         })?;
-    handle_consolidate_wiki(store.as_ref(), queue, &job.payload, Utc::now(), cancel)
-        .await
-        .map(|_| ())
+    handle_consolidate_wiki(
+        store.as_ref(),
+        queue,
+        &job.payload,
+        Timestamp::now(),
+        cancel,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn dispatch_unembedded<Q: JobQueue>(
@@ -527,7 +533,7 @@ async fn dispatch_entities<Q: JobQueue>(
         queue,
         model: &entity.model,
         settings: &entity.settings,
-        now: Utc::now(),
+        now: Timestamp::now(),
         cancel,
     };
     match &job.name {

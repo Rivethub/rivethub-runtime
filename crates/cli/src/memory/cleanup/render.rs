@@ -1,4 +1,5 @@
 use kernel::cleanup::JunkReason;
+use wire::time::LegacyStrftime as _;
 
 use super::report::FoldRow;
 use super::report::ReportData;
@@ -40,8 +41,8 @@ pub(super) fn markdown(data: &ReportData) -> String {
         &mut out,
         &format!(
             "Snapshot taken {}, report written {}. The run took {} ({}). Nothing in memory was changed.\n",
-            data.snapshot_at.format("%Y-%m-%d %H:%M UTC"),
-            data.written_at.format("%Y-%m-%d %H:%M UTC"),
+            data.snapshot_at.legacy_strftime("%Y-%m-%d %H:%M UTC"),
+            data.written_at.legacy_strftime("%Y-%m-%d %H:%M UTC"),
             duration(data.seconds.values().sum()),
             stages.join(", ")
         ),

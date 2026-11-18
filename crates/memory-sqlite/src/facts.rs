@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use kernel::facts::Claim;
 use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
@@ -150,7 +150,12 @@ fn fact_for(conn: &Connection, claim: &NewClaim) -> Result<String, FactError> {
     let id = FactId::random().to_string();
     conn.execute(
         "INSERT INTO rh_entity_facts (id, topic_id, key, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![id, entity, claim.key.as_str(), time::stamp(Utc::now())],
+        params![
+            id,
+            entity,
+            claim.key.as_str(),
+            time::stamp(Timestamp::now())
+        ],
     )
     .map_err(failed("fact create"))?;
     Ok(id)
@@ -194,7 +199,7 @@ fn insert(conn: &Connection, claim: &NewClaim) -> Result<(), FactError> {
             summary,
             evidence,
             time::stamp(claim.at),
-            time::stamp(Utc::now()),
+            time::stamp(Timestamp::now()),
             by.or_else(|| claim.owner.as_ref().map(Owner::as_str)),
             REGISTRY_DEFAULT_OWNER,
         ],

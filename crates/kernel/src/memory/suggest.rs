@@ -1,7 +1,6 @@
 use super::TagEntityType;
 use super::TagState;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +63,7 @@ pub struct TagVocabularyProposal {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TagSuggestionWrite {
     pub proposed_by: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub rows: Vec<TagSuggestionRow>,
     pub vocabulary: Vec<TagVocabularyProposal>,
 }

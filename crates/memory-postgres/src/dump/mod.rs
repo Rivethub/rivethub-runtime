@@ -2,11 +2,11 @@ mod filter;
 mod parse;
 mod relation;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::io::Write;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use futures::StreamExt;
 use sqlx::PgConnection;
 use tokio_util::sync::CancellationToken;
@@ -36,7 +36,7 @@ impl PostgresMemory {
     pub async fn export_memory_dump(
         &self,
         tables: &[CopySource<'_>],
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         origin: &DumpOrigin,
         cancellation: &CancellationToken,
     ) -> Result<Vec<u8>, Error> {
@@ -85,7 +85,7 @@ async fn export_tables(
     conn: &mut PgConnection,
     out: &mut Vec<u8>,
     tables: &[CopySource<'_>],
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
     cancellation: &CancellationToken,
 ) -> Result<(), Error> {
     let mark = since.map(timestamp_mark).transpose()?;
@@ -392,8 +392,8 @@ fn write_header(out: &mut Vec<u8>, origin: &DumpOrigin) -> Result<(), Error> {
     .map_err(|source| Error::DumpMessage(source.to_string()))
 }
 
-fn timestamp_mark(since: DateTime<Utc>) -> Result<String, Error> {
-    let text = since.to_rfc3339();
+fn timestamp_mark(since: Timestamp) -> Result<String, Error> {
+    let text = since.rfc3339_offset();
     if text.bytes().all(|byte| {
         byte.is_ascii_digit() || matches!(byte, b'T' | b'Z' | b':' | b'.' | b'+' | b'-')
     }) {

@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::facts::Claim;
 use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
@@ -97,8 +96,10 @@ pub(crate) struct ClaimRow {
     session_id: Option<String>,
     summary_id: Option<Uuid>,
     evidence: Option<String>,
-    at: DateTime<Utc>,
-    recorded_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    recorded_at: Timestamp,
     owner_user_id: String,
     settled: bool,
 }
@@ -106,15 +107,18 @@ pub(crate) struct ClaimRow {
 #[derive(sqlx::FromRow)]
 struct HistoryRow {
     sentence: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
     session_key: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     title: Option<String>,
-    started_at: Option<DateTime<Utc>>,
-    last_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    started_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    last_at: Option<Timestamp>,
     messages: i64,
     import_settings: Option<Json<JsonObject>>,
 }
@@ -219,13 +223,13 @@ pub(crate) fn claim(row: &ClaimRow) -> Result<Claim, FactError> {
 pub(crate) async fn insert_claim(
     conn: &mut PgConnection,
     claim: &NewClaim,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), FactError> {
     let fact: Uuid = sqlx::query_scalar(FACT_SQL)
         .bind(claim.entity.uuid())
         .bind(claim.key.as_str())
         .bind(FactId::random().uuid())
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(now))
         .fetch_one(&mut *conn)
         .await
         .map_err(failed("fact create"))?;
@@ -255,8 +259,8 @@ pub(crate) async fn insert_claim(
         .bind(session)
         .bind(summary)
         .bind(evidence)
-        .bind(claim.at)
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(claim.at))
+        .bind(crate::time::BindTime::bind_time(now))
         .bind(by.or_else(|| claim.owner.as_ref().map(Owner::as_str)))
         .bind(settled)
         .execute(&mut *conn)

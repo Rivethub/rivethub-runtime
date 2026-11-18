@@ -1,4 +1,5 @@
 use super::*;
+use jiff::Timestamp;
 
 pub(crate) async fn seed_fts() -> TestResult<Fresh> {
     let fresh = fresh_store()?;
@@ -138,7 +139,7 @@ fn insert_tag(
     Ok(())
 }
 
-pub(crate) async fn seed_tag_pool(store: &SqliteStore, now: DateTime<Utc>) -> TestResult {
+pub(crate) async fn seed_tag_pool(store: &SqliteStore, now: Timestamp) -> TestResult {
     let tagged = store
         .capture(
             one_message("tagged", TAGGED_NOTE),

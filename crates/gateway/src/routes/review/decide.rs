@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::facts::FactValue;
 use kernel::facts::NewClaim;
 use kernel::facts::Said;
@@ -47,7 +46,7 @@ pub(super) async fn apply(
     user: &UserId,
     item: Item,
     decision: ReviewDecision,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<ReviewMark, ApiError> {
     let verdict = match decision {
         ReviewDecision::Later => {
@@ -88,7 +87,7 @@ async fn decide_fact(
     fact: FactAction,
     conflict: bool,
     verdict: Verdict,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), ApiError> {
     let value = match verdict {
         Verdict::Accept if conflict => Some(fact.value.clone()),
@@ -133,7 +132,7 @@ async fn decide_filing(
     user: &UserId,
     filing: FilingAction,
     verdict: Verdict,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), ApiError> {
     let topic = match verdict {
         Verdict::Reject => return Ok(()),
@@ -155,7 +154,7 @@ async fn made_topic(
     user: &UserId,
     name: TopicName,
     parent: Option<TopicId>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<TopicId, ApiError> {
     let store = gateway.topics()?;
     let slug = Slug::fold(name.as_str()).map_err(topic_error)?;
@@ -223,7 +222,7 @@ async fn decide_tidy(
     user: &UserId,
     proposal: ProposalId,
     verdict: Verdict,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), ApiError> {
     match verdict {
         Verdict::Accept => {

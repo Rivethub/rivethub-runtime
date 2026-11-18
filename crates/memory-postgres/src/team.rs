@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::{Error, PostgresMemory};
@@ -36,8 +37,8 @@ impl PostgresMemory {
 
     pub(crate) async fn read_team_sessions(
         &self,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        before: Option<chrono::DateTime<chrono::Utc>>,
+        since: Option<Timestamp>,
+        before: Option<Timestamp>,
         limit: u32,
     ) -> Result<Vec<kernel::memory::TeamSession>, kernel::memory::MemoryStoreError> {
         let rows = sqlx::query_as::<_, TeamSessionRow>(
@@ -95,7 +96,7 @@ impl PostgresMemory {
                     ),
                     owner: row.owner,
                     session_id: row.session_key,
-                    when: row.recent,
+                    when: row.recent.to_jiff(),
                     topic: row.parent_name.into_iter().chain(row.topic_name).collect(),
                     excerpt,
                 }

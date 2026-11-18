@@ -1,7 +1,6 @@
 use crate::embed::EmbedAttempt;
 use crate::error::Error;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryChunkMatch;
 use kernel::memory::MemoryFallback;
 use kernel::memory::MemoryHitSource;
@@ -64,7 +63,7 @@ pub struct MemorySearchHit {
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub score: f64,
     pub role: Option<Role>,
     pub agent: Option<String>,

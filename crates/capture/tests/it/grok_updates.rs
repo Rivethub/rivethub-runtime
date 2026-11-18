@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -203,10 +204,7 @@ async fn reads_carry_the_agent_clock_through_the_open_turn() -> TestResult {
     let turns = reader.read(&session()).await?;
     let first = turns.first().ok_or("no turns")?;
     assert_eq!(first.role, Role::User);
-    assert_eq!(
-        first.at,
-        "2026-10-11T12:00:02Z".parse::<chrono::DateTime<chrono::Utc>>()?
-    );
+    assert_eq!(first.at, "2026-10-11T12:00:02Z".parse::<Timestamp>()?);
     assert_eq!(turns.len(), 15);
     let open = turns.last().ok_or("no open turn")?;
     assert_eq!(

@@ -1,6 +1,7 @@
 mod limit;
 pub(crate) mod store;
 
+use jiff::SignedDuration;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,7 +10,6 @@ use std::time::Duration;
 use axum::http::Method;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::TimeDelta;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -25,7 +25,7 @@ pub(crate) const UPLOAD_BODY_DEADLINE: Duration = Duration::from_mins(11);
 pub(crate) const SEND_DEADLINE: Duration = Duration::from_mins(15);
 const SWEEP_EVERY: Duration = Duration::from_mins(10);
 pub const ORPHAN_AGE: Duration = Duration::from_hours(1);
-pub const DROP_TTL: TimeDelta = TimeDelta::days(7);
+pub const DROP_TTL: SignedDuration = wire::time::elapsed_days(7);
 const DROPS_PATH: &str = "/api/drops";
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -79,7 +79,7 @@ pub struct DropsConfig {
     pub max_bytes: u64,
     pub per_user_drops: u32,
     pub per_user_bytes: u64,
-    pub ttl: TimeDelta,
+    pub ttl: SignedDuration,
     pub rates: Rates,
 }
 

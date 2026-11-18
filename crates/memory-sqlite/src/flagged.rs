@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::flagged::FLAG_AFTER_FAILURES;
 use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedId;
@@ -49,7 +48,7 @@ impl FlaggedJobs for SqliteStore {
     }
 
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError> {
-        let now = crate::time::stamp(Utc::now());
+        let now = crate::time::stamp(Timestamp::now());
         let raw = i64::from(id);
         let changed = self
             .with_conn(move |conn| {
@@ -91,7 +90,7 @@ impl FlaggedJobs for SqliteStore {
         Ok(())
     }
 
-    async fn dismiss(&self, id: FlaggedId, _at: DateTime<Utc>) -> Result<(), FlaggedError> {
+    async fn dismiss(&self, id: FlaggedId, _at: Timestamp) -> Result<(), FlaggedError> {
         let raw = i64::from(id);
         let changed = self
             .with_conn(move |conn| {

@@ -1,6 +1,8 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::path::{Path, PathBuf};
+use wire::time::TimestampFormat as _;
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -49,6 +51,7 @@ pub struct CrashReport {
     pub at: String,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageReport {
@@ -56,7 +59,9 @@ pub struct UsageReport {
     pub install_id: Uuid,
     pub rh: String,
     pub os: CloudOs,
-    pub day: NaiveDate,
+
+    #[serde_as(as = "wire::time::CivilDate")]
+    pub day: Date,
     pub counts: UsageCounts,
 }
 
@@ -82,7 +87,7 @@ impl CrashReport {
         job: CrashJob,
         site: Option<PanicSite<'_>>,
         backtrace: &str,
-        at: DateTime<Utc>,
+        at: Timestamp,
     ) -> Self {
         let location = match site {
             Some(site) => frame(&format!("{}:{}", module_of(site.file), site.line)),
@@ -97,7 +102,7 @@ impl CrashReport {
             kind: CrashKind::Panic,
             location,
             frames: frames(backtrace),
-            at: at.to_rfc3339_opts(SecondsFormat::Millis, true),
+            at: at.rfc3339_millis(),
         }
     }
 }
@@ -259,7 +264,14 @@ fn queue_panic(
     }
     let os = CloudOs::current().ok_or(AccountError::Platform)?;
     let backtrace = std::backtrace::Backtrace::force_capture().to_string();
-    let report = CrashReport::panic(state.install_id, os, job, site, &backtrace, Utc::now());
+    let report = CrashReport::panic(
+        state.install_id,
+        os,
+        job,
+        site,
+        &backtrace,
+        Timestamp::now(),
+    );
     queue(files, &report)
 }
 

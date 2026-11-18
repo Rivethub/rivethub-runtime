@@ -1,11 +1,12 @@
 use crate::JsonObject;
 use crate::gateway::memory::MemoryHitSource;
 use crate::message::Role;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryPassage {
@@ -36,10 +37,13 @@ pub struct MemoryEntry {
     pub tool_args: Option<JsonObject>,
     pub tool_result: Option<String>,
     pub metadata: Option<JsonObject>,
-    pub created_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
     pub provenance: Option<Provenance>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySearchResult {
@@ -53,7 +57,9 @@ pub struct MemorySearchResult {
     pub role: Option<Role>,
     pub agent: Option<String>,
     pub relevance_score: f64,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
 }
@@ -86,11 +92,14 @@ pub struct ProvenanceChecks {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Provenance {
     pub author: Option<String>,
-    pub origin_date: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub origin_date: Option<Timestamp>,
     pub verification: Verification,
     pub checks: Option<ProvenanceChecks>,
 }

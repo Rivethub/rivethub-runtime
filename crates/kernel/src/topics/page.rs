@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 
 use super::DECISIONS_HEADING;
@@ -131,14 +130,14 @@ pub trait TopicPageStore: Send + Sync {
         &self,
         topic: TopicId,
         page: &TopicPage,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn edit_page(
         &self,
         slug: &WikiSlug,
         edit: &PageEdit,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<bool, WikiStoreError>;
 
     async fn change_page(
@@ -146,14 +145,14 @@ pub trait TopicPageStore: Send + Sync {
         root: TopicId,
         slug: &WikiSlug,
         change: &PageChange<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn redirect_page(
         &self,
         from: &WikiSlug,
         to: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn fold_page(
@@ -161,7 +160,7 @@ pub trait TopicPageStore: Send + Sync {
         child: &WikiSlug,
         into: &WikiSlug,
         mark: FoldMark,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError>;
 
     async fn remove_page(&self, slug: &WikiSlug) -> Result<(), WikiStoreError>;
@@ -202,7 +201,7 @@ pub(crate) async fn root_page(
     topics: &dyn TopicStore,
     pages: &dyn TopicPageStore,
     root: &Topic,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<WikiSlug, TopicPageError> {
     PageSync { topics, pages, now }.ensure(root).await
 }
@@ -229,7 +228,7 @@ pub async fn sync_topic_page(
     decisions: &dyn DecisionStore,
     job: &SyncTopicPage,
     owners: SweepOwners<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), TopicPageError> {
     let sync = PageSync { topics, pages, now };
     if let Some(id) = job.topic_id {
@@ -264,7 +263,7 @@ enum Landing {
 struct PageSync<'a> {
     topics: &'a dyn TopicStore,
     pages: &'a dyn TopicPageStore,
-    now: DateTime<Utc>,
+    now: Timestamp,
 }
 
 impl PageSync<'_> {

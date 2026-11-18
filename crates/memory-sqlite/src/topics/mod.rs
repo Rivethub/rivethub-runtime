@@ -8,8 +8,7 @@ mod rows;
 mod write;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::topics::HistoryMark;
 use kernel::topics::MergePlan;
 use kernel::topics::PlacedSession;
@@ -84,7 +83,7 @@ impl TopicStore for SqliteStore {
         &self,
         id: TopicId,
         changes: TopicChanges,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         self.topics("topic update", move |conn| {
             let current = rows::by_id(conn, id)?.ok_or_else(|| not_found(id))?;
@@ -111,7 +110,7 @@ impl TopicStore for SqliteStore {
         &self,
         source: TopicId,
         into: TopicId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         self.topics("topic merge", move |conn| {
             let from = rows::by_id(conn, source)?.ok_or_else(|| not_found(source))?;
@@ -141,8 +140,8 @@ impl TopicStore for SqliteStore {
     async fn set_closed(
         &self,
         id: TopicId,
-        closed: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
+        closed: Option<Timestamp>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         self.topics("topic close", move |conn| {
             let topic = rows::by_id(conn, id)?

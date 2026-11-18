@@ -6,14 +6,13 @@ mod subagents;
 mod tool;
 mod transcript_batch;
 
+use jiff::Timestamp;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Utc;
 use pending::Pending;
 use pending::PendingPrompts;
 use subagents::Captured;
@@ -54,7 +53,7 @@ pub enum HookError {
     #[error("capture JSON encoding failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error("transcript timestamp is not RFC 3339")]
-    Timestamp(#[source] chrono::ParseError),
+    Timestamp(#[source] jiff::Error),
     #[error(transparent)]
     Read(#[from] kernel::transcript::TranscriptReaderError),
     #[error("subagent files were not listed: {0}")]
@@ -133,7 +132,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         &self.log_file
     }
 
-    pub async fn run(&self, stdin: &str, now: DateTime<Utc>, ingest_key: &str) -> HookRun {
+    pub async fn run(&self, stdin: &str, now: Timestamp, ingest_key: &str) -> HookRun {
         let payload = match serde_json::from_str::<HookPayload>(stdin) {
             Ok(payload) => payload,
             Err(error) => {
@@ -216,7 +215,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         &self,
         batch: &CaptureBatchRequest,
         claim: Option<pending::Claim>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Totals, WriteError> {
         let written = self.writer.write(batch, now).await;
         let saved = match &written {
@@ -237,7 +236,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         payload: &HookPayload,
         native: &str,
         event: HookEvent,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<HookRun>, HookError> {
         let selection = subagents::select(payload, native, event).await?;
         let last_event = event.to_string();
@@ -395,18 +394,18 @@ async fn settled_transcript(payload: &HookPayload) -> Vec<Line> {
 }
 
 #[must_use]
-pub fn ingest_key(now: DateTime<Utc>) -> String {
+pub fn ingest_key(now: Timestamp) -> String {
     let token: String = uuid::Uuid::new_v4()
         .simple()
         .to_string()
         .chars()
         .take(INGEST_TOKEN_CHARS)
         .collect();
-    format!("{}-{token}", now.timestamp_millis())
+    format!("{}-{token}", now.epoch_millis())
 }
 
-fn iso_at(now: DateTime<Utc>) -> String {
-    now.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn iso_at(now: Timestamp) -> String {
+    now.rfc3339_millis()
 }
 
 fn base_batch(session_key: &str) -> CaptureBatchRequest {
@@ -428,7 +427,7 @@ fn settings_for(
     payload: &HookPayload,
     session: &SessionId,
     event: HookEvent,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<JsonObject, HookError> {
     let native = crate::transcript::native_id(session)
         .ok_or(HookError::Missing("claude-code session id"))?
@@ -486,7 +485,7 @@ fn observed_hook<'a>(
     }
 }
 
-fn log_line(event: HookEvent, session_key: &str, totals: &Totals, now: DateTime<Utc>) -> String {
+fn log_line(event: HookEvent, session_key: &str, totals: &Totals, now: Timestamp) -> String {
     let head = format!(
         "{} {event} {session_key}: updated conv {} — +{} msg",
         iso_at(now),

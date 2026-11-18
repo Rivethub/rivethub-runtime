@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::memory::jobs::UnembeddedStore;
 use kernel::memory::{EmbedTable, EmbedTarget};
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue};
@@ -94,7 +94,7 @@ async fn unembedded_preserves_scheduled_run_at_and_selects_newest_per_table(
         table: EmbedTable::Summaries,
         id: uuid::Uuid::from_u128(4).to_string(),
     };
-    let future: DateTime<Utc> = "2099-01-01T00:00:00Z".parse()?;
+    let future: Timestamp = "2099-01-01T00:00:00Z".parse()?;
     let mut job = workers::embedding_sweep::embed_sweep_job(&target, 5)?;
     job.run_at = Some(future);
     queue.enqueue(job).await?;
@@ -103,12 +103,12 @@ async fn unembedded_preserves_scheduled_run_at_and_selects_newest_per_table(
         handle_enqueue_unembedded(&store, &queue, 1, 7, &CancellationToken::new()).await?,
         1
     );
-    let run_at: DateTime<Utc> =
+    let run_at: memory_postgres::time::PgTimestamp =
         sqlx::query_scalar("SELECT run_at FROM graphile_worker._private_jobs WHERE key = $1")
             .bind(format!("embed-ros_summaries-{}", target.id))
             .fetch_one(&pool)
             .await?;
-    assert_eq!(run_at, future);
+    assert_eq!(run_at.to_jiff(), future);
     assert_eq!(
         queue.jobs.lock().first().expect("job").max_attempts,
         Some(7)

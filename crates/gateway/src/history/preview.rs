@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::DateTime;
 use kernel::preview::Preview;
 use kernel::transcript::TranscriptRead;
 use parking_lot::RwLock;
@@ -41,7 +41,7 @@ impl History {
         {
             return Ok(cached.clone());
         }
-        let updated = DateTime::from_timestamp_millis(row.updated_at).ok_or_else(|| {
+        let updated = Timestamp::from_millisecond(row.updated_at).map_err(|_error| {
             ApiError::Unprocessable(format!(
                 "{} has an unreadable update time",
                 resolved.session

@@ -1,10 +1,10 @@
 #![cfg(test)]
 use crate::session_delete::Stores;
 use crate::session_support;
+use jiff::Timestamp;
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use gateway::sessions::SessionRegistry;
 use kernel::memory::{MemoryState, SessionRecord, SessionTopic};
 use kernel::topics::TopicId;
@@ -25,8 +25,8 @@ fn claude(native: &str) -> SessionId {
 }
 
 fn record(native: &str, title: &str, minute: i64) -> SessionRecord {
-    let started: DateTime<Utc> =
-        DateTime::from_timestamp(1_790_000_000 + minute * 60, 0).unwrap_or(DateTime::UNIX_EPOCH);
+    let started: Timestamp =
+        Timestamp::new(1_790_000_000 + minute * 60, 0).unwrap_or(Timestamp::UNIX_EPOCH);
     SessionRecord {
         owner: None,
         id: claude(native),

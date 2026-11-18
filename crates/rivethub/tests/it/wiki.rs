@@ -115,17 +115,11 @@ async fn wiki_routes_read_pages_and_metadata_from_postgres() -> TestResult {
     assert_eq!(actual.related, Some(vec!["known".to_owned()]));
     assert_eq!(
         actual.updated_at,
-        chrono::DateTime::parse_from_rfc3339("2026-10-14T00:00:00.000Z")
-            .expect("instant")
-            .with_timezone(&chrono::Utc)
+        wire::time::parse_rfc3339("2026-10-14T00:00:00.000Z").expect("instant")
     );
     assert_eq!(
         actual.last_verified,
-        Some(
-            chrono::DateTime::parse_from_rfc3339("2026-10-01T00:00:00.000Z")
-                .expect("instant")
-                .with_timezone(&chrono::Utc)
-        )
+        Some(wire::time::parse_rfc3339("2026-10-01T00:00:00.000Z").expect("instant"))
     );
     let citation = actual.citations.first().ok_or("one citation")?;
     let source = actual.sources.first().ok_or("one source")?;

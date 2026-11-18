@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 
 use chrono::DateTime;
@@ -74,8 +75,8 @@ pub(super) async fn load_transcript(
         };
         let ids = sqlx::query_scalar::<_, Uuid>(WINDOW_MESSAGES)
             .bind(conversation)
-            .bind(leaf.start)
-            .bind(leaf.end)
+            .bind(crate::time::BindTime::bind_time(leaf.start))
+            .bind(crate::time::BindTime::bind_time(leaf.end))
             .fetch_all(pool)
             .await
             .map_err(query_error)?;

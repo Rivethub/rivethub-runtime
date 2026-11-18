@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::SessionDeletion as _;
@@ -21,15 +20,15 @@ fn author(user: &str) -> BundleAuthor {
     }
 }
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+fn at(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
 fn object(text: &str) -> Result<JsonObject, serde_json::Error> {
     serde_json::from_str(text)
 }
 
-fn said(event_id: &str, content: &str, created_at: DateTime<Utc>) -> CaptureMessage {
+fn said(event_id: &str, content: &str, created_at: Timestamp) -> CaptureMessage {
     CaptureMessage {
         event_id: event_id.to_owned(),
         role: Role::User,
@@ -67,6 +66,65 @@ async fn captured(
         .capture_batch(batch, &CaptureOptions::owned_by(&owner))
         .await?;
     Ok(Uuid::parse_str(&result.conversation_id)?)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capture_rejects_placement_past_the_timestamp_ceiling(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let owner = CaptureOptions::owned_by(&Owner::new("dana".to_owned())?);
+    let last = at("9999-12-30T22:00:00.999999Z")?;
+    let first = at("9999-12-30T22:00:00.999998Z")?;
+    let tied = batch(
+        "claude-code:tied-ceiling",
+        vec![said("one", "one", last), said("two", "two", last)],
+    );
+    assert!(matches!(
+        store.capture_batch(&tied, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "message time placement",
+            ..
+        })
+    ));
+    let key = "claude-code:undated-ceiling";
+    let id = captured(
+        &store,
+        "dana",
+        &batch(key, vec![said("seed", "seed", first)]),
+    )
+    .await?;
+    let undated = |event_id| CaptureMessage {
+        created_at: None,
+        ..said(event_id, event_id, first)
+    };
+    let overflow = batch(key, vec![undated("one"), undated("two")]);
+    assert!(matches!(
+        store.capture_batch(&overflow, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "message insert",
+            ..
+        })
+    ));
+    let count: i64 =
+        sqlx::query_scalar("select count(*) from rh_messages where conversation_id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count, 1);
+    let _last = captured(
+        &store,
+        "dana",
+        &batch(key, vec![said("last", "last", last)]),
+    )
+    .await?;
+    let beyond = batch(key, vec![undated("beyond")]);
+    assert!(matches!(
+        store.capture_batch(&beyond, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "capture start time",
+            ..
+        })
+    ));
+    Ok(())
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
@@ -264,7 +322,7 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
     let key = "claude-code:overlap";
     let undated = |content: &str| CaptureMessage {
         created_at: None,
-        ..said(&format!("evt-{content}"), content, Utc::now())
+        ..said(&format!("evt-{content}"), content, Timestamp::now())
     };
     let id = captured(&store, "dana", &batch(key, vec![undated("seed")])).await?;
     let warm = (pool.acquire().await?, pool.acquire().await?);

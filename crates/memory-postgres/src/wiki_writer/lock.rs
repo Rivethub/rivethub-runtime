@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write as _};
@@ -5,6 +6,7 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
 use kernel::wiki::builder::WikiWriteError;
 use parking_lot::Mutex;
@@ -95,7 +97,7 @@ fn acquire_once(path: &Path, token: &str) -> Result<Attempt, std::io::Error> {
         .open(path)
     {
         Ok(mut file) => {
-            writeln!(file, "{token} {}", chrono::Utc::now().timestamp_millis())?;
+            writeln!(file, "{token} {}", Timestamp::now().epoch_millis())?;
             file.sync_all()?;
             Ok(Attempt::Owned)
         }
@@ -115,11 +117,7 @@ fn reclaim(path: &Path) -> Result<Attempt, std::io::Error> {
     let Ok(timestamp) = timestamp.parse::<i64>() else {
         return Ok(Attempt::Busy);
     };
-    if chrono::Utc::now()
-        .timestamp_millis()
-        .saturating_sub(timestamp)
-        <= 60_000
-    {
+    if Timestamp::now().epoch_millis().saturating_sub(timestamp) <= 60_000 {
         return Ok(Attempt::Busy);
     }
     if read_lock(path)?.as_ref() != Some(&content) {

@@ -388,14 +388,14 @@ async fn purge_tombstones_with_the_trash_mark(pool: PgPool) -> TestResult {
         .trash_session(seeded.alpha.as_str(), Some("user-1"), at(100))
         .await?;
     memory.purge_trashed(at(100), 10).await?;
-    let (deleted_at, deleted_by): (chrono::DateTime<chrono::Utc>, Option<String>) = sqlx::query_as(
+    let (deleted_at, deleted_by): (jiff_sqlx::Timestamp, Option<String>) = sqlx::query_as(
         "SELECT deleted_at, deleted_by FROM rh_session_tombstones WHERE session_key = $1",
     )
     .bind(seeded.alpha.as_str())
     .fetch_one(&pool)
     .await?;
     assert_eq!(
-        (deleted_at, deleted_by.as_deref()),
+        (deleted_at.to_jiff(), deleted_by.as_deref()),
         (at(100), Some("user-1"))
     );
     Ok(())

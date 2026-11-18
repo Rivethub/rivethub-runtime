@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
@@ -5,7 +6,6 @@ use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::routing;
-use chrono::Utc;
 use kernel::topics::PageEdit;
 use kernel::topics::Topic;
 use kernel::topics::TopicId;
@@ -56,9 +56,15 @@ pub(super) async fn edit(
         current_state: request.current_state,
         article: request.article,
     };
-    let edited = edit_topic_page(store.as_ref(), gateway.pages()?, &topic, &edit, Utc::now())
-        .await
-        .map_err(refused)?;
+    let edited = edit_topic_page(
+        store.as_ref(),
+        gateway.pages()?,
+        &topic,
+        &edit,
+        Timestamp::now(),
+    )
+    .await
+    .map_err(refused)?;
     if edited.is_none() {
         return Err(ApiError::Conflict("A type has no page".to_owned()));
     }

@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::AllFiled;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::Correction;
@@ -30,7 +29,7 @@ struct ConversationPlacementRow {
     conversation_id: Uuid,
     topic_id: Uuid,
     placed_by: String,
-    placed_at: DateTime<Utc>,
+    placed_at: Timestamp,
 }
 
 struct HeadRow {
@@ -152,8 +151,7 @@ impl FilingStore for PostgresMemory {
                 placement.conversation,
                 placement.topic.uuid(),
                 placement.by.to_string(),
-                placement.at
-            )
+            crate::time::BindTime::bind_time(placement.at) as _)
             .execute(&mut *tx)
             .await
             .map_err(failed("conversation placement write"))?;
@@ -171,7 +169,7 @@ impl FilingStore for PostgresMemory {
         sqlx::query_as!(
             ConversationPlacementRow,
             "DELETE FROM rh_conversation_placements WHERE conversation_id = $1
-             RETURNING conversation_id, topic_id, placed_by, placed_at",
+             RETURNING conversation_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\"",
             conversation
         )
         .fetch_optional(&self.pool)
@@ -234,7 +232,7 @@ impl FilingStore for PostgresMemory {
             conversation,
             correction.from.uuid(),
             correction.to.map(TopicId::uuid),
-            correction.at
+            crate::time::BindTime::bind_time(correction.at) as _
         )
         .execute(&self.pool)
         .await
@@ -315,7 +313,7 @@ async fn placement_of(
     let row = if lock {
         sqlx::query_as!(
             ConversationPlacementRow,
-            "SELECT conversation_id, topic_id, placed_by, placed_at
+            "SELECT conversation_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\"
                FROM rh_conversation_placements WHERE conversation_id = $1 FOR UPDATE",
             conversation
         )
@@ -324,7 +322,7 @@ async fn placement_of(
     } else {
         sqlx::query_as!(
             ConversationPlacementRow,
-            "SELECT conversation_id, topic_id, placed_by, placed_at
+            "SELECT conversation_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\"
                FROM rh_conversation_placements WHERE conversation_id = $1",
             conversation
         )

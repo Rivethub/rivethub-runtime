@@ -1,15 +1,19 @@
 use super::{
     MemoryDegraded, MemoryEntry, MemoryFallback, MemorySearchResult, SummaryKind, TagWire,
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SummaryDetail {
     pub kind: SummaryKind,
-    pub earliest_at: Option<DateTime<Utc>>,
-    pub latest_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub earliest_at: Option<Timestamp>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub latest_at: Option<Timestamp>,
     pub tags: Vec<TagWire>,
     pub children: Vec<SummaryExcerpt>,
     pub sources: Vec<MemoryEntry>,

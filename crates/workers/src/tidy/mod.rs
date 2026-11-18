@@ -1,12 +1,11 @@
 mod parse;
 mod prompt;
 
+use jiff::Timestamp;
 use kernel::topics::SweepOwners;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::Target;
 use kernel::model::ModelOptions;
 use kernel::model::ModelProvider;
@@ -53,13 +52,13 @@ pub struct TidyEnv<'a> {
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
     pub owners: SweepOwners<'a>,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TidyRun {
-    NotDue { last: DateTime<Utc> },
+    NotDue { last: Timestamp },
     Proposed(Batch),
 }
 

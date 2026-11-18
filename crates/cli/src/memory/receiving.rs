@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -12,8 +13,6 @@ use capture::sign::TrustError;
 use capture::sign::TrustStore;
 use capture::sign::TrustedSender;
 use capture::sign::Verification;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use thiserror::Error;
 use wire::capture::Receipt;
@@ -90,7 +89,7 @@ impl Fetched {
     }
 
     #[must_use]
-    pub fn receipt(&self, at: DateTime<Utc>) -> Receipt {
+    pub fn receipt(&self, at: Timestamp) -> Receipt {
         receipt(&self.id, at, &self.opened.verification)
     }
 
@@ -153,7 +152,7 @@ fn screen(bundle: &SessionBundle) -> Result<(), ShareError> {
     Ok(())
 }
 
-pub(super) fn receipt(id: &DropId, at: DateTime<Utc>, verification: &Verification) -> Receipt {
+pub(super) fn receipt(id: &DropId, at: Timestamp, verification: &Verification) -> Receipt {
     Receipt {
         bundle_id: id.to_string(),
         received_at: at,

@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,6 +20,7 @@ pub(super) const CONTRADICTED: &str = "contradicted";
 
 pub const ENTITY_LOCK_CLASS: i32 = 0x656e_7479;
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtractEntities {
@@ -29,7 +29,8 @@ pub struct ExtractEntities {
     pub conversation_id: Option<Uuid>,
 
     #[serde(skip)]
-    pub session_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub session_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,15 +39,15 @@ pub struct EntityLeaf {
     pub id: Uuid,
     pub conversation_id: Option<Uuid>,
     pub content: String,
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
+    pub start: Timestamp,
+    pub end: Timestamp,
     pub owner: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TranscriptMessage {
     pub id: Uuid,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
     pub role: String,
     pub tool_name: Option<String>,
@@ -59,8 +60,8 @@ pub struct TranscriptMessage {
 pub struct LeafClock {
     pub id: Uuid,
     pub conversation_id: Option<Uuid>,
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
+    pub start: Timestamp,
+    pub end: Timestamp,
 }
 
 impl From<&EntityLeaf> for LeafClock {
@@ -280,7 +281,7 @@ pub struct StoredRewrite {
     pub history: Option<PreparedHistory>,
     pub owner: String,
 
-    pub session_at: DateTime<Utc>,
+    pub session_at: Timestamp,
 
     pub session_id: Uuid,
 
@@ -289,12 +290,12 @@ pub struct StoredRewrite {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppliedMark {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub summary_id: Uuid,
 }
 
 #[must_use]
-pub fn older_than_mark(session_at: DateTime<Utc>, session_id: Uuid, mark: AppliedMark) -> bool {
+pub fn older_than_mark(session_at: Timestamp, session_id: Uuid, mark: AppliedMark) -> bool {
     (session_at, session_id) < (mark.at, mark.summary_id)
 }
 
@@ -312,7 +313,7 @@ pub struct PreparedEntity {
 pub struct PreparedFact {
     pub attribute: String,
     pub value: String,
-    pub as_of: DateTime<Utc>,
+    pub as_of: Timestamp,
     pub status: FactState,
     pub summary_id: Uuid,
     pub conversation_id: Option<Uuid>,
@@ -322,7 +323,7 @@ pub struct PreparedFact {
 pub struct PreparedHistory {
     pub summary_id: Uuid,
     pub conversation_id: Option<Uuid>,
-    pub session_on: NaiveDate,
+    pub session_on: Date,
     pub sentence: String,
 }
 
@@ -392,13 +393,13 @@ pub struct MatchCandidate {
 pub struct LiveFact {
     pub attribute: String,
     pub value: String,
-    pub as_of: DateTime<Utc>,
+    pub as_of: Timestamp,
     pub status: FactState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryLine {
-    pub date: NaiveDate,
+    pub date: Date,
     pub sentence: String,
     pub summary_id: Uuid,
     pub conversation_id: Option<Uuid>,
@@ -435,7 +436,7 @@ pub enum SlugOccupant {
 pub struct BindHit {
     pub id: Uuid,
     pub type_id: Uuid,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,7 +475,7 @@ pub struct EntityMerge {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MentionNote {
     pub history: Option<PreparedHistory>,
-    pub session_at: DateTime<Utc>,
+    pub session_at: Timestamp,
     pub session_id: Uuid,
     pub owner: String,
 }

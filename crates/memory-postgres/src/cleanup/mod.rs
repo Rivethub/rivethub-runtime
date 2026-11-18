@@ -1,6 +1,7 @@
 mod pages;
 mod rows;
 
+use jiff::Timestamp;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -235,7 +236,7 @@ impl PostgresMemory {
 
     async fn read_snapshot(&self) -> Result<Snapshot, Error> {
         self.ensure_read_only().await?;
-        let taken_at = chrono::Utc::now();
+        let taken_at = Timestamp::now();
         let (projects, refused) = self.snapshot_projects().await?;
         Ok(Snapshot {
             taken_at,

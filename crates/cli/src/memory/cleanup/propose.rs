@@ -1,5 +1,5 @@
-use chrono::Utc;
 use config::Environment;
+use jiff::Timestamp;
 use kernel::cleanup::BackfillBatch;
 use kernel::tidy::TidyStore as _;
 use memory_postgres::{DatabaseIdentity, PostgresMemory};
@@ -66,7 +66,7 @@ pub(super) async fn write(
         pages: &folds.pages,
         generic: &filed.generic,
     }
-    .batch(Utc::now())?;
+    .batch(Timestamp::now())?;
     let stored = memory.propose(batch).await;
     memory.pool().close().await;
     let stored = stored?;

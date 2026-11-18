@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use values::{JsonObject, Role};
@@ -18,10 +18,10 @@ pub struct CaptureBatchRequest {
     pub finalize: Option<bool>,
     #[serde(default)]
     #[serde_as(as = "Option<values::Millis>")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
     #[serde(default)]
     #[serde_as(as = "Option<values::Millis>")]
-    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<Timestamp>,
     pub messages: Vec<CaptureMessage>,
 }
 
@@ -38,7 +38,7 @@ pub struct CaptureMessage {
     pub metadata: Option<JsonObject>,
     #[serde(default)]
     #[serde_as(as = "Option<values::Millis>")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

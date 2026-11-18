@@ -1,7 +1,7 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::queue::JobName;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
@@ -73,14 +73,14 @@ pub struct JobInsert {
     pub key: Option<String>,
     pub payload: String,
     pub priority: i16,
-    pub run_at: DateTime<Utc>,
+    pub run_at: Timestamp,
     pub max_attempts: u32,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 impl JobInsert {
     #[must_use]
-    pub fn new(task: impl Into<String>, payload: String, now: DateTime<Utc>) -> Self {
+    pub fn new(task: impl Into<String>, payload: String, now: Timestamp) -> Self {
         Self {
             task: task.into(),
             key: None,
@@ -99,7 +99,7 @@ impl JobInsert {
     }
 
     #[must_use]
-    pub fn run_at(mut self, run_at: DateTime<Utc>) -> Self {
+    pub fn run_at(mut self, run_at: Timestamp) -> Self {
         self.run_at = run_at;
         self
     }
@@ -142,7 +142,7 @@ impl SqliteStore {
         &self,
         tasks: Vec<String>,
         only_id: Option<String>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<ClaimedSqliteJob>, SqliteError> {
         self.with_conn(move |conn| claim_one(conn, &tasks, only_id.as_deref(), now))
             .await
@@ -152,7 +152,7 @@ impl SqliteStore {
         &self,
         id: String,
         error: String,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<FailOutcome, SqliteError> {
         self.with_conn(move |conn| fail_one(conn, &id, &error, now))
             .await
@@ -163,7 +163,7 @@ impl SqliteStore {
         self.with_conn(move |conn| delete_job(conn, &id, now)).await
     }
 
-    pub async fn release_job(&self, id: String, now: DateTime<Utc>) -> Result<(), SqliteError> {
+    pub async fn release_job(&self, id: String, now: Timestamp) -> Result<(), SqliteError> {
         self.with_conn(move |conn| release_one(conn, &id, now))
             .await
     }
@@ -173,7 +173,7 @@ pub(crate) fn enqueue_embed(
     conn: &Connection,
     table: &str,
     id: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<bool, SqliteError> {
     enqueue_embed_due(conn, table, id, now, now)
 }
@@ -182,8 +182,8 @@ pub(crate) fn enqueue_embed_due(
     conn: &Connection,
     table: &str,
     id: &str,
-    now: DateTime<Utc>,
-    run_at: DateTime<Utc>,
+    now: Timestamp,
+    run_at: Timestamp,
 ) -> Result<bool, SqliteError> {
     let payload = serde_json::to_string(&EmbedJob {
         target_table: table,
@@ -231,7 +231,7 @@ fn claim_one(
     conn: &mut Connection,
     tasks: &[String],
     only_id: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<ClaimedSqliteJob>, SqliteError> {
     if tasks.is_empty() {
         return Ok(None);
@@ -278,7 +278,7 @@ fn accepted_payload(row: &DueRow) -> Result<JobPayload, SqliteError> {
     }
 }
 
-fn mark_running(conn: &Connection, id: &str, now: DateTime<Utc>) -> Result<u32, SqliteError> {
+fn mark_running(conn: &Connection, id: &str, now: Timestamp) -> Result<u32, SqliteError> {
     let stamped = time::stamp(now);
     let attempts = conn
         .query_row(
@@ -301,7 +301,7 @@ fn reject_claim(
     conn: &Connection,
     id: &str,
     error: &SqliteError,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), SqliteError> {
     let clipped: String = error.to_string().chars().take(ERROR_CHARS).collect();
     conn.execute(
@@ -343,7 +343,7 @@ fn fail_one(
     conn: &mut Connection,
     id: &str,
     error: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<FailOutcome, SqliteError> {
     let tx =
         crate::summary_replace::immediate(conn).map_err(SqliteError::query("job fail begin"))?;
@@ -397,13 +397,20 @@ fn fail_one(
     Ok(outcome)
 }
 
-fn later(now: DateTime<Utc>, attempt: u32) -> Result<DateTime<Utc>, SqliteError> {
+fn later(now: Timestamp, attempt: u32) -> Result<Timestamp, SqliteError> {
     let delay = i64::try_from(retry_delay_ms(attempt)).map_err(|_| SqliteError::Clock)?;
-    now.checked_add_signed(chrono::Duration::milliseconds(delay))
-        .ok_or(SqliteError::Clock)
+    now.saturating_add(SignedDuration::from_millis(delay))
+        .map_err(|_error| SqliteError::Clock)
 }
 
-fn delete_job(conn: &mut Connection, id: &str, now: DateTime<Utc>) -> Result<(), SqliteError> {
+#[cfg(test)]
+#[test]
+fn sqlite_retry_after_the_timestamp_ceiling_saturates() -> Result<(), SqliteError> {
+    assert_eq!(later(Timestamp::MAX, u32::MAX)?, Timestamp::MAX);
+    Ok(())
+}
+
+fn delete_job(conn: &mut Connection, id: &str, now: Timestamp) -> Result<(), SqliteError> {
     let tx = conn
         .transaction()
         .map_err(SqliteError::query("job complete"))?;
@@ -429,7 +436,7 @@ pub(crate) fn revive_one(
     conn: &Connection,
     key: &str,
     payload: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<bool, SqliteError> {
     let stamped = time::stamp(now);
     let changed = conn

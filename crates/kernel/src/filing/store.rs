@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use super::Correction;
@@ -30,7 +29,7 @@ pub struct ConversationPlacement {
     pub conversation: Uuid,
     pub topic: TopicId,
     pub by: PlacementSource,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 impl ConversationPlacement {
@@ -47,7 +46,7 @@ impl ConversationPlacement {
 pub struct FiledSession {
     pub placement: Placement,
     pub title: Option<String>,
-    pub last_active: Option<DateTime<Utc>>,
+    pub last_active: Option<Timestamp>,
     pub node: Option<String>,
     pub lineage: Option<Lineage>,
     pub visibility: Option<SessionVisibility>,
@@ -58,7 +57,7 @@ pub struct FiledConversation {
     pub placement: ConversationPlacement,
     pub title: Option<String>,
     pub channel: String,
-    pub last_active: Option<DateTime<Utc>>,
+    pub last_active: Option<Timestamp>,
     pub node: Option<String>,
 }
 

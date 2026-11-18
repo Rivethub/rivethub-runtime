@@ -1,5 +1,6 @@
 use super::types::FactState;
 use super::types::LiveFact;
+use values::time::LegacyStrftime as _;
 
 #[must_use]
 pub fn prose_article(article: &str) -> String {
@@ -30,7 +31,7 @@ pub fn facts_section(facts: &[LiveFact]) -> String {
         out.push_str(fact.value.trim());
         out.push_str(ended);
         out.push_str(" (as of ");
-        out.push_str(&fact.as_of.date_naive().to_string());
+        out.push_str(&fact.as_of.legacy_strftime("%Y-%m-%d"));
         out.push(')');
     }
     out
