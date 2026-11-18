@@ -18,6 +18,7 @@ mod node_name;
 mod owner;
 mod pgdb;
 mod roots;
+mod search_rerank;
 mod sessions;
 mod share_desk;
 mod share_receive;

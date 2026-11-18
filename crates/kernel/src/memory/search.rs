@@ -51,3 +51,13 @@ pub struct SearchOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<String>,
 }
+
+#[async_trait::async_trait]
+pub trait SearchRerank: Send + Sync {
+    async fn apply(
+        &self,
+        store: &dyn super::MemoryStore,
+        query: &super::SearchQuery,
+        outcome: &mut SearchOutcome,
+    );
+}

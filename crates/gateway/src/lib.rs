@@ -57,6 +57,7 @@ pub(crate) struct GuardState {
 #[expect(missing_debug_implementations)]
 pub struct Gateway {
     store: Arc<dyn MemoryStore>,
+    reranker: Option<Arc<dyn kernel::memory::SearchRerank>>,
     settings: Settings,
     policy: auth::OriginPolicy,
     denials: DenialLog,
@@ -105,6 +106,7 @@ impl Gateway {
         );
         Self {
             store,
+            reranker: None,
             settings,
             policy,
             denials: DenialLog::default(),
@@ -143,6 +145,15 @@ impl Gateway {
             drops: None,
             trusted_proxies: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_search_rerank(
+        mut self,
+        reranker: Option<Arc<dyn kernel::memory::SearchRerank>>,
+    ) -> Self {
+        self.reranker = reranker;
+        self
     }
 
     #[must_use]

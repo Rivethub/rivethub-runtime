@@ -251,11 +251,7 @@ async fn search(
             1..=SEARCH_LIMIT_MAX,
         ),
     };
-    let results = gateway
-        .store()
-        .search(query.resolve_window(Timestamp::now(), &config::host_zone()))
-        .await?;
-    let origins = super::memory_rows::search_origins(&gateway, &results).await?;
+    let (results, origins) = ranked_search(&gateway, query).await?;
     let snippets = params.snippet == Some(true);
     Ok(Json(MemorySearchResponse {
         scope,
@@ -436,6 +432,20 @@ fn serialize_tool<T: Serialize>(value: &T) -> Result<String, ApiError> {
     serde_json::to_string(value).map_err(ApiError::Serialize)
 }
 
+async fn ranked_search(
+    gateway: &Gateway,
+    query: SearchQuery,
+) -> Result<(kernel::memory::SearchOutcome, memory_body::Origins), ApiError> {
+    let query = query.resolve_window(Timestamp::now(), &config::host_zone());
+    let store = gateway.store().as_ref();
+    let mut results = store.search(query.clone()).await?;
+    let origins = super::memory_rows::search_origins(gateway, &results).await?;
+    if let Some(reranker) = &gateway.reranker {
+        reranker.apply(store, &query, &mut results).await;
+    }
+    Ok((results, origins))
+}
+
 async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<String, ApiError> {
     let mode = match args.mode {
         Some(mode) => mode,
@@ -463,11 +473,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
         tag,
         limit: Limit::clamped(args.limit, SEARCH_TOOL_LIMIT_DEFAULT, 1..=SEARCH_LIMIT_MAX),
     };
-    let results = gateway
-        .store()
-        .search(query.resolve_window(Timestamp::now(), &config::host_zone()))
-        .await?;
-    let origins = super::memory_rows::search_origins(gateway, &results).await?;
+    let (results, origins) = ranked_search(gateway, query).await?;
     let response = MemorySearchResponse {
         query: args.query,
         scope,

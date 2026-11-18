@@ -177,6 +177,15 @@ pub async fn search(
     args: Search,
     zone: &TimeZone,
 ) -> Result<CallToolResult, Error> {
+    search_with_rerank(store, args, zone, None).await
+}
+
+pub(crate) async fn search_with_rerank(
+    store: &dyn MemoryStore,
+    args: Search,
+    zone: &TimeZone,
+    reranker: Option<&crate::rerank::Reranker>,
+) -> Result<CallToolResult, Error> {
     let scope = match args.scope {
         Some(scope) => scope,
         None => MemoryScope::Both,
@@ -201,7 +210,7 @@ pub async fn search(
             )?,
             limit: limit(Search::NAME, args.limit, 10, 50)?,
         };
-    let outcome = store
+    let mut outcome = store
         .search(
             query
                 .clone()
@@ -209,6 +218,11 @@ pub async fn search(
         )
         .await?;
     let hits = hit_context(store, &outcome).await?;
+    if let Some(reranker) = reranker {
+        reranker
+            .rank(store, &query, &mut outcome, Some(&hits))
+            .await;
+    }
     Ok(crate::text(crate::render_search::search(
         &query,
         &outcome,
@@ -225,9 +239,16 @@ async fn hit_context(
     store: &dyn MemoryStore,
     outcome: &kernel::memory::SearchOutcome,
 ) -> Result<crate::render_search::HitContext, Error> {
+    hit_context_for(store, outcome, &outcome.results).await
+}
+
+pub(crate) async fn hit_context_for(
+    store: &dyn MemoryStore,
+    outcome: &kernel::memory::SearchOutcome,
+    hits: &[kernel::memory::MemorySearchResult],
+) -> Result<crate::render_search::HitContext, Error> {
     let mut messages = std::collections::BTreeMap::new();
-    for hit in outcome
-        .results
+    for hit in hits
         .iter()
         .filter(|hit| hit.source == kernel::memory::MemoryHitSource::Message)
     {
@@ -252,7 +273,7 @@ async fn hit_context(
     };
     let mut carried = crate::provenance::Origins::new();
     let mut hit_keys = Vec::new();
-    for hit in &outcome.results {
+    for hit in hits {
         let Some(key) = hit.session_id.as_deref() else {
             continue;
         };

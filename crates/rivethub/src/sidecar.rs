@@ -221,6 +221,7 @@ async fn run_server(
         .store_identity(viewer.as_str())
         .await?
         .display_zone(display_zone(env))
+        .search_rerank(config)
         .plugins(Arc::new(plugins));
     if let Some(sessions) = served.sessions {
         builder = builder.sessions(sessions);
@@ -242,7 +243,9 @@ pub(crate) fn memory_future(
             "rh local serves MCP only when a host or socket is configured".into(),
         ));
     }
-    let mut builder = mcp::Server::builder(memory, shutdown.child_token()).display_zone(zone);
+    let mut builder = mcp::Server::builder(memory, shutdown.child_token())
+        .display_zone(zone)
+        .search_rerank(config);
     if let Some(port) = plugins {
         builder = builder.plugins(port);
     }

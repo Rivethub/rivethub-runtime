@@ -19,6 +19,11 @@ static NESTED_QUANTIFIERS: LazyLock<Result<Regex, regress::Error>> =
     LazyLock::new(|| Regex::new(NESTED_QUANTIFIER_PATTERN));
 
 pub(super) fn validate(out: &mut ValidationResult, memory: &MemorySection) {
+    if let Some(rerank) = &memory.recall.rerank {
+        for (path, message) in rerank.problems() {
+            out.error(path, message);
+        }
+    }
     if memory
         .recall
         .own_weight

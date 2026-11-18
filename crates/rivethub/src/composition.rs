@@ -285,6 +285,7 @@ impl Composition {
         let mut gateway = models::attach(Gateway::new(store, settings), config, env, factory)?
             .with_tenancy(identity.tenancy.clone())
             .with_local_owner(local_owner)
+            .with_search_rerank(mcp::rerank::configured(config))
             .with_auth_policy(gateway::AuthPolicy::from_config(config))
             .with_trusted_proxies(trusted_proxies(config))
             .with_sessions(sessions);
