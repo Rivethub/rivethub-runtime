@@ -40,6 +40,39 @@ fn legacy_year(text: String) -> String {
     }
 }
 
+pub trait LegacyStrftime {
+    fn legacy_strftime(&self, pattern: &str) -> String;
+}
+
+fn legacy_year_pattern(pattern: &str, year: i16) -> Cow<'_, str> {
+    if year < 0 && pattern.contains("%Y") {
+        Cow::Owned(pattern.replace("%Y", &format!("-{:04}", year.unsigned_abs())))
+    } else {
+        Cow::Borrowed(pattern)
+    }
+}
+
+impl LegacyStrftime for Timestamp {
+    fn legacy_strftime(&self, pattern: &str) -> String {
+        let pattern = legacy_year_pattern(pattern, self.utc_date().year());
+        self.strftime(pattern.as_ref()).to_string()
+    }
+}
+
+impl LegacyStrftime for Date {
+    fn legacy_strftime(&self, pattern: &str) -> String {
+        let pattern = legacy_year_pattern(pattern, self.year());
+        self.strftime(pattern.as_ref()).to_string()
+    }
+}
+
+impl LegacyStrftime for jiff::ZonedDateTime {
+    fn legacy_strftime(&self, pattern: &str) -> String {
+        let pattern = legacy_year_pattern(pattern, self.year());
+        self.strftime(pattern.as_ref()).to_string()
+    }
+}
+
 impl TimestampFormat for Timestamp {
     fn rfc3339_offset(self) -> String {
         let precision = automatic_precision(self);
@@ -377,7 +410,7 @@ impl JsonSchemaAs<Timestamp> for EpochMillis {
 
 impl SerializeAs<Date> for CivilDate {
     fn serialize_as<S: Serializer>(value: &Date, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.strftime("%Y-%m-%d").to_string())
+        serializer.serialize_str(&value.legacy_strftime("%Y-%m-%d"))
     }
 }
 

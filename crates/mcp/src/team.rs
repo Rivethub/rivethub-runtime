@@ -2,6 +2,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use wire::time::LegacyStrftime as _;
 
 use kernel::memory::{MemoryStore, Provenance, Verification};
 use rmcp::model::{CallToolResult, ToolAnnotations};
@@ -102,7 +103,7 @@ fn render(
                 record
                     .when
                     .to_zoned_datetime(zone.clone())
-                    .strftime("%Y-%m-%d %H:%M %Z")
+                    .legacy_strftime("%Y-%m-%d %H:%M %Z")
             );
             if !record.topic.is_empty() {
                 write!(heading, " · {}", record.topic.join(" / "))?;

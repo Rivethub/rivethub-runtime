@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::LegacyStrftime as _;
 
 use capture::receive::Blocked;
 use capture::receive::Decisions;
@@ -244,8 +245,8 @@ fn listed(session: &BundledSession) -> String {
     let dates = match (origin.created_at, origin.updated_at) {
         (Some(created), Some(updated)) => format!(
             "{} to {}",
-            created.strftime("%Y-%m-%d"),
-            updated.strftime("%Y-%m-%d")
+            created.legacy_strftime("%Y-%m-%d"),
+            updated.legacy_strftime("%Y-%m-%d")
         ),
         _ => "undated".to_owned(),
     };

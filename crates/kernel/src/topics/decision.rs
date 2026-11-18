@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use std::fmt;
 use std::str::FromStr;
+use values::time::LegacyStrftime as _;
 
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -141,7 +142,7 @@ impl Decision {
     }
 
     fn line(&self) -> String {
-        let when = self.created_at.strftime("%Y-%m-%d");
+        let when = self.created_at.legacy_strftime("%Y-%m-%d");
         match self.status {
             DecisionStatus::Active => format!("- {} ({}, {when})", self.text.as_str(), self.by),
             DecisionStatus::Superseded => format!(

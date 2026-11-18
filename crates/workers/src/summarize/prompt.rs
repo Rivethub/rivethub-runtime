@@ -3,6 +3,7 @@ use kernel::memory::ConversationHead;
 use kernel::memory::Provenance;
 use kernel::memory::SummaryNode;
 use kernel::memory::WindowMessage;
+use wire::time::LegacyStrftime as _;
 use wire::time::TimestampFormat as _;
 
 use crate::error::WorkerError;
@@ -257,9 +258,9 @@ fn span_value(start: Timestamp, end: Timestamp) -> String {
 
 fn prompt_time(at: Timestamp) -> String {
     if at.nanosecond_of_second() == 0 && jiff::tz::TimeZone::UTC.to_datetime(at).second() == 0 {
-        format!("{}Z", at.strftime("%Y-%m-%dT%H:%M"))
+        format!("{}Z", at.legacy_strftime("%Y-%m-%dT%H:%M"))
     } else if at.nanosecond_of_second() == 0 {
-        format!("{}Z", at.strftime("%Y-%m-%dT%H:%M:%S"))
+        format!("{}Z", at.legacy_strftime("%Y-%m-%dT%H:%M:%S"))
     } else {
         at.rfc3339_z()
     }

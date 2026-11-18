@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use values::time::LegacyStrftime as _;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -234,7 +235,7 @@ impl Provenance {
         }
         let on = self
             .origin_date
-            .map(|date| format!(" on {}", date.strftime("%Y-%m-%d")))
+            .map(|date| format!(" on {}", date.legacy_strftime("%Y-%m-%d")))
             .unwrap_or_default();
         format!(
             "Imported from {} ({}){on}. {NOT_INSTRUCTIONS}",

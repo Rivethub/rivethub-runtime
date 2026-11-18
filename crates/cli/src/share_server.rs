@@ -3,6 +3,7 @@ use jiff::Timestamp;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
+use wire::time::LegacyStrftime as _;
 
 use capture::sanitize::KeyError;
 use capture::seal::CodeError;
@@ -325,7 +326,7 @@ impl ShareServers {
                         lines.push_str(" (scope ");
                         lines.push_str(scope);
                         lines.push_str("); the access token renews itself, next at ");
-                        lines.push_str(&expires_at.strftime("%Y-%m-%d %H:%M UTC").to_string());
+                        lines.push_str(&expires_at.legacy_strftime("%Y-%m-%d %H:%M UTC"));
                     }
                     Listed::Team { user } => {
                         lines.push_str(" as ");

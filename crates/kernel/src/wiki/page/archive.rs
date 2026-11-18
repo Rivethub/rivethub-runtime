@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use jiff::civil::Date;
 use std::collections::BTreeSet;
+use values::time::LegacyStrftime as _;
 use values::time::TimestampFormat as _;
 
 use super::bound::{ARCHIVED_TITLE, Archived, blocks, covered, history_line, spill, words};
@@ -13,7 +14,7 @@ pub const SEGMENT_BUDGET: usize = 64 * 1024;
 
 #[must_use]
 pub fn archive_month(at: Timestamp) -> String {
-    at.strftime(MONTH).to_string()
+    at.legacy_strftime(MONTH)
 }
 
 #[must_use]
@@ -97,7 +98,7 @@ pub fn legacy_archive_path(slug: &str) -> String {
 
 #[must_use]
 pub fn archive_anchor(at: Timestamp) -> String {
-    format!("a-{}", at.strftime("%Y%m%dT%H%M%S%3fZ"))
+    format!("a-{}", at.legacy_strftime("%Y%m%dT%H%M%S%3fZ"))
 }
 
 #[must_use]
@@ -144,7 +145,7 @@ pub fn archive_block(at: Timestamp, inline: Option<&str>, archived: &[Archived])
     let mut block = format!(
         "\n<a id=\"{}\"></a>\n\n## {}",
         archive_anchor(at),
-        at.strftime("%Y-%m-%d %H:%M UTC")
+        at.legacy_strftime("%Y-%m-%d %H:%M UTC")
     );
     if let Some(sha) = inline {
         block.push_str(" (last inline at ");

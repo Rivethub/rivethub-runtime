@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Write as _;
+use wire::time::LegacyStrftime as _;
 use wire::time::TimestampFormat as _;
 
 use axum::http::StatusCode;
@@ -152,7 +153,7 @@ pub(super) fn article(page: &WikiPageResponse) -> Result<String, WikiError> {
     if !page.history.is_empty() {
         output.push_str("<section><h2>History</h2>");
         for entry in &page.history {
-            let date = entry.date.to_string();
+            let date = entry.date.legacy_strftime("%Y-%m-%d");
             write!(
                 output,
                 "<h3>{}</h3><time>{}</time><pre>{}</pre>",

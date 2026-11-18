@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::fmt::Write as _;
+use wire::time::LegacyStrftime as _;
 
 use kernel::memory::MemoryStore;
 use kernel::memory::SessionDigest;
@@ -79,8 +80,7 @@ fn render(
     }
     let day = |at: Timestamp| {
         at.to_zoned_datetime(zone.clone())
-            .strftime("%Y-%m-%d")
-            .to_string()
+            .legacy_strftime("%Y-%m-%d")
     };
     for (index, (ranked, digest)) in found.iter().enumerate() {
         let imported = kernel::memory::is_imported(&digest.key);

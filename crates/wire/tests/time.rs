@@ -209,3 +209,16 @@ fn legacy_wire_spelling_and_precision() -> Result<(), Box<dyn std::error::Error>
     }
     Ok(())
 }
+
+#[test]
+fn negative_year_format_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    use wire::time::LegacyStrftime as _;
+
+    let at = wire::time::parse_wire_timestamp("-0001-01-01T01:02:03.5Z")?;
+    assert_eq!(
+        at.legacy_strftime("%Y%m%dT%H%M%S%3fZ"),
+        "-00010101T010203500Z"
+    );
+    assert_eq!(at.legacy_strftime("%Y-%m-%d"), "-0001-01-01");
+    Ok(())
+}

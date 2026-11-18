@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::LegacyStrftime as _;
 
 use kernel::harness_setup::ConnectOutcome;
 use kernel::harness_setup::SetupError;
@@ -37,8 +38,10 @@ impl Backups {
             || "config".to_owned(),
             |name| name.to_string_lossy().into_owned(),
         );
-        self.directory
-            .join(format!("{id}-{name}-{}", now.strftime("%Y%m%dT%H%M%S%3fZ")))
+        self.directory.join(format!(
+            "{id}-{name}-{}",
+            now.legacy_strftime("%Y%m%dT%H%M%S%3fZ")
+        ))
     }
 }
 

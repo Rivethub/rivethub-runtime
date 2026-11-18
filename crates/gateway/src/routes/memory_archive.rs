@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use std::sync::Arc;
+use wire::time::LegacyStrftime as _;
 
 use axum::Json;
 use axum::extract::Path;
@@ -221,7 +222,7 @@ pub(crate) async fn export(
     drop(abandoned);
     let disposition = format!(
         "attachment; filename=\"memory-{}.sql.gz\"",
-        Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
+        Timestamp::now().legacy_strftime("%Y%m%dT%H%M%SZ")
     );
     Ok((
         [

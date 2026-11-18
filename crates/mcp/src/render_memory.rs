@@ -2,6 +2,7 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use wire::time::LegacyStrftime as _;
 use wire::time::TimestampFormat as _;
 
 use kernel::memory::BrowseFilter;
@@ -177,14 +178,12 @@ pub(crate) fn browse(
 
 pub(crate) fn timestamp(date: Timestamp, zone: &TimeZone) -> String {
     date.to_zoned_datetime(zone.clone())
-        .strftime("%Y-%m-%d %H:%M:%S %Z")
-        .to_string()
+        .legacy_strftime("%Y-%m-%d %H:%M:%S %Z")
 }
 
 pub(crate) fn local_date(date: Timestamp, zone: &TimeZone) -> String {
     date.to_zoned_datetime(zone.clone())
-        .strftime("%Y-%m-%d")
-        .to_string()
+        .legacy_strftime("%Y-%m-%d")
 }
 
 pub(crate) fn get_full(

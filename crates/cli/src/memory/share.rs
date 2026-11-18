@@ -2,6 +2,7 @@ use jiff::Timestamp;
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::LegacyStrftime as _;
 
 use tokio::io::AsyncReadExt as _;
 
@@ -299,7 +300,7 @@ pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
 pub fn code_line(shared: &Shared) -> String {
     format!(
         "share code (works once, expires {}; send it privately): {}",
-        shared.expires_at.strftime("%Y-%m-%d"),
+        shared.expires_at.legacy_strftime("%Y-%m-%d"),
         shared.code
     )
 }

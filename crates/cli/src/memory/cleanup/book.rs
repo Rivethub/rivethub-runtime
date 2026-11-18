@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use std::path::PathBuf;
+use wire::time::LegacyStrftime as _;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -84,7 +85,7 @@ impl Book {
     pub(super) async fn note(&self, line: &str) -> Result<(), Error> {
         let stamped = format!(
             "{} {line}\n",
-            Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ")
+            Timestamp::now().legacy_strftime("%Y-%m-%dT%H:%M:%SZ")
         );
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)

@@ -2,6 +2,7 @@ use super::{RecompileReport, SourceSummary};
 use crate::wiki::merge::{MergeInput, Merged, PageMerger};
 use crate::wiki::page::bound::{ARTICLE_BUDGET, SECTION_BUDGET, fit, tail};
 use crate::wiki::page::{SUMMARY_LIMIT, WikiPage, cap_summary, demote_h2_headings};
+use values::time::LegacyStrftime as _;
 
 const ARTICLE_LEAD: usize = 4 * 1024;
 const ARTICLE_MATERIAL: usize = 12 * 1024;
@@ -165,7 +166,7 @@ fn newest(items: &[&SourceSummary], budget: usize) -> Vec<String> {
     for item in items {
         let text = format!(
             "{}: {}",
-            item.at.strftime("%Y-%m-%d %H:%M"),
+            item.at.legacy_strftime("%Y-%m-%d %H:%M"),
             fit(&item.content, ITEM).kept
         );
         if used.saturating_add(text.len()) > budget && !material.is_empty() {

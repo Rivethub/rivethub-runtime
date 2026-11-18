@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use jiff::civil::Date;
 use std::str::FromStr as _;
+use wire::time::LegacyStrftime as _;
 
 use async_trait::async_trait;
 use kernel::changes::ChangeError;
@@ -308,7 +309,7 @@ fn digest_row(
         .query_row(
             "SELECT summary, changes, written_at FROM rh_daily_digests
               WHERE owner_user_id = ?1 AND day = ?2",
-            params![owner.as_str(), day.to_string()],
+            params![owner.as_str(), day.legacy_strftime("%Y-%m-%d")],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
@@ -345,7 +346,7 @@ impl DigestStore for SqliteStore {
                         changes = excluded.changes, written_at = excluded.written_at",
                 named_params! {
                     ":owner": digest.owner.as_str(),
-                    ":day": digest.day.to_string(),
+                    ":day": digest.day.legacy_strftime("%Y-%m-%d"),
                     ":summary": digest.summary,
                     ":changes": digest.changes,
                     ":written_at": time::stamp(digest.written_at),

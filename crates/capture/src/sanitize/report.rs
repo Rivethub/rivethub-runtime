@@ -1,6 +1,7 @@
 use jiff::Timestamp;
 use std::collections::HashMap;
 use std::fmt;
+use wire::time::LegacyStrftime as _;
 
 use wire::capture::BundledSession;
 
@@ -326,7 +327,7 @@ impl Report {
             format_args!(
                 "Sanitized {sessions} {} at {}: {totals}.\n",
                 plural(sessions, "session", "sessions"),
-                self.at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                self.at.legacy_strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         );
         if let Some(decision) = &self.decision {

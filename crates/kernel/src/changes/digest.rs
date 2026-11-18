@@ -4,6 +4,7 @@ use jiff::civil::Date;
 use serde::Deserialize;
 use serde::Serialize;
 use values::JsonObject;
+use values::time::LegacyStrftime as _;
 
 use super::Change;
 use super::ChangeError;
@@ -99,7 +100,7 @@ pub trait DigestStore: Send + Sync {
 #[must_use]
 pub fn digest_prompt(day: Date, changes: &[Change]) -> String {
     let mut lines = vec![
-        format!("Day: {}", day.strftime("%A, %B %-d, %Y")),
+        format!("Day: {}", day.legacy_strftime("%A, %B %-d, %Y")),
         "Recorded changes, newest first:".to_owned(),
     ];
     lines.extend(changes.iter().take(PROMPT_CHANGES).map(prompt_line));
