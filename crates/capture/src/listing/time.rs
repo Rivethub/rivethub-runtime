@@ -68,6 +68,20 @@ pub(crate) fn finite_or_date(time: &RawTime) -> Option<i64> {
     }
 }
 
+fn civil_datetime(text: &str) -> Result<DateTime, jiff::Error> {
+    if let Some((_, fraction)) = text.rsplit_once('.')
+        && fraction.len() > 9
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let truncated = text.len() - (fraction.len() - 9);
+        let text = text
+            .get(..truncated)
+            .ok_or_else(|| jiff::Error::from_args(format_args!("invalid fractional seconds")))?;
+        return DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text);
+    }
+    DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text)
+}
+
 pub(crate) fn parse_date(text: &str) -> Option<i64> {
     let text = text.trim();
     if let Ok(at) = wire::time::parse_rfc3339(text) {
@@ -82,7 +96,7 @@ pub(crate) fn parse_date(text: &str) -> Option<i64> {
             }
         };
     }
-    if let Ok(naive) = DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text) {
+    if let Ok(naive) = civil_datetime(text) {
         return match jiff::tz::TimeZone::UTC.to_timestamp(naive) {
             Ok(at) => Some(at.epoch_millis()),
             Err(error) => {
@@ -180,6 +194,7 @@ mod tests {
             ("1969-12-31T23:59:59.999999999Z", Some(-1)),
             ("1970-01-01t01:00:00.5+01:00", Some(500)),
             ("1970-01-01T00:00:00.000999", Some(0)),
+            (" 2026-01-01T01:02:03.123456789012", Some(1_767_229_323_123)),
             ("1970-01-01 00:00:00.5", None),
             ("1970-01-01T00:00", None),
             ("1970-02-29", None),

@@ -188,10 +188,13 @@ pub fn parse_rfc3339(raw: &str) -> Result<Timestamp, Error> {
 }
 
 pub fn parse_wire_timestamp(raw: &str) -> Result<Timestamp, Error> {
-    parse_rfc3339(raw).or_else(|_strict| parse_relaxed_timestamp(raw))
+    parse_rfc3339(raw).or_else(|_strict| {
+        let (civil, offset) = legacy_civil_timestamp(raw, false)?;
+        legacy_numeric_offset(offset.trim(), false)?.to_timestamp(civil)
+    })
 }
 
-fn parse_relaxed_timestamp(raw: &str) -> Result<Timestamp, Error> {
+pub fn legacy_civil_timestamp(raw: &str, space_separator: bool) -> Result<(DateTime, &str), Error> {
     let raw = raw.trim_start();
     let (sign, digits, width) = match raw.as_bytes() {
         [b'+', ..] => (1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
@@ -199,23 +202,30 @@ fn parse_relaxed_timestamp(raw: &str) -> Result<Timestamp, Error> {
         _ => (1, raw, 4),
     };
     let (year, tail) = decimal::<i16>(digits, width)?;
-    let (month, tail) = decimal(delimiter(tail, '-')?, 2)?;
-    let (day, tail) = decimal(delimiter(tail, '-')?, 2)?;
-    let clock = tail
-        .strip_prefix(['T', 't', ' '])
-        .ok_or_else(invalid_timestamp)?;
+    let (month, tail) = decimal(delimiter(tail, '-', space_separator)?, 2)?;
+    let (day, tail) = decimal(delimiter(tail, '-', space_separator)?, 2)?;
+    let clock = if space_separator {
+        tail.trim_start()
+    } else {
+        tail.strip_prefix(['T', 't', ' '])
+            .ok_or_else(invalid_timestamp)?
+    };
     let (hour, tail) = decimal(clock.trim_start(), 2)?;
-    let (minute, tail) = decimal(delimiter(tail, ':')?, 2)?;
-    let (second, tail) = decimal(delimiter(tail, ':')?, 2)?;
+    let (minute, tail) = decimal(delimiter(tail, ':', space_separator)?, 2)?;
+    let (second, tail) = decimal(delimiter(tail, ':', space_separator)?, 2)?;
     let (nanos, offset) = parse_fraction(tail)?;
     let second = if second == 60 { 59 } else { second };
     let civil = DateTime::new(year * sign, month, day, hour, minute, second, nanos)?;
-    parse_relaxed_offset(offset.trim())?.to_timestamp(civil)
+    Ok((civil, offset))
 }
 
-fn delimiter(raw: &str, separator: char) -> Result<&str, Error> {
-    raw.trim_start()
-        .strip_prefix(separator)
+fn delimiter(raw: &str, separator: char, space_separator: bool) -> Result<&str, Error> {
+    let raw = if space_separator {
+        raw
+    } else {
+        raw.trim_start()
+    };
+    raw.strip_prefix(separator)
         .map(str::trim_start)
         .ok_or_else(invalid_timestamp)
 }
@@ -242,8 +252,8 @@ fn parse_fraction(raw: &str) -> Result<(i32, &str), Error> {
     Ok((nanos * 10_i32.pow(9 - used), tail))
 }
 
-fn parse_relaxed_offset(raw: &str) -> Result<Offset, Error> {
-    if raw == "Z" || raw == "z" || raw.eq_ignore_ascii_case("UTC") {
+pub fn legacy_numeric_offset(raw: &str, allow_hours_only: bool) -> Result<Offset, Error> {
+    if raw == "Z" || raw == "z" || (!allow_hours_only && raw.eq_ignore_ascii_case("UTC")) {
         return Ok(Offset::UTC);
     }
     let (sign, tail) = if let Some(tail) = raw.strip_prefix('+') {
@@ -254,8 +264,12 @@ fn parse_relaxed_offset(raw: &str) -> Result<Offset, Error> {
         return Err(invalid_timestamp());
     };
     let (hours, tail) = offset_digits(tail)?;
-    let (minutes, tail) =
-        offset_digits(tail.trim_start_matches(|ch: char| ch == ':' || ch.is_whitespace()))?;
+    let tail = tail.trim_start_matches(|ch: char| ch == ':' || ch.is_whitespace());
+    let (minutes, tail) = if allow_hours_only && tail.is_empty() {
+        (0, tail)
+    } else {
+        offset_digits(tail)?
+    };
     if hours > 23 || minutes > 59 || !tail.is_empty() {
         return Err(invalid_timestamp());
     }

@@ -39,24 +39,10 @@ pub(crate) fn stored(text: &str, column: &'static str) -> Result<Timestamp, Sqli
 }
 
 fn parse_sqlite_timestamp(raw: &str) -> Result<Timestamp, jiff::Error> {
-    match wire::time::parse_rfc3339(raw) {
-        Ok(at) => Ok(at),
-        Err(strict) => {
-            let Some((date, suffix)) = raw.split_once(' ') else {
-                return Err(strict);
-            };
-            let Some(offset_start) = suffix.find(['+', '-', 'Z', 'z']) else {
-                return Err(strict);
-            };
-            let (time, offset) = suffix.split_at(offset_start);
-            let offset = offset.trim();
-            if matches!(offset.as_bytes(), [b'+' | b'-', b'0'..=b'9', b'0'..=b'9']) {
-                wire::time::parse_wire_timestamp(&format!("{date}T{}{offset}00", time.trim_end()))
-            } else {
-                wire::time::parse_wire_timestamp(&format!("{date}T{time}{offset}"))
-            }
-        }
-    }
+    wire::time::parse_rfc3339(raw).or_else(|_strict| {
+        let (civil, offset) = wire::time::legacy_civil_timestamp(raw, true)?;
+        wire::time::legacy_numeric_offset(offset.trim_start(), true)?.to_timestamp(civil)
+    })
 }
 
 #[cfg(test)]
@@ -69,6 +55,11 @@ mod tests {
             ("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999Z"),
             ("2026-01-01 01:00:00.5+01", "2026-01-01T00:00:00.500Z"),
             ("2026-01-01 01:00:00+0100", "2026-01-01T00:00:00.000Z"),
+            (
+                " 2026- 01- 01 01:02:03.123456789012−01:00",
+                "2026-01-01T02:02:03.123Z",
+            ),
+            ("-0001-01-01 01:02:03+0100", "-0001-01-01T00:02:03.000Z"),
             ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.000Z"),
         ] {
             assert_eq!(stamp(stored(raw, "created_at").expect(raw)), expected);
