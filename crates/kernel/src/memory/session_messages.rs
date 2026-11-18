@@ -10,7 +10,7 @@ pub const SESSION_MESSAGES_MAX: u32 = 1_000;
 #[error("cursor {0:?} is not one this server issued")]
 pub struct CursorError(String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MessageCursor {
     pub created_at: DateTime<Utc>,
     pub id: Uuid,
@@ -48,6 +48,31 @@ impl MessagesQuery {
                 .unwrap_or(SESSION_MESSAGES_DEFAULT)
                 .clamp(1, SESSION_MESSAGES_MAX),
         }
+    }
+
+    #[must_use]
+    pub fn page_after<T>(
+        &self,
+        mut ordered: Vec<T>,
+        cursor: impl Fn(&T) -> MessageCursor,
+    ) -> Vec<T> {
+        let count = self.limit as usize + 1;
+        let Some(after) = self.after else {
+            ordered.truncate(count);
+            return ordered;
+        };
+        if let Some(index) = ordered.iter().position(|row| {
+            let current = cursor(row);
+            current.id == after.id
+                && current.created_at.timestamp_micros() == after.created_at.timestamp_micros()
+        }) {
+            return ordered.into_iter().skip(index + 1).take(count).collect();
+        }
+        ordered
+            .into_iter()
+            .filter(|row| cursor(row) > after)
+            .take(count)
+            .collect()
     }
 }
 

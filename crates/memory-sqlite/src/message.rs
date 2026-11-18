@@ -155,3 +155,13 @@ pub(crate) fn stored_role(row: &Row<'_>, index: usize) -> rusqlite::Result<Role>
 fn stored_object(text: &str, column: &'static str) -> Result<JsonObject, SqliteError> {
     serde_json::from_str(text).map_err(|source| SqliteError::StoredJson { column, source })
 }
+
+pub(crate) fn transcript_metadata(text: &str) -> Option<JsonObject> {
+    match serde_json::from_str(text) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::debug!(%error, "message metadata supplies no transcript position");
+            None
+        }
+    }
+}

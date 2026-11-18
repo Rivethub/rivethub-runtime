@@ -3,6 +3,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
+use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
 use kernel::memory::Provenance;
@@ -13,10 +14,13 @@ use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
 use sqlx::PgPool;
 use sqlx::Row;
+use sqlx::types::Json;
 use std::str::FromStr;
 use uuid::Uuid;
+use wire::JsonObject;
 use wire::message::Role;
 
 use crate::PostgresMemory;
@@ -25,6 +29,7 @@ const HEAD_SQL: &str = "select id, session_key, agent, channel, title
     from rh_conversations where id = $1";
 
 const MESSAGES_SQL: &str = "select m.id, m.agent, m.role, m.content, m.created_at,
+        case when jsonb_typeof(m.metadata) = 'object' then m.metadata end as metadata,
         case when m.role = 'tool'
              then convert_to(substr(coalesce(m.tool_args::text, ''), 1, $2), 'SQL_ASCII')
         end as tool_input,
@@ -320,9 +325,23 @@ async fn load_messages(pool: &PgPool, id: Uuid) -> Result<Vec<WindowMessage>, Su
         .map_err(|source| query_err("load unsummarized messages", source))?;
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
-        messages.push(message_from(&row)?);
+        let metadata: Option<Json<JsonObject>> = row
+            .try_get("metadata")
+            .map_err(|source| query_err("read message metadata", source))?;
+        messages.push((message_from(&row)?, metadata));
     }
-    Ok(messages)
+    Ok(
+        order_messages(messages, MemoryBrowseOrder::Asc, |(message, metadata)| {
+            MessagePosition::new(
+                message.created_at,
+                message.role,
+                metadata.as_ref().map(|json| &json.0),
+            )
+        })
+        .into_iter()
+        .map(|(message, _)| message)
+        .collect(),
+    )
 }
 
 fn message_from(row: &sqlx::postgres::PgRow) -> Result<WindowMessage, SummaryStoreError> {

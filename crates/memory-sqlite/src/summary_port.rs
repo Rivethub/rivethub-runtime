@@ -4,6 +4,7 @@ use chrono::Utc;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;
+use kernel::memory::MemoryBrowseOrder;
 use kernel::memory::NewSummary;
 use kernel::memory::PendingConversation;
 use kernel::memory::Provenance;
@@ -16,14 +17,15 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
 use rusqlite::OptionalExtension as _;
 use rusqlite::params_from_iter;
 use rusqlite::types::Value;
 use uuid::Uuid;
-use wire::message::Role;
 
 use crate::SqliteStore;
 use crate::error::SqliteError;
+use crate::message::{stored_role, transcript_metadata};
 use crate::time;
 
 #[async_trait]
@@ -295,7 +297,7 @@ fn provenance_of(
 fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMessage>, SqliteError> {
     let mut statement = conn
         .prepare(
-            "SELECT m.id, m.agent, m.role, m.content, m.created_at, \
+            "SELECT m.id, m.agent, m.role, m.content, m.created_at, m.metadata, \
                     CASE WHEN m.role = 'tool' \
                          THEN substr(CAST(coalesce(m.tool_args, '') AS BLOB), 1, ?2) END, \
                     CASE WHEN m.role = 'tool' \
@@ -315,47 +317,47 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
             ]),
             |row| {
                 Ok((
-                    (
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                    ),
-                    (
-                        row.get::<_, Option<Vec<u8>>>(5)?,
-                        row.get::<_, Option<Vec<u8>>>(6)?,
-                    ),
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    stored_role(row, 2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                    row.get::<_, Option<Vec<u8>>>(7)?,
                 ))
             },
         )
         .map_err(SqliteError::query("load messages"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("load messages"))?;
-    rows.into_iter()
+    let messages = rows
+        .into_iter()
         .map(
-            |((id, agent, role, content, created_at), (input, result))| {
-                Ok(WindowMessage {
+            |(id, agent, role, content, created_at, metadata, input, result)| {
+                let message = WindowMessage {
                     id: parse_id(&id)?,
                     agent,
-                    role: role.parse::<Role>().map_err(|source| SqliteError::Query {
-                        operation: "message role",
-                        source: rusqlite::Error::FromSqlConversionFailure(
-                            2,
-                            rusqlite::types::Type::Text,
-                            Box::new(source),
-                        ),
-                    })?,
+                    role,
                     content,
                     tool: match (input, result) {
                         (Some(input), Some(result)) => ToolUse::from_prefixes(&input, &result),
                         _ => None,
                     },
                     created_at: time::stored(&created_at, "created_at")?,
-                })
+                };
+                Ok((message, transcript_metadata(&metadata)))
             },
         )
-        .collect()
+        .collect::<Result<Vec<_>, SqliteError>>()?;
+    Ok(
+        order_messages(messages, MemoryBrowseOrder::Asc, |(message, metadata)| {
+            MessagePosition::new(message.created_at, message.role, metadata.as_ref())
+        })
+        .into_iter()
+        .map(|(message, _)| message)
+        .collect(),
+    )
 }
 
 fn prefix_bytes(budget: usize) -> Result<Value, SqliteError> {

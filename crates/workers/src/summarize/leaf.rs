@@ -86,8 +86,16 @@ fn leaf_record(
     messages: &[WindowMessage],
     content: String,
 ) -> Result<NewSummary, WorkerError> {
-    let start = messages.first().ok_or(WorkerError::Count)?.created_at;
-    let end = messages.last().ok_or(WorkerError::Count)?.created_at;
+    let start = messages
+        .iter()
+        .map(|message| message.created_at)
+        .min()
+        .ok_or(WorkerError::Count)?;
+    let end = messages
+        .iter()
+        .map(|message| message.created_at)
+        .max()
+        .ok_or(WorkerError::Count)?;
     let mut sources = Vec::with_capacity(messages.len());
     for (index, message) in messages.iter().enumerate() {
         sources.push(SummarySource {

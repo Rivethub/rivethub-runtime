@@ -10,7 +10,8 @@ SELECT id FROM rh_messages
    AND created_at <= $3";
 
 pub(super) const TRANSCRIPT_MESSAGES: &str = "\
-SELECT id, created_at, role, tool_name, content, tool_args, tool_result
+SELECT id, conversation_id, created_at, to_json(role) AS role, tool_name, content, tool_args, tool_result,
+       CASE WHEN jsonb_typeof(metadata) = 'object' THEN metadata END AS metadata
   FROM rh_messages
  WHERE id = ANY($1)
  ORDER BY created_at, id";

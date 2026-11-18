@@ -149,3 +149,12 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog() -
     )
     .await
 }
+
+#[tokio::test]
+async fn positioned_messages_reach_scoped_readers() -> TestResult {
+    let (_directory, store) = store()?;
+    testkit::session_messages::readers_use_line_order_before_page_and_browse_limits(
+        &store, &store, &store,
+    )
+    .await
+}

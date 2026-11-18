@@ -13,6 +13,7 @@ use crate::SqliteStore;
 use crate::error::SqliteError;
 use crate::message::ENTRY_COLUMNS;
 use crate::message::EntryRow;
+use crate::session_messages::{POSITION_COLUMNS, ordered_cursors, read_ordered_entries};
 use crate::time;
 
 const BROWSE_CONDITIONS: &str = "WHERE (?1 OR m.role <> 'tool')
@@ -42,31 +43,50 @@ impl SqliteStore {
             MemoryBrowseOrder::Asc => "ASC",
             MemoryBrowseOrder::Desc => "DESC",
         };
-        let sql = format!(
-            "SELECT {ENTRY_COLUMNS} FROM ros_messages m
-               JOIN ros_conversations c ON c.id = m.conversation_id
-             {BROWSE_CONDITIONS}
-             ORDER BY m.created_at {direction}, m.rowid ASC
-             LIMIT ?10"
-        );
         self.with_conn(move |conn| {
+            let scoped = filter.conversation_id.is_some();
+            let columns = if scoped {
+                POSITION_COLUMNS
+            } else {
+                ENTRY_COLUMNS
+            };
+            let sql = format!(
+                "SELECT {columns} FROM ros_messages m
+                   JOIN ros_conversations c ON c.id = m.conversation_id
+                 {BROWSE_CONDITIONS}
+                 ORDER BY m.created_at {direction}, m.rowid ASC LIMIT ?10"
+            );
+            let bindings = params![
+                filter.include_tools,
+                filter.conversation_id.map(|id| id.to_string()),
+                filter.agent,
+                filter.role.map(|role| role.to_string()),
+                filter.tool_name,
+                filter.tag.as_ref().map(|tag| tag.key.as_str()),
+                filter.tag.as_ref().map(|tag| tag.value.as_str()),
+                bounds.since.map(time::stamp),
+                bounds.before.map(time::stamp),
+                if scoped {
+                    -1_i64
+                } else {
+                    i64::from(filter.limit.get())
+                },
+            ];
+            if scoped {
+                let tx = conn.transaction().map_err(SqliteError::query("browse"))?;
+                let cursors = ordered_cursors(&tx, &sql, bindings, filter.order, "browse")?;
+                let ids: Vec<_> = cursors
+                    .iter()
+                    .take(filter.limit.get() as usize)
+                    .map(|(id, _)| id.as_str())
+                    .collect();
+                let entries = read_ordered_entries(&tx, &ids, "browse")?;
+                tx.commit().map_err(SqliteError::query("browse"))?;
+                return Ok(entries);
+            }
             let mut statement = conn.prepare(&sql).map_err(SqliteError::query("browse"))?;
             let rows = statement
-                .query_map(
-                    params![
-                        filter.include_tools,
-                        filter.conversation_id.map(|id| id.to_string()),
-                        filter.agent,
-                        filter.role.map(|role| role.to_string()),
-                        filter.tool_name,
-                        filter.tag.as_ref().map(|tag| tag.key.as_str()),
-                        filter.tag.as_ref().map(|tag| tag.value.as_str()),
-                        bounds.since.map(time::stamp),
-                        bounds.before.map(time::stamp),
-                        filter.limit.get(),
-                    ],
-                    EntryRow::read,
-                )
+                .query_map(bindings, EntryRow::read)
                 .map_err(SqliteError::query("browse"))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(SqliteError::query("browse"))?;

@@ -33,6 +33,7 @@ mod sessions;
 pub mod share;
 mod suggest;
 mod summary;
+pub mod summary_order;
 mod tags;
 mod title;
 mod tree;

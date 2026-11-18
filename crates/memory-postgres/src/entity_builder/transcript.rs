@@ -2,11 +2,16 @@ use std::collections::HashSet;
 
 use chrono::DateTime;
 use chrono::Utc;
+use kernel::memory::MemoryBrowseOrder;
+use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::TranscriptMessage;
 use serde_json::Value;
+use sqlx::types::Json;
 use uuid::Uuid;
+use wire::JsonObject;
+use wire::message::Role;
 
 use super::error::query_error;
 
@@ -23,9 +28,10 @@ struct SourceLink {
 #[derive(Debug, sqlx::FromRow)]
 struct TranscriptRow {
     id: Uuid,
+    conversation_id: Uuid,
+    metadata: Option<Json<JsonObject>>,
     created_at: DateTime<Utc>,
-    #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
-    role: String,
+    role: Json<Role>,
     tool_name: Option<String>,
     content: String,
     tool_args: Option<Value>,
@@ -76,6 +82,14 @@ pub(super) async fn load_transcript(
         .fetch_all(pool)
         .await
         .map_err(query_error)?;
+    let rows = order_messages(rows, MemoryBrowseOrder::Asc, |row| {
+        MessagePosition::new(
+            row.created_at,
+            row.role.0,
+            row.metadata.as_ref().map(|json| &json.0),
+        )
+        .in_conversation(row.conversation_id)
+    });
     Ok(rows.into_iter().map(message_from).collect())
 }
 
@@ -86,7 +100,7 @@ fn message_from(row: TranscriptRow) -> TranscriptMessage {
     TranscriptMessage {
         id: row.id,
         at: row.created_at,
-        role: row.role,
+        role: row.role.0.to_string(),
         tool_name,
         content: row.content,
         tool_args,

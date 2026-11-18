@@ -460,3 +460,12 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog(
     )
     .await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn positioned_messages_reach_scoped_readers(pool: PgPool) -> TestResult {
+    let memory = PostgresMemory::new(pool);
+    testkit::session_messages::readers_use_line_order_before_page_and_browse_limits(
+        &memory, &memory, &memory,
+    )
+    .await
+}
