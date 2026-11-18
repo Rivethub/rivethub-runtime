@@ -1,10 +1,10 @@
-use chrono::DateTime;
-use chrono::SecondsFormat;
+use jiff::Timestamp;
 use kernel::transcript::TranscriptReaderError;
 use serde::Deserialize;
 use wire::JsonObject;
 use wire::message::Role;
 use wire::session_id::SessionId;
+use wire::time::TimestampFormat as _;
 
 use super::harness_db::OpencodeEvent;
 use super::message::Mapped;
@@ -205,14 +205,17 @@ fn map_record(
     mode: Mode,
 ) -> Result<Vec<Mapped>, TranscriptReaderError> {
     let position = base + 1;
-    let Some(at) = DateTime::from_timestamp_millis(time_created) else {
-        return Ok(vec![Mapped::Skip(SkippedRecord {
-            position,
-            rule: SkipRule::UnparseableTimestamp,
-            detail: format!("time_created {time_created} is not a millisecond instant"),
-        })]);
+    let at = match Timestamp::from_millisecond(time_created) {
+        Ok(at) => at,
+        Err(_error) => {
+            return Ok(vec![Mapped::Skip(SkippedRecord {
+                position,
+                rule: SkipRule::UnparseableTimestamp,
+                detail: format!("time_created {time_created} is not a millisecond instant"),
+            })]);
+        }
     };
-    let at = at.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let at = at.rfc3339_millis();
     let row = Row {
         session,
         base,

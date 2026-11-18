@@ -1,11 +1,13 @@
 #![cfg(test)]
 use crate::session_support;
+use jiff::SignedDuration;
+use jiff::Timestamp;
+use wire::time::TimestampFormat as _;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{TimeDelta, Utc};
 use gateway::sessions::SessionRegistry;
 use kernel::memory::SessionActivity;
 use kernel::transcript::{
@@ -153,11 +155,11 @@ fn claude(native: &str) -> SessionId {
 }
 
 fn hours_ago(hours: i64) -> i64 {
-    (Utc::now() - TimeDelta::hours(hours)).timestamp_millis()
+    (Timestamp::now() - SignedDuration::from_hours(hours)).epoch_millis()
 }
 
 fn minutes_ago(minutes: i64) -> i64 {
-    (Utc::now() - TimeDelta::minutes(minutes)).timestamp_millis()
+    (Timestamp::now() - SignedDuration::from_mins(minutes)).epoch_millis()
 }
 
 fn row(native: &str, updated_at: i64) -> StoreSession {
@@ -514,7 +516,7 @@ async fn trash_skips_tombstoned_live_and_unseen_sessions() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default();
-    deletion.tombstone(&claude("t-gone"), Utc::now());
+    deletion.tombstone(&claude("t-gone"), Timestamp::now());
     let setup = setup(stores, deletion);
     let (_, body) = call(&setup, "GET", "/api/sessions/trash", "", ALICE).await;
     assert_eq!(String::from_utf8_lossy(&body), r#"{"candidates":[]}"#);
@@ -555,7 +557,7 @@ async fn a_deleted_session_resumed_in_its_harness_is_listed_again() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default();
-    let deleted_at = Utc::now() - TimeDelta::hours(1);
+    let deleted_at = Timestamp::now() - SignedDuration::from_hours(1);
     deletion.tombstone(&claude("s-resumed"), deleted_at);
     deletion.tombstone(&claude("s-gone"), deleted_at);
     let setup = setup(stores, deletion);
@@ -596,7 +598,10 @@ async fn a_kept_session_leaves_the_trash_until_it_is_used_again() {
         ..Stores::default()
     };
     let deletion = FakeSessionDeletion::default();
-    deletion.keep(&claude("t-used-since"), Utc::now() - TimeDelta::hours(3));
+    deletion.keep(
+        &claude("t-used-since"),
+        Timestamp::now() - SignedDuration::from_hours(3),
+    );
     let setup = setup(stores, deletion);
     let trash = |body: &[u8]| -> Vec<String> {
         parsed::<SessionTrashList>(body)

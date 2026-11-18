@@ -1,5 +1,3 @@
-use chrono::Duration;
-
 #[must_use]
 pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(4)
@@ -15,8 +13,8 @@ pub fn push_within_budget(budget: &mut usize, line: &str) -> bool {
 }
 
 #[must_use]
-pub fn relative_when(delta: Duration) -> String {
-    let minutes = delta.num_minutes().max(0);
+pub fn relative_when(delta: jiff::SignedDuration) -> String {
+    let minutes = delta.as_mins().max(0);
     if minutes < 1 {
         "just now".to_owned()
     } else if minutes < 60 {

@@ -11,8 +11,7 @@ use super::remember;
 use super::render_message;
 use super::render_preface;
 use super::render_transcript;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::queue::JobKeyMode;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityObservation;
@@ -26,8 +25,8 @@ use uuid::Uuid;
 
 use crate::entity_builder::extract_entities_job;
 
-fn at(secs: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs, 0).unwrap_or(DateTime::UNIX_EPOCH)
+fn at(secs: i64) -> Timestamp {
+    Timestamp::new(secs, 0).unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 fn uid(n: u128) -> Uuid {

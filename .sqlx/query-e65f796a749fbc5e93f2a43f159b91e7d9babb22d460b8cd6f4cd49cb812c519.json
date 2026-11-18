@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT session_key, deleted_at AS \"deleted_at: jiff_sqlx::Timestamp\" FROM rh_session_tombstones WHERE session_key = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "session_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "session_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "deleted_at: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "deleted_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e65f796a749fbc5e93f2a43f159b91e7d9babb22d460b8cd6f4cd49cb812c519"
+}

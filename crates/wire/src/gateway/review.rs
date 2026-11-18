@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -36,17 +35,21 @@ pub struct ReviewOption {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewEvidence {
     pub session: SessionMention,
-    pub at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub quote: String,
     #[serde(default)]
     pub highlight: Option<String>,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewItem {
@@ -61,7 +64,9 @@ pub struct ReviewItem {
     #[serde(default)]
     pub options: Option<Vec<ReviewOption>>,
     pub evidence: Vec<ReviewEvidence>,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

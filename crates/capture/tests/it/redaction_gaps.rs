@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use parking_lot::Mutex;
 use wire::capture::CaptureBatchRequest;
@@ -234,7 +233,7 @@ async fn posted_message(
         None,
         Some(builtins()?),
     );
-    let now: DateTime<Utc> = "2026-01-01T00:00:00Z".parse()?;
+    let now: Timestamp = "2026-01-01T00:00:00Z".parse()?;
     writer.write(&batch, now).await?;
     let body = transport
         .posts

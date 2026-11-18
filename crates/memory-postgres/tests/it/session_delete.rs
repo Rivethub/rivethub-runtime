@@ -245,7 +245,7 @@ async fn the_sweep_removes_rows_written_behind_the_gateway(pool: PgPool) -> Test
          VALUES ($1, 'external', 'cli', 'user', 'written directly', $2, 'owner')",
     )
     .bind(conversation)
-    .bind(at(4))
+    .bind(memory_postgres::time::PgTimestamp::from(at(4)))
     .execute(&pool)
     .await?;
     let topic = memory.create(new_topic("Late", &[], None)?).await?;

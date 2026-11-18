@@ -1,7 +1,7 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryEntry;
 use kernel::memory::MemoryStore;
 use kernel::memory::Provenance;
@@ -21,14 +21,14 @@ pub(crate) async fn resolve<'a>(
     Ok(kernel::memory::resolve_origins(store, entries, more_keys).await?)
 }
 
-pub(crate) fn tag(provenance: &Provenance, zone: chrono_tz::Tz, dated: bool) -> String {
+pub(crate) fn tag(provenance: &Provenance, zone: &TimeZone, dated: bool) -> String {
     if provenance.team_owner.is_some() {
         return provenance.tag();
     }
     let date = provenance
         .origin_date
         .filter(|_| dated)
-        .map(|date: DateTime<Utc>| render_memory::local_date(date, zone));
+        .map(|date: Timestamp| render_memory::local_date(date, zone));
     match (&provenance.author, date) {
         (Some(author), Some(date)) => format!(
             "from {author} · {date} · {}",

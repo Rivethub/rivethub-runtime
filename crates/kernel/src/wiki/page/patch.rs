@@ -1,6 +1,7 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use values::time::TimestampFormat as _;
 
 use super::article::{ArticlePatch, apply_article_patches, demote_h2_headings};
 use super::limits;
@@ -18,7 +19,7 @@ pub struct PagePatch {
     pub action: WikiAction,
     pub slug: String,
     #[serde_as(as = "values::Millis")]
-    pub verified_at: DateTime<Utc>,
+    pub verified_at: Timestamp,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -62,7 +63,7 @@ pub fn apply_patch(page: Option<WikiPage>, patch: PagePatch) -> Result<WikiPage,
         Some(page) => page,
         None => new_page(&patch.slug)?,
     };
-    let today = patch.verified_at.date_naive();
+    let today = patch.verified_at.utc_date();
     if let Some(title) = patch
         .title
         .as_deref()

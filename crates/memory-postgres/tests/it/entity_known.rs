@@ -1,8 +1,7 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
+use jiff::SignedDuration as Duration;
+use jiff::Timestamp;
 use kernel::tenancy::Scope;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStore;
@@ -14,6 +13,7 @@ use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
+use wire::time::TimestampFormat as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -120,8 +120,8 @@ async fn limit_case(pool: PgPool) -> TestResult {
         document.push_str(&name);
         document.push(' ');
         let when =
-            at("2026-11-01T00:00:00Z") + Duration::seconds(i64::try_from(index).unwrap_or(0));
-        commit(&memory, &name, "Hosts", &[], &when.to_rfc3339()).await?;
+            at("2026-11-01T00:00:00Z") + Duration::from_secs(i64::try_from(index).unwrap_or(0));
+        commit(&memory, &name, "Hosts", &[], &when.rfc3339_offset()).await?;
     }
     let known = known_in(&memory, &document).await?;
     assert_eq!(known.len(), limit);
@@ -190,8 +190,8 @@ async fn seed_summary(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(at("2026-11-01T00:00:00Z"))
-    .bind(at("2026-11-01T01:00:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T01:00:00Z")))
     .fetch_one(pool)
     .await
 }
@@ -212,7 +212,7 @@ async fn seed_fact(pool: &PgPool, entity: Uuid, summary: Uuid) -> Result<(), sql
     )
     .bind(Uuid::new_v4())
     .bind(entity)
-    .bind(at("2026-11-01T00:30:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:30:00Z")))
     .bind(Uuid::new_v4())
     .bind(summary)
     .execute(pool)
@@ -235,6 +235,6 @@ fn leaf(content: &str, start: &str) -> EntityLeaf {
     }
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }

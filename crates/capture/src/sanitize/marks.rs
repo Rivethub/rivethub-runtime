@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::fmt;
+use wire::time::TimestampFormat as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Utc;
 use kernel::memory::share::desk::FlagChoice;
 use kernel::memory::share::desk::Mark;
 use thiserror::Error;
@@ -27,8 +26,8 @@ const HIDDEN_OPEN: &str = "<!-- flag ";
 const HIDDEN_CLOSE: &str = " -->";
 const SHORTEST_LEARNED: usize = 3;
 
-pub(super) fn stamp_text(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+pub(super) fn stamp_text(at: Timestamp) -> String {
+    at.rfc3339_z()
 }
 
 pub(super) fn flag_section(out: &mut String, decision: &Decision, bundle: &str) {
@@ -156,7 +155,7 @@ pub struct ReportFlag {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportFlags {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub flags: Vec<ReportFlag>,
     open_line: Option<usize>,
 }
@@ -257,9 +256,8 @@ pub fn read_flags(report: &str) -> Result<ReportFlags, ReportError> {
         if let Some(stamp) = line.strip_prefix(STAMP_PREFIX) {
             let stamp = stamp.trim().trim_matches('`');
             at = Some(
-                DateTime::parse_from_rfc3339(stamp)
-                    .map_err(|_| ReportError::BadStamp(stamp.to_owned()))?
-                    .with_timezone(&Utc),
+                wire::time::parse_rfc3339(stamp)
+                    .map_err(|_| ReportError::BadStamp(stamp.to_owned()))?,
             );
         } else if line.starts_with(OPEN_PREFIX) {
             open_line = Some(index);

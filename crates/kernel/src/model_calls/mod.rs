@@ -2,7 +2,7 @@ mod headers;
 mod totals;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use values::{CallOutcome, CallUsage, SessionId};
 
 use crate::memory::MemoryStoreError;
@@ -14,8 +14,8 @@ pub use totals::CallTotals;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCall {
     pub call_id: String,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub started_at: Timestamp,
+    pub finished_at: Option<Timestamp>,
     pub provider: String,
     pub model_requested: Option<String>,
     pub model_served: Option<String>,

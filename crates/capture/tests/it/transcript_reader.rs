@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use wire::message::Role;
 use wire::session_id::SessionId;
@@ -19,7 +18,7 @@ fn store() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn at(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 

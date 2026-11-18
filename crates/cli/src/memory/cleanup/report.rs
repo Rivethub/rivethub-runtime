@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::cleanup::Automated;
 use kernel::cleanup::Fate;
 use kernel::cleanup::FiledHow;
@@ -34,11 +33,14 @@ const SAMPLE_TITLES: usize = 3;
 const SAMPLE_FOLDS: usize = 8;
 const SHUFFLE: u128 = 0x9E37_79B9_7F4A_7C15_F39C_C060_5CED_C835;
 
+#[serde_with::serde_as]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ReportData {
-    pub(super) snapshot_at: DateTime<Utc>,
-    pub(super) written_at: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(super) snapshot_at: Timestamp,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(super) written_at: Timestamp,
     pub(super) seconds: BTreeMap<String, f64>,
     pub(super) conversations: Counts,
     pub(super) tree: Vec<TreeRow>,
@@ -157,7 +159,7 @@ fn build(
     let (fold_outcomes, fold_rules, fold_samples) = fold_summary(tree, &folds.pages);
     Ok(ReportData {
         snapshot_at: stage.snapshot.taken_at,
-        written_at: Utc::now(),
+        written_at: Timestamp::now(),
         seconds: timings.seconds.clone(),
         conversations: Counts {
             summarized: stage.snapshot.conversations.len(),

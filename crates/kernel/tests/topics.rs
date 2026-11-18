@@ -1,6 +1,4 @@
-use chrono::DateTime;
-use chrono::TimeZone;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::topics::Alias;
 use kernel::topics::Change;
 use kernel::topics::MAX_DEPTH;
@@ -31,10 +29,8 @@ use values::SessionId;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn at(minute: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 1, 12, minute, 0)
-        .single()
-        .unwrap_or_default()
+fn at(minute: u32) -> Timestamp {
+    Timestamp::constant(1_790_856_000 + i64::from(minute) * 60, 0)
 }
 
 fn topic(name: &str, aliases: &[&str]) -> Result<Topic, TopicError> {

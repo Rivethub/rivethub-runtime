@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureResult;
@@ -61,7 +60,7 @@ async fn a_stop_captures_the_reply_claude_writes_after_the_hook_starts()
     std::fs::write(&transcript, format!("{PROMPT_LINE}\n"))?;
     let posts = Posts::default();
     let hook = hook_in(home.path(), &posts)?;
-    let now: DateTime<Utc> = "2026-10-10T12:00:02.000Z".parse()?;
+    let now: Timestamp = "2026-10-10T12:00:02.000Z".parse()?;
     let stdin = format!(
         r#"{{"session_id":"{SESSION}","transcript_path":"{}","hook_event_name":"Stop","last_assistant_message":"Hello there friend"}}"#,
         transcript.display()

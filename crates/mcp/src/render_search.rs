@@ -1,30 +1,32 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use wire::time::TimestampFormat as _;
 
 use crate::provenance::Origins;
 use crate::{Error, render_memory, render_tags};
-use chrono::{DateTime, Utc};
 use kernel::memory::{MemoryEntry, MemorySearchResult};
 use kernel::memory::{MemoryHitSource, Provenance, TagWire};
 use kernel::memory::{SearchOutcome, SearchQuery, SummaryDetail};
 
-pub(crate) fn age(date: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let delta = now.signed_duration_since(date);
-    if delta.num_minutes() < 1 {
+pub(crate) fn age(date: Timestamp, now: Timestamp) -> String {
+    let delta = now.duration_since(date);
+    if delta.as_mins() < 1 {
         "just now".to_owned()
-    } else if delta.num_hours() < 1 {
-        format!("{}m ago", delta.num_minutes())
-    } else if delta.num_days() < 1 {
-        format!("{}h ago", delta.num_hours())
+    } else if delta.as_hours() < 1 {
+        format!("{}m ago", delta.as_mins())
+    } else if delta.as_secs() / 86_400 < 1 {
+        format!("{}h ago", delta.as_hours())
     } else {
-        format!("{}d ago", delta.num_days())
+        format!("{}d ago", delta.as_secs() / 86_400)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Clock {
-    pub(crate) now: DateTime<Utc>,
-    pub(crate) zone: chrono_tz::Tz,
+pub(crate) struct Clock<'a> {
+    pub(crate) now: Timestamp,
+    pub(crate) zone: &'a TimeZone,
 }
 
 pub(crate) struct HitContext {
@@ -38,7 +40,7 @@ pub(crate) fn search(
     outcome: &SearchOutcome,
     found: &HitContext,
     expand: bool,
-    clock: Clock,
+    clock: Clock<'_>,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let Clock { now, zone } = clock;
@@ -121,8 +123,8 @@ fn message(
     hit: &MemorySearchResult,
     entry: &MemoryEntry,
     found: &HitContext,
-    now: DateTime<Utc>,
-    zone: chrono_tz::Tz,
+    now: Timestamp,
+    zone: &TimeZone,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let origin = found.origins.get(&entry.session_id);
@@ -181,12 +183,7 @@ fn session_line(pages: Option<&crate::pages::Pages>, session: Option<&str>) -> S
     crate::pages::suffix(pages.and_then(|pages| session.and_then(|id| pages.session(id))))
 }
 
-fn attributed(
-    lead: &str,
-    content: &str,
-    origin: Option<&Provenance>,
-    zone: chrono_tz::Tz,
-) -> String {
+fn attributed(lead: &str, content: &str, origin: Option<&Provenance>, zone: &TimeZone) -> String {
     match origin {
         Some(provenance) => format!(
             "{lead} {}\n{}",
@@ -216,16 +213,10 @@ fn empty(query: &SearchQuery) -> String {
         }
     } else {
         if let Some(since) = query.since {
-            bounds.push(format!(
-                "since=\"{}\"",
-                since.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
-            ));
+            bounds.push(format!("since=\"{}\"", since.rfc3339_z()));
         }
         if let Some(before) = query.before {
-            bounds.push(format!(
-                "before=\"{}\"",
-                before.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
-            ));
+            bounds.push(format!("before=\"{}\"", before.rfc3339_z()));
         }
     }
     if bounds.is_empty() {
@@ -242,7 +233,7 @@ fn empty(query: &SearchQuery) -> String {
     }
 }
 
-fn dated(hit: &MemorySearchResult, now: DateTime<Utc>, zone: chrono_tz::Tz) -> String {
+fn dated(hit: &MemorySearchResult, now: Timestamp, zone: &TimeZone) -> String {
     format!(
         "{} · {}",
         age(hit.created_at, now),
@@ -255,7 +246,7 @@ fn summary(
     detail: &SummaryDetail,
     expand: bool,
     origin: Option<&Provenance>,
-    clock: Clock,
+    clock: Clock<'_>,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let Clock { now, zone } = clock;
@@ -338,4 +329,39 @@ fn summary(
     });
     text.push_str(&session_line(pages, hit.session_id.as_deref()));
     Ok(text)
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::age;
+    use crate::render_memory::timestamp;
+
+    use jiff::Timestamp;
+
+    fn instant(value: &str) -> Timestamp {
+        value.parse().expect(value)
+    }
+
+    #[test]
+    fn fall_back_repeats_the_local_hour_with_distinct_abbreviations() {
+        let before = instant("2026-11-01T05:14:33Z");
+        let after = instant("2026-11-01T06:14:33Z");
+        assert_eq!(
+            timestamp(
+                before,
+                &wire::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
+            "2026-11-01 01:14:33 EDT"
+        );
+        assert_eq!(
+            timestamp(
+                after,
+                &wire::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
+            "2026-11-01 01:14:33 EST"
+        );
+        assert_eq!(age(before, after), "1h ago");
+        assert_eq!(age(after, after), "just now");
+        assert_eq!(age(after, instant("2026-11-03T05:14:33Z")), "1d ago");
+    }
 }

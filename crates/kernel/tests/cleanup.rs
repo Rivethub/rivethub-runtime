@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::cleanup::DraftTopic;
 use kernel::cleanup::JunkReason;
 use kernel::cleanup::NameGuard;
@@ -22,7 +22,7 @@ fn draft(name: &str, parent: Option<&str>, estimate: u32, merges: &[&str]) -> Dr
 
 #[test]
 fn seeds_projects_and_guards_the_proposed_names() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let existing = SnapshotTopic {
         id: TopicId::random(),
         kind: TopicKind::Work,
@@ -105,7 +105,7 @@ fn seeds_projects_and_guards_the_proposed_names() {
 
 fn acme_only() -> Snapshot {
     Snapshot {
-        taken_at: Utc::now(),
+        taken_at: Timestamp::now(),
         conversations: Vec::new(),
         topics: Vec::new(),
         redirects: Vec::new(),

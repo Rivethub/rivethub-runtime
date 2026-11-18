@@ -4,10 +4,9 @@ mod find;
 mod flow;
 mod import;
 
+use jiff::Timestamp;
 use std::sync::Arc;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::share::SessionShare;
 use kernel::owner::Owner;
 use rmcp::model::ToolAnnotations;
@@ -34,15 +33,18 @@ pub struct Sessions {
     pub node: String,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Find {
     #[schemars(description = "What the sessions were about: a question, a prompt or keywords")]
     pub(crate) query: String,
     #[schemars(description = "Only sessions with a matching message after this time (ISO UTC timestamp)", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    pub(crate) since: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    pub(crate) since: Option<Timestamp>,
     #[schemars(description = "Only sessions with a matching message before this time (ISO UTC timestamp)", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    pub(crate) before: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    pub(crate) before: Option<Timestamp>,
     #[schemars(description = "Only sessions of this agent (opus, codex, etc.)", transform = crate::catalog::optional_non_null)]
     pub(crate) agent: Option<String>,
     #[schemars(description = "Only sessions whose conversation carries this accepted key:value tag (e.g. project:acmeapp)", transform = crate::catalog::optional_non_null)]

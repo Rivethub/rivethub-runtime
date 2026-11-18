@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::DeletedSession;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
@@ -31,7 +30,7 @@ fn usize_count(value: usize) -> Result<u64, SqliteError> {
 pub(crate) fn tombstone_at(
     conn: &Connection,
     session_key: &str,
-) -> Result<Option<DateTime<Utc>>, SqliteError> {
+) -> Result<Option<Timestamp>, SqliteError> {
     let stored: Option<String> = conn
         .query_row(
             "SELECT deleted_at FROM rh_session_tombstones WHERE session_key = ?1",
@@ -61,7 +60,7 @@ pub(crate) fn lift(conn: &Connection, session_key: &str) -> Result<(), SqliteErr
 pub(crate) fn admits(
     conn: &Connection,
     session_key: &str,
-    stamps: impl IntoIterator<Item = Option<DateTime<Utc>>>,
+    stamps: impl IntoIterator<Item = Option<Timestamp>>,
 ) -> Result<bool, SqliteError> {
     let Some(deleted_at) = tombstone_at(conn, session_key)? else {
         return Ok(true);
@@ -76,7 +75,7 @@ pub(crate) fn admits(
 fn used_after(
     conn: &Connection,
     session_key: &str,
-    deleted_at: DateTime<Utc>,
+    deleted_at: Timestamp,
 ) -> Result<bool, SqliteError> {
     conn.query_row(
         "SELECT EXISTS (
@@ -168,7 +167,7 @@ fn purge(conn: &Connection, session_key: &str) -> Result<DeletedSession, SqliteE
 fn erase(
     conn: &mut Connection,
     session_key: &str,
-    tombstone: Option<(DateTime<Utc>, Option<&str>)>,
+    tombstone: Option<(Timestamp, Option<&str>)>,
 ) -> Result<DeletedSession, SqliteError> {
     let tx = conn
         .transaction()
@@ -419,7 +418,7 @@ impl SessionDeletion for SqliteStore {
         &self,
         session_key: &str,
         deleted_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<DeletedSession, MemoryStoreError> {
         let session_key = session_key.to_owned();
         let deleted_by = deleted_by.map(str::to_owned);
@@ -431,7 +430,7 @@ impl SessionDeletion for SqliteStore {
     async fn tombstones(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let session_keys = session_keys.to_vec();
         self.with_conn(move |conn| {
             let mut found = BTreeMap::new();
@@ -479,7 +478,7 @@ impl SessionDeletion for SqliteStore {
         &self,
         session_key: &str,
         kept_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         let session_key = session_key.to_owned();
         let kept_by = kept_by.map(str::to_owned);
@@ -501,7 +500,7 @@ impl SessionDeletion for SqliteStore {
     async fn kept(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let keys = json_keys(session_keys)?;
         self.with_conn(move |conn| kept_at(conn, &keys))
             .await
@@ -526,7 +525,7 @@ impl SessionDeletion for SqliteStore {
         &self,
         session_key: &str,
         trashed_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError> {
         let session_key = session_key.to_owned();
         let trashed_by = trashed_by.map(str::to_owned);
@@ -561,7 +560,7 @@ impl SessionDeletion for SqliteStore {
     async fn trashed(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError> {
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError> {
         let keys = json_keys(session_keys)?;
         self.with_conn(move |conn| trashed_at(conn, &keys))
             .await
@@ -570,11 +569,11 @@ impl SessionDeletion for SqliteStore {
 
     async fn purge_trashed(
         &self,
-        older_than: DateTime<Utc>,
+        older_than: Timestamp,
         limit: u32,
     ) -> Result<DeletedSession, MemoryStoreError> {
         self.with_conn(move |conn| {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let mut total = DeletedSession::default();
             for session_key in due_trash(conn, older_than, limit)? {
                 total += erase(conn, &session_key, Some((now, None)))?;

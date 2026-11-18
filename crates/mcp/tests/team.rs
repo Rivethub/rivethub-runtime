@@ -35,9 +35,7 @@ async fn only_a_shared_hub_introduces_the_viewer_and_teammates() {
 #[tokio::test]
 async fn teammate_sessions_carry_a_page_only_when_the_origin_and_the_key_are_known() {
     let store = Arc::new(testkit::FakeMemoryStore::default());
-    let when = chrono::DateTime::parse_from_rfc3339("2026-11-14T01:37:50Z")
-        .expect("when")
-        .to_utc();
+    let when = wire::time::parse_rfc3339("2026-11-14T01:37:50Z").expect("when");
     store
         .script_team_sessions(vec![
             kernel::memory::TeamSession {

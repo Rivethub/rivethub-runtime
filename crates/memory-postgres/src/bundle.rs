@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryEntry;
 use uuid::Uuid;
 use wire::JsonObject;
@@ -26,8 +25,8 @@ struct BundleRow {
     settings: Option<sqlx::types::Json<JsonObject>>,
     node: Option<String>,
     owner_user_id: String,
-    conversation_created_at: DateTime<Utc>,
-    conversation_updated_at: DateTime<Utc>,
+    conversation_created_at: Timestamp,
+    conversation_updated_at: Timestamp,
     message_id: Option<String>,
     role_text: Option<String>,
     content: String,
@@ -35,7 +34,7 @@ struct BundleRow {
     tool_args: Option<String>,
     tool_result: Option<String>,
     metadata: Option<String>,
-    message_at: DateTime<Utc>,
+    message_at: Timestamp,
 }
 
 impl crate::PostgresMemory {
@@ -46,17 +45,7 @@ impl crate::PostgresMemory {
     ) -> Result<Vec<BundledSession>, Error> {
         let rows = sqlx::query_as!(
             BundleRow,
-            "select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, \
-             c.settings as \"settings: sqlx::types::Json<JsonObject>\", c.node, c.owner_user_id, \
-             c.created_at as conversation_created_at, c.updated_at as conversation_updated_at, \
-             m.id::text as message_id, m.role as role_text, m.content, m.tool_name, \
-             m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, \
-             m.created_at as message_at \
-             from rh_conversations c join rh_messages m on m.conversation_id = c.id \
-             where c.owner_user_id = $1 \
-             and (c.id = any($2) or ($2::uuid[] is null and not exists \
-             (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) \
-             order by c.created_at, c.id, m.created_at, m.id",
+            r#"select c.id as conversation_id, c.session_key, c.agent, c.channel, c.title, c.settings as "settings: sqlx::types::Json<JsonObject>", c.node, c.owner_user_id, c.created_at as "conversation_created_at!: jiff_sqlx::Timestamp", c.updated_at as "conversation_updated_at!: jiff_sqlx::Timestamp", m.id::text as message_id, m.role as role_text, m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, m.metadata::text as metadata, m.created_at as "message_at!: jiff_sqlx::Timestamp" from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and (c.id = any($2) or ($2::uuid[] is null and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key))) order by c.created_at, c.id, m.created_at, m.id"#,
             author.user,
             conversation_ids as Option<&[Uuid]>,
         )

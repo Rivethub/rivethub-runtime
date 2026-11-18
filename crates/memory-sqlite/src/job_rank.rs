@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
@@ -47,7 +46,7 @@ pub(crate) fn select_due(
     conn: &Connection,
     tasks: &[String],
     only_id: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<DueRow>, SqliteError> {
     let ranked = due(
         conn,
@@ -82,7 +81,7 @@ fn due(
     sql: &str,
     tasks: &[String],
     only_id: Option<&str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<(DueRow, i64)>, SqliteError> {
     let stamped = time::stamp(now);
     let pinned = only_id.map(str::to_owned);

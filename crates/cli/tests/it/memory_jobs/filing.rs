@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
-use chrono::Utc;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +32,7 @@ async fn a_subagent_key_follows_its_parent_and_is_not_filed(pool: PgPool) -> Tes
             topics: &topics,
             provider: &provider,
             model: "model",
-            now: Utc::now(),
+            now: Timestamp::now(),
             cancel: &CancellationToken::new(),
         },
         conversation,

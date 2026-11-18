@@ -1,7 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::process::Stdio;
+use wire::time::TimestampFormat as _;
 
-use chrono::{DateTime, Utc};
 use kernel::wiki::builder::WikiWriteError;
 use kernel::wiki::page::{WikiHistoryEntry, WikiSlug, parse_wiki_page};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
@@ -12,11 +13,11 @@ use super::{git, topic_path};
 pub(super) async fn since(
     root: &Path,
     slug: &WikiSlug,
-    since: DateTime<Utc>,
+    since: Timestamp,
 ) -> Result<Vec<WikiHistoryEntry>, WikiWriteError> {
     let path = topic_path(slug);
-    let after = format!("--since={}", since.to_rfc3339());
-    let before = format!("--before={}", since.to_rfc3339());
+    let after = format!("--since={}", since.rfc3339_offset());
+    let before = format!("--before={}", since.rfc3339_offset());
     let mut commits: Vec<String> = git(root, &["rev-list", &after, "HEAD", "--", &path])
         .await?
         .lines()

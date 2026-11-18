@@ -1,8 +1,8 @@
+use jiff::civil::Date;
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 
-use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wire::gateway::account::{PendingUpdate, ReleaseChannel, UpdateSource};
@@ -122,10 +122,12 @@ pub enum Membership {
     },
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageDay {
-    pub day: NaiveDate,
+    #[serde_as(as = "wire::time::CivilDate")]
+    pub day: Date,
     pub searches: u64,
     pub app_opens: u64,
 }

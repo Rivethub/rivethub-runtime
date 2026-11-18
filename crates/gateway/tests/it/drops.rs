@@ -1,10 +1,11 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::TimeDelta;
 use config::model::TrustedProxy;
 use gateway::Gateway;
 use gateway::drops::{DropId, Drops, DropsConfig, Rate, Rates};
@@ -81,7 +82,7 @@ pub(crate) struct Shape {
     pub(crate) enabled: bool,
     pub(crate) secure: bool,
     pub(crate) per_user_drops: u32,
-    pub(crate) ttl: TimeDelta,
+    pub(crate) ttl: SignedDuration,
     pub(crate) rates: Rates,
     pub(crate) trusted_proxies: &'static [&'static str],
 }
@@ -92,7 +93,7 @@ impl Default for Shape {
             enabled: true,
             secure: false,
             per_user_drops: 50,
-            ttl: TimeDelta::days(7),
+            ttl: wire::time::elapsed_days(7),
             rates: Rates::default(),
             trusted_proxies: &[],
         }
@@ -122,7 +123,7 @@ impl TenancyStore for DefaultVisibility {
         &self,
         _user: &Owner,
         _visibility: &Visibility,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<VisibilityDefault, TenancyStoreError> {
         Err(no_visibility())
     }
@@ -140,7 +141,7 @@ impl TenancyStore for DefaultVisibility {
         _viewer: &Viewer,
         _session: &wire::session_id::SessionKey,
         _mark: Option<&Visibility>,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<SessionVisibility, TenancyStoreError> {
         Err(no_visibility())
     }
@@ -636,9 +637,10 @@ fn check_created(answer: &Answer, label: &str) -> Outcome {
         created.id
     );
     assert_eq!(created.bytes, AGE.len() as u64 + 16, "{label}");
-    let left = created.expires_at - chrono::Utc::now();
+    let left = created.expires_at - Timestamp::now();
     assert!(
-        left > TimeDelta::days(7) - TimeDelta::minutes(1) && left <= TimeDelta::days(7),
+        left > wire::time::elapsed_days(7) - SignedDuration::from_mins(1)
+            && left <= wire::time::elapsed_days(7),
         "{label}: {left}"
     );
     Ok(())
@@ -960,7 +962,7 @@ async fn expired_and_unknown_look_identical() -> Outcome {
     let consumed = upload(&live, "alice-token", sealed(32)).await?;
     assert_eq!(shape_of(&live, &consumed).await?.status, StatusCode::OK);
     let expired_node = Node::start(Shape {
-        ttl: TimeDelta::zero(),
+        ttl: SignedDuration::ZERO,
         ..Shape::default()
     })
     .await?;

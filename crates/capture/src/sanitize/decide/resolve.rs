@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use thiserror::Error;
 use wire::capture::BundledSession;
 use wire::capture::FlagMark;
@@ -67,7 +66,7 @@ pub(in super::super) fn marks(
     report: &[ReportFlag],
     local: &LocalReview,
     key: &LocalKey,
-    at: DateTime<Utc>,
+    at: Timestamp,
     unresolved: usize,
 ) -> Result<Marks, ResolveError> {
     if !local.holds_its_seal(key) {

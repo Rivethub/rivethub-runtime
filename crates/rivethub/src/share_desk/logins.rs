@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use capture::seal::ShareServer;
-use chrono::DateTime;
-use chrono::Utc;
 use cli::memory::desk::PendingLogin;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::LoginId;
@@ -12,7 +11,7 @@ use tokio::sync::Mutex;
 use tokio::sync::OwnedMutexGuard;
 
 pub(super) struct Pending {
-    pub(super) expires_at: DateTime<Utc>,
+    pub(super) expires_at: Timestamp,
     pub(super) login: Arc<Mutex<PendingLogin>>,
 }
 

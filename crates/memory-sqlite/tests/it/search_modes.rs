@@ -1,6 +1,6 @@
 use crate::search_support;
+use jiff::Timestamp;
 
-use chrono::{FixedOffset, TimeZone as _, Utc};
 use kernel::memory::SearchMode;
 use kernel::memory::{BrowseWindow, MemoryScope};
 use kernel::model::Embedding;
@@ -34,9 +34,13 @@ fn provider() -> Arc<FakeProvider> {
 #[tokio::test]
 async fn vector_scores_messages_and_summaries_and_normalizes_query() -> TestResult {
     let (_dir, store) = seeded(Some(provider())).await?;
-    let now = Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap();
+    let now = wire::time::timestamp_at_utc(2026, 10, 10, 0, 0, 0).unwrap();
     let response = store
-        .search_at(query("unmatched", SearchMode::Vector), now, &Utc)
+        .search_at(
+            query("unmatched", SearchMode::Vector),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert!(response.degraded.is_none());
     assert_eq!(
@@ -67,7 +71,11 @@ async fn embedding_failure_is_visible_and_keyword_results_survive() -> TestResul
         ] {
             let (_dir, store) = seeded(provider).await?;
             let response = store
-                .search_at(query("alpha", mode), Utc::now(), &Utc)
+                .search_at(
+                    query("alpha", mode),
+                    Timestamp::now(),
+                    &jiff::tz::TimeZone::UTC,
+                )
                 .await?;
             assert!(response.degraded.is_some());
             assert_ne!(response.results, []);
@@ -97,7 +105,11 @@ async fn corrupt_vectors_are_errors() -> TestResult {
             .await?;
         assert!(matches!(
             store
-                .search_at(query("alpha", SearchMode::Vector), Utc::now(), &Utc)
+                .search_at(
+                    query("alpha", SearchMode::Vector),
+                    Timestamp::now(),
+                    &jiff::tz::TimeZone::UTC
+                )
                 .await,
             Err(SqliteError::StoredEmbedding)
         ));
@@ -119,7 +131,11 @@ async fn regex_matches_tool_results_case_insensitively_and_rejects_bad_patterns(
         })
         .await?;
     let result = store
-        .search_at(query("^deploy.*42$", SearchMode::Regex), Utc::now(), &Utc)
+        .search_at(
+            query("^deploy.*42$", SearchMode::Regex),
+            Timestamp::now(),
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert_eq!(
         result
@@ -133,7 +149,11 @@ async fn regex_matches_tool_results_case_insensitively_and_rejects_bad_patterns(
     for pattern in ["[", "(?:a{1000}){1000}"] {
         assert!(matches!(
             store
-                .search_at(query(pattern, SearchMode::Regex), Utc::now(), &Utc)
+                .search_at(
+                    query(pattern, SearchMode::Regex),
+                    Timestamp::now(),
+                    &jiff::tz::TimeZone::UTC
+                )
                 .await,
             Err(SqliteError::Regex(_))
         ));
@@ -146,11 +166,19 @@ async fn trigram_indexes_follow_inserts_updates_and_deletes() -> TestResult {
     let (_dir, store) = seeded(None).await?;
     store.with_conn(|conn| {conn.execute_batch("UPDATE ros_messages SET content='PostgreSQL',tool_result='quartz' WHERE id='a'; UPDATE ros_summaries SET content='PostgreSQL' WHERE id='s';").map_err(failed)?; Ok(())}).await?;
     let result = store
-        .search_at(query("postgressql", SearchMode::Trigram), Utc::now(), &Utc)
+        .search_at(
+            query("postgressql", SearchMode::Trigram),
+            Timestamp::now(),
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert_eq!(result.results.len(), 2);
     let result = store
-        .search_at(query("quarts", SearchMode::Trigram), Utc::now(), &Utc)
+        .search_at(
+            query("quarts", SearchMode::Trigram),
+            Timestamp::now(),
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert_eq!(result.results.first().unwrap().id, "a");
     store
@@ -164,7 +192,11 @@ async fn trigram_indexes_follow_inserts_updates_and_deletes() -> TestResult {
         .await?;
     assert_eq!(
         store
-            .search_at(query("postgressql", SearchMode::Trigram), Utc::now(), &Utc)
+            .search_at(
+                query("postgressql", SearchMode::Trigram),
+                Timestamp::now(),
+                &jiff::tz::TimeZone::UTC
+            )
             .await?
             .results,
         []
@@ -176,26 +208,32 @@ async fn trigram_indexes_follow_inserts_updates_and_deletes() -> TestResult {
 #[tokio::test]
 async fn search_uses_the_supplied_calendar_zone_and_filters() -> TestResult {
     let (_dir, store) = seeded(None).await?;
-    let now = Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, 0).unwrap();
+    let now = wire::time::timestamp_at_utc(2026, 10, 10, 12, 0, 0).unwrap();
     let mut request = query("alpha", SearchMode::Regex);
     request.scope = MemoryScope::Messages;
     request.window = Some(BrowseWindow::Today);
     assert_eq!(
         store
-            .search_at(request.clone(), now, &Utc)
+            .search_at(request.clone(), now, &jiff::tz::TimeZone::UTC)
             .await?
             .results
             .len(),
         1
     );
-    let zone = FixedOffset::west_opt(4 * 3600).unwrap();
+    let zone = jiff::tz::Offset::from_seconds(-4 * 3600)?.to_time_zone();
     assert_eq!(
         store.search_at(request.clone(), now, &zone).await?.results,
         []
     );
     request.window = None;
     request.agent = Some("another".to_owned());
-    assert_eq!(store.search_at(request, now, &Utc).await?.results, []);
+    assert_eq!(
+        store
+            .search_at(request, now, &jiff::tz::TimeZone::UTC)
+            .await?
+            .results,
+        []
+    );
     Ok(())
 }
 
@@ -203,7 +241,11 @@ async fn search_uses_the_supplied_calendar_zone_and_filters() -> TestResult {
 async fn query_embedding_timeout_reports_degradation() -> TestResult {
     let (_dir, store) = seeded(Some(Arc::new(FakeProvider::new(vec![Script::EmbedHang])))).await?;
     let result = store
-        .search_at(query("alpha", SearchMode::Hybrid), Utc::now(), &Utc)
+        .search_at(
+            query("alpha", SearchMode::Hybrid),
+            Timestamp::now(),
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert!(
         result
@@ -227,7 +269,11 @@ async fn cancelled_embedding_stops_search_and_does_not_reinforce_hits() -> TestR
         cancellation,
     ));
     let result = store
-        .search_at(query("alpha", SearchMode::Hybrid), Utc::now(), &Utc)
+        .search_at(
+            query("alpha", SearchMode::Hybrid),
+            Timestamp::now(),
+            &jiff::tz::TimeZone::UTC,
+        )
         .await;
     assert!(matches!(result, Err(SqliteError::SearchCancelled)));
     store
@@ -255,9 +301,11 @@ async fn vector_filters_scope_agent_time_and_tags() -> TestResult {
     request.scope = MemoryScope::Summaries;
     request.agent = Some("agent".to_owned());
     request.tag = Some("project:one".parse()?);
-    request.since = Some(Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap());
-    request.before = Some(Utc.with_ymd_and_hms(2026, 10, 11, 0, 0, 0).unwrap());
-    let result = store.search_at(request, Utc::now(), &Utc).await?;
+    request.since = Some(wire::time::timestamp_at_utc(2026, 10, 10, 0, 0, 0).unwrap());
+    request.before = Some(wire::time::timestamp_at_utc(2026, 10, 11, 0, 0, 0).unwrap());
+    let result = store
+        .search_at(request, Timestamp::now(), &jiff::tz::TimeZone::UTC)
+        .await?;
     assert_eq!(
         result
             .results
@@ -272,9 +320,13 @@ async fn vector_filters_scope_agent_time_and_tags() -> TestResult {
 #[tokio::test]
 async fn keyword_scoring_does_not_treat_an_embedding_blob_as_query_similarity() -> TestResult {
     let (_dir, store) = seeded(None).await?;
-    let now = Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap();
+    let now = wire::time::timestamp_at_utc(2026, 10, 10, 0, 0, 0).unwrap();
     let result = store
-        .search_at(query("^alpha", SearchMode::Regex), now, &Utc)
+        .search_at(
+            query("^alpha", SearchMode::Regex),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     let first = result.results.first().ok_or("message missing")?;
     let length = u32::try_from(first.content.chars().count())?;
@@ -299,9 +351,13 @@ async fn configured_instruction_and_short_literals_reach_the_search_arms() -> Te
         std::time::Duration::from_secs(1),
         tokio_util::sync::CancellationToken::new(),
     ));
-    let now = Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap();
+    let now = wire::time::timestamp_at_utc(2026, 10, 10, 0, 0, 0).unwrap();
     let result = store
-        .search_at(query("v2", SearchMode::Hybrid), now, &Utc)
+        .search_at(
+            query("v2", SearchMode::Hybrid),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert_eq!(provider.embed_requests().await, [vec!["task: v2"]]);
     let hit = result
@@ -316,7 +372,7 @@ async fn configured_instruction_and_short_literals_reach_the_search_arms() -> Te
 
 #[tokio::test]
 async fn a_question_finds_rows_that_hold_only_some_of_its_words() -> TestResult {
-    let now = Utc.with_ymd_and_hms(2026, 10, 10, 0, 0, 0).unwrap();
+    let now = wire::time::timestamp_at_utc(2026, 10, 10, 0, 0, 0).unwrap();
     for (provider, mode) in [
         (None, SearchMode::Hybrid),
         (None, SearchMode::Fts),
@@ -324,7 +380,11 @@ async fn a_question_finds_rows_that_hold_only_some_of_its_words() -> TestResult 
     ] {
         let (_dir, store) = seeded(provider).await?;
         let response = store
-            .search_at(query("where did the alpha summary go", mode), now, &Utc)
+            .search_at(
+                query("where did the alpha summary go", mode),
+                now,
+                &jiff::tz::TimeZone::UTC,
+            )
             .await?;
         let found: Vec<&str> = response.results.iter().map(|hit| hit.id.as_str()).collect();
         assert_eq!(found, ["s", "a", "b"], "{mode}");

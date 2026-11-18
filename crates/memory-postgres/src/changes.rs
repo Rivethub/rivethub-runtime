@@ -1,9 +1,8 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
 use kernel::changes::ChangeError;
 use kernel::changes::ChangeFeed;
 use kernel::changes::ChangeRecord;
@@ -89,7 +88,8 @@ struct DecisionRow {
     kind: String,
     text: String,
     session_id: Option<String>,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
@@ -97,7 +97,8 @@ struct CreatedRow {
     id: Uuid,
     name: String,
     kind: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
@@ -107,7 +108,8 @@ struct PlacedRow {
     kind: String,
     session_id: String,
     placed_by: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
@@ -115,7 +117,8 @@ struct TaggedRow {
     session_key: String,
     key: String,
     value: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
@@ -124,14 +127,16 @@ struct MergedRow {
     name: String,
     kind: String,
     merged_from: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 #[derive(sqlx::FromRow)]
 struct DigestRow {
     summary: String,
     changes: i32,
-    written_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    written_at: Timestamp,
 }
 
 fn failed(operation: &'static str) -> impl FnOnce(sqlx::Error) -> ChangeError {
@@ -176,8 +181,8 @@ where
         .map(|harness| harness.to_string())
         .collect();
     let query = sqlx::query_as::<_, T>(sqlx::AssertSqlSafe(sql.to_owned()))
-        .bind(window.from)
-        .bind(window.to);
+        .bind(crate::time::BindTime::bind_time(window.from))
+        .bind(crate::time::BindTime::bind_time(window.to));
     let query = if sql.contains("$3") {
         query
             .bind(harnesses)
@@ -255,17 +260,13 @@ impl ChangeFeed for PostgresMemory {
 
 #[async_trait]
 impl DigestStore for PostgresMemory {
-    async fn digest(
-        &self,
-        day: NaiveDate,
-        owner: &Owner,
-    ) -> Result<Option<DailyDigest>, ChangeError> {
+    async fn digest(&self, day: Date, owner: &Owner) -> Result<Option<DailyDigest>, ChangeError> {
         let found = sqlx::query_as::<_, DigestRow>(
             "SELECT summary, changes, written_at FROM rh_daily_digests
               WHERE owner_user_id = $1 AND day = $2",
         )
         .bind(owner.as_str())
-        .bind(day)
+        .bind(crate::time::BindTime::bind_time(day))
         .fetch_optional(&self.pool)
         .await
         .map_err(failed("daily digest"))?;
@@ -291,10 +292,10 @@ impl DigestStore for PostgresMemory {
                     changes = EXCLUDED.changes, written_at = EXCLUDED.written_at",
         )
         .bind(digest.owner.as_str())
-        .bind(digest.day)
+        .bind(crate::time::BindTime::bind_time(digest.day))
         .bind(&digest.summary)
         .bind(i32::try_from(digest.changes).map_err(|error| stored("digest changes", error))?)
-        .bind(digest.written_at)
+        .bind(crate::time::BindTime::bind_time(digest.written_at))
         .execute(&self.pool)
         .await
         .map_err(failed("daily digest"))?;

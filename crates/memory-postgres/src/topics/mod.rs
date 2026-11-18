@@ -8,8 +8,7 @@ mod rows;
 mod write;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::topics::HistoryMark;
 use kernel::topics::MergePlan;
 use kernel::topics::PlacedSession;
@@ -65,7 +64,7 @@ impl TopicStore for PostgresMemory {
         &self,
         id: TopicId,
         changes: TopicChanges,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         let mut tx = self.pool.begin().await.map_err(failed("topic update"))?;
         let current = rows::by_id(&mut tx, id)
@@ -102,7 +101,7 @@ impl TopicStore for PostgresMemory {
         &self,
         source: TopicId,
         into: TopicId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         let mut tx = self.pool.begin().await.map_err(failed("topic merge"))?;
         let from = rows::by_id(&mut tx, source)
@@ -138,8 +137,8 @@ impl TopicStore for PostgresMemory {
     async fn set_closed(
         &self,
         id: TopicId,
-        closed: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
+        closed: Option<Timestamp>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError> {
         let mut tx = self.pool.begin().await.map_err(failed("topic close"))?;
         let topic = rows::by_id(&mut tx, id)
@@ -242,7 +241,7 @@ impl TopicStore for PostgresMemory {
         sqlx::query_as!(
             PlacementRow,
             "DELETE FROM rh_session_placements WHERE session_id = $1
-             RETURNING session_id, topic_id, placed_by, placed_at, owner_user_id",
+             RETURNING session_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\", owner_user_id",
             session.as_str()
         )
         .fetch_optional(&self.pool)

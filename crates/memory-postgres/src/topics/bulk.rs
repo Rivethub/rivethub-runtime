@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::cmp::Reverse;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::AllFiled;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::Filed;
@@ -29,10 +28,10 @@ struct FilingRow {
     conversation_id: Option<Uuid>,
     topic_id: Option<Uuid>,
     placed_by: Option<String>,
-    at: DateTime<Utc>,
+    at: Timestamp,
     title: Option<String>,
     channel: Option<String>,
-    last_active: Option<DateTime<Utc>>,
+    last_active: Option<Timestamp>,
     node: Option<String>,
     owner_user_id: Option<String>,
     session_owner: Option<String>,
@@ -70,9 +69,9 @@ async fn filings(pool: &PgPool, topic: Option<TopicId>) -> Result<AllFiled, Topi
                 GROUP BY k.session_id
            )
            SELECT p.session_id AS "session_id?", NULL::uuid AS "conversation_id?",
-                  p.topic_id AS "topic_id?", p.placed_by AS "placed_by?", p.placed_at AS "at!",
+                  p.topic_id AS "topic_id?", p.placed_by AS "placed_by?", p.placed_at AS "at!: jiff_sqlx::Timestamp",
                   seen.title AS "title?", NULL::text AS "channel?",
-                  seen.last_active AS "last_active?", seen.node AS "node?",
+                  seen.last_active AS "last_active!: crate::time::OptionalTimestamp", seen.node AS "node?",
                   p.owner_user_id AS "owner_user_id?", seen.owner AS "session_owner?",
                   m.visibility AS "mark?",
                   coalesce(seen.visibility,

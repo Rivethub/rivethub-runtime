@@ -15,6 +15,7 @@ pub mod transport;
 pub mod wiki;
 
 pub use error::Error;
+use jiff::tz::TimeZone;
 use kernel::memory::MemoryStore;
 use kernel::plugins::PluginTools;
 use kernel::tenancy::Scope;
@@ -34,7 +35,7 @@ pub struct Server {
     memory: Arc<dyn MemoryStore>,
     tools: Arc<Vec<Tool>>,
     shutdown: CancellationToken,
-    zone: chrono_tz::Tz,
+    zone: TimeZone,
     plugins: Option<Arc<dyn PluginTools>>,
     sessions: Option<Arc<sessions::Sessions>>,
     pages: Option<pages::Pages>,
@@ -45,7 +46,7 @@ pub struct Builder {
     instructions: Option<String>,
     memory: Arc<dyn MemoryStore>,
     shutdown: CancellationToken,
-    zone: Option<chrono_tz::Tz>,
+    zone: Option<TimeZone>,
     plugins: Option<Arc<dyn PluginTools>>,
     sessions: Option<sessions::Sessions>,
     pages: Option<pages::Pages>,
@@ -184,7 +185,7 @@ impl Server {
                 memory::search(
                     self.memory.as_ref(),
                     decode(arguments)?,
-                    self.zone,
+                    &self.zone,
                     self.pages.as_ref(),
                 )
                 .await
@@ -193,7 +194,7 @@ impl Server {
                 memory::browse(
                     self.memory.as_ref(),
                     decode(arguments)?,
-                    self.zone,
+                    &self.zone,
                     self.pages.as_ref(),
                 )
                 .await
@@ -202,7 +203,7 @@ impl Server {
                 team::call(
                     self.memory.as_ref(),
                     decode(arguments)?,
-                    self.zone,
+                    &self.zone,
                     self.pages.as_ref(),
                 )
                 .await
@@ -231,7 +232,7 @@ impl Server {
                     self.memory.as_ref(),
                     self.sessions()?,
                     decode(arguments)?,
-                    self.zone,
+                    &self.zone,
                 ))
                 .await
             }
@@ -269,7 +270,7 @@ impl Builder {
     }
 
     #[must_use]
-    pub fn display_zone(mut self, zone: chrono_tz::Tz) -> Self {
+    pub fn display_zone(mut self, zone: TimeZone) -> Self {
         self.zone = Some(zone);
         self
     }
@@ -302,7 +303,7 @@ impl Builder {
             memory: self.memory,
             tools: Arc::new(tools),
             shutdown: self.shutdown,
-            zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
+            zone: self.zone.unwrap_or(TimeZone::UTC),
             plugins: self.plugins,
             sessions: self.sessions.map(Arc::new),
             pages: self.pages,

@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
@@ -16,10 +15,12 @@ use crate::topics::TopicId;
 use crate::topics::TopicKind;
 use crate::topics::TopicName;
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
-    pub taken_at: DateTime<Utc>,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub taken_at: Timestamp,
     pub conversations: Vec<SnapshotConversation>,
     pub topics: Vec<SnapshotTopic>,
     pub redirects: Vec<SnapshotRedirect>,
@@ -80,6 +81,7 @@ pub enum TaskOrigin {
     Eval,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotConversation {
@@ -87,7 +89,9 @@ pub struct SnapshotConversation {
     pub head: SnapshotHead,
     pub cwd: Option<String>,
     pub summary: Option<String>,
-    pub last_active: DateTime<Utc>,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub last_active: Timestamp,
     pub task_parent: Option<SnapshotHead>,
     pub task_origin: Option<TaskOrigin>,
     pub opening: Option<String>,
@@ -111,6 +115,7 @@ impl SnapshotConversation {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotTopic {
@@ -120,8 +125,11 @@ pub struct SnapshotTopic {
     pub parent: Option<TopicId>,
     pub aliases: Vec<String>,
     pub directory: Option<SnapshotRoot>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub created_at: Timestamp,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

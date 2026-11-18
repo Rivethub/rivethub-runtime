@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::queue::{ClaimSelector, FixedJob, JobName, JobQueue};
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{ConsolidateWiki, WikiConsolidateStore, WikiFold, WikiTopicStats};
@@ -31,7 +31,7 @@ impl Topics {
                 title: (*slug).to_owned(),
                 citations: 0,
                 history: 0,
-                created_at: DateTime::<Utc>::UNIX_EPOCH,
+                created_at: Timestamp::UNIX_EPOCH,
                 bound: false,
             })
             .collect(),
@@ -49,7 +49,7 @@ impl WikiConsolidateStore for Topics {
     async fn fold_wiki(
         &self,
         fold: &WikiFold,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         self.folds.lock().await.push(fold.clone());
         Ok(fold.children.clone())
@@ -73,7 +73,7 @@ async fn consolidation_folds_each_planned_cluster_and_reembeds_the_parent() -> T
         &store,
         &queue,
         &payload(&defaults()?)?,
-        Utc::now(),
+        Timestamp::now(),
         &CancellationToken::new(),
     )
     .await?;
@@ -102,7 +102,7 @@ async fn a_dry_run_folds_nothing() -> TestResult {
             dry_run: true,
             ..defaults()?
         })?,
-        Utc::now(),
+        Timestamp::now(),
         &CancellationToken::new(),
     )
     .await?;
@@ -121,7 +121,7 @@ async fn an_unknown_option_is_refused() -> TestResult {
         &store,
         &queue,
         &options,
-        Utc::now(),
+        Timestamp::now(),
         &CancellationToken::new(),
     )
     .await;

@@ -1,6 +1,3 @@
-use chrono::DateTime;
-use chrono::Utc;
-
 use super::bind::compact_key;
 use super::ledger::place_as_of;
 use super::types::EntityObservation;
@@ -11,6 +8,8 @@ use super::types::ObservedHistory;
 use super::types::PreparedEntity;
 use super::types::PreparedFact;
 use super::types::PreparedHistory;
+use jiff::Timestamp;
+use values::time::TimestampFormat as _;
 
 #[must_use]
 pub fn merge_same(observations: Vec<EntityObservation>) -> Vec<EntityObservation> {
@@ -291,7 +290,7 @@ fn prepare_history(
         let next = PreparedHistory {
             summary_id: leaf.id,
             conversation_id: leaf.conversation_id,
-            session_on: leaf.start.date_naive(),
+            session_on: leaf.start.utc_date(),
             sentence,
         };
         if let Some(existing) = prepared
@@ -306,7 +305,7 @@ fn prepare_history(
     prepared
 }
 
-fn leaf_for(time: DateTime<Utc>, leaves: &[LeafClock]) -> Option<&LeafClock> {
+fn leaf_for(time: Timestamp, leaves: &[LeafClock]) -> Option<&LeafClock> {
     leaves
         .iter()
         .find(|leaf| time >= leaf.start && time <= leaf.end)

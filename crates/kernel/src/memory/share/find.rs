@@ -1,6 +1,3 @@
-use chrono::DateTime;
-use chrono::Utc;
-
 use crate::memory::Limit;
 use crate::memory::MemoryScope;
 use crate::memory::MemorySearchResult;
@@ -8,6 +5,7 @@ use crate::memory::SearchMode;
 use crate::memory::SearchQuery;
 use crate::memory::SessionDigest;
 use crate::memory::TagLiteral;
+use jiff::Timestamp;
 
 pub const DEFAULT_SESSIONS: u32 = 10;
 pub const MAX_SESSIONS: u32 = 25;
@@ -21,8 +19,8 @@ pub struct Search {
     pub text: String,
     pub agent: Option<String>,
     pub tag: Option<TagLiteral>,
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
+    pub before: Option<Timestamp>,
 }
 
 #[must_use]
@@ -54,7 +52,7 @@ pub struct Ranked {
     pub key: String,
     pub best: f64,
     pub hits: usize,
-    pub latest: DateTime<Utc>,
+    pub latest: Timestamp,
     pub excerpts: Vec<String>,
 }
 

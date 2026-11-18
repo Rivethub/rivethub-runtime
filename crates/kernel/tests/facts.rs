@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::facts::Claim;
 use kernel::facts::FactChange;
 use kernel::facts::FactId;
@@ -20,8 +19,8 @@ use values::SessionId;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn hours(count: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH + TimeDelta::days(20_000) + TimeDelta::hours(count)
+fn hours(count: i64) -> Timestamp {
+    Timestamp::UNIX_EPOCH + values::time::elapsed_days(20_000) + SignedDuration::from_hours(count)
 }
 
 fn session(n: u8) -> SessionId {
@@ -80,7 +79,7 @@ impl Key {
     }
 }
 
-fn only(claims: &[Claim], as_of: Option<DateTime<Utc>>) -> FactState {
+fn only(claims: &[Claim], as_of: Option<Timestamp>) -> FactState {
     let mut facts = facts_as_of(claims, as_of);
     assert_eq!(facts.len(), 1, "one fact");
     facts.remove(0)
@@ -224,7 +223,7 @@ fn the_timeline_lists_changes_pins_and_conflicts_newest_first() -> TestResult {
         ip.writer("192.0.2.9", 3, 2)?,
         ip.you("192.0.2.9", true, 5)?,
     ];
-    let events: Vec<(DateTime<Utc>, FactChange)> = timeline(&claims, None)
+    let events: Vec<(Timestamp, FactChange)> = timeline(&claims, None)
         .into_iter()
         .map(|event| (event.at, event.change))
         .collect();

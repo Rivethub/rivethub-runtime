@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::FiledSession;
 use kernel::filing::bare_session_prefix;
 use kernel::topics::Lineage;
@@ -75,7 +74,10 @@ fn session(row: &sqlx::postgres::PgRow) -> Result<FiledSession, TopicError> {
     let child: String = row.try_get("session_id").map_err(read("session_id"))?;
     let parent: String = row.try_get("parent").map_err(read("parent"))?;
     let placed_by: String = row.try_get("placed_by").map_err(read("placed_by"))?;
-    let at: DateTime<Utc> = row.try_get("placed_at").map_err(read("placed_at"))?;
+    let at: Timestamp = row
+        .try_get::<jiff_sqlx::Timestamp, _>("placed_at")
+        .map(jiff_sqlx::Timestamp::to_jiff)
+        .map_err(read("placed_at"))?;
     let owner: String = row
         .try_get("owner_user_id")
         .map_err(read("owner_user_id"))?;
@@ -92,7 +94,10 @@ fn session(row: &sqlx::postgres::PgRow) -> Result<FiledSession, TopicError> {
             owner: Some(super::rows::owner(owner)?),
         },
         title: row.try_get("title").map_err(read("title"))?,
-        last_active: row.try_get("last_active").map_err(read("last_active"))?,
+        last_active: row
+            .try_get::<crate::time::OptionalTimestamp, _>("last_active")
+            .map(Option::from)
+            .map_err(read("last_active"))?,
         node: Some(row.try_get("node").map_err(read("node"))?),
         lineage: Some(Lineage {
             parent: id(parent, "parent")?,

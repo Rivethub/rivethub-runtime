@@ -1,9 +1,8 @@
 use crate::search_support;
+use jiff::Timestamp;
 
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryScope;
 use kernel::memory::SearchMode;
 use kernel::memory::SearchQuery;
@@ -57,12 +56,14 @@ async fn seed(store: &SqliteStore) -> TestResult {
     Ok(())
 }
 
-fn clock() -> TestResult<DateTime<Utc>> {
+fn clock() -> TestResult<Timestamp> {
     Ok("2026-10-11T12:00:00Z".parse()?)
 }
 
 async fn hits(store: &SqliteStore, query: SearchQuery) -> TestResult<BTreeSet<String>> {
-    let outcome = store.search_at(query, clock()?, &Utc).await?;
+    let outcome = store
+        .search_at(query, clock()?, &jiff::tz::TimeZone::UTC)
+        .await?;
     Ok(outcome.results.into_iter().map(|hit| hit.id).collect())
 }
 
@@ -145,7 +146,9 @@ async fn excluded_roles_drop_messages_and_summary_hits_name_their_session() -> T
         );
         let mut search = query(TEXT, mode);
         search.scope = MemoryScope::Summaries;
-        let outcome = store.search_at(search, clock()?, &Utc).await?;
+        let outcome = store
+            .search_at(search, clock()?, &jiff::tz::TimeZone::UTC)
+            .await?;
         let sessions: Vec<Option<&str>> = outcome
             .results
             .iter()

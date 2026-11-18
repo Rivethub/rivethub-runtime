@@ -16,7 +16,7 @@ pub enum TextMismatch {
     #[error(transparent)]
     Number(#[from] std::num::ParseFloatError),
     #[error(transparent)]
-    Date(#[from] chrono::ParseError),
+    Date(#[from] jiff::Error),
 }
 
 pub fn compare_memory_text(
@@ -64,7 +64,7 @@ pub fn compare_memory_text(
             }
         }
         if let Some(timestamp) = value.as_str().strip_prefix("since=") {
-            chrono::DateTime::parse_from_rfc3339(timestamp)?;
+            wire::time::parse_rfc3339(timestamp)?;
         }
         actual_position += value.end();
         expected_position = field.end();

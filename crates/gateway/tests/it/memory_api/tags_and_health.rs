@@ -1,4 +1,5 @@
 use super::*;
+use jiff::Timestamp;
 use kernel::memory::EmbedModelMismatch;
 use wire::gateway::memory::EmbedStatus;
 use wire::gateway::memory::MemoryHealthResponse;
@@ -424,7 +425,7 @@ fn memory_fallback_and_health_shape() {
     assert_eq!(health.embeddings.status, EmbedStatus::Unavailable);
     assert_eq!(health.status, MemoryHealthStatus::Degraded);
     let observed = health.observed_at.expect("observation time");
-    assert!((chrono::Utc::now() - observed).num_seconds().abs() < 60);
+    assert!((Timestamp::now() - observed).as_secs().abs() < 60);
     assert_eq!(health.embed_queue_depth, 0);
 
     store.arm_embeddings();

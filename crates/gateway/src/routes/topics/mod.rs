@@ -5,6 +5,7 @@ mod map;
 mod page;
 pub(crate) mod visibility;
 
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
@@ -14,7 +15,6 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing;
-use chrono::Utc;
 use kernel::filing::Target;
 use kernel::topics::Change;
 use kernel::topics::NewTopic;
@@ -235,7 +235,7 @@ async fn create(
         directory: request.directory.map(map::root),
         owner: (kind != TopicKind::Type).then(|| user.owner().clone()),
     };
-    let topic = Topic::create(TopicId::random(), new, Utc::now()).map_err(map::error)?;
+    let topic = Topic::create(TopicId::random(), new, Timestamp::now()).map_err(map::error)?;
     let created = store.create(topic).await.map_err(map::error)?;
     Ok((StatusCode::CREATED, Json(map::record(created))))
 }
@@ -269,7 +269,7 @@ async fn update(
         directory,
     };
     let updated = store
-        .update(id, changes, Utc::now())
+        .update(id, changes, Timestamp::now())
         .await
         .map_err(map::error)?;
     gateway.sessions().topic_changed(&updated.id);
@@ -295,7 +295,7 @@ async fn merge(
     let source = resolve_id(store.as_ref(), &key).await?;
     let into = resolve_id(store.as_ref(), &request.into).await?;
     let merged = store
-        .merge(source, into, Utc::now())
+        .merge(source, into, Timestamp::now())
         .await
         .map_err(map::error)?;
     Ok(Json(map::record(merged)))
@@ -342,7 +342,7 @@ pub(crate) async fn place_session(
 ) -> Result<wire::gateway::topics::TopicPlacement, ApiError> {
     let store = gateway.topics()?;
     let before = store.placement(&session).await.map_err(map::error)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let outcome = store
         .place(Placement {
             session: session.clone(),
@@ -379,7 +379,14 @@ async fn unplace(
         .await
         .map_err(map::error)?;
     let filed = removed.map(|placement| (placement.by, placement.topic));
-    filing::correct(&gateway, Target::Session(session), filed, None, Utc::now()).await?;
+    filing::correct(
+        &gateway,
+        Target::Session(session),
+        filed,
+        None,
+        Timestamp::now(),
+    )
+    .await?;
     Ok(Json(PlacementReply {
         placement: None,
         suggestion: None,

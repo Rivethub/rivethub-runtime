@@ -5,7 +5,7 @@ use crate::search::SearchOptions;
 use crate::search::TagFilter;
 use crate::search_literal::Patience;
 use crate::search_literal::literal_tokens;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryHitSource;
 use kernel::memory::MemoryScope;
 use kernel::memory_core::hybrid_pool;
@@ -85,11 +85,11 @@ pub(crate) fn push_time_conditions(
 ) {
     if let Some(since) = options.since {
         query.push(format!(" AND {alias}.created_at >= "));
-        query.push_bind(since);
+        query.push_bind(crate::time::BindTime::bind_time(since));
     }
     if let Some(before) = options.before {
         query.push(format!(" AND {alias}.created_at < "));
-        query.push_bind(before);
+        query.push_bind(crate::time::BindTime::bind_time(before));
     }
 }
 
@@ -279,7 +279,8 @@ pub(crate) struct ArmSqlRow {
     conversation_id: Option<String>,
     session_id: Option<String>,
     session_channel: Option<String>,
-    created_at: chrono::DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     score: f64,
     semantic: f64,
     age_days: f64,

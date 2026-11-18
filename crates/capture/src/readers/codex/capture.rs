@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReaderError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -29,9 +28,9 @@ struct Line {
     #[serde_as(as = "DefaultOnError")]
     #[serde(rename = "type", default)]
     kind: Option<String>,
-    #[serde_as(as = "DefaultOnError")]
+    #[serde_as(as = "DefaultOnError<Option<wire::time::Rfc3339>>")]
     #[serde(default)]
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
     #[serde(default)]
     payload: Option<Payload>,
 }

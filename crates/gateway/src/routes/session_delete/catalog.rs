@@ -1,10 +1,11 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wire::time::TimestampFormat as _;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use chrono::{DateTime, Utc};
 use kernel::memory::{
     ImportOrigin, MemoryState, SessionCatalog, SessionCursor, SessionQuery, SessionRecord,
     SessionView,
@@ -91,14 +92,14 @@ pub(crate) fn catalog(gateway: &Gateway) -> Result<&dyn SessionCatalog, ApiError
 }
 
 fn encode_cursor(cursor: &SessionCursor) -> String {
-    format!("{}.{}", cursor.started_at.timestamp_millis(), cursor.key)
+    format!("{}.{}", cursor.started_at.epoch_millis(), cursor.key)
 }
 
 fn decode_cursor(text: &str) -> Result<SessionCursor, ApiError> {
     let invalid = || ApiError::BadRequest("cursor is not one this server issued".to_owned());
     let (millis, key) = text.split_once('.').ok_or_else(invalid)?;
     let millis: i64 = millis.parse().map_err(|_| invalid())?;
-    let started_at = DateTime::from_timestamp_millis(millis).ok_or_else(invalid)?;
+    let started_at = Timestamp::from_millisecond(millis).map_err(|_error| invalid())?;
     key.parse::<SessionKey>().map_err(|_| invalid())?;
     Ok(SessionCursor {
         started_at,
@@ -259,7 +260,7 @@ pub(super) async fn trash(
     let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
-        .trash_session(key.as_str(), Some(user.as_str()), Utc::now())
+        .trash_session(key.as_str(), Some(user.as_str()), Timestamp::now())
         .await?;
     tracing::info!(session = %key, "session moved to the trash");
     Ok(StatusCode::NO_CONTENT)

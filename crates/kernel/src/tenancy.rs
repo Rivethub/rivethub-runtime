@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use values::SessionKey;
 
 use crate::BoxError;
@@ -177,7 +176,7 @@ impl Scope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibilityDefault {
     pub visibility: Visibility,
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,7 +230,7 @@ pub trait TenancyStore: Send + Sync {
         &self,
         user: &Owner,
         visibility: &Visibility,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<VisibilityDefault, TenancyStoreError>;
 
     fn row_secured(&self) -> bool {
@@ -249,7 +248,7 @@ pub trait TenancyStore: Send + Sync {
         viewer: &Viewer,
         session: &SessionKey,
         mark: Option<&Visibility>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<SessionVisibility, TenancyStoreError>;
 
     async fn mark_topic(

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
@@ -172,9 +173,9 @@ fn share_signed(
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Sanitization::Sanitized(SanitizeStamp {
-            at: chrono::DateTime::UNIX_EPOCH,
+            at: Timestamp::UNIX_EPOCH,
             policy_sha256: "0".repeat(64),
             passes: Vec::new(),
             unresolved_flags: 0,

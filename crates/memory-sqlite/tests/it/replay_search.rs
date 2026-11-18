@@ -1,10 +1,9 @@
 use crate::common;
+use jiff::Timestamp;
 #[path = "search_support/fts_seed.rs"]
 mod seed;
 use seed::{seed_fts, seed_tag_pool};
 
-use chrono::DateTime;
-use chrono::Utc;
 use common::Fresh;
 use common::Ids;
 use common::TestResult;
@@ -75,7 +74,10 @@ async fn tag_pool_widening_returns_the_buried_hit() -> TestResult {
     let query = asked("rollback", MemoryScope::Messages, 2);
     let mut query = query;
     query.tag = Some("project:rare".parse()?);
-    let outcome = fresh.store.search_at(query, now, &Utc).await?;
+    let outcome = fresh
+        .store
+        .search_at(query, now, &jiff::tz::TimeZone::UTC)
+        .await?;
     let mut ids = Ids::default();
     expect_degraded(
         result.get("degraded").ok_or("degraded")?,
@@ -101,7 +103,10 @@ async fn search_modes_and_request_validation() -> TestResult {
     for mode in [SearchMode::Fts, SearchMode::Hybrid, SearchMode::Vector] {
         let mut query = asked("deploy", MemoryScope::Both, 10);
         query.mode = mode;
-        let outcome = fresh.store.search_at(query, now, &Utc).await?;
+        let outcome = fresh
+            .store
+            .search_at(query, now, &jiff::tz::TimeZone::UTC)
+            .await?;
         assert!(outcome.results.is_empty(), "{mode}");
         assert!(outcome.degraded.is_some(), "{mode}");
         assert_eq!(outcome.expanded, []);
@@ -111,13 +116,20 @@ async fn search_modes_and_request_validation() -> TestResult {
     fresh.store.arm_embed();
     let armed = fresh
         .store
-        .search_at(asked("deploy", MemoryScope::Both, 10), now, &Utc)
+        .search_at(
+            asked("deploy", MemoryScope::Both, 10),
+            now,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert!(armed.degraded.is_some());
     for mode in [SearchMode::Trigram, SearchMode::Regex] {
         let mut query = asked("deploy", MemoryScope::Both, 10);
         query.mode = mode;
-        let result = fresh.store.search_at(query, now, &Utc).await?;
+        let result = fresh
+            .store
+            .search_at(query, now, &jiff::tz::TimeZone::UTC)
+            .await?;
         assert_eq!(result.results, []);
         assert!(result.degraded.is_none());
     }
@@ -125,7 +137,7 @@ async fn search_modes_and_request_validation() -> TestResult {
     synthesize.synthesize = Some(true);
     let error = fresh
         .store
-        .search_at(synthesize, now, &Utc)
+        .search_at(synthesize, now, &jiff::tz::TimeZone::UTC)
         .await
         .expect_err("synthesis");
     assert_eq!(
@@ -138,7 +150,7 @@ async fn search_modes_and_request_validation() -> TestResult {
     inverted.before = Some(stamp);
     let error = fresh
         .store
-        .search_at(inverted, now, &Utc)
+        .search_at(inverted, now, &jiff::tz::TimeZone::UTC)
         .await
         .expect_err("range");
     assert_eq!(error.to_string(), "since must precede before");
@@ -148,7 +160,7 @@ async fn search_modes_and_request_validation() -> TestResult {
 async fn replay_memory(
     store: &SqliteStore,
     fts: &Json,
-    clock: DateTime<Utc>,
+    clock: Timestamp,
     notice: &Json,
     ids: &mut Ids,
 ) -> TestResult {
@@ -163,7 +175,7 @@ async fn replay_memory(
             .search_at(
                 recorded_query(text, case.get("options").ok_or("options")?)?,
                 clock,
-                &Utc,
+                &jiff::tz::TimeZone::UTC,
             )
             .await?;
         assert_slice(&outcome);
@@ -181,7 +193,7 @@ async fn replay_memory(
 async fn reinforce_recorded(
     store: &SqliteStore,
     case: &Json,
-    clock: DateTime<Utc>,
+    clock: Timestamp,
     ids: &Ids,
 ) -> TestResult {
     let mut recorded = Vec::new();
@@ -200,7 +212,7 @@ async fn reinforce_recorded(
 async fn replay_backend(
     store: &SqliteStore,
     fts: &Json,
-    clock: DateTime<Utc>,
+    clock: Timestamp,
     ids: &mut Ids,
 ) -> TestResult {
     for case in array(fts, "backendSearch")? {
@@ -211,7 +223,11 @@ async fn replay_backend(
         let options = case.get("options").ok_or("options")?;
         let response = case.get("response").ok_or("response")?;
         let outcome = store
-            .search_at(recorded_query(text, options)?, clock, &Utc)
+            .search_at(
+                recorded_query(text, options)?,
+                clock,
+                &jiff::tz::TimeZone::UTC,
+            )
             .await?;
         assert_slice(&outcome);
         expect_degraded(
@@ -232,11 +248,13 @@ async fn replay_backend(
 
 async fn last_seven_days_keeps_the_october_rollback(
     store: &SqliteStore,
-    clock: DateTime<Utc>,
+    clock: Timestamp,
 ) -> TestResult {
     let mut query = asked("rollback", MemoryScope::Messages, 10);
     query.window = Some(BrowseWindow::Last7d);
-    let outcome = store.search_at(query, clock, &Utc).await?;
+    let outcome = store
+        .search_at(query, clock, &jiff::tz::TimeZone::UTC)
+        .await?;
     let contents: Vec<&str> = outcome
         .results
         .iter()

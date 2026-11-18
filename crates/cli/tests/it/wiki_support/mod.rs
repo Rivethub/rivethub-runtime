@@ -1,8 +1,8 @@
 #![cfg(test)]
 
+use jiff::Timestamp;
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
 use kernel::model::FinishReason;
 use kernel::model::{LlmResponse, LlmResponseKind};
 use kernel::topics::{
@@ -22,10 +22,8 @@ use wire::session_id::SessionId;
 
 pub(crate) type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-pub(crate) fn now() -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-10-10T12:00:00Z")
-        .expect("time")
-        .with_timezone(&Utc)
+pub(crate) fn now() -> Timestamp {
+    wire::time::parse_rfc3339("2026-10-10T12:00:00Z").expect("time")
 }
 
 pub(crate) fn slug(text: &str) -> WikiSlug {
@@ -44,7 +42,7 @@ pub(crate) fn patch() -> WikiPatch {
         article: Some("## Process\nCut the release branch on Monday, run the deploy script, watch the health check.".to_owned()),
         related: None,
         history_entry: Some(WikiHistoryEntry {
-            date: chrono::NaiveDate::from_ymd_opt(2026, 10, 10).expect("history date"),
+            date: jiff::civil::Date::new(2026, 10, 10).expect("history date"),
             title: "Blue-green adopted".to_owned(),
             body: "Decided to deploy blue-green.".to_owned(),
         }),
@@ -150,6 +148,7 @@ pub(crate) struct Tables {
     #[serde(rename = "ros_summaries")]
     pub(crate) summaries: Option<Vec<Summary>>,
 }
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 pub(crate) struct Summary {
     pub(crate) id: Uuid,
@@ -158,9 +157,14 @@ pub(crate) struct Summary {
     pub(crate) kind: String,
     pub(crate) depth: i32,
     pub(crate) message_count: i32,
-    pub(crate) earliest_at: DateTime<Utc>,
-    pub(crate) latest_at: DateTime<Utc>,
-    pub(crate) created_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) earliest_at: Timestamp,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) latest_at: Timestamp,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) created_at: Timestamp,
     pub(crate) model: String,
     pub(crate) pipeline_version: i32,
 }
@@ -180,7 +184,7 @@ pub(crate) async fn seed_recording(pool: &PgPool, row: &Summary) -> Result<(), s
         .bind(row.conversation_id).bind(format!("claude-code:{}", row.conversation_id)).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO rh_summaries (id, conversation_id, content, kind, depth, message_count, earliest_at, latest_at, created_at, model, pipeline_version, owner_user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, 'owner')")
         .bind(row.id).bind(row.conversation_id).bind(&row.content).bind(&row.kind).bind(row.depth).bind(row.message_count)
-        .bind(row.earliest_at).bind(row.latest_at).bind(row.created_at).bind(&row.model).bind(row.pipeline_version)
+        .bind(memory_postgres::time::PgTimestamp::from(row.earliest_at)).bind(memory_postgres::time::PgTimestamp::from(row.latest_at)).bind(memory_postgres::time::PgTimestamp::from(row.created_at)).bind(&row.model).bind(row.pipeline_version)
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())

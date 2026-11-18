@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::time::Duration;
+use values::time::TimestampFormat as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use strum::Display;
@@ -49,13 +49,13 @@ pub enum ConnectPart {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureActivity {
     pub key_prefix: String,
-    pub last_at: DateTime<Utc>,
+    pub last_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureHistory {
     Unknown,
-    Known(Option<DateTime<Utc>>),
+    Known(Option<Timestamp>),
 }
 
 impl CaptureHistory {
@@ -70,7 +70,7 @@ impl CaptureHistory {
         )
     }
 
-    fn last(self) -> Option<DateTime<Utc>> {
+    fn last(self) -> Option<Timestamp> {
         match self {
             Self::Unknown => None,
             Self::Known(last) => last,
@@ -84,10 +84,7 @@ impl CaptureHistory {
         match self {
             Self::Known(None) if capture_installed => Some("nothing captured yet".to_owned()),
             Self::Unknown | Self::Known(None) => None,
-            Self::Known(Some(at)) => Some(format!(
-                "last capture {}",
-                at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-            )),
+            Self::Known(Some(at)) => Some(format!("last capture {}", at.rfc3339_seconds())),
         }
     }
 }
@@ -112,12 +109,15 @@ pub struct RecallStatus {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStatus {
     pub method: CaptureMethod,
     pub state: CaptureState,
-    pub last_capture_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub last_capture_at: Option<Timestamp>,
     pub detail: String,
 }
 
@@ -152,11 +152,10 @@ pub struct HarnessProbe {
 
 impl HarnessProbe {
     #[must_use]
-    pub fn into_status(self, history: CaptureHistory, now: DateTime<Utc>) -> HarnessStatus {
+    pub fn into_status(self, history: CaptureHistory, now: Timestamp) -> HarnessStatus {
         let last = history.last();
         let recent = last.is_some_and(|at| {
-            now.signed_duration_since(at)
-                .to_std()
+            std::time::Duration::try_from(now.duration_since(at))
                 .is_ok_and(|age| age <= STALE_AFTER)
                 || at > now
         });

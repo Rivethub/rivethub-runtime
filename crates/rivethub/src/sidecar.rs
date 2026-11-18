@@ -1,3 +1,4 @@
+use jiff::tz::TimeZone;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -234,7 +235,7 @@ pub(crate) fn memory_future(
     config: &Config,
     memory: Arc<dyn MemoryStore>,
     plugins: Option<Arc<dyn kernel::plugins::PluginTools>>,
-    zone: chrono_tz::Tz,
+    zone: TimeZone,
     shutdown: CancellationToken,
     origin: Option<url::Url>,
 ) -> Result<impl std::future::Future<Output = Result<(), SidecarError>> + Send + use<>, SidecarError>
@@ -535,20 +536,20 @@ async fn join_task<T: Send>(
     }
 }
 
-pub(crate) fn display_zone(env: &Environment) -> chrono_tz::Tz {
+pub(crate) fn display_zone(env: &Environment) -> TimeZone {
     let configured = env
         .get("TZ")
         .and_then(std::ffi::OsStr::to_str)
         .map(|value| value.trim_start_matches(':').to_owned())
         .filter(|value| !value.is_empty());
     let Some(name) = configured.or_else(zone_from_localtime) else {
-        return chrono_tz::Tz::UTC;
+        return TimeZone::UTC;
     };
-    match name.parse::<chrono_tz::Tz>() {
+    match wire::time::bundled_zone(&name) {
         Ok(zone) => zone,
         Err(error) => {
             tracing::warn!("unknown time zone {name:?} ({error}) — MCP timestamps show UTC");
-            chrono_tz::Tz::UTC
+            TimeZone::UTC
         }
     }
 }

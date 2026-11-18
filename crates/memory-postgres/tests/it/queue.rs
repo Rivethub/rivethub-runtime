@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
@@ -182,7 +183,7 @@ async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it(pool: PgPool) -> 
         key: Some("compact-c1".to_owned()),
         key_mode: JobKeyMode::Arm,
         priority,
-        run_at: Some(chrono::Utc::now()),
+        run_at: Some(Timestamp::now()),
         max_attempts: Some(3),
     };
     let state = || {

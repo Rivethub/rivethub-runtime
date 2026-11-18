@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryStatsResponse;
 use kernel::memory::RecentSession;
 use kernel::memory::TopTool;
@@ -40,7 +39,8 @@ const CAPTURE_ACTIVITY: &str =
 #[derive(sqlx::FromRow)]
 struct ActivityRow {
     key_prefix: String,
-    last_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    last_at: Timestamp,
 }
 
 #[derive(Default, sqlx::FromRow)]
@@ -66,7 +66,8 @@ struct RecentRow {
     session_id: String,
     title: Option<String>,
     agent: String,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
     messages: i64,
 }
 

@@ -1,5 +1,8 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::path::Path;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
 use rusqlite::OptionalExtension as _;
 
@@ -10,8 +13,8 @@ const MESSAGES: u32 = 20;
 const SUMMARY_WAIT: Duration = Duration::from_mins(1);
 const POLL: Duration = Duration::from_millis(100);
 
-fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+fn stamp(at: Timestamp) -> String {
+    at.rfc3339_millis()
 }
 
 fn seed_idle_conversation(path: &Path) -> TestResult {
@@ -20,7 +23,7 @@ fn seed_idle_conversation(path: &Path) -> TestResult {
     }
     migrate::sqlite(path)?;
     let conn = rusqlite::Connection::open(path)?;
-    let started = chrono::Utc::now() - chrono::TimeDelta::hours(2);
+    let started = Timestamp::now() - SignedDuration::from_hours(2);
     conn.execute(
         "INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
          VALUES (?1, 'idle-session', 'rivet', ?2, ?2)",
@@ -36,7 +39,7 @@ fn seed_idle_conversation(path: &Path) -> TestResult {
                 CONVERSATION,
                 role,
                 format!("ledger step {index}"),
-                stamp(started + chrono::TimeDelta::seconds(i64::from(index))),
+                stamp(started + SignedDuration::from_secs(i64::from(index))),
             ),
         )?;
     }

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
@@ -15,7 +16,6 @@ use capture::share_policy::ShareRefused;
 use capture::sign::PublicKey;
 use capture::sign::TrustError;
 use capture::sign::Verification as Signing;
-use chrono::Utc;
 use cli::memory::FetchError;
 use cli::memory::Fetched;
 use cli::share_server::ServerError;
@@ -135,7 +135,7 @@ impl port::ReceiveDesk for NodeReceiver {
         if accepts_findings && !request.fresh_login {
             return Err(ReceiveError::FreshLoginRequired);
         }
-        let now = Utc::now();
+        let now = Timestamp::now();
         let receipt = fetched.receipt(now);
         let batches = received_batches(&plan, &bundle.manifest.exported_by.user, &receipt)?;
         let mut imported = Vec::with_capacity(batches.len());

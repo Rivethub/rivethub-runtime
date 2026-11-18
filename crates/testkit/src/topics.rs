@@ -1,9 +1,8 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::fmt::Debug;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 use kernel::topics::Alias;
 use kernel::topics::Change;
 use kernel::topics::HistoryMark;
@@ -52,8 +51,8 @@ pub(crate) fn same<T: PartialEq + Debug>(
 }
 
 #[must_use]
-pub fn at(minute: u32) -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH + TimeDelta::seconds(1_790_000_000 + i64::from(minute) * 60)
+pub fn at(minute: u32) -> Timestamp {
+    Timestamp::UNIX_EPOCH + SignedDuration::from_secs(1_790_000_000 + i64::from(minute) * 60)
 }
 
 pub fn session(native: &str) -> Result<SessionId, wire::session_id::SessionIdError> {
@@ -101,7 +100,7 @@ pub async fn topics_are_created_found_and_renamed(store: &dyn TopicStore) -> Out
         node: "node-a".into(),
         path: "/home/user/acmekit".into(),
     });
-    topic.created_at = at(0) + TimeDelta::nanoseconds(123_456_789);
+    topic.created_at = at(0) + SignedDuration::from_nanos(123_456_789);
     topic.updated_at = topic.created_at;
     let created = store.create(topic.clone()).await?;
     same("created", created.name.as_str(), topic.name.as_str())?;

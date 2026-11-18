@@ -1,4 +1,5 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::entities::{ChangeKind, Freshness};
@@ -31,13 +32,16 @@ pub enum Actor {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub kind: ChangeKind,
     pub subject: SubjectRef,
     pub text: String,
-    pub at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub actor: Actor,
     #[serde(default)]
     pub source: Option<SessionRef>,
@@ -50,18 +54,22 @@ pub struct TodayEntry {
     pub changes: Vec<Change>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityDay {
-    pub date: NaiveDate,
+    #[serde_as(as = "crate::time::CivilDate")]
+    pub date: Date,
     #[schemars(range(max = 4))]
     pub level: u8,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TodayDigest {
-    pub date: NaiveDate,
+    #[serde_as(as = "crate::time::CivilDate")]
+    pub date: Date,
     pub headline: String,
     pub summary: String,
     pub needs_you: Vec<ReviewItem>,

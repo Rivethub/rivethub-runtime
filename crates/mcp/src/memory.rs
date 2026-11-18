@@ -1,6 +1,7 @@
 use crate::Error;
 use crate::catalog::ToolInput as _;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use kernel::memory::{BrowseFilter, Limit, MemoryStore, SearchQuery};
 use rmcp::model::CallToolResult;
 use serde::Deserialize;
@@ -8,6 +9,7 @@ use uuid::Uuid;
 use wire::gateway::memory::{BrowseWindow, MemoryBrowseOrder, MemoryScope, SearchMode};
 use wire::message::Role;
 
+#[serde_with::serde_as]
 #[derive(schemars::JsonSchema, Debug, Deserialize)]
 #[schemars(!deny_unknown_fields)]
 #[serde(deny_unknown_fields)]
@@ -30,9 +32,11 @@ pub struct Search {
     #[schemars(description = "Only results whose conversation carries this accepted key:value tag (e.g. project:acmeapp). See memory_tags.", transform = crate::catalog::optional_non_null)]
     tag: Option<String>,
     #[schemars(description = "Only return results after this date (ISO UTC timestamp). Prefer window= for local-day bounds.", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    since: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    since: Option<Timestamp>,
     #[schemars(description = "Only return results before this date (ISO UTC timestamp). Prefer window= for local-day bounds.", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    before: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    before: Option<Timestamp>,
     #[schemars(description = "Shortcut for time-bounded filters — resolves in the SERVER local timezone. last_7d/last_14d are rolling (prefer over this_week early in the week). Used only when neither since nor before is provided.", transform = crate::catalog::optional_non_null)]
     window: Option<BrowseWindow>,
     #[schemars(description = "Auto-expand top summary hits to show source messages (default: true)", transform = crate::catalog::optional_non_null)]
@@ -55,6 +59,7 @@ impl crate::catalog::ToolInput for Search {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(schemars::JsonSchema, Debug, Deserialize)]
 #[schemars(!deny_unknown_fields)]
 #[serde(deny_unknown_fields)]
@@ -66,9 +71,11 @@ pub struct Browse {
     #[schemars(description = "Only results whose conversation carries this accepted key:value tag (e.g. project:acmeapp). See memory_tags.", transform = crate::catalog::optional_non_null)]
     tag: Option<String>,
     #[schemars(description = "Show messages after this time (ISO UTC timestamp). Bare dates are UTC midnight (= previous evening US local). Prefer window=.", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    since: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    since: Option<Timestamp>,
     #[schemars(description = "Show messages before this time (ISO UTC timestamp). Same UTC gotcha as since. Prefer window=.", with = "Option<String>", transform = crate::catalog::optional_non_null)]
-    before: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    before: Option<Timestamp>,
     #[schemars(description = "Shortcut for time-bounded windows — resolves to (since, before) in the SERVER local timezone, no TZ math required. last_7d/last_14d are rolling (prefer over this_week early in the week). Used only when neither since nor before is provided.", transform = crate::catalog::optional_non_null)]
     window: Option<BrowseWindow>,
     #[serde(default)]
@@ -168,7 +175,7 @@ pub(crate) fn limit(
 pub(crate) async fn search(
     store: &dyn MemoryStore,
     args: Search,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let scope = match args.scope {
@@ -196,7 +203,11 @@ pub(crate) async fn search(
             limit: limit(Search::NAME, args.limit, 10, 50)?,
         };
     let outcome = store
-        .search(query.clone().resolve_window(Utc::now(), &chrono::Local))
+        .search(
+            query
+                .clone()
+                .resolve_window(Timestamp::now(), &config::host_zone()),
+        )
         .await?;
     let hits = hit_context(store, &outcome).await?;
     Ok(crate::text(crate::render_search::search(
@@ -205,7 +216,7 @@ pub(crate) async fn search(
         &hits,
         expand,
         crate::render_search::Clock {
-            now: Utc::now(),
+            now: Timestamp::now(),
             zone,
         },
         pages,
@@ -280,7 +291,7 @@ async fn hit_context(
 pub(crate) async fn browse(
     store: &dyn MemoryStore,
     args: Browse,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     if args.window.is_some() && (args.since.is_some() || args.before.is_some()) {
@@ -309,7 +320,7 @@ pub(crate) async fn browse(
             order: order(args.order),
             limit: limit(Browse::NAME, args.limit, 50, 200)?,
         }
-        .resolve_window(chrono::Utc::now(), &chrono::Local);
+        .resolve_window(Timestamp::now(), &config::host_zone());
     let entries = store.browse(filter.clone()).await?;
     let sessions = if entries.is_empty() {
         std::collections::BTreeMap::new()

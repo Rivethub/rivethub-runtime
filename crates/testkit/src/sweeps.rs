@@ -1,5 +1,4 @@
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::queue::ClaimSelector;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
@@ -43,9 +42,7 @@ pub async fn the_sweeps_run_before_an_older_backlog(queue: &dyn JobQueue) -> Out
 }
 
 async fn sweeps_before_backlog(queue: &dyn JobQueue, role: WorkerRole, work: FixedJob) -> Outcome {
-    let queued = Utc::now()
-        .checked_sub_signed(TimeDelta::days(19))
-        .ok_or("the backlog time does not fit")?;
+    let queued = Timestamp::now().checked_sub(wire::time::elapsed_days(19))?;
     for index in 0..BACKLOG {
         queue
             .enqueue(Job {

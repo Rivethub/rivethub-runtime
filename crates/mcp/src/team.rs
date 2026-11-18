@@ -1,7 +1,8 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use chrono::Utc;
 use kernel::memory::{MemoryStore, Provenance, Verification};
 use rmcp::model::{CallToolResult, ToolAnnotations};
 use serde::Deserialize;
@@ -51,22 +52,22 @@ impl ToolInput for Args {
 pub(crate) async fn call(
     store: &dyn MemoryStore,
     args: Args,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let limit = crate::memory::limit(Args::NAME, args.limit, 5, 20)?;
     let window = crate::memory::window(args.window.unwrap_or(BrowseWindow::Last7d));
-    let range = kernel::memory_core::resolve_window(window, Utc::now(), &chrono::Local);
+    let range = kernel::memory_core::resolve_window(window, Timestamp::now(), &config::host_zone());
     let records = store
         .team_sessions(range.since, range.before, limit.get())
         .await?;
-    render(records, zone, Utc::now(), pages)
+    render(records, zone, Timestamp::now(), pages)
 }
 
 fn render(
     records: Vec<kernel::memory::TeamSession>,
-    zone: chrono_tz::Tz,
-    now: chrono::DateTime<Utc>,
+    zone: &TimeZone,
+    now: Timestamp,
     pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let mut grouped = BTreeMap::<String, Vec<_>>::new();
@@ -96,7 +97,7 @@ fn render(
                 "{} · {} · {}",
                 record.title,
                 crate::render_search::age(record.when, now),
-                record.when.with_timezone(&zone).format("%Y-%m-%d %H:%M %Z")
+                crate::render_memory::timestamp_minutes(record.when, zone)
             );
             if !record.topic.is_empty() {
                 write!(heading, " · {}", record.topic.join(" / "))?;

@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use uuid::Uuid;
 
 use super::Desk;
@@ -38,7 +37,7 @@ pub struct BackfillBatch<'a> {
 }
 
 impl BackfillBatch<'_> {
-    pub fn batch(&self, at: DateTime<Utc>) -> Result<Batch, TidyError> {
+    pub fn batch(&self, at: Timestamp) -> Result<Batch, TidyError> {
         let targets: HashMap<Uuid, Target> = self
             .snapshot
             .conversations
@@ -47,7 +46,7 @@ impl BackfillBatch<'_> {
                 Desk::target(conversation).map(|target| (conversation.head.id, target))
             })
             .collect();
-        let seen: HashMap<Uuid, (Option<&str>, DateTime<Utc>)> = self
+        let seen: HashMap<Uuid, (Option<&str>, Timestamp)> = self
             .snapshot
             .conversations
             .iter()
@@ -206,7 +205,7 @@ fn page_edit(page: &Folded) -> Result<Option<(TreeEdit, String)>, TidyError> {
 
 fn evidence(
     filed: &[(Target, Uuid)],
-    seen: &HashMap<Uuid, (Option<&str>, DateTime<Utc>)>,
+    seen: &HashMap<Uuid, (Option<&str>, Timestamp)>,
 ) -> Result<Evidence, TidyError> {
     Ok(Evidence {
         sessions: u64::try_from(filed.len()).map_err(|_| TidyError::Invalid {

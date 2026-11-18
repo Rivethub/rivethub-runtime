@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::recompile::{
@@ -18,7 +18,8 @@ const SUMMARIES: i64 = 400;
 #[derive(Debug, sqlx::FromRow)]
 struct SummaryRow {
     topic_id: Option<Uuid>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     content: String,
 }
 
@@ -27,7 +28,7 @@ impl WikiRecompileStore for PostgresMemory {
     async fn recompile_source(
         &self,
         slug: &WikiSlug,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Option<RecompileSource>, WikiStoreError> {
         let placed = self.recompile_home(slug).await?;
         let repository = WikiRepository::new(self.directory_of(&placed)?);
@@ -70,7 +71,7 @@ impl WikiRecompileStore for PostgresMemory {
     async fn store_recompiled(
         &self,
         recompiled: Recompiled,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<String, WikiStoreError> {
         let placed = self.recompile_home(&recompiled.page.meta.slug).await?;
         let mut repository = WikiRepository::new(self.directory_of(&placed)?)
@@ -113,7 +114,7 @@ impl PostgresMemory {
         repository: &mut LockedRepository,
         recompiled: Recompiled,
         placed: &Placed,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<String, WikiStoreError> {
         let Recompiled {
             base,

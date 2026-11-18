@@ -35,23 +35,19 @@ fn page() -> WikiPageResponse {
         see_also: Some(vec!["related-topic".into()]),
         history: vec![
             WikiHistoryEntry {
-                date: chrono::NaiveDate::from_ymd_opt(2026, 10, 1).expect("date"),
+                date: jiff::civil::Date::new(2026, 10, 1).expect("date"),
                 title: "Started".into(),
                 body: "Older history".into(),
             },
             WikiHistoryEntry {
-                date: chrono::NaiveDate::from_ymd_opt(2026, 10, 14).expect("date"),
+                date: jiff::civil::Date::new(2026, 10, 14).expect("date"),
                 title: "Ready".into(),
                 body: "Recent history".into(),
             },
         ],
         citations: vec![WikiCitation {
             summary_id: "00000000-0000-4000-8000-000000000001".into(),
-            date: Some(
-                chrono::DateTime::parse_from_rfc3339("2026-10-14T00:00:00Z")
-                    .expect("instant")
-                    .with_timezone(&chrono::Utc),
-            ),
+            date: Some(wire::time::parse_rfc3339("2026-10-14T00:00:00Z").expect("instant")),
             kind: Some("summary".into()),
             note: Some("Decision 🦀".into()),
             conversation_id: None,
@@ -65,9 +61,7 @@ fn page() -> WikiPageResponse {
         sources: vec![],
         git_sha: None,
         last_verified: None,
-        updated_at: chrono::DateTime::parse_from_rfc3339("2026-10-14T00:00:00Z")
-            .expect("instant")
-            .with_timezone(&chrono::Utc),
+        updated_at: wire::time::parse_rfc3339("2026-10-14T00:00:00Z").expect("instant"),
         related: None,
         topic_id: None,
     }

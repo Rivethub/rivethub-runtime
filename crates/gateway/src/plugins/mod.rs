@@ -20,13 +20,13 @@ pub(crate) use api::PluginCaller;
 pub(crate) use tools::tool_error;
 pub(crate) use views::check as check_view;
 
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq as _;
@@ -97,7 +97,7 @@ struct Live {
     error: Option<String>,
     last_exit: Option<PluginExit>,
     restarts: u32,
-    started_at: Option<DateTime<Utc>>,
+    started_at: Option<Timestamp>,
     token: Option<[u8; 32]>,
     client: Option<reqwest::Client>,
     supervisor: Option<Supervisor>,
@@ -373,7 +373,7 @@ impl PluginHost {
             entry.live.state = PluginState::Running;
             entry.live.error = None;
             entry.live.client = Some(client);
-            entry.live.started_at = Some(Utc::now());
+            entry.live.started_at = Some(Timestamp::now());
         });
         self.log(plugin, PluginLogStream::Host, "ready".to_owned());
         self.changed(plugin);

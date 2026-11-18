@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::NewSummary;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummarySource;
@@ -218,7 +217,9 @@ async fn a_tool_row_shows_its_clipped_input_and_result(pool: PgPool) -> TestResu
     .bind(conversation)
     .bind(&command)
     .bind(&output)
-    .bind(at("2026-10-10T12:01:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at(
+        "2026-10-10T12:01:00Z",
+    )))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -388,11 +389,11 @@ fn titled_leaf(conversation: Uuid, content: &str) -> NewSummary {
         depth: SummaryKind::Leaf.depth(),
         content: content.to_owned(),
         message_count: 0,
-        earliest_at: Utc::now(),
-        latest_at: Utc::now(),
+        earliest_at: Timestamp::now(),
+        latest_at: Timestamp::now(),
         model: "fake-chat".to_owned(),
         pipeline_version: 5,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         sources: Vec::new(),
         child_ids: Vec::new(),
     }
@@ -437,7 +438,7 @@ async fn seed_message(
     pool: &PgPool,
     conversation: Uuid,
     content: &str,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = deferred(pool).await?;
     let id = sqlx::query_scalar(
@@ -446,7 +447,7 @@ async fn seed_message(
     )
     .bind(conversation)
     .bind(content)
-    .bind(created_at)
+    .bind(memory_postgres::time::PgTimestamp::from(created_at))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -476,8 +477,6 @@ async fn deferred(
     Ok(tx)
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .expect("timestamp")
-        .with_timezone(&Utc)
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).expect("timestamp")
 }

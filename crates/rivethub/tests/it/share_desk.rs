@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -9,8 +11,6 @@ use std::sync::atomic::Ordering;
 
 use axum::http::StatusCode;
 use axum::response::IntoResponse as _;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::share::Decision;
 use kernel::memory::share::SessionChoices;
 use kernel::memory::share::desk::DeskError;
@@ -391,7 +391,7 @@ async fn debug_never_shows_text_or_code() -> TestResult {
     }
     let sent = kernel::memory::share::desk::Sent {
         code: "rh1:127.0.0.1:9/Qm9iQm9iQm9iQm9iQm9iQg#secretkeypart".to_owned(),
-        expires_at: Utc::now(),
+        expires_at: Timestamp::now(),
         bytes: 1,
         signed: None,
     };
@@ -439,11 +439,11 @@ async fn a_failing_decision_model_never_echoes_into_the_error() -> TestResult {
 async fn drafts_are_capped_and_expire_when_idle() -> TestResult {
     let dana = Node::new("dana", "http://127.0.0.1:9", &sessions()).await?;
     let (alpha, _, _) = chosen(&dana)?;
-    let start: DateTime<Utc> = "2026-11-11T12:00:00Z".parse()?;
+    let start: Timestamp = "2026-11-11T12:00:00Z".parse()?;
     let minutes = Arc::new(AtomicI64::new(0));
     let clock = {
         let minutes = Arc::clone(&minutes);
-        Arc::new(move || start + chrono::TimeDelta::minutes(minutes.load(Ordering::SeqCst)))
+        Arc::new(move || start + SignedDuration::from_mins(minutes.load(Ordering::SeqCst)))
     };
     let desk = desk(&dana, false)?.with_clock(clock);
 
@@ -457,7 +457,7 @@ async fn drafts_are_capped_and_expire_when_idle() -> TestResult {
     minutes.store(29, Ordering::SeqCst);
     let kept = *held.first().ok_or("a draft")?;
     let touched = desk.report(kept).await?;
-    assert_eq!(touched.expires_at, start + chrono::TimeDelta::minutes(59));
+    assert_eq!(touched.expires_at, start + SignedDuration::from_mins(59));
     minutes.store(31, Ordering::SeqCst);
     desk.sweep();
     for id in held.iter().skip(1) {

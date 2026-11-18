@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
@@ -8,8 +9,6 @@ use capture::redaction::Redaction;
 use capture::spool::CaptureSpool;
 use capture::writer::CaptureWriter;
 use capture::writer::HttpCaptureTransport;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Config;
 use config::Environment;
 use config::RedactionSettings;
@@ -142,7 +141,7 @@ async fn post_recorded_batches(
     let client = reqwest::Client::builder()
         .default_headers(crate::owner::headers(&gateway::state_dir(env)?)?)
         .build()?;
-    let now: DateTime<Utc> = NOW.parse()?;
+    let now: Timestamp = NOW.parse()?;
     let mut expected = Vec::new();
     for (name, chunk_bytes) in WRITER_CASES {
         let input = std::fs::read_to_string(recording(name).with_extension("input.json"))?;

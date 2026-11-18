@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::fmt;
 use std::fmt::Write as _;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -90,8 +89,8 @@ impl FromStr for LoginId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindQuery {
     pub query: String,
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
+    pub before: Option<Timestamp>,
     pub agent: Option<String>,
     pub tag: Option<String>,
     pub limit: Option<u32>,
@@ -108,8 +107,8 @@ pub struct FoundSession {
     pub id: Uuid,
     pub title: Option<String>,
     pub agent: String,
-    pub first: DateTime<Utc>,
-    pub last: DateTime<Utc>,
+    pub first: Timestamp,
+    pub last: Timestamp,
     pub messages: u64,
     pub best: f64,
     pub hits: usize,
@@ -128,7 +127,7 @@ pub struct DraftRequest {
 #[derive(Clone, PartialEq)]
 pub struct Draft {
     pub id: DraftId,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub totals: DraftTotals,
     pub rules: Vec<RuleCount>,
     pub sessions: Vec<DraftSession>,
@@ -351,7 +350,7 @@ pub struct SendConfirm {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Sent {
     pub code: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub bytes: u64,
     pub signed: Option<String>,
 }
@@ -444,7 +443,7 @@ pub enum LoginStep {
         user_code: String,
         verification_uri_complete: String,
         interval: u64,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     },
     Pending {
         interval: u64,

@@ -1,5 +1,4 @@
-use chrono::Duration;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use sqlx::QueryBuilder;
 use sqlx::types::Json;
@@ -68,21 +67,25 @@ impl crate::PostgresMemory {
             return Ok(None);
         }
         let newest = newest_column(is_message);
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut candidates: Vec<Uuid> = Vec::with_capacity(RANK_CAP);
         let mut upper = None;
         let bounds = SLICE_DAYS
             .iter()
-            .map(|days| Some(now - Duration::days(*days)))
+            .map(|days| Some(now - wire::time::elapsed_days(*days)))
             .chain(std::iter::once(None));
         for lower in bounds {
             let mut slice = QueryBuilder::new(format!("SELECT {alias}.id FROM {from}"));
             push_fts_where(&mut slice, context, is_message, long);
             if let Some(upper) = upper {
-                slice.push(format!(" AND {newest} < ")).push_bind(upper);
+                slice
+                    .push(format!(" AND {newest} < "))
+                    .push_bind(crate::time::BindTime::bind_time(upper));
             }
             if let Some(lower) = lower {
-                slice.push(format!(" AND {newest} >= ")).push_bind(lower);
+                slice
+                    .push(format!(" AND {newest} >= "))
+                    .push_bind(crate::time::BindTime::bind_time(lower));
             }
             slice.push(format!(
                 " ORDER BY {newest} DESC LIMIT {}",

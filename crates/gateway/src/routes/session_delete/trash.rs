@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use chrono::{DateTime, Utc};
 use kernel::memory::{
     EMPTY_SESSIONS_MAX, SessionActivity, Speaker, SpokenTurn, TrashReason, TrashSignals,
     trash_verdict,
@@ -27,11 +27,11 @@ const TRANSCRIPT_READS: usize = 32;
 struct Considered {
     row: StoreSession,
     session: SessionId,
-    updated_at: DateTime<Utc>,
+    updated_at: Timestamp,
 }
 
-fn considered(row: StoreSession, now: DateTime<Utc>) -> Option<Considered> {
-    let updated_at = DateTime::from_timestamp_millis(row.updated_at)?;
+fn considered(row: StoreSession, now: Timestamp) -> Option<Considered> {
+    let updated_at = super::super::history::history_stamp(row.updated_at)?;
     let settled = row.updated_at > 0 && row.parent_session_id.is_none() && now >= updated_at;
     settled.then(|| Considered {
         session: SessionId::new(row.harness, &row.id),
@@ -82,7 +82,7 @@ pub(super) async fn trash(
 ) -> Result<Json<SessionTrashList>, ApiError> {
     let deletions = deletions(&gateway)?;
     let roster = crate::history::registered();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (mut rows, empty) = tokio::join!(
         listed(&gateway, &roster),
         deletions.empty_sessions(EMPTY_SESSIONS_MAX)
@@ -137,7 +137,7 @@ pub(super) async fn keep(
     let key = crate::session_address::resolve(&gateway, &segment).await?;
     ensure_owned(&gateway, &user, &key).await?;
     deletions(&gateway)?
-        .keep_session(key.as_str(), Some(user.as_str()), Utc::now())
+        .keep_session(key.as_str(), Some(user.as_str()), Timestamp::now())
         .await?;
     tracing::info!(session = %key, "session kept out of the trash review");
     Ok(StatusCode::NO_CONTENT)
@@ -169,7 +169,7 @@ async fn judged(
     gateway: &Gateway,
     row: Considered,
     memory: SessionActivity,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Option<SessionTrashCandidate> {
     let read = gateway
         .history()

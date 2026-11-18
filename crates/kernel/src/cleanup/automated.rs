@@ -131,10 +131,10 @@ fn names_work(conversation: &SnapshotConversation, project_keys: &BTreeSet<Strin
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
 
     use super::*;
     use crate::cleanup::SnapshotHead;
+    use jiff::Timestamp;
 
     fn conversation(opening: &str, user_turns: u32) -> SnapshotConversation {
         SnapshotConversation {
@@ -147,7 +147,7 @@ mod tests {
             },
             cwd: None,
             summary: None,
-            last_active: Utc::now(),
+            last_active: Timestamp::now(),
             task_parent: None,
             task_origin: None,
             opening: Some(opening.to_owned()),

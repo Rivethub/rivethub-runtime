@@ -1,10 +1,11 @@
 #![cfg(test)]
 use crate::common;
+use jiff::Timestamp;
+use jiff::civil::Date;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
 use common::answer;
 use gateway::Gateway;
 use kernel::changes::{
@@ -25,7 +26,7 @@ const NAS: &str = "00000000-0000-4000-8000-0000000000a2";
 const SESSION: &str = "claude-code:00000000-0000-4000-8000-0000000000c1";
 const OTHER: &str = "claude-code:00000000-0000-4000-8000-0000000000c2";
 
-fn at(text: &str) -> DateTime<Utc> {
+fn at(text: &str) -> Timestamp {
     text.parse().unwrap()
 }
 
@@ -58,11 +59,7 @@ struct Digests {
 
 #[async_trait]
 impl DigestStore for Digests {
-    async fn digest(
-        &self,
-        day: NaiveDate,
-        owner: &Owner,
-    ) -> Result<Option<DailyDigest>, ChangeError> {
+    async fn digest(&self, day: Date, owner: &Owner) -> Result<Option<DailyDigest>, ChangeError> {
         Ok(self
             .kept
             .lock()
@@ -171,7 +168,7 @@ async fn today(app: axum::Router, date: &str) -> TodayDigest {
 async fn today_is_the_days_sessions_with_the_changes_they_caused() {
     let digests = Arc::new(Digests::default());
     let digest = today(app(digests.clone()), "2026-09-21").await;
-    assert_eq!(digest.date, "2026-09-21".parse::<NaiveDate>().unwrap());
+    assert_eq!(digest.date, "2026-09-21".parse::<Date>().unwrap());
     assert_eq!(
         digest.headline,
         "Your agents learned 2 things on Monday, September 21"
@@ -210,7 +207,7 @@ async fn today_is_the_days_sessions_with_the_changes_they_caused() {
         digest
             .activity_by_day
             .iter()
-            .find(|entry| entry.date == day.parse::<NaiveDate>().unwrap())
+            .find(|entry| entry.date == day.parse::<Date>().unwrap())
             .map(|entry| entry.level)
     };
     assert_eq!(level("2026-09-21"), Some(4));

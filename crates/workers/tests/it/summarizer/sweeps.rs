@@ -196,7 +196,7 @@ async fn a_first_leaf_enqueues_filing() {
 async fn recent_conversations_rank_behind_the_sweeps_and_ahead_of_old_backlog() {
     let now = at("2026-10-30T18:00:00Z");
     let ago = |hours: i64| {
-        now.checked_sub_signed(Duration::hours(hours))
+        now.checked_sub(jiff::SignedDuration::from_hours(hours))
             .expect("message time")
     };
     let [recent_idle, recent_stale, old_idle, old_stale] = [1, 2, 3, 4].map(conversation_id);

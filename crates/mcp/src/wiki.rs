@@ -11,6 +11,7 @@ use rmcp::model::{CallToolResult, ToolAnnotations};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::collections::HashSet;
+use wire::time::LegacyStrftime as _;
 
 const FULL_PAGE_REFUSED: &str = "wiki page exceeds 24,000 characters; choose a section";
 
@@ -105,7 +106,7 @@ pub(crate) async fn search(
                     "## {} ({}) — verified {}\n{link}{banner}{}",
                     topic.title,
                     topic.slug,
-                    topic.updated_at.format("%Y-%m-%d"),
+                    topic.updated_at.legacy_strftime("%Y-%m-%d"),
                     topic.excerpt
                 )
             })

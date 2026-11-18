@@ -8,8 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde_with.workspace = true
 async-trait = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 config = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
