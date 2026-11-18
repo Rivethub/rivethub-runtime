@@ -1,6 +1,7 @@
 pub(crate) mod archive;
 mod history;
 mod lock;
+pub(crate) mod references;
 
 use std::path::{Component, Path, PathBuf};
 
@@ -19,6 +20,7 @@ use lock::WriterLock;
 #[derive(Debug, Clone)]
 pub struct WikiRepository {
     root: PathBuf,
+    sql_references: bool,
 }
 
 #[derive(Debug)]
@@ -29,12 +31,22 @@ pub struct AppliedPage {
 
 impl WikiRepository {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            sql_references: false,
+        }
+    }
+
+    pub(crate) fn for_store(root: PathBuf) -> Self {
+        Self {
+            root,
+            sql_references: true,
+        }
     }
 
     pub async fn read_unlocked(&self, slug: &WikiSlug) -> Result<Option<WikiPage>, WikiWriteError> {
         let root = tokio::fs::canonicalize(&self.root).await?;
-        read_page(&root, slug).await
+        read_page(&root, slug, self.sql_references).await
     }
 
     pub async fn history_since(
@@ -49,13 +61,18 @@ impl WikiRepository {
     pub async fn lock(&self) -> Result<LockedRepository, WikiWriteError> {
         let root = prepare_root(&self.root).await?;
         let lock = WriterLock::acquire(&root).await?;
-        Ok(LockedRepository { root, lock })
+        Ok(LockedRepository {
+            root,
+            lock,
+            sql_references: self.sql_references,
+        })
     }
 }
 
 #[derive(Debug)]
 pub struct LockedRepository {
     root: PathBuf,
+    sql_references: bool,
     lock: WriterLock,
 }
 
@@ -66,13 +83,13 @@ impl LockedRepository {
         provenance: &str,
         merge: Option<&MergeBase>,
     ) -> Result<AppliedPage, WikiWriteError> {
-        apply_locked(&self.root, patch, provenance, merge).await
+        apply_locked(&self.root, patch, provenance, merge, self.sql_references).await
     }
 
     pub async fn read(&self, slug: &str) -> Result<Option<WikiPage>, WikiWriteError> {
         let slug = WikiSlug::try_from(normalize_slug(slug))?;
         ensure_repo(&self.root).await?;
-        read_page(&self.root, &slug).await
+        read_page(&self.root, &slug, self.sql_references).await
     }
 
     pub async fn fold(
@@ -82,7 +99,16 @@ impl LockedRepository {
         message: &str,
         now: DateTime<Utc>,
     ) -> Result<String, WikiWriteError> {
-        fold_locked(&self.root, page, removed, message, now).await
+        fold_archived(
+            &self.root,
+            page,
+            removed,
+            message,
+            now,
+            Vec::new(),
+            self.sql_references,
+        )
+        .await
     }
 
     pub async fn recompile(
@@ -92,7 +118,16 @@ impl LockedRepository {
         message: &str,
         now: DateTime<Utc>,
     ) -> Result<String, WikiWriteError> {
-        fold_archived(&self.root, page, &[], message, now, archived).await
+        fold_archived(
+            &self.root,
+            page,
+            &[],
+            message,
+            now,
+            archived,
+            self.sql_references,
+        )
+        .await
     }
 
     pub async fn remove(
@@ -169,10 +204,11 @@ async fn apply_locked(
     mut patch: PagePatch,
     provenance: &str,
     merge: Option<&MergeBase>,
+    sql_references: bool,
 ) -> Result<AppliedPage, WikiWriteError> {
     let slug = WikiSlug::try_from(normalize_slug(&patch.slug))?;
     sync(root).await?;
-    let previous = read_page(root, &slug).await?;
+    let previous = read_page(root, &slug, sql_references).await?;
     if let (Some(base), Some(current)) = (merge, previous.as_ref()) {
         patch.current_state = patch
             .current_state
@@ -202,16 +238,6 @@ async fn apply_locked(
     Ok(AppliedPage { page, git_sha })
 }
 
-async fn fold_locked(
-    root: &Path,
-    page: &mut WikiPage,
-    removed: &[String],
-    message: &str,
-    now: DateTime<Utc>,
-) -> Result<String, WikiWriteError> {
-    fold_archived(root, page, removed, message, now, Vec::new()).await
-}
-
 async fn fold_archived(
     root: &Path,
     page: &mut WikiPage,
@@ -219,9 +245,10 @@ async fn fold_archived(
     message: &str,
     now: DateTime<Utc>,
     extra: Vec<Archived>,
+    sql_references: bool,
 ) -> Result<String, WikiWriteError> {
     sync(root).await?;
-    let previous = read_page(root, &page.meta.slug).await?;
+    let previous = read_page(root, &page.meta.slug, sql_references).await?;
     let archived = archive::bound(root, previous.as_ref(), page, now, extra).await?;
     let mut paths = vec![store_page(root, page).await?];
     paths.extend(archived);
@@ -291,7 +318,11 @@ pub(super) fn topic_path(slug: &WikiSlug) -> String {
     format!("topics/{}.md", slug.as_ref())
 }
 
-async fn read_page(root: &Path, slug: &WikiSlug) -> Result<Option<WikiPage>, WikiWriteError> {
+async fn read_page(
+    root: &Path,
+    slug: &WikiSlug,
+    sql_references: bool,
+) -> Result<Option<WikiPage>, WikiWriteError> {
     let destination = root.join(topic_path(slug));
     reject_symlink(&destination).await?;
     match tokio::fs::canonicalize(&destination).await {
@@ -300,7 +331,10 @@ async fn read_page(root: &Path, slug: &WikiSlug) -> Result<Option<WikiPage>, Wik
                 return Err(WikiWriteError::Containment(canonical));
             }
             let markdown = tokio::fs::read_to_string(canonical).await?;
-            let page = parse_wiki_page(&markdown)?;
+            let mut page = parse_wiki_page(&markdown)?;
+            if sql_references {
+                references::clear(&mut page);
+            }
             if page.meta.slug != *slug {
                 return Err(WikiWriteError::SlugMismatch);
             }

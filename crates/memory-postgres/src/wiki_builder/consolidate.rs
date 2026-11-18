@@ -63,7 +63,7 @@ impl WikiConsolidateStore for PostgresMemory {
             .as_ref()
             .ok_or(WikiStoreError::DirectoryMissing)?;
         let (folded, released) = {
-            let mut repository = WikiRepository::new(directory.clone()).lock().await?;
+            let mut repository = WikiRepository::for_store(directory.clone()).lock().await?;
             let folded = self.fold_pages(&mut repository, fold, now).await;
             (folded, repository.release().await)
         };

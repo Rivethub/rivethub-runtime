@@ -497,3 +497,129 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
     assert_eq!(found, [(id(2), id(21)), (id(3), id(22))]);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPool) -> TestResult {
+    use kernel::memory::MemoryStore;
+    use kernel::wiki::WikiLookup;
+    use kernel::wiki::page::{
+        PageCitation, PageSource, WikiPage, WikiSlug, WikiSourceKind, parse_wiki_page,
+    };
+    use kernel::wiki::recompile::WikiRecompileStore;
+    use memory_postgres::wiki_writer::WikiRepository;
+
+    seed(&pool).await?;
+    let before = checksum(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_provenance (topic_slug, source_kind, source_id, owner_user_id)
+         SELECT topic_slug, 'summary', summary_id, owner_user_id FROM rh_wiki_citations",
+    )
+    .execute(&pool)
+    .await?;
+
+    let directory = tempfile::tempdir()?;
+    let slug = WikiSlug::try_from("valve".to_owned())?;
+    let mut page = WikiPage::empty(slug.clone(), "Valve".to_owned());
+    page.current_state = "The spare sits on the shelf.".to_owned();
+    for summary in [id(10), id(12)] {
+        page.citations.push(PageCitation {
+            summary_id: summary.to_string(),
+            date: None,
+            kind: None,
+            note: None,
+        });
+        page.meta.sources.push(PageSource {
+            kind: WikiSourceKind::Summary,
+            ids: vec![summary.to_string()],
+            conversation_id: Some(id(1).to_string()),
+            extra: Default::default(),
+        });
+    }
+    let mut repository = WikiRepository::new(directory.path().to_path_buf())
+        .lock()
+        .await?;
+    repository
+        .fold(&mut page, &[], "Invented wiki page", Utc::now())
+        .await?;
+    repository.release().await?;
+    let page_path = directory.path().join("topics/valve.md");
+    let cached = tokio::fs::read_to_string(&page_path).await?;
+    assert!(cached.contains(&id(10).to_string()));
+    let archive = directory.path().join("archive/valve");
+    tokio::fs::create_dir_all(&archive).await?;
+    let archival_file = archive.join("2024-01.1.md");
+    tokio::fs::write(&archival_file, &cached).await?;
+
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    // A failure at commit is the last point at which the reference rewrite can
+    // roll back. The Git cache remains readable against either SQL snapshot.
+    sqlx::raw_sql(
+        "CREATE FUNCTION refuse_swap() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'interrupted publication'; END $$;
+         CREATE CONSTRAINT TRIGGER refuse_swap AFTER DELETE ON rh_summaries
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION refuse_swap()",
+    )
+    .execute(&pool)
+    .await?;
+    let prepared = tree(&[10, 11, 12], 20, &[2], true);
+    Scope::Maintenance
+        .run(async {
+            assert!(store.replace_summary_tree(&prepared).await.is_err());
+            let WikiLookup::Page(first) = store.wiki_page(&slug).await? else {
+                return Err("missing wiki page".into());
+            };
+            assert!(first.markdown.contains(&id(10).to_string()));
+
+            sqlx::query("DROP TRIGGER refuse_swap ON rh_summaries")
+                .execute(&pool)
+                .await?;
+            store.replace_summary_tree(&prepared).await?;
+            let WikiLookup::Page(second) = store.wiki_page(&slug).await? else {
+                return Err("missing wiki page".into());
+            };
+            let projected = parse_wiki_page(&second.markdown)?;
+            assert_eq!(
+                projected
+                    .citations
+                    .iter()
+                    .map(|c| c.summary_id.as_str())
+                    .collect::<Vec<_>>(),
+                [id(20).to_string()]
+            );
+            assert_eq!(
+                projected.meta.sources.first().ok_or("source")?.ids,
+                [id(20).to_string()]
+            );
+            assert_eq!(projected.current_state, "The spare sits on the shelf.");
+            let archive = store
+                .wiki_archive(&slug, Some("2024-01"))
+                .await?
+                .ok_or("archive")?;
+            let archived = parse_wiki_page(&archive)?;
+            assert!(archived.citations.is_empty());
+            assert!(archived.meta.sources.is_empty());
+            assert_eq!(archived.current_state, projected.current_state);
+            let recompile = store
+                .recompile_source(&slug, Utc::now())
+                .await?
+                .ok_or("recompile")?;
+            assert!(recompile.page.citations.is_empty());
+            assert!(recompile.page.meta.sources.is_empty());
+            assert_eq!(
+                recompile
+                    .summaries
+                    .first()
+                    .and_then(|s| s.input.as_ref())
+                    .map(|s| s.id),
+                Some(id(20))
+            );
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+        .await?;
+    assert_eq!(tokio::fs::read_to_string(page_path).await?, cached);
+    assert_eq!(tokio::fs::read_to_string(archival_file).await?, cached);
+    assert_eq!(checksum(&pool).await?, before);
+    Ok(())
+}

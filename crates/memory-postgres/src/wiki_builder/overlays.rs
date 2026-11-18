@@ -102,7 +102,7 @@ impl PostgresMemory {
             .as_ref()
             .map_or(String::new(), |scope| scope.directory.clone());
         let found = {
-            let repository = WikiRepository::new(self.wiki_home(&directory)?)
+            let repository = WikiRepository::for_store(self.wiki_home(&directory)?)
                 .lock()
                 .await?;
             let read = repository

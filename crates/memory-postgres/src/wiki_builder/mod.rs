@@ -121,7 +121,7 @@ impl WikiBuilderStore for PostgresMemory {
         };
         let directory = self.wiki_home(&home.directory)?;
         let (applied, released) = {
-            let mut repository = crate::wiki_writer::WikiRepository::new(directory)
+            let mut repository = crate::wiki_writer::WikiRepository::for_store(directory)
                 .lock()
                 .await?;
             let applied = self

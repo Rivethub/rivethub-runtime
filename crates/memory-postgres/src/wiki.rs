@@ -12,13 +12,14 @@ use kernel::wiki::page::WikiSlug;
 use kernel::wiki::page::archive::{
     ARCHIVE_DIRECTORY, archive_directory, legacy_archive_path, parse_archive_month,
 };
-use sqlx::Postgres;
 use sqlx::QueryBuilder;
+use sqlx::{PgConnection, Postgres};
 use uuid::Uuid;
 
 use crate::Error;
 use crate::PostgresMemory;
 use crate::wiki_writer::archive::archive_parts;
+use crate::wiki_writer::references;
 
 #[derive(Debug, sqlx::FromRow)]
 struct TopicRow {
@@ -100,23 +101,33 @@ impl PostgresMemory {
     }
 
     pub(crate) async fn read_wiki_page(&self, slug: &WikiSlug) -> Result<WikiLookup, Error> {
+        let mut tx = self.pool.begin().await.map_err(Error::Connection)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| Error::operation("wiki read snapshot", source))?;
         let row = sqlx::query!(
             "SELECT slug, title, aliases, tags, entities, current_state, article, related,
                     git_sha, last_verified_at, updated_at, topic_id
              FROM rh_wiki_topics WHERE slug = $1",
             slug.as_ref()
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|source| Error::operation("wiki page", source))?;
         let Some(row) = row else {
+            tx.commit().await.map_err(Error::Connection)?;
             return self.wiki_redirect(slug).await;
         };
-        let (citations, sources) =
-            tokio::try_join!(self.read_citations(&row.slug), self.wiki_sources(&row.slug))?;
+        let citations = Self::read_citations(&mut tx, &row.slug).await?;
+        let sources = Self::wiki_sources(&mut tx, &row.slug).await?;
         let markdown = if let Some(directory) = &self.wiki_directory {
-            let home = self.markdown_home(slug).await?;
-            read_markdown(&directory.join(&home.directory), &home.local).await?
+            let home = crate::wiki_scope::page_home(&mut tx, slug.as_ref())
+                .await
+                .map_err(Error::WikiScope)?;
+            let markdown = read_markdown(&directory.join(&home.directory), &home.local).await?;
+            references::project(markdown, &citations, &sources)
+                .map_err(|source| Error::stored("wiki page", source))?
         } else if row.article.is_empty() {
             format!("# {}\n\n{}\n", row.title, row.current_state)
         } else {
@@ -125,6 +136,7 @@ impl PostgresMemory {
                 row.title, row.current_state, row.article
             )
         };
+        tx.commit().await.map_err(Error::Connection)?;
         Ok(WikiLookup::Page(Box::new(WikiPageResponse {
             slug: row.slug,
             title: row.title,
@@ -183,13 +195,13 @@ impl PostgresMemory {
         })
     }
 
-    async fn wiki_sources(&self, slug: &str) -> Result<Vec<WikiSource>, Error> {
+    async fn wiki_sources(conn: &mut PgConnection, slug: &str) -> Result<Vec<WikiSource>, Error> {
         let rows = sqlx::query!(
             "SELECT source_kind, source_id, conversation_id FROM rh_wiki_provenance
              WHERE topic_slug = $1 ORDER BY source_kind, source_id",
             slug
         )
-        .fetch_all(&self.pool)
+        .fetch_all(conn)
         .await
         .map_err(|source| Error::operation("wiki sources", source))?;
         rows.into_iter()
@@ -300,6 +312,8 @@ impl PostgresMemory {
             let text = tokio::fs::read_to_string(path)
                 .await
                 .map_err(Error::WikiIo)?;
+            let text = references::project(text, &[], &[])
+                .map_err(|source| Error::stored("wiki archive", source))?;
             found.get_or_insert_with(String::new).push_str(&text);
         }
         Ok(found)

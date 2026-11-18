@@ -29,7 +29,7 @@ impl WikiRecompileStore for PostgresMemory {
         since: DateTime<Utc>,
     ) -> Result<Option<RecompileSource>, WikiStoreError> {
         let placed = self.recompile_home(slug).await?;
-        let repository = WikiRepository::new(self.directory_of(&placed)?);
+        let repository = WikiRepository::for_store(self.directory_of(&placed)?);
         let local = WikiSlug::try_from(placed.local.clone())
             .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
         let Some(mut page) = repository.read_unlocked(&local).await? else {
@@ -84,7 +84,7 @@ impl WikiRecompileStore for PostgresMemory {
         now: DateTime<Utc>,
     ) -> Result<String, WikiStoreError> {
         let placed = self.recompile_home(&recompiled.page.meta.slug).await?;
-        let mut repository = WikiRepository::new(self.directory_of(&placed)?)
+        let mut repository = WikiRepository::for_store(self.directory_of(&placed)?)
             .lock()
             .await?;
         let stored = self
