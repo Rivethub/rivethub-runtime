@@ -189,6 +189,9 @@ impl<'a> CaptureWriter<'a> {
     }
 
     pub async fn insert_message(&mut self, row: &MessageRow<'_>) -> Result<Uuid, Error> {
+        if row.created_at.is_none() {
+            advance_placement(self.undated_from, row.batch_index, "message insert")?;
+        }
         let tool_args = row.tool_args.map(sqlx::types::Json);
         let metadata = sqlx::types::Json(row.metadata);
         let record = sqlx::query!(
@@ -249,7 +252,7 @@ impl<'a> CaptureWriter<'a> {
         loop {
             latest.extend(self.latest_by_millisecond(conversation_id, &wanted).await?);
             asked.extend(wanted);
-            let placed = untie(&times, latest.clone());
+            let placed = untie(&times, latest.clone())?;
             wanted = milliseconds(&placed)
                 .into_iter()
                 .filter(|millisecond| !asked.contains(millisecond))
@@ -358,8 +361,7 @@ fn milliseconds(times: &[Option<Timestamp>]) -> Vec<Timestamp> {
 fn untie(
     times: &[Option<Timestamp>],
     mut latest: BTreeMap<Timestamp, Timestamp>,
-) -> Vec<Option<Timestamp>> {
-    let tick = SignedDuration::from_micros(1);
+) -> Result<Vec<Option<Timestamp>>, Error> {
     times
         .iter()
         .map(|time| {
@@ -369,14 +371,24 @@ fn untie(
                     .get(&millisecond(placed))
                     .filter(|&&stored| placed <= stored)
                 {
-                    placed = stored + tick;
+                    placed = advance_placement(stored, 1, "message time placement")?;
                 }
                 latest.insert(millisecond(at), placed);
                 latest.insert(millisecond(placed), placed);
-                placed
+                Ok(placed)
             })
+            .transpose()
         })
         .collect()
+}
+
+fn advance_placement(
+    at: Timestamp,
+    micros: i64,
+    operation: &'static str,
+) -> Result<Timestamp, Error> {
+    at.checked_add(SignedDuration::from_micros(micros))
+        .map_err(|source| Error::operation(operation, sqlx::Error::Encode(Box::new(source))))
 }
 
 fn millisecond(at: Timestamp) -> Timestamp {

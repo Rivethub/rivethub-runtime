@@ -69,6 +69,65 @@ async fn captured(
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capture_rejects_placement_past_the_timestamp_ceiling(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let owner = CaptureOptions::owned_by(&Owner::new("dana".to_owned())?);
+    let last = at("9999-12-30T22:00:00.999999Z")?;
+    let first = at("9999-12-30T22:00:00.999998Z")?;
+    let tied = batch(
+        "claude-code:tied-ceiling",
+        vec![said("one", "one", last), said("two", "two", last)],
+    );
+    assert!(matches!(
+        store.capture_batch(&tied, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "message time placement",
+            ..
+        })
+    ));
+    let key = "claude-code:undated-ceiling";
+    let id = captured(
+        &store,
+        "dana",
+        &batch(key, vec![said("seed", "seed", first)]),
+    )
+    .await?;
+    let undated = |event_id| CaptureMessage {
+        created_at: None,
+        ..said(event_id, event_id, first)
+    };
+    let overflow = batch(key, vec![undated("one"), undated("two")]);
+    assert!(matches!(
+        store.capture_batch(&overflow, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "message insert",
+            ..
+        })
+    ));
+    let count: i64 =
+        sqlx::query_scalar("select count(*) from rh_messages where conversation_id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(count, 1);
+    let _last = captured(
+        &store,
+        "dana",
+        &batch(key, vec![said("last", "last", last)]),
+    )
+    .await?;
+    let beyond = batch(key, vec![undated("beyond")]);
+    assert!(matches!(
+        store.capture_batch(&beyond, &owner).await,
+        Err(memory_postgres::error::Error::Operation {
+            operation: "capture start time",
+            ..
+        })
+    ));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn export_selects_only_named_sessions_in_message_order(pool: PgPool) -> TestResult {
     let store = PostgresMemory::new(pool.clone());
     let mut tool = said("evt-tool", "[tool call] Read", at("2026-10-14T09:05:00Z")?);
