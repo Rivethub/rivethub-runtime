@@ -214,7 +214,7 @@ async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree
     let source_pool = source_database(&pool).await?;
     let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
     let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
-    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
     let cancel = CancellationToken::new();
     source.import_memory_dump(&fixture, false, &cancel).await?;
     capture(&family, "alice", &[("cli:top-down", 1)]).await?;

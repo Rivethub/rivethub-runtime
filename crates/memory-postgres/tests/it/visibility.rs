@@ -1499,7 +1499,9 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     let writer = |session: &str| -> Result<Said, Box<dyn std::error::Error>> {
         Ok(Said::Writer {
             session: SessionId::try_from(session.to_owned())?,
-            summary: summaries[session],
+            summary: *summaries
+                .get(session)
+                .ok_or("missing summary for session")?,
             evidence: None,
             settled: false,
         })
@@ -1900,7 +1902,7 @@ async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -
 async fn top_down_archive_scopes_passages_and_private_tables(pool: PgPool) -> TestResult {
     let probe = probe(&pool).await?;
     let store = PostgresMemory::new(probe.clone());
-    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
     Scope::Maintenance
         .run(store.import_memory_dump(&fixture, false, &tokio_util::sync::CancellationToken::new()))
         .await?;

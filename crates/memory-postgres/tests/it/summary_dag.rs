@@ -268,7 +268,7 @@ async fn top_down_archive_resolves_ranges_and_keeps_filtered_copy_closed(
 ) -> TestResult {
     use tokio_util::sync::CancellationToken;
 
-    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
     let memory = PostgresMemory::new(pool.clone());
     let cancel = CancellationToken::new();
     memory.import_memory_dump(&fixture, false, &cancel).await?;

@@ -297,7 +297,7 @@ async fn top_down_archive_keeps_the_full_filtered_tree_without_postgres_passages
 
     let source = fresh_store()?;
     let cancel = CancellationToken::new();
-    let fixture = testkit::recording("summary-archive/top-down.sql");
+    let fixture = testkit::recording("summary-archive/top-down.txt");
     let imported = source.store.import_pg_dump(fixture, cancel.clone()).await?;
     assert_eq!(imported.rows.get(&ImportTable::Summaries).copied(), Some(7));
     let owner = SummaryOwner::Session("cli:top-down".to_owned());
