@@ -24,14 +24,13 @@ base64 = "0.22"
 bytes = "1"
 capture = { path = "crates/capture", version = "0.8.3" }
 cargo_metadata = "0.23"
-jiff = { version = "1.0.1", features = ["serde"] }
+jiff = { version = "1.0.1", default-features = false, features = ["std", "serde", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated", "perf-inline"] }
 jiff-sqlx = { version = "1.0.0", features = ["postgres"] }
 jiff-tzdb = "=0.1.4"
 clap = { version = "4", features = ["derive"] }
 cli = { path = "crates/cli", version = "0.8.3" }
 config = { path = "crates/config", version = "0.8.3" }
-croner = { version = "4.0.3", default-features = false, features = ["jiff"] }
-jiff02 = { package = "jiff", version = "0.2.35" }
+croner = { version = "4.0.3", default-features = false }
 eventsource-stream = "0.2"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 futures = "0.3"
@@ -80,7 +79,7 @@ serde_ignored = "0.1"
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 serde_path_to_error = "0.1"
 serde_urlencoded = "0.7"
-serde_with = { version = "3", default-features = false, features = ["macros", "schemars_1"] }
+serde_with = { version = "=3.21.0", default-features = false, features = ["macros", "schemars_1"] }
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
 shlex = "2"

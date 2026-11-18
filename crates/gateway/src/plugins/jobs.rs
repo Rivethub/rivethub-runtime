@@ -1,9 +1,13 @@
-use jiff::Timestamp;
+use jiff::tz::AmbiguousOffset;
+use jiff::{SignedDuration, Timestamp, ZonedDateTime};
+use std::cmp::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use croner::Cron;
+use croner::errors::CronError;
 use croner::parser::{CronParser, Seconds};
+use croner::time::{CivilDate, CivilDateTime, CivilTime, CronDateTime, Resolution, Weekday};
 use tokio_util::sync::CancellationToken;
 use wire::plugin::host::{PluginJobOutcome, PluginJobRun, PluginJobTrigger, PluginLogStream};
 use wire::plugin::manifest::{PluginJob, PluginManifest};
@@ -16,6 +20,78 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(600_000);
 
 fn parser() -> CronParser {
     CronParser::builder().seconds(Seconds::Disallowed).build()
+}
+
+#[derive(Clone)]
+struct ScheduleTime(ZonedDateTime);
+
+impl CronDateTime for ScheduleTime {
+    fn to_civil(&self) -> CivilDateTime {
+        let date = self.0.datetime();
+        CivilDateTime::new(
+            CivilDate::from_parts_unchecked(
+                i32::from(date.year()),
+                u32::from(date.month().unsigned_abs()),
+                u32::from(date.day().unsigned_abs()),
+            ),
+            CivilTime::from_parts_unchecked(
+                u32::from(date.hour().unsigned_abs()),
+                u32::from(date.minute().unsigned_abs()),
+                u32::from(date.second().unsigned_abs()),
+            ),
+        )
+    }
+
+    fn civil_weekday(&self) -> Weekday {
+        Weekday::from_days_from_sunday(u32::from(
+            self.0.weekday().to_sunday_zero_offset().unsigned_abs(),
+        ))
+    }
+
+    fn resolve_civil(&self, civil: CivilDateTime) -> Result<Resolution<Self>, CronError> {
+        let year = i16::try_from(civil.year()).map_err(|_error| CronError::InvalidDate)?;
+        let field = |value| i8::try_from(value).map_err(|_error| CronError::InvalidTime);
+        let wall = jiff::civil::DateTime::new(
+            year,
+            field(civil.month())?,
+            field(civil.day())?,
+            field(civil.hour())?,
+            field(civil.minute())?,
+            field(civil.second())?,
+            0,
+        )
+        .map_err(|_error| CronError::InvalidDate)?;
+        let zone = self.0.time_zone();
+        let possible = zone.to_ambiguous_timestamp(wall);
+        let zoned = |at: Result<Timestamp, jiff::Error>| {
+            at.map(|at| Self(at.to_zoned_datetime(zone.clone())))
+                .map_err(|_error| CronError::InvalidTime)
+        };
+        match possible.offset() {
+            AmbiguousOffset::Unambiguous { .. } => {
+                zoned(possible.unambiguous()).map(Resolution::Single)
+            }
+            AmbiguousOffset::Fold { .. } => Ok(Resolution::Ambiguous(
+                zoned(possible.earlier())?,
+                zoned(possible.later())?,
+            )),
+            AmbiguousOffset::Gap { .. } => Ok(Resolution::Gap),
+        }
+    }
+
+    fn checked_add_seconds(&self, seconds: i64) -> Option<Self> {
+        match self.0.checked_add(SignedDuration::from_secs(seconds)) {
+            Ok(at) => Some(Self(at)),
+            Err(error) => {
+                tracing::trace!(%error, "plug-in schedule exceeds the supported timestamp range");
+                None
+            }
+        }
+    }
+
+    fn cmp_instant(&self, other: &Self) -> Ordering {
+        self.0.timestamp().cmp(&other.0.timestamp())
+    }
 }
 
 pub(super) fn check_schedules(manifest: &PluginManifest) -> Result<(), HostError> {
@@ -57,11 +133,11 @@ pub(super) async fn schedule(
         return;
     }
     loop {
-        let now = jiff02::Zoned::now();
-        let next: Vec<(jiff02::Zoned, &RouteName)> = scheduled
+        let now = ScheduleTime(ZonedDateTime::now());
+        let next: Vec<(Timestamp, &RouteName)> = scheduled
             .iter()
             .filter_map(|entry| match entry.cron.find_next_occurrence(&now, false) {
-                Ok(at) => Some((at, &entry.job)),
+                Ok(at) => Some((at.0.timestamp(), &entry.job)),
                 Err(error) => {
                     tracing::warn!(%error, job = entry.job.as_ref(), "plug-in job has no next run");
                     None
@@ -71,7 +147,7 @@ pub(super) async fn schedule(
         let Some(soonest) = next.iter().map(|(at, _)| at).min() else {
             return;
         };
-        let wait = match Duration::try_from(soonest.duration_since(&now)) {
+        let wait = match Duration::try_from(soonest.duration_since(now.0.timestamp())) {
             Ok(wait) => wait,
             Err(error) => {
                 tracing::trace!(%error, "the next plug-in job run is already due");
@@ -83,14 +159,7 @@ pub(super) async fn schedule(
             () = tokio::time::sleep(wait) => {}
         }
         for (at, job) in next.iter().filter(|(at, _)| at == soonest) {
-            let stamp = match Timestamp::from_nanosecond(at.timestamp().as_nanosecond()) {
-                Ok(stamp) => stamp,
-                Err(error) => {
-                    tracing::warn!(%error, job = job.as_ref(), "scheduled time is out of range");
-                    continue;
-                }
-            };
-            match start(&host, &plugin, job, PluginJobTrigger::Schedule, Some(stamp)) {
+            match start(&host, &plugin, job, PluginJobTrigger::Schedule, Some(*at)) {
                 Ok(_) => {}
                 Err(HostError::Conflict(reason)) => host.log(
                     &plugin,
@@ -189,7 +258,8 @@ async fn execute(
 #[cfg(test)]
 mod tests {
 
-    use super::parser;
+    use super::{ScheduleTime, parser};
+    use jiff::ZonedDateTime;
 
     #[test]
     fn plugin_schedules_use_five_fields_and_find_the_next_local_occurrence()
@@ -212,11 +282,11 @@ mod tests {
             ),
         ] {
             let offset = now.get(19..).ok_or("offset")?;
-            let start: jiff02::Zoned = format!("{now}[{offset}]").parse()?;
+            let start = ScheduleTime(format!("{now}[{offset}]").parse::<ZonedDateTime>()?);
             let next_at = parser()
                 .parse(schedule)?
                 .find_next_occurrence(&start, false)?;
-            assert_eq!(next_at.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(), next);
+            assert_eq!(next_at.0.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(), next);
         }
         assert!(parser().parse("0 0 0 * * *").is_err());
         Ok(())
@@ -276,12 +346,12 @@ mod tests {
                 "2026-11-01T01:00:00-05:00",
             ),
         ] {
-            let start: jiff02::Zoned = format!("{now}[America/New_York]").parse()?;
+            let start = ScheduleTime(format!("{now}[America/New_York]").parse::<ZonedDateTime>()?);
             let next_at = parser()
                 .parse(schedule)?
                 .find_next_occurrence(&start, false)?;
             assert_eq!(
-                next_at.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+                next_at.0.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(),
                 next,
                 "{schedule}"
             );

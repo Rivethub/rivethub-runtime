@@ -16,7 +16,6 @@ base64 = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
 jiff = { workspace = true }
-jiff02.workspace = true
 config = { workspace = true }
 croner = { workspace = true }
 getrandom = { workspace = true }
