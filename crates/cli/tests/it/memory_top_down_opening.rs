@@ -10,14 +10,10 @@ use memory_sqlite::SqliteStore;
 use testkit::fakes::{FakeProvider, Script};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use wire::{
-    JsonObject,
-    message::{Message, MessageContent, Role},
-};
+use wire::message::{Message, MessageContent, Role};
 use workers::{
-    EmbedSettings, FILING_SYSTEM_PROMPT, LEAF_SYSTEM_PROMPT, ProcessRole, RoleModel, Runner,
-    RunnerConfig, SessionTopics, SummarizeEnv, SummarySettings, SummaryTrigger,
-    TITLE_SYSTEM_PROMPT, WorkerDeps, handle_summarize,
+    EmbedSettings, FILING_SYSTEM_PROMPT, ProcessRole, RoleModel, Runner, RunnerConfig,
+    SessionTopics, SummarySettings, TITLE_SYSTEM_PROMPT, WorkerDeps,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -53,16 +49,6 @@ async fn active_capture_titles_and_files_before_the_first_leaf_and_recovers_lost
 
     lose_opening_jobs(&store, id).await?;
     let script = scripted();
-    let settings = SummarySettings::standard("fake-chat")?;
-    let token = CancellationToken::new();
-    let env = SummarizeEnv {
-        store: store.as_ref(),
-        provider: script.as_ref(),
-        queue: store.as_ref(),
-        settings: &settings,
-        now,
-        cancel: &token,
-    };
     let sweep = WorkerRole::Summarizer
         .crontab(false)
         .into_iter()
@@ -89,23 +75,11 @@ async fn active_capture_titles_and_files_before_the_first_leaf_and_recovers_lost
     assert!(!store.opening_title(id).await?.expect("opening").armed);
     assert_eq!(store.undelivered_openings().await?, []);
 
-    let summarize = JsonObject::from_serialize(&SummarizeRequest {
-        conversation_id: id,
-        trigger_type: SummaryTrigger::Explicit,
-    })?;
-    handle_summarize(&env, &summarize).await?;
     store.enqueue(sweep.job()).await?;
     run_role(&store, &script, ProcessRole::Summarizer).await?;
     run_role(&store, &script, ProcessRole::Categorizer).await?;
     assert_opening_calls(&script.chat_requests().await);
     Ok(())
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SummarizeRequest {
-    conversation_id: Uuid,
-    trigger_type: SummaryTrigger,
 }
 
 async fn lose_opening_jobs(store: &SqliteStore, id: Uuid) -> TestResult {
@@ -135,7 +109,7 @@ fn assert_opening_calls(calls: &[ModelRequest]) {
     let filings = inputs(FILING_SYSTEM_PROMPT);
     assert_eq!(filings.len(), 2, "one filing per conversation");
     assert!(filings.iter().all(|input| input.contains(REQUEST)));
-    assert_eq!(inputs(LEAF_SYSTEM_PROMPT).len(), 1);
+    assert_eq!(calls.len(), 3);
 }
 
 fn message_text(message: &Message) -> Option<&str> {
@@ -163,7 +137,6 @@ fn scripted() -> Arc<FakeProvider> {
         ),
         chat(FILING_SYSTEM_PROMPT, r#"{"suggest":"Release planning"}"#),
         chat(FILING_SYSTEM_PROMPT, r#"{"suggest":"Release planning"}"#),
-        chat(LEAF_SYSTEM_PROMPT, "Investigated the deployment callback."),
     ]))
 }
 

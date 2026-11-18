@@ -177,6 +177,111 @@ pub trait SummaryStore: Send + Sync {
         })
     }
 
+    #[doc(hidden)]
+    async fn live_candidates(
+        &self,
+        _after: Uuid,
+        _limit: i64,
+    ) -> Result<Vec<(Uuid, i64)>, SummaryStoreError> {
+        Ok(Vec::new())
+    }
+
+    #[doc(hidden)]
+    async fn live_input(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<super::summary_backend::SummaryInput>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    #[doc(hidden)]
+    async fn live_run(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<super::summary_backend::SummaryRun>, SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    async fn freeze_live_run(
+        &self,
+        _id: Uuid,
+        _revision: i64,
+        _root: Option<Uuid>,
+        _manifest: serde_json::Value,
+    ) -> Result<Uuid, SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    async fn live_checkpoint(
+        &self,
+        _run: Uuid,
+        _key: [u8; 32],
+    ) -> Result<Option<serde_json::Value>, SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    async fn save_live_checkpoint(
+        &self,
+        _run: Uuid,
+        _revision: i64,
+        _key: [u8; 32],
+        _artifact: serde_json::Value,
+    ) -> Result<(), SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    async fn try_summary_permit(
+        &self,
+        _limit: u32,
+    ) -> Result<Option<Box<dyn super::summary_backend::SummaryPermit>>, SummaryStoreError> {
+        Ok(Some(Box::new(())))
+    }
+
+    #[doc(hidden)]
+    async fn publish_live(
+        &self,
+        _tree: super::summary_reference::PreparedSummaryTree,
+        _indexes: super::summary_backend::SummaryIndexes,
+    ) -> Result<bool, SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    async fn fail_live(&self, _id: Uuid, _revision: i64) -> Result<(), SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
+    #[doc(hidden)]
+    fn live_index_key(&self) -> Option<[u8; 32]> {
+        None
+    }
+
+    #[doc(hidden)]
+    async fn repair_candidates(&self, _limit: u32) -> Result<Vec<Uuid>, SummaryStoreError> {
+        Ok(Vec::new())
+    }
+
+    #[doc(hidden)]
+    async fn repair_input(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<super::summary_backend::SummaryRepair>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    #[doc(hidden)]
+    async fn repair_index(
+        &self,
+        _expected: super::summary_backend::SummaryRepair,
+        _index: super::summary_backend::SummaryIndex,
+    ) -> Result<(), SummaryStoreError> {
+        Err(SummaryStoreError::Closed)
+    }
+
     async fn conversation(&self, id: Uuid)
     -> Result<Option<ConversationWindow>, SummaryStoreError>;
 

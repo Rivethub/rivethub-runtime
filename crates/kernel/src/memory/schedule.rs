@@ -35,13 +35,7 @@ impl WorkerRole {
                 cron("unchunked-sweep", FixedJob::EnqueueUnchunked, 15),
             ],
             Self::Summarizer => vec![
-                cron("idle-enqueue", FixedJob::EnqueueIdle, 5),
                 cron("opening-sweep", FixedJob::EnqueueOpenings, 5),
-                cron(
-                    "stale-compaction-sweep",
-                    FixedJob::EnqueueStaleSummaries,
-                    15,
-                ),
                 cron("reap-dead-jobs", FixedJob::ReapDeadJobs, 60),
                 cron("topic-page-sweep", FixedJob::SyncTopicPage, 60),
                 cron("deleted-session-sweep", FixedJob::PurgeDeletedSessions, 15),

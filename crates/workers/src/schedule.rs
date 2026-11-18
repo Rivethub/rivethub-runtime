@@ -117,3 +117,62 @@ pub(crate) async fn run_summary_expiry(
         }
     }
 }
+
+pub(crate) async fn run_summary_discovery(
+    store: &dyn kernel::memory::SummaryStore,
+    queue: &dyn JobQueue,
+    cancel: &CancellationToken,
+) {
+    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(5));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => return,
+            _ = ticks.tick() => {}
+        }
+        let result = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return,
+            result = discover_summaries(store, queue) => result,
+        };
+        if let Err(error) = result {
+            tracing::warn!("summary discovery failed: {error}");
+        }
+    }
+}
+
+async fn discover_summaries(
+    store: &dyn kernel::memory::SummaryStore,
+    queue: &dyn JobQueue,
+) -> Result<(), WorkerError> {
+    use crate::summarize::live::{ATTEMPTS, LiveRequest};
+    use kernel::queue::{FixedJob, Job, JobKeyMode, JobName};
+    let mut after = uuid::Uuid::nil();
+    loop {
+        let rows = store.live_candidates(after, 200).await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        for (id, revision) in rows {
+            let request = LiveRequest {
+                conversation_id: id,
+                revision: Some(revision),
+            };
+            queue
+                .enqueue(Job {
+                    name: JobName::Fixed(FixedJob::SummarizeConversation),
+                    payload: wire::JsonObject::from_serialize(&request)
+                        .map_err(WorkerError::summary_payload)?,
+                    key: Some(format!("compact-{id}")),
+                    key_mode: JobKeyMode::Arm,
+                    priority: -20,
+                    run_at: None,
+                    max_attempts: Some(ATTEMPTS),
+                })
+                .await
+                .map_err(WorkerError::queue)?;
+            after = id;
+        }
+    }
+}

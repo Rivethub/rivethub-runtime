@@ -226,6 +226,41 @@ pub(crate) async fn check_status(
 
 #[async_trait]
 impl ModelProvider for OpenAiCompatible {
+    async fn count_tokens(
+        &self,
+        model: &str,
+        text: &str,
+    ) -> Result<Option<usize>, ModelProviderError> {
+        if self.variant != Variant::Vllm {
+            return Ok(None);
+        }
+        #[derive(serde::Deserialize)]
+        struct Count {
+            count: usize,
+        }
+        let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+        let url = format!("{root}/tokenize");
+        let body = serde_json::json!({ "model": model, "prompt": text });
+        let response = token::dispatch(&self.auth, || {
+            self.client
+                .post(&url)
+                .timeout(std::time::Duration::from_secs(60))
+                .json(&body)
+        })
+        .await;
+        match response {
+            Ok(response) => response
+                .json::<Count>()
+                .await
+                .map(|reply| Some(reply.count))
+                .map_err(request_error),
+            Err(token::CallError::Status(error)) if matches!(error.code(), 404 | 405 | 501) => {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
         let finish = Arc::new(AtomicU8::new(0));
         let rx = self.send_chat(&request, Some(Arc::clone(&finish))).await?;

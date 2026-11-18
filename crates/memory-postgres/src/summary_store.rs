@@ -1,3 +1,4 @@
+use crate::summary_backend as backend;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -15,9 +16,13 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::settlement::{SettlementPage, SummaryState};
+use kernel::memory::summary_backend::{SummaryIndex, SummaryRepair};
+use kernel::memory::summary_backend::{SummaryIndexes, SummaryInput, SummaryPermit, SummaryRun};
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::memory::summary_reference::PreparedSummaryTree;
 use kernel::queue::Job;
+use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::types::Json;
@@ -134,6 +139,126 @@ struct PendingRow {
 
 #[async_trait]
 impl SummaryStore for PostgresMemory {
+    async fn live_candidates(
+        &self,
+        after: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, i64)>, SummaryStoreError> {
+        backend::candidates(self, after, limit).await
+    }
+
+    async fn live_input(&self, id: Uuid) -> Result<Option<SummaryInput>, SummaryStoreError> {
+        self.live_source(id).await
+    }
+
+    async fn live_run(&self, id: Uuid) -> Result<Option<SummaryRun>, SummaryStoreError> {
+        backend::run(self, id).await
+    }
+
+    async fn freeze_live_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        root: Option<Uuid>,
+        manifest: Value,
+    ) -> Result<Uuid, SummaryStoreError> {
+        sqlx::query_scalar(
+            "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (conversation_id) DO UPDATE SET revision = EXCLUDED.revision,
+                 expected_root = EXCLUDED.expected_root, manifest = EXCLUDED.manifest
+             WHERE rh_summary_runs.revision <= EXCLUDED.revision RETURNING id",
+        )
+        .bind(Uuid::new_v4())
+        .bind(id)
+        .bind(revision)
+        .bind(root)
+        .bind(manifest)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend::error)
+    }
+
+    async fn live_checkpoint(
+        &self,
+        run: Uuid,
+        key: [u8; 32],
+    ) -> Result<Option<Value>, SummaryStoreError> {
+        sqlx::query_scalar(
+            "SELECT artifact FROM rh_summary_checkpoints WHERE run_id = $1 AND artifact_key = $2",
+        )
+        .bind(run)
+        .bind(key.as_slice())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(backend::error)
+    }
+
+    async fn save_live_checkpoint(
+        &self,
+        run: Uuid,
+        revision: i64,
+        key: [u8; 32],
+        artifact: Value,
+    ) -> Result<(), SummaryStoreError> {
+        sqlx::query(
+            "INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                     SELECT id, $2, $3 FROM rh_summary_runs WHERE id = $1 AND revision = $4 ON CONFLICT DO NOTHING",
+        )
+        .bind(run)
+        .bind(key.as_slice())
+        .bind(artifact).bind(revision)
+        .execute(&self.pool)
+        .await
+        .map_err(backend::error)?;
+        Ok(())
+    }
+
+    async fn try_summary_permit(
+        &self,
+        limit: u32,
+    ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError> {
+        use sqlx::Connection as _;
+        let mut conn = sqlx::PgConnection::connect_with(&self.pool.connect_options())
+            .await
+            .map_err(backend::error)?;
+        for slot in 0..i32::try_from(limit).map_err(|_| SummaryStoreError::Count)? {
+            let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(1937075568, $1)")
+                .bind(slot)
+                .fetch_one(&mut conn)
+                .await
+                .map_err(backend::error)?;
+            if locked {
+                return Ok(Some(Box::new(conn)));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn publish_live(
+        &self,
+        tree: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+    ) -> Result<bool, SummaryStoreError> {
+        use crate::summary_replace::ReplaceSummaryError;
+        match self.replace_live_summary(&tree, &indexes).await {
+            Ok(()) => Ok(true),
+            Err(ReplaceSummaryError::Reference(_)) => Ok(false),
+            Err(error) => Err(backend::error(error)),
+        }
+    }
+
+    async fn fail_live(&self, id: Uuid, revision: i64) -> Result<(), SummaryStoreError> {
+        sqlx::query("UPDATE rh_summary_state SET failed_revision = $2 WHERE conversation_id = $1
+            AND input_revision = $2 AND settled_at IS NOT NULL AND summarized_through IS DISTINCT FROM $2")
+            .bind(id).bind(revision).execute(&self.pool).await.map_err(backend::error)?;
+        Ok(())
+    }
+
+    fn live_index_key(&self) -> Option<[u8; 32]> {
+        self.summary_index_key
+    }
+
     async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
         self.read_summary_state(id).await.map_err(settlement_error)
     }
@@ -154,6 +279,22 @@ impl SummaryStore for PostgresMemory {
         self.expire_settlement(after, cutoff, now, limit)
             .await
             .map_err(settlement_error)
+    }
+
+    async fn repair_candidates(&self, limit: u32) -> Result<Vec<Uuid>, SummaryStoreError> {
+        self.marked_indexes(limit).await
+    }
+
+    async fn repair_input(&self, id: Uuid) -> Result<Option<SummaryRepair>, SummaryStoreError> {
+        self.marked_index(id).await
+    }
+
+    async fn repair_index(
+        &self,
+        expected: SummaryRepair,
+        index: SummaryIndex,
+    ) -> Result<(), SummaryStoreError> {
+        self.replace_index(expected, index).await
     }
 
     async fn conversation(

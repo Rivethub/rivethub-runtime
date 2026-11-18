@@ -88,11 +88,14 @@ pub fn tuned_summary(
     settings: crate::SummarySettings,
     env: &Environment,
 ) -> Result<crate::SummarySettings, WorkerError> {
-    let leaf = positive(env, "RIVETHUB_SUMMARY_LEAF_TOKENS")?.unwrap_or(settings.leaf_max_tokens);
-    let branch =
-        positive(env, "RIVETHUB_SUMMARY_BRANCH_TOKENS")?.unwrap_or(settings.branch_max_tokens);
-    let root = positive(env, "RIVETHUB_SUMMARY_ROOT_TOKENS")?.unwrap_or(settings.root_max_tokens);
-    let mut settings = settings.with_max_tokens(leaf, branch, root)?;
+    let mut settings = settings;
+    if let Some(context) = positive(env, "RIVETHUB_SUMMARY_CONTEXT_TOKENS")? {
+        settings.context_tokens = context;
+    }
+    if let Some(limit) = positive(env, "RIVETHUB_SUMMARY_MODEL_CONCURRENCY")? {
+        settings.model_concurrency = limit;
+    }
+    settings.live_limits()?;
     if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_INACTIVITY_MINUTES")? {
         settings.inactivity = chrono::TimeDelta::minutes(i64::from(minutes));
     }

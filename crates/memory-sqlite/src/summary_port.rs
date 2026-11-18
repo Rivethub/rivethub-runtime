@@ -1,3 +1,4 @@
+use crate::summary_backend as backend;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -18,10 +19,14 @@ use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
 use kernel::memory::settlement::{SettlementPage, SummaryState};
+use kernel::memory::summary_backend::{SummaryIndex, SummaryRepair};
+use kernel::memory::summary_backend::{SummaryIndexes, SummaryInput, SummaryRun};
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::memory::summary_reference::PreparedSummaryTree;
 use kernel::queue::Job;
 use rusqlite::OptionalExtension as _;
+use rusqlite::params;
 use rusqlite::params_from_iter;
 use rusqlite::types::Value;
 use uuid::Uuid;
@@ -33,6 +38,129 @@ use crate::time;
 
 #[async_trait]
 impl SummaryStore for SqliteStore {
+    async fn live_candidates(
+        &self,
+        after: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(Uuid, i64)>, SummaryStoreError> {
+        self.with_conn(move |conn| backend::candidates(conn, after, limit))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn live_input(&self, id: Uuid) -> Result<Option<SummaryInput>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let tx = conn.transaction().map_err(backend::error)?;
+            let input = backend::input(&tx, id)?;
+            tx.commit().map_err(backend::error)?;
+            Ok(input)
+        })
+        .await
+        .map_err(store_err)
+    }
+
+    async fn live_run(&self, id: Uuid) -> Result<Option<SummaryRun>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let row = conn
+                .query_row(
+                    "SELECT id, revision, manifest FROM rh_summary_runs WHERE conversation_id = ?1",
+                    [id.to_string()],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(backend::error)?;
+            row.map(|(id, revision, manifest)| {
+                Ok(SummaryRun {
+                    id: parse_id(&id)?,
+                    revision,
+                    manifest: workspace_json(&manifest)?,
+                })
+            })
+            .transpose()
+        })
+        .await
+        .map_err(store_err)
+    }
+
+    async fn freeze_live_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        root: Option<Uuid>,
+        manifest: serde_json::Value,
+    ) -> Result<Uuid, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let id: String = conn.query_row(
+                "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision,
+                     expected_root = excluded.expected_root, manifest = excluded.manifest
+                 WHERE rh_summary_runs.revision <= excluded.revision RETURNING id",
+                params![Uuid::new_v4().to_string(), id.to_string(), revision, root.map(|root| root.to_string()),
+                    manifest.to_string(), time::stamp(Utc::now())], |row| row.get(0)
+            ).map_err(backend::error)?;
+            parse_id(&id)
+        }).await.map_err(store_err)
+    }
+
+    async fn live_checkpoint(
+        &self,
+        run: Uuid,
+        key: [u8; 32],
+    ) -> Result<Option<serde_json::Value>, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            conn.query_row("SELECT artifact FROM rh_summary_checkpoints WHERE run_id = ?1 AND artifact_key = ?2",
+                params![run.to_string(), key.as_slice()], |row| row.get::<_, String>(0))
+                .optional().map_err(backend::error)?.map(|value| workspace_json(&value)).transpose()
+        }).await.map_err(store_err)
+    }
+
+    async fn save_live_checkpoint(
+        &self,
+        run: Uuid,
+        revision: i64,
+        key: [u8; 32],
+        artifact: serde_json::Value,
+    ) -> Result<(), SummaryStoreError> {
+        self.with_conn(move |conn| {
+            conn.execute("INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+                          SELECT id, ?2, ?3 FROM rh_summary_runs WHERE id = ?1 AND revision = ?4 ON CONFLICT DO NOTHING",
+                params![run.to_string(), key.as_slice(), artifact.to_string(), revision]).map_err(backend::error)?;
+            Ok(())
+        }).await.map_err(store_err)
+    }
+
+    async fn publish_live(
+        &self,
+        tree: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+    ) -> Result<bool, SummaryStoreError> {
+        match self.replace_live_summary(tree, indexes).await {
+            Ok(()) => Ok(true),
+            Err(SqliteError::SummaryReference(_)) => Ok(false),
+            Err(error) => Err(store_err(error)),
+        }
+    }
+
+    async fn fail_live(&self, id: Uuid, revision: i64) -> Result<(), SummaryStoreError> {
+        self.with_conn(move |conn| {
+            conn.execute("UPDATE rh_summary_state SET failed_revision = ?2 WHERE conversation_id = ?1
+                AND input_revision = ?2 AND settled_at IS NOT NULL AND summarized_through IS NOT ?2",
+                params![id.to_string(), revision]).map_err(backend::error)?;
+            Ok(())
+        }).await.map_err(store_err)
+    }
+
+    fn live_index_key(&self) -> Option<[u8; 32]> {
+        self.summary_index_key
+    }
+
     async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
         self.read_summary_state(id).await.map_err(store_err)
     }
@@ -49,6 +177,37 @@ impl SummaryStore for SqliteStore {
         limit: u32,
     ) -> Result<SettlementPage, SummaryStoreError> {
         self.expire_settlement(after, cutoff, now, limit)
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_candidates(&self, limit: u32) -> Result<Vec<Uuid>, SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(Vec::new());
+        };
+        self.with_conn(move |conn| crate::summary_index::marked_indexes(conn, key, limit))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_input(&self, id: Uuid) -> Result<Option<SummaryRepair>, SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(None);
+        };
+        self.with_conn(move |conn| crate::summary_index::marked_index(conn, id, key))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn repair_index(
+        &self,
+        expected: SummaryRepair,
+        index: SummaryIndex,
+    ) -> Result<(), SummaryStoreError> {
+        let Some(key) = self.summary_index_key else {
+            return Ok(());
+        };
+        self.with_conn(move |conn| crate::summary_index::replace_index(conn, key, expected, index))
             .await
             .map_err(store_err)
     }
@@ -629,4 +788,11 @@ mod tests {
             "{warning}"
         );
     }
+}
+
+fn workspace_json(value: &str) -> Result<serde_json::Value, SqliteError> {
+    serde_json::from_str(value).map_err(|source| SqliteError::StoredJson {
+        column: "summary workspace",
+        source,
+    })
 }

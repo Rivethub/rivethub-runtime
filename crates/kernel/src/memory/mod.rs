@@ -682,3 +682,6 @@ pub trait MemoryStore: Send + Sync {
 }
 
 pub mod schedule;
+
+#[doc(hidden)]
+pub mod summary_backend;

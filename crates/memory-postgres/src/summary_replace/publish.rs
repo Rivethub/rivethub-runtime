@@ -1,3 +1,4 @@
+use kernel::memory::summary_backend::{SummaryIndex, SummaryIndexes};
 use std::collections::{BTreeMap, BTreeSet};
 
 use kernel::memory::summary_reference::{
@@ -76,15 +77,53 @@ impl PostgresMemory {
         &self,
         prepared: &PreparedSummaryTree,
     ) -> Result<(), ReplaceSummaryError> {
+        self.replace_tree(prepared, None).await
+    }
+
+    pub(crate) async fn replace_live_summary(
+        &self,
+        prepared: &PreparedSummaryTree,
+        indexes: &SummaryIndexes,
+    ) -> Result<(), ReplaceSummaryError> {
+        self.replace_tree(prepared, Some(indexes)).await
+    }
+
+    async fn replace_tree(
+        &self,
+        prepared: &PreparedSummaryTree,
+        indexes: Option<&SummaryIndexes>,
+    ) -> Result<(), ReplaceSummaryError> {
         prepared.validate_index_key(self.summary_index_key)?;
-        let mut coverage = prepared
-            .coverage()
-            .map_err(|error| Error::stored("summary manifest", error))?;
         let mut tx = self.pool.begin().await.map_err(query)?;
         exclusive(&mut tx, [prepared.conversation])
             .await
             .map_err(query)?;
         validate_current(&mut tx, prepared).await?;
+        if indexes.is_some() {
+            let revision = prepared
+                .expected_revision
+                .ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
+            if !crate::summary_backend::eligible(&mut tx, prepared.conversation, revision)
+                .await
+                .map_err(query)?
+            {
+                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
+            }
+            if prepared.records.is_empty() {
+                if !prepared.expected_ids.is_empty() {
+                    return Err(Error::protocol(
+                        "empty transcript would replace an existing summary",
+                    )
+                    .into());
+                }
+                finish_revision(&mut tx, prepared).await?;
+                tx.commit().await.map_err(query)?;
+                return Ok(());
+            }
+        }
+        let mut coverage = prepared
+            .coverage()
+            .map_err(|error| Error::stored("summary manifest", error))?;
         let old = old_coverage(&mut tx, prepared).await?;
         let mut plan = prepared.clone();
         let retained = retain::plan(&mut tx, &mut plan, &mut coverage).await?;
@@ -135,29 +174,33 @@ impl PostgresMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(query)?;
-            sqlx::query(
+            if let Some(indexes) = indexes {
+                let index = indexes
+                    .get(&record.id)
+                    .ok_or_else(|| Error::protocol("missing prepared summary index"))?;
+                write_index(&mut tx, record, index).await?;
+            }
+            let complete: bool = sqlx::query_scalar(
                 "UPDATE rh_summaries SET index_needs_repair = NOT rh_summary_record_indexed(id)
-                 WHERE id = $1",
+                 WHERE id = $1 RETURNING NOT index_needs_repair",
             )
             .bind(record.id)
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(query)?;
+            if indexes.is_some() && !complete {
+                return Err(Error::protocol("incomplete published summary index").into());
+            }
         }
         sqlx::raw_sql(include_str!("references.sql"))
             .execute(&mut *tx)
             .await
             .map_err(query)?;
         remove_queue_work(&mut tx).await?;
-        sqlx::query("DELETE FROM rh_summary_runs WHERE conversation_id = $1")
-            .bind(prepared.conversation)
-            .execute(&mut *tx)
-            .await
-            .map_err(query)?;
-        if let Some(revision) = prepared.expected_revision {
-            sqlx::query("UPDATE rh_summary_state SET summarized_through = $2, failed_revision = NULL WHERE conversation_id = $1")
-                .bind(prepared.conversation).bind(revision).execute(&mut *tx).await.map_err(query)?;
+        if indexes.is_some() {
+            enqueue_deliveries(&mut tx, prepared.conversation).await?;
         }
+        finish_revision(&mut tx, prepared).await?;
         tx.commit().await.map_err(query)?;
         Ok(())
     }
@@ -375,6 +418,18 @@ async fn insert_record(
             .bind(entry.render_key.as_ref().map(<[_; 32]>::as_slice))
             .execute(&mut *conn).await.map_err(query)?;
     }
+    sqlx::query(
+        "SELECT pg_notify('rh_summary_written', json_build_object(
+           'id', $1::uuid, 'sessionKey', c.session_key, 'kind', $2::text, 'depth', $3::int)::text)
+         FROM rh_conversations c WHERE c.id = $4",
+    )
+    .bind(record.id)
+    .bind(record.kind.as_str())
+    .bind(record.kind.depth())
+    .bind(tree.conversation)
+    .execute(conn)
+    .await
+    .map_err(query)?;
     Ok(())
 }
 
@@ -401,4 +456,70 @@ async fn queue_present(conn: &mut PgConnection) -> Result<bool, Error> {
         .fetch_one(conn)
         .await
         .map_err(query)
+}
+
+async fn finish_revision(
+    conn: &mut PgConnection,
+    prepared: &PreparedSummaryTree,
+) -> Result<(), Error> {
+    sqlx::query("DELETE FROM rh_summary_runs WHERE conversation_id = $1")
+        .bind(prepared.conversation)
+        .execute(&mut *conn)
+        .await
+        .map_err(query)?;
+    if let Some(revision) = prepared.expected_revision {
+        sqlx::query("UPDATE rh_summary_state SET summarized_through = $2, failed_revision = NULL WHERE conversation_id = $1")
+                .bind(prepared.conversation).bind(revision).execute(&mut *conn).await.map_err(query)?;
+    }
+    Ok(())
+}
+
+async fn write_index(
+    conn: &mut PgConnection,
+    row: &PreparedSummaryRecord,
+    index: &SummaryIndex,
+) -> Result<(), Error> {
+    for (ordinal, passage) in index.passages.iter().enumerate() {
+        let ordinal =
+            i32::try_from(ordinal).map_err(|error| Error::stored("passage ordinal", error))?;
+        let vector = pgvector::HalfVector::from_f32_slice(&passage.vector);
+        let written = sqlx::query(
+            "UPDATE rh_summary_passages SET embedding = $3, earliest_at = $4, latest_at = $5
+             WHERE record_id = $1 AND ordinal = $2",
+        )
+        .bind(row.id)
+        .bind(ordinal)
+        .bind(vector)
+        .bind(passage.earliest_at)
+        .bind(passage.latest_at)
+        .execute(&mut *conn)
+        .await
+        .map_err(query)?
+        .rows_affected();
+        if written != 1 {
+            return Err(Error::protocol("missing prepared summary passage"));
+        }
+    }
+    Ok(())
+}
+
+async fn enqueue_deliveries(conn: &mut PgConnection, conversation: Uuid) -> Result<(), Error> {
+    if !queue_present(conn).await? {
+        return Ok(());
+    }
+    sqlx::query(
+        "WITH candidates AS (
+             SELECT DISTINCT anchor_id, consumer,
+                 CASE consumer WHEN 'wiki' THEN 'wiki-ext-' ELSE 'entity-ext-' END || anchor_id AS key
+             FROM rh_summary_deliveries WHERE conversation_id = $1 AND anchor_id IS NOT NULL
+         )
+         SELECT graphile_worker.add_job(
+             CASE consumer WHEN 'wiki' THEN 'extract-wiki' ELSE 'extract-entities' END,
+             json_build_object('summaryId', anchor_id, 'conversationId', $1::uuid),
+             max_attempts := 2, job_key := pending.key, priority := -10, job_key_mode := 'preserve_run_at'
+         ) FROM candidates pending
+         WHERE NOT EXISTS (SELECT 1 FROM graphile_worker._private_jobs j WHERE j.key = pending.key)
+           AND NOT EXISTS (SELECT 1 FROM rh_flagged_jobs f WHERE f.job_key = pending.key)"
+    ).bind(conversation).execute(conn).await.map_err(query)?;
+    Ok(())
 }

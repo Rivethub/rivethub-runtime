@@ -292,10 +292,15 @@ pub fn with_models<Q: JobQueue + 'static>(
     } = bindings;
     let entity_provider = Arc::clone(&wiki_writer.provider);
     let entity_model = wiki_writer.model.clone();
+    let mut summary = SummarySettings::standard(summarizer.model)?;
+    if let Some(context) = summarizer.context_window {
+        summary.context_tokens = context;
+    }
+    summary.model_profile = summarizer.profile;
     let deps = WorkerDeps {
         targets: ports.targets,
         summaries: ports.summaries,
-        summary: SummarySettings::standard(summarizer.model)?,
+        summary,
         summarizer: summarizer.provider,
         categorizer: workers::RoleModel {
             provider: categorizer.provider,

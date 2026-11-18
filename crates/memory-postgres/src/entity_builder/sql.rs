@@ -151,9 +151,9 @@ SELECT s.id, s.conversation_id, coalesce(s.earliest_at, s.created_at) AS session
   FROM rh_summaries s
   LEFT JOIN rh_conversations c ON c.id = s.conversation_id
   LEFT JOIN rh_entity_extractions e ON e.summary_id = s.id
- WHERE s.kind = 'leaf'
+ WHERE ((s.kind = 'leaf' AND (e.summary_id IS NULL OR e.status = 'failed' OR e.pipeline_version < $1))
+    OR EXISTS (SELECT 1 FROM rh_summary_deliveries d WHERE d.anchor_id = s.id AND d.consumer = 'entity'))
    AND (c.id IS NULL OR c.session_key NOT LIKE 'heartbeat:%')
-   AND (e.summary_id IS NULL OR e.status = 'failed' OR e.pipeline_version < $1)
    AND NOT EXISTS (
        SELECT 1 FROM graphile_worker._private_jobs j WHERE j.key = 'entity-ext-' || s.id::text)
    AND NOT EXISTS (

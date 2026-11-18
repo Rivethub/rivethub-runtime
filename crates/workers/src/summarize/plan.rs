@@ -12,7 +12,7 @@ use wire::message::Role;
 use super::prompt::{self, Mode, Prompt};
 use super::settings::{CARRY_CEILING, Limits};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Source {
     pub(crate) id: Uuid,
     pub(crate) ordinal: usize,
@@ -35,6 +35,7 @@ pub(crate) enum PlanError {
     InvalidMeter,
     #[error("chunk budget and meter leave no room for a character")]
     InvalidCut,
+    #[cfg(test)]
     #[error("exact token count unavailable for a packed chunk")]
     ExactCount,
     #[error("composition needs at least one record")]
@@ -172,6 +173,10 @@ impl Meter {
         Self(3.0)
     }
 
+    pub(crate) const fn ratio(self) -> f64 {
+        self.0
+    }
+
     pub(crate) fn new(chars_per_token: f64) -> Result<Self, PlanError> {
         if !chars_per_token.is_finite() || chars_per_token <= 0.0 {
             return Err(PlanError::InvalidMeter);
@@ -211,14 +216,14 @@ impl Meter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Fragment {
     pub(crate) source: Source,
     pub(crate) block_chars: Range<usize>,
     pub(crate) chunk_chars: Range<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Chunk {
     pub(crate) text: String,
     pub(crate) input_token_estimate: usize,

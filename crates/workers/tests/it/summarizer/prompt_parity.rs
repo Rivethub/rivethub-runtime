@@ -245,6 +245,7 @@ async fn top_down_prompt_parity_requests() {
             Meter::calibrate(&sample, count).expect("calibrated meter")
         });
         let expected_meter = Meter::new(case.ratio).expect("fixture ratio");
+        assert!((meter.ratio() - expected_meter.ratio()).abs() < f64::EPSILON);
         assert_eq!(
             meter.estimate(&case.rendered),
             expected_meter.estimate(&case.rendered)

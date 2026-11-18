@@ -538,13 +538,8 @@ async fn all_claims_every_role_that_has_a_handler() {
     let (cancel, run) = spawn(&rig);
     rig.queue.wait_phase(wiki_job, Phase::Done).await;
     rig.queue.wait_phase(embed, Phase::Done).await;
-    rig.queue.wait_phase(summarize, Phase::Backoff).await;
+    rig.queue.wait_phase(summarize, Phase::Done).await;
     rig.queue.wait_phase(tags, Phase::Backoff).await;
-    let failed = rig.queue.view(summarize).await;
-    assert_eq!(
-        failed.error.as_deref(),
-        Some("job payload is not a summarizer job: missing field `conversationId`")
-    );
     let tagged = rig.queue.view(tags).await;
     assert_eq!(
         tagged.error.as_deref(),

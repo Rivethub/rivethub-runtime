@@ -34,6 +34,31 @@ struct PositionRow {
     created_at: DateTime<Utc>,
 }
 
+pub(crate) async fn summary_messages(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Vec<MemoryEntry>, Error> {
+    let sql = format!(
+        "SELECT {ENTRY_COLUMNS}, m.created_at FROM rh_messages m
+        JOIN rh_conversations c ON c.id = m.conversation_id WHERE c.id = $1
+        ORDER BY m.created_at, m.id"
+    );
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_all(conn)
+        .await
+        .map_err(failure)?;
+    let entries = into_entries(rows)?;
+    Ok(order_messages(entries, MemoryBrowseOrder::Asc, |row| {
+        MessagePosition::new(
+            row.created_at.unwrap_or_default(),
+            row.role,
+            row.metadata.as_ref(),
+        )
+        .in_conversation(id)
+    }))
+}
+
 impl PostgresMemory {
     pub(crate) async fn session_messages(
         &self,

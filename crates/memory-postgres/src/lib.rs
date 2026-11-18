@@ -44,7 +44,9 @@ mod settlement;
 mod stats;
 mod stats_cache;
 mod store_impl;
+mod summary_backend;
 mod summary_dag;
+mod summary_index;
 mod summary_opening;
 mod summary_replace;
 #[doc(hidden)]

@@ -8,8 +8,11 @@ use super::plan::{Source, tag};
 use super::prompt::Prompt;
 use super::python_whitespace;
 
+#[cfg(test)]
 pub(crate) const SEED: u32 = 0;
+#[cfg(test)]
 pub(crate) const STREAM: bool = true;
+#[cfg(test)]
 pub(crate) const INCLUDE_USAGE: bool = true;
 
 pub(crate) const NON_STOP: u32 = 1 << 0;
@@ -41,7 +44,7 @@ pub(crate) fn model_request(model: &str, prompt: &Prompt) -> ModelRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Section {
     pub(crate) heading: String,
     pub(crate) chars: Range<usize>,
@@ -50,7 +53,7 @@ pub(crate) struct Section {
     pub(crate) range_verified: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct Reply {
     pub(crate) text: String,
     pub(crate) sections: Vec<Section>,

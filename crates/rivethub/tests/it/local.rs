@@ -432,7 +432,9 @@ fn topic_title(path: &Path) -> TestResult<String> {
 
 async fn model_stub() -> std::io::Result<testkit::Stub> {
     testkit::stub_server(
-        axum::Router::new().route("/v1/chat/completions", axum::routing::post(complete)),
+        axum::Router::new()
+            .route("/v1/chat/completions", axum::routing::post(complete))
+            .route("/v1/embeddings", axum::routing::post(embed_model_stub)),
     )
     .await
 }
@@ -458,4 +460,21 @@ async fn complete(
         [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
         payload,
     ))
+}
+
+async fn embed_model_stub(
+    axum::Json(request): axum::Json<wire::stream::openai::EmbeddingRequest>,
+) -> axum::Json<wire::stream::openai::EmbeddingResponse> {
+    use wire::stream::openai::{EmbeddingResponse, EmbeddingRow};
+    axum::Json(EmbeddingResponse {
+        data: request
+            .input
+            .iter()
+            .enumerate()
+            .map(|(index, _)| EmbeddingRow {
+                index,
+                embedding: vec![0.25; 1024],
+            })
+            .collect(),
+    })
 }

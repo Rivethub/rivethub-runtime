@@ -68,13 +68,17 @@ impl SummaryState {
         let status = if self.summarized_through == Some(self.input_revision) {
             SettleStatus::AlreadySummarized
         } else {
-            let status = if self.settled_at.is_some() && !self.historical_only {
+            let status = if self.settled_at.is_some()
+                && !self.historical_only
+                && self.failed_revision.is_none()
+            {
                 SettleStatus::AlreadySettled
             } else {
                 SettleStatus::Settled
             };
             self.settle(now);
             self.historical_only = false;
+            self.failed_revision = None;
             status
         };
         SettleResult {

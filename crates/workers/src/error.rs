@@ -84,11 +84,13 @@ pub enum WorkerError {
     },
     #[error("conversation {id} is not in the summary store")]
     ConversationMissing { id: Uuid },
-    #[error("a truncated leaf batch cannot shrink further")]
-    LeafShrink,
+    #[error("summary revision is no longer eligible")]
+    SummarySuperseded,
+    #[error("summary tree changed while publishing")]
+    SummaryReplan,
     #[error("the model returned an empty summary")]
     EmptySummary,
-    #[error("the model truncated the summary")]
+    #[error("the model truncated the response")]
     Truncated,
     #[error("another worker is rewriting this page route")]
     RouteBusy,

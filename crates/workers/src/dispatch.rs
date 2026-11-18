@@ -7,8 +7,7 @@ use crate::error::WorkerError;
 use crate::filing::{FilingEnv, SessionTopics, file_target, handle_file};
 use crate::role::ProcessRole;
 use crate::summarize::{
-    SummarizeEnv, SummarySettings, handle_enqueue_idle, handle_enqueue_openings,
-    handle_enqueue_stale, handle_opening_title, handle_reap, handle_summarize,
+    SummarizeEnv, SummarySettings, handle_enqueue_openings, handle_opening_title, handle_reap,
 };
 use crate::wiki_builder::{
     WikiBuilderDeps, WikiBuilderEnv, handle_consolidate_wiki, handle_extract_wiki,
@@ -38,6 +37,7 @@ pub(crate) struct JobEnv {
     pub(crate) embedder: Arc<dyn ModelProvider>,
     pub(crate) embed: EmbedSettings,
     pub(crate) summary: SummarySettings,
+    pub(crate) summary_permits: Arc<tokio::sync::Semaphore>,
     pub(crate) topics: Option<SessionTopics>,
     pub(crate) topic_pages: Option<crate::topic_page::TopicPages>,
     pub(crate) tidy: Option<Arc<dyn kernel::tidy::TidyStore>>,
@@ -65,6 +65,21 @@ pub(crate) async fn dispatch<Q: JobQueue>(
             dispatch_wiki(queue, env, job, cancel).await
         }
         JobName::Fixed(FixedJob::EmbedTarget) => {
+            if let crate::embed::ParsedTarget::Ready(target) =
+                crate::embed::read_target(&job.payload)?
+                && target.table == kernel::memory::EmbedTable::Summaries
+                && let Ok(id) = uuid::Uuid::parse_str(&target.id)
+                && kernel::tenancy::Scope::Maintenance
+                    .run(crate::summarize::index::repair(
+                        env.summaries.as_ref(),
+                        env.embedder.as_ref(),
+                        env.embed,
+                        id,
+                    ))
+                    .await?
+            {
+                return Ok(());
+            }
             handle_embed(
                 env.targets.as_ref(),
                 env.embedder.as_ref(),
@@ -84,6 +99,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
             dispatch_sweep(queue, env, Sweep::StaleWiki, cancel).await
         }
         JobName::Fixed(FixedJob::SynthesizeToolCall) => {
+            let _slot = summary_slot(env).await?;
             let store = env
                 .memory_jobs
                 .as_ref()
@@ -98,14 +114,30 @@ pub(crate) async fn dispatch<Q: JobQueue>(
             .await
         }
         JobName::Fixed(FixedJob::SummarizeConversation) => {
-            handle_summarize(&summarize, &job.payload).await.map(|_| ())
+            use crate::summarize::live::{LiveEnv, LiveRequest, handle};
+            if !job.payload.as_map().contains_key("revision") {
+                return Ok(());
+            }
+            let payload: LiveRequest = job
+                .payload
+                .deserialize()
+                .map_err(WorkerError::summary_payload)?;
+            let live = LiveEnv {
+                summary: &summarize,
+                embedder: env.embedder.as_ref(),
+                embed: env.embed,
+                permits: &env.summary_permits,
+            };
+            kernel::tenancy::Scope::Maintenance
+                .run(handle(&live, &payload, job.attempt))
+                .await
         }
-        JobName::Fixed(FixedJob::TitleConversation) => dispatch_title(env, &summarize, job).await,
+        JobName::Fixed(FixedJob::TitleConversation) => {
+            let _slot = summary_slot(env).await?;
+            dispatch_title(env, &summarize, job).await
+        }
         JobName::Fixed(FixedJob::EnqueueOpenings) => handle_enqueue_openings(&summarize).await,
-        JobName::Fixed(FixedJob::EnqueueIdle) => handle_enqueue_idle(&summarize).await.map(|_| ()),
-        JobName::Fixed(FixedJob::EnqueueStaleSummaries) => {
-            handle_enqueue_stale(&summarize).await.map(|_| ())
-        }
+        JobName::Fixed(FixedJob::EnqueueIdle | FixedJob::EnqueueStaleSummaries) => Ok(()),
         JobName::Fixed(FixedJob::ReapDeadJobs) => handle_reap(&summarize).await.map(|_| ()),
         JobName::Fixed(FixedJob::FileConversation) => dispatch_file(env, job, cancel).await,
         JobName::Fixed(FixedJob::ProposeTidy) => dispatch_tidy(env, cancel).await,
@@ -117,12 +149,41 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         }
         JobName::Fixed(FixedJob::SyncTopicPage) => dispatch_topic_page(env, job, cancel).await,
         JobName::Fixed(FixedJob::PurgeDeletedSessions) => dispatch_purge(env, cancel).await,
-        JobName::Fixed(FixedJob::DigestDay) => dispatch_digest(env, job, cancel).await,
+        JobName::Fixed(FixedJob::DigestDay) => {
+            let _slot = summary_slot(env).await?;
+            dispatch_digest(env, job, cancel).await
+        }
         JobName::Fixed(
             FixedJob::ExtractEntities
             | FixedJob::EnqueueEntityBackfill
             | FixedJob::EnqueueStaleEntities,
         ) => dispatch_entities(queue, env, job, cancel).await,
+    }
+}
+
+async fn summary_slot(
+    env: &JobEnv,
+) -> Result<
+    (
+        tokio::sync::SemaphorePermit<'_>,
+        Box<dyn kernel::memory::summary_backend::SummaryPermit>,
+    ),
+    WorkerError,
+> {
+    let local = env
+        .summary_permits
+        .acquire()
+        .await
+        .map_err(|_| WorkerError::Closed)?;
+    loop {
+        if let Some(permit) = env
+            .summaries
+            .try_summary_permit(env.summary.model_concurrency)
+            .await?
+        {
+            return Ok((local, permit));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
 
@@ -366,6 +427,27 @@ async fn dispatch_unembedded<Q: JobQueue>(
     env: &JobEnv,
     cancel: &CancellationToken,
 ) -> Result<(), WorkerError> {
+    for id in kernel::tenancy::Scope::Maintenance
+        .run(env.summaries.repair_candidates(env.settings.sweep_limit))
+        .await?
+    {
+        let target = kernel::memory::EmbedTarget {
+            table: kernel::memory::EmbedTable::Summaries,
+            id: id.to_string(),
+        };
+        queue
+            .enqueue(kernel::queue::Job {
+                name: JobName::Fixed(FixedJob::EmbedTarget),
+                payload: crate::embed::embed_payload(&target)?,
+                key: Some(crate::embed::embed_key(&target)),
+                key_mode: kernel::queue::JobKeyMode::KeepRunAt,
+                priority: 10,
+                run_at: None,
+                max_attempts: None,
+            })
+            .await
+            .map_err(WorkerError::queue)?;
+    }
     let store = env
         .unembedded
         .as_ref()

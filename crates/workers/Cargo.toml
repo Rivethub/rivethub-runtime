@@ -29,6 +29,11 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+memory-postgres.workspace = true
+memory-sqlite.workspace = true
+migrate.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+tempfile.workspace = true
 testkit = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
 

@@ -9,7 +9,7 @@ use wire::capture::SessionObservation;
 use crate::summary_port::parse_id;
 use crate::{SqliteError, SqliteStore, time};
 
-const INCLUDED: &str = "c.session_key NOT LIKE 'heartbeat:%'
+pub(crate) const INCLUDED: &str = "c.session_key NOT LIKE 'heartbeat:%'
     AND NOT EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key)
     AND NOT EXISTS (SELECT 1 FROM rh_session_tombstones t WHERE t.session_key = c.session_key)";
 
@@ -228,6 +228,7 @@ impl SqliteStore {
                  JOIN ros_conversations c ON c.id = s.conversation_id
                  WHERE c.id = ?1 AND s.input_revision = ?2 AND s.settled_at IS NOT NULL
                    AND (s.summarized_through IS NULL OR s.summarized_through < ?2)
+                   AND s.failed_revision IS NOT ?2
                    AND {INCLUDED})"
                 ),
                 params![id.to_string(), revision],

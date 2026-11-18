@@ -100,6 +100,7 @@ pub struct Runner<Q> {
     config: RunnerConfig,
     embed: EmbedSettings,
     summary: SummarySettings,
+    summary_permits: Arc<Semaphore>,
     wake: Arc<Notify>,
     outage: Arc<OutageGate>,
     idle: watch::Sender<bool>,
@@ -138,6 +139,7 @@ where
             embedder: deps.embedder,
             config,
             embed: deps.embed,
+            summary_permits: Arc::new(Semaphore::new(deps.summary.model_concurrency as usize)),
             summary: deps.summary,
             wake: Arc::new(Notify::new()),
             outage: Arc::new(OutageGate::new()),
@@ -150,6 +152,7 @@ where
 
     pub fn tuned(mut self, env: &config::Environment) -> Result<Self, WorkerError> {
         self.summary = crate::tuned_summary(self.summary, env)?;
+        self.summary_permits = Arc::new(Semaphore::new(self.summary.model_concurrency as usize));
         self.embed = crate::tuned_embed(self.embed, env)?;
         Ok(self)
     }
@@ -327,7 +330,18 @@ where
                 .await;
             }
         };
-        let (claimed, scheduled, ()) = tokio::join!(claims, schedule, settle);
+        let discover = async {
+            if self.schedules && roles.contains(&WorkerRole::Summarizer) {
+                kernel::tenancy::Scope::Maintenance
+                    .run(crate::schedule::run_summary_discovery(
+                        self.summaries.as_ref(),
+                        self.queue.as_ref(),
+                        &cancel,
+                    ))
+                    .await;
+            }
+        };
+        let (claimed, scheduled, (), ()) = tokio::join!(claims, schedule, settle, discover);
         let outcome = claimed.and(scheduled);
         drop(notifications);
         drop(listening);
@@ -451,6 +465,7 @@ where
             embedder: Arc::clone(&self.embedder),
             embed: self.embed,
             summary: self.summary.clone(),
+            summary_permits: Arc::clone(&self.summary_permits),
             topics: self.topics.clone(),
             topic_pages: self.topic_pages.clone(),
             tidy: self.tidy.clone(),

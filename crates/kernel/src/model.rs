@@ -76,6 +76,14 @@ pub struct LlmResponse {
 
 #[async_trait]
 pub trait ModelProvider: Send + Sync {
+    async fn count_tokens(
+        &self,
+        _model: &str,
+        _text: &str,
+    ) -> Result<Option<usize>, ModelProviderError> {
+        Ok(None)
+    }
+
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError>;
 
     async fn stream(

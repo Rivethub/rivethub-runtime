@@ -99,33 +99,20 @@ fn worker_concurrency_is_unset_by_default_and_must_be_a_positive_count() -> Resu
 fn summary_caps_and_embed_timeout_follow_the_environment() -> Result<(), WorkerError> {
     let standard = workers::SummarySettings::standard("m")?;
     let unset = workers::tuned_summary(standard.clone(), &Environment::default())?;
-    assert_eq!(
-        (
-            unset.leaf_max_tokens,
-            unset.branch_max_tokens,
-            unset.root_max_tokens
-        ),
-        (16_384, 24_576, 32_768)
-    );
+    assert_eq!(unset.context_tokens, 131_072);
+    assert_eq!(unset.model_concurrency, 3);
     let tuned = workers::tuned_summary(
         standard.clone(),
         &Environment::from_vars([
-            ("RIVETHUB_SUMMARY_LEAF_TOKENS", "4096"),
-            ("RIVETHUB_SUMMARY_BRANCH_TOKENS", "6144"),
-            ("RIVETHUB_SUMMARY_ROOT_TOKENS", "8192"),
+            ("RIVETHUB_SUMMARY_CONTEXT_TOKENS", "262144"),
+            ("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", "2"),
         ]),
     )?;
-    assert_eq!(
-        (
-            tuned.leaf_max_tokens,
-            tuned.branch_max_tokens,
-            tuned.root_max_tokens
-        ),
-        (4096, 6144, 8192)
-    );
+    assert_eq!(tuned.context_tokens, 262_144);
+    assert_eq!(tuned.model_concurrency, 2);
     assert!(matches!(
-        workers::tuned_summary(standard, &Environment::from_vars([("RIVETHUB_SUMMARY_ROOT_TOKENS", "0")])),
-        Err(WorkerError::JobSetting { ref name }) if name == "RIVETHUB_SUMMARY_ROOT_TOKENS"
+        workers::tuned_summary(standard, &Environment::from_vars([("RIVETHUB_SUMMARY_MODEL_CONCURRENCY", "0")])),
+        Err(WorkerError::JobSetting { ref name }) if name == "RIVETHUB_SUMMARY_MODEL_CONCURRENCY"
     ));
     let embed = workers::tuned_embed(
         EmbedSettings::standard(),

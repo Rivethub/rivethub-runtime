@@ -1,3 +1,4 @@
+use kernel::memory::{WrittenSummary, summary_backend::SummaryIndexes};
 use std::collections::{BTreeMap, BTreeSet};
 
 use kernel::memory::summary_reference::{
@@ -26,15 +27,50 @@ impl SqliteStore {
     #[doc(hidden)]
     pub async fn replace_summary_tree(
         &self,
-        mut prepared: PreparedSummaryTree,
+        prepared: PreparedSummaryTree,
     ) -> Result<(), SqliteError> {
+        self.replace_tree(prepared, None).await.map(drop)
+    }
+
+    pub(crate) async fn replace_live_summary(
+        &self,
+        prepared: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+    ) -> Result<(), SqliteError> {
+        let written = self.replace_tree(prepared, Some(indexes)).await?;
+        if !written.is_empty() {
+            self.notifications.send_replace(());
+        }
+        for notice in written {
+            drop(self.summaries_written.send(notice));
+        }
+        Ok(())
+    }
+
+    async fn replace_tree(
+        &self,
+        mut prepared: PreparedSummaryTree,
+        indexes: Option<SummaryIndexes>,
+    ) -> Result<Vec<WrittenSummary>, SqliteError> {
         prepared.validate_index_key(self.summary_index_key)?;
-        let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
-            message: error.to_string(),
-        })?;
         self.with_conn(move |conn| {
             let tx = immediate(conn).map_err(failure)?;
             validate_current(&tx, &prepared)?;
+            if indexes.is_some() {
+                let revision = prepared.expected_revision.ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
+                if !crate::summary_backend::eligible(&tx, prepared.conversation, revision)? {
+                    return Err(SummaryReferenceError::Stale(prepared.conversation).into());
+                }
+                if prepared.records.is_empty() {
+                    if !prepared.expected_ids.is_empty() {
+                        return Err(SqliteError::Invalid { message: "empty transcript would replace an existing summary".into() });
+                    }
+                    finish_revision(&tx, &prepared)?;
+                    tx.commit().map_err(failure)?;
+                    return Ok(Vec::new());
+                }
+            }
+            let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
             let old = old_coverage(&tx, prepared.conversation)?;
             let retained = retain::plan(&tx, &mut prepared, &mut coverage)?;
             stage(&tx, &prepared, &coverage, &old, &retained)?;
@@ -67,16 +103,24 @@ impl SqliteStore {
                        WHERE old.content = dest.content AND old.index_key = dest.index_key);
                  DROP TABLE summary_old_vectors;",
             ).map_err(failure)?;
+            let written = if let Some(indexes) = indexes {
+                enqueue_deliveries(&tx, &prepared)?;
+                for (id, index) in indexes {
+                    tx.execute("UPDATE ros_summaries SET embedding = ?2, index_needs_repair = 0 WHERE id = ?1",
+                        params![id.to_string(), crate::vector::pack(&index.pooled)]).map_err(failure)?;
+                }
+                let session_key: String = tx.query_row("SELECT session_key FROM ros_conversations WHERE id = ?1",
+                    [prepared.conversation.to_string()], |row| row.get(0)).map_err(failure)?;
+                prepared.records.iter().filter(|record| !retained.contains(&record.id)).map(|record| WrittenSummary {
+                    id: record.id, session_key: session_key.clone(), kind: record.kind, depth: record.kind.depth(),
+                }).collect()
+            } else {
+                Vec::new()
+            };
             tx.execute_batch(include_str!("references.sql")).map_err(failure)?;
-            tx.execute("DELETE FROM rh_summary_runs WHERE conversation_id = ?1",
-                [prepared.conversation.to_string()]).map_err(failure)?;
-            if let Some(revision) = prepared.expected_revision {
-                tx.execute(
-                    "UPDATE rh_summary_state SET summarized_through = ?2, failed_revision = NULL WHERE conversation_id = ?1",
-                    params![prepared.conversation.to_string(), revision],
-                ).map_err(failure)?;
-            }
-            tx.commit().map_err(failure)
+            finish_revision(&tx, &prepared)?;
+            tx.commit().map_err(failure)?;
+            Ok(written)
         }).await
     }
 }
@@ -111,7 +155,7 @@ fn validate_current(conn: &Connection, tree: &PreparedSummaryTree) -> Result<(),
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(failure)?;
-    if owner.as_deref() != Some(tree.owner.as_str())
+    if owner.as_deref().unwrap_or_default() != tree.owner
         || revision != tree.expected_revision
         || ids
             .into_iter()
@@ -138,7 +182,7 @@ fn old_coverage(conn: &Connection, conversation: Uuid) -> Result<SummaryCoverage
     Ok(coverage)
 }
 
-pub(super) fn stored_uuid(value: String) -> Result<Uuid, SqliteError> {
+pub(crate) fn stored_uuid(value: String) -> Result<Uuid, SqliteError> {
     Uuid::parse_str(&value).map_err(|_| SqliteError::StoredValue {
         column: "summary coverage ID",
         value,
@@ -271,6 +315,52 @@ fn insert_record(
                 entry.render_key.as_ref().map(<[_; 32]>::as_slice)
             ])
             .map_err(failure)?;
+    }
+    Ok(())
+}
+
+fn finish_revision(conn: &Connection, prepared: &PreparedSummaryTree) -> Result<(), SqliteError> {
+    conn.execute(
+        "DELETE FROM rh_summary_runs WHERE conversation_id = ?1",
+        [prepared.conversation.to_string()],
+    )
+    .map_err(failure)?;
+    if let Some(revision) = prepared.expected_revision {
+        conn.execute(
+                    "UPDATE rh_summary_state SET summarized_through = ?2, failed_revision = NULL WHERE conversation_id = ?1",
+                    params![prepared.conversation.to_string(), revision],
+                ).map_err(failure)?;
+    }
+    Ok(())
+}
+
+fn enqueue_deliveries(
+    conn: &Connection,
+    prepared: &PreparedSummaryTree,
+) -> Result<(), SqliteError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT DISTINCT anchor_id FROM ros_summary_deliveries d
+         WHERE conversation_id = ?1 AND consumer = 'wiki' AND anchor_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM ros_jobs j WHERE j.job_key = 'wiki-ext-' || d.anchor_id)",
+        )
+        .map_err(failure)?;
+    let anchors = statement
+        .query_map([prepared.conversation.to_string()], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(failure)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failure)?;
+    for anchor in anchors {
+        let payload =
+            serde_json::json!({ "summaryId": anchor, "conversationId": prepared.conversation });
+        let mut job =
+            crate::queue::JobInsert::new("extract-wiki", payload.to_string(), prepared.created_at);
+        job.key = Some(format!("wiki-ext-{anchor}"));
+        job.max_attempts = 2;
+        job.priority = -10;
+        crate::queue::enqueue_in(conn, &job)?;
     }
     Ok(())
 }

@@ -21,6 +21,26 @@ const SESSION: &str = " FROM ros_messages m JOIN ros_conversations c ON c.id = m
 
 const OPERATION: &str = "session messages";
 
+pub(crate) fn summary_messages(
+    conn: &rusqlite::Connection,
+    id: Uuid,
+) -> Result<Vec<MemoryEntry>, SqliteError> {
+    let sql = format!(
+        "SELECT {ENTRY_COLUMNS} FROM ros_messages m
+        JOIN ros_conversations c ON c.id = m.conversation_id WHERE c.id = ?1
+        ORDER BY m.created_at, m.id"
+    );
+    let entries = read_entries(conn, &sql, [id.to_string()])?;
+    Ok(order_messages(entries, MemoryBrowseOrder::Asc, |row| {
+        MessagePosition::new(
+            row.created_at.unwrap_or_default(),
+            row.role,
+            row.metadata.as_ref(),
+        )
+        .in_conversation(id)
+    }))
+}
+
 impl SqliteStore {
     pub(crate) async fn session_messages(
         &self,

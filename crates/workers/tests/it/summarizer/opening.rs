@@ -10,7 +10,7 @@ async fn title_job_names_an_active_opening_and_preserves_a_supplied_title()
     let id = Uuid::new_v4();
     let manual = Uuid::new_v4();
     let request = "Trace the missing queue receipt";
-    let store = Arc::new(MemStore::new(Vec::new()));
+    let store = Arc::new(MemStore::new());
     for (id, title, supplied) in [
         (id, "Session cli:receipt", false),
         (manual, "Session 123: hand picked…", true),

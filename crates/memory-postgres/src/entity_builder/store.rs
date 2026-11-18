@@ -144,6 +144,9 @@ impl EntityStore for PostgresMemory {
         lead: &EntityLeaf,
         limit: u32,
     ) -> Result<Vec<FollowingLeaf>, EntityStoreError> {
+        if lead.delivery.is_some() {
+            return Ok(Vec::new());
+        }
         let Some(conversation) = lead.conversation_id else {
             return Ok(Vec::new());
         };
