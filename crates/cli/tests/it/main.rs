@@ -23,6 +23,7 @@ mod memory_titles;
 mod migrate_binary;
 mod open;
 mod process;
+mod recall_origin;
 mod search_eval;
 mod search_eval_mcp;
 mod service;

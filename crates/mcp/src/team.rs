@@ -36,7 +36,7 @@ pub(crate) struct Args {
 
 impl ToolInput for Args {
     const NAME: &'static str = "memory_team";
-    const DESCRIPTION: &'static str = "Recent visible sessions from teammates, grouped by person. Private sessions you cannot read are never included. Defaults to the last 7 days and 5 sessions per person.";
+    const DESCRIPTION: &'static str = "Recent visible sessions from teammates, grouped by person. Private sessions you cannot read are never included. Defaults to the last 7 days and 5 sessions per person. Results carry page links.";
     fn annotations() -> Option<ToolAnnotations> {
         Some(ToolAnnotations::from_raw(
             None,
@@ -52,6 +52,7 @@ pub(crate) async fn call(
     store: &dyn MemoryStore,
     args: Args,
     zone: chrono_tz::Tz,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let limit = crate::memory::limit(Args::NAME, args.limit, 5, 20)?;
     let window = crate::memory::window(args.window.unwrap_or(BrowseWindow::Last7d));
@@ -59,13 +60,14 @@ pub(crate) async fn call(
     let records = store
         .team_sessions(range.since, range.before, limit.get())
         .await?;
-    render(records, zone, Utc::now())
+    render(records, zone, Utc::now(), pages)
 }
 
 fn render(
     records: Vec<kernel::memory::TeamSession>,
     zone: chrono_tz::Tz,
     now: chrono::DateTime<Utc>,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let mut grouped = BTreeMap::<String, Vec<_>>::new();
     for record in records {
@@ -101,6 +103,9 @@ fn render(
             }
             let body = format!("{heading}\n{}", record.excerpt.unwrap_or_default());
             writeln!(text, "{}", kernel::memory::quote(&origin, &body))?;
+            if let Some(url) = pages.and_then(|pages| pages.session(&record.session_id)) {
+                writeln!(text, "{url}")?;
+            }
         }
     }
     Ok(crate::text(text))

@@ -221,6 +221,9 @@ async fn run_server(
         .await?
         .display_zone(display_zone(env))
         .plugins(Arc::new(plugins));
+    if let Some(origin) = cli::recall_origin(env, config).await {
+        builder = builder.page_origin(origin);
+    }
     if let Some(sessions) = served.sessions {
         builder = builder.sessions(sessions);
     }
@@ -233,6 +236,7 @@ pub(crate) fn memory_future(
     plugins: Option<Arc<dyn kernel::plugins::PluginTools>>,
     zone: chrono_tz::Tz,
     shutdown: CancellationToken,
+    origin: Option<url::Url>,
 ) -> Result<impl std::future::Future<Output = Result<(), SidecarError>> + Send + use<>, SidecarError>
 {
     let selected = select(config)?;
@@ -242,6 +246,9 @@ pub(crate) fn memory_future(
         ));
     }
     let mut builder = mcp::Server::builder(memory, shutdown.child_token()).display_zone(zone);
+    if let Some(origin) = origin {
+        builder = builder.page_origin(origin);
+    }
     if let Some(port) = plugins {
         builder = builder.plugins(port);
     }

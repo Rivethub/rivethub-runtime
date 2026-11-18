@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod error;
 pub mod memory;
 mod nonblock;
+mod pages;
 pub mod plugins;
 mod provenance;
 mod render_memory;
@@ -36,6 +37,7 @@ pub struct Server {
     zone: chrono_tz::Tz,
     plugins: Option<Arc<dyn PluginTools>>,
     sessions: Option<Arc<sessions::Sessions>>,
+    pages: Option<pages::Pages>,
     scope: Option<Scope>,
 }
 
@@ -46,6 +48,7 @@ pub struct Builder {
     zone: Option<chrono_tz::Tz>,
     plugins: Option<Arc<dyn PluginTools>>,
     sessions: Option<sessions::Sessions>,
+    pages: Option<pages::Pages>,
 }
 
 #[cfg_attr(dylint_lib = "rr_lints", expect(manualderive))]
@@ -104,6 +107,7 @@ impl Server {
             zone: None,
             plugins: None,
             sessions: None,
+            pages: None,
         }
     }
 
@@ -177,19 +181,51 @@ impl Server {
     ) -> Result<CallToolResult, Error> {
         match operation {
             Operation::Search => {
-                memory::search(self.memory.as_ref(), decode(arguments)?, self.zone).await
+                memory::search(
+                    self.memory.as_ref(),
+                    decode(arguments)?,
+                    self.zone,
+                    self.pages.as_ref(),
+                )
+                .await
             }
             Operation::Browse => {
-                memory::browse(self.memory.as_ref(), decode(arguments)?, self.zone).await
+                memory::browse(
+                    self.memory.as_ref(),
+                    decode(arguments)?,
+                    self.zone,
+                    self.pages.as_ref(),
+                )
+                .await
             }
             Operation::Team => {
-                team::call(self.memory.as_ref(), decode(arguments)?, self.zone).await
+                team::call(
+                    self.memory.as_ref(),
+                    decode(arguments)?,
+                    self.zone,
+                    self.pages.as_ref(),
+                )
+                .await
             }
             Operation::Stats => memory::stats(self.memory.as_ref(), decode(arguments)?).await,
             Operation::GetFull => memory::get_full(self.memory.as_ref(), decode(arguments)?).await,
             Operation::Tags => tags::call(self.memory.as_ref(), decode(arguments)?).await,
-            Operation::WikiSearch => wiki::search(self.memory.as_ref(), decode(arguments)?).await,
-            Operation::WikiRead => wiki::read(self.memory.as_ref(), decode(arguments)?).await,
+            Operation::WikiSearch => {
+                wiki::search(
+                    self.memory.as_ref(),
+                    decode(arguments)?,
+                    self.pages.as_ref(),
+                )
+                .await
+            }
+            Operation::WikiRead => {
+                wiki::read(
+                    self.memory.as_ref(),
+                    decode(arguments)?,
+                    self.pages.as_ref(),
+                )
+                .await
+            }
             Operation::SessionFind => {
                 Box::pin(sessions::find(
                     self.memory.as_ref(),
@@ -250,6 +286,12 @@ impl Builder {
         self
     }
 
+    #[must_use]
+    pub fn page_origin(mut self, origin: url::Url) -> Self {
+        self.pages = Some(pages::Pages::new(origin));
+        self
+    }
+
     pub fn build(self) -> Result<Server, Error> {
         let mut tools = catalog::definitions()?;
         if self.sessions.is_some() {
@@ -263,6 +305,7 @@ impl Builder {
             zone: self.zone.unwrap_or(chrono_tz::Tz::UTC),
             plugins: self.plugins,
             sessions: self.sessions.map(Arc::new),
+            pages: self.pages,
             scope: Scope::current(),
         })
     }

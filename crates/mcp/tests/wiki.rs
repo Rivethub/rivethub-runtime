@@ -477,3 +477,75 @@ async fn store_failures_are_tool_errors_and_search_totals_are_not_page_lengths()
         "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀"
     );
 }
+
+fn linked(store: Arc<FakeMemoryStore>) -> Server {
+    Server::builder(store, CancellationToken::new())
+        .page_origin(url::Url::parse("https://localhost:5174").expect("origin"))
+        .build()
+        .expect("server")
+}
+
+#[tokio::test]
+async fn a_configured_origin_adds_the_topic_page_and_an_unknown_origin_adds_none() {
+    let store = Arc::new(FakeMemoryStore::default());
+    store.insert_wiki_page(page()).await;
+    let plain = Server::new(store.clone(), CancellationToken::new()).expect("server");
+    let linked = linked(store);
+    let before_result = support::call(&plain, "wiki_search", r#"{"query":"acme"}"#).await;
+    let after_result = support::call(&linked, "wiki_search", r#"{"query":"acme"}"#).await;
+    let before = text(&before_result);
+    let after = text(&after_result);
+    let url = "https://localhost:5174/topics/acme";
+    assert_eq!(
+        before,
+        "## Acme 日本語 (acme) — verified 2026-10-14\nReady 🦀"
+    );
+    assert_eq!(
+        after,
+        format!("## Acme 日本語 (acme) — verified 2026-10-14\n{url}\nReady 🦀")
+    );
+    assert_eq!(after.len(), before.len() + url.len() + 1);
+    assert!(!before.contains("https://"));
+    let read_before_result = support::call(&plain, "wiki_read", r#"{"slug":"acme"}"#).await;
+    let read_after_result = support::call(&linked, "wiki_read", r#"{"slug":"acme"}"#).await;
+    let read_before = text(&read_before_result);
+    let read_after = text(&read_after_result);
+    assert_eq!(read_after, format!("{url}\n\n{read_before}"));
+    assert_eq!(read_after.len(), read_before.len() + url.len() + 2);
+    let missing_result = support::call(&linked, "wiki_search", r#"{"query":"missing"}"#).await;
+    let missing = text(&missing_result);
+    assert_eq!(missing, "No wiki topics match \"missing\".");
+    assert!(linked.tools().iter().any(|tool| {
+        tool.name == "wiki_search"
+            && tool
+                .description
+                .as_ref()
+                .is_some_and(|text| text.contains("page links"))
+    }));
+}
+
+#[tokio::test]
+async fn wiki_read_links_the_page_a_redirect_returns() {
+    let store = Arc::new(FakeMemoryStore::default());
+    store.insert_wiki_page(page()).await;
+    store
+        .insert_wiki_redirect("old".into(), "acme".into())
+        .await;
+    let linked = linked(store);
+    let read_result = support::call(&linked, "wiki_read", r#"{"slug":"old"}"#).await;
+    let read = text(&read_result);
+    assert!(read.starts_with("https://localhost:5174/topics/acme\n\n"));
+    assert!(!read.contains("/topics/old"));
+}
+
+#[tokio::test]
+async fn a_wiki_slug_is_percent_encoded_in_the_page_link() {
+    let store = Arc::new(FakeMemoryStore::default());
+    let mut spaced = page();
+    spaced.slug = "acme kit".into();
+    store.insert_wiki_page(spaced).await;
+    let linked = linked(store);
+    let found_result = support::call(&linked, "wiki_search", r#"{"query":"kit"}"#).await;
+    let found = text(&found_result);
+    assert!(found.contains("https://localhost:5174/topics/acme%20kit\n"));
+}

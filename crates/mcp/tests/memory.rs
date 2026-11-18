@@ -857,3 +857,118 @@ async fn teammates_are_named_and_instruction_shaped_text_is_quoted() {
         assert!(!json.contains("from owner · team"));
     }
 }
+
+fn linked(store: Arc<FakeMemoryStore>) -> Server {
+    Server::builder(store, CancellationToken::new())
+        .page_origin(url::Url::parse("https://localhost:5174").expect("origin"))
+        .build()
+        .expect("server")
+}
+
+#[tokio::test]
+async fn a_configured_origin_adds_one_session_page_per_top_level_hit() {
+    use kernel::memory::MemoryStore;
+    let store = Arc::new(FakeMemoryStore::default());
+    store
+        .append(&testkit::owner().expect("owner"), vec![native("n1", None)])
+        .await
+        .expect("seed");
+    let plain = Server::new(store.clone(), CancellationToken::new()).expect("server");
+    let linked = linked(Arc::clone(&store));
+    let url = "https://localhost:5174/sessions/claude-code%3An1";
+    let search_before =
+        text_of(&support::call(&plain, "memory_search", r#"{"query":"bundle digest"}"#).await);
+    let search_after =
+        text_of(&support::call(&linked, "memory_search", r#"{"query":"bundle digest"}"#).await);
+    assert_eq!(
+        search_after.replacen(&format!("\n{url}"), "", 1),
+        search_before
+    );
+    assert!(!search_before.contains("https://"));
+    assert_eq!(search_after.len(), search_before.len() + url.len() + 1);
+    let browse_before = text_of(&support::call(&plain, "memory_browse", "{}").await);
+    let browse_after = text_of(&support::call(&linked, "memory_browse", "{}").await);
+    assert_eq!(
+        browse_before,
+        "## Messages (1 returned, newest first)\n_tools excluded (include_tools=true to show)_\n\n[2026-11-08 10:00:00 UTC] rivet/user\nbundle digest work in n1"
+    );
+    assert_eq!(
+        browse_after,
+        format!(
+            "## Messages (1 returned, newest first)\n_tools excluded (include_tools=true to show)_\n\n[2026-11-08 10:00:00 UTC] rivet/user\n{url}\nbundle digest work in n1"
+        )
+    );
+    assert_eq!(browse_after.len(), browse_before.len() + url.len() + 1);
+    let full = text_of(&support::call(&linked, "memory_get_full", r#"{"id":"n1"}"#).await);
+    assert!(!full.contains("https://"));
+}
+
+#[tokio::test]
+async fn a_hit_without_a_session_key_carries_no_page_link() {
+    use kernel::memory::MemoryStore;
+    let store = Arc::new(FakeMemoryStore::default());
+    let mut bare = native("bare", None);
+    bare.session_id = "00000000-0000-4000-8000-000000000001".into();
+    bare.content = "bundle digest bare row".into();
+    store
+        .append(&testkit::owner().expect("owner"), vec![bare])
+        .await
+        .expect("seed");
+    let linked = linked(store);
+    for (tool, args) in [
+        ("memory_search", r#"{"query":"bare row"}"#),
+        ("memory_browse", "{}"),
+    ] {
+        let found = text_of(&support::call(&linked, tool, args).await);
+        assert!(found.contains("bundle digest bare row"), "{found}");
+        assert!(!found.contains("https://"), "{found}");
+        assert!(!found.contains("/sessions/"), "{found}");
+    }
+}
+
+#[tokio::test]
+async fn an_import_key_is_percent_encoded_and_expanded_sources_are_not_linked() {
+    use kernel::memory::{
+        MemoryHitSource, MemorySearchResult, SummaryDetail, SummaryExcerpt, SummaryKind,
+    };
+    let store = Arc::new(FakeMemoryStore::default());
+    let digest = "ab".repeat(32);
+    let import = format!("import:{digest}");
+    let when = "2026-11-08T10:00:00Z".parse().expect("date");
+    let mut outcome = kernel::memory::SearchOutcome::default();
+    outcome.results.push(MemorySearchResult {
+        chunk: None,
+        id: "sum-1".into(),
+        source: MemoryHitSource::Summary,
+        content: "lantern summary".into(),
+        role: None,
+        agent: None,
+        relevance_score: 0.9,
+        created_at: when,
+        session_id: Some(import.clone()),
+        title: None,
+    });
+    outcome.summaries.insert(
+        "sum-1".into(),
+        SummaryDetail {
+            kind: SummaryKind::Leaf,
+            earliest_at: None,
+            latest_at: None,
+            tags: Vec::new(),
+            children: vec![SummaryExcerpt {
+                kind: SummaryKind::Leaf,
+                content: "child lantern".into(),
+            }],
+            sources: vec![native("src", None)],
+            provenance: None,
+        },
+    );
+    store.set_search_outcome(outcome).await;
+    let linked = linked(store);
+    let found = text_of(&support::call(&linked, "memory_search", r#"{"query":"lantern"}"#).await);
+    let url = format!("https://localhost:5174/sessions/import%3A{digest}");
+    assert_eq!(found.matches(&url).count(), 1, "{found}");
+    assert!(found.contains("child lantern"), "{found}");
+    assert!(found.contains("bundle digest work in src"), "{found}");
+    assert!(!found.contains("/sessions/claude-code"), "{found}");
+}

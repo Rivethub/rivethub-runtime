@@ -93,6 +93,7 @@ pub(crate) fn browse(
     sessions: &BTreeMap<String, Vec<TagWire>>,
     origins: &Origins,
     zone: chrono_tz::Tz,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let mut details = Vec::new();
     if let Some(window) = filter.window {
@@ -140,40 +141,51 @@ pub(crate) fn browse(
     }
     let mut blocks = Vec::new();
     for entry in entries {
-        let mut heading = String::new();
-        if let Some(date) = entry.created_at {
-            write!(heading, "[{}] ", timestamp(date, zone))?;
-        }
-        let imported = origins.contains_key(&entry.session_id);
-        write!(
-            heading,
-            "{}/{}",
-            crate::provenance::own_text(imported, &entry.agent),
-            entry.role
-        )?;
-        if let Some(name) = &entry.tool_name {
-            write!(
-                heading,
-                " [tool: {}]",
-                crate::provenance::own_text(imported, name)
-            )?;
-        }
-        if let Some(provenance) = origins.get(&entry.session_id) {
-            write!(
-                heading,
-                " · {}",
-                crate::provenance::tag(provenance, zone, false)
-            )?;
-        }
-        if let Some(tags) = tags(entry, sessions) {
-            heading.push_str(&tags);
-        }
-        let body = crate::provenance::quoted(origins, &entry.session_id, payload(entry, 800)?);
-        blocks.push(format!("{heading}\n{body}"));
+        blocks.push(entry_block(entry, sessions, origins, zone, pages)?);
     }
     text.push_str("\n\n");
     text.push_str(&blocks.join("\n\n---\n\n"));
     Ok(text)
+}
+
+fn entry_block(
+    entry: &MemoryEntry,
+    sessions: &BTreeMap<String, Vec<TagWire>>,
+    origins: &Origins,
+    zone: chrono_tz::Tz,
+    pages: Option<&crate::pages::Pages>,
+) -> Result<String, Error> {
+    let mut heading = String::new();
+    if let Some(date) = entry.created_at {
+        write!(heading, "[{}] ", timestamp(date, zone))?;
+    }
+    let imported = origins.contains_key(&entry.session_id);
+    write!(
+        heading,
+        "{}/{}",
+        crate::provenance::own_text(imported, &entry.agent),
+        entry.role
+    )?;
+    if let Some(name) = &entry.tool_name {
+        write!(
+            heading,
+            " [tool: {}]",
+            crate::provenance::own_text(imported, name)
+        )?;
+    }
+    if let Some(provenance) = origins.get(&entry.session_id) {
+        write!(
+            heading,
+            " · {}",
+            crate::provenance::tag(provenance, zone, false)
+        )?;
+    }
+    if let Some(tags) = tags(entry, sessions) {
+        heading.push_str(&tags);
+    }
+    let body = crate::provenance::quoted(origins, &entry.session_id, payload(entry, 800)?);
+    let link = crate::pages::suffix(pages.and_then(|pages| pages.session(&entry.session_id)));
+    Ok(format!("{heading}{link}\n{body}"))
 }
 
 pub(crate) fn timestamp(date: DateTime<Utc>, zone: chrono_tz::Tz) -> String {

@@ -29,6 +29,7 @@ pub use error::Error;
 pub use exit::Exit;
 pub use local::Prepared;
 pub use roots::ServiceRoot;
+pub use status::recall_origin;
 pub use tree::{Cli, Command, ConfigCommand};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

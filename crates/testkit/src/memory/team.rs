@@ -3,6 +3,10 @@ use std::collections::BTreeMap;
 use super::FakeMemoryStore;
 
 impl FakeMemoryStore {
+    pub async fn script_team_sessions(&self, sessions: Vec<kernel::memory::TeamSession>) {
+        *self.team_sessions.lock().await = sessions;
+    }
+
     pub async fn script_recall_owner(&self, session: String, owner: String) {
         self.owners.lock().await.insert(session, owner);
     }
