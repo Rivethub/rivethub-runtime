@@ -6,6 +6,8 @@ mod rollup;
 mod settings;
 mod sweep;
 mod title;
+#[expect(dead_code, reason = "the top-down publisher lands in step 9")]
+pub(crate) mod top_down;
 
 use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;

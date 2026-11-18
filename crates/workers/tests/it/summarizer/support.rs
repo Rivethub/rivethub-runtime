@@ -297,6 +297,16 @@ pub(super) fn kind_name(system: &str) -> &'static str {
         "ROOT_SYSTEM_PROMPT"
     } else if system == TITLE_SYSTEM_PROMPT {
         "TITLE_SYSTEM_PROMPT"
+    } else if system.starts_with("You write the memory record of one working session")
+        && system.contains("You are given the transcript of part ")
+    {
+        "TOP_DOWN_PART"
+    } else if system.starts_with("You write the memory record of one working session") {
+        "TOP_DOWN_SESSION"
+    } else if system.starts_with("You are given the records of the first ") {
+        "TOP_DOWN_CARRY"
+    } else if system.starts_with("You are given the records of all ") {
+        "TOP_DOWN_FINAL"
     } else {
         "OTHER"
     }
@@ -307,6 +317,8 @@ pub(super) fn answer(kind: &str) -> String {
         "BRANCH_SYSTEM_PROMPT" => BRANCH_TEXT.to_owned(),
         "ROOT_SYSTEM_PROMPT" => ROOT_TEXT.to_owned(),
         "TITLE_SYSTEM_PROMPT" => TITLE_ANSWER.to_owned(),
+        "TOP_DOWN_PART" => "Résultat du jardin".to_owned(),
+        "TOP_DOWN_SESSION" | "TOP_DOWN_CARRY" | "TOP_DOWN_FINAL" => "Réduit.".to_owned(),
         _ => LEAF_TEXT.to_owned(),
     }
 }

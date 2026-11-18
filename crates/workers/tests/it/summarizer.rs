@@ -307,3 +307,5 @@ mod sweeps;
 mod triggers;
 
 use support::*;
+
+mod prompt_parity;
