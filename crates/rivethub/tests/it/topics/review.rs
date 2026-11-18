@@ -72,8 +72,7 @@ async fn entity(api: &Api, name: &str, kind: &str) -> TestResult<TopicRecord> {
 async fn said(
     api: &Api,
     entity: &TopicRecord,
-    key: &str,
-    value: &str,
+    (key, value): (&str, &str),
     session: &str,
     words: &str,
     at: Timestamp,
@@ -112,8 +111,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
             said(
                 api,
                 &host,
-                "os",
-                "Ubuntu 22.04",
+                ("os", "Ubuntu 22.04"),
                 SECOND,
                 "web01 still runs Ubuntu 22.04",
                 now - SignedDuration::from_hours(3),
@@ -122,8 +120,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
             said(
                 api,
                 &host,
-                "os",
-                "Ubuntu 24.04",
+                ("os", "Ubuntu 24.04"),
                 FIRST,
                 "web01 is on Ubuntu 24.04 now",
                 now - SignedDuration::from_hours(2),
@@ -132,8 +129,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
             said(
                 api,
                 &host,
-                "address",
-                "192.0.2.4",
+                ("address", "192.0.2.4"),
                 FIRST,
                 "web01 answers on 192.0.2.4",
                 now - SignedDuration::from_hours(1),

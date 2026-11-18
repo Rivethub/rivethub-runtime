@@ -4,12 +4,12 @@ use std::process::Stdio;
 use std::time::Duration;
 use wire::time::TimestampFormat as _;
 
-use serde_json::Value;
+use kernel::memory::summary_conversion::ConversionProgress;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use super::{TestResult, model_stub, provider_at, start, stop, write_state};
 
-async fn control(home: &Path, args: &[&str]) -> TestResult<Value> {
+async fn control<T: serde::de::DeserializeOwned>(home: &Path, args: &[&str]) -> TestResult<T> {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
         .args(["memory", "resummarize"])
         .args(args)
@@ -27,7 +27,7 @@ async fn control(home: &Path, args: &[&str]) -> TestResult<Value> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-async fn first_watch_snapshot(home: &Path) -> TestResult<Value> {
+async fn first_watch_snapshot(home: &Path) -> TestResult<ConversionProgress> {
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
         .args(["memory", "resummarize", "status", "--watch", "--json"])
         .env_clear()
@@ -78,12 +78,10 @@ async fn top_down_conversion_local_cli_and_worker() -> TestResult {
             (&message, &conversation, &old),
         )?;
     }
-    assert_eq!(control(home.path(), &["status"]).await?["enabled"], false);
-    assert_eq!(first_watch_snapshot(home.path()).await?["enabled"], false);
-    assert_eq!(
-        control(home.path(), &["rehearse", &conversation]).await?["sampledConversations"],
-        0
-    );
+    let status: ConversionProgress = control(home.path(), &["status"]).await?;
+    assert!(!status.enabled);
+    assert!(!first_watch_snapshot(home.path()).await?.enabled);
+    assert_empty_rehearsal(home.path(), &conversation).await?;
 
     let started = start(
         home.path(),
@@ -91,37 +89,55 @@ async fn top_down_conversion_local_cli_and_worker() -> TestResult {
         &["gateway listening on ", "worker running summarizer"],
     )
     .await?;
-    let result = async {
-        assert_eq!(
-            control(home.path(), &["start", "--rate", "300000"]).await?["enabled"],
-            true
-        );
-        assert_eq!(control(home.path(), &["pause"]).await?["enabled"], false);
-        assert_eq!(control(home.path(), &["resume"]).await?["rate"], 300_000);
-        let progress = tokio::time::timeout(Duration::from_secs(20), async {
-            loop {
-                let progress = control(home.path(), &["status"]).await?;
-                if progress["complete"] == 1 || progress["failed"] != 0 {
-                    break Ok::<_, Box<dyn std::error::Error>>(progress);
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-        .await??;
-        assert_eq!(progress["complete"], 1, "{progress}");
-        assert_eq!(progress["inventoryComplete"], true);
-        let conn = rusqlite::Connection::open(&database)?;
-        let indexed: bool = conn.query_row(
-            "SELECT (embedding IS NOT NULL AND NOT index_needs_repair) FROM ros_summaries
-             WHERE conversation_id = ?1 AND kind = 'session'",
-            [&conversation],
-            |row| row.get(0),
-        )?;
-        assert!(indexed);
-        Ok::<_, Box<dyn std::error::Error>>(())
-    }
-    .await;
+    let result = exercise_running_conversion(home.path(), &database, &conversation).await;
     stop(started).await?;
     stub.close().await?;
     result
+}
+
+async fn assert_empty_rehearsal(home: &Path, conversation: &str) -> TestResult {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Rehearsal {
+        sampled_conversations: usize,
+    }
+    let result: Rehearsal = control(home, &["rehearse", conversation]).await?;
+    assert_eq!(result.sampled_conversations, 0);
+    Ok(())
+}
+
+async fn exercise_running_conversion(
+    home: &Path,
+    database: &Path,
+    conversation: &str,
+) -> TestResult {
+    let started: ConversionProgress = control(home, &["start", "--rate", "300000"]).await?;
+    assert!(started.enabled);
+    let paused: ConversionProgress = control(home, &["pause"]).await?;
+    assert!(!paused.enabled);
+    let resumed: ConversionProgress = control(home, &["resume"]).await?;
+    assert_eq!(resumed.rate, 300_000);
+    let progress = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut polls = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            polls.tick().await;
+            let progress: ConversionProgress = control(home, &["status"]).await?;
+            if progress.complete == 1 || progress.failed != 0 {
+                return Ok::<_, Box<dyn std::error::Error>>(progress);
+            }
+            polls.reset();
+        }
+    })
+    .await??;
+    assert_eq!(progress.complete, 1, "{progress:?}");
+    assert!(progress.inventory_complete);
+    let conn = rusqlite::Connection::open(database)?;
+    let indexed: bool = conn.query_row(
+        "SELECT (embedding IS NOT NULL AND NOT index_needs_repair) FROM ros_summaries
+             WHERE conversation_id = ?1 AND kind = 'session'",
+        [conversation],
+        |row| row.get(0),
+    )?;
+    assert!(indexed);
+    Ok(())
 }

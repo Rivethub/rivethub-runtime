@@ -127,7 +127,7 @@ async fn composed_summarizer_settles_obsolete_cli_job_without_embedder() -> Test
         .conversation(id.parse()?)
         .await?
         .ok_or("conversation")?;
-    assert!(window.leaves.is_empty());
+    assert_eq!(window.leaves, []);
     assert!(harness.requests.lock().await.is_empty());
     store.close().await?;
     Ok(())

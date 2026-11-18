@@ -483,11 +483,22 @@ async fn embed_model_stub(
     })
 }
 
+#[derive(serde::Deserialize)]
+struct TokenizeInput {
+    prompt: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct TokenizeOutput {
+    count: usize,
+}
+
 async fn tokenize_model_stub(
-    axum::Json(request): axum::Json<serde_json::Value>,
-) -> axum::Json<serde_json::Value> {
-    let count = request["prompt"]
-        .as_str()
+    axum::Json(request): axum::Json<TokenizeInput>,
+) -> axum::Json<TokenizeOutput> {
+    let count = request
+        .prompt
+        .as_ref()
         .map_or(0, |text| text.chars().count().div_ceil(3));
-    axum::Json(serde_json::json!({ "count": count }))
+    axum::Json(TokenizeOutput { count })
 }

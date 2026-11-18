@@ -232,7 +232,18 @@ async fn parts_and_late_input(
     );
     drop(calls);
 
-    for part in &input.parts {
+    verify_late_input(store, session, id, base, &script, input.parts).await
+}
+
+async fn verify_late_input(
+    store: &(impl SummaryStore + MemoryStore + WikiBuilderStore),
+    session: &str,
+    id: Uuid,
+    base: Timestamp,
+    script: &Scripted,
+    parts: Vec<kernel::memory::summary_reference::PreparedSummaryRecord>,
+) -> TestResult {
+    for part in &parts {
         complete_wiki(store, id, part.id, part.sources.len()).await?;
     }
 
@@ -244,10 +255,10 @@ async fn parts_and_late_input(
     .await?;
     let next = settle(store, session).await?;
     script.large_parts.store(false, SeqCst);
-    run(store, &script, &next, 1, 32_768, &Semaphore::new(3)).await?;
+    run(store, script, &next, 1, 32_768, &Semaphore::new(3)).await?;
     let next_input = store.live_input(id).await?.ok_or("second publication")?;
     assert_eq!(next_input.parts.len(), 5);
-    for old in input.parts {
+    for old in parts {
         let kept = next_input
             .parts
             .iter()
@@ -289,6 +300,7 @@ async fn parts_and_late_input(
             .user
             .contains("[m00001")
     );
+    drop(calls);
     assert_eq!(
         next_input.messages.first().ok_or("late message")?.content,
         "The late coral receipt arrived."
@@ -320,11 +332,8 @@ async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) ->
     };
     let permits = Semaphore::new(3);
     let interruption = async {
-        loop {
-            if script.calls.lock().await.len() == 3 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        while script.calls.lock().await.len() < 3 {
+            script.call_arrived.notified().await;
         }
         capture(store, session, short("Capture resumed for a final note.")).await?;
         barrier.wait().await;
@@ -349,11 +358,20 @@ async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) ->
             .is_none()
     );
 
+    recover_exhaustion(store, session, id, &permits).await
+}
+
+async fn recover_exhaustion(
+    store: &(impl SummaryStore + MemoryStore),
+    session: &str,
+    id: Uuid,
+    permits: &Semaphore,
+) -> TestResult {
     let script = Scripted::live();
     let next = settle(store, session).await?;
     script.empty.store(true, SeqCst);
     assert!(matches!(
-        run(store, &script, &next, 3, 32_768, &permits).await,
+        run(store, &script, &next, 3, 32_768, permits).await,
         Err(WorkerError::EmptySummary)
     ));
     assert_eq!(
@@ -376,7 +394,7 @@ async fn superseded_and_exhaustion(store: &(impl SummaryStore + MemoryStore)) ->
     );
     let latest = settle(store, session).await?;
     script.empty.store(false, SeqCst);
-    run(store, &script, &latest, 1, 32_768, &permits).await?;
+    run(store, &script, &latest, 1, 32_768, permits).await?;
     assert_eq!(
         store
             .summary_state(id)
@@ -457,7 +475,7 @@ async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
             .with_wiki_owner(testkit::owner()?),
     );
     Scope::Maintenance
-        .run(async {
+        .run(Box::pin(async {
             short_and_reopen(store.as_ref()).await?;
             parts_and_late_input(store.as_ref()).await?;
             superseded_and_exhaustion(store.as_ref()).await?;
@@ -471,7 +489,7 @@ async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
                 .await?;
             let queue = Arc::new(store.queue().await?);
             repair_job(queue, store.clone(), id).await
-        })
+        }))
         .await?;
     let passage: (memory_postgres::time::PgTimestamp, memory_postgres::time::PgTimestamp) = sqlx::query_as(
         "SELECT p.earliest_at, p.latest_at FROM rh_summary_passages p JOIN rh_summaries s ON s.id = p.record_id
@@ -660,12 +678,13 @@ where
         id: id.to_string(),
         table: kernel::memory::EmbedTable::Summaries,
     };
+    let mut payload = wire::JsonObject::default();
+    payload.insert("targetTable", "ros_summaries")?;
+    payload.insert("targetId", id)?;
     let queued = queue
         .enqueue(Job {
             name: JobName::Fixed(FixedJob::EmbedTarget),
-            payload: wire::JsonObject::from_serialize(
-                &serde_json::json!({ "targetTable": "ros_summaries", "targetId": id }),
-            )?,
+            payload,
             key: Some(workers::embed_key(&target)),
             key_mode: JobKeyMode::KeepRunAt,
             priority: -30,

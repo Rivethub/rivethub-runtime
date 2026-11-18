@@ -357,7 +357,7 @@ fn slot<'a>(config: &'a Config, id: &str) -> Result<&'a ProviderSlot, ModelError
 
 pub(crate) fn summary_index_key(config: &Config, env: &Environment) -> Option<[u8; 32]> {
     let factory = ModelFactory::without_harnesses(env);
-    let models = factory.resolve_models(config).ok()?;
+    let models = index_setting(factory.resolve_models(config))?;
     let choice = models
         .embedder
         .choice
@@ -386,7 +386,7 @@ pub(crate) fn summary_index_key(config: &Config, env: &Environment) -> Option<[u
             provider.model.clone()?,
         )
     };
-    let width = workers::EmbedSettings::from_config(config).ok()?.width;
+    let width = index_setting(workers::EmbedSettings::from_config(config))?.width;
     Some(kernel::memory::summary_backend::index_key(
         &endpoint,
         prefix.as_deref(),
@@ -396,8 +396,18 @@ pub(crate) fn summary_index_key(config: &Config, env: &Environment) -> Option<[u
 }
 
 fn openai<'a>(config: &'a Config, id: &str) -> Option<&'a config::provider::OpenaiProvider> {
-    match &slot(config, id).ok()?.body {
+    match &index_setting(slot(config, id))?.body {
         ProviderBody::Openai(body) => Some(body),
         ProviderBody::Cli(_) | ProviderBody::Unknown(_) | ProviderBody::Removed(_) => None,
+    }
+}
+
+fn index_setting<T>(result: Result<T, impl std::fmt::Display>) -> Option<T> {
+    match result {
+        Ok(setting) => Some(setting),
+        Err(error) => {
+            tracing::debug!(%error, "summary index configuration is unavailable");
+            None
+        }
     }
 }

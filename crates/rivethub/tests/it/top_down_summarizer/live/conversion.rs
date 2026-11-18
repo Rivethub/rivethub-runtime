@@ -3,6 +3,7 @@ use kernel::memory::summary_conversion::{
     LEASE, SummaryConversion,
 };
 use kernel::memory::{NewSummary, SummaryKind, SummarySource};
+use sha2::{Digest as _, Sha256};
 use tokio::sync::Notify;
 use wire::time::TimestampFormat as _;
 use workers::handle_conversion_tick;
@@ -168,6 +169,61 @@ async fn conversion(
     tick(store, &provider, &permits).await?;
     assert!(capability.status().await?.inventory_complete);
 
+    verify_foreground_priority(store, capability, historical, old, &provider, &permits).await?;
+    provider.script.fail_embeddings.store(true, SeqCst);
+    tick(store, &provider, &permits).await?;
+    assert_eq!(
+        capability.status().await?.recent_failures,
+        [(historical, "summary embedding failed".into())]
+    );
+    tick(store, &provider, &permits).await?;
+    assert_eq!(
+        provider.embed_calls.load(SeqCst),
+        1,
+        "failed items are skipped"
+    );
+    capability
+        .control(ConversionControl::Retry {
+            conversation: historical,
+        })
+        .await?;
+    provider.script.fail_embeddings.store(false, SeqCst);
+
+    recover_conversion(
+        store,
+        capability,
+        historical,
+        old,
+        &provider,
+        (&permits, expire),
+    )
+    .await?;
+    let after = store
+        .live_input(historical)
+        .await?
+        .ok_or("converted tree")?;
+    assert!(after.expected_root.is_some());
+    assert!(!after.expected_ids.contains(&old));
+    assert_eq!(
+        Sha256::digest(serde_json::to_vec(&before)?),
+        Sha256::digest(serde_json::to_vec(&after.messages)?)
+    );
+    let state = store
+        .summary_state(historical)
+        .await?
+        .ok_or("published revision")?;
+    assert_eq!(state.summarized_through, Some(state.input_revision));
+    Ok(())
+}
+
+async fn verify_foreground_priority(
+    store: &(impl SummaryStore + MemoryStore),
+    capability: &dyn SummaryConversion,
+    historical: Uuid,
+    old: Uuid,
+    provider: &Provider,
+    permits: &Semaphore,
+) -> TestResult {
     let interruption = async {
         provider.entered.notified().await;
         assert_eq!(capability.status().await?.current, Some(historical));
@@ -193,7 +249,7 @@ async fn conversion(
         Ok::<_, Box<dyn std::error::Error>>(live)
     };
     let (result, live) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(tick(store, &provider, &permits), interruption)
+        tokio::join!(tick(store, provider, permits), interruption)
     })
     .await?;
     result?;
@@ -204,39 +260,31 @@ async fn conversion(
         0,
         "conversion yielded before its next request"
     );
-    tick(store, &provider, &permits).await?;
+    tick(store, provider, permits).await?;
     assert_eq!(
         provider.script.calls.lock().await.len(),
         1,
         "ready foreground blocks admission"
     );
-    run(store, &provider.script, &live, 1, 32_768, &permits).await?;
+    run(store, &provider.script, &live, 1, 32_768, permits).await?;
     assert_eq!(provider.script.calls.lock().await.len(), 2);
 
-    provider.script.fail_embeddings.store(true, SeqCst);
-    tick(store, &provider, &permits).await?;
-    assert_eq!(
-        capability.status().await?.recent_failures,
-        [(historical, "summary embedding failed".into())]
-    );
-    tick(store, &provider, &permits).await?;
-    assert_eq!(
-        provider.embed_calls.load(SeqCst),
-        1,
-        "failed items are skipped"
-    );
-    capability
-        .control(ConversionControl::Retry {
-            conversation: historical,
-        })
-        .await?;
-    provider.script.fail_embeddings.store(false, SeqCst);
+    Ok(())
+}
 
+async fn recover_conversion(
+    store: &(impl SummaryStore + MemoryStore),
+    capability: &dyn SummaryConversion,
+    historical: Uuid,
+    old: Uuid,
+    provider: &Provider,
+    (permits, expire): (&Semaphore, impl std::future::Future<Output = TestResult>),
+) -> TestResult {
     provider.embed_gate.store(true, SeqCst);
     tokio::time::timeout(Duration::from_secs(10), async {
         tokio::select! {
             () = provider.entered.notified() => Ok(()),
-            result = tick(store, &provider, &permits) => Err(format!("crash fixture finished early: {result:?}")),
+            result = tick(store, provider, permits) => Err(format!("crash fixture finished early: {result:?}")),
         }
     }).await??;
     assert_eq!(capability.status().await?.current, Some(historical));
@@ -250,7 +298,7 @@ async fn conversion(
         Ok::<_, kernel::memory::SummaryStoreError>(())
     };
     let (result, paused) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(tick(store, &provider, &permits), pause_before_publish)
+        tokio::join!(tick(store, provider, permits), pause_before_publish)
     })
     .await?;
     result?;
@@ -269,7 +317,7 @@ async fn conversion(
             include_giants: false,
         })
         .await?;
-    tick(store, &provider, &permits).await?;
+    tick(store, provider, permits).await?;
     let status = capability.status().await?;
     assert_eq!(
         provider.embed_calls.load(SeqCst),
@@ -290,22 +338,6 @@ async fn conversion(
         2,
         "resume reused completed chat"
     );
-    let after = store
-        .live_input(historical)
-        .await?
-        .ok_or("converted tree")?;
-    assert!(after.expected_root.is_some());
-    assert!(!after.expected_ids.contains(&old));
-    use sha2::{Digest as _, Sha256};
-    assert_eq!(
-        Sha256::digest(serde_json::to_vec(&before)?),
-        Sha256::digest(serde_json::to_vec(&after.messages)?)
-    );
-    let state = store
-        .summary_state(historical)
-        .await?
-        .ok_or("published revision")?;
-    assert_eq!(state.summarized_through, Some(state.input_revision));
     Ok(())
 }
 
@@ -335,8 +367,22 @@ async fn top_down_conversion_sqlite() -> TestResult {
     let before = std::fs::read(&path)?;
     let report = memory_sqlite::SqliteStore::rehearse_conversion(&path, &[historical])?;
     assert_eq!(report.sampled_conversations, 1);
-    assert_eq!(report.tables["ros_wiki_extractions"].remapped, 1);
-    assert_eq!(report.tables["ros_summary_sources"].deleted, 1);
+    assert_eq!(
+        report
+            .tables
+            .get("ros_wiki_extractions")
+            .ok_or("missing ros_wiki_extractions disposition")?
+            .remapped,
+        1
+    );
+    assert_eq!(
+        report
+            .tables
+            .get("ros_summary_sources")
+            .ok_or("missing ros_summary_sources disposition")?
+            .deleted,
+        1
+    );
     assert_eq!(std::fs::read(&path)?, before);
     conversion(&store, historical, old, async {
         let conn = rusqlite::Connection::open(&path)?;
@@ -383,9 +429,9 @@ async fn top_down_conversion_postgres(pool: sqlx::PgPool) -> TestResult {
             .bind(old).execute(&pool).await?;
         let report = store.rehearse_conversion(&[historical]).await?;
         assert_eq!(report.sampled_conversations, 1);
-        assert_eq!(report.tables["rh_wiki_extractions"].remapped, 1);
-        assert_eq!(report.tables["rh_entity_extractions"].remapped, 1);
-        assert_eq!(report.tables["rh_summary_sources"].deleted, 1);
+        assert_eq!(report.tables.get("rh_wiki_extractions").ok_or("missing rh_wiki_extractions disposition")?.remapped, 1);
+        assert_eq!(report.tables.get("rh_entity_extractions").ok_or("missing rh_entity_extractions disposition")?.remapped, 1);
+        assert_eq!(report.tables.get("rh_summary_sources").ok_or("missing rh_summary_sources disposition")?.deleted, 1);
         assert!(!store.summary_conversion().ok_or("conversion")?.status().await?.enabled);
         conversion(&store, historical, old, async {
             sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = now() - interval '1 second'
@@ -483,6 +529,10 @@ async fn exercise_inventory(
         assert_ne!(normal.conversation, giant);
         second.finish(normal, ConversionOutcome::Complete).await?;
     }
+    exercise_giant_admission(second, giant).await
+}
+
+async fn exercise_giant_admission(second: &dyn SummaryConversion, giant: Uuid) -> TestResult {
     assert!(
         second.claim(QUIET).await?.is_none(),
         "giants require opt-in"

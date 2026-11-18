@@ -77,7 +77,48 @@ async fn local_publish(multipart: bool) -> TestResult {
     write_state(home, &config)?;
     std::fs::create_dir_all(home.join(".rivethub"))?;
     migrate::sqlite(&database)?;
-    let store = memory_sqlite::SqliteStore::open(&database)?;
+    seed_transcript(&database, multipart).await?;
+    let started = start(
+        home,
+        &["local", "--no-lan"],
+        &["gateway listening on ", "worker running summarizer"],
+    )
+    .await?;
+    let settled = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
+        .args(["memory", "settle", "live-ledger", "--json"])
+        .env_clear()
+        .env("HOME", home)
+        .output()
+        .await?;
+    assert!(
+        settled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&settled.stderr)
+    );
+    let state: kernel::memory::settlement::SettleResult = serde_json::from_slice(&settled.stdout)?;
+    let conversation = state.conversation_id.to_string();
+    let summarized = wait_summary(&database, &conversation).await;
+    let logs = stop(started).await;
+    let closed = stub.close().await;
+    let logs = logs?;
+    closed?;
+    assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
+    let conn = rusqlite::Connection::open(&database)?;
+    let part_count: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'part'",
+        [conversation],
+        |row| row.get(0),
+    )?;
+    if multipart {
+        assert!(part_count >= 3);
+    } else {
+        assert_eq!(part_count, 0);
+    }
+    Ok(())
+}
+
+async fn seed_transcript(database: &std::path::Path, multipart: bool) -> TestResult {
+    let store = memory_sqlite::SqliteStore::open(database)?;
     let now = jiff::Timestamp::now();
     let messages = (0..if multipart { 6 } else { 1 })
         .map(|position| kernel::memory::MemoryEntry {
@@ -102,44 +143,5 @@ async fn local_publish(multipart: bool) -> TestResult {
     store
         .append_entries(messages, &testkit::owner()?, now)
         .await?;
-    drop(store);
-    let started = start(
-        home,
-        &["local", "--no-lan"],
-        &["gateway listening on ", "worker running summarizer"],
-    )
-    .await?;
-    let settled = tokio::process::Command::new(env!("CARGO_BIN_EXE_rh"))
-        .args(["memory", "settle", "live-ledger", "--json"])
-        .env_clear()
-        .env("HOME", home)
-        .output()
-        .await?;
-    assert!(
-        settled.status.success(),
-        "{}",
-        String::from_utf8_lossy(&settled.stderr)
-    );
-    let state: serde_json::Value = serde_json::from_slice(&settled.stdout)?;
-    let conversation = state["conversationId"]
-        .as_str()
-        .ok_or("missing conversation ID")?;
-    let summarized = wait_summary(&database, conversation).await;
-    let logs = stop(started).await;
-    let closed = stub.close().await;
-    let logs = logs?;
-    closed?;
-    assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
-    let conn = rusqlite::Connection::open(&database)?;
-    let part_count: i64 = conn.query_row(
-        "SELECT count(*) FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'part'",
-        [conversation],
-        |row| row.get(0),
-    )?;
-    if multipart {
-        assert!(part_count >= 3);
-    } else {
-        assert_eq!(part_count, 0);
-    }
     Ok(())
 }

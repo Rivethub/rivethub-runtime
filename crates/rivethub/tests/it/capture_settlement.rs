@@ -84,18 +84,21 @@ async fn top_down_settle_requires_the_owner_and_persists_the_reply() -> TestResu
     }
     let accepted = post(&app, &url, "", Some("dana-full")).await?;
     assert_eq!(accepted.status(), 202);
-    let accepted: serde_json::Value = read_json(accepted).await?;
-    let id: uuid::Uuid = accepted["conversationId"]
-        .as_str()
-        .ok_or("conversationId")?
-        .parse()?;
-    assert_eq!(accepted["status"], "settled");
-    assert_eq!(accepted["inputRevision"], 1);
+    let accepted: kernel::memory::settlement::SettleResult = read_json(accepted).await?;
+    let id = accepted.conversation_id;
+    assert_eq!(
+        accepted.status,
+        kernel::memory::settlement::SettleStatus::Settled
+    );
+    assert_eq!(accepted.input_revision, 1);
     let retry = post(&app, &url, "", Some("dana-full")).await?;
     assert_eq!(retry.status(), 202);
-    let retry: serde_json::Value = read_json(retry).await?;
-    assert_eq!(retry["status"], "already_settled");
-    assert_eq!(accepted["settledAt"], retry["settledAt"]);
+    let retry: kernel::memory::settlement::SettleResult = read_json(retry).await?;
+    assert_eq!(
+        retry.status,
+        kernel::memory::settlement::SettleStatus::AlreadySettled
+    );
+    assert_eq!(accepted.settled_at, retry.settled_at);
     let reopened = memory_sqlite::SqliteStore::open(&path)?;
     assert!(reopened.summary_eligible(id, 1).await?);
     Ok(())
