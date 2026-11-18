@@ -205,7 +205,7 @@ pub async fn search(
         .search(
             query
                 .clone()
-                .resolve_window(Timestamp::now(), &wire::time::host_zone()),
+                .resolve_window(Timestamp::now(), &config::host_zone()),
         )
         .await?;
     let hits = hit_context(store, &outcome).await?;
@@ -317,7 +317,7 @@ pub async fn browse(
             order: order(args.order),
             limit: limit(Browse::NAME, args.limit, 50, 200)?,
         }
-        .resolve_window(Timestamp::now(), &wire::time::host_zone());
+        .resolve_window(Timestamp::now(), &config::host_zone());
     let entries = store.browse(filter.clone()).await?;
     let sessions = if entries.is_empty() {
         std::collections::BTreeMap::new()

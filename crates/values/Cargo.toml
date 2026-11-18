@@ -17,5 +17,11 @@ serde_with = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+iana-time-zone = "=0.1.65"
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

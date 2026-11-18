@@ -33,7 +33,7 @@ impl SqliteStore {
         now: Timestamp,
     ) -> Result<Vec<MemoryEntry>, SqliteError> {
         let bounds = match (filter.since, filter.before, filter.window) {
-            (None, None, Some(window)) => resolve_window(window, now, &wire::time::host_zone()),
+            (None, None, Some(window)) => resolve_window(window, now, &config::host_zone()),
             (since, before, _) => TimeRange { since, before },
         };
         let direction = match filter.order {

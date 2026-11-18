@@ -7,9 +7,11 @@ use serde::{Deserialize, Deserializer, Serializer};
 use serde_with::schemars_1::JsonSchemaAs;
 use serde_with::{DeserializeAs, SerializeAs};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod host;
 
-pub use host::host_zone;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use host::resolve_host_zone;
 
 pub trait TimestampFormat {
     fn rfc3339_offset(self) -> String;

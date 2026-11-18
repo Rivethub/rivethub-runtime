@@ -229,7 +229,7 @@ async fn search(
     };
     let results = gateway
         .store()
-        .search(query.resolve_window(Timestamp::now(), &wire::time::host_zone()))
+        .search(query.resolve_window(Timestamp::now(), &config::host_zone()))
         .await?;
     let origins = super::memory_rows::search_origins(&gateway, &results).await?;
     let snippets = params.snippet == Some(true);
@@ -282,7 +282,7 @@ async fn browse(
     };
     let entries = gateway
         .store()
-        .browse(filter.resolve_window(Timestamp::now(), &wire::time::host_zone()))
+        .browse(filter.resolve_window(Timestamp::now(), &config::host_zone()))
         .await?;
     Ok(Json(
         super::memory_rows::browse_response(&gateway, entries).await?,
@@ -441,7 +441,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
     };
     let results = gateway
         .store()
-        .search(query.resolve_window(Timestamp::now(), &wire::time::host_zone()))
+        .search(query.resolve_window(Timestamp::now(), &config::host_zone()))
         .await?;
     let origins = super::memory_rows::search_origins(gateway, &results).await?;
     let response = MemorySearchResponse {
@@ -492,7 +492,7 @@ async fn browse_tool(gateway: &Gateway, args: MemoryBrowseToolArgs) -> Result<St
     };
     let entries = gateway
         .store()
-        .browse(filter.resolve_window(Timestamp::now(), &wire::time::host_zone()))
+        .browse(filter.resolve_window(Timestamp::now(), &config::host_zone()))
         .await?;
     serialize_tool(&super::memory_rows::browse_response(gateway, entries).await?)
 }
