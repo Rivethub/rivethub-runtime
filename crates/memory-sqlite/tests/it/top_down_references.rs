@@ -98,15 +98,24 @@ async fn seed(store: &SqliteStore) -> TestResult {
 }
 
 async fn snapshot(store: &SqliteStore) -> Result<String, memory_sqlite::SqliteError> {
+    use sha2::{Digest as _, Sha256};
+
     store
         .with_conn(|conn| {
-            conn.query_row(
-                "SELECT json_group_array(json_array(id, conversation_id, content, created_at)) FROM
-         (SELECT * FROM ros_messages ORDER BY id)",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(failed)
+            let mut query = conn
+                .prepare("SELECT * FROM ros_messages ORDER BY id")
+                .map_err(failed)?;
+            let width = query.column_count();
+            let mut rows = query.query([]).map_err(failed)?;
+            let mut digest = Sha256::new();
+            while let Some(row) = rows.next().map_err(failed)? {
+                let values = (0..width)
+                    .map(|column| row.get::<_, rusqlite::types::Value>(column))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(failed)?;
+                digest.update(format!("{values:?}").as_bytes());
+            }
+            Ok(hex::encode(digest.finalize()))
         })
         .await
 }
@@ -315,5 +324,47 @@ async fn check_gone(
     assert!(
         matches!(tags, Err(MemoryStoreError::SummaryReference(SummaryReferenceError::Gone(uuid))) if uuid == id(10))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_split_message_has_only_the_first_anchor() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+        prepared.records.push(PreparedSummaryRecord {
+            id: id(part),
+            parent: Some(id(20)),
+            kind: SummaryKind::Part,
+            ordinal,
+            content: format!("Valve service part {ordinal}."),
+            input_key: [5; 32],
+            index_key: None,
+            model: None,
+            issued_part_ordinal: Some(ordinal),
+            input_tokens: Some(20),
+            quality_flags: 0,
+            section: None,
+            sources: messages
+                .into_iter()
+                .map(|(message, ordinal)| SummaryManifestEntry {
+                    message: id(message),
+                    ordinal,
+                    render_key: None,
+                })
+                .collect(),
+        });
+    }
+    store.replace_summary_tree(prepared).await?;
+    store.with_conn(|conn| {
+        let mut query = conn.prepare(
+            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+        ).map_err(failed)?;
+        let found: Vec<(String, String)> = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(failed)?.collect::<Result<_, _>>().map_err(failed)?;
+        assert_eq!(found, [(id(2).to_string(), id(21).to_string()), (id(3).to_string(), id(22).to_string())]);
+        Ok(())
+    }).await?;
     Ok(())
 }

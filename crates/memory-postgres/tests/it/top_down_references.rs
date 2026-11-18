@@ -458,3 +458,42 @@ async fn check_gone(
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+        prepared.records.push(PreparedSummaryRecord {
+            id: id(part),
+            parent: Some(id(20)),
+            kind: SummaryKind::Part,
+            ordinal,
+            content: format!("Valve service part {ordinal}."),
+            input_key: [5; 32],
+            index_key: None,
+            model: None,
+            issued_part_ordinal: Some(ordinal),
+            input_tokens: Some(20),
+            quality_flags: 0,
+            section: None,
+            sources: messages
+                .into_iter()
+                .map(|(message, ordinal)| SummaryManifestEntry {
+                    message: id(message),
+                    ordinal,
+                    render_key: None,
+                })
+                .collect(),
+        });
+    }
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&prepared))
+        .await?;
+    let found: Vec<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+    ).fetch_all(&pool).await?;
+    assert_eq!(found, [(id(2), id(21)), (id(3), id(22))]);
+    Ok(())
+}
