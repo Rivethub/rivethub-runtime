@@ -77,9 +77,12 @@ impl HookPayload {
     #[must_use]
     pub fn claude_transcript(&self) -> bool {
         match (&self.session_id, &self.transcript_path) {
-            (Some(session), Some(path)) => path
-                .file_stem()
-                .is_some_and(|stem| stem == session.native()),
+            (Some(session), Some(path)) => path.file_stem().is_some_and(|stem| {
+                stem == session.native()
+                    || (self.hook_event_name == Some(HookEvent::SubagentStop)
+                        && stem.to_str().and_then(|name| name.strip_prefix("agent-"))
+                            == Some(session.native()))
+            }),
             _ => true,
         }
     }

@@ -107,8 +107,37 @@ fn short(text: &str) -> Vec<(String, Timestamp)> {
     vec![(text.to_owned(), Timestamp::now())]
 }
 
+async fn stop_child(
+    store: &dyn MemoryStore,
+    session: &str,
+    id: Uuid,
+    revision: i64,
+    at: &str,
+) -> TestResult<LiveRequest> {
+    let batch = CaptureBatchRequest {
+        agent: "fixture".to_owned(),
+        channel: Some("tests".to_owned()),
+        ..testkit::settlement::batch(session, Vec::new())
+    };
+    let mut stopped = testkit::settlement::observed(batch, "SubagentStop", at, true)?;
+    stopped
+        .settings
+        .as_mut()
+        .ok_or("stop settings")?
+        .insert("parent_session_id", "ledger-parent")?;
+    let captured = store.capture(stopped, &testkit::owner()?, None).await?;
+    assert_eq!(captured.conversation_id, id.to_string());
+    Ok(LiveRequest {
+        conversation_id: id,
+        revision: Some(revision),
+    })
+}
+
+const FIRST_STOP: &str = "2026-11-14T18:00:00Z";
+const SECOND_STOP: &str = "2026-11-14T18:01:00Z";
+
 async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResult {
-    let session = "ledger-short";
+    let session = "claude-code:ledger-short";
     let id = capture(store, session, short("Record the olive receipt number.")).await?;
     let state = store.summary_state(id).await?.ok_or("active state")?;
     let mut request = LiveRequest {
@@ -119,7 +148,7 @@ async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResu
     let permits = Semaphore::new(3);
     run(store, &script, &request, 1, 131_072, &permits).await?;
     assert!(script.calls.lock().await.is_empty());
-    request = settle(store, session).await?;
+    request = stop_child(store, session, id, 1, FIRST_STOP).await?;
     script.truncated.store(true, SeqCst);
     run(store, &script, &request, 1, 131_072, &permits).await?;
     let first = store
@@ -136,7 +165,16 @@ async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResu
     assert_eq!(row.vector, kernel::memory::VectorState::Embedded);
 
     capture(store, session, short("The amber receipt is still open.")).await?;
-    request = settle(store, session).await?;
+    let active = store.summary_state(id).await?.ok_or("reopened state")?;
+    assert_eq!(active.input_revision, 2);
+    assert_eq!(active.summarized_through, Some(1));
+    assert_eq!(active.settled_at, None);
+    request.revision = Some(2);
+    run(store, &script, &request, 1, 131_072, &permits).await?;
+    assert_eq!(script.calls.lock().await.len(), 1);
+    stop_child(store, session, id, 2, FIRST_STOP).await?;
+    assert!(!store.summary_eligible(id, 2).await?);
+    request = stop_child(store, session, id, 2, SECOND_STOP).await?;
     script.truncated.store(false, SeqCst);
     script.fail_embeddings.store(true, SeqCst);
     assert!(matches!(
@@ -151,6 +189,11 @@ async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResu
         Some(first)
     );
     assert_eq!(script.calls.lock().await.len(), 2);
+    let calls = script.calls.lock().await;
+    let second = calls.get(1).ok_or("reopened model call")?;
+    assert!(second.user.contains("Record the olive receipt number."));
+    assert!(second.user.contains("The amber receipt is still open."));
+    drop(calls);
     script.fail_embeddings.store(false, SeqCst);
     run(store, &script, &request, 2, 131_072, &Semaphore::new(3)).await?;
     assert_eq!(script.calls.lock().await.len(), 2);
@@ -169,7 +212,7 @@ async fn short_and_reopen(store: &(impl SummaryStore + MemoryStore)) -> TestResu
 async fn parts_and_late_input(
     store: &(impl SummaryStore + MemoryStore + WikiBuilderStore),
 ) -> TestResult {
-    let session = "ledger-parts";
+    let session = "claude-code:ledger-parts";
     let base = Timestamp::now() - wire::time::elapsed_days(1);
     let rows = (1..=8)
         .map(|index| {
@@ -180,7 +223,7 @@ async fn parts_and_late_input(
         })
         .collect();
     let id = capture(store, session, rows).await?;
-    let request = settle(store, session).await?;
+    let request = stop_child(store, session, id, 1, FIRST_STOP).await?;
     let script = Scripted {
         part_pause: Some(Arc::new(Barrier::new(3))),
         ..Scripted::live()
@@ -253,7 +296,9 @@ async fn verify_late_input(
         vec![("The late coral receipt arrived.".into(), base)],
     )
     .await?;
-    let next = settle(store, session).await?;
+    let active = store.summary_state(id).await?.ok_or("reopened state")?;
+    assert_eq!(active.settled_at, None);
+    let next = stop_child(store, session, id, 2, SECOND_STOP).await?;
     script.large_parts.store(false, SeqCst);
     run(store, script, &next, 1, 32_768, &Semaphore::new(3)).await?;
     let next_input = store.live_input(id).await?.ok_or("second publication")?;
@@ -493,8 +538,8 @@ async fn top_down_live_postgres(pool: sqlx::PgPool) -> TestResult {
         .await?;
     let passage: (memory_postgres::time::PgTimestamp, memory_postgres::time::PgTimestamp) = sqlx::query_as(
         "SELECT p.earliest_at, p.latest_at FROM rh_summary_passages p JOIN rh_summaries s ON s.id = p.record_id
-         JOIN rh_conversations c ON c.id = s.conversation_id WHERE c.session_key = 'ledger-short' AND s.kind = 'session'"
-    ).fetch_one(&pool).await?;
+         JOIN rh_conversations c ON c.id = s.conversation_id WHERE c.session_key = $1 AND s.kind = 'session'"
+    ).bind("claude-code:ledger-short").fetch_one(&pool).await?;
     assert!(passage.0.to_jiff() <= passage.1.to_jiff());
     let hits = Scope::Maintenance
         .run(store.search(SearchQuery {

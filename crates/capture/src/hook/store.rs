@@ -38,6 +38,7 @@ pub enum StoreHarness {
 enum Trigger {
     Capture,
     Finalize,
+    SubagentEnd,
 }
 
 struct Profile {
@@ -85,11 +86,19 @@ impl StoreHarness {
     fn trigger(self, event: &str) -> Option<Trigger> {
         match (self, event) {
             (Self::GrokBuild, "Stop" | "PreCompact")
-            | (Self::Opencode, "session.idle" | "session.error")
+            | (Self::Opencode, "session.error")
             | (Self::Codex, "Stop" | "SubagentStop") => Some(Trigger::Capture),
             (Self::GrokBuild | Self::Codex, "SessionEnd") | (Self::Dsh, "turn/end") => {
                 Some(Trigger::Finalize)
             }
+            (
+                Self::Opencode,
+                "session.idle"
+                | "session.execution.succeeded"
+                | "session.execution.failed"
+                | "session.execution.interrupted",
+            )
+            | (Self::Dsh, "subagent/end") => Some(Trigger::SubagentEnd),
             _ => None,
         }
     }
@@ -199,7 +208,16 @@ impl StoreCapture {
             .await
             .map_err(|error| error.to_string())?;
         let messages = slice.messages;
-        if messages.is_empty() && event != "SessionEnd" {
+        let subagent_end = self.harness.trigger(event) == Some(Trigger::SubagentEnd);
+        if messages.is_empty() && event != "SessionEnd" && !subagent_end {
+            return Ok(None);
+        }
+        let subagent = self.link(native).await;
+        let child_ended = subagent_end && subagent.is_some();
+        if subagent_end
+            && !child_ended
+            && (messages.is_empty() || self.harness == StoreHarness::Dsh)
+        {
             return Ok(None);
         }
         let settings = JsonObject::from_serialize(&HookSettings {
@@ -208,17 +226,22 @@ impl StoreCapture {
             cwd,
             last_event: event,
             last_ingest_at: iso_at(now),
-            subagent: self.link(native).await,
+            subagent,
         })
         .map_err(|error| error.to_string())?;
+        let title = if child_ended && messages.is_empty() {
+            None
+        } else {
+            self.title(native).await
+        };
         Ok(Some(CaptureBatchRequest {
             session_key: session.to_string(),
             agent: profile.agent.to_owned(),
             channel: Some(profile.channel.to_owned()),
-            title: self.title(native).await,
+            title,
             settings: Some(settings),
             task_id: None,
-            finalize: finalize.then_some(true),
+            finalize: (finalize || child_ended).then_some(true),
             created_at: None,
             updated_at: None,
             messages,

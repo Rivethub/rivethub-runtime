@@ -411,6 +411,7 @@ fn split_chunks(
                     "last_event",
                     "last_ingest_at",
                     "last_event_id",
+                    "parent_session_id",
                     "summary_end_suppressed",
                 ] {
                     if let Some(value) = settings.get(key) {

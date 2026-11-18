@@ -548,8 +548,7 @@ async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
 }
 
 fn suppress_end(body: String) -> Result<String, SpoolError> {
-    if body.contains("SessionEnd")
-        && let Ok(mut batch) = serde_json::from_str::<CaptureBatchRequest>(&body)
+    if let Ok(mut batch) = serde_json::from_str::<CaptureBatchRequest>(&body)
         && crate::session_observation(&batch)
             .is_some_and(|observation| observation.end_key.is_some())
         && let Some(settings) = &mut batch.settings

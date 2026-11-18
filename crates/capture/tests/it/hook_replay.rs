@@ -167,6 +167,13 @@ async fn transcript_tool_arguments_preserve_input_values() -> Result<(), Box<dyn
             NOW_TEXT.parse()?,
         )
         .await?;
+        if index == 4 {
+            assert!(
+                posts.is_empty(),
+                "the recorded stop carries no child identity"
+            );
+            continue;
+        }
         let mut actual = Vec::new();
         for body in posts {
             let batch: wire::capture::CaptureBatchRequest = serde_json::from_str(&body)?;

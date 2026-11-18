@@ -53,14 +53,33 @@ impl SessionObservation {
         let Some(settings) = settings else {
             return false;
         };
-        let direct_session_hook = match live_source(session_key, settings) {
-            Some("claude-code-hook") => settings.get("parent_session_id").is_none(),
-            Some("codex-hook" | "grok-build-hook") => true,
+        if finalize != Some(true) {
+            return false;
+        }
+        let child = settings
+            .get_str("parent_session_id")
+            .is_some_and(|id| !id.is_empty());
+        match (
+            live_source(session_key, settings),
+            settings.get_str("last_event"),
+        ) {
+            (Some("claude-code-hook"), Some("SubagentStop"))
+            | (
+                Some("opencode-hook"),
+                Some(
+                    "session.idle"
+                    | "session.execution.succeeded"
+                    | "session.execution.failed"
+                    | "session.execution.interrupted",
+                ),
+            )
+            | (Some("dsh-hook"), Some("subagent/end")) => child,
+            (Some("claude-code-hook"), Some("SessionEnd")) => {
+                settings.get("parent_session_id").is_none()
+            }
+            (Some("codex-hook" | "grok-build-hook"), Some("SessionEnd")) => true,
             _ => false,
-        };
-        finalize == Some(true)
-            && direct_session_hook
-            && settings.get_str("last_event") == Some("SessionEnd")
+        }
     }
 }
 

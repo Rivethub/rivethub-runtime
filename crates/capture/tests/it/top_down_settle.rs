@@ -75,6 +75,14 @@ fn has_end(batch: &CaptureBatchRequest) -> bool {
         .is_ok_and(|observation| observation.is_some_and(|observed| observed.end_key.is_some()))
 }
 
+fn child_end_batch() -> Result<CaptureBatchRequest, Box<dyn std::error::Error>> {
+    let mut batch = end_batch()?;
+    let settings = batch.settings.as_mut().ok_or("fixture settings")?;
+    settings.insert("parent_session_id", "fixture-parent")?;
+    settings.insert("last_event", "SubagentStop")?;
+    Ok(batch)
+}
+
 fn network() -> PostError {
     PostError::Network {
         message: "fixture offline".to_owned(),
@@ -129,7 +137,7 @@ async fn replay_end_waits_for_backoff_or_ages_out_after_a_dead_predecessor() -> 
             None,
         );
         let now: Timestamp = "2026-10-10T12:00:00Z".parse()?;
-        assert!(writer.write(&end_batch()?, now).await.is_err());
+        assert!(writer.write(&child_end_batch()?, now).await.is_err());
         assert_eq!(transport.posts.lock().len(), 1);
         let replay = CaptureWriter::new(
             transport.clone(),

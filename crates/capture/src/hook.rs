@@ -152,23 +152,40 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         if !payload.claude_transcript() || payload.subagent_tool_call() {
             return HookRun::done();
         }
+        if event == HookEvent::SubagentStop {
+            return self
+                .capture_subagents(&payload, session.native(), event, now)
+                .await;
+        }
         if event == HookEvent::UserPromptSubmit {
             return self.hold_prompt(&payload, &session, now, ingest_key).await;
         }
+        self.capture_parent(&payload, &session, event, now, ingest_key)
+            .await
+    }
+
+    async fn capture_parent(
+        &self,
+        payload: &HookPayload,
+        session: &SessionId,
+        event: HookEvent,
+        now: Timestamp,
+        ingest_key: &str,
+    ) -> HookRun {
         let transcript = match event {
-            HookEvent::Stop => settled_transcript(&payload).await,
+            HookEvent::Stop => settled_transcript(payload).await,
             HookEvent::PostToolUse
             | HookEvent::SubagentStop
             | HookEvent::SessionEnd
             | HookEvent::UserPromptSubmit
-            | HookEvent::Other => load_transcript(&payload).await,
+            | HookEvent::Other => load_transcript(payload).await,
         };
         let (batch, claim) = match event {
             HookEvent::PostToolUse => (
-                tool::batch(&payload, &session, &transcript, ingest_key, &self.pending).await,
+                tool::batch(payload, session, &transcript, ingest_key, &self.pending).await,
                 None,
             ),
-            HookEvent::Stop | HookEvent::SubagentStop | HookEvent::SessionEnd => {
+            HookEvent::Stop | HookEvent::SessionEnd => {
                 match self.pending.claim(session.native()).await {
                     Ok(claim) => (
                         transcript_batch::build(
@@ -183,10 +200,12 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                     Err(error) => return HookRun::failed(error.to_string()),
                 }
             }
-            HookEvent::UserPromptSubmit | HookEvent::Other => return HookRun::done(),
+            HookEvent::SubagentStop | HookEvent::UserPromptSubmit | HookEvent::Other => {
+                return HookRun::done();
+            }
         };
         let batch = batch.and_then(|mut batch| {
-            batch.settings = Some(settings_for(&payload, &session, event, now)?);
+            batch.settings = Some(settings_for(payload, session, event, now)?);
             Ok(batch)
         });
         let batch = match batch {
@@ -201,13 +220,11 @@ impl<T: CaptureTransport> ClaudeHook<T> {
             }
             Err(error) => run.absorb(&HookRun::write_failed(&error)),
         }
-        match self
-            .capture_subagents(&payload, session.native(), event, now)
-            .await
-        {
-            Ok(found) => found.iter().for_each(|found| run.absorb(found)),
-            Err(error) => run.absorb(&HookRun::failed(error.to_string())),
-        }
+        run.absorb(
+            &self
+                .capture_subagents(payload, session.native(), event, now)
+                .await,
+        );
         run
     }
 
@@ -237,15 +254,18 @@ impl<T: CaptureTransport> ClaudeHook<T> {
         native: &str,
         event: HookEvent,
         now: Timestamp,
-    ) -> Result<Vec<HookRun>, HookError> {
-        let selection = subagents::select(payload, native, event).await?;
+    ) -> HookRun {
+        let selection = match subagents::select(payload, native, event).await {
+            Ok(selection) => selection,
+            Err(error) => return HookRun::failed(error.to_string()),
+        };
         let last_event = event.to_string();
-        let mut failures = Vec::new();
+        let mut result = HookRun::done();
         for file in &selection.files {
             let bytes = match tokio::fs::metadata(&file.path).await {
                 Ok(metadata) => metadata.len(),
                 Err(error) => {
-                    failures.push(HookRun::failed(format!(
+                    result.absorb(&HookRun::failed(format!(
                         "subagent {} was not read: {error}",
                         file.id
                     )));
@@ -257,7 +277,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                     Ok(true) => continue,
                     Ok(false) => {}
                     Err(error) => {
-                        failures.push(HookRun::failed(format!(
+                        result.absorb(&HookRun::failed(format!(
                             "subagent {} was not checked: {error}",
                             file.id
                         )));
@@ -271,12 +291,13 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 finalize: selection.named || event == HookEvent::SessionEnd,
                 cwd: payload.cwd.as_ref().map(|path| path.display().to_string()),
                 agent_type: payload.agent_type.as_deref().filter(|_| selection.named),
+                event_id: payload.event_id.as_deref().filter(|_| selection.named),
             };
             let batch = match file::batch(&capture, now).await {
                 Ok(Some(batch)) => batch,
                 Ok(None) => continue,
                 Err(error) => {
-                    failures.push(HookRun::failed(format!("subagent {}: {error}", file.id)));
+                    result.absorb(&HookRun::failed(format!("subagent {}: {error}", file.id)));
                     continue;
                 }
             };
@@ -289,7 +310,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 Err(error) => {
                     let mut run = HookRun::write_failed(error);
                     run.stderr = format!("subagent {}: {}", file.id, run.stderr);
-                    failures.push(run);
+                    result.absorb(&run);
                 }
             }
             let kept = match &written {
@@ -300,7 +321,7 @@ impl<T: CaptureTransport> ClaudeHook<T> {
                 tracing::warn!("subagent {} was not recorded: {error}", file.id);
             }
         }
-        Ok(failures)
+        result
     }
 
     async fn hold_prompt(
