@@ -8,6 +8,10 @@
     "The seed has no ModelRequest field. The product OpenAI adapter sets streaming and usage itself, so the test compares all three as profile metadata.",
     "Reply section rows use eval block/range analysis with the production Overview and fallback projection."
   ],
+  "wire_differences": {
+    "reference_seed": 0,
+    "product_sends_seed": false
+  },
   "sessions": [
     {
       "name": "short full tools",
@@ -1735,6 +1739,1399 @@
         "Résultat du jardin",
         "Résultat du jardin"
       ]
+    },
+    {
+      "name": "eighty percent stays",
+      "messages": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:58:09Z",
+          "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "role": "user",
+          "created_at": "2026-05-14T13:57:09Z",
+          "content": "stay",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:56:09Z",
+          "content": "tail",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        }
+      ],
+      "calibration": null,
+      "ratio": 3.0,
+      "dense_exact": false,
+      "window": 262144,
+      "chunk_tokens": 100,
+      "thinking": false,
+      "rendered": "[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n[m00002 2026-05-14 13:57 user] stay\n[m00003 2026-05-14 13:56 assistant] tail",
+      "tags": {
+        "m00001": "00000000-0000-0000-0000-000000000001",
+        "m00002": "00000000-0000-0000-0000-000000000002",
+        "m00003": "00000000-0000-0000-0000-000000000003"
+      },
+      "render_keys": {
+        "00000000-0000-0000-0000-000000000001": "be04ddb955e314629c68ff747ce688ddab7225e0f20cc27d9418fb261754425d",
+        "00000000-0000-0000-0000-000000000002": "14462a8adb3fd171a24771a2acbca45d410e782557b952ce0e2979a9d23bc440",
+        "00000000-0000-0000-0000-000000000003": "16f25cc9026233eda06caa1db95ee3a89c011bb87e45b5f2d86e890b45bce6a8"
+      },
+      "chunks": [
+        {
+          "text": "[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n[m00002 2026-05-14 13:57 user] stay",
+          "estimate": 92,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "block_chars": [
+                0,
+                237
+              ],
+              "chunk_chars": [
+                0,
+                237
+              ]
+            },
+            {
+              "id": "00000000-0000-0000-0000-000000000002",
+              "block_chars": [
+                0,
+                35
+              ],
+              "chunk_chars": [
+                238,
+                273
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00003 2026-05-14 13:56 assistant] tail",
+          "estimate": 14,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "block_chars": [
+                0,
+                40
+              ],
+              "chunk_chars": [
+                0,
+                40
+              ]
+            }
+          ]
+        }
+      ],
+      "spans": [
+        [
+          "00000000-0000-0000-0000-000000000001",
+          "00000000-0000-0000-0000-000000000002"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000003"
+        ]
+      ],
+      "total_tokens": 106,
+      "requests": [
+        {
+          "step": "part1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 1.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n[m00002 2026-05-14 13:57 user] stay"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part2",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 2, the last part.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 2\n\n[m00003 2026-05-14 13:56 assistant] tail"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "final",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of all 2 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 300 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 225 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin\n\n## Record of part 2\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 962,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 300
+        }
+      ],
+      "part_records": [
+        "Résultat du jardin",
+        "Résultat du jardin"
+      ]
+    },
+    {
+      "name": "eighty percent cuts",
+      "messages": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:58:09Z",
+          "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "role": "user",
+          "created_at": "2026-05-14T13:57:09Z",
+          "content": "cut",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:56:09Z",
+          "content": "tail",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        }
+      ],
+      "calibration": null,
+      "ratio": 3.0,
+      "dense_exact": false,
+      "window": 262144,
+      "chunk_tokens": 100,
+      "thinking": false,
+      "rendered": "[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n[m00002 2026-05-14 13:57 user] cut\n[m00003 2026-05-14 13:56 assistant] tail",
+      "tags": {
+        "m00001": "00000000-0000-0000-0000-000000000001",
+        "m00002": "00000000-0000-0000-0000-000000000002",
+        "m00003": "00000000-0000-0000-0000-000000000003"
+      },
+      "render_keys": {
+        "00000000-0000-0000-0000-000000000001": "8ef51b9fe85285cc491fb9596ac3b2aa1a8ef20d478088e9409bb560b84fd668",
+        "00000000-0000-0000-0000-000000000002": "41f7ede817626f9d40e5c4f3d97d9871e15a9f313a4f80300910bf65c81cd446",
+        "00000000-0000-0000-0000-000000000003": "16f25cc9026233eda06caa1db95ee3a89c011bb87e45b5f2d86e890b45bce6a8"
+      },
+      "chunks": [
+        {
+          "text": "[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "estimate": 81,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "block_chars": [
+                0,
+                240
+              ],
+              "chunk_chars": [
+                0,
+                240
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00002 2026-05-14 13:57 user] cut\n[m00003 2026-05-14 13:56 assistant] tail",
+          "estimate": 26,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000002",
+              "block_chars": [
+                0,
+                34
+              ],
+              "chunk_chars": [
+                0,
+                34
+              ]
+            },
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "block_chars": [
+                0,
+                40
+              ],
+              "chunk_chars": [
+                35,
+                75
+              ]
+            }
+          ]
+        }
+      ],
+      "spans": [
+        [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000002",
+          "00000000-0000-0000-0000-000000000003"
+        ]
+      ],
+      "total_tokens": 107,
+      "requests": [
+        {
+          "step": "part1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 1.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part2",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 2, the last part.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 2\n\n[m00002 2026-05-14 13:57 user] cut\n[m00003 2026-05-14 13:56 assistant] tail"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "final",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of all 2 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 300 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 225 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin\n\n## Record of part 2\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 962,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 300
+        }
+      ],
+      "part_records": [
+        "Résultat du jardin",
+        "Résultat du jardin"
+      ]
+    },
+    {
+      "name": "emoji midpoint and short over budget",
+      "messages": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:58:09Z",
+          "content": "🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "role": "user",
+          "created_at": "2026-05-14T13:57:09Z",
+          "content": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        }
+      ],
+      "calibration": null,
+      "ratio": 3.0,
+      "dense_exact": true,
+      "window": 262144,
+      "chunk_tokens": 1000,
+      "thinking": false,
+      "rendered": "[m00001 2026-05-14 13:58 assistant] 🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿\n[m00002 2026-05-14 13:57 user] bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "tags": {
+        "m00001": "00000000-0000-0000-0000-000000000001",
+        "m00002": "00000000-0000-0000-0000-000000000002"
+      },
+      "render_keys": {
+        "00000000-0000-0000-0000-000000000001": "44da9f1319cdf3251851bf1b95532478dd2aa44350dafb81a731e02a603e5758",
+        "00000000-0000-0000-0000-000000000002": "5a31d541d1628fdc1c12d854a3fb716bb005e26ea21c14130d9d543fa344066e"
+      },
+      "chunks": [
+        {
+          "text": "[m00001 2026-05-14 13:58 assistant] 🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿",
+          "estimate": 423,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "block_chars": [
+                0,
+                1268
+              ],
+              "chunk_chars": [
+                0,
+                1268
+              ]
+            }
+          ]
+        },
+        {
+          "text": "🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿",
+          "estimate": 423,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "block_chars": [
+                1268,
+                2536
+              ],
+              "chunk_chars": [
+                0,
+                1268
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00002 2026-05-14 13:57 user] bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "estimate": 667,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000002",
+              "block_chars": [
+                0,
+                1999
+              ],
+              "chunk_chars": [
+                0,
+                1999
+              ]
+            }
+          ]
+        }
+      ],
+      "spans": [
+        [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000002"
+        ]
+      ],
+      "total_tokens": 1513,
+      "requests": [
+        {
+          "step": "part1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 1.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] 🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part2",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 2.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 2\n\n🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿🌿"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part3",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 3, the last part.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 3\n\n[m00002 2026-05-14 13:57 user] bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "final",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of all 3 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 300 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 283 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin\n\n## Record of part 2\n\nRésultat du jardin\n\n## Record of part 3\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 1079,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 378
+        }
+      ],
+      "part_records": [
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin"
+      ]
+    },
+    {
+      "name": "odd reduction",
+      "messages": [
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:58:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:57:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:56:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000004",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:55:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000005",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:54:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000006",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:53:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000007",
+          "role": "assistant",
+          "created_at": "2026-05-14T13:52:09Z",
+          "content": "texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
+          "tool_name": null,
+          "tool_args": null,
+          "tool_result": null
+        }
+      ],
+      "calibration": 35000,
+      "ratio": 0.022294285714285714,
+      "dense_exact": false,
+      "window": 24000,
+      "chunk_tokens": 6000,
+      "thinking": false,
+      "rendered": "[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1\n[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2\n[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3\n[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4\n[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5\n[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6\n[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
+      "tags": {
+        "m00001": "00000000-0000-0000-0000-000000000001",
+        "m00002": "00000000-0000-0000-0000-000000000002",
+        "m00003": "00000000-0000-0000-0000-000000000003",
+        "m00004": "00000000-0000-0000-0000-000000000004",
+        "m00005": "00000000-0000-0000-0000-000000000005",
+        "m00006": "00000000-0000-0000-0000-000000000006",
+        "m00007": "00000000-0000-0000-0000-000000000007"
+      },
+      "render_keys": {
+        "00000000-0000-0000-0000-000000000001": "e7740d1c19fbc05cef1276e00e7e19f19f08b01483ba93de3fdbce57e3651155",
+        "00000000-0000-0000-0000-000000000002": "0d5d9a21318df0717f332643e7f4d30924b5b88c8a341447c07a0bebe59c6962",
+        "00000000-0000-0000-0000-000000000003": "112f423194284e26f9ee985cee41833c4f6e05446b54219fd49a3157d0f20d02",
+        "00000000-0000-0000-0000-000000000004": "af040fd68f15304b8a4e8883b3e15d63261d9cb5528a8d89c3e6dee5f59959ab",
+        "00000000-0000-0000-0000-000000000005": "b11508c00ec8eaa7a4669a4c34c5ad5b741e7a43423a4f6e14a53e7419fa4608",
+        "00000000-0000-0000-0000-000000000006": "1c90d6b94cdffd18549a68a6e7be180dcfd24b79a31f2d38754ab4b09455fce6",
+        "00000000-0000-0000-0000-000000000007": "5437aa34398224b34de5ef08bb2371cf51f7a0ef7b83b4612de2a850fc37cddd"
+      },
+      "chunks": [
+        {
+          "text": "[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000002",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000004",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000005",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000006",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        },
+        {
+          "text": "[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7",
+          "estimate": 5518,
+          "fragments": [
+            {
+              "id": "00000000-0000-0000-0000-000000000007",
+              "block_chars": [
+                0,
+                123
+              ],
+              "chunk_chars": [
+                0,
+                123
+              ]
+            }
+          ]
+        }
+      ],
+      "spans": [
+        [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000002"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000003"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000004"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000005"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000006"
+        ],
+        [
+          "00000000-0000-0000-0000-000000000007"
+        ]
+      ],
+      "total_tokens": 38626,
+      "requests": [
+        {
+          "step": "part1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 1.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 1\n\n[m00001 2026-05-14 13:58 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 1"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part2",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 2.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 2\n\n[m00002 2026-05-14 13:57 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 2"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part3",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 3.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 3\n\n[m00003 2026-05-14 13:56 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 3"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part4",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 4.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 4\n\n[m00004 2026-05-14 13:55 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 4"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part5",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 5.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 5\n\n[m00005 2026-05-14 13:54 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 5"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part6",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 6.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 6\n\n[m00006 2026-05-14 13:53 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 6"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "part7",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You write the memory record of one working session between a person and an AI agent. The session is too long to read at once, so it is read in parts. You are given the transcript of part 7, the last part.\n\nWrite the record of this part only.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nWrite this part as sections, one section for each topic or thread of work the part actually contains. Use as few sections as the part needs, and keep material about one thing in one section. A reader will later look up one section without the rest, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers in this part. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces an earlier part is not a section heading.\nWrite about 2250 words, and never more than 2250."
+              },
+              {
+                "role": "user",
+                "content": "# Transcript of part 7\n\n[m00007 2026-05-14 13:52 assistant] texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿 texte 🌿  item 7"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 5012,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 3000
+        },
+        {
+          "step": "final.group0.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group0.group1.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group0.group1.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group0.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 2 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 3 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group0.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group0.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 2 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group1.group0",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group1.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 1 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRésultat du jardin"
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 2 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final.group1",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of the first 4 parts of one long working session between a person and an AI agent. Write one condensed record that the reader of the next part will use as background.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nKeep the states things ended in, the decisions, the names and identifiers, and the open work. Drop step-by-step detail. Write at most 7500 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 15512,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 10000
+        },
+        {
+          "step": "final",
+          "body": {
+            "model": "fixture-chat",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are given the records of all 7 parts of one working session between a person and an AI agent, in order. Write the single memory record of the whole session.\n\nOther agents will read this record later, without the session, to find out what happened and to continue the work.\n\nWrite what was asked, what was done, what was found, what was decided and why, and what was left open.\nKeep exact names and identifiers: hosts, addresses, ports, paths, commands, versions, model names, branch and pull request numbers, error messages, and numbers with their units.\nSay who asked for or decided something when it matters.\nGive the state each thing ended in. When something was tried and then reversed or corrected, say so.\nSeparate what was done from what was only proposed or planned.\nKeep dates when the transcript gives them.\nState only what the transcript shows.\nDo not describe the transcript itself: no message counts, no tallies of tool calls, no remarks about the conversation.\n\nLater parts override earlier ones where they disagree. Open with one paragraph that says what the session was about and how it ended. Then write the rest as sections, one section for each topic or thread of work the session actually contains. Use as few sections as the session needs, and keep material about one thing in one section. Where the same thread continues from one part into another, merge it into one section whose range runs from the earliest message tag in that thread to the latest. A reader will later look up one section without the rest of the record, so the section itself carries what that topic decided, what it found, and what it left open.\n\nEach section starts with one heading line of this form: ## <title> [m00012-m00087]. The title is a short name of the topic, written in place of the placeholder. The two tags are the first and last message tags the section covers, written in place of the sample tags. Those tags are the labels on the transcript message headers. The range is how a reader finds the messages for that topic, and it belongs in the section. Threads that interleave may have overlapping ranges. A heading that only introduces a part is not a section heading.\nWrite about 2896 words. A session this size needs that much to keep its decisions, exact values and open work. Do not pad, and never go over 7242 words."
+              },
+              {
+                "role": "user",
+                "content": "## Record of part 1\n\nRéduit.\n\n## Record of part 2\n\nRéduit."
+              }
+            ],
+            "temperature": 0,
+            "seed": 0,
+            "max_tokens": 14996,
+            "stream": true,
+            "stream_options": {
+              "include_usage": true
+            },
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          },
+          "editorial_ceiling": 9656
+        }
+      ],
+      "part_records": [
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin",
+        "Résultat du jardin"
+      ]
     }
   ],
   "replies": {
@@ -2033,6 +3430,101 @@
         "output": null,
         "flags": 3,
         "sections": []
+      },
+      {
+        "name": "fence odd dashes multibyte",
+        "text": "Intro 🌿\n```\n## Fenced [m00002-m00003]\nstill fenced\n```\n## Real [m00002-m00003]\nbody é\n## Spaced [m00002 - m00003]\nnope\n## En [m00002–m00003]\nalso\n## Em [m00002—m00003]\nx\n## Real [m00002-m00003]\nagain\n",
+        "finish": "stop",
+        "usage": 12,
+        "ceiling": 300,
+        "output": "Intro 🌿\n```\n## Fenced [m00002-m00003]\nstill fenced\n```\n## Real [m00002-m00003]\nbody é\n## Spaced [m00002 - m00003]\nnope\n## En [m00002–m00003]\nalso\n## Em [m00002—m00003]\nx\n## Real [m00002-m00003]\nagain",
+        "flags": 0,
+        "sections": [
+          {
+            "heading": "Overview",
+            "chars": [
+              0,
+              12
+            ],
+            "bounds": [
+              2,
+              5
+            ],
+            "verified": false
+          },
+          {
+            "heading": "Fenced",
+            "chars": [
+              12,
+              55
+            ],
+            "bounds": [
+              2,
+              3
+            ],
+            "verified": true
+          },
+          {
+            "heading": "Real",
+            "chars": [
+              55,
+              86
+            ],
+            "bounds": [
+              2,
+              3
+            ],
+            "verified": true
+          },
+          {
+            "heading": "Spaced [m00002 - m00003]",
+            "chars": [
+              86,
+              119
+            ],
+            "bounds": [
+              2,
+              5
+            ],
+            "verified": false
+          },
+          {
+            "heading": "En [m00002–m00003]",
+            "chars": [
+              119,
+              146
+            ],
+            "bounds": [
+              2,
+              5
+            ],
+            "verified": false
+          },
+          {
+            "heading": "Em [m00002—m00003]",
+            "chars": [
+              146,
+              170
+            ],
+            "bounds": [
+              2,
+              5
+            ],
+            "verified": false
+          },
+          {
+            "heading": "Real",
+            "chars": [
+              170,
+              199
+            ],
+            "bounds": [
+              2,
+              3
+            ],
+            "verified": true
+          }
+        ]
       }
     ]
   }

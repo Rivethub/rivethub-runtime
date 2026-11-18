@@ -7,13 +7,7 @@ use std::collections::BTreeMap;
 use wire::JsonObject;
 
 use super::*;
-mod llm {
-    pub(super) use super::top_down::llm::*;
-    pub(crate) const SEED: u32 = 0;
-    pub(crate) const STREAM: bool = true;
-    pub(crate) const INCLUDE_USAGE: bool = true;
-}
-
+use top_down::llm;
 use top_down::plan::{self, ComposePlan, Meter, Source};
 use top_down::prompt::{self, Mode, Prompt};
 mod settings {
@@ -24,8 +18,15 @@ use settings::Limits;
 
 #[derive(Deserialize)]
 struct Fixture {
+    wire_differences: WireDifferences,
     sessions: Vec<Session>,
     replies: Replies,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+struct WireDifferences {
+    reference_seed: u32,
+    product_sends_seed: bool,
 }
 
 #[derive(Deserialize)]
@@ -81,36 +82,8 @@ struct Session {
 #[derive(Deserialize)]
 struct Request {
     step: String,
-    body: RequestBody,
+    body: serde_json::Value,
     editorial_ceiling: u32,
-}
-
-#[derive(Deserialize)]
-struct RequestBody {
-    model: String,
-    messages: [ExpectedMessage; 2],
-    temperature: f64,
-    seed: u32,
-    max_tokens: u32,
-    stream: bool,
-    stream_options: StreamOptions,
-    chat_template_kwargs: TemplateKwargs,
-}
-
-#[derive(Deserialize)]
-struct ExpectedMessage {
-    role: Role,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct StreamOptions {
-    include_usage: bool,
-}
-
-#[derive(Deserialize)]
-struct TemplateKwargs {
-    enable_thinking: bool,
 }
 
 #[derive(Deserialize)]
@@ -160,6 +133,7 @@ fn fixture() -> Fixture {
 struct Playback {
     provider: Scripted,
     requests: std::vec::IntoIter<Request>,
+    differences: WireDifferences,
 }
 
 impl Playback {
@@ -167,7 +141,7 @@ impl Playback {
         let expected = self.requests.next().expect("expected request");
         assert_eq!(step, expected.step);
         let request = llm::model_request("fixture-chat", prompt);
-        check_request(&request, expected.body, step);
+        check_request(&request, expected.body, self.differences, step);
         assert_eq!(
             prompt.editorial_ceiling, expected.editorial_ceiling,
             "{step}"
@@ -211,39 +185,36 @@ impl Playback {
     }
 }
 
-fn check_request(request: &ModelRequest, expected: RequestBody, step: &str) {
-    let [system, user] = expected.messages;
-    let system_text = super::script::system_text(request).expect("system text");
-    let user_text = super::script::user_text(request).expect("user text");
-    assert_eq!(
-        system_text.as_bytes(),
-        system.content.as_bytes(),
-        "{step} system"
+fn check_request(
+    request: &ModelRequest,
+    mut expected: serde_json::Value,
+    differences: WireDifferences,
+    step: &str,
+) {
+    let wire = providers::body::chat_body(providers::Variant::Vllm, request, None)
+        .expect("OpenAI request body");
+    let actual = serde_json::to_value(wire).expect("serialized request body");
+    assert_eq!(expected["seed"], differences.reference_seed, "{step} seed");
+    assert_eq!(actual.get("seed").is_some(), differences.product_sends_seed);
+    if !differences.product_sends_seed {
+        expected
+            .as_object_mut()
+            .expect("reference body")
+            .remove("seed");
+    }
+    expected["temperature"] = serde_json::json!(
+        expected["temperature"]
+            .as_f64()
+            .expect("reference temperature")
     );
-    assert_eq!(user_text.as_bytes(), user.content.as_bytes(), "{step} user");
-    assert_eq!(
-        request.messages.first().map(|message| message.role),
-        Some(system.role)
-    );
-    assert_eq!(
-        request.messages.get(1).map(|message| message.role),
-        Some(user.role)
-    );
-    assert_eq!(request.model, expected.model);
-    assert_eq!(request.max_tokens, Some(expected.max_tokens));
-    assert_eq!(request.options.temperature, Some(expected.temperature));
-    assert_eq!(
-        request.options.enable_thinking,
-        Some(expected.chat_template_kwargs.enable_thinking)
-    );
-    assert_eq!(llm::SEED, expected.seed);
-    assert_eq!(llm::STREAM, expected.stream);
-    assert_eq!(llm::INCLUDE_USAGE, expected.stream_options.include_usage);
+    expected["enable_thinking"] = expected["chat_template_kwargs"]["enable_thinking"].clone();
+    assert_eq!(actual, expected, "{step} request");
 }
 
 #[tokio::test]
 async fn top_down_prompt_parity_requests() {
-    for mut case in fixture().sessions {
+    let fixture = fixture();
+    for mut case in fixture.sessions {
         let limits = Limits::new(case.window, case.chunk_tokens, case.thinking).expect("limits");
         let rows: Vec<_> = std::mem::take(&mut case.messages)
             .into_iter()
@@ -266,6 +237,7 @@ async fn top_down_prompt_parity_requests() {
         let mut playback = Playback {
             provider: Scripted::default(),
             requests: case.requests.into_iter(),
+            differences: fixture.wire_differences,
         };
         let chunk_count = plan.chunks.len();
         if chunk_count == 1 {
