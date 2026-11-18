@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
-use jiff::civil::Date;
-use jiff::tz::TimeZone;
+use jiff::civil::{Date, DateTime};
+use jiff::tz::{Offset, TimeZone};
 use jiff::{Error, SignedDuration, Timestamp};
 use serde::{Deserialize, Deserializer, Serializer};
 use serde_with::schemars_1::JsonSchemaAs;
@@ -33,24 +33,31 @@ fn automatic_precision(at: Timestamp) -> usize {
     }
 }
 
+fn legacy_year(text: String) -> String {
+    match text.strip_prefix("-00") {
+        Some(year_and_time) => format!("-{year_and_time}"),
+        None => text,
+    }
+}
+
 impl TimestampFormat for Timestamp {
     fn rfc3339_offset(self) -> String {
         let precision = automatic_precision(self);
         let base = self.display_with_offset(jiff::tz::Offset::UTC);
-        format!("{base:.precision$}")
+        legacy_year(format!("{base:.precision$}"))
     }
 
     fn rfc3339_z(self) -> String {
         let precision = automatic_precision(self);
-        format!("{self:.precision$}")
+        legacy_year(format!("{self:.precision$}"))
     }
 
     fn rfc3339_millis(self) -> String {
-        format!("{self:.3}")
+        legacy_year(format!("{self:.3}"))
     }
 
     fn rfc3339_seconds(self) -> String {
-        format!("{self:.0}")
+        legacy_year(format!("{self:.0}"))
     }
 
     fn utc_date(self) -> Date {
@@ -155,6 +162,8 @@ pub fn parse_rfc3339(raw: &str) -> Result<Timestamp, Error> {
         0
     };
     let offset = tail.get(offset_start..).ok_or_else(invalid_timestamp)?;
+    let normalized = offset.strip_prefix('−').map(|digits| format!("-{digits}"));
+    let offset = normalized.as_deref().unwrap_or(offset);
     if !matches!(
         offset.as_bytes(),
         [b'Z' | b'z']
@@ -169,63 +178,95 @@ pub fn parse_rfc3339(raw: &str) -> Result<Timestamp, Error> {
     ) {
         return Err(invalid_timestamp());
     }
-    if fraction_digits > 9 {
-        let prefix = raw.get(..29).ok_or_else(invalid_timestamp)?;
+    if fraction_digits > 9 || normalized.is_some() {
+        let prefix = raw
+            .get(..19 + offset_start.min(10))
+            .ok_or_else(invalid_timestamp)?;
         return format!("{prefix}{offset}").parse();
     }
     raw.parse()
 }
 
 pub fn parse_wire_timestamp(raw: &str) -> Result<Timestamp, Error> {
-    match parse_rfc3339(raw) {
-        Ok(at) => Ok(at),
-        Err(_strict) => {
-            let raw = raw.trim_end();
-            if let Some(body) = raw.strip_suffix(['Z', 'z']) {
-                return jiff::fmt::strtime::parse("%Y-%m-%d%T%.f", body)
-                    .and_then(|time| TimeZone::UTC.to_timestamp(time.to_datetime()?))
-                    .or_else(|_error| parse_wire_offset(body, "+0000"));
-            }
-            if let Some(body) = raw.get(..raw.len().saturating_sub(3))
-                && raw
-                    .get(body.len()..)
-                    .is_some_and(|suffix| suffix.eq_ignore_ascii_case("UTC"))
-            {
-                return parse_wire_offset(body, "+0000");
-            }
-            let separator = raw
-                .get(10..)
-                .and_then(|tail| tail.rfind(['+', '-']))
-                .map(|index| index + 10)
-                .ok_or_else(invalid_timestamp)?;
-            let (body, offset) = raw.split_at(separator);
-            parse_wire_offset(body, offset)
-        }
-    }
+    parse_rfc3339(raw).or_else(|_strict| parse_relaxed_timestamp(raw))
 }
 
-fn parse_wire_offset(body: &str, offset: &str) -> Result<Timestamp, Error> {
-    let body = body.trim_end();
-    let separator = body.rfind(['T', 't', ' ']).ok_or_else(invalid_timestamp)?;
-    let boundary = body.get(..separator).ok_or_else(invalid_timestamp)?;
-    let clock = body.get(separator + 1..).ok_or_else(invalid_timestamp)?;
-    let offset: String = offset
-        .chars()
-        .filter(|ch| *ch != ':' && !ch.is_whitespace())
-        .collect();
-    if !matches!(
-        offset.as_bytes(),
-        [
-            b'+' | b'-',
-            b'0'..=b'9',
-            b'0'..=b'9',
-            b'0'..=b'9',
-            b'0'..=b'9'
-        ]
-    ) {
+fn parse_relaxed_timestamp(raw: &str) -> Result<Timestamp, Error> {
+    let raw = raw.trim_start();
+    let (sign, digits, width) = match raw.as_bytes() {
+        [b'+', ..] => (1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
+        [b'-', ..] => (-1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
+        _ => (1, raw, 4),
+    };
+    let (year, tail) = decimal::<i16>(digits, width)?;
+    let (month, tail) = decimal(delimiter(tail, '-')?, 2)?;
+    let (day, tail) = decimal(delimiter(tail, '-')?, 2)?;
+    let clock = tail
+        .strip_prefix(['T', 't', ' '])
+        .ok_or_else(invalid_timestamp)?;
+    let (hour, tail) = decimal(clock.trim_start(), 2)?;
+    let (minute, tail) = decimal(delimiter(tail, ':')?, 2)?;
+    let (second, tail) = decimal(delimiter(tail, ':')?, 2)?;
+    let (nanos, offset) = parse_fraction(tail)?;
+    let second = if second == 60 { 59 } else { second };
+    let civil = DateTime::new(year * sign, month, day, hour, minute, second, nanos)?;
+    parse_relaxed_offset(offset.trim())?.to_timestamp(civil)
+}
+
+fn delimiter(raw: &str, separator: char) -> Result<&str, Error> {
+    raw.trim_start()
+        .strip_prefix(separator)
+        .map(str::trim_start)
+        .ok_or_else(invalid_timestamp)
+}
+
+fn decimal<T: std::str::FromStr>(raw: &str, width: usize) -> Result<(T, &str), Error> {
+    let len = raw
+        .bytes()
+        .take(width)
+        .take_while(u8::is_ascii_digit)
+        .count();
+    let (digits, tail) = raw.split_at(len);
+    let value = digits.parse().map_err(|_error| invalid_timestamp())?;
+    Ok((value, tail))
+}
+
+fn parse_fraction(raw: &str) -> Result<(i32, &str), Error> {
+    let Some(fraction) = raw.strip_prefix('.') else {
+        return Ok((0, raw));
+    };
+    let length = fraction.bytes().take_while(u8::is_ascii_digit).count();
+    let (digits, tail) = fraction.split_at(length);
+    let (nanos, excess) = decimal::<i32>(digits, 9)?;
+    let used = u32::try_from(digits.len() - excess.len()).map_err(|_error| invalid_timestamp())?;
+    Ok((nanos * 10_i32.pow(9 - used), tail))
+}
+
+fn parse_relaxed_offset(raw: &str) -> Result<Offset, Error> {
+    if raw == "Z" || raw == "z" || raw.eq_ignore_ascii_case("UTC") {
+        return Ok(Offset::UTC);
+    }
+    let (sign, tail) = if let Some(tail) = raw.strip_prefix('+') {
+        (1, tail)
+    } else if let Some(tail) = raw.strip_prefix(['-', '−']) {
+        (-1, tail)
+    } else {
+        return Err(invalid_timestamp());
+    };
+    let (hours, tail) = offset_digits(tail)?;
+    let (minutes, tail) =
+        offset_digits(tail.trim_start_matches(|ch: char| ch == ':' || ch.is_whitespace()))?;
+    if hours > 23 || minutes > 59 || !tail.is_empty() {
         return Err(invalid_timestamp());
     }
-    Timestamp::strptime("%Y-%m-%dT%T%.f%z", format!("{boundary}T{clock}{offset}"))
+    Offset::from_seconds(sign * (hours * 3600 + minutes * 60))
+}
+
+fn offset_digits(raw: &str) -> Result<(i32, &str), Error> {
+    if !matches!(raw.as_bytes(), [b'0'..=b'9', b'0'..=b'9', ..]) {
+        return Err(invalid_timestamp());
+    }
+    decimal(raw, 2)
 }
 
 #[derive(Debug)]

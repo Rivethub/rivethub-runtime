@@ -154,3 +154,58 @@ fn plugin_timestamps_round_to_a_signed_millisecond() -> Result<(), Box<dyn std::
     }
     Ok(())
 }
+
+#[test]
+fn legacy_wire_spelling_and_precision() -> Result<(), Box<dyn std::error::Error>> {
+    for (raw, default, capture) in [
+        (
+            " 2026- 1- 1t 01 : 02 : 03.123456789012 +01::00 ",
+            Some("2026-01-01T00:02:03.123456789Z"),
+            None,
+        ),
+        ("2026-01-01T01:02:03+ 0100", None, None),
+        (
+            "2026-01-01 01:02:03.123456789012z",
+            Some("2026-01-01T01:02:03.123456789Z"),
+            Some("2026-01-01T01:02:03.123Z"),
+        ),
+        (
+            "2026-01-01T01:02:03−01:00",
+            Some("2026-01-01T02:02:03Z"),
+            Some("2026-01-01T02:02:03.000Z"),
+        ),
+        (
+            "-0001-01-01T01:02:03.5Z",
+            Some("-0001-01-01T01:02:03.500Z"),
+            None,
+        ),
+    ] {
+        let stamp = serde_json::from_value::<SanitizeStamp>(json!({
+            "at": raw, "policy_sha256": "hash", "passes": [], "unresolved_flags": 0
+        }));
+        let message = serde_json::from_value::<CaptureMessage>(json!({
+            "event_id": "message", "role": "user", "content": "body", "created_at": raw
+        }));
+        assert_eq!(stamp.is_ok(), default.is_some(), "{raw}");
+        assert_eq!(message.is_ok(), capture.is_some(), "{raw}");
+        if let Ok(stamp) = stamp {
+            assert_eq!(
+                serde_json::to_value(stamp)?
+                    .get("at")
+                    .and_then(serde_json::Value::as_str),
+                default,
+                "{raw}"
+            );
+        }
+        if let Ok(message) = message {
+            assert_eq!(
+                serde_json::to_value(message)?
+                    .get("created_at")
+                    .and_then(serde_json::Value::as_str),
+                capture,
+                "{raw}"
+            );
+        }
+    }
+    Ok(())
+}
