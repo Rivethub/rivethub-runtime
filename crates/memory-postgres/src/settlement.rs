@@ -145,7 +145,7 @@ impl CaptureWriter<'_> {
         .map_err(failure)?;
         Ok(settings
             .flatten()
-            .and_then(|settings| SessionObservation::from_capture(key, Some(&settings.0), None)))
+            .and_then(|settings| capture_observation(key, Some(&settings.0), None)))
     }
 
     pub(crate) async fn record_summary_input(
@@ -197,7 +197,7 @@ impl PostgresMemory {
         owner: &str,
     ) -> Result<Option<SettleResult>, Error> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
-        let id = Uuid::parse_str(session).ok();
+        let id = kernel::memory::settlement::session_uuid(session);
         let found: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM rh_conversations
              WHERE owner_user_id = $1 AND (id = $2 OR session_key = $3)
@@ -381,4 +381,18 @@ pub(crate) async fn rendered_order(conn: &mut PgConnection, id: Uuid) -> Result<
     .filter(|input| input.rendered)
     .map(|input| input.id)
     .collect())
+}
+
+pub(crate) fn capture_observation(
+    key: &str,
+    settings: Option<&wire::JsonObject>,
+    finalize: Option<bool>,
+) -> Option<SessionObservation> {
+    match SessionObservation::from_capture(key, settings, finalize) {
+        Ok(observation) => observation,
+        Err(error) => {
+            tracing::debug!(%error, "ignoring capture observation with an invalid timestamp");
+            None
+        }
+    }
 }

@@ -906,9 +906,12 @@ async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn st
     )
     .await;
     assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
-    let result: serde_json::Value = serde_json::from_str(&first.stdout)?;
-    assert_eq!(result["status"], "settled");
-    assert_eq!(result["inputRevision"], 1);
+    let result: kernel::memory::settlement::SettleResult = serde_json::from_str(&first.stdout)?;
+    assert_eq!(
+        result.status,
+        kernel::memory::settlement::SettleStatus::Settled
+    );
+    assert_eq!(result.input_revision, 1);
     let second = memory(&["settle", key, "--sqlite", db], &environment, false).await;
     assert_eq!(second.exit, Exit::Ok);
     assert!(second.stdout.contains("revision 1 already settled"));

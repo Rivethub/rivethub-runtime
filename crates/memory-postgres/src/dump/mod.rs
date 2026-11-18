@@ -1,6 +1,7 @@
 mod filter;
 mod parse;
 mod relation;
+mod sql;
 
 use jiff::Timestamp;
 use std::collections::BTreeMap;
@@ -203,7 +204,7 @@ async fn import_tables(
 }
 
 pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<(), Error> {
-    let invalid: bool = sqlx::query_scalar(include_str!("summary_graph.sql"))
+    let invalid: bool = sqlx::query_scalar(sql::SUMMARY_GRAPH)
         .fetch_one(&mut *conn)
         .await
         .map_err(|source| Error::operation("validate summary graph", source))?;

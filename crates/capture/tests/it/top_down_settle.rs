@@ -72,8 +72,7 @@ fn end_batch() -> Result<CaptureBatchRequest, serde_json::Error> {
 fn has_end(batch: &CaptureBatchRequest) -> bool {
     batch
         .session_observation()
-        .and_then(|observation| observation.end_key)
-        .is_some()
+        .is_ok_and(|observation| observation.is_some_and(|observed| observed.end_key.is_some()))
 }
 
 fn network() -> PostError {
@@ -199,7 +198,7 @@ async fn claude_clear_forwards_the_previous_session_end() -> TestResult {
     };
     assert_eq!(notification.session_key, format!("claude-code:{old}"));
     let key = notification
-        .session_observation()
+        .session_observation()?
         .and_then(|observation| observation.end_key)
         .ok_or("end marker")?;
     drop(posts);

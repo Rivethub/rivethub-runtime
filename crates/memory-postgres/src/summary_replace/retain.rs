@@ -13,11 +13,55 @@ use uuid::Uuid;
 use super::publish::{ReplaceSummaryError, query};
 use crate::Error;
 
+type StoredSection = (Uuid, Option<Uuid>, i32, String, bool, Vec<Uuid>);
+
 pub(super) async fn plan(
     conn: &mut PgConnection,
     tree: &mut PreparedSummaryTree,
     coverage: &mut SummaryCoverage,
 ) -> Result<BTreeSet<Uuid>, ReplaceSummaryError> {
+    validate_parts(conn, tree).await?;
+    let parts: Vec<_> = tree.retained_parts.iter().copied().collect();
+    let old: Vec<StoredSection> = sqlx::query_as(
+        "SELECT s.id, CASE WHEN p.kind = 'part' THEN p.id END, s.summary_ordinal, s.content,
+                s.range_verified, ARRAY(
+                    SELECT l.message_id FROM rh_summary_sources l
+                    WHERE l.summary_id = p.id AND l.ordinal BETWEEN s.source_first AND s.source_last
+                    ORDER BY l.ordinal
+                )
+         FROM rh_summaries s JOIN rh_summaries p ON p.id = s.parent_id
+         WHERE s.conversation_id = $1 AND s.owner_user_id = $2 AND s.kind = 'section'
+           AND (p.kind = 'session' OR p.id = ANY($3))",
+    )
+    .bind(tree.conversation)
+    .bind(&tree.owner)
+    .bind(&parts)
+    .fetch_all(conn)
+    .await
+    .map_err(query)?;
+    let sections = tree.retain_sections(
+        coverage,
+        old.into_iter()
+            .map(|(id, part, ordinal, content, verified, messages)| {
+                (
+                    id,
+                    SectionIdentity {
+                        part,
+                        ordinal,
+                        content,
+                        verified,
+                        messages,
+                    },
+                )
+            }),
+    );
+    Ok(sections.union(&tree.retained_parts).copied().collect())
+}
+
+async fn validate_parts(
+    conn: &mut PgConnection,
+    tree: &PreparedSummaryTree,
+) -> Result<(), ReplaceSummaryError> {
     for row in tree
         .records
         .iter()
@@ -66,41 +110,7 @@ pub(super) async fn plan(
             return Err(SummaryReferenceError::Stale(row.id).into());
         }
     }
-    let parts: Vec<_> = tree.retained_parts.iter().copied().collect();
-    let old: Vec<(Uuid, Option<Uuid>, i32, String, bool, Vec<Uuid>)> = sqlx::query_as(
-        "SELECT s.id, CASE WHEN p.kind = 'part' THEN p.id END, s.summary_ordinal, s.content,
-                s.range_verified, ARRAY(
-                    SELECT l.message_id FROM rh_summary_sources l
-                    WHERE l.summary_id = p.id AND l.ordinal BETWEEN s.source_first AND s.source_last
-                    ORDER BY l.ordinal
-                )
-         FROM rh_summaries s JOIN rh_summaries p ON p.id = s.parent_id
-         WHERE s.conversation_id = $1 AND s.owner_user_id = $2 AND s.kind = 'section'
-           AND (p.kind = 'session' OR p.id = ANY($3))",
-    )
-    .bind(tree.conversation)
-    .bind(&tree.owner)
-    .bind(&parts)
-    .fetch_all(conn)
-    .await
-    .map_err(query)?;
-    let sections = tree.retain_sections(
-        coverage,
-        old.into_iter()
-            .map(|(id, part, ordinal, content, verified, messages)| {
-                (
-                    id,
-                    SectionIdentity {
-                        part,
-                        ordinal,
-                        content,
-                        verified,
-                        messages,
-                    },
-                )
-            }),
-    );
-    Ok(sections.union(&tree.retained_parts).copied().collect())
+    Ok(())
 }
 
 pub(super) async fn reparent(

@@ -86,8 +86,8 @@ impl EndChunk {
     fn parse(id: &str) -> Option<Self> {
         let mut fields = id.strip_prefix("end-")?.split('-');
         let bundle = Uuid::parse_str(fields.next()?).ok()?;
-        let index = fields.next()?.parse().ok()?;
-        let count = fields.next()?.parse().ok()?;
+        let index = parse_spool_field(fields.next()?, "bundle index")?;
+        let count = parse_spool_field(fields.next()?, "bundle chunk count")?;
         (index < count && fields.next().is_none()).then_some(Self {
             bundle,
             index,
@@ -504,7 +504,7 @@ fn parse_name(path: &Path) -> Option<Name> {
     let name = path.file_name()?.to_str()?;
     let stem = name.strip_suffix(SUFFIX)?;
     let (digits, rest) = stem.split_once('-')?;
-    let prefix = digits.parse::<u64>().ok()?;
+    let prefix = parse_spool_field(digits, "spool sequence")?;
     let mut parts = rest.split('.');
     let id = parts.next().filter(|id| !id.is_empty())?;
     let (attempts, not_before) = match (parts.next(), parts.next(), parts.next()) {
@@ -518,6 +518,19 @@ fn parse_name(path: &Path) -> Option<Name> {
         attempts,
         not_before,
     })
+}
+
+fn parse_spool_field<T: std::str::FromStr>(text: &str, field: &str) -> Option<T>
+where
+    T::Err: std::fmt::Display,
+{
+    match text.parse() {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::debug!(field, %error, "ignoring malformed spool filename");
+            None
+        }
+    }
 }
 
 fn decimal(text: &str) -> Option<u64> {
@@ -537,8 +550,7 @@ async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
 fn suppress_end(body: String) -> Result<String, SpoolError> {
     if body.contains("SessionEnd")
         && let Ok(mut batch) = serde_json::from_str::<CaptureBatchRequest>(&body)
-        && batch
-            .session_observation()
+        && crate::session_observation(&batch)
             .is_some_and(|observation| observation.end_key.is_some())
         && let Some(settings) = &mut batch.settings
     {

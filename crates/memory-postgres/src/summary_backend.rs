@@ -1,9 +1,10 @@
+use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::{
     SummaryKind, SummaryStoreError,
     summary_backend::{SummaryInput, SummaryRun},
     summary_reference::{PreparedSummaryRecord, SummaryManifestEntry},
 };
-use serde_json::Value;
+use sqlx::types::Json;
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
 
@@ -92,7 +93,14 @@ async fn parts(
             index_key: key(row.try_get("index_key")?),
             model: row.try_get("model")?,
             issued_part_ordinal: row.try_get("issued_part_ordinal")?,
-            input_tokens: row.try_get("input_token_estimate")?,
+            input_tokens: row
+                .try_get::<Option<i64>, _>("input_token_estimate")?
+                .map(u64::try_from)
+                .transpose()
+                .map_err(|source| sqlx::Error::ColumnDecode {
+                    index: "input_token_estimate".into(),
+                    source: Box::new(source),
+                })?,
             quality_flags: row.try_get("quality_flags")?,
             section: None,
             sources: links
@@ -109,7 +117,14 @@ async fn parts(
 }
 
 fn key(bytes: Option<Vec<u8>>) -> Option<[u8; 32]> {
-    bytes.and_then(|bytes| bytes.try_into().ok())
+    let bytes = bytes?;
+    match bytes.try_into() {
+        Ok(key) => Some(key),
+        Err(bytes) => {
+            tracing::debug!(length = bytes.len(), "summary key has the wrong length");
+            None
+        }
+    }
 }
 
 pub(crate) async fn eligible(
@@ -143,14 +158,14 @@ pub(crate) async fn run(
     store: &PostgresMemory,
     id: Uuid,
 ) -> Result<Option<SummaryRun>, SummaryStoreError> {
-    let row: Option<(Uuid, i64, Value)> = sqlx::query_as(
+    let row: Option<(Uuid, i64, Json<SummaryArtifact>)> = sqlx::query_as(
         "SELECT id, revision, manifest FROM rh_summary_runs WHERE conversation_id = $1",
     )
     .bind(id)
     .fetch_optional(&store.pool)
     .await
     .map_err(error)?;
-    Ok(row.map(|(id, revision, manifest)| SummaryRun {
+    Ok(row.map(|(id, revision, Json(manifest))| SummaryRun {
         id,
         revision,
         manifest,
@@ -162,7 +177,7 @@ pub(crate) async fn freeze(
     id: Uuid,
     revision: i64,
     root: Option<Uuid>,
-    manifest: Value,
+    manifest: SummaryArtifact,
 ) -> Result<Uuid, sqlx::Error> {
     sqlx::query_scalar(
         "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest)
@@ -175,7 +190,7 @@ pub(crate) async fn freeze(
     .bind(id)
     .bind(revision)
     .bind(root)
-    .bind(manifest)
+    .bind(Json(manifest))
     .fetch_one(conn)
     .await
 }

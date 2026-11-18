@@ -1,7 +1,8 @@
 use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use uuid::Uuid;
 
 use super::{MemoryEntry, summary_reference::PreparedSummaryRecord};
@@ -19,7 +20,31 @@ pub struct SummaryInput {
 pub struct SummaryRun {
     pub id: Uuid,
     pub revision: i64,
-    pub manifest: Value,
+    pub manifest: SummaryArtifact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SummaryArtifact(Box<RawValue>);
+
+impl SummaryArtifact {
+    pub fn encode(value: &impl Serialize) -> Result<Self, serde_json::Error> {
+        serde_json::value::to_raw_value(&serde_json::to_value(value)?).map(Self)
+    }
+
+    pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_str(self.as_json())
+    }
+
+    #[must_use]
+    pub fn as_json(&self) -> &str {
+        self.0.get()
+    }
+
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.as_json() == "null"
+    }
 }
 
 #[serde_with::serde_as]

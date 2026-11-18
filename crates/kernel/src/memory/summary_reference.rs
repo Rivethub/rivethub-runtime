@@ -60,7 +60,7 @@ pub struct PreparedSummaryRecord {
     pub index_key: Option<[u8; 32]>,
     pub model: Option<String>,
     pub issued_part_ordinal: Option<i32>,
-    pub input_tokens: Option<i64>,
+    pub input_tokens: Option<u64>,
     pub quality_flags: i32,
     pub section: Option<SummarySectionBounds>,
     pub sources: Vec<SummaryManifestEntry>,
@@ -194,7 +194,10 @@ impl PreparedSummaryTree {
                 }
                 end = range.end;
             }
-            if end == 0 || usize::try_from(end).ok() != Some(row.content.chars().count()) {
+            if end == 0
+                || usize::try_from(end).map_err(|_| InvalidSummaryManifest)?
+                    != row.content.chars().count()
+            {
                 return Err(InvalidSummaryManifest);
             }
         }
@@ -228,7 +231,7 @@ impl PreparedSummaryTree {
                             || !row
                                 .issued_part_ordinal
                                 .is_some_and(|ordinal| ordinal > 0 && issued.insert(ordinal))
-                            || row.input_tokens.is_none_or(|tokens| tokens <= 0))
+                            || row.input_tokens.is_none_or(|tokens| tokens == 0))
                     {
                         return Err(InvalidSummaryManifest);
                     }
@@ -410,7 +413,14 @@ pub fn replacement_target<'a>(
 }
 
 #[must_use]
-pub fn summary_job_target(task: &str, payload: &serde_json::Value) -> Option<Uuid> {
+pub fn summary_job_target(task: &str, payload: &serde_json::value::RawValue) -> Option<Uuid> {
+    let payload: values::JsonObject = match serde_json::from_str(payload.get()) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::debug!(task, error_kind = ?error.classify(), "job payload has no readable summary reference");
+            return None;
+        }
+    };
     let target = match task {
         "extract-wiki" | "extract-entities" => payload.get("summaryId"),
         "embed-target" if payload.get("targetTable")?.as_str()? == "ros_summaries" => {
@@ -418,5 +428,11 @@ pub fn summary_job_target(task: &str, payload: &serde_json::Value) -> Option<Uui
         }
         _ => None,
     }?;
-    Uuid::parse_str(target.as_str()?).ok()
+    match Uuid::parse_str(target.as_str()?) {
+        Ok(id) => Some(id),
+        Err(error) => {
+            tracing::debug!(task, %error, "job payload has an invalid summary reference");
+            None
+        }
+    }
 }

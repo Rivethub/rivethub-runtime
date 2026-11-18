@@ -14,6 +14,7 @@ use wire::message::Role;
 use crate::SqliteStore;
 use crate::conversation::ConversationKey;
 use crate::conversation::NewConversation;
+use crate::conversation::StoredConversation;
 use crate::error::SqliteError;
 use crate::message::NewMessage;
 use crate::queue::enqueue_embed;
@@ -115,7 +116,7 @@ impl PreparedBatch {
                 message: error.to_string(),
             })?;
         let imported = owned_key.is_some();
-        let observation = wire::capture::SessionObservation::from_capture(
+        let observation = crate::settlement::capture_observation(
             &batch.session_key,
             batch.settings.as_ref(),
             batch.finalize,
@@ -188,45 +189,10 @@ impl PreparedBatch {
         } else {
             None
         };
-        let conversation = match found {
-            None if self.messages.is_empty() && self.is_end => {
-                return Ok((self.dropped()?, false));
-            }
-            Some(found) if found.owner.as_deref().is_some_and(|stored| stored != owner) => {
-                return Err(SqliteError::Invalid {
-                    message: "this session belongs to another user".to_owned(),
-                });
-            }
-            Some(found) => {
-                self.update_conversation(tx, &found.id, found.updated_at, owner, now)?;
-                found
-            }
-            None => NewConversation {
-                key: &self.key,
-                channel: self.channel.as_deref(),
-                title: self.title.as_deref(),
-                title_from_capture: self.title.is_some(),
-                settings: self
-                    .settings
-                    .as_ref()
-                    .map(|settings| encode(settings, "settings"))
-                    .transpose()?
-                    .as_deref(),
-                task_id: self.task_id.as_deref(),
-                owner,
-                created_at: self.created_at.at(now),
-                updated_at: self.updated_at.at(now),
-            }
-            .insert(tx)?,
-        };
-        if let Some(node) = &self.node {
-            tx.execute(
-                "INSERT INTO rh_conversation_nodes (conversation_id, node) VALUES (?1, ?2)
-                 ON CONFLICT (conversation_id) DO NOTHING",
-                params![conversation.id, node],
-            )
-            .map_err(SqliteError::query("conversation node"))?;
+        if found.is_none() && self.messages.is_empty() && self.is_end {
+            return Ok((self.dropped()?, false));
         }
+        let conversation = self.write_conversation(tx, owner, now, found)?;
         let channel = match &self.channel {
             Some(channel) => channel,
             None => &conversation.channel,
@@ -270,8 +236,7 @@ impl PreparedBatch {
             now,
             inserted > 0 || enriched,
             self.imported,
-            self.observation.as_ref(),
-            prior,
+            (self.observation.as_ref(), prior.as_ref()),
         )?;
         if self.finalize {
             tx.execute(
@@ -289,6 +254,52 @@ impl PreparedBatch {
             },
             opening_jobs,
         ))
+    }
+
+    fn write_conversation(
+        &self,
+        tx: &Transaction<'_>,
+        owner: &str,
+        now: Timestamp,
+        found: Option<StoredConversation>,
+    ) -> Result<StoredConversation, SqliteError> {
+        let conversation = match found {
+            Some(found) if found.owner.as_deref().is_some_and(|stored| stored != owner) => {
+                return Err(SqliteError::Invalid {
+                    message: "this session belongs to another user".to_owned(),
+                });
+            }
+            Some(found) => {
+                self.update_conversation(tx, &found.id, found.updated_at, owner, now)?;
+                found
+            }
+            None => NewConversation {
+                key: &self.key,
+                channel: self.channel.as_deref(),
+                title: self.title.as_deref(),
+                title_from_capture: self.title.is_some(),
+                settings: self
+                    .settings
+                    .as_ref()
+                    .map(|settings| encode(settings, "settings"))
+                    .transpose()?
+                    .as_deref(),
+                task_id: self.task_id.as_deref(),
+                owner,
+                created_at: self.created_at.at(now),
+                updated_at: self.updated_at.at(now),
+            }
+            .insert(tx)?,
+        };
+        if let Some(node) = &self.node {
+            tx.execute(
+                "INSERT INTO rh_conversation_nodes (conversation_id, node) VALUES (?1, ?2)
+                 ON CONFLICT (conversation_id) DO NOTHING",
+                params![conversation.id, node],
+            )
+            .map_err(SqliteError::query("conversation node"))?;
+        }
+        Ok(conversation)
     }
 
     fn update_conversation(

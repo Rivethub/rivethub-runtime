@@ -1,8 +1,6 @@
 use thiserror::Error;
 
 pub(crate) const PART_PARALLELISM: usize = 3;
-#[cfg(test)]
-pub(crate) const EVAL_CONTEXT_TOKENS: u32 = 262_144;
 pub(crate) const FALLBACK_CONTEXT_TOKENS: u32 = 131_072;
 pub(crate) const CHUNK_TOKENS: u32 = 90_000;
 pub(crate) const PART_CEILING: u32 = 3_000;

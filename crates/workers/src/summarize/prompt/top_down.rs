@@ -160,17 +160,19 @@ pub(crate) fn join_records(records: &[impl AsRef<str>]) -> String {
 }
 
 pub(crate) fn session_ceiling(total: usize) -> u32 {
-    u32::try_from((total / 4).max(300))
-        .unwrap_or(u32::MAX)
-        .min(SESSION_CEILING)
+    cap_session_tokens((total / 4).max(300))
 }
 
 fn session_target(total: usize) -> u32 {
-    words(
-        u32::try_from((total / TARGET_DIVISOR).max(400))
-            .unwrap_or(u32::MAX)
-            .min(SESSION_CEILING),
-    )
+    words(cap_session_tokens((total / TARGET_DIVISOR).max(400)))
+}
+
+fn cap_session_tokens(tokens: usize) -> u32 {
+    if let Ok(tokens) = u32::try_from(tokens) {
+        tokens.min(SESSION_CEILING)
+    } else {
+        SESSION_CEILING
+    }
 }
 
 const fn words(tokens: u32) -> u32 {

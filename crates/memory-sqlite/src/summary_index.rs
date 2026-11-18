@@ -86,8 +86,8 @@ pub(crate) fn marked_index(
 pub(crate) fn replace_index(
     conn: &mut Connection,
     key: [u8; 32],
-    expected: SummaryRepair,
-    index: SummaryIndex,
+    expected: &SummaryRepair,
+    index: &SummaryIndex,
 ) -> Result<(), SqliteError> {
     let tx = immediate(conn).map_err(error)?;
     tx.execute(

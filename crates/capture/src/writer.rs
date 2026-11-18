@@ -212,8 +212,7 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;
         let mut saved = Vec::with_capacity(chunks.len());
-        let bundle = prepared
-            .session_observation()
+        let bundle = crate::session_observation(&prepared)
             .is_some_and(|observation| observation.end_key.is_some())
             .then(uuid::Uuid::now_v7);
         for (index, chunk) in chunks.iter().enumerate() {
@@ -406,7 +405,7 @@ fn split_chunks(
         let bytes = encoded(settings)?.len();
         if bytes > max_chunk_bytes {
             let mut kept = elided_blob(bytes)?;
-            if batch.session_observation().is_some() {
+            if crate::session_observation(batch).is_some() {
                 for key in [
                     "source",
                     "last_event",

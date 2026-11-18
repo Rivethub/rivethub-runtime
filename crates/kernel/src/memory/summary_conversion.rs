@@ -12,6 +12,30 @@ pub const DEFAULT_RATE: i64 = 200_000;
 pub const INVENTORY_PAGE_SIZE: i64 = 200;
 pub const LEASE: SignedDuration = SignedDuration::from_mins(20);
 
+#[doc(hidden)]
+#[must_use]
+pub fn inactivity_cutoff(clock: Timestamp, inactivity: SignedDuration) -> Timestamp {
+    match clock.checked_sub(inactivity) {
+        Ok(cutoff) => cutoff,
+        Err(error) => {
+            tracing::debug!(%error, "using the earliest supported conversion cutoff");
+            Timestamp::MIN
+        }
+    }
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn bounded_deadline(clock: Timestamp, delay: SignedDuration) -> Timestamp {
+    match clock.checked_add(delay) {
+        Ok(deadline) => deadline,
+        Err(error) => {
+            tracing::debug!(%error, "using the latest supported conversion deadline");
+            Timestamp::MAX
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum ConversionControl {
     Start {
@@ -30,7 +54,7 @@ pub enum ConversionControl {
     },
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversionProgress {
     pub enabled: bool,
@@ -45,9 +69,9 @@ pub struct ConversionProgress {
     pub failed: i64,
     pub giant_deferred: i64,
     pub rate: i64,
-    pub charged_tokens: i64,
-    pub provider_input_tokens: i64,
-    pub provider_output_tokens: i64,
+    pub charged_tokens: u64,
+    pub provider_input_tokens: u64,
+    pub provider_output_tokens: u64,
     pub current: Option<Uuid>,
     pub recent_failures: Vec<(Uuid, String)>,
 }
@@ -120,7 +144,7 @@ pub trait SummaryConversion: Send + Sync {
         &self,
         lease: ConversionLease,
         root: Option<Uuid>,
-        manifest: serde_json::Value,
+        manifest: super::summary_backend::SummaryArtifact,
     ) -> Result<Option<Uuid>, SummaryStoreError>;
 
     #[doc(hidden)]
@@ -186,10 +210,10 @@ impl ConversionBucket {
 
     fn defer(&mut self, deficit: f64) {
         let delay = (deficit * 60_000.0 / self.rate as f64).ceil() as i64;
-        self.at = self
-            .at
-            .checked_add(SignedDuration::from_millis(delay.min(i64::MAX / 2)))
-            .unwrap_or(Timestamp::MAX);
+        self.at = bounded_deadline(
+            self.at,
+            SignedDuration::from_millis(delay.min(i64::MAX / 2)),
+        );
     }
 }
 
@@ -209,17 +233,16 @@ pub struct ReferenceCounts {
 
 pub const REHEARSAL_LIMIT: usize = 20;
 
-impl Default for ConversionRehearsal {
-    fn default() -> Self {
+impl ConversionRehearsal {
+    #[must_use]
+    pub fn empty() -> Self {
         Self {
             plan: "single session record; actual parts and sections can change convergence",
             sampled_conversations: 0,
             tables: std::collections::BTreeMap::new(),
         }
     }
-}
 
-impl ConversionRehearsal {
     #[doc(hidden)]
     pub fn add(&mut self, name: &'static str, total: i64, remapped: i64) {
         let counts = self.tables.entry(name).or_default();

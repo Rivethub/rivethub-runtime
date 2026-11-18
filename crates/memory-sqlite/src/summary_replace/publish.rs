@@ -1,3 +1,4 @@
+use super::sql;
 use kernel::memory::summary_conversion::ConversionLease;
 use kernel::memory::{WrittenSummary, summary_backend::SummaryIndexes};
 use std::collections::{BTreeMap, BTreeSet};
@@ -75,10 +76,10 @@ impl SqliteStore {
         self.with_conn(move |conn| {
             let tx = immediate(conn).map_err(failure)?;
             validate_current(&tx, &prepared)?;
-            if let Some(lease) = conversion {
-                if !crate::summary_conversion::can_publish(&tx, lease)? {
-                    return Err(SummaryReferenceError::Stale(prepared.conversation).into());
-                }
+            if let Some(lease) = conversion
+                && !crate::summary_conversion::can_publish(&tx, lease)?
+            {
+                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
             }
             if indexes.is_some() {
                 let revision = prepared.expected_revision.ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
@@ -100,11 +101,11 @@ impl SqliteStore {
             stage(&tx, &prepared, &coverage, &old, &retained)?;
             retain::reparent(&tx, &prepared, &retained)?;
             tx.execute(
-                include_str!("deliveries.sql"),
+                sql::DELIVERIES,
                 params![prepared.conversation.to_string(), prepared.historical],
             ).map_err(failure)?;
-            tx.execute_batch(include_str!("reuse_vectors.sql")).map_err(failure)?;
-            tx.execute_batch(include_str!("before_delete.sql")).map_err(failure)?;
+            tx.execute_batch(sql::REUSE_VECTORS).map_err(failure)?;
+            tx.execute_batch(sql::BEFORE_DELETE).map_err(failure)?;
 
             let mut records: Vec<_> = prepared.records.iter().collect();
             records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
@@ -143,7 +144,7 @@ impl SqliteStore {
             } else {
                 Vec::new()
             };
-            tx.execute_batch(include_str!("references.sql")).map_err(failure)?;
+            tx.execute_batch(sql::REFERENCES).map_err(failure)?;
             finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
             Ok(written)
@@ -196,9 +197,7 @@ pub(crate) fn old_coverage(
     conn: &Connection,
     conversation: Uuid,
 ) -> Result<SummaryCoverage, SqliteError> {
-    let mut statement = conn
-        .prepare(include_str!("coverage.sql"))
-        .map_err(failure)?;
+    let mut statement = conn.prepare(sql::COVERAGE).map_err(failure)?;
     let mut matches = statement
         .query([conversation.to_string()])
         .map_err(failure)?;
@@ -260,11 +259,21 @@ fn stage(
         let target = old
             .get(id)
             .and_then(|members| replacement_target(members, candidates.iter().copied()));
+        let kind = target
+            .map(|id| {
+                records
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| SqliteError::Invalid {
+                        message: format!("missing replacement summary {id}"),
+                    })
+            })
+            .transpose()?;
         moves
             .execute(params![
                 id.to_string(),
                 target.map(|id| id.to_string()),
-                target.map(|id| records[&id])
+                kind
             ])
             .map_err(failure)?;
     }
@@ -315,7 +324,11 @@ fn insert_record(
                 record.index_key.as_ref().map(<[_; 32]>::as_slice),
                 record.model,
                 record.issued_part_ordinal,
-                record.input_tokens,
+                record
+                    .input_tokens
+                    .map(i64::try_from)
+                    .transpose()
+                    .map_err(SqliteError::Count)?,
                 record.quality_flags,
                 record.section.as_ref().map(|bounds| bounds.char_start),
                 record.section.as_ref().map(|bounds| bounds.char_end),
@@ -382,6 +395,12 @@ fn enqueue_deliveries(
     conn: &Connection,
     prepared: &PreparedSummaryTree,
 ) -> Result<(), SqliteError> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Delivery<'a> {
+        summary_id: &'a str,
+        conversation_id: Uuid,
+    }
     let mut statement = conn
         .prepare(
             "SELECT DISTINCT anchor_id FROM ros_summary_deliveries d
@@ -397,10 +416,16 @@ fn enqueue_deliveries(
         .collect::<Result<Vec<_>, _>>()
         .map_err(failure)?;
     for anchor in anchors {
+        let payload = Delivery {
+            summary_id: &anchor,
+            conversation_id: prepared.conversation,
+        };
         let payload =
-            serde_json::json!({ "summaryId": anchor, "conversationId": prepared.conversation });
-        let mut job =
-            crate::queue::JobInsert::new("extract-wiki", payload.to_string(), prepared.created_at);
+            serde_json::to_string(&payload).map_err(|source| SqliteError::StoredJson {
+                column: "wiki delivery payload",
+                source,
+            })?;
+        let mut job = crate::queue::JobInsert::new("extract-wiki", payload, prepared.created_at);
         job.key = Some(format!("wiki-ext-{anchor}"));
         job.max_attempts = 2;
         job.priority = -10;

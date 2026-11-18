@@ -3,7 +3,6 @@ use wire::time::TimestampFormat as _;
 
 use config::Environment;
 use kernel::memory::MemoryStore;
-use kernel::memory::settlement::SettleStatus;
 use kernel::owner::Owner;
 use kernel::tenancy::{Scope, Viewer};
 use memory_postgres::PostgresMemory;
@@ -31,13 +30,12 @@ pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
         }
         match scan.option("--sqlite", None) {
             Taken::Value(path) => sqlite = Some(PathBuf::from(path)),
-            Taken::Missing => return Err(Error::SettleUsage),
             Taken::Absent if arg.starts_with('-') => return Err(Error::UnknownOption(arg)),
             Taken::Absent if session.is_none() && !arg.trim().is_empty() => {
                 session = Some(arg);
                 scan.bump();
             }
-            Taken::Absent => return Err(Error::SettleUsage),
+            Taken::Missing | Taken::Absent => return Err(Error::SettleUsage),
         }
     }
     Ok(Args {
@@ -68,11 +66,7 @@ pub(super) async fn run(args: Args, env: &Environment) -> Result<Report, Error> 
             serde_json::to_string(&result)?
         )));
     }
-    let status = match result.status {
-        SettleStatus::Settled => "settled",
-        SettleStatus::AlreadySettled => "already settled",
-        SettleStatus::AlreadySummarized => "already summarized",
-    };
+    let status = result.status.to_string().replace('_', " ");
     let at = result
         .settled_at
         .map(|at| format!(" at {}", at.rfc3339_offset()))

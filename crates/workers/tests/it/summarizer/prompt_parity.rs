@@ -7,10 +7,20 @@ use std::collections::BTreeMap;
 use wire::JsonObject;
 
 use super::*;
-use top_down::llm;
+mod llm {
+    pub(super) use super::top_down::llm::*;
+    pub(crate) const SEED: u32 = 0;
+    pub(crate) const STREAM: bool = true;
+    pub(crate) const INCLUDE_USAGE: bool = true;
+}
+
 use top_down::plan::{self, ComposePlan, Meter, Source};
 use top_down::prompt::{self, Mode, Prompt};
-use top_down::settings::{self, Limits};
+mod settings {
+    pub(super) use super::top_down::settings::*;
+    pub(crate) const EVAL_CONTEXT_TOKENS: u32 = 262_144;
+}
+use settings::Limits;
 
 #[derive(Deserialize)]
 struct Fixture {

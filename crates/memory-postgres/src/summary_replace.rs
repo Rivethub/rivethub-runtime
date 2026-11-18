@@ -53,9 +53,8 @@ pub(crate) async fn lock_conversation(
 }
 
 fn find_input<'a>(rows: &'a [SummaryInput], id: &Uuid) -> Option<&'a SummaryInput> {
-    rows.binary_search_by_key(id, |input| input.id)
-        .ok()
-        .and_then(|index| rows.get(index))
+    let index = rows.partition_point(|input| input.id < *id);
+    rows.get(index).filter(|input| input.id == *id)
 }
 
 pub(crate) async fn shared_visible(
@@ -212,3 +211,5 @@ pub(crate) async fn external(
     }
     Ok((conn, after))
 }
+
+mod sql;

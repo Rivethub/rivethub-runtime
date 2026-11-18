@@ -1,3 +1,4 @@
+use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::{
     SummaryKind,
     summary_backend::SummaryInput,
@@ -135,7 +136,12 @@ fn parts(conn: &Connection, id: Uuid) -> Result<Vec<PreparedSummaryRecord>, Sqli
             index_key: key(row.get(5).map_err(error)?),
             model: row.get(6).map_err(error)?,
             issued_part_ordinal: row.get(7).map_err(error)?,
-            input_tokens: row.get(8).map_err(error)?,
+            input_tokens: row
+                .get::<_, Option<i64>>(8)
+                .map_err(error)?
+                .map(u64::try_from)
+                .transpose()
+                .map_err(crate::SqliteError::Count)?,
             quality_flags: row.get(9).map_err(error)?,
             section: None,
         });
@@ -144,7 +150,14 @@ fn parts(conn: &Connection, id: Uuid) -> Result<Vec<PreparedSummaryRecord>, Sqli
 }
 
 fn key(bytes: Option<Vec<u8>>) -> Option<[u8; 32]> {
-    bytes.and_then(|bytes| bytes.try_into().ok())
+    let bytes = bytes?;
+    match bytes.try_into() {
+        Ok(key) => Some(key),
+        Err(bytes) => {
+            tracing::debug!(length = bytes.len(), "summary key has the wrong length");
+            None
+        }
+    }
 }
 
 pub(crate) fn freeze(
@@ -152,7 +165,7 @@ pub(crate) fn freeze(
     id: Uuid,
     revision: i64,
     root: Option<Uuid>,
-    manifest: serde_json::Value,
+    manifest: &SummaryArtifact,
 ) -> Result<Uuid, SqliteError> {
     let id: String = conn.query_row(
                 "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest, created_at)
@@ -161,7 +174,7 @@ pub(crate) fn freeze(
                      expected_root = excluded.expected_root, manifest = excluded.manifest
                  WHERE rh_summary_runs.revision <= excluded.revision RETURNING id",
                 params![Uuid::new_v4().to_string(), id.to_string(), revision, root.map(|root| root.to_string()),
-                    manifest.to_string(), crate::time::stamp(jiff::Timestamp::now())], |row| row.get(0)
+                    manifest.as_json(), crate::time::stamp(jiff::Timestamp::now())], |row| row.get(0)
             ).map_err(error)?;
     stored_uuid(id)
 }

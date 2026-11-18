@@ -38,8 +38,7 @@ pub(crate) enum PlanError {
     InvalidMeter,
     #[error("chunk budget and meter leave no room for a character")]
     InvalidCut,
-    #[cfg(test)]
-    #[error("exact token count unavailable for a packed chunk")]
+    #[error("summary tokenizer became unavailable")]
     ExactCount,
     #[error("composition needs at least one record")]
     EmptyComposition,
@@ -55,11 +54,8 @@ pub(crate) fn render(ordered: &[MemoryEntry]) -> Result<Vec<Block>, PlanError> {
             continue;
         }
         let created_at = message.created_at.ok_or(PlanError::MissingSource)?;
-        let id = message
-            .id
-            .as_deref()
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .ok_or(PlanError::MissingSource)?;
+        let id = Uuid::parse_str(message.id.as_deref().ok_or(PlanError::MissingSource)?)
+            .map_err(|_| PlanError::MissingSource)?;
         let ordinal = blocks.len() + 1;
         let tag = tag(ordinal);
         let stamp = created_at.legacy_strftime("%Y-%m-%d %H:%M");

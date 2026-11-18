@@ -20,6 +20,7 @@ pub(super) struct Captured {
 #[derive(Default)]
 pub(super) struct Scripted {
     pub(super) calls: Mutex<Vec<Captured>>,
+    pub(super) call_arrived: tokio::sync::Notify,
     pub(super) live_output: bool,
     pub(super) fail_part_once: std::sync::atomic::AtomicBool,
     pub(super) empty: std::sync::atomic::AtomicBool,
@@ -49,6 +50,7 @@ impl ModelProvider for Scripted {
             kind: kind.to_owned(),
             user: user.to_owned(),
         });
+        self.call_arrived.notify_one();
         let active = self.concurrent.fetch_add(1, Ordering::SeqCst) + 1;
         let _active = Active(&self.concurrent);
         self.peak.fetch_max(active, Ordering::SeqCst);
@@ -59,7 +61,7 @@ impl ModelProvider for Scripted {
             {
                 barrier.wait().await;
             } else {
-                tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+                tokio::task::yield_now().await;
             }
             if user.starts_with(
                 "# Transcript of part 2

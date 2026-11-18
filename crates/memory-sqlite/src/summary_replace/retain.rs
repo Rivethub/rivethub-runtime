@@ -14,6 +14,59 @@ pub(super) fn plan(
     tree: &mut PreparedSummaryTree,
     coverage: &mut SummaryCoverage,
 ) -> Result<BTreeSet<Uuid>, SqliteError> {
+    validate_parts(conn, tree)?;
+    let conversation = tree.conversation.to_string();
+    let mut sections = conn.prepare(
+        "SELECT s.id, CASE WHEN p.kind = 'part' THEN p.id END, s.summary_ordinal, s.content,
+                s.range_verified, (
+                    SELECT json_group_array(message_id) FROM (
+                        SELECT l.message_id FROM ros_summary_sources l
+                        WHERE l.summary_id = p.id AND l.ordinal BETWEEN s.source_first AND s.source_last
+                        ORDER BY l.ordinal
+                    )
+                )
+         FROM ros_summaries s JOIN ros_summaries p ON p.id = s.parent_id
+         WHERE s.conversation_id = ?1 AND s.kind = 'section'",
+    ).map_err(failure)?;
+    let rows = sections
+        .query_map([conversation], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(failure)?;
+    let mut old = Vec::new();
+    for row in rows {
+        let (id, part, ordinal, content, verified, messages) = row.map_err(failure)?;
+        let part = part.map(stored_uuid).transpose()?;
+        if part.is_some_and(|id| !tree.retained_parts.contains(&id)) {
+            continue;
+        }
+        let messages = serde_json::from_str(&messages).map_err(|_| SqliteError::StoredValue {
+            column: "section sources",
+            value: messages,
+        })?;
+        old.push((
+            stored_uuid(id)?,
+            SectionIdentity {
+                part,
+                ordinal,
+                content,
+                verified,
+                messages,
+            },
+        ));
+    }
+    let sections = tree.retain_sections(coverage, old);
+    Ok(sections.union(&tree.retained_parts).copied().collect())
+}
+
+fn validate_parts(conn: &Connection, tree: &PreparedSummaryTree) -> Result<(), SqliteError> {
     let conversation = tree.conversation.to_string();
     let mut sources = conn
         .prepare(
@@ -74,54 +127,7 @@ pub(super) fn plan(
             return Err(SummaryReferenceError::Stale(row.id).into());
         }
     }
-    let mut sections = conn.prepare(
-        "SELECT s.id, CASE WHEN p.kind = 'part' THEN p.id END, s.summary_ordinal, s.content,
-                s.range_verified, (
-                    SELECT json_group_array(message_id) FROM (
-                        SELECT l.message_id FROM ros_summary_sources l
-                        WHERE l.summary_id = p.id AND l.ordinal BETWEEN s.source_first AND s.source_last
-                        ORDER BY l.ordinal
-                    )
-                )
-         FROM ros_summaries s JOIN ros_summaries p ON p.id = s.parent_id
-         WHERE s.conversation_id = ?1 AND s.kind = 'section'",
-    ).map_err(failure)?;
-    let rows = sections
-        .query_map([conversation], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get::<_, String>(5)?,
-            ))
-        })
-        .map_err(failure)?;
-    let mut old = Vec::new();
-    for row in rows {
-        let (id, part, ordinal, content, verified, messages) = row.map_err(failure)?;
-        let part = part.map(stored_uuid).transpose()?;
-        if part.is_some_and(|id| !tree.retained_parts.contains(&id)) {
-            continue;
-        }
-        let messages = serde_json::from_str(&messages).map_err(|_| SqliteError::StoredValue {
-            column: "section sources",
-            value: messages,
-        })?;
-        old.push((
-            stored_uuid(id)?,
-            SectionIdentity {
-                part,
-                ordinal,
-                content,
-                verified,
-                messages,
-            },
-        ));
-    }
-    let sections = tree.retain_sections(coverage, old);
-    Ok(sections.union(&tree.retained_parts).copied().collect())
+    Ok(())
 }
 
 pub(super) fn reparent(

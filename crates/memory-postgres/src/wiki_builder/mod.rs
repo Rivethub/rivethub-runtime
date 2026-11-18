@@ -300,49 +300,8 @@ impl PostgresMemory {
             return Ok(Vec::new());
         }
         lock_slugs(&mut tx, &patches, &routing.cited).await?;
-        let mut cited = Vec::new();
-        for slug in &routing.cited {
-            if within(&mut tx, slug.as_ref(), home).await? {
-                cited.push(slug.clone());
-            } else if let Some(key) = overlaid(&mut tx, slug.as_ref(), home).await? {
-                cited.push(
-                    WikiSlug::try_from(key)
-                        .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?,
-                );
-            }
-        }
-        let topic_page = match &routing.topic_page {
-            Some(page) if within(&mut tx, page.as_ref(), home).await? => Some(page),
-            Some(_) | None => None,
-        };
-        let date: jiff_sqlx::Timestamp =
-            sqlx::query_scalar("SELECT created_at FROM rh_summaries WHERE id = $1")
-                .bind(job.summary_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(query_error)?;
-        let source = topics::Source {
-            summary: &summary,
-            date: date.to_jiff(),
-            topic_page,
-            merged: &routing.merged,
-            home,
-            also: &routing.also,
-        };
-        let mut touched = Vec::new();
-        let mut last_sha = None;
-        for patch in patches {
-            let (slug, sha) = topics::apply(&mut tx, repository, &source, patch, now).await?;
-            touched.push(slug);
-            last_sha = Some(sha);
-        }
-        for slug in &cited {
-            for cited_by in std::iter::once(&summary).chain(&routing.also) {
-                topics::cite(&mut tx, slug.as_ref(), cited_by, now).await?;
-            }
-        }
-        touched.sort();
-        touched.dedup();
+        let (touched, last_sha) =
+            apply_and_cite(&mut tx, repository, &work, &summary, patches, now).await?;
         let mut summaries = vec![&summary];
         summaries.extend(&routing.also);
         if let Some(deferred) = &routing.deferred {
@@ -355,6 +314,61 @@ impl PostgresMemory {
         tx.commit().await.map_err(query_error)?;
         Ok(touched)
     }
+}
+
+async fn apply_and_cite(
+    tx: &mut Transaction<'_, Postgres>,
+    repository: &mut crate::wiki_writer::LockedRepository,
+    work: &Work<'_>,
+    summary: &WikiSummary,
+    patches: Vec<WikiPatch>,
+    now: Timestamp,
+) -> Result<(Vec<String>, Option<String>), WikiStoreError> {
+    let Work { routing, home, job } = *work;
+    let mut cited = Vec::new();
+    for slug in &routing.cited {
+        if within(tx, slug.as_ref(), home).await? {
+            cited.push(slug.clone());
+        } else if let Some(key) = overlaid(tx, slug.as_ref(), home).await? {
+            cited.push(
+                WikiSlug::try_from(key)
+                    .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?,
+            );
+        }
+    }
+    let topic_page = match &routing.topic_page {
+        Some(page) if within(tx, page.as_ref(), home).await? => Some(page),
+        Some(_) | None => None,
+    };
+    let date: jiff_sqlx::Timestamp =
+        sqlx::query_scalar("SELECT created_at FROM rh_summaries WHERE id = $1")
+            .bind(job.summary_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(query_error)?;
+    let source = topics::Source {
+        summary,
+        date: date.to_jiff(),
+        topic_page,
+        merged: &routing.merged,
+        home,
+        also: &routing.also,
+    };
+    let mut touched = Vec::new();
+    let mut last_sha = None;
+    for patch in patches {
+        let (slug, sha) = topics::apply(tx, repository, &source, patch, now).await?;
+        touched.push(slug);
+        last_sha = Some(sha);
+    }
+    for slug in &cited {
+        for cited_by in std::iter::once(summary).chain(&routing.also) {
+            topics::cite(tx, slug.as_ref(), cited_by, now).await?;
+        }
+    }
+    touched.sort();
+    touched.dedup();
+    Ok((touched, last_sha))
 }
 
 fn settle<T>(

@@ -15,17 +15,16 @@ pub(crate) const INCLUDED: &str = "c.session_key NOT LIKE 'heartbeat:%'
     AND NOT EXISTS (SELECT 1 FROM rh_session_tombstones t WHERE t.session_key = c.session_key)";
 
 fn seed(conn: &Connection, id: &str, fresh: Option<Timestamp>) -> Result<(), SqliteError> {
-    let last = match fresh {
-        Some(at) => at,
-        None => {
-            let at: String = conn.query_row(
+    let last = if let Some(at) = fresh {
+        at
+    } else {
+        let at: String = conn.query_row(
                 "SELECT coalesce((SELECT m.created_at FROM ros_messages m WHERE m.conversation_id = c.id
                                   ORDER BY julianday(m.created_at) DESC LIMIT 1), c.created_at)
                    FROM ros_conversations c WHERE c.id = ?1",
                 [id], |row| row.get(0),
             ).map_err(failure)?;
-            time::stored(&at, "last source time")?
-        }
+        time::stored(&at, "last source time")?
     };
     conn.execute(
         "INSERT INTO rh_summary_state
@@ -126,12 +125,14 @@ pub(crate) fn prior_observation(
         .map_err(failure)?;
     let settings = settings
         .flatten()
-        .and_then(|text| serde_json::from_str(&text).ok());
-    Ok(SessionObservation::from_capture(
-        key,
-        settings.as_ref(),
-        None,
-    ))
+        .and_then(|text| match serde_json::from_str(&text) {
+            Ok(settings) => Some(settings),
+            Err(error) => {
+                tracing::debug!(error_kind = ?error.classify(), "stored capture settings are unreadable");
+                None
+            }
+        });
+    Ok(capture_observation(key, settings.as_ref(), None))
 }
 
 pub(crate) fn record_capture(
@@ -140,8 +141,7 @@ pub(crate) fn record_capture(
     now: Timestamp,
     changed: bool,
     imported: bool,
-    observation: Option<&SessionObservation>,
-    prior: Option<SessionObservation>,
+    (observation, prior): (Option<&SessionObservation>, Option<&SessionObservation>),
 ) -> Result<(), SqliteError> {
     let mut current = state(conn, id)?;
     if current.is_none() {
@@ -149,8 +149,7 @@ pub(crate) fn record_capture(
         current = state(conn, id)?;
     }
     if let Some(mut current) = current {
-        let seeded =
-            current.record_capture(now, false, imported, prior.as_ref().map(|o| (o.at, None)));
+        let seeded = current.record_capture(now, false, imported, prior.map(|o| (o.at, None)));
         let updated = current.record_capture(
             now,
             changed,
@@ -171,7 +170,7 @@ impl SqliteStore {
         owner: &str,
     ) -> Result<Option<SettleResult>, SqliteError> {
         let session = session.to_owned();
-        let id = Uuid::parse_str(&session).ok().map(|id| id.to_string());
+        let id = kernel::memory::settlement::session_uuid(&session).map(|id| id.to_string());
         let owner = owner.to_owned();
         let now = time::stored(&time::stamp(self.now()), "settled_at")?;
         self.with_conn(move |conn| {
@@ -376,4 +375,18 @@ pub(crate) fn rendered_inputs(
     .into_iter()
     .filter_map(|input| input.render)
     .collect())
+}
+
+pub(crate) fn capture_observation(
+    key: &str,
+    settings: Option<&wire::JsonObject>,
+    finalize: Option<bool>,
+) -> Option<SessionObservation> {
+    match SessionObservation::from_capture(key, settings, finalize) {
+        Ok(observation) => observation,
+        Err(error) => {
+            tracing::debug!(%error, "ignoring capture observation with an invalid timestamp");
+            None
+        }
+    }
 }

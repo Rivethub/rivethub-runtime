@@ -320,56 +320,9 @@ where
             cancel.cancel();
             scheduled
         };
-        let settle = async {
-            if self.schedules && roles.contains(&WorkerRole::Summarizer) {
-                crate::schedule::run_summary_expiry(
-                    self.summaries.as_ref(),
-                    self.summary.inactivity,
-                    &cancel,
-                )
-                .await;
-            }
-        };
-        let discover = async {
-            if self.schedules && roles.contains(&WorkerRole::Summarizer) {
-                kernel::tenancy::Scope::Maintenance
-                    .run(crate::schedule::run_summary_discovery(
-                        self.summaries.as_ref(),
-                        self.queue.as_ref(),
-                        &cancel,
-                    ))
-                    .await;
-            }
-        };
-        let convert = async {
-            if !self.schedules
-                || !roles.contains(&WorkerRole::Summarizer)
-                || self.summaries.live_index_key().is_none()
-                || self.summary.model_concurrency < 2
-            {
-                return;
-            }
-            let Some(store) = self.summaries.summary_conversion() else {
-                return;
-            };
-            let summary = crate::summarize::SummarizeEnv {
-                store: self.summaries.as_ref(),
-                provider: self.summarizer.as_ref(),
-                queue: self.queue.as_ref(),
-                settings: &self.summary,
-                now: jiff::Timestamp::now(),
-                cancel: &cancel,
-            };
-            let env = crate::summarize::live::LiveEnv {
-                summary: &summary,
-                embedder: self.embedder.as_ref(),
-                embed: self.embed,
-                permits: &self.summary_permits,
-            };
-            kernel::tenancy::Scope::Maintenance
-                .run(crate::summarize::conversion::run(&env, store))
-                .await;
-        };
+        let settle = self.run_summary_expiry(&roles, &cancel);
+        let discover = self.run_summary_discovery(&roles, &cancel);
+        let convert = self.run_summary_conversion(&roles, &cancel);
         let (claimed, scheduled, (), (), ()) =
             tokio::join!(claims, schedule, settle, discover, convert);
         let outcome = claimed.and(scheduled);
@@ -378,6 +331,59 @@ where
         cancel.cancel();
         let reaped = self.reap(&mut tasks, true).await;
         outcome.and(reaped)
+    }
+
+    async fn run_summary_expiry(&self, roles: &[WorkerRole], cancel: &CancellationToken) {
+        if self.schedules && roles.contains(&WorkerRole::Summarizer) {
+            crate::schedule::run_summary_expiry(
+                self.summaries.as_ref(),
+                self.summary.inactivity,
+                cancel,
+            )
+            .await;
+        }
+    }
+
+    async fn run_summary_discovery(&self, roles: &[WorkerRole], cancel: &CancellationToken) {
+        if self.schedules && roles.contains(&WorkerRole::Summarizer) {
+            kernel::tenancy::Scope::Maintenance
+                .run(crate::schedule::run_summary_discovery(
+                    self.summaries.as_ref(),
+                    self.queue.as_ref(),
+                    cancel,
+                ))
+                .await;
+        }
+    }
+
+    async fn run_summary_conversion(&self, roles: &[WorkerRole], cancel: &CancellationToken) {
+        if !self.schedules
+            || !roles.contains(&WorkerRole::Summarizer)
+            || self.summaries.live_index_key().is_none()
+            || self.summary.model_concurrency < 2
+        {
+            return;
+        }
+        let Some(store) = self.summaries.summary_conversion() else {
+            return;
+        };
+        let summary = crate::summarize::SummarizeEnv {
+            store: self.summaries.as_ref(),
+            provider: self.summarizer.as_ref(),
+            queue: self.queue.as_ref(),
+            settings: &self.summary,
+            now: jiff::Timestamp::now(),
+            cancel,
+        };
+        let env = crate::summarize::live::LiveEnv {
+            summary: &summary,
+            embedder: self.embedder.as_ref(),
+            embed: self.embed,
+            permits: &self.summary_permits,
+        };
+        kernel::tenancy::Scope::Maintenance
+            .run(crate::summarize::conversion::run(&env, store))
+            .await;
     }
 
     async fn claim_loop(

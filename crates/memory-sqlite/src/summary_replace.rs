@@ -106,10 +106,14 @@ pub(crate) fn live_job(
     task: &str,
     payload: &str,
 ) -> Result<bool, crate::SqliteError> {
-    let Ok(payload) = serde_json::from_str(payload) else {
-        return Ok(true);
+    let payload: &serde_json::value::RawValue = match serde_json::from_str(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::debug!(error_kind = ?error.classify(), "skipping summary fence for unreadable job payload");
+            return Ok(true);
+        }
     };
-    let Some(id) = kernel::memory::summary_reference::summary_job_target(task, &payload) else {
+    let Some(id) = kernel::memory::summary_reference::summary_job_target(task, payload) else {
         return Ok(true);
     };
     match shared(tx, id) {
@@ -120,3 +124,5 @@ pub(crate) fn live_job(
         }
     }
 }
+
+mod sql;

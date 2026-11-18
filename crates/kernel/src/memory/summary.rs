@@ -211,7 +211,7 @@ pub trait SummaryStore: Send + Sync {
         _id: Uuid,
         _revision: i64,
         _root: Option<Uuid>,
-        _manifest: serde_json::Value,
+        _manifest: super::summary_backend::SummaryArtifact,
     ) -> Result<Uuid, SummaryStoreError> {
         Err(SummaryStoreError::Closed)
     }
@@ -221,7 +221,7 @@ pub trait SummaryStore: Send + Sync {
         &self,
         _run: Uuid,
         _key: [u8; 32],
-    ) -> Result<Option<serde_json::Value>, SummaryStoreError> {
+    ) -> Result<Option<super::summary_backend::SummaryArtifact>, SummaryStoreError> {
         Err(SummaryStoreError::Closed)
     }
 
@@ -231,7 +231,7 @@ pub trait SummaryStore: Send + Sync {
         _run: Uuid,
         _revision: i64,
         _key: [u8; 32],
-        _artifact: serde_json::Value,
+        _artifact: super::summary_backend::SummaryArtifact,
     ) -> Result<(), SummaryStoreError> {
         Err(SummaryStoreError::Closed)
     }

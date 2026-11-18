@@ -1,4 +1,93 @@
-UPDATE ros_summaries AS s
+pub(super) const BEFORE_DELETE: &str = r"UPDATE ros_summary_deliveries AS d
+SET anchor_id = (SELECT a.anchor FROM summary_anchors a WHERE a.message = d.message_id),
+    historical_backlog = NOT EXISTS (SELECT 1 FROM summary_anchors a WHERE a.message = d.message_id)
+WHERE d.anchor_id IN (SELECT old FROM summary_replacements);
+
+CREATE TEMP TABLE summary_replaced_access AS
+SELECT map.new, sum(s.access_count) AS access_count, max(s.last_accessed_at) AS last_accessed_at
+FROM ros_summaries s JOIN summary_replacements map ON map.old = s.id
+WHERE map.new IS NOT NULL GROUP BY map.new;
+
+CREATE TEMP TABLE summary_replaced_extractions AS
+SELECT e.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY
+       (e.status IN ('done', 'skipped')) DESC, e.pipeline_version DESC, e.extracted_at DESC, map.old DESC) AS rank
+FROM ros_wiki_extractions e
+JOIN summary_replacements map ON map.old = e.summary_id AND map.new IS NOT NULL;
+
+DELETE FROM ros_summaries WHERE id IN (SELECT old FROM summary_replacements);
+";
+
+pub(super) const COVERAGE: &str = r"WITH RECURSIVE tree AS (
+    SELECT id, parent_id, kind, source_first, source_last, range_verified
+    FROM ros_summaries WHERE conversation_id = ?1
+), descendants AS (
+    SELECT id AS old, id AS node FROM tree WHERE kind IN ('branch', 'root')
+    UNION
+    SELECT d.old, t.id FROM descendants d JOIN tree t ON t.parent_id = d.node
+), membership AS (
+    SELECT old, node AS source, NULL AS first, NULL AS last FROM descendants
+    UNION
+    SELECT id, id, NULL, NULL FROM tree WHERE kind IN ('leaf', 'session', 'part')
+    UNION
+    SELECT t.id, t.parent_id, t.source_first, t.source_last FROM tree t
+    JOIN tree p ON p.id = t.parent_id AND p.kind IN ('part', 'session')
+    WHERE t.kind = 'section' AND t.range_verified
+      AND EXISTS (SELECT 1 FROM ros_summary_sources l WHERE l.summary_id = p.id AND l.ordinal = t.source_first)
+      AND EXISTS (SELECT 1 FROM ros_summary_sources l WHERE l.summary_id = p.id AND l.ordinal = t.source_last)
+)
+SELECT DISTINCT map.old, l.message_id FROM membership map
+JOIN ros_summary_sources l ON l.summary_id = map.source
+JOIN ros_messages m ON m.id = l.message_id AND m.conversation_id = ?1
+WHERE map.first IS NULL OR l.ordinal BETWEEN map.first AND map.last
+";
+
+pub(super) const DELIVERIES: &str = r"WITH legacy_leaves AS (
+    SELECT s.* FROM ros_summaries s WHERE s.conversation_id = ?1 AND s.kind = 'leaf'
+), window_members AS (
+    SELECT s.id AS summary_id, m.id AS message_id,
+           count(*) OVER (PARTITION BY s.id) AS window_count, s.message_count
+    FROM legacy_leaves s JOIN ros_messages m ON m.conversation_id = s.conversation_id
+         AND m.created_at BETWEEN s.earliest_at AND s.latest_at
+    WHERE NOT EXISTS (SELECT 1 FROM ros_summary_sources l WHERE l.summary_id = s.id)
+), legacy_members AS (
+    SELECT l.summary_id, l.message_id FROM ros_summary_sources l JOIN legacy_leaves s ON s.id = l.summary_id
+    UNION ALL
+    SELECT summary_id, message_id FROM window_members WHERE window_count = message_count
+), accepted AS (
+    SELECT l.message_id, max(coalesce(e.pipeline_version, 4)) AS version
+    FROM legacy_leaves s JOIN legacy_members l ON l.summary_id = s.id
+    LEFT JOIN ros_wiki_extractions e ON e.summary_id = s.id
+    LEFT JOIN rh_wiki_deferred d ON d.summary_id = s.id
+    WHERE s.conversation_id = ?1 AND s.kind = 'leaf'
+      AND (d.summary_id IS NOT NULL OR e.status IN ('done', 'skipped'))
+    GROUP BY l.message_id
+), recovery AS (
+    SELECT DISTINCT l.message_id
+    FROM legacy_members l
+    JOIN ros_wiki_extractions e ON e.summary_id = l.summary_id WHERE e.status = 'failed'
+    UNION
+    SELECT DISTINCT l.message_id
+    FROM legacy_members l
+    JOIN ros_jobs j ON j.job_key = 'wiki-ext-' || l.summary_id AND j.state <> 'dead'
+), delivery AS (
+    SELECT m.id AS message_id, c.consumer, done.version,
+           CASE WHEN done.version IS NULL AND (NOT ?2 OR recovery.message_id IS NOT NULL)
+                THEN a.anchor END AS anchor_id
+    FROM ros_messages m CROSS JOIN (SELECT 'wiki' AS consumer UNION ALL SELECT 'entity') c
+    LEFT JOIN summary_anchors a ON a.message = m.id
+    LEFT JOIN accepted done ON done.message_id = m.id AND c.consumer = 'wiki'
+    LEFT JOIN recovery ON recovery.message_id = m.id AND c.consumer = 'wiki'
+    WHERE m.conversation_id = ?1 AND (?2 OR a.anchor IS NOT NULL)
+)
+INSERT INTO ros_summary_deliveries (conversation_id, consumer, message_id, completed_version, anchor_id, historical_backlog)
+SELECT ?1, consumer, message_id, version, anchor_id, version IS NULL AND anchor_id IS NULL FROM delivery WHERE true
+ON CONFLICT (conversation_id, consumer, message_id) DO UPDATE
+SET completed_version = excluded.completed_version, anchor_id = NULL, historical_backlog = 0
+WHERE ros_summary_deliveries.completed_version IS NULL AND excluded.completed_version IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM summary_retained WHERE id = ros_summary_deliveries.anchor_id)
+";
+
+pub(super) const REFERENCES: &str = r"UPDATE ros_summaries AS s
 SET access_count = a.access_count, last_accessed_at = a.last_accessed_at
 FROM summary_replaced_access a WHERE s.id = a.new AND s.id NOT IN (SELECT id FROM summary_retained);
 
@@ -100,3 +189,11 @@ DROP TABLE summary_anchors;
 DROP TABLE summary_replacements;
 
 DROP TABLE summary_retained;
+";
+
+pub(super) const REUSE_VECTORS: &str = r"CREATE TEMP TABLE summary_old_vectors AS
+SELECT s.id, s.conversation_id, s.content, s.index_key, s.embedding
+FROM ros_summaries s JOIN summary_replacements r ON r.old = s.id
+WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair
+  AND s.embedding IS NOT NULL AND s.index_key IS NOT NULL;
+";

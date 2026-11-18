@@ -1,5 +1,6 @@
 use jiff::SignedDuration;
 use jiff::Timestamp;
+use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::{
     SummaryStoreError,
     summary_backend::{SummaryIndexes, SummaryPermit},
@@ -145,6 +146,11 @@ fn bucket(conn: &Connection) -> Result<ConversionBucket, SqliteError> {
     })
 }
 
+fn read_token_count(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<u64> {
+    let count: i64 = row.get(column)?;
+    u64::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, count))
+}
+
 fn read_status(conn: &Connection) -> Result<ConversionProgress, SqliteError> {
     let (mut progress, cursor) = conn.query_row(
         "SELECT enabled, include_giants, inventory_complete, rate, charged_tokens,
@@ -155,9 +161,9 @@ fn read_status(conn: &Connection) -> Result<ConversionProgress, SqliteError> {
             include_giants: row.get(1)?,
             inventory_complete: row.get(2)?,
             rate: row.get(3)?,
-            charged_tokens: row.get(4)?,
-            provider_input_tokens: row.get(5)?,
-            provider_output_tokens: row.get(6)?,
+            charged_tokens: read_token_count(row, 4)?,
+            provider_input_tokens: read_token_count(row, 5)?,
+            provider_output_tokens: read_token_count(row, 6)?,
             ..ConversionProgress::default()
         }, row.get::<_, Option<String>>(7)?)),
     ).map_err(error)?;
@@ -265,7 +271,7 @@ impl SummaryConversion for SqliteStore {
                 return Ok(None);
             }
             let clock = Timestamp::now();
-            let cutoff = clock.checked_sub(inactivity).unwrap_or(Timestamp::MIN);
+            let cutoff = kernel::memory::summary_conversion::inactivity_cutoff(clock, inactivity);
             if !scanned {
                 inventory(&tx, cutoff)?;
                 tx.commit().map_err(error)?;
@@ -313,7 +319,7 @@ impl SummaryConversion for SqliteStore {
                 ).map_err(error)?;
                 tx.execute("UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = ?2,
                             reservation_expires_at = ?3 WHERE conversation_id = ?1",
-                           params![id, claim_stamp(clock), time::stamp(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))]).map_err(error)?;
+                           params![id, claim_stamp(clock), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))]).map_err(error)?;
                 Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock })
             } else {
                 None
@@ -346,7 +352,7 @@ impl SummaryConversion for SqliteStore {
                 }
             }
             tx.execute("UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
-                params![lease.conversation.to_string(), time::stamp(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))]).map_err(error)?;
+                params![lease.conversation.to_string(), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))]).map_err(error)?;
             tx.commit().map_err(error)?;
             Ok(true)
         }).await.map_err(store_error)
@@ -356,7 +362,7 @@ impl SummaryConversion for SqliteStore {
         &self,
         lease: ConversionLease,
         root: Option<uuid::Uuid>,
-        manifest: serde_json::Value,
+        manifest: SummaryArtifact,
     ) -> Result<Option<uuid::Uuid>, SummaryStoreError> {
         self.with_conn(move |conn| {
             let tx = immediate(conn)?;
@@ -368,7 +374,7 @@ impl SummaryConversion for SqliteStore {
                 lease.conversation,
                 lease.revision,
                 root,
-                manifest,
+                &manifest,
             )?;
             tx.commit().map_err(error)?;
             Ok(Some(id))

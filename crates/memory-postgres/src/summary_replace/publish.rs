@@ -1,3 +1,4 @@
+use super::sql;
 use kernel::memory::summary_backend::{SummaryIndex, SummaryIndexes};
 use kernel::memory::summary_conversion::ConversionLease;
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,25 +108,23 @@ impl PostgresMemory {
     ) -> Result<(), ReplaceSummaryError> {
         prepared.validate_index_key(self.summary_index_key)?;
         let mut tx = self.pool.begin().await.map_err(query)?;
-        if let Some(lease) = conversion {
-            if !crate::summary_conversion::can_publish(&mut tx, lease)
+        if let Some(lease) = conversion
+            && !crate::summary_conversion::can_publish(&mut tx, lease)
                 .await
                 .map_err(query)?
-            {
-                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
-            }
+        {
+            return Err(SummaryReferenceError::Stale(prepared.conversation).into());
         }
         exclusive(&mut tx, [prepared.conversation])
             .await
             .map_err(query)?;
         validate_current(&mut tx, prepared).await?;
-        if let Some(lease) = conversion {
-            if !crate::summary_conversion::can_publish(&mut tx, lease)
+        if let Some(lease) = conversion
+            && !crate::summary_conversion::can_publish(&mut tx, lease)
                 .await
                 .map_err(query)?
-            {
-                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
-            }
+        {
+            return Err(SummaryReferenceError::Stale(prepared.conversation).into());
         }
         if indexes.is_some() {
             let revision = prepared
@@ -159,68 +158,8 @@ impl PostgresMemory {
         stage(&mut tx, prepared, &coverage, &old, &retained).await?;
         import_deliveries(&mut tx, prepared).await?;
 
-        let indexed: Vec<_> = prepared
-            .records
-            .iter()
-            .filter(|row| {
-                row.kind.depth() > 0 && row.index_key.is_some() && !retained.contains(&row.id)
-            })
-            .collect();
-        if !indexed.is_empty() {
-            let keys: BTreeSet<_> = indexed.iter().filter_map(|row| row.index_key).collect();
-            let keys: Vec<_> = keys.iter().map(<[_; 32]>::as_slice).collect();
-            let old: Vec<_> = prepared.expected_ids.iter().copied().collect();
-            sqlx::query(include_str!("snapshot_passages.sql"))
-                .bind(old)
-                .bind(keys)
-                .execute(&mut *tx)
-                .await
-                .map_err(query)?;
-        }
-
-        let mut records: Vec<_> = prepared.records.iter().collect();
-        records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
-        for record in records {
-            if retained.contains(&record.id) {
-                retain::reparent(&mut tx, record).await?;
-            } else {
-                insert_record(&mut tx, prepared, record, &coverage).await?;
-            }
-        }
-        for record in indexed {
-            let (starts, ends): (Vec<_>, Vec<_>) = prepared
-                .passage_windows
-                .get(&record.id)
-                .into_iter()
-                .flatten()
-                .map(|range| (range.start, range.end))
-                .unzip();
-            sqlx::query(include_str!("reuse_passages.sql"))
-                .bind(record.id)
-                .bind(starts)
-                .bind(ends)
-                .execute(&mut *tx)
-                .await
-                .map_err(query)?;
-            if let Some(indexes) = indexes {
-                let index = indexes
-                    .get(&record.id)
-                    .ok_or_else(|| Error::protocol("missing prepared summary index"))?;
-                write_index(&mut tx, record, index).await?;
-            }
-            let complete: bool = sqlx::query_scalar(
-                "UPDATE rh_summaries SET index_needs_repair = NOT rh_summary_record_indexed(id)
-                 WHERE id = $1 RETURNING NOT index_needs_repair",
-            )
-            .bind(record.id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(query)?;
-            if indexes.is_some() && !complete {
-                return Err(Error::protocol("incomplete published summary index").into());
-            }
-        }
-        sqlx::raw_sql(include_str!("references.sql"))
+        write_replacement_records(&mut tx, prepared, indexes, &coverage, &retained).await?;
+        sqlx::raw_sql(sql::REFERENCES)
             .execute(&mut *tx)
             .await
             .map_err(query)?;
@@ -232,6 +171,80 @@ impl PostgresMemory {
         tx.commit().await.map_err(query)?;
         Ok(())
     }
+}
+
+async fn write_replacement_records(
+    conn: &mut PgConnection,
+    tree: &PreparedSummaryTree,
+    indexes: Option<&SummaryIndexes>,
+    coverage: &SummaryCoverage,
+    retained: &BTreeSet<Uuid>,
+) -> Result<(), ReplaceSummaryError> {
+    let indexable_records: Vec<_> = tree
+        .records
+        .iter()
+        .filter(|row| {
+            row.kind.depth() > 0 && row.index_key.is_some() && !retained.contains(&row.id)
+        })
+        .collect();
+    if !indexable_records.is_empty() {
+        let keys: BTreeSet<_> = indexable_records
+            .iter()
+            .filter_map(|row| row.index_key)
+            .collect();
+        let keys: Vec<_> = keys.iter().map(<[_; 32]>::as_slice).collect();
+        let old_ids: Vec<_> = tree.expected_ids.iter().copied().collect();
+        sqlx::query(sql::SNAPSHOT_PASSAGES)
+            .bind(old_ids)
+            .bind(keys)
+            .execute(&mut *conn)
+            .await
+            .map_err(query)?;
+    }
+
+    let mut records: Vec<_> = tree.records.iter().collect();
+    records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
+    for record in records {
+        if retained.contains(&record.id) {
+            retain::reparent(conn, record).await?;
+        } else {
+            insert_record(conn, tree, record, coverage).await?;
+        }
+    }
+    for record in indexable_records {
+        let (starts, ends): (Vec<_>, Vec<_>) = tree
+            .passage_windows
+            .get(&record.id)
+            .into_iter()
+            .flatten()
+            .map(|range| (range.start, range.end))
+            .unzip();
+        sqlx::query(sql::REUSE_PASSAGES)
+            .bind(record.id)
+            .bind(starts)
+            .bind(ends)
+            .execute(&mut *conn)
+            .await
+            .map_err(query)?;
+        if let Some(indexes) = indexes {
+            let index = indexes
+                .get(&record.id)
+                .ok_or_else(|| Error::protocol("missing prepared summary index"))?;
+            write_index(conn, record, index).await?;
+        }
+        let complete: bool = sqlx::query_scalar(
+            "UPDATE rh_summaries SET index_needs_repair = NOT rh_summary_record_indexed(id)
+                 WHERE id = $1 RETURNING NOT index_needs_repair",
+        )
+        .bind(record.id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(query)?;
+        if indexes.is_some() && !complete {
+            return Err(Error::protocol("incomplete published summary index").into());
+        }
+    }
+    Ok(())
 }
 
 async fn validate_current(
@@ -329,7 +342,16 @@ async fn stage(
             .and_then(|members| replacement_target(members, candidates.iter().copied()));
         ids.push(*id);
         targets.push(target);
-        kinds.push(target.map(|id| records[&id]));
+        kinds.push(
+            target
+                .map(|id| {
+                    records
+                        .get(&id)
+                        .copied()
+                        .ok_or_else(|| Error::protocol(format!("missing replacement summary {id}")))
+                })
+                .transpose()?,
+        );
     }
     sqlx::query(
         "INSERT INTO summary_replacements SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::text[])",
@@ -367,7 +389,7 @@ async fn import_deliveries(
         .await
         .map_err(query)?;
     }
-    sqlx::query(include_str!("deliveries.sql"))
+    sqlx::query(sql::DELIVERIES)
         .bind(tree.conversation)
         .bind(tree.historical)
         .bind(&tree.owner)
@@ -424,7 +446,7 @@ async fn insert_record(
         .bind(record.index_key.as_ref().map(<[_; 32]>::as_slice))
         .bind(&record.model)
         .bind(record.issued_part_ordinal)
-        .bind(record.input_tokens)
+        .bind(record.input_tokens.map(i64::try_from).transpose()?)
         .bind(record.quality_flags)
         .bind(record.section.as_ref().map(|bounds| bounds.char_start))
         .bind(record.section.as_ref().map(|bounds| bounds.char_end))

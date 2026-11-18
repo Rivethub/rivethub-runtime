@@ -7,8 +7,9 @@ use kernel::memory::{
     EmbedTable, EmbedTarget, EmbeddingStore, EmbeddingStoreError, StoredEmbedding, SummaryKind,
 };
 use kernel::wiki::builder::{ExtractWiki, WikiBuilderStore, WikiRouting, WikiStoreError, WikiWork};
-use memory_sqlite::SqliteStore;
+use memory_sqlite::{SqliteError, SqliteStore};
 use rusqlite::params;
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 use crate::search_support::{TestResult, failed, store};
@@ -25,9 +26,9 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_revision: None,
         historical,
         created_at: Timestamp::now(),
-        retained_parts: Default::default(),
+        retained_parts: BTreeSet::new(),
         part_order: Vec::new(),
-        passage_windows: Default::default(),
+        passage_windows: BTreeMap::new(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -295,40 +296,7 @@ async fn top_down_references_related_rows_follow_the_winner() -> TestResult {
     let (_dir, store) = store(None)?;
     seed(&store).await?;
     let transcript = snapshot(&store).await?;
-    store.with_conn(|conn| {
-        let at = "2024-01-01T00:00:00Z";
-        conn.execute(
-            "UPDATE ros_wiki_extractions SET topics_touched = '[\"valve\"]'",
-            [],
-        ).map_err(failed)?;
-        conn.execute(
-            "INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, extracted_at, topics_touched)
-             VALUES (?1, 'failed', 8, ?2, '[\"gasket\"]')",
-            params![id(11).to_string(), at],
-        ).map_err(failed)?;
-        for statement in [
-            "INSERT INTO ros_wiki_provenance (topic_slug, source_kind, source_id, created_at)
-             SELECT 'valve', 'summary', id, ?1 FROM ros_summaries",
-            "INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
-             SELECT 'valve', 'summary:' || id, id, '{}', ?1, 'alice' FROM ros_summaries",
-            "INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
-             SELECT id, conversation_id, '[]', ?1, 'alice' FROM ros_summaries",
-            "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, source, state, created_at, updated_at)
-             SELECT id, 'summary', id, 'type', 'hardware', 'user', 'accepted', ?1, ?1 FROM ros_summaries",
-            "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
-             SELECT 'valve-size', id, 'size', ?1 FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
-            "INSERT INTO rh_entity_fact_claims (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
-             SELECT id, 'valve-size', id, 'wiki-writer', 'valves', id, ?1, ?1, 'alice' FROM ros_summaries",
-        ] {
-            conn.execute(statement, [at]).map_err(failed)?;
-        }
-        conn.execute(
-            "INSERT INTO ros_jobs (id, task, job_key, payload, run_at, created_at, updated_at)
-             VALUES ('wiki-fixture', 'extract-wiki', 'wiki-ext-' || ?1, json_object('summaryId', ?1), ?2, ?2, ?2)",
-            params![id(12).to_string(), at],
-        ).map_err(failed)?;
-        Ok(())
-    }).await?;
+    store.with_conn(seed_related_references).await?;
     store
         .replace_summary_tree(tree(&[10, 11, 12], 20, &[2], true))
         .await?;
@@ -374,6 +342,42 @@ async fn top_down_references_related_rows_follow_the_winner() -> TestResult {
         })
         .await?;
     assert_eq!(snapshot(&store).await?, transcript);
+    Ok(())
+}
+
+fn seed_related_references(conn: &mut rusqlite::Connection) -> Result<(), SqliteError> {
+    let at = "2024-01-01T00:00:00Z";
+    conn.execute(
+        "UPDATE ros_wiki_extractions SET topics_touched = '[\"valve\"]'",
+        [],
+    )
+    .map_err(failed)?;
+    conn.execute(
+            "INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, extracted_at, topics_touched)
+             VALUES (?1, 'failed', 8, ?2, '[\"gasket\"]')",
+            params![id(11).to_string(), at],
+        ).map_err(failed)?;
+    for statement in [
+            "INSERT INTO ros_wiki_provenance (topic_slug, source_kind, source_id, created_at)
+             SELECT 'valve', 'summary', id, ?1 FROM ros_summaries",
+            "INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
+             SELECT 'valve', 'summary:' || id, id, '{}', ?1, 'alice' FROM ros_summaries",
+            "INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
+             SELECT id, conversation_id, '[]', ?1, 'alice' FROM ros_summaries",
+            "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, source, state, created_at, updated_at)
+             SELECT id, 'summary', id, 'type', 'hardware', 'user', 'accepted', ?1, ?1 FROM ros_summaries",
+            "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+             SELECT 'valve-size', id, 'size', ?1 FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
+            "INSERT INTO rh_entity_fact_claims (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
+             SELECT id, 'valve-size', id, 'wiki-writer', 'valves', id, ?1, ?1, 'alice' FROM ros_summaries",
+        ] {
+            conn.execute(statement, [at]).map_err(failed)?;
+        }
+    conn.execute(
+            "INSERT INTO ros_jobs (id, task, job_key, payload, run_at, created_at, updated_at)
+             VALUES ('wiki-fixture', 'extract-wiki', 'wiki-ext-' || ?1, json_object('summaryId', ?1), ?2, ?2, ?2)",
+            params![id(12).to_string(), at],
+        ).map_err(failed)?;
     Ok(())
 }
 

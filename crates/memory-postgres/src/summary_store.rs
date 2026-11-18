@@ -15,13 +15,13 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::settlement::{SettlementPage, SummaryState};
+use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::summary_backend::{SummaryIndex, SummaryRepair};
 use kernel::memory::summary_backend::{SummaryIndexes, SummaryInput, SummaryPermit, SummaryRun};
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::memory::summary_reference::PreparedSummaryTree;
 use kernel::queue::Job;
-use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::types::Json;
@@ -169,7 +169,7 @@ impl SummaryStore for PostgresMemory {
         id: Uuid,
         revision: i64,
         root: Option<Uuid>,
-        manifest: Value,
+        manifest: SummaryArtifact,
     ) -> Result<Uuid, SummaryStoreError> {
         let mut conn = self.pool.acquire().await.map_err(backend::error)?;
         backend::freeze(&mut conn, id, revision, root, manifest)
@@ -181,14 +181,15 @@ impl SummaryStore for PostgresMemory {
         &self,
         run: Uuid,
         key: [u8; 32],
-    ) -> Result<Option<Value>, SummaryStoreError> {
-        sqlx::query_scalar(
+    ) -> Result<Option<SummaryArtifact>, SummaryStoreError> {
+        sqlx::query_scalar::<_, Json<SummaryArtifact>>(
             "SELECT artifact FROM rh_summary_checkpoints WHERE run_id = $1 AND artifact_key = $2",
         )
         .bind(run)
         .bind(key.as_slice())
         .fetch_optional(&self.pool)
         .await
+        .map(|row| row.map(|Json(artifact)| artifact))
         .map_err(backend::error)
     }
 
@@ -197,7 +198,7 @@ impl SummaryStore for PostgresMemory {
         run: Uuid,
         revision: i64,
         key: [u8; 32],
-        artifact: Value,
+        artifact: SummaryArtifact,
     ) -> Result<(), SummaryStoreError> {
         sqlx::query(
             "INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
@@ -205,7 +206,7 @@ impl SummaryStore for PostgresMemory {
         )
         .bind(run)
         .bind(key.as_slice())
-        .bind(artifact).bind(revision)
+        .bind(Json(artifact)).bind(revision)
         .execute(&self.pool)
         .await
         .map_err(backend::error)?;

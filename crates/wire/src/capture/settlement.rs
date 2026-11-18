@@ -11,33 +11,37 @@ pub struct SessionObservation {
 }
 
 impl CaptureBatchRequest {
-    #[must_use]
-    pub fn session_observation(&self) -> Option<SessionObservation> {
+    pub fn session_observation(&self) -> Result<Option<SessionObservation>, jiff::Error> {
         SessionObservation::from_capture(&self.session_key, self.settings.as_ref(), self.finalize)
     }
 }
 
 impl SessionObservation {
-    #[must_use]
     pub fn from_capture(
         session_key: &str,
         settings: Option<&JsonObject>,
         finalize: Option<bool>,
-    ) -> Option<Self> {
-        let settings = settings?;
-        let source = live_source(session_key, settings)?;
-        settings
-            .get_str("last_event")
-            .filter(|event| !event.is_empty())?;
-        let observed = settings.get_str("last_ingest_at")?;
-        let at = crate::time::parse_rfc3339(observed).ok()?;
+    ) -> Result<Option<Self>, jiff::Error> {
+        let Some(settings) = settings else {
+            return Ok(None);
+        };
+        let Some(source) = live_source(session_key, settings) else {
+            return Ok(None);
+        };
+        if settings.get_str("last_event").is_none_or(str::is_empty) {
+            return Ok(None);
+        }
+        let Some(observed) = settings.get_str("last_ingest_at") else {
+            return Ok(None);
+        };
+        let at = crate::time::parse_rfc3339(observed)?;
         let end_key = (Self::is_session_end(session_key, Some(settings), finalize)
             && settings.get_bool("summary_end_suppressed") != Some(true))
         .then(|| {
             let native = settings.get_str("last_event_id").unwrap_or_default();
             format!("{source}/{}:{native}", at.rfc3339_offset())
         });
-        Some(Self { at, end_key })
+        Ok(Some(Self { at, end_key }))
     }
 
     #[must_use]

@@ -1,5 +1,6 @@
 use jiff::SignedDuration;
 use jiff::Timestamp;
+use kernel::memory::summary_backend::SummaryArtifact;
 use kernel::memory::{
     SummaryStoreError,
     summary_backend::{SummaryIndexes, SummaryPermit},
@@ -141,6 +142,45 @@ async fn now(conn: &mut PgConnection) -> Result<Timestamp, sqlx::Error> {
         .map(jiff_sqlx::Timestamp::to_jiff)
 }
 
+async fn clear_stale_items(conn: &mut PgConnection, clock: Timestamp) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE rh_summary_conversion_items SET state = 'pending', reservation_expires_at = NULL
+            WHERE reservation_expires_at <= $1",
+    )
+    .bind(crate::time::BindTime::bind_time(clock))
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM rh_summary_conversion_items i USING rh_conversations c
+             WHERE i.conversation_id = c.id AND i.state IN ('pending','waiting_quiet','failed') AND (NOT ({INCLUDED}) OR EXISTS (
+                 SELECT 1 FROM rh_summary_state s WHERE s.conversation_id = c.id AND NOT s.historical_only))"
+        ))).execute(&mut *conn).await?;
+    Ok(())
+}
+
+fn read_progress(row: &sqlx::postgres::PgRow) -> Result<ConversionProgress, SummaryStoreError> {
+    Ok(ConversionProgress {
+        enabled: row.try_get("enabled").map_err(error)?,
+        include_giants: row.try_get("include_giants").map_err(error)?,
+        inventory_after: row.try_get("inventory_after").map_err(error)?,
+        inventory_complete: row.try_get("inventory_complete").map_err(error)?,
+        rate: row.try_get("rate").map_err(error)?,
+        charged_tokens: u64::try_from(row.try_get::<i64, _>("charged_tokens").map_err(error)?)
+            .map_err(error)?,
+        provider_input_tokens: u64::try_from(
+            row.try_get::<i64, _>("provider_input_tokens")
+                .map_err(error)?,
+        )
+        .map_err(error)?,
+        provider_output_tokens: u64::try_from(
+            row.try_get::<i64, _>("provider_output_tokens")
+                .map_err(error)?,
+        )
+        .map_err(error)?,
+        ..ConversionProgress::default()
+    })
+}
+
 #[async_trait::async_trait]
 impl SummaryConversion for PostgresMemory {
     async fn control(
@@ -184,17 +224,7 @@ impl SummaryConversion for PostgresMemory {
             .fetch_one(&mut *tx)
             .await
             .map_err(error)?;
-        let mut progress = ConversionProgress {
-            enabled: row.get("enabled"),
-            include_giants: row.get("include_giants"),
-            inventory_after: row.get("inventory_after"),
-            inventory_complete: row.get("inventory_complete"),
-            rate: row.get("rate"),
-            charged_tokens: row.get("charged_tokens"),
-            provider_input_tokens: row.get("provider_input_tokens"),
-            provider_output_tokens: row.get("provider_output_tokens"),
-            ..ConversionProgress::default()
-        };
+        let mut progress = read_progress(&row)?;
         let groups: Vec<(String, i64)> = sqlx::query_as(
             "SELECT state, count(*) FROM rh_summary_conversion_items GROUP BY state",
         )
@@ -250,7 +280,7 @@ impl SummaryConversion for PostgresMemory {
             return Ok(None);
         }
         let clock = now(&mut tx).await.map_err(error)?;
-        let cutoff = clock.checked_sub(inactivity).unwrap_or(Timestamp::MIN);
+        let cutoff = kernel::memory::summary_conversion::inactivity_cutoff(clock, inactivity);
         if !scanned {
             inventory(&mut tx, cutoff).await.map_err(error)?;
             tx.commit().await.map_err(error)?;
@@ -259,13 +289,7 @@ impl SummaryConversion for PostgresMemory {
         if bucket(&mut tx).await.map_err(error)?.at > clock {
             return Ok(None);
         }
-        sqlx::query("UPDATE rh_summary_conversion_items SET state = 'pending', reservation_expires_at = NULL
-            WHERE reservation_expires_at <= $1").bind(crate::time::BindTime::bind_time(clock)).execute(&mut *tx).await.map_err(error)?;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DELETE FROM rh_summary_conversion_items i USING rh_conversations c
-             WHERE i.conversation_id = c.id AND i.state IN ('pending','waiting_quiet','failed') AND (NOT ({INCLUDED}) OR EXISTS (
-                 SELECT 1 FROM rh_summary_state s WHERE s.conversation_id = c.id AND NOT s.historical_only))"
-        ))).execute(&mut *tx).await.map_err(error)?;
+        clear_stale_items(&mut tx, clock).await.map_err(error)?;
         let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool)> = sqlx::query_as(
             "SELECT c.id, i.last_input_at, coalesce(s.last_input_at <> i.last_input_at, false) FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
@@ -303,7 +327,7 @@ impl SummaryConversion for PostgresMemory {
             .bind(conversation)
             .bind(crate::time::BindTime::bind_time(clock))
             .bind(crate::time::BindTime::bind_time(
-                clock.checked_add(LEASE).unwrap_or(Timestamp::MAX),
+                kernel::memory::summary_conversion::bounded_deadline(clock, LEASE),
             ))
             .execute(&mut *tx)
             .await
@@ -349,7 +373,7 @@ impl SummaryConversion for PostgresMemory {
             }
         }
         sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = $2 WHERE conversation_id = $1")
-            .bind(lease.conversation).bind(crate::time::BindTime::bind_time(clock.checked_add(LEASE).unwrap_or(Timestamp::MAX))).execute(&mut *tx).await.map_err(error)?;
+            .bind(lease.conversation).bind(crate::time::BindTime::bind_time(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))).execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)?;
         Ok(true)
     }
@@ -358,7 +382,7 @@ impl SummaryConversion for PostgresMemory {
         &self,
         lease: ConversionLease,
         root: Option<Uuid>,
-        manifest: serde_json::Value,
+        manifest: SummaryArtifact,
     ) -> Result<Option<Uuid>, SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         if !can_publish(&mut tx, lease).await.map_err(error)? {

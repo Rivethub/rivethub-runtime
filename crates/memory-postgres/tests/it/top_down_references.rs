@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use jiff::Timestamp;
 use kernel::memory::summary_reference::{
     PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummaryReferenceError,
@@ -26,9 +28,9 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_revision: None,
         historical,
         created_at: Timestamp::now(),
-        retained_parts: Default::default(),
+        retained_parts: BTreeSet::new(),
         part_order: Vec::new(),
-        passage_windows: Default::default(),
+        passage_windows: BTreeMap::new(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -637,16 +639,19 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
             kind: WikiSourceKind::Summary,
             ids: vec![summary.to_string()],
             conversation_id: Some(id(1).to_string()),
-            extra: Default::default(),
+            extra: wire::Extra::default(),
         });
     }
-    let mut repository = WikiRepository::new(directory.path().to_path_buf())
-        .lock()
-        .await?;
-    repository
-        .fold(&mut page, &[], "Invented wiki page", Timestamp::now())
-        .await?;
-    repository.release().await?;
+    async {
+        let mut repository = WikiRepository::new(directory.path().to_path_buf())
+            .lock()
+            .await?;
+        repository
+            .fold(&mut page, &[], "Invented wiki page", Timestamp::now())
+            .await?;
+        repository.release().await
+    }
+    .await?;
     let page_path = directory.path().join("topics/valve.md");
     let cached = tokio::fs::read_to_string(&page_path).await?;
     assert!(cached.contains(&id(10).to_string()));
@@ -711,8 +716,8 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
                 .await?
                 .ok_or("archive")?;
             let archived = parse_wiki_page(&archive)?;
-            assert!(archived.citations.is_empty());
-            assert!(archived.meta.sources.is_empty());
+            assert_eq!(archived.citations, []);
+            assert_eq!(archived.meta.sources, []);
             assert_eq!(archived.current_state, projected.current_state);
             let legacy = store
                 .wiki_archive(&slug, None)
@@ -724,8 +729,8 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
                 .recompile_source(&slug, Timestamp::now())
                 .await?
                 .ok_or("recompile")?;
-            assert!(recompile.page.citations.is_empty());
-            assert!(recompile.page.meta.sources.is_empty());
+            assert_eq!(recompile.page.citations, []);
+            assert_eq!(recompile.page.meta.sources, []);
             assert_eq!(
                 recompile
                     .summaries
@@ -890,8 +895,9 @@ async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgP
         .await?
         .with_summary_index_key([0xab; 32]);
     let mut first = tree(&[10, 11, 12], 20, &[2, 3], true);
-    first.records[0].content = "Screw. Clamp.".to_owned();
-    first.records[0].index_key = Some([0xab; 32]);
+    let first_root = first.records.first_mut().ok_or("missing first root")?;
+    first_root.content = "Screw. Clamp.".to_owned();
+    first_root.index_key = Some([0xab; 32]);
     first.passage_windows.insert(id(20), vec![0..7, 7..13]);
     Scope::Maintenance
         .run(store.replace_summary_tree(&first))
@@ -909,8 +915,9 @@ async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgP
     let before = passages().await?;
     assert_eq!(before.len(), 2);
     let mut second = tree(&[20], 21, &[2, 3], true);
-    second.records[0].content = "Screw. Clamp. Nut.".to_owned();
-    second.records[0].index_key = Some([0xab; 32]);
+    let second_root = second.records.first_mut().ok_or("missing second root")?;
+    second_root.content = "Screw. Clamp. Nut.".to_owned();
+    second_root.index_key = Some([0xab; 32]);
     second
         .passage_windows
         .insert(id(21), vec![0..7, 7..13, 13..18]);
@@ -927,10 +934,13 @@ async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgP
     );
 
     let mut different = tree(&[21], 22, &[2, 3], true);
-    different.records[0]
-        .content
-        .clone_from(&second.records[0].content);
-    different.records[0].index_key = Some([0xcd; 32]);
+    let previous_root = second.records.first().ok_or("missing second root")?;
+    let different_root = different
+        .records
+        .first_mut()
+        .ok_or("missing different root")?;
+    different_root.content.clone_from(&previous_root.content);
+    different_root.index_key = Some([0xcd; 32]);
     different
         .passage_windows
         .insert(id(22), vec![0..7, 7..13, 13..18]);

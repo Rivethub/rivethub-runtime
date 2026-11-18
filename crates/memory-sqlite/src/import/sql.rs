@@ -1,4 +1,4 @@
-WITH nodes AS (
+pub(super) const SUMMARY_GRAPH: &str = r"WITH nodes AS (
     SELECT s.* FROM ros_summaries s WHERE s.pipeline_version >= 7
         OR s.kind IN ('session', 'part', 'section')
 ), coverage AS (
@@ -55,3 +55,4 @@ SELECT EXISTS (
         )
     ))
 )
+";

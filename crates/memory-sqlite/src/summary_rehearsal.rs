@@ -55,9 +55,10 @@ impl SqliteStore {
         let mut conn =
             Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(error)?;
         let tx = conn.transaction().map_err(error)?;
-        let mut result = ConversionRehearsal::default();
-        for id in ids.iter().collect::<BTreeSet<_>>() {
-            rehearse(&tx, *id, &mut result)?;
+        let mut result = ConversionRehearsal::empty();
+        let unique: BTreeSet<_> = ids.iter().copied().collect();
+        for id in unique {
+            rehearse(&tx, id, &mut result)?;
         }
         tx.commit().map_err(error)?;
         Ok(result)

@@ -23,9 +23,29 @@ pub(super) struct Args {
     json: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "kebab-case")]
+enum Verb {
+    Start,
+    Pause,
+    Resume,
+    Status,
+    Retry,
+    Release,
+    Rehearse,
+}
+
 pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
     let (verb, options) = args.split_first().ok_or(Error::ResummarizeUsage)?;
-    let (conversation, options) = if matches!(verb.as_str(), "retry" | "release") {
+    let verb = verb.parse::<Verb>();
+    let verb = match verb {
+        Ok(verb) => Some(verb),
+        Err(error) => {
+            tracing::debug!(%error, "unknown conversion command");
+            None
+        }
+    };
+    let (conversation, options) = if matches!(verb, Some(Verb::Retry | Verb::Release)) {
         let (id, options) = options.split_first().ok_or(Error::ResummarizeUsage)?;
         (
             Some(id.parse().map_err(|_| Error::ResummarizeUsage)?),
@@ -44,50 +64,49 @@ pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
     while let Some(arg) = scan.current().map(str::to_owned) {
         if scan.flag("--json") {
             json = true;
-        } else if verb == "status" && scan.flag("--watch") {
+        } else if verb == Some(Verb::Status) && scan.flag("--watch") {
             watch = true;
-        } else if matches!(verb.as_str(), "start" | "resume") && scan.flag("--include-giants") {
+        } else if matches!(verb, Some(Verb::Start | Verb::Resume)) && scan.flag("--include-giants")
+        {
             include_giants = true;
         } else if let Taken::Value(path) = scan.option("--sqlite", None) {
             sqlite = Some(PathBuf::from(path));
-        } else if verb == "start"
+        } else if verb == Some(Verb::Start)
             && let Taken::Value(value) = scan.option("--rate", None)
         {
-            rate = Some(
-                value
-                    .parse::<i64>()
-                    .ok()
-                    .filter(|&rate| rate > 0)
-                    .ok_or(Error::ResummarizeUsage)?,
-            );
-        } else if verb == "rehearse" && !arg.starts_with('-') {
+            let parsed = value.parse::<i64>().map_err(|_| Error::ResummarizeUsage)?;
+            if parsed <= 0 {
+                return Err(Error::ResummarizeUsage);
+            }
+            rate = Some(parsed);
+        } else if verb == Some(Verb::Rehearse) && !arg.starts_with('-') {
             rehearsal.push(arg.parse().map_err(|_| Error::ResummarizeUsage)?);
             scan.bump();
         } else {
             return Err(Error::UnknownOption(arg));
         }
     }
-    let action = match verb.as_str() {
-        "start" => Some(ConversionControl::Start {
+    let action = match verb {
+        Some(Verb::Start) => Some(ConversionControl::Start {
             rate,
             include_giants,
         }),
-        "pause" => Some(ConversionControl::Pause),
-        "resume" => Some(ConversionControl::Resume { include_giants }),
-        "retry" => Some(ConversionControl::Retry {
+        Some(Verb::Pause) => Some(ConversionControl::Pause),
+        Some(Verb::Resume) => Some(ConversionControl::Resume { include_giants }),
+        Some(Verb::Retry) => Some(ConversionControl::Retry {
             conversation: conversation.ok_or(Error::ResummarizeUsage)?,
         }),
-        "release" => Some(ConversionControl::Release {
+        Some(Verb::Release) => Some(ConversionControl::Release {
             conversation: conversation.ok_or(Error::ResummarizeUsage)?,
         }),
-        "rehearse"
+        Some(Verb::Rehearse)
             if !rehearsal.is_empty()
                 && rehearsal.len() <= kernel::memory::summary_conversion::REHEARSAL_LIMIT =>
         {
             None
         }
-        "status" => None,
-        _ => return Err(Error::ResummarizeUsage),
+        Some(Verb::Status) => None,
+        Some(Verb::Rehearse) | None => return Err(Error::ResummarizeUsage),
     };
     Ok(Args {
         action,
@@ -180,7 +199,7 @@ fn format(progress: &ConversionProgress, json: bool) -> Result<String, Error> {
         progress.provider_output_tokens
     );
     for (id, error) in &progress.recent_failures {
-        let _ = writeln!(text, "{id} {error}");
+        writeln!(text, "{id} {error}").map_err(std::io::Error::other)?;
     }
     Ok(text)
 }
@@ -211,11 +230,12 @@ async fn rehearse(target: Target, ids: Vec<uuid::Uuid>, json: bool) -> Result<Re
         result.sampled_conversations, result.plan
     );
     for (table, counts) in result.tables {
-        let _ = writeln!(
+        writeln!(
             text,
             "{table}  {} remapped  {} deleted",
             counts.remapped, counts.deleted
-        );
+        )
+        .map_err(std::io::Error::other)?;
     }
     Ok(Report::success(text))
 }

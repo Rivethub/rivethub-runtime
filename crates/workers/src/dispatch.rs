@@ -64,31 +64,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::ExtractWiki | FixedJob::EnqueueWikiBackfill) => {
             dispatch_wiki(queue, env, job, cancel).await
         }
-        JobName::Fixed(FixedJob::EmbedTarget) => {
-            if let crate::embed::ParsedTarget::Ready(target) =
-                crate::embed::read_target(&job.payload)?
-                && target.table == kernel::memory::EmbedTable::Summaries
-                && let Ok(id) = uuid::Uuid::parse_str(&target.id)
-                && kernel::tenancy::Scope::Maintenance
-                    .run(crate::summarize::index::repair(
-                        env.summaries.as_ref(),
-                        env.embedder.as_ref(),
-                        env.embed,
-                        id,
-                    ))
-                    .await?
-            {
-                return Ok(());
-            }
-            handle_embed(
-                env.targets.as_ref(),
-                env.embedder.as_ref(),
-                env.embed,
-                &job.payload,
-                cancel,
-            )
-            .await
-        }
+        JobName::Fixed(FixedJob::EmbedTarget) => dispatch_embed(env, job, cancel).await,
         JobName::Fixed(FixedJob::EnqueueUnembedded) => {
             dispatch_unembedded(queue, env, cancel).await
         }
@@ -114,23 +90,7 @@ pub(crate) async fn dispatch<Q: JobQueue>(
             .await
         }
         JobName::Fixed(FixedJob::SummarizeConversation) => {
-            use crate::summarize::live::{LiveEnv, LiveRequest, handle};
-            if !job.payload.as_map().contains_key("revision") {
-                return Ok(());
-            }
-            let payload: LiveRequest = job
-                .payload
-                .deserialize()
-                .map_err(WorkerError::summary_payload)?;
-            let live = LiveEnv {
-                summary: &summarize,
-                embedder: env.embedder.as_ref(),
-                embed: env.embed,
-                permits: &env.summary_permits,
-            };
-            kernel::tenancy::Scope::Maintenance
-                .run(handle(&live, &payload, job.attempt))
-                .await
+            dispatch_live(env, &summarize, job).await
         }
         JobName::Fixed(FixedJob::TitleConversation) => {
             let _slot = summary_slot(env).await?;
@@ -161,6 +121,59 @@ pub(crate) async fn dispatch<Q: JobQueue>(
     }
 }
 
+async fn dispatch_embed(
+    env: &JobEnv,
+    job: &ClaimedJob,
+    cancel: &CancellationToken,
+) -> Result<(), WorkerError> {
+    if let crate::embed::ParsedTarget::Ready(target) = crate::embed::read_target(&job.payload)?
+        && target.table == kernel::memory::EmbedTable::Summaries
+        && let Ok(id) = uuid::Uuid::parse_str(&target.id)
+        && kernel::tenancy::Scope::Maintenance
+            .run(crate::summarize::index::repair(
+                env.summaries.as_ref(),
+                env.embedder.as_ref(),
+                env.embed,
+                id,
+            ))
+            .await?
+    {
+        return Ok(());
+    }
+    handle_embed(
+        env.targets.as_ref(),
+        env.embedder.as_ref(),
+        env.embed,
+        &job.payload,
+        cancel,
+    )
+    .await
+}
+
+async fn dispatch_live(
+    env: &JobEnv,
+    summarize: &SummarizeEnv<'_>,
+    job: &ClaimedJob,
+) -> Result<(), WorkerError> {
+    use crate::summarize::live::{LiveEnv, LiveRequest, handle};
+    if !job.payload.as_map().contains_key("revision") {
+        return Ok(());
+    }
+    let payload: LiveRequest = job
+        .payload
+        .deserialize()
+        .map_err(WorkerError::summary_payload)?;
+    let live = LiveEnv {
+        summary: summarize,
+        embedder: env.embedder.as_ref(),
+        embed: env.embed,
+        permits: &env.summary_permits,
+    };
+    kernel::tenancy::Scope::Maintenance
+        .run(handle(&live, &payload, job.attempt))
+        .await
+}
+
 async fn summary_slot(
     env: &JobEnv,
 ) -> Result<
@@ -175,13 +188,20 @@ async fn summary_slot(
         .acquire()
         .await
         .map_err(|_| WorkerError::Closed)?;
+    let permit = wait_for_summary_permit(env).await?;
+    Ok((local, permit))
+}
+
+async fn wait_for_summary_permit(
+    env: &JobEnv,
+) -> Result<Box<dyn kernel::memory::summary_backend::SummaryPermit>, WorkerError> {
     loop {
-        if let Some(permit) = env
+        let permit = env
             .summaries
             .try_summary_permit(env.summary.model_concurrency)
-            .await?
-        {
-            return Ok((local, permit));
+            .await?;
+        if let Some(permit) = permit {
+            return Ok(permit);
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }

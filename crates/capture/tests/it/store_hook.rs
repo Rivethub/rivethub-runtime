@@ -168,7 +168,7 @@ async fn top_down_settle_a_session_end_with_no_turns_posts_an_empty_marker() -> 
     assert_eq!(batch.messages, []);
     assert!(
         batch
-            .session_observation()
+            .session_observation()?
             .and_then(|o| o.end_key)
             .is_some()
     );

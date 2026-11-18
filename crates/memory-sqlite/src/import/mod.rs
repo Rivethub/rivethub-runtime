@@ -2,6 +2,7 @@ mod catalog;
 mod columns;
 mod copy;
 mod error;
+mod sql;
 mod values;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -255,7 +256,7 @@ fn finish(
     report: &ImportReport,
     index_key: Option<&[u8; 32]>,
 ) -> Result<(), ImportError> {
-    let invalid: bool = tx.query_row(include_str!("summary_graph.sql"), [], |row| row.get(0))?;
+    let invalid: bool = tx.query_row(sql::SUMMARY_GRAPH, [], |row| row.get(0))?;
     if invalid {
         return Err(ImportError::SummaryGraph);
     }

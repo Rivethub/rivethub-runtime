@@ -102,10 +102,9 @@ impl LockedRepository {
         fold_archived(
             &self.root,
             page,
-            removed,
+            (removed, Vec::new()),
             message,
             now,
-            Vec::new(),
             self.sql_references,
         )
         .await
@@ -121,10 +120,9 @@ impl LockedRepository {
         fold_archived(
             &self.root,
             page,
-            &[],
+            (&[], archived),
             message,
             now,
-            archived,
             self.sql_references,
         )
         .await
@@ -241,10 +239,9 @@ async fn apply_locked(
 async fn fold_archived(
     root: &Path,
     page: &mut WikiPage,
-    removed: &[String],
+    (removed, extra): (&[String], Vec<Archived>),
     message: &str,
     now: Timestamp,
-    extra: Vec<Archived>,
     sql_references: bool,
 ) -> Result<String, WikiWriteError> {
     sync(root).await?;

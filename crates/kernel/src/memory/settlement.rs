@@ -5,6 +5,18 @@ use uuid::Uuid;
 pub const DEFAULT_INACTIVITY_MINUTES: u32 = 24 * 60;
 pub const SETTLEMENT_PAGE_SIZE: u32 = 200;
 
+#[doc(hidden)]
+#[must_use]
+pub fn session_uuid(session: &str) -> Option<Uuid> {
+    match Uuid::parse_str(session) {
+        Ok(id) => Some(id),
+        Err(error) => {
+            tracing::trace!(%error, "looking up settlement by session key");
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryState {
     pub conversation_id: Uuid,
@@ -90,8 +102,9 @@ impl SummaryState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, strum::Display)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum SettleStatus {
     Settled,
     AlreadySettled,
@@ -99,7 +112,7 @@ pub enum SettleStatus {
 }
 
 #[serde_with::serde_as]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettleResult {
     pub conversation_id: Uuid,

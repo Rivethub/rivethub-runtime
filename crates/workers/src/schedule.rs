@@ -96,9 +96,12 @@ pub(crate) async fn run_summary_expiry(
             _ = ticks.tick() => {}
         }
         let now = Timestamp::now();
-        let Ok(cutoff) = now.checked_sub(inactivity) else {
-            tracing::error!("summary inactivity cutoff is outside the supported date range");
-            return;
+        let cutoff = match now.checked_sub(inactivity) {
+            Ok(cutoff) => cutoff,
+            Err(error) => {
+                tracing::error!(%error, "summary inactivity cutoff is outside the supported date range");
+                return;
+            }
         };
         let mut after = None;
         loop {

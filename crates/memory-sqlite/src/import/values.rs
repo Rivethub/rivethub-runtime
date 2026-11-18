@@ -76,11 +76,14 @@ impl Conversion {
                 Ok(Value::Text(serde_json::to_string(&payload)?))
             }
             Self::Array => Ok(Value::Text(serde_json::to_string(&array(&text, line)?)?)),
-            Self::Bytea => text
-                .strip_prefix("\\x")
-                .and_then(|hex| hex::decode(hex).ok())
-                .map(Value::Blob)
-                .ok_or_else(|| copy::invalid(line, "invalid hexadecimal bytea")),
+            Self::Bytea => {
+                let digits = text
+                    .strip_prefix(r"\x")
+                    .ok_or_else(|| copy::invalid(line, "invalid hexadecimal bytea"))?;
+                hex::decode(digits)
+                    .map(Value::Blob)
+                    .map_err(|_| copy::invalid(line, "invalid hexadecimal bytea"))
+            }
             Self::Vector => {
                 let mut vector: Vec<f32> = serde_json::from_str(&text)?;
                 if width.is_some_and(|expected| expected != vector.len())

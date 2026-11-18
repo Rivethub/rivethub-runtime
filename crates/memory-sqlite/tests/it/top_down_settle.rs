@@ -2,10 +2,7 @@ use jiff::Timestamp;
 use kernel::memory::settlement::SettleStatus;
 use kernel::memory::{MemoryStore as _, SummaryStore as _};
 use memory_sqlite::SqliteStore;
-use serde_json::json;
-use testkit::settlement::{
-    TestResult, batch, expire, message, obj, position_fills, revision_lifecycle,
-};
+use testkit::settlement::{TestResult, batch, expire, message, position_fills, revision_lifecycle};
 use uuid::Uuid;
 use wire::message::Role;
 
@@ -32,7 +29,9 @@ async fn result_fills_and_persistence() -> TestResult {
     let mut tool = message("blade", "2026-01-02T01:00:00Z")?;
     tool.role = Role::Tool;
     tool.tool_name = Some("test-tool".to_owned());
-    tool.metadata = Some(obj(json!({"pending_result": true}))?);
+    let mut metadata = wire::JsonObject::default();
+    metadata.insert("pending_result", true)?;
+    tool.metadata = Some(metadata);
     let local = store(&path)?;
     let id: Uuid = local
         .capture(batch("cli:blade", vec![tool.clone()]), &alice, None, now)

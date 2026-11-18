@@ -8,13 +8,6 @@ use super::plan::{Source, tag};
 use super::prompt::Prompt;
 use super::python_whitespace;
 
-#[cfg(test)]
-pub(crate) const SEED: u32 = 0;
-#[cfg(test)]
-pub(crate) const STREAM: bool = true;
-#[cfg(test)]
-pub(crate) const INCLUDE_USAGE: bool = true;
-
 pub(crate) const NON_STOP: u32 = 1 << 0;
 pub(crate) const OVER_CEILING: u32 = 1 << 1;
 pub(crate) const THINK_TAG: u32 = 1 << 2;
@@ -92,7 +85,7 @@ pub(crate) fn parse_reply(
     if !stopped {
         quality_flags |= NON_STOP;
     }
-    if completion_tokens.unwrap_or(0) > u64::from(editorial_ceiling) {
+    if completion_tokens.is_some_and(|tokens| tokens > u64::from(editorial_ceiling)) {
         quality_flags |= OVER_CEILING;
     }
     if text.starts_with("<think>") || text.contains("</think>") {
@@ -196,7 +189,11 @@ fn heading_range(raw: &str) -> (&str, Option<(usize, usize)>) {
 }
 
 fn ordinal(text: &str) -> Option<usize> {
-    let number = text.strip_prefix('m')?.parse().ok()?;
+    let digits = text.strip_prefix('m')?;
+    let number = digits.bytes().try_fold(0_usize, |number, byte| {
+        let digit = usize::from(byte.checked_sub(b'0').filter(|digit| *digit <= 9)?);
+        number.checked_mul(10)?.checked_add(digit)
+    })?;
     (tag(number) == text).then_some(number)
 }
 

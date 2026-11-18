@@ -66,7 +66,51 @@ fn failure_reason(error: &WorkerError) -> String {
         }
         WorkerError::EmptySummary => "the model returned an empty summary",
         WorkerError::Summary(_) => "summary store operation failed",
-        _ => "summary conversion failed",
+        WorkerError::Tenancy(..)
+        | WorkerError::JobSetting { .. }
+        | WorkerError::EmptySynth
+        | WorkerError::SynthPayload { .. }
+        | WorkerError::MemoryJob(..)
+        | WorkerError::MissingMemoryJobs
+        | WorkerError::WikiStore(..)
+        | WorkerError::EntityStore(..)
+        | WorkerError::WikiJson(..)
+        | WorkerError::WikiModel(..)
+        | WorkerError::MissingDependencies { .. }
+        | WorkerError::Concurrency
+        | WorkerError::Width
+        | WorkerError::ChunkWindow
+        | WorkerError::Payload { .. }
+        | WorkerError::Queue(..)
+        | WorkerError::Target(..)
+        | WorkerError::Unhandled { .. }
+        | WorkerError::TextTooLong
+        | WorkerError::Cancelled
+        | WorkerError::TaskEnded(..)
+        | WorkerError::Closed
+        | WorkerError::SummaryPayload { .. }
+        | WorkerError::ConversationMissing { .. }
+        | WorkerError::SummarySuperseded
+        | WorkerError::ConversionYield
+        | WorkerError::SummaryReplan
+        | WorkerError::Truncated
+        | WorkerError::RouteBusy
+        | WorkerError::EmptyTitle
+        | WorkerError::TitleJson(..)
+        | WorkerError::Count
+        | WorkerError::Clock
+        | WorkerError::FilePayload { .. }
+        | WorkerError::Filing { .. }
+        | WorkerError::Cleanup { .. }
+        | WorkerError::ModelTimeout { .. }
+        | WorkerError::Topics(..)
+        | WorkerError::Lineage(..)
+        | WorkerError::Memory(..)
+        | WorkerError::TopicPage(..)
+        | WorkerError::Tidy(..)
+        | WorkerError::TidyAnswer { .. }
+        | WorkerError::Changes(..)
+        | WorkerError::EmptyDigest => "summary conversion failed",
     }
     .to_owned()
 }

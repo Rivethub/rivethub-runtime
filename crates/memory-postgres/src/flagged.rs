@@ -227,7 +227,7 @@ impl FlaggedJobs for PostgresMemory {
 
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError> {
         let mut tx = self.pool.begin().await.map_err(unavailable)?;
-        let job: Option<(String, serde_json::Value)> =
+        let job: Option<(String, Box<serde_json::value::RawValue>)> =
             sqlx::query_as("SELECT task, payload FROM rh_flagged_jobs WHERE id = $1")
                 .bind(i64::from(id))
                 .fetch_optional(&mut *tx)
@@ -298,7 +298,7 @@ pub(crate) async fn live_jobs(
     tx: &mut Transaction<'_, Postgres>,
     jobs: &[i64],
 ) -> Result<Vec<i64>, Error> {
-    let rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
+    let rows: Vec<(i64, String, Box<serde_json::value::RawValue>)> = sqlx::query_as(
         "SELECT j.id, t.identifier, j.payload::jsonb FROM graphile_worker._private_jobs j
          JOIN graphile_worker._private_tasks t ON t.id = j.task_id WHERE j.id = ANY($1)",
     )

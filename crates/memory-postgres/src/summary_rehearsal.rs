@@ -111,9 +111,10 @@ impl PostgresMemory {
             .execute(&mut *tx)
             .await
             .map_err(error)?;
-        let mut result = ConversionRehearsal::default();
-        for id in ids.iter().collect::<BTreeSet<_>>() {
-            rehearse(&mut tx, *id, &mut result).await?;
+        let mut result = ConversionRehearsal::empty();
+        let unique: BTreeSet<_> = ids.iter().copied().collect();
+        for id in unique {
+            rehearse(&mut tx, id, &mut result).await?;
         }
         tx.commit().await.map_err(error)?;
         Ok(result)
@@ -177,6 +178,14 @@ async fn rehearse(
         .map_err(error)?;
         result.add(table, total, remapped);
     }
+    count_queue_dispositions(conn, &old, result).await
+}
+
+async fn count_queue_dispositions(
+    conn: &mut PgConnection,
+    old: &[Uuid],
+    result: &mut ConversionRehearsal,
+) -> Result<(), Error> {
     let queue: bool =
         sqlx::query_scalar("SELECT to_regclass('graphile_worker._private_jobs') IS NOT NULL")
             .fetch_one(&mut *conn)
