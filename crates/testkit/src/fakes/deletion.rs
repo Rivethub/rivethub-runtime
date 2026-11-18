@@ -1,5 +1,6 @@
 use jiff::Timestamp;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use kernel::memory::DeletedSession;
@@ -17,6 +18,7 @@ pub struct FakeSessionDeletion {
     tombstones: Mutex<BTreeMap<String, Tombstone>>,
     keeps: Mutex<BTreeMap<String, Timestamp>>,
     trash: Mutex<BTreeMap<String, Timestamp>>,
+    tombstone_purges: AtomicUsize,
 }
 
 impl FakeSessionDeletion {
@@ -61,6 +63,11 @@ impl FakeSessionDeletion {
             .lock()
             .get(session.into().as_str())
             .map(|(_, deleted_by)| deleted_by.clone())
+    }
+
+    #[must_use]
+    pub fn tombstone_purges(&self) -> usize {
+        self.tombstone_purges.load(Ordering::Relaxed)
     }
 }
 
@@ -131,6 +138,7 @@ impl SessionDeletion for FakeSessionDeletion {
     }
 
     async fn purge_tombstoned(&self, _limit: u32) -> Result<DeletedSession, MemoryStoreError> {
+        self.tombstone_purges.fetch_add(1, Ordering::Relaxed);
         Ok(DeletedSession::default())
     }
 

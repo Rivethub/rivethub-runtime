@@ -13,7 +13,6 @@ pub(crate) async fn handle_purge(
     now: Timestamp,
     cancel: &CancellationToken,
 ) -> Result<DeletedSession, WorkerError> {
-    let cutoff = now - wire::time::elapsed_days(i64::from(trash_days));
     let mut purged = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(WorkerError::Cancelled),
@@ -27,6 +26,10 @@ pub(crate) async fn handle_purge(
             "purged memory rows written for deleted sessions"
         );
     }
+    let cutoff = match now.checked_sub(wire::time::elapsed_days(i64::from(trash_days))) {
+        Ok(cutoff) => cutoff,
+        Err(_out_of_range) => return Ok(purged),
+    };
     let emptied = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(WorkerError::Cancelled),
@@ -54,6 +57,20 @@ mod tests {
     use wire::session_id::SessionId;
 
     use super::*;
+
+    #[tokio::test]
+    async fn large_trash_retention_skips_trash_but_still_purges_tombstones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let deletions = FakeSessionDeletion::default();
+        let session = SessionId::new(wire::harness::HarnessId::ClaudeCode, "keep-trashed");
+        deletions
+            .trash_session(session.as_str(), None, Timestamp::MIN)
+            .await?;
+        handle_purge(&deletions, 5_000_000, at(0), &CancellationToken::new()).await?;
+        assert!(deletions.is_trashed(&session));
+        assert_eq!(deletions.tombstone_purges(), 1);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn only_sessions_trashed_past_retention_are_purged()
