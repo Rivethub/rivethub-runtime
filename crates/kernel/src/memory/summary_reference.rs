@@ -36,7 +36,7 @@ use chrono::{DateTime, Utc};
 
 use super::SummaryKind;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PreparedSummaryTree {
     pub conversation: Uuid,
     pub owner: String,
@@ -45,9 +45,12 @@ pub struct PreparedSummaryTree {
     pub historical: bool,
     pub created_at: DateTime<Utc>,
     pub records: Vec<PreparedSummaryRecord>,
+    /// Kept parts also appear in `records`, with their stored bytes and original
+    /// manifest, the new root as parent, and their new composition position.
+    pub retained_parts: BTreeSet<Uuid>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PreparedSummaryRecord {
     pub id: Uuid,
     pub parent: Option<Uuid>,
@@ -64,7 +67,7 @@ pub struct PreparedSummaryRecord {
     pub sources: Vec<SummaryManifestEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SummarySectionBounds {
     pub first: i32,
     pub last: i32,
@@ -73,7 +76,7 @@ pub struct SummarySectionBounds {
     pub char_end: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryManifestEntry {
     pub message: Uuid,
     pub ordinal: i32,
@@ -84,13 +87,30 @@ pub struct SummaryManifestEntry {
 #[error("invalid prepared summary manifest")]
 pub struct InvalidSummaryManifest;
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SectionIdentity {
+    pub part: Option<Uuid>,
+    pub ordinal: i32,
+    pub content: String,
+    pub verified: bool,
+    pub messages: Vec<Uuid>,
+}
+
 pub type SummaryCoverage = BTreeMap<Uuid, BTreeSet<Uuid>>;
 
 impl PreparedSummaryTree {
     pub fn coverage(&self) -> Result<SummaryCoverage, InvalidSummaryManifest> {
         let records: BTreeMap<_, _> = self.records.iter().map(|row| (row.id, row)).collect();
         if records.len() != self.records.len()
-            || records.keys().any(|id| self.expected_ids.contains(id))
+            || !self.retained_parts.is_subset(&self.expected_ids)
+            || self.retained_parts.iter().any(|id| {
+                records
+                    .get(id)
+                    .is_none_or(|row| row.kind != SummaryKind::Part)
+            })
+            || records
+                .keys()
+                .any(|id| self.expected_ids.contains(id) && !self.retained_parts.contains(id))
         {
             return Err(InvalidSummaryManifest);
         }
@@ -115,7 +135,9 @@ impl PreparedSummaryTree {
             return Err(InvalidSummaryManifest);
         }
 
+        let root_ids: BTreeSet<_> = root_members.values().copied().collect();
         let mut occupied = BTreeSet::new();
+        let mut issued = BTreeSet::new();
         let mut coverages = BTreeMap::new();
         for row in &self.records {
             if row.ordinal < 0
@@ -132,7 +154,9 @@ impl PreparedSummaryTree {
                     if row.kind == SummaryKind::Part
                         && (row.parent != Some(root.id)
                             || row.ordinal == 0
-                            || !row.issued_part_ordinal.is_some_and(|ordinal| ordinal > 0)
+                            || !row
+                                .issued_part_ordinal
+                                .is_some_and(|ordinal| ordinal > 0 && issued.insert(ordinal))
                             || !row.input_tokens.is_some_and(|tokens| tokens > 0))
                     {
                         return Err(InvalidSummaryManifest);
@@ -140,7 +164,8 @@ impl PreparedSummaryTree {
                     let mut ordinals = BTreeSet::new();
                     let mut members = BTreeSet::new();
                     for entry in &row.sources {
-                        if root_members.get(&entry.ordinal) != Some(&entry.message)
+                        if entry.ordinal <= 0
+                            || !root_ids.contains(&entry.message)
                             || !ordinals.insert(entry.ordinal)
                             || !members.insert(entry.message)
                         {
@@ -211,6 +236,61 @@ impl PreparedSummaryTree {
             }
         }
         Ok(coverages)
+    }
+
+    /// Match a section in the same logical slot using the owner's original tag order.
+    #[must_use]
+    pub fn section_identity(&self, row: &PreparedSummaryRecord) -> Option<SectionIdentity> {
+        let bounds = row.section.as_ref()?;
+        let parent = self
+            .records
+            .iter()
+            .find(|parent| Some(parent.id) == row.parent)?;
+        let mut sources: Vec<_> = parent
+            .sources
+            .iter()
+            .filter(|entry| (bounds.first..=bounds.last).contains(&entry.ordinal))
+            .collect();
+        sources.sort_by_key(|entry| entry.ordinal);
+        Some(SectionIdentity {
+            part: (parent.kind == SummaryKind::Part).then_some(parent.id),
+            ordinal: row.ordinal,
+            content: row.content.clone(),
+            verified: bounds.verified,
+            messages: sources.into_iter().map(|entry| entry.message).collect(),
+        })
+    }
+
+    /// Apply unique matches to the validated plan without changing its coverage.
+    pub fn retain_sections(
+        &mut self,
+        coverage: &mut SummaryCoverage,
+        old: impl IntoIterator<Item = (Uuid, SectionIdentity)>,
+    ) -> BTreeSet<Uuid> {
+        let mut candidates = BTreeMap::new();
+        for (id, identity) in old {
+            candidates
+                .entry(identity)
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(id));
+        }
+        let matches: BTreeMap<_, _> = self
+            .records
+            .iter()
+            .filter_map(|row| {
+                let identity = self.section_identity(row)?;
+                Some((row.id, candidates.remove(&identity).flatten()?))
+            })
+            .collect();
+        for row in &mut self.records {
+            if let Some(&id) = matches.get(&row.id) {
+                if let Some(members) = coverage.remove(&row.id) {
+                    coverage.insert(id, members);
+                }
+                row.id = id;
+            }
+        }
+        matches.into_values().collect()
     }
 
     #[must_use]

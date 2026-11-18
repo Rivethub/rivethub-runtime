@@ -99,6 +99,7 @@ pub(crate) fn complete_legacy(
     Ok(())
 }
 mod publish;
+mod retain;
 
 pub(crate) fn live_job(
     tx: &Transaction<'_>,

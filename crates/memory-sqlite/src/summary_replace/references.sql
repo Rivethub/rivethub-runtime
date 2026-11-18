@@ -1,8 +1,8 @@
 UPDATE ros_summaries AS s
 SET access_count = a.access_count, last_accessed_at = a.last_accessed_at
-FROM summary_replaced_access a WHERE s.id = a.new;
+FROM summary_replaced_access a WHERE s.id = a.new AND s.id NOT IN (SELECT id FROM summary_retained);
 
-INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, git_sha, error, extracted_at)
+INSERT OR IGNORE INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, git_sha, error, extracted_at)
 SELECT e.new, e.status, e.pipeline_version,
        (SELECT json_group_array(topic) FROM (
            SELECT DISTINCT t.value AS topic
@@ -17,7 +17,7 @@ WITH ranked AS (
             (nullif(trim(c.note), '') IS NOT NULL) DESC, c.cited_at DESC, map.old DESC) AS rank
     FROM ros_wiki_citations c JOIN summary_replacements map ON map.old = c.summary_id AND map.new IS NOT NULL
 )
-INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+INSERT OR IGNORE INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
 SELECT topic_slug, new, CASE WHEN kind IS NOT NULL THEN new_kind END, note, cited_at
 FROM ranked WHERE rank = 1;
 
@@ -31,7 +31,7 @@ WITH ranked AS (
     JOIN summary_replacements map ON map.old = p.source_id AND map.new IS NOT NULL
     WHERE p.source_kind = 'summary'
 )
-INSERT INTO ros_wiki_provenance (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at)
+INSERT OR IGNORE INTO ros_wiki_provenance (topic_slug, source_kind, source_id, conversation_id, git_sha, created_at)
 SELECT topic_slug, 'summary', new, conversation, sha, min(created_at)
 FROM ranked GROUP BY topic_slug, new, conversation, sha;
 
@@ -50,17 +50,13 @@ WITH ranked AS (
 )
 INSERT INTO rh_wiki_entity_candidates (key, source, summary_id, patch, held_at, owner_user_id)
 SELECT key, new_source, new, patch, held_at, owner_user_id FROM ranked WHERE rank = 1
-ON CONFLICT (key, source) DO UPDATE
-SET summary_id = excluded.summary_id, patch = excluded.patch, held_at = excluded.held_at
-WHERE rh_wiki_entity_candidates.owner_user_id IS excluded.owner_user_id
-  AND (rh_wiki_entity_candidates.held_at, rh_wiki_entity_candidates.summary_id)
-      < (excluded.held_at, excluded.summary_id);
+ON CONFLICT (key, source) DO NOTHING;
 
 WITH ranked AS (
     SELECT d.*, map.new, row_number() OVER (PARTITION BY map.new ORDER BY d.deferred_at DESC, map.old DESC) AS rank
     FROM rh_wiki_deferred d JOIN summary_replacements map ON map.old = d.summary_id AND map.new IS NOT NULL
 )
-INSERT INTO rh_wiki_deferred (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id)
+INSERT OR IGNORE INTO rh_wiki_deferred (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id)
 SELECT new, waits_session, waits_conversation, applied_topic, patches, deferred_at, owner_user_id
 FROM ranked WHERE rank = 1;
 
@@ -71,7 +67,9 @@ WITH ranked AS (
     JOIN summary_replacements map ON map.old = c.summary_id AND map.new IS NOT NULL
 )
 UPDATE rh_entity_fact_claims AS c SET summary_id = ranked.new
-FROM ranked WHERE c.id = ranked.id AND ranked.rank = 1;
+FROM ranked WHERE c.id = ranked.id AND ranked.rank = 1
+AND NOT EXISTS (SELECT 1 FROM rh_entity_fact_claims existing
+                WHERE existing.fact_id = c.fact_id AND existing.summary_id = ranked.new);
 
 WITH ranked AS (
     SELECT t.id, map.new, row_number() OVER (PARTITION BY t.key, t.value, map.new ORDER BY
@@ -79,7 +77,10 @@ WITH ranked AS (
     FROM ros_tags t JOIN summary_replacements map ON map.old = t.entity_id AND map.new IS NOT NULL
     WHERE t.entity_type = 'summary'
 )
-UPDATE ros_tags AS t SET entity_id = ranked.new FROM ranked WHERE t.id = ranked.id AND ranked.rank = 1;
+UPDATE ros_tags AS t SET entity_id = ranked.new FROM ranked WHERE t.id = ranked.id AND ranked.rank = 1
+AND NOT EXISTS (SELECT 1 FROM ros_tags existing
+                WHERE existing.entity_type = 'summary' AND existing.entity_id = ranked.new
+                  AND existing.key = t.key AND existing.value = t.value);
 
 DELETE FROM ros_tags WHERE entity_type = 'summary' AND entity_id IN (SELECT old FROM summary_replacements);
 DELETE FROM rh_entity_fact_claims WHERE summary_id IN (SELECT old FROM summary_replacements);
@@ -97,3 +98,5 @@ DROP TABLE summary_replaced_access;
 DROP TABLE summary_replaced_extractions;
 DROP TABLE summary_anchors;
 DROP TABLE summary_replacements;
+
+DROP TABLE summary_retained;

@@ -1,7 +1,7 @@
 use chrono::Utc;
 use kernel::memory::summary_reference::{
     PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummaryReferenceError,
-    embedding_input_hash,
+    SummarySectionBounds, embedding_input_hash,
 };
 use kernel::memory::{
     EmbedTable, EmbedTarget, EmbeddingStore, EmbeddingStoreError, StoredEmbedding, SummaryKind,
@@ -25,6 +25,7 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_revision: None,
         historical,
         created_at: Utc::now(),
+        retained_parts: Default::default(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -51,6 +52,76 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
                 .collect(),
         }],
     }
+}
+
+fn part(root: u128, node: u128, message: u128, ordinal: i32) -> PreparedSummaryRecord {
+    PreparedSummaryRecord {
+        id: id(node),
+        parent: Some(id(root)),
+        kind: SummaryKind::Part,
+        ordinal,
+        content: "A contained part.".to_owned(),
+        input_key: [8; 32],
+        index_key: None,
+        model: None,
+        issued_part_ordinal: Some(ordinal),
+        input_tokens: Some(30),
+        quality_flags: 0,
+        section: None,
+        sources: vec![SummaryManifestEntry {
+            message: id(message),
+            ordinal: 1,
+            render_key: Some([9; 32]),
+        }],
+    }
+}
+
+fn section(root: u128, node: u128, ordinal: i32, tag: i32, text: &str) -> PreparedSummaryRecord {
+    PreparedSummaryRecord {
+        id: id(node),
+        parent: Some(id(root)),
+        kind: SummaryKind::Section,
+        ordinal,
+        content: text.to_owned(),
+        input_key: [7; 32],
+        index_key: None,
+        model: None,
+        issued_part_ordinal: None,
+        input_tokens: None,
+        quality_flags: 0,
+        section: Some(SummarySectionBounds {
+            first: tag,
+            last: tag,
+            verified: true,
+            char_start: ordinal * 6,
+            char_end: ordinal * 6 + 6,
+        }),
+        sources: Vec::new(),
+    }
+}
+
+fn initial_parts() -> PreparedSummaryTree {
+    let mut initial = tree(&[10, 11, 12], 20, &[2, 3], false);
+    initial.records.extend([
+        part(20, 21, 2, 1),
+        part(20, 22, 3, 2),
+        section(20, 23, 0, 1, "Valve."),
+        section(20, 24, 1, 2, "Shelf."),
+    ]);
+    initial
+}
+
+fn reopen_parts() -> PreparedSummaryTree {
+    let mut next = tree(&[20, 21, 22, 23, 24], 30, &[4, 2, 3], false);
+    next.retained_parts.extend([id(21), id(22)]);
+    next.records.extend([
+        part(30, 21, 2, 1),
+        part(30, 22, 3, 2),
+        part(30, 31, 4, 3),
+        section(30, 32, 0, 2, "Valve."),
+        section(30, 33, 1, 3, "Stand."),
+    ]);
+    next
 }
 
 async fn seed(store: &SqliteStore) -> TestResult {
@@ -366,5 +437,99 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
         assert_eq!(found, [(id(2).to_string(), id(21).to_string()), (id(3).to_string(), id(22).to_string())]);
         Ok(())
     }).await?;
+    Ok(())
+}
+
+async fn kept_parts(store: &SqliteStore) -> Result<String, memory_sqlite::SqliteError> {
+    use sha2::{Digest as _, Sha256};
+
+    store.with_conn(|conn| {
+        let mut digest = Sha256::new();
+        for statement in [
+            "SELECT * FROM ros_summaries WHERE id IN (?1, ?2) ORDER BY id",
+            "SELECT * FROM ros_summary_sources WHERE summary_id IN (?1, ?2) ORDER BY summary_id, ordinal",
+            "SELECT * FROM ros_wiki_citations WHERE summary_id IN (?1, ?2) ORDER BY summary_id",
+            "SELECT * FROM ros_summary_deliveries WHERE anchor_id IN (?1, ?2) ORDER BY consumer, message_id",
+        ] {
+            let mut stmt = conn.prepare(statement).map_err(failed)?;
+            let columns: Vec<_> = stmt.column_names().enumerate()
+                .filter_map(|(i, name)| (name != "parent_id").then_some(i)).collect();
+            let mut rows = stmt.query([id(21).to_string(), id(22).to_string()]).map_err(failed)?;
+            while let Some(row) = rows.next().map_err(failed)? {
+                for &column in &columns {
+                    let value: rusqlite::types::Value = row.get(column).map_err(failed)?;
+                    digest.update(format!("{value:?}").as_bytes());
+                }
+            }
+        }
+        Ok(hex::encode(digest.finalize()))
+    }).await
+}
+
+#[tokio::test]
+async fn top_down_references_reopens_parts_and_sections() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store.replace_summary_tree(initial_parts()).await?;
+    store.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+             VALUES (?1, ?2, 'fixture', 'cli', 'user', 'An earlier measurement.', '2023-12-01T00:00:00Z')",
+            [id(4).to_string(), id(1).to_string()],
+        ).map_err(failed)?;
+        for part in [id(21), id(22)] {
+            conn.execute(
+                "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+                 VALUES ('valve', ?1, 'part', 'A kept part', '2024-01-01T00:00:00Z')
+                 ON CONFLICT DO NOTHING",
+                [part.to_string()],
+            ).map_err(failed)?;
+        }
+        Ok(())
+    }).await?;
+
+    let transcript = snapshot(&store).await?;
+    let before = kept_parts(&store).await?;
+    let mut stale = reopen_parts();
+    stale
+        .records
+        .iter_mut()
+        .find(|row| row.id == id(21))
+        .ok_or("part")?
+        .sources[0]
+        .render_key = Some([3; 32]);
+    assert!(matches!(
+        store.replace_summary_tree(stale).await,
+        Err(memory_sqlite::SqliteError::SummaryReference(SummaryReferenceError::Stale(uuid))) if uuid == id(21)
+    ));
+    assert_eq!(kept_parts(&store).await?, before);
+    assert_eq!(snapshot(&store).await?, transcript);
+    store.replace_summary_tree(reopen_parts()).await?;
+    assert_eq!(kept_parts(&store).await?, before);
+    assert_eq!(snapshot(&store).await?, transcript);
+    let graph = store
+        .with_conn(|conn| {
+            conn.prepare("SELECT id, parent_id FROM ros_summaries ORDER BY id")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .map_err(failed)
+        })
+        .await?;
+    assert_eq!(
+        graph,
+        [
+            (id(21), Some(id(30))),
+            (id(22), Some(id(30))),
+            (id(23), Some(id(30))),
+            (id(30), None),
+            (id(31), Some(id(30))),
+            (id(33), Some(id(30))),
+        ]
+        .map(|(node, parent)| (node.to_string(), parent.map(|p| p.to_string())))
+    );
     Ok(())
 }

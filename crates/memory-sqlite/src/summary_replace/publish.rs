@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{SqliteError, SqliteStore, time};
 
-use super::immediate;
+use super::{immediate, retain};
 
 const INSERT_RECORD: &str = "
 INSERT INTO ros_summaries (id, conversation_id, parent_id, kind, depth, content,
@@ -26,28 +26,46 @@ impl SqliteStore {
     #[doc(hidden)]
     pub async fn replace_summary_tree(
         &self,
-        prepared: PreparedSummaryTree,
+        mut prepared: PreparedSummaryTree,
     ) -> Result<(), SqliteError> {
-        let coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
+        let mut coverage = prepared.coverage().map_err(|error| SqliteError::Invalid {
             message: error.to_string(),
         })?;
         self.with_conn(move |conn| {
             let tx = immediate(conn).map_err(failure)?;
             validate_current(&tx, &prepared)?;
             let old = old_coverage(&tx, prepared.conversation)?;
-            stage(&tx, &prepared, &coverage, &old)?;
+            let retained = retain::plan(&tx, &mut prepared, &mut coverage)?;
+            stage(&tx, &prepared, &coverage, &old, &retained)?;
+            retain::reparent(&tx, &prepared, &retained)?;
             tx.execute(
                 include_str!("deliveries.sql"),
                 params![prepared.conversation.to_string(), prepared.historical],
             ).map_err(failure)?;
+            tx.execute_batch(include_str!("reuse_vectors.sql")).map_err(failure)?;
             tx.execute_batch(include_str!("before_delete.sql")).map_err(failure)?;
 
             let mut records: Vec<_> = prepared.records.iter().collect();
             records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
             for record in records {
-                insert_record(&tx, &prepared, record, &coverage)?;
+                if !retained.contains(&record.id) {
+                    insert_record(&tx, &prepared, record, &coverage)?;
+                }
             }
 
+            tx.execute_batch(
+                "UPDATE ros_summaries AS dest
+                 SET (embedding, index_needs_repair) = (
+                     SELECT old.embedding, 0 FROM summary_old_vectors old
+                     WHERE old.content = dest.content AND old.index_key = dest.index_key
+                     ORDER BY old.id LIMIT 1)
+                 WHERE dest.conversation_id = (SELECT conversation_id FROM summary_old_vectors LIMIT 1)
+                   AND dest.kind IN ('session', 'part')
+                   AND dest.id NOT IN (SELECT id FROM summary_retained)
+                   AND EXISTS (SELECT 1 FROM summary_old_vectors old
+                       WHERE old.content = dest.content AND old.index_key = dest.index_key);
+                 DROP TABLE summary_old_vectors;",
+            ).map_err(failure)?;
             tx.execute_batch(include_str!("references.sql")).map_err(failure)?;
             tx.execute("DELETE FROM rh_summary_runs WHERE conversation_id = ?1",
                 [prepared.conversation.to_string()]).map_err(failure)?;
@@ -62,7 +80,7 @@ impl SqliteStore {
     }
 }
 
-fn failure(error: rusqlite::Error) -> SqliteError {
+pub(super) fn failure(error: rusqlite::Error) -> SqliteError {
     SqliteError::query("replace summary tree")(error)
 }
 
@@ -119,7 +137,7 @@ fn old_coverage(conn: &Connection, conversation: Uuid) -> Result<SummaryCoverage
     Ok(coverage)
 }
 
-fn stored_uuid(value: String) -> Result<Uuid, SqliteError> {
+pub(super) fn stored_uuid(value: String) -> Result<Uuid, SqliteError> {
     Uuid::parse_str(&value).map_err(|_| SqliteError::StoredValue {
         column: "summary coverage ID",
         value,
@@ -131,12 +149,20 @@ fn stage(
     tree: &PreparedSummaryTree,
     coverage: &SummaryCoverage,
     old: &SummaryCoverage,
+    retained: &BTreeSet<Uuid>,
 ) -> Result<(), SqliteError> {
     conn.execute_batch(
         "CREATE TEMP TABLE summary_replacements (old text PRIMARY KEY, new text, kind text);
+         CREATE TEMP TABLE summary_retained (id text PRIMARY KEY);
          CREATE TEMP TABLE summary_anchors (message text PRIMARY KEY, anchor text NOT NULL);",
     )
     .map_err(failure)?;
+    let mut kept = conn
+        .prepare("INSERT INTO summary_retained VALUES (?1)")
+        .map_err(failure)?;
+    for id in retained {
+        kept.execute([id.to_string()]).map_err(failure)?;
+    }
     let candidates: Vec<_> = tree
         .records
         .iter()
@@ -156,7 +182,7 @@ fn stage(
     let mut moves = conn
         .prepare("INSERT INTO summary_replacements VALUES (?1, ?2, ?3)")
         .map_err(failure)?;
-    for id in &tree.expected_ids {
+    for id in tree.expected_ids.difference(retained) {
         let target = old
             .get(id)
             .and_then(|members| replacement_target(members, candidates.iter().copied()));

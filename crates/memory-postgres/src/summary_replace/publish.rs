@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{Error, PostgresMemory};
 
-use super::exclusive;
+use super::{exclusive, retain};
 
 const OLD_COVERAGE: &str = "
 WITH RECURSIVE tree AS (
@@ -66,7 +66,7 @@ impl From<SummaryReferenceError> for ReplaceSummaryError {
     }
 }
 
-fn query(error: sqlx::Error) -> Error {
+pub(super) fn query(error: sqlx::Error) -> Error {
     Error::operation("replace summary tree", error)
 }
 
@@ -76,7 +76,7 @@ impl PostgresMemory {
         &self,
         prepared: &PreparedSummaryTree,
     ) -> Result<(), ReplaceSummaryError> {
-        let coverage = prepared
+        let mut coverage = prepared
             .coverage()
             .map_err(|error| Error::stored("summary manifest", error))?;
         let mut tx = self.pool.begin().await.map_err(query)?;
@@ -85,13 +85,35 @@ impl PostgresMemory {
             .map_err(query)?;
         validate_current(&mut tx, prepared).await?;
         let old = old_coverage(&mut tx, prepared).await?;
-        stage(&mut tx, prepared, &coverage, &old).await?;
+        let mut plan = prepared.clone();
+        let retained = retain::plan(&mut tx, &mut plan, &mut coverage).await?;
+        let prepared = &plan;
+        stage(&mut tx, prepared, &coverage, &old, &retained).await?;
         import_deliveries(&mut tx, prepared).await?;
 
         let mut records: Vec<_> = prepared.records.iter().collect();
         records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
         for record in records {
-            insert_record(&mut tx, prepared, record, &coverage).await?;
+            if retained.contains(&record.id) {
+                retain::reparent(&mut tx, record).await?;
+            } else {
+                insert_record(&mut tx, prepared, record, &coverage).await?;
+            }
+        }
+        let old_owners: Vec<_> = prepared
+            .expected_ids
+            .difference(&retained)
+            .copied()
+            .collect();
+        for record in prepared.records.iter().filter(|row| {
+            row.kind.depth() > 0 && row.index_key.is_some() && !retained.contains(&row.id)
+        }) {
+            sqlx::query(include_str!("reuse_passages.sql"))
+                .bind(record.id)
+                .bind(&old_owners)
+                .execute(&mut *tx)
+                .await
+                .map_err(query)?;
         }
         sqlx::raw_sql(include_str!("references.sql"))
             .execute(&mut *tx)
@@ -168,12 +190,19 @@ async fn stage(
     tree: &PreparedSummaryTree,
     coverage: &SummaryCoverage,
     old: &SummaryCoverage,
+    retained: &BTreeSet<Uuid>,
 ) -> Result<(), Error> {
     sqlx::raw_sql(
         "CREATE TEMP TABLE summary_replacements (old uuid PRIMARY KEY, new uuid, kind text) ON COMMIT DROP;
          CREATE TEMP TABLE summary_anchors (message uuid PRIMARY KEY, anchor uuid NOT NULL) ON COMMIT DROP;
+         CREATE TEMP TABLE summary_retained (id uuid PRIMARY KEY) ON COMMIT DROP;
          CREATE TEMP TABLE summary_recovery (summary_id uuid, consumer text) ON COMMIT DROP;",
     ).execute(&mut *conn).await.map_err(query)?;
+    sqlx::query("INSERT INTO summary_retained SELECT unnest($1::uuid[])")
+        .bind(retained.iter().copied().collect::<Vec<_>>())
+        .execute(&mut *conn)
+        .await
+        .map_err(query)?;
     let candidates: Vec<_> = tree
         .records
         .iter()
@@ -193,7 +222,7 @@ async fn stage(
     let mut ids = Vec::new();
     let mut targets = Vec::new();
     let mut kinds = Vec::new();
-    for id in &tree.expected_ids {
+    for id in tree.expected_ids.difference(retained) {
         let target = old
             .get(id)
             .and_then(|members| replacement_target(members, candidates.iter().copied()));

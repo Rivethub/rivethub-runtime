@@ -1,7 +1,7 @@
 use chrono::Utc;
 use kernel::memory::summary_reference::{
     PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummaryReferenceError,
-    embedding_input_hash,
+    SummarySectionBounds, embedding_input_hash,
 };
 use kernel::memory::{
     EmbedTable, EmbedTarget, EmbeddingStore, EmbeddingStoreError, StoredEmbedding, SummaryKind,
@@ -26,6 +26,7 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
         expected_revision: None,
         historical,
         created_at: Utc::now(),
+        retained_parts: Default::default(),
         records: vec![PreparedSummaryRecord {
             id: id(root),
             parent: None,
@@ -52,6 +53,76 @@ fn tree(old: &[u128], root: u128, messages: &[u128], historical: bool) -> Prepar
                 .collect(),
         }],
     }
+}
+
+fn part(root: u128, node: u128, message: u128, ordinal: i32) -> PreparedSummaryRecord {
+    PreparedSummaryRecord {
+        id: id(node),
+        parent: Some(id(root)),
+        kind: SummaryKind::Part,
+        ordinal,
+        content: "A contained part.".to_owned(),
+        input_key: [8; 32],
+        index_key: None,
+        model: None,
+        issued_part_ordinal: Some(ordinal),
+        input_tokens: Some(30),
+        quality_flags: 0,
+        section: None,
+        sources: vec![SummaryManifestEntry {
+            message: id(message),
+            ordinal: 1,
+            render_key: Some([9; 32]),
+        }],
+    }
+}
+
+fn section(root: u128, node: u128, ordinal: i32, tag: i32, text: &str) -> PreparedSummaryRecord {
+    PreparedSummaryRecord {
+        id: id(node),
+        parent: Some(id(root)),
+        kind: SummaryKind::Section,
+        ordinal,
+        content: text.to_owned(),
+        input_key: [7; 32],
+        index_key: None,
+        model: None,
+        issued_part_ordinal: None,
+        input_tokens: None,
+        quality_flags: 0,
+        section: Some(SummarySectionBounds {
+            first: tag,
+            last: tag,
+            verified: true,
+            char_start: ordinal * 6,
+            char_end: ordinal * 6 + 6,
+        }),
+        sources: Vec::new(),
+    }
+}
+
+fn initial_parts() -> PreparedSummaryTree {
+    let mut initial = tree(&[10, 11, 12], 20, &[2, 3], false);
+    initial.records.extend([
+        part(20, 21, 2, 1),
+        part(20, 22, 3, 2),
+        section(20, 23, 0, 1, "Valve."),
+        section(20, 24, 1, 2, "Shelf."),
+    ]);
+    initial
+}
+
+fn reopen_parts() -> PreparedSummaryTree {
+    let mut next = tree(&[20, 21, 22, 23, 24], 30, &[4, 2, 3], false);
+    next.retained_parts.extend([id(21), id(22)]);
+    next.records.extend([
+        part(30, 21, 2, 1),
+        part(30, 22, 3, 2),
+        part(30, 31, 4, 3),
+        section(30, 32, 0, 2, "Valve."),
+        section(30, 33, 1, 3, "Stand."),
+    ]);
+    next
 }
 
 async fn seed(pool: &PgPool) -> TestResult {
@@ -621,5 +692,76 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
     assert_eq!(tokio::fs::read_to_string(page_path).await?, cached);
     assert_eq!(tokio::fs::read_to_string(archival_file).await?, cached);
     assert_eq!(checksum(&pool).await?, before);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_reopens_parts_and_sections(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&initial_parts()))
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'An earlier measurement.', '2023-12-01', 'alice')",
+    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, owner_user_id)
+         VALUES ('valve', $1, 'part', 'A kept part', 'alice'),
+                ('valve', $2, 'part', 'Another kept part', 'alice')
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(id(21))
+    .bind(id(22))
+    .execute(&pool)
+    .await?;
+    let transcript = checksum(&pool).await?;
+    let parts = || {
+        sqlx::query_scalar::<_, String>(
+        "SELECT md5(jsonb_build_array(
+            (SELECT jsonb_agg(to_jsonb(s) - 'parent_id' ORDER BY id) FROM rh_summaries s WHERE id IN ($1, $2)),
+            (SELECT jsonb_agg(to_jsonb(l) ORDER BY summary_id, ordinal) FROM rh_summary_sources l WHERE summary_id IN ($1, $2)),
+            (SELECT jsonb_agg(to_jsonb(c) ORDER BY summary_id) FROM rh_wiki_citations c WHERE summary_id IN ($1, $2)),
+            (SELECT jsonb_agg(to_jsonb(d) ORDER BY consumer, message_id) FROM rh_summary_deliveries d WHERE anchor_id IN ($1, $2))
+         )::text)",
+    ).bind(id(21)).bind(id(22)).fetch_one(&pool)
+    };
+    let before = parts().await?;
+    let mut stale = reopen_parts();
+    stale
+        .records
+        .iter_mut()
+        .find(|row| row.id == id(21))
+        .ok_or("part")?
+        .sources[0]
+        .render_key = Some([3; 32]);
+    assert!(matches!(
+        Scope::Maintenance.run(store.replace_summary_tree(&stale)).await,
+        Err(memory_postgres::ReplaceSummaryError::Reference(SummaryReferenceError::Stale(uuid))) if uuid == id(21)
+    ));
+    assert_eq!(parts().await?, before);
+    assert_eq!(checksum(&pool).await?, transcript);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&reopen_parts()))
+        .await?;
+    assert_eq!(parts().await?, before);
+    assert_eq!(checksum(&pool).await?, transcript);
+
+    let graph: Vec<(Uuid, Option<Uuid>)> =
+        sqlx::query_as("SELECT id, parent_id FROM rh_summaries ORDER BY id")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(
+        graph,
+        [
+            (id(21), Some(id(30))),
+            (id(22), Some(id(30))),
+            (id(23), Some(id(30))),
+            (id(30), None),
+            (id(31), Some(id(30))),
+            (id(33), Some(id(30))),
+        ]
+    );
     Ok(())
 }
