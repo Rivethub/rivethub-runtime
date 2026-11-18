@@ -151,10 +151,16 @@ async fn a_session_s_messages_are_read_in_order_and_counted_like_the_catalog() -
 }
 
 #[tokio::test]
-async fn positioned_messages_reach_scoped_readers() -> TestResult {
+async fn positioned_messages_reach_session_and_summary_readers() -> TestResult {
     let (_directory, store) = store()?;
-    testkit::session_messages::readers_use_line_order_before_page_and_browse_limits(
+    testkit::session_messages::session_and_summary_readers_use_line_order(
         &store, &store, &store,
     )
     .await
+}
+
+#[tokio::test]
+async fn scoped_browse_keeps_timestamp_window_order() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::scoped_browse_keeps_timestamp_window_order(&memory, &memory).await
 }

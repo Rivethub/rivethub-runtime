@@ -7,14 +7,13 @@ use kernel::memory::MemoryStore;
 use kernel::memory::MessagesQuery;
 use kernel::memory::SessionCatalog;
 use kernel::memory::SummaryStore;
-use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
 use wire::session_id::SessionKey;
 
 use crate::topics::at;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn row(index: u32, role: Role, content: &str) -> CaptureMessage {
     CaptureMessage {
@@ -105,7 +104,7 @@ pub async fn messages_come_in_order_paged_and_counted_like_the_catalog(
     Ok(())
 }
 
-pub async fn readers_use_line_order_before_page_and_browse_limits(
+pub async fn session_and_summary_readers_use_line_order(
     memory: &dyn MemoryStore,
     catalog: &dyn SessionCatalog,
     summaries: &dyn SummaryStore,
@@ -185,10 +184,63 @@ pub async fn readers_use_line_order_before_page_and_browse_limits(
             .collect::<Vec<_>>(),
         ["fallback", "opening", "tool", "later"]
     );
-    assert_browse_order(memory, conversation).await
+    Ok(())
 }
 
-async fn assert_browse_order(memory: &dyn MemoryStore, conversation: Uuid) -> TestResult {
+pub async fn capture_session_fixture(
+    memory: &dyn MemoryStore,
+    key: &SessionKey,
+    messages: Vec<CaptureMessage>,
+) -> TestResult {
+    memory
+        .capture(
+            CaptureBatchRequest {
+                session_key: key.to_string(),
+                agent: "opus".to_owned(),
+                channel: Some("cli".to_owned()),
+                title: None,
+                settings: None,
+                task_id: None,
+                finalize: None,
+                created_at: Some(at(1)),
+                updated_at: Some(at(1)),
+                messages,
+            },
+            &crate::owner()?,
+            None,
+        )
+        .await?;
+    Ok(())
+}
+
+fn positioned(index: u32, path: &str, line: u64, content: &str) -> TestResult<CaptureMessage> {
+    let mut message = row(index, Role::User, content);
+    message.metadata = Some(JsonObject::from_serialize(&serde_json::json!({
+        "session_jsonl_path": path, "session_jsonl_line": line,
+    }))?);
+    Ok(message)
+}
+
+pub async fn scoped_browse_keeps_timestamp_window_order(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+) -> TestResult {
+    let key: SessionKey = "claude-code:00000000-0000-4000-8000-0000000000e6".parse()?;
+    capture_session_fixture(
+        memory,
+        &key,
+        vec![
+            positioned(10, "a", 1, "first")?,
+            positioned(30, "a", 2, "last by time")?,
+            positioned(20, "a", 3, "middle by time")?,
+        ],
+    )
+    .await?;
+    let conversation = catalog
+        .get(&key)
+        .await?
+        .and_then(|row| row.conversation)
+        .ok_or("conversation ID")?;
     let mut filter = BrowseFilter {
         conversation_id: Some(conversation),
         agent: None,
@@ -202,19 +254,23 @@ async fn assert_browse_order(memory: &dyn MemoryStore, conversation: Uuid) -> Te
         order: MemoryBrowseOrder::Asc,
         limit: Limit::clamped(Some(2), 50, 1..=100),
     };
-    for (order, expected) in [
-        (MemoryBrowseOrder::Asc, ["fallback", "opening"]),
-        (MemoryBrowseOrder::Desc, ["later", "tool"]),
-    ] {
-        filter.order = order;
-        let entries = memory.browse(filter.clone()).await?;
-        assert_eq!(
-            entries
-                .iter()
-                .map(|entry| entry.content.as_str())
-                .collect::<Vec<_>>(),
-            expected
-        );
-    }
+    let first = memory.browse(filter.clone()).await?;
+    assert_eq!(contents(&first), ["first", "middle by time"]);
+    filter.since = first.last().and_then(|entry| entry.created_at);
+    assert_eq!(
+        contents(&memory.browse(filter.clone()).await?),
+        ["middle by time", "last by time"]
+    );
+    filter.order = MemoryBrowseOrder::Desc;
+    filter.since = None;
+    filter.before = Some(at(30));
+    assert_eq!(
+        contents(&memory.browse(filter).await?),
+        ["middle by time", "first"]
+    );
     Ok(())
+}
+
+fn contents(entries: &[kernel::memory::MemoryEntry]) -> Vec<&str> {
+    entries.iter().map(|entry| entry.content.as_str()).collect()
 }

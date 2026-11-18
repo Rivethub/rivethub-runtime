@@ -1,8 +1,5 @@
 use crate::error::Error;
 use crate::memory_jobs::ToolArguments;
-use crate::session_messages::{
-    POSITION_COLUMNS, PositionRow, ordered_cursors, read_ordered_entries,
-};
 use chrono::DateTime;
 use chrono::Utc;
 use kernel::memory::BrowseFilter;
@@ -143,18 +140,13 @@ impl crate::PostgresMemory {
         &self,
         filter: &BrowseFilter,
     ) -> Result<Vec<MemoryEntry>, Error> {
-        let scoped = filter.conversation_id.is_some();
-        let columns = if scoped {
-            POSITION_COLUMNS
-        } else {
-            "m.id::text as id, c.session_key, m.agent, m.channel, m.role as role_text,
-             m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result,
-             m.metadata::text as metadata, m.created_at,
-             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings"
-        };
-        let mut query = sqlx::QueryBuilder::new(format!(
-            "select {columns} from rh_messages m join rh_conversations c on c.id = m.conversation_id where true"
-        ));
+        let mut query = sqlx::QueryBuilder::new(
+            "select m.id::text as id, c.session_key, m.agent, m.channel, m.role as role_text, \
+             m.content, m.tool_name, m.tool_args::text as tool_args, m.tool_result, \
+             m.metadata::text as metadata, m.created_at, \
+             case when c.session_key like 'import:%' then coalesce(c.settings::text, '{}') end as import_settings \
+             from rh_messages m join rh_conversations c on c.id = m.conversation_id where true",
+        );
         query.push(crate::session_marks::not_trashed("m"));
         if !filter.include_tools {
             query.push(" and m.role <> 'tool'");
@@ -191,13 +183,10 @@ impl crate::PostgresMemory {
             MemoryBrowseOrder::Asc => "asc",
             MemoryBrowseOrder::Desc => "desc",
         };
-        query.push(format!(" order by m.created_at {direction}"));
-        if scoped {
-            query.push(", m.id");
-            return self.browse_transcript(&mut query, filter).await;
-        }
-        query.push(" limit ");
-        query.push_bind(i64::from(filter.limit.get()));
+        query.push(format!(
+            " order by m.created_at {direction} limit {}",
+            i64::from(filter.limit.get())
+        ));
         let rows = query
             .build_query_as::<MessageEntryRow>()
             .fetch_all(&self.pool)
@@ -207,29 +196,6 @@ impl crate::PostgresMemory {
         rows.into_iter()
             .map(|row| row.into_entry(&mut seen))
             .collect()
-    }
-
-    async fn browse_transcript(
-        &self,
-        query: &mut sqlx::QueryBuilder<sqlx::Postgres>,
-        filter: &BrowseFilter,
-    ) -> Result<Vec<MemoryEntry>, Error> {
-        let mut tx = self.begin_transcript_read("browse").await?;
-        let rows = query
-            .build_query_as::<PositionRow>()
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|source| Error::operation("browse", source))?;
-        let ids: Vec<_> = ordered_cursors(rows, filter.order)
-            .into_iter()
-            .take(filter.limit.get() as usize)
-            .map(|cursor| cursor.id)
-            .collect();
-        let entries = read_ordered_entries(&mut tx, &ids, "browse").await?;
-        tx.commit()
-            .await
-            .map_err(|source| Error::operation("browse", source))?;
-        Ok(entries)
     }
 
     pub async fn memory_get_full(&self, id: &str) -> Result<Option<MemoryEntry>, Error> {
