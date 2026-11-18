@@ -5,7 +5,10 @@ all-features = true
 version = 2
 yanked = "deny"
 unmaintained = "workspace"
-ignore = []
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained and no upgrade clears it; it is used across the workspace, so replacing it with jiff or time is its own change" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained with chrono; it goes when chrono does" },
+]
 
 [licenses]
 version = 2
