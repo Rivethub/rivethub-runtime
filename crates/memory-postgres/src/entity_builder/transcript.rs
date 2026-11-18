@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::TranscriptMessage;
@@ -23,7 +22,8 @@ struct SourceLink {
 #[derive(Debug, sqlx::FromRow)]
 struct TranscriptRow {
     id: Uuid,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     #[cfg_attr(dylint_lib = "rr_lints", expect(stringly))]
     role: String,
     tool_name: Option<String>,
@@ -60,8 +60,8 @@ pub(super) async fn load_transcript(
         };
         let ids = sqlx::query_scalar::<_, Uuid>(WINDOW_MESSAGES)
             .bind(conversation)
-            .bind(leaf.start)
-            .bind(leaf.end)
+            .bind(crate::time::BindTime::bind_time(leaf.start))
+            .bind(crate::time::BindTime::bind_time(leaf.end))
             .fetch_all(pool)
             .await
             .map_err(query_error)?;

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::Path;
@@ -7,12 +8,11 @@ use std::sync::Arc;
 use capture::sanitize::KeyError;
 use capture::sanitize::key::PrivateFile;
 use capture::seal::ShareServer;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use kernel::memory::share::desk::TokenStore;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
 use super::Login;
 use super::ServerError;
@@ -74,7 +74,7 @@ pub(crate) struct LoginStore {
 pub(crate) enum Listed {
     Device {
         scope: String,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     },
     Team {
         user: String,
@@ -94,15 +94,87 @@ enum Record {
     Team(TeamRecord),
 }
 
+#[serde_as]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeviceRecord {
-    expires_at: DateTime<Utc>,
+    #[serde_as(as = "LoginExpiry")]
+    expires_at: Timestamp,
     scope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     access_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
+}
+
+struct LoginExpiry;
+
+impl SerializeAs<Timestamp> for LoginExpiry {
+    fn serialize_as<S: serde::Serializer>(
+        value: &Timestamp,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        wire::time::Rfc3339::serialize_as(value, serializer)
+    }
+}
+
+impl<'de> DeserializeAs<'de, Timestamp> for LoginExpiry {
+    fn deserialize_as<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Timestamp, D::Error> {
+        deserialize_login_expiry(deserializer)
+    }
+}
+
+fn deserialize_login_expiry<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Timestamp, D::Error> {
+    let raw = String::deserialize(deserializer)?;
+    match wire::time::parse_wire_timestamp(&raw) {
+        Ok(at) => Ok(at),
+        Err(_range) if valid_future_expiry(&raw) => Ok(Timestamp::MAX),
+        Err(error) => Err(serde::de::Error::custom(error)),
+    }
+}
+
+fn valid_future_expiry(raw: &str) -> bool {
+    let raw = raw.trim_start();
+    let unsigned = match raw.strip_prefix('+') {
+        Some(raw) => raw,
+        None => raw,
+    };
+    let Some((digits, rest)) = unsigned.split_once('-') else {
+        return false;
+    };
+    let digits = digits.trim_end();
+    if (!raw.starts_with('+') && digits.len() != 4)
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return false;
+    }
+    let year = match digits.parse::<u32>() {
+        Ok(year) => year,
+        Err(_error) => return false,
+    };
+    if !(9999..=262_142).contains(&year) || (year > 9999 && !raw.starts_with('+')) {
+        return false;
+    }
+    let equivalent_year = 2000 + year % 400;
+    wire::time::parse_wire_timestamp(&format!("{equivalent_year}-{rest}")).is_ok()
+}
+
+#[cfg(test)]
+#[test]
+fn legacy_expiry_saturates_but_malformed_login_still_fails() -> Result<(), serde_json::Error> {
+    let raw = r#"{"expires_at":"+262142-12-31T23:59:59.999999999Z","scope":"drops:write"}"#;
+    let record: DeviceRecord = serde_json::from_str(raw)?;
+    assert_eq!(record.expires_at, Timestamp::MAX);
+    for raw in [
+        r#"{"expires_at":"+262142-02-30T00:00:00Z","scope":"drops:write"}"#,
+        r#"{"expires_at":"++262142-12-31T23:59:59Z","scope":"drops:write"}"#,
+        r#"{"expires_at":"00009999-12-31T23:59:59Z","scope":"drops:write"}"#,
+    ] {
+        assert!(serde_json::from_str::<DeviceRecord>(raw).is_err(), "{raw}");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]

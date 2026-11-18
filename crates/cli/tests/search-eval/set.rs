@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::num::NonZeroU32;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::SearchMode;
 use serde::Deserialize;
 use serde::Serialize;
@@ -10,10 +9,12 @@ use serde::Serialize;
 use crate::Failure;
 use crate::read;
 
+#[serde_with::serde_as]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct QuerySet {
-    pub(crate) clock: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    pub(crate) clock: Option<Timestamp>,
     pub(crate) limit: NonZeroU32,
     #[serde(default)]
     pub(crate) tolerance: f64,

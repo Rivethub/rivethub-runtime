@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
+use jiff::SignedDuration as Duration;
+use jiff::Timestamp;
 use kernel::harness_setup::CaptureActivity;
 use kernel::harness_setup::CaptureHistory;
 use kernel::harness_setup::CaptureMethod;
@@ -28,10 +27,8 @@ fn probe(installed: bool) -> HarnessProbe {
     }
 }
 
-fn now() -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-11-06T12:00:00Z")
-        .map(|time| time.with_timezone(&Utc))
-        .unwrap_or_default()
+fn now() -> Timestamp {
+    values::time::parse_rfc3339("2026-11-06T12:00:00Z").unwrap_or_default()
 }
 
 fn state(installed: bool, history: CaptureHistory) -> CaptureState {
@@ -40,14 +37,14 @@ fn state(installed: bool, history: CaptureHistory) -> CaptureState {
 
 #[test]
 fn a_capture_inside_three_days_is_receiving_whatever_the_install_check_says() {
-    let recent = CaptureHistory::Known(Some(now() - Duration::days(2)));
+    let recent = CaptureHistory::Known(Some(now() - values::time::elapsed_days(2)));
     assert_eq!(state(true, recent), CaptureState::Receiving);
     assert_eq!(state(false, recent), CaptureState::Receiving);
 }
 
 #[test]
 fn an_installed_entry_that_captured_before_but_not_in_three_days_is_stale() {
-    let old = CaptureHistory::Known(Some(now() - Duration::days(4)));
+    let old = CaptureHistory::Known(Some(now() - values::time::elapsed_days(4)));
     assert_eq!(state(true, old), CaptureState::Stale);
     assert_eq!(state(true, CaptureHistory::Unknown), CaptureState::Stale);
 }
@@ -59,7 +56,7 @@ fn an_installed_entry_that_has_never_captured_is_idle() {
 
 #[test]
 fn nothing_installed_and_nothing_recent_is_not_connected() {
-    let old = CaptureHistory::Known(Some(now() - Duration::days(30)));
+    let old = CaptureHistory::Known(Some(now() - values::time::elapsed_days(30)));
     assert_eq!(state(false, old), CaptureState::NotConnected);
     assert_eq!(
         state(false, CaptureHistory::Unknown),
@@ -69,8 +66,8 @@ fn nothing_installed_and_nothing_recent_is_not_connected() {
 
 #[test]
 fn the_history_of_a_harness_is_its_newest_capture_under_its_prefix() {
-    let early = now() - Duration::days(9);
-    let late = now() - Duration::hours(3);
+    let early = now() - values::time::elapsed_days(9);
+    let late = now() - Duration::from_hours(3);
     let activity = [
         CaptureActivity {
             key_prefix: "codex".to_owned(),
@@ -97,7 +94,7 @@ fn the_history_of_a_harness_is_its_newest_capture_under_its_prefix() {
 
 #[test]
 fn the_status_carries_the_last_capture_time_and_both_details() {
-    let at = now() - Duration::hours(1);
+    let at = now() - Duration::from_hours(1);
     let status = probe(true).into_status(CaptureHistory::Known(Some(at)), now());
     assert_eq!(status.capture.last_capture_at, Some(at));
     assert_eq!(
@@ -109,7 +106,7 @@ fn the_status_carries_the_last_capture_time_and_both_details() {
 
 #[test]
 fn history_is_mentioned_only_when_the_line_can_say_something_definite() {
-    let at = now() - Duration::hours(1);
+    let at = now() - Duration::from_hours(1);
     let installed = probe(true);
     assert_eq!(
         installed

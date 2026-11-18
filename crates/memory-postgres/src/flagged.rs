@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedId;
 use kernel::flagged::FlaggedJob;
@@ -99,9 +98,12 @@ struct FlaggedRow {
     payload: sqlx::types::Json<JsonObject>,
     last_error: String,
     failures: i32,
-    first_failed_at: DateTime<Utc>,
-    last_failed_at: DateTime<Utc>,
-    flagged_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    first_failed_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    last_failed_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    flagged_at: Timestamp,
 }
 
 pub(crate) async fn fail(
@@ -201,12 +203,12 @@ impl FlaggedJobs for PostgresMemory {
         queued.map(|_| ()).ok_or(FlaggedError::Missing(id))
     }
 
-    async fn dismiss(&self, id: FlaggedId, at: DateTime<Utc>) -> Result<(), FlaggedError> {
+    async fn dismiss(&self, id: FlaggedId, at: Timestamp) -> Result<(), FlaggedError> {
         let dismissed = sqlx::query(
             "UPDATE rh_flagged_jobs SET dismissed_at = $2 WHERE id = $1 AND dismissed_at IS NULL",
         )
         .bind(i64::from(id))
-        .bind(at)
+        .bind(crate::time::BindTime::bind_time(at))
         .execute(&self.pool)
         .await
         .map_err(unavailable)?;

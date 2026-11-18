@@ -149,9 +149,7 @@ mod validated_batch_tests {
                 tool_result: None,
                 metadata: None,
                 created_at: Some(
-                    chrono::DateTime::parse_from_rfc3339("2026-10-10T12:00:00+02:00")
-                        .expect("offset instant")
-                        .with_timezone(&chrono::Utc),
+                    wire::time::parse_rfc3339("2026-10-10T12:00:00+02:00").expect("offset instant"),
                 ),
             }],
         };
@@ -160,11 +158,7 @@ mod validated_batch_tests {
         let created_at = entries.first().and_then(|entry| entry.created_at);
         assert_eq!(
             created_at,
-            Some(
-                chrono::DateTime::parse_from_rfc3339("2026-10-10T10:00:00Z")
-                    .expect("instant")
-                    .with_timezone(&chrono::Utc)
-            )
+            Some(wire::time::parse_rfc3339("2026-10-10T10:00:00Z").expect("instant"))
         );
     }
 }

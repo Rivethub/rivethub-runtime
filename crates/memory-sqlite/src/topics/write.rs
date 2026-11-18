@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::filing::conversation_keys;
 use kernel::owner::Owner;
 use kernel::topics::MergePlan;
@@ -318,7 +319,7 @@ pub(super) fn enqueue_syncs(
     conn: &Connection,
     syncs: Vec<SyncTopicPage>,
 ) -> Result<(), TopicError> {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     for sync in syncs {
         let job = sync.job().map_err(unavailable)?;
         let payload = serde_json::to_string(&job.payload).map_err(unavailable)?;

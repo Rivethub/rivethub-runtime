@@ -1,7 +1,7 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::fmt::Write as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryStore;
 use kernel::memory::SessionDigest;
 use kernel::memory::share;
@@ -22,7 +22,7 @@ pub(crate) async fn find(
     store: &dyn MemoryStore,
     kit: &Sessions,
     args: Find,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
 ) -> Result<CallToolResult, Error> {
     let query = args.query.trim().to_owned();
     if query.is_empty() {
@@ -70,14 +70,14 @@ fn render(
     query: &str,
     found: &[(&Ranked, &SessionDigest)],
     dropped: usize,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, Error> {
     let mut out = String::new();
     if found.is_empty() {
         writeln!(out, "No sessions match \"{query}\".")?;
     }
-    let day = |at: DateTime<Utc>| at.with_timezone(&zone).format("%Y-%m-%d").to_string();
+    let day = |at: Timestamp| crate::render_memory::local_date(at, zone);
     for (index, (ranked, digest)) in found.iter().enumerate() {
         let imported = kernel::memory::is_imported(&digest.key);
         write!(

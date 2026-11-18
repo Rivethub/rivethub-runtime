@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
-use chrono::TimeZone;
-use chrono::Utc;
 use kernel::model::Embedding;
 use kernel::model::FinishReason;
 use kernel::model::LlmResponse;
@@ -174,7 +173,7 @@ impl EntityStore for IdleStore {
         &self,
         _leaves: &[kernel::wiki::entity_pass::EntityLeaf],
         _prepared: &PreparedEntity,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Option<EntityView>, EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -183,7 +182,7 @@ impl EntityStore for IdleStore {
         &self,
         _view: &EntityView,
         _prose: &EntityProse,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -193,7 +192,7 @@ impl EntityStore for IdleStore {
         _leaves: &[Uuid],
         _slugs: &[String],
         _git_sha: Option<&str>,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -202,7 +201,7 @@ impl EntityStore for IdleStore {
         &self,
         _summary_id: Uuid,
         _error: &str,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -233,7 +232,7 @@ impl EntityStore for IdleStore {
         &self,
         _entity: Uuid,
         _embedding: &[f32],
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -244,7 +243,7 @@ impl EntityStore for IdleStore {
         _prepared: &PreparedEntity,
         _confidence: f32,
         _reason: &str,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(EntityStoreError::DirectoryMissing)
     }
@@ -262,7 +261,7 @@ pub(super) struct Harness {
     settings: MatcherSettings,
     cancel: CancellationToken,
     model: String,
-    now: chrono::DateTime<Utc>,
+    now: Timestamp,
 }
 
 impl Harness {
@@ -274,10 +273,7 @@ impl Harness {
             settings: MatcherSettings::default(),
             cancel: CancellationToken::new(),
             model: "thinkingcap-flash-next".to_owned(),
-            now: Utc
-                .timestamp_opt(1_700_000_000, 0)
-                .single()
-                .unwrap_or_default(),
+            now: Timestamp::new(1_700_000_000, 0).unwrap_or_default(),
         }
     }
 
@@ -390,10 +386,8 @@ async fn three_stream_errors_fail_the_call() {
     assert_eq!(harness.calls(), 3);
 }
 
-fn stamp() -> chrono::DateTime<Utc> {
-    Utc.timestamp_opt(1_700_000_000, 0)
-        .single()
-        .unwrap_or_default()
+fn stamp() -> Timestamp {
+    Timestamp::new(1_700_000_000, 0).unwrap_or_default()
 }
 
 fn host_view() -> EntityView {
@@ -760,7 +754,7 @@ impl EntityStore for RetryStore {
         &self,
         _leaves: &[EntityLeaf],
         _prepared: &PreparedEntity,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Option<EntityView>, EntityStoreError> {
         Err(missing())
     }
@@ -769,7 +763,7 @@ impl EntityStore for RetryStore {
         &self,
         _view: &EntityView,
         _prose: &EntityProse,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         Err(missing())
     }
@@ -779,7 +773,7 @@ impl EntityStore for RetryStore {
         _leaves: &[Uuid],
         _slugs: &[String],
         _git_sha: Option<&str>,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(missing())
     }
@@ -788,7 +782,7 @@ impl EntityStore for RetryStore {
         &self,
         _summary_id: Uuid,
         _error: &str,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(missing())
     }
@@ -819,7 +813,7 @@ impl EntityStore for RetryStore {
         &self,
         _entity: Uuid,
         _embedding: &[f32],
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(missing())
     }
@@ -830,7 +824,7 @@ impl EntityStore for RetryStore {
         _prepared: &PreparedEntity,
         _confidence: f32,
         _reason: &str,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), EntityStoreError> {
         Err(missing())
     }
@@ -867,7 +861,7 @@ impl EntityLease for MarkLease {
     async fn apply(
         &mut self,
         body: &StoredRewrite,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         let mut ledger = self.ledger.lock().await;
         if self.id == ledger.fail_once && !ledger.failed {
@@ -895,7 +889,7 @@ impl EntityLease for MarkLease {
     async fn record_mention(
         &mut self,
         _note: &MentionNote,
-        _now: chrono::DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Option<String>, EntityStoreError> {
         Ok(None)
     }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -23,6 +23,7 @@ pub enum TagState {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagWire {
@@ -38,9 +39,14 @@ pub struct TagWire {
     pub proposed_by: String,
     pub reason: String,
     pub decided_by: Option<String>,
-    pub decided_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub decided_at: Option<Timestamp>,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub created_at: Timestamp,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +71,7 @@ pub struct PendingTagWire {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagTaxonomyEntry {
@@ -76,9 +83,14 @@ pub struct TagTaxonomyEntry {
     pub state: TagState,
     pub source: String,
     pub reason: String,
-    pub decided_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub decided_at: Option<Timestamp>,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub created_at: Timestamp,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

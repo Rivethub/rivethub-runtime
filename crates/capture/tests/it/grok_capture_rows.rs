@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::Json;
 use wire::capture::CaptureResult;
@@ -66,7 +65,7 @@ async fn stop_rows(
         &config::Paths::new(&env)?,
     )
     .ok_or("grok store")?;
-    let now: DateTime<Utc> = "2026-11-14T18:02:00Z".parse()?;
+    let now: Timestamp = "2026-11-14T18:02:00Z".parse()?;
     let payload = format!(
         r#"{{"hook_event_name":"Stop","session_id":"{session}","cwd":"/home/user/acmekit"}}"#
     );

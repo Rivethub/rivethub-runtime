@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::flagged::FlaggedJobs as _;
 use kernel::queue::ClaimSelector;
 use kernel::queue::FixedJob;
@@ -89,9 +90,9 @@ async fn failures_count_across_re_adds_and_flag_the_job_out_of_the_queue(
     let rest = store.flagged().await?;
     assert_eq!(rest.len(), 1);
     let good = rest.first().ok_or("the other flagged job")?;
-    store.dismiss(good.id, chrono::Utc::now()).await?;
+    store.dismiss(good.id, Timestamp::now()).await?;
     assert_eq!(store.flagged().await?, Vec::new());
-    assert!(store.dismiss(good.id, chrono::Utc::now()).await.is_err());
+    assert!(store.dismiss(good.id, Timestamp::now()).await.is_err());
     let ledger: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_job_failures")
         .fetch_one(&pool)
         .await?;

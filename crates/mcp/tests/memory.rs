@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use jiff::Timestamp;
 use kernel::memory::{
     BrowseFilter, Limit, SearchMode, SearchQuery, TagCountsQuery, TagListQuery, TagLookup,
     TagTaxonomyQuery,
@@ -24,8 +25,8 @@ async fn memory_requests_reach_kernel_with_resolved_windows() {
     let (server, store) = setup();
     let today = kernel::memory_core::resolve_window(
         BrowseWindow::Today,
-        chrono::Utc::now(),
-        &chrono::Local,
+        Timestamp::now(),
+        &config::host_zone(),
     );
     for (name, args) in [
         (
@@ -317,7 +318,7 @@ async fn search_without_an_embedding_endpoint_is_one_calm_line() {
 #[tokio::test]
 async fn search_accepts_windows_and_false_flags_but_rejects_wrong_types() {
     let (server, store) = setup();
-    let started = chrono::Utc::now();
+    let started = Timestamp::now();
     let reply = support::call(
         &server,
         "memory_search",
@@ -331,8 +332,8 @@ async fn search_accepts_windows_and_false_flags_but_rejects_wrong_types() {
     };
     assert_eq!(query.window, None);
     let since = query.since.expect("resolved window start");
-    assert!(since >= started - chrono::Duration::days(7));
-    assert!(since <= chrono::Utc::now() - chrono::Duration::days(7));
+    assert!(since >= started - wire::time::elapsed_days(7));
+    assert!(since <= Timestamp::now() - wire::time::elapsed_days(7));
     assert_eq!(query.before, None);
     assert_eq!(query.expand, Some(false));
     assert_eq!(query.synthesize, Some(false));

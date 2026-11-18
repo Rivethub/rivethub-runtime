@@ -1,7 +1,9 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::os::unix::fs::PermissionsExt as _;
+use wire::time::TimestampFormat as _;
 
 use capture::writer::PostError;
-use chrono::Utc;
 use config::Environment;
 use tokio::io::AsyncReadExt as _;
 
@@ -378,7 +380,7 @@ async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothin
         }
         let uid = nix::unistd::getuid().as_raw();
         let uid = if foreign { uid.wrapping_add(1) } else { uid };
-        let report = super::hook_as(&env, TOOL, Utc::now(), uid).await;
+        let report = super::hook_as(&env, TOOL, Timestamp::now(), uid).await;
         if let Some(server) = server {
             server.abort();
         }
@@ -460,7 +462,7 @@ async fn a_capture_batch_is_delivered_or_kept_and_a_foreign_listener_sees_nothin
                 .max()
                 .expect("a held batch");
             assert!(
-                held >= (Utc::now() + chrono::TimeDelta::seconds(100)).timestamp_millis(),
+                held >= (Timestamp::now() + SignedDuration::from_secs(100)).epoch_millis(),
                 "{name}: the batch is not held for the Retry-After"
             );
         }

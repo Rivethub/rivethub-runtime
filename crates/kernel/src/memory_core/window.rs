@@ -1,108 +1,109 @@
 use crate::memory::BrowseWindow;
-use chrono::DateTime;
-use chrono::Datelike as _;
-use chrono::Duration;
-use chrono::LocalResult;
-use chrono::NaiveDate;
-use chrono::NaiveDateTime;
-use chrono::NaiveTime;
-use chrono::Offset as _;
-use chrono::TimeZone;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeRange {
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
+    pub before: Option<Timestamp>,
 }
 
 #[must_use]
-pub fn resolve_window<Tz: TimeZone>(
-    window: BrowseWindow,
-    now: DateTime<Utc>,
-    zone: &Tz,
-) -> TimeRange {
-    let today = now.with_timezone(zone).date_naive();
+pub fn resolve_window(window: BrowseWindow, now: Timestamp, zone: &TimeZone) -> TimeRange {
+    let today = now.to_zoned_datetime(zone.clone()).date();
     match window {
         BrowseWindow::Today => TimeRange {
-            since: Some(midnight_utc(today, zone)),
+            since: midnight(today, zone),
             before: None,
         },
         BrowseWindow::Yesterday => TimeRange {
-            since: Some(midnight_utc(today - Duration::days(1), zone)),
-            before: Some(midnight_utc(today, zone)),
+            since: yesterday(today, zone),
+            before: midnight(today, zone),
         },
         BrowseWindow::ThisMorning => {
-            let start = midnight_utc(today, zone);
+            let start = midnight(today, zone);
             TimeRange {
-                since: Some(start),
-                before: Some(start + Duration::hours(12)),
+                since: start,
+                before: start.and_then(|at| shifted(at, SignedDuration::from_hours(12))),
             }
         }
         BrowseWindow::ThisWeek => TimeRange {
-            since: Some(midnight_utc(
-                today - Duration::days(i64::from(today.weekday().num_days_from_monday())),
-                zone,
-            )),
+            since: calendar_date(today.checked_sub(
+                jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset())),
+            ))
+            .and_then(|date| midnight(date, zone)),
             before: None,
         },
         BrowseWindow::Last24h => TimeRange {
-            since: Some(now - Duration::hours(24)),
+            since: shifted(now, -SignedDuration::from_hours(24)),
             before: None,
         },
         BrowseWindow::Last7d => TimeRange {
-            since: Some(now - Duration::days(7)),
+            since: shifted(now, -values::time::elapsed_days(7)),
             before: None,
         },
         BrowseWindow::Last14d => TimeRange {
-            since: Some(now - Duration::days(14)),
+            since: shifted(now, -values::time::elapsed_days(14)),
             before: None,
         },
     }
 }
 
 #[must_use]
-pub fn day_window<Tz: TimeZone>(date: NaiveDate, zone: &Tz) -> TimeRange {
+pub fn day_window(date: Date, zone: &TimeZone) -> TimeRange {
     TimeRange {
-        since: Some(midnight_utc(date, zone)),
-        before: date.succ_opt().map(|next| midnight_utc(next, zone)),
+        since: midnight(date, zone),
+        before: calendar_date(date.tomorrow()).and_then(|date| midnight(date, zone)),
     }
 }
 
-fn midnight_utc<Tz: TimeZone>(date: NaiveDate, zone: &Tz) -> DateTime<Utc> {
-    let naive = NaiveDateTime::new(date, NaiveTime::MIN);
-    match zone.from_local_datetime(&naive) {
-        LocalResult::Single(local) => local.with_timezone(&Utc),
-        LocalResult::Ambiguous(first, second) => first.min(second).with_timezone(&Utc),
-        LocalResult::None => after_gap(naive, zone),
-    }
+fn yesterday(date: Date, zone: &TimeZone) -> Option<Timestamp> {
+    calendar_date(date.yesterday()).and_then(|date| midnight(date, zone))
 }
 
-fn after_gap<Tz: TimeZone>(local: NaiveDateTime, zone: &Tz) -> DateTime<Utc> {
-    let after = zone
-        .offset_from_utc_datetime(&(local + Duration::days(1)))
-        .fix();
-    let before = zone
-        .offset_from_utc_datetime(&(local - Duration::days(1)))
-        .fix();
-    let gap = i64::from(after.local_minus_utc()) - i64::from(before.local_minus_utc());
-    let first = local + Duration::seconds(seconds_until_existing(zone, local, gap));
-    (first - after).and_utc()
-}
-
-fn seconds_until_existing<Tz: TimeZone>(zone: &Tz, local: NaiveDateTime, gap: i64) -> i64 {
-    let mut lo = 0i64;
-    let mut hi = gap.max(0);
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        let candidate = local + Duration::seconds(mid);
-        if zone.from_local_datetime(&candidate).earliest().is_some() {
-            hi = mid;
-        } else {
-            lo = mid + 1;
+fn calendar_date(result: Result<Date, jiff::Error>) -> Option<Date> {
+    match result {
+        Ok(date) => Some(date),
+        Err(error) => {
+            tracing::debug!(%error, "calendar window exceeds the supported date range");
+            None
         }
     }
-    lo
+}
+
+fn shifted(at: Timestamp, by: SignedDuration) -> Option<Timestamp> {
+    window_timestamp(at.checked_add(by))
+}
+
+fn midnight(date: Date, zone: &TimeZone) -> Option<Timestamp> {
+    window_timestamp(midnight_utc(date, zone))
+}
+
+fn window_timestamp(result: Result<Timestamp, jiff::Error>) -> Option<Timestamp> {
+    match result {
+        Ok(at) => Some(at),
+        Err(error) => {
+            tracing::debug!(%error, "calendar window exceeds the supported timestamp range");
+            None
+        }
+    }
+}
+
+fn midnight_utc(date: Date, zone: &TimeZone) -> Result<Timestamp, jiff::Error> {
+    let ambiguous = zone.to_ambiguous_timestamp(date.at(0, 0, 0, 0));
+    let earlier = ambiguous.earlier()?;
+    if matches!(ambiguous.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
+        let later = ambiguous.later()?;
+        if let Some(transition) = zone.following(earlier).next()
+            && transition.timestamp() <= later
+        {
+            return Ok(transition.timestamp());
+        }
+        return Ok(later);
+    }
+    Ok(earlier)
 }
 
 #[cfg(test)]
@@ -110,15 +111,10 @@ mod tests {
     use super::TimeRange;
     use super::resolve_window;
     use crate::memory::BrowseWindow;
-    use chrono::DateTime;
-    use chrono::Duration;
-    use chrono::Utc;
-    use chrono_tz::America::Havana;
-    use chrono_tz::America::New_York;
-    use chrono_tz::America::Santiago;
-    use chrono_tz::Asia::Kolkata;
+    use jiff::SignedDuration;
+    use jiff::Timestamp;
 
-    fn utc(text: &str) -> DateTime<Utc> {
+    fn utc(text: &str) -> Timestamp {
         text.parse().expect("an RFC 3339 instant")
     }
 
@@ -133,15 +129,23 @@ mod tests {
     fn rolling_windows_count_back_from_now_in_any_zone() {
         let now = utc("2026-03-08T07:30:00Z");
         assert_eq!(
-            resolve_window(BrowseWindow::Last24h, now, &New_York),
+            resolve_window(
+                BrowseWindow::Last24h,
+                now,
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
             range("2026-03-07T07:30:00Z", None)
         );
         assert_eq!(
-            resolve_window(BrowseWindow::Last7d, now, &Kolkata),
+            resolve_window(
+                BrowseWindow::Last7d,
+                now,
+                &values::time::bundled_zone("Asia/Kolkata").expect("bundled zone")
+            ),
             range("2026-03-01T07:30:00Z", None)
         );
         assert_eq!(
-            resolve_window(BrowseWindow::Last14d, now, &Utc),
+            resolve_window(BrowseWindow::Last14d, now, &jiff::tz::TimeZone::UTC),
             range("2026-02-22T07:30:00Z", None)
         );
     }
@@ -150,15 +154,23 @@ mod tests {
     fn today_starts_at_local_midnight() {
         let now = utc("2026-10-13T03:00:00Z");
         assert_eq!(
-            resolve_window(BrowseWindow::Today, now, &Utc),
+            resolve_window(BrowseWindow::Today, now, &jiff::tz::TimeZone::UTC),
             range("2026-10-13T00:00:00Z", None)
         );
         assert_eq!(
-            resolve_window(BrowseWindow::Today, now, &New_York),
+            resolve_window(
+                BrowseWindow::Today,
+                now,
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
             range("2026-10-12T04:00:00Z", None)
         );
         assert_eq!(
-            resolve_window(BrowseWindow::Today, now, &Kolkata),
+            resolve_window(
+                BrowseWindow::Today,
+                now,
+                &values::time::bundled_zone("Asia/Kolkata").expect("bundled zone")
+            ),
             range("2026-10-12T18:30:00Z", None)
         );
     }
@@ -167,7 +179,11 @@ mod tests {
     fn this_morning_is_twelve_hours_from_local_midnight() {
         let now = utc("2026-10-13T15:00:00Z");
         assert_eq!(
-            resolve_window(BrowseWindow::ThisMorning, now, &New_York),
+            resolve_window(
+                BrowseWindow::ThisMorning,
+                now,
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
             range("2026-10-13T04:00:00Z", Some("2026-10-13T16:00:00Z"))
         );
     }
@@ -181,7 +197,11 @@ mod tests {
             "2026-10-19T03:59:59Z",
         ] {
             assert_eq!(
-                resolve_window(BrowseWindow::ThisWeek, utc(now), &New_York),
+                resolve_window(
+                    BrowseWindow::ThisWeek,
+                    utc(now),
+                    &values::time::bundled_zone("America/New_York").expect("bundled zone")
+                ),
                 TimeRange {
                     since: Some(monday),
                     before: None
@@ -193,7 +213,7 @@ mod tests {
             resolve_window(
                 BrowseWindow::ThisWeek,
                 utc("2026-10-19T04:00:00Z"),
-                &New_York
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
             ),
             range("2026-10-19T04:00:00Z", None)
         );
@@ -204,7 +224,7 @@ mod tests {
         let window = resolve_window(
             BrowseWindow::Yesterday,
             utc("2026-03-09T12:00:00Z"),
-            &New_York,
+            &values::time::bundled_zone("America/New_York").expect("bundled zone"),
         );
         assert_eq!(
             window,
@@ -215,7 +235,7 @@ mod tests {
                 .before
                 .zip(window.since)
                 .map(|(end, start)| end - start),
-            Some(Duration::hours(23))
+            Some(SignedDuration::from_hours(23))
         );
     }
 
@@ -224,7 +244,7 @@ mod tests {
         let window = resolve_window(
             BrowseWindow::Yesterday,
             utc("2026-11-02T12:00:00Z"),
-            &New_York,
+            &values::time::bundled_zone("America/New_York").expect("bundled zone"),
         );
         assert_eq!(
             window,
@@ -235,7 +255,7 @@ mod tests {
                 .before
                 .zip(window.since)
                 .map(|(end, start)| end - start),
-            Some(Duration::hours(25))
+            Some(SignedDuration::from_hours(25))
         );
     }
 
@@ -245,7 +265,7 @@ mod tests {
             resolve_window(
                 BrowseWindow::ThisWeek,
                 utc("2026-11-01T18:00:00Z"),
-                &New_York
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
             ),
             range("2026-10-26T04:00:00Z", None)
         );
@@ -257,7 +277,7 @@ mod tests {
             resolve_window(
                 BrowseWindow::ThisMorning,
                 utc("2026-03-08T15:00:00Z"),
-                &New_York
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
             ),
             range("2026-03-08T05:00:00Z", Some("2026-03-08T17:00:00Z"))
         );
@@ -266,7 +286,11 @@ mod tests {
     #[test]
     fn a_skipped_midnight_starts_the_day_at_the_end_of_the_gap() {
         assert_eq!(
-            resolve_window(BrowseWindow::Today, utc("2026-09-06T12:00:00Z"), &Santiago),
+            resolve_window(
+                BrowseWindow::Today,
+                utc("2026-09-06T12:00:00Z"),
+                &values::time::bundled_zone("America/Santiago").expect("bundled zone")
+            ),
             range("2026-09-06T04:00:00Z", None)
         );
     }
@@ -274,7 +298,11 @@ mod tests {
     #[test]
     fn a_repeated_midnight_starts_the_day_at_its_first_occurrence() {
         assert_eq!(
-            resolve_window(BrowseWindow::Today, utc("2026-11-01T12:00:00Z"), &Havana),
+            resolve_window(
+                BrowseWindow::Today,
+                utc("2026-11-01T12:00:00Z"),
+                &values::time::bundled_zone("America/Havana").expect("bundled zone")
+            ),
             range("2026-11-01T04:00:00Z", None)
         );
     }

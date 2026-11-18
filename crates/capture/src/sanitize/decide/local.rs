@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
@@ -16,9 +15,11 @@ use super::places::Place;
 use super::slots::BaseValue;
 use super::slots::FieldAt;
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalReview {
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub at: Timestamp,
     pub unreviewed_sha256: String,
     pub flags: Vec<LocalFlag>,
     pub fields: Vec<BaseField>,

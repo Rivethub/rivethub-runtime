@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -142,7 +143,7 @@ fn inspected(findings: usize, secret: bool) -> Inspected {
 fn imported() -> Imported {
     Imported {
         bundle: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-        received_at: chrono::Utc::now(),
+        received_at: Timestamp::now(),
         author: "ines".to_owned(),
         verification: Verification::Unsigned,
         signer: None,

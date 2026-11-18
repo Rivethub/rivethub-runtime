@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::Deserialize;
 use serde::Serialize;
 use values::JsonObject;
+use values::time::LegacyStrftime as _;
 
 use super::Change;
 use super::ChangeError;
@@ -27,25 +27,30 @@ what was learned. Mention the most important topics or entities with the markdow
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyDigest {
-    pub day: NaiveDate,
+    pub day: Date,
     pub owner: Owner,
     pub summary: String,
     pub changes: u32,
-    pub written_at: DateTime<Utc>,
+    pub written_at: Timestamp,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DigestRequest {
-    pub day: NaiveDate,
-    pub from: DateTime<Utc>,
-    pub to: DateTime<Utc>,
+    #[serde_as(as = "values::time::CivilDate")]
+    pub day: Date,
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub from: Timestamp,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub to: Timestamp,
     pub owner: String,
 }
 
 impl DigestRequest {
     #[must_use]
-    pub fn new(day: NaiveDate, from: DateTime<Utc>, to: DateTime<Utc>, owner: &Owner) -> Self {
+    pub fn new(day: Date, from: Timestamp, to: Timestamp, owner: &Owner) -> Self {
         Self {
             day,
             from,
@@ -85,11 +90,7 @@ impl DigestRequest {
 
 #[async_trait]
 pub trait DigestStore: Send + Sync {
-    async fn digest(
-        &self,
-        day: NaiveDate,
-        owner: &Owner,
-    ) -> Result<Option<DailyDigest>, ChangeError>;
+    async fn digest(&self, day: Date, owner: &Owner) -> Result<Option<DailyDigest>, ChangeError>;
 
     async fn keep_digest(&self, digest: &DailyDigest) -> Result<(), ChangeError>;
 
@@ -97,9 +98,9 @@ pub trait DigestStore: Send + Sync {
 }
 
 #[must_use]
-pub fn digest_prompt(day: NaiveDate, changes: &[Change]) -> String {
+pub fn digest_prompt(day: Date, changes: &[Change]) -> String {
     let mut lines = vec![
-        format!("Day: {}", day.format("%A, %B %-d, %Y")),
+        format!("Day: {}", day.legacy_strftime("%A, %B %-d, %Y")),
         "Recorded changes, newest first:".to_owned(),
     ];
     lines.extend(changes.iter().take(PROMPT_CHANGES).map(prompt_line));

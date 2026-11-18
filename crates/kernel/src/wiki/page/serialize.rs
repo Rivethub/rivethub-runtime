@@ -4,6 +4,7 @@ use super::frontmatter::WrittenFrontmatter;
 use super::limits;
 use super::yaml::to_block_yaml;
 use super::{CitationKind, PageCitation, WikiPage, WikiPageError};
+use values::time::LegacyStrftime as _;
 
 pub(super) const CITATION_COLUMNS: &str =
     "| Date | Kind | Summary | Note |\n|------|------|---------|------|";
@@ -70,7 +71,7 @@ pub(super) fn history_heading(entry: &WikiHistoryEntry) -> String {
 }
 
 pub(super) fn citation_row(citation: &PageCitation) -> String {
-    let date = citation.date.map(|date| date.to_string());
+    let date = citation.date.map(|date| date.legacy_strftime("%Y-%m-%d"));
     let note = citation
         .note
         .as_deref()

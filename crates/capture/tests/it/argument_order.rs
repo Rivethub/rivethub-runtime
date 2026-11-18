@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::Json;
 use wire::capture::CaptureResult;
@@ -89,7 +88,7 @@ async fn occurrence_count_spans_hook_and_transcript_spellings()
         transcript_path.display()
     );
 
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let run = hook.run(&stdin, now, "1791656243919-30e4c5d70").await;
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stderr, "");

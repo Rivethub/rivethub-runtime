@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -425,7 +426,7 @@ async fn sanitized_sessions(
             user: exporter.to_owned(),
             node: "desk".to_owned(),
         },
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         wire::capture::Sanitization::Raw,
         sessions,
     )
@@ -926,7 +927,7 @@ async fn an_unsigned_bundle_cannot_join_a_verified_conversation(pool: PgPool) {
     let verified_code = code_of(&shared.stdout);
 
     let session = forged.sessions.first_mut().expect("session");
-    session.origin.updated_at = Some(chrono::DateTime::UNIX_EPOCH);
+    session.origin.updated_at = Some(Timestamp::UNIX_EPOCH);
     let message = session.batch.messages.first_mut().expect("message");
     message.event_id = "mallory-evt".to_owned();
     message.content = "planted by mallory".to_owned();
@@ -1064,7 +1065,7 @@ fn a_shared_code_never_prints_its_key_in_debug() {
         sessions: 1,
         signed: None,
         uploaded: 1,
-        expires_at: chrono::DateTime::UNIX_EPOCH,
+        expires_at: Timestamp::UNIX_EPOCH,
         code: format!("rhb1:{DROP_ID}#{key}"),
     };
     let shown = format!("{shared:?}");

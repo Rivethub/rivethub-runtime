@@ -95,10 +95,14 @@ impl crate::PostgresMemory {
              JOIN rh_conversations c ON c.id = m.conversation_id WHERE true",
         );
         if let Some(since) = query.since {
-            statement.push(" AND m.created_at >= ").push_bind(since);
+            statement
+                .push(" AND m.created_at >= ")
+                .push_bind(crate::time::BindTime::bind_time(since));
         }
         if let Some(before) = query.before {
-            statement.push(" AND m.created_at < ").push_bind(before);
+            statement
+                .push(" AND m.created_at < ")
+                .push_bind(crate::time::BindTime::bind_time(before));
         }
         if let Some(agent) = &query.agent {
             statement.push(" AND m.agent = ").push_bind(agent);

@@ -19,8 +19,10 @@ mod slug;
 mod summary;
 mod yaml;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
+use values::time::TimestampFormat as _;
 
 use values::Extra;
 
@@ -119,7 +121,7 @@ impl TryFrom<String> for LastVerified {
     type Error = LastVerifiedError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
-        if DateTime::parse_from_rfc3339(&text).is_ok() || citations::iso_date(&text).is_some() {
+        if values::time::parse_rfc3339(&text).is_ok() || citations::iso_date(&text).is_some() {
             Ok(Self(text))
         } else {
             Err(LastVerifiedError(text))
@@ -127,9 +129,9 @@ impl TryFrom<String> for LastVerified {
     }
 }
 
-impl From<DateTime<Utc>> for LastVerified {
-    fn from(instant: DateTime<Utc>) -> Self {
-        Self(instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+impl From<Timestamp> for LastVerified {
+    fn from(instant: Timestamp) -> Self {
+        Self(instant.rfc3339_millis())
     }
 }
 
@@ -145,11 +147,13 @@ impl AsRef<str> for LastVerified {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WikiHistoryEntry {
     #[schemars(with = "String")]
-    pub date: NaiveDate,
+    #[serde_as(as = "values::time::CivilDate")]
+    pub date: Date,
     pub title: String,
     pub body: String,
 }
@@ -188,12 +192,14 @@ pub struct PageSource {
     pub extra: Extra,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PageCitation {
     pub summary_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub date: Option<NaiveDate>,
+    #[serde_as(as = "Option<values::time::CivilDate>")]
+    pub date: Option<Date>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<CitationKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

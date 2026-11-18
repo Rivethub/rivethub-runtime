@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::owner::Owner;
 use kernel::tenancy::SessionVisibility;
 use kernel::tenancy::Space;
@@ -33,10 +32,7 @@ fn unavailable(error: SqliteError) -> TenancyStoreError {
     TenancyStoreError::Unavailable(Box::new(error))
 }
 
-fn default_of(
-    conn: &Connection,
-    user: &str,
-) -> Result<Option<(String, DateTime<Utc>)>, SqliteError> {
+fn default_of(conn: &Connection, user: &str) -> Result<Option<(String, Timestamp)>, SqliteError> {
     let row = conn
         .query_row(
             "SELECT default_visibility, default_since FROM rh_user_settings WHERE user_id = ?1",
@@ -80,7 +76,7 @@ fn topic_mark(conn: &Connection, topic: Option<String>) -> Result<Option<String>
 fn owner_default(
     conn: &Connection,
     owner: &str,
-    created: DateTime<Utc>,
+    created: Timestamp,
 ) -> Result<String, SqliteError> {
     Ok(match default_of(conn, owner)? {
         Some((visibility, since)) if created >= since => visibility,
@@ -114,7 +110,7 @@ fn session_state(
     conn: &Connection,
     session: &str,
     viewer: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(Option<String>, Option<String>, String), SqliteError> {
     let conversation = conn
         .query_row(
@@ -256,7 +252,7 @@ impl TenancyStore for SqliteStore {
         &self,
         user: &Owner,
         visibility: &Visibility,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<VisibilityDefault, TenancyStoreError> {
         let user = user.as_str().to_owned();
         let wanted = visibility.as_str().to_owned();
@@ -322,7 +318,7 @@ impl TenancyStore for SqliteStore {
         viewer: &Viewer,
         session: &SessionKey,
         mark: Option<&Visibility>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<SessionVisibility, TenancyStoreError> {
         if let Some(mark) = mark {
             viewer.may_share(mark)?;

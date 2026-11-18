@@ -1,13 +1,12 @@
 mod samples;
 mod upkeep;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::conversation_keys;
 use kernel::tidy::Batch;
 use kernel::tidy::BatchId;
@@ -38,12 +37,12 @@ struct ProposalRow {
     id: Uuid,
     batch_id: Uuid,
     proposed_by: String,
-    proposed_at: DateTime<Utc>,
+    proposed_at: Timestamp,
     change: Json<EditRecord>,
     reason: String,
     evidence: Json<Evidence>,
     state: String,
-    decided_at: Option<DateTime<Utc>>,
+    decided_at: Option<Timestamp>,
 }
 
 struct SuggestionRow {
@@ -107,9 +106,9 @@ impl PostgresMemory {
     ) -> Result<Vec<Proposal>, TidyError> {
         let mut proposals = sqlx::query_as!(
             ProposalRow,
-            r#"SELECT p.id, p.batch_id, b.proposed_by, b.proposed_at,
+            r#"SELECT p.id, p.batch_id, b.proposed_by, b.proposed_at AS "proposed_at: jiff_sqlx::Timestamp",
                       p.change AS "change: Json<EditRecord>", p.reason,
-                      p.evidence AS "evidence: Json<Evidence>", p.state, p.decided_at
+                      p.evidence AS "evidence: Json<Evidence>", p.state, p.decided_at AS "decided_at!: crate::time::OptionalTimestamp"
                  FROM rh_tidy_proposals p
                  JOIN rh_tidy_batches b ON b.id = p.batch_id
                 WHERE ($1 = false OR p.state = 'pending')
@@ -139,7 +138,7 @@ impl TidyStore for PostgresMemory {
             "INSERT INTO rh_tidy_batches (id, proposed_by, proposed_at) VALUES ($1, $2, $3)",
             batch.id.uuid(),
             batch.by.to_string(),
-            batch.at
+            crate::time::BindTime::bind_time(batch.at) as _
         )
         .execute(&mut *tx)
         .await
@@ -200,14 +199,14 @@ impl TidyStore for PostgresMemory {
         &self,
         id: ProposalId,
         state: ProposalState,
-        at: DateTime<Utc>,
+        at: Timestamp,
     ) -> Result<Proposal, TidyError> {
         let decided = sqlx::query_scalar!(
             "UPDATE rh_tidy_proposals SET state = $2, decided_at = $3
               WHERE id = $1 AND state = 'pending' RETURNING id",
             id.uuid(),
             state.to_string(),
-            at
+            crate::time::BindTime::bind_time(at) as _
         )
         .fetch_optional(&self.pool)
         .await
@@ -225,14 +224,15 @@ impl TidyStore for PostgresMemory {
         }
     }
 
-    async fn last_batch(&self, by: Proposer) -> Result<Option<DateTime<Utc>>, TidyError> {
+    async fn last_batch(&self, by: Proposer) -> Result<Option<Timestamp>, TidyError> {
         sqlx::query_scalar!(
-            "SELECT max(proposed_at) FROM rh_tidy_batches WHERE proposed_by = $1",
+            r#"SELECT max(proposed_at) AS "max!: crate::time::OptionalTimestamp" FROM rh_tidy_batches WHERE proposed_by = $1"#,
             by.to_string()
         )
         .fetch_one(&self.pool)
         .await
         .map_err(failed("tidy last batch"))
+        .map(Option::from)
     }
 
     async fn known(&self) -> Result<BTreeSet<Fingerprint>, TidyError> {
@@ -247,7 +247,7 @@ impl TidyStore for PostgresMemory {
         .collect())
     }
 
-    async fn inputs(&self, since: DateTime<Utc>) -> Result<TidyInputs, TidyError> {
+    async fn inputs(&self, since: Timestamp) -> Result<TidyInputs, TidyError> {
         let rows = sqlx::query_as!(
             SuggestionRow,
             "SELECT s.session_id, s.name, s.parent_id
@@ -285,7 +285,7 @@ impl TidyStore for PostgresMemory {
                        UNION ALL
                        SELECT topic_id FROM rh_conversation_placements WHERE placed_at >= $1) f
                 GROUP BY topic_id"#,
-            since
+            crate::time::BindTime::bind_time(since) as _
         )
         .fetch_all(&self.pool)
         .await

@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::SessionDigest;
 use uuid::Uuid;
 
@@ -8,8 +8,8 @@ fn digest(key: &str, author: Option<&str>) -> SessionDigest {
         conversation_id: Uuid::nil(),
         title: None,
         agent: "rivet".to_owned(),
-        first: Utc::now(),
-        last: Utc::now(),
+        first: Timestamp::now(),
+        last: Timestamp::now(),
         messages: 1,
         imported_from: author.map(str::to_owned),
     }

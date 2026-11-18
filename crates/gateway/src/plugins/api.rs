@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
@@ -9,7 +10,6 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use chrono::Utc;
 use kernel::plugins::PluginAccess;
 use tokio::net::UnixListener;
 use tokio_util::sync::CancellationToken;
@@ -232,7 +232,7 @@ async fn notify(
         text: notice.text,
         tone: notice.tone,
         action: notice.action,
-        ts: Utc::now(),
+        ts: Timestamp::now(),
     });
     StatusCode::NO_CONTENT
 }

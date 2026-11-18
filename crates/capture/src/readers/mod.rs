@@ -15,11 +15,10 @@ mod opencode_link;
 mod scan;
 pub(crate) mod sqlite;
 
+use jiff::Timestamp;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -120,7 +119,7 @@ impl TranscriptReader for StoreReader {
     async fn tail(
         &self,
         session: &SessionId,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<Turn>, TranscriptReaderError> {
         match self {
             Self::Claude(reader) => reader.tail(session, since).await,

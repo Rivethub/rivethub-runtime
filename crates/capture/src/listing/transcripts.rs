@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -72,7 +71,7 @@ impl TranscriptReader for StoreTranscriptReader {
     async fn tail(
         &self,
         session: &SessionId,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<Turn>, TranscriptReaderError> {
         self.session_reader(session)?.tail(session, since).await
     }

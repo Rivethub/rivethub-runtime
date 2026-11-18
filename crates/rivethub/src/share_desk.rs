@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -8,8 +9,6 @@ use capture::sanitize::decide::DecideError;
 use capture::sanitize::decide::Mode;
 use capture::sanitize::decide::Resolution;
 use capture::share;
-use chrono::DateTime;
-use chrono::Utc;
 use cli::memory::SessionStore;
 use cli::memory::desk as cli_desk;
 use config::Config;
@@ -65,7 +64,7 @@ const DRAFT_LABEL: &str = "the draft bundle";
 const CLIENT: &str = "RivetHub desktop";
 const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_mins(1);
 
-pub type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+pub type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
 
 pub struct NodeDesk {
     share: NodeShare,
@@ -103,7 +102,7 @@ impl NodeDesk {
             share: NodeShare::new::<E>(config, env, owner, store)?,
             env: env.clone(),
             memory,
-            clock: Arc::new(Utc::now),
+            clock: Arc::new(Timestamp::now),
             drafts: Drafts::new(),
             logins: parking_lot::Mutex::default(),
             sign_in_out: OriginGates::default(),
@@ -140,13 +139,13 @@ impl NodeDesk {
             .retain(|_, pending| pending.expires_at > now);
     }
 
-    fn slot(&self, id: DraftId) -> Result<(Arc<Mutex<DraftState>>, DateTime<Utc>), DeskError> {
+    fn slot(&self, id: DraftId) -> Result<(Arc<Mutex<DraftState>>, Timestamp), DeskError> {
         self.sweep();
         self.drafts.get(id, (self.clock)())
     }
 }
 
-fn view(id: DraftId, state: &DraftState, expires_at: DateTime<Utc>) -> Draft {
+fn view(id: DraftId, state: &DraftState, expires_at: Timestamp) -> Draft {
     let report = &state.report;
     let totals = report.totals();
     let decision = report.decision.as_ref();
@@ -387,7 +386,7 @@ impl ShareDesk for NodeDesk {
             .collect::<Result<Vec<_>, _>>()
             .map_err(failed)?;
         let chosen =
-            share::chosen(self.share.author.clone(), sessions, Utc::now()).map_err(failed)?;
+            share::chosen(self.share.author.clone(), sessions, Timestamp::now()).map_err(failed)?;
         self.sweep();
         let reservation = self
             .drafts
@@ -399,7 +398,7 @@ impl ShareDesk for NodeDesk {
                 mapping: &self.share.mapping,
                 key: &self.share.key,
                 decider: decider.as_ref(),
-                at: Utc::now(),
+                at: Timestamp::now(),
             },
             DRAFT_LABEL,
         )

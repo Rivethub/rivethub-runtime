@@ -1,7 +1,6 @@
 use crate::embed::EmbedAttempt;
 use crate::error::Error;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryChunkMatch;
 use kernel::memory::MemoryFallback;
 use kernel::memory::MemoryHitSource;
@@ -22,8 +21,8 @@ use wire::message::Role;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchOptions {
-    pub(crate) since: Option<DateTime<Utc>>,
-    pub(crate) before: Option<DateTime<Utc>>,
+    pub(crate) since: Option<Timestamp>,
+    pub(crate) before: Option<Timestamp>,
     pub(crate) text: String,
     pub(crate) mode: SearchMode,
     pub(crate) scope: MemoryScope,
@@ -62,7 +61,7 @@ pub struct MemorySearchHit {
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub score: f64,
     pub role: Option<Role>,
     pub agent: Option<String>,
@@ -97,7 +96,7 @@ pub(crate) struct ArmRow {
     pub(crate) tool_name: Option<String>,
     pub(crate) conversation_id: Option<String>,
     pub(crate) session_id: Option<String>,
-    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) created_at: Timestamp,
     pub(crate) arm_score: f64,
     pub(crate) semantic: f64,
     pub(crate) boost: f64,

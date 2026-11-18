@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::wiki::builder::{WikiStoreError, WikiSummary};
 use kernel::wiki::merge::MergedPage;
@@ -7,13 +7,14 @@ use kernel::wiki::page::bound::MergeBase;
 use kernel::wiki::page::{CitationKind, PageCitation, PagePatch, PageSource, WikiPage};
 use kernel::wiki::page::{WikiSlug, WikiSourceKind};
 use sqlx::{Postgres, Transaction};
+use wire::time::TimestampFormat as _;
 
 use super::{gate, lock_slug, query_error};
 use crate::wiki_scope::WikiScope;
 
 pub(super) struct Source<'a> {
     pub(super) summary: &'a WikiSummary,
-    pub(super) date: DateTime<Utc>,
+    pub(super) date: Timestamp,
     pub(super) topic_page: Option<&'a WikiSlug>,
     pub(super) merged: &'a [MergedPage],
     pub(super) home: &'a WikiScope,
@@ -25,7 +26,7 @@ pub(super) async fn apply(
     repository: &mut crate::wiki_writer::LockedRepository,
     source: &Source<'_>,
     patch: WikiPatch,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(String, String), WikiStoreError> {
     let Source {
         summary,
@@ -39,7 +40,7 @@ pub(super) async fn apply(
     let key = crate::wiki_scope::page_key(tx, home, &gated.slug).await?;
     lock_slug(tx, &key).await?;
     let slug = gated.slug;
-    let note_entry = (slug != patch.slug.as_ref()).then(|| patch.note(date.date_naive()));
+    let note_entry = (slug != patch.slug.as_ref()).then(|| patch.note(date.utc_date()));
     let citation_note = patch
         .history_entry
         .as_ref()
@@ -134,7 +135,9 @@ fn citations(cited_by: &[&WikiSummary], note: &str) -> (Vec<PageCitation>, Vec<P
             (
                 PageCitation {
                     summary_id: id.clone(),
-                    date: summary.created_at.map(|at| at.date_naive()),
+                    date: summary
+                        .created_at
+                        .map(wire::time::TimestampFormat::utc_date),
                     kind: Some(CitationKind::Leaf),
                     note: Some(note.to_owned()),
                 },
@@ -181,7 +184,7 @@ pub(super) async fn store_topic(
     tx: &mut Transaction<'_, Postgres>,
     page: &WikiPage,
     git_sha: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     store(tx, page, page.meta.slug.as_ref(), None, git_sha, now).await
 }
@@ -192,7 +195,7 @@ pub(crate) async fn store(
     key: &str,
     home: Option<&WikiScope>,
     git_sha: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let history_count = i32::try_from(page.history.len())
         .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;
@@ -222,7 +225,7 @@ pub(crate) async fn store(
     .bind(key).bind(&page.meta.title).bind(&page.meta.aliases)
     .bind(&page.meta.tags).bind(&page.meta.entities).bind(&page.current_state)
     .bind(&page.article).bind(&page.meta.related).bind(search_text).bind(history_count)
-    .bind(now).bind(now).bind(git_sha)
+    .bind(crate::time::BindTime::bind_time(now)).bind(crate::time::BindTime::bind_time(now)).bind(git_sha)
     .bind(home.map(|home| home.scope.as_str()))
     .bind(home.map(|_| page.meta.slug.as_ref()))
     .bind(owner)
@@ -235,7 +238,7 @@ pub(super) async fn cite(
     tx: &mut Transaction<'_, Postgres>,
     slug: &str,
     summary: &WikiSummary,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     provenance(tx, slug, summary, None, now).await
 }
@@ -245,7 +248,7 @@ async fn provenance(
     slug: &str,
     summary: &WikiSummary,
     note: Option<String>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     sqlx::query(
         "INSERT INTO rh_wiki_provenance
@@ -255,7 +258,7 @@ async fn provenance(
     .bind(slug)
     .bind(summary.id)
     .bind(summary.conversation_id)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .bind(summary.owner.as_ref().map(Owner::as_str))
     .execute(&mut **tx)
     .await
@@ -267,7 +270,7 @@ async fn provenance(
     .bind(slug)
     .bind(summary.id)
     .bind(note)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .bind(summary.owner.as_ref().map(Owner::as_str))
     .execute(&mut **tx)
     .await

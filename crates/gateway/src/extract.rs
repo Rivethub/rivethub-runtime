@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::error::Error;
 use std::future::Future;
 use std::str::FromStr;
@@ -9,8 +10,6 @@ use axum::extract::Request;
 use axum::extract::rejection::BytesRejection;
 use axum::extract::rejection::FailedToBufferBody;
 use axum::http::request::Parts;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::TagLiteral;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -260,42 +259,42 @@ impl RolesParam {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
-pub struct SinceParam(pub DateTime<Utc>);
+pub struct SinceParam(pub Timestamp);
 
 impl TryFrom<String> for SinceParam {
     type Error = ParamError;
 
     fn try_from(raw: String) -> Result<Self, Self::Error> {
-        DateTime::parse_from_rfc3339(&raw)
-            .map(|parsed| Self(parsed.with_timezone(&Utc)))
+        wire::time::parse_rfc3339(&raw)
+            .map(Self)
             .map_err(|_| ParamError("invalid since"))
     }
 }
 
 impl SinceParam {
     #[must_use]
-    pub const fn get(self) -> DateTime<Utc> {
+    pub const fn get(self) -> Timestamp {
         self.0
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
-pub struct BeforeParam(pub DateTime<Utc>);
+pub struct BeforeParam(pub Timestamp);
 
 impl TryFrom<String> for BeforeParam {
     type Error = ParamError;
 
     fn try_from(raw: String) -> Result<Self, Self::Error> {
-        DateTime::parse_from_rfc3339(&raw)
-            .map(|parsed| Self(parsed.with_timezone(&Utc)))
+        wire::time::parse_rfc3339(&raw)
+            .map(Self)
             .map_err(|_| ParamError("invalid before"))
     }
 }
 
 impl BeforeParam {
     #[must_use]
-    pub const fn get(self) -> DateTime<Utc> {
+    pub const fn get(self) -> Timestamp {
         self.0
     }
 }

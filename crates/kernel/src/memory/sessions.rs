@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use values::HarnessId;
 use values::SessionId;
 use values::SessionKey;
@@ -33,7 +32,7 @@ pub enum MemoryState {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SessionCursor {
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     pub key: String,
 }
 
@@ -77,8 +76,8 @@ pub struct SessionTopic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportOrigin {
     pub author: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
+    pub updated_at: Option<Timestamp>,
     pub receipt: Option<ImportReceipt>,
 }
 
@@ -112,8 +111,8 @@ pub struct SessionRecord<K = SessionId> {
     pub owner: Option<String>,
     pub id: K,
     pub title: String,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
     pub message_count: u64,
     pub topic: Option<SessionTopic>,
     pub kept: bool,

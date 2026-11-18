@@ -1,6 +1,8 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use wire::time::TimestampFormat as _;
 
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
@@ -207,7 +209,8 @@ async fn one_pass(engine: &Engine, id: Uuid, concurrency: usize, pass: Pass) -> 
 #[derive(Debug, sqlx::FromRow)]
 struct Started {
     id: Uuid,
-    started: Option<chrono::DateTime<chrono::Utc>>,
+    #[sqlx(try_from = "memory_postgres::time::OptionalTimestamp")]
+    started: Option<Timestamp>,
 }
 
 fn sort_started(ids: &[Uuid], mut rows: Vec<Started>) -> Vec<Uuid> {
@@ -225,9 +228,9 @@ fn sort_started(ids: &[Uuid], mut rows: Vec<Started>) -> Vec<Uuid> {
     ordered
 }
 
-fn stamp(started: Option<chrono::DateTime<chrono::Utc>>) -> (u8, i64) {
+fn stamp(started: Option<Timestamp>) -> (u8, i64) {
     match started {
-        Some(time) => (0, time.timestamp()),
+        Some(time) => (0, time.epoch_seconds()),
         None => (1, 0),
     }
 }

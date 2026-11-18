@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 mod corpus;
 mod mcp;
 mod report;
@@ -14,7 +15,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use chrono::Utc;
 use clap::Parser;
 use kernel::memory::Limit;
 use kernel::memory::MemoryScope;
@@ -184,10 +184,14 @@ async fn run(args: &Args) -> Result<Verdict, Failure> {
 async fn evaluate(store: &SqliteStore, set: &QuerySet) -> Result<Vec<Scored>, Failure> {
     let mut scored = Vec::with_capacity(set.queries.len());
     for query in &set.queries {
-        let now = set.clock.unwrap_or_else(Utc::now);
+        let now = set.clock.unwrap_or_else(Timestamp::now);
         let started = Instant::now();
         let outcome = store
-            .search_at(search(query, set.limit.get()), now, &Utc)
+            .search_at(
+                search(query, set.limit.get()),
+                now,
+                &jiff::tz::TimeZone::UTC,
+            )
             .await
             .map_err(|source| Failure::Search {
                 id: query.id.clone(),

@@ -2,6 +2,24 @@ use testkit::Json;
 use testkit::json_eq;
 
 #[test]
+fn batch_session_dates_accept_relaxed_offsets_and_reject_offset_seconds()
+-> Result<(), Box<dyn std::error::Error>> {
+    let raw = r#"{"session_key":"codex:session","agent":"codex","messages":[],"created_at":" 2026-01-01T01:02:03.123456789012 +0100","updated_at":"2026-01-01T01:02:03Z"}"#;
+    let batch = capture::batch::parse_batch(raw)?;
+    let json = serde_json::to_value(batch)?;
+    assert_eq!(
+        json.get("created_at").and_then(Json::as_str),
+        Some("2026-01-01T00:02:03.123Z")
+    );
+    assert_eq!(
+        json.get("updated_at").and_then(Json::as_str),
+        Some("2026-01-01T01:02:03.000Z")
+    );
+    assert!(capture::batch::parse_batch(&raw.replace(" +0100", "+01:00:00")).is_err());
+    Ok(())
+}
+
+#[test]
 fn batch_validation_matches_recorded_outcomes() -> Result<(), Box<dyn std::error::Error>> {
     let path = testkit::recording("capture/capture-zod/capture-batch.json");
     let text = std::fs::read_to_string(&path)?;

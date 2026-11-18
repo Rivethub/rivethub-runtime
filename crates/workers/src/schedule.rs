@@ -1,19 +1,26 @@
-use chrono::{DateTime, Timelike, Utc};
+use jiff::Timestamp;
 use kernel::memory::schedule::CronEntry;
 use kernel::queue::{JobQueue, WorkerRole};
 use tokio_util::sync::CancellationToken;
+use wire::time::TimestampFormat as _;
 
 use crate::WorkerError;
 
 pub async fn enqueue_due(
     queue: &dyn JobQueue,
     entries: &[CronEntry],
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancel: &CancellationToken,
 ) -> Result<(), WorkerError> {
-    let due = entries
-        .iter()
-        .filter(|entry| now.minute().is_multiple_of(entry.every_minutes));
+    let due = entries.iter().filter(|entry| {
+        u32::from(
+            jiff::tz::TimeZone::UTC
+                .to_datetime(now)
+                .minute()
+                .unsigned_abs(),
+        )
+        .is_multiple_of(entry.every_minutes)
+    });
     enqueue(queue, due, cancel).await
 }
 
@@ -61,8 +68,8 @@ pub(crate) async fn run(
         enqueue(queue, entries.iter(), cancel).await?;
     }
     loop {
-        let now = Utc::now();
-        let millis = 60_000 - now.timestamp_millis().rem_euclid(60_000);
+        let now = Timestamp::now();
+        let millis = 60_000 - now.epoch_millis().rem_euclid(60_000);
         let wait = std::time::Duration::from_millis(
             u64::try_from(millis).map_err(|_| WorkerError::Count)?,
         );
@@ -71,6 +78,6 @@ pub(crate) async fn run(
             () = cancel.cancelled() => return Ok(()),
             () = tokio::time::sleep(wait) => {}
         }
-        enqueue_due(queue, &entries, Utc::now(), cancel).await?;
+        enqueue_due(queue, &entries, Timestamp::now(), cancel).await?;
     }
 }

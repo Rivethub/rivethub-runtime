@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::owner::Owner;
 use kernel::tenancy::SessionVisibility;
 use kernel::tenancy::Space;
@@ -204,7 +203,7 @@ impl TenancyStore for PostgresTenancy {
         &self,
         user: &Owner,
     ) -> Result<Option<VisibilityDefault>, TenancyStoreError> {
-        let row = sqlx::query_as::<_, (String, DateTime<Utc>)>(
+        let row = sqlx::query_as::<_, (String, jiff_sqlx::Timestamp)>(
             "SELECT default_visibility, default_since FROM rh_user_settings WHERE user_id = $1",
         )
         .bind(user.as_str())
@@ -214,7 +213,7 @@ impl TenancyStore for PostgresTenancy {
         row.map(|(visibility, since)| {
             Ok(VisibilityDefault {
                 visibility: Visibility::parse(&visibility)?,
-                since,
+                since: since.to_jiff(),
             })
         })
         .transpose()
@@ -224,9 +223,9 @@ impl TenancyStore for PostgresTenancy {
         &self,
         user: &Owner,
         visibility: &Visibility,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<VisibilityDefault, TenancyStoreError> {
-        let (stored, since) = sqlx::query_as::<_, (String, DateTime<Utc>)>(
+        let (stored, since) = sqlx::query_as::<_, (String, jiff_sqlx::Timestamp)>(
             "INSERT INTO rh_user_settings (user_id, default_visibility, default_since, updated_at)
              VALUES ($1, $2, $3, $3)
              ON CONFLICT (user_id) DO UPDATE SET
@@ -238,13 +237,13 @@ impl TenancyStore for PostgresTenancy {
         )
         .bind(user.as_str())
         .bind(visibility.as_str())
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(now))
         .fetch_one(&self.pool)
         .await
         .map_err(failed("visibility default"))?;
         Ok(VisibilityDefault {
             visibility: Visibility::parse(&stored)?,
-            since,
+            since: since.to_jiff(),
         })
     }
 
@@ -270,7 +269,7 @@ impl TenancyStore for PostgresTenancy {
         viewer: &Viewer,
         session: &SessionKey,
         mark: Option<&Visibility>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<SessionVisibility, TenancyStoreError> {
         if let Some(mark) = mark {
             viewer.may_share(mark)?;
@@ -296,7 +295,7 @@ impl TenancyStore for PostgresTenancy {
             .bind(session.as_str())
             .bind(viewer.principal().as_str())
             .bind(mark.as_str())
-            .bind(now),
+            .bind(crate::time::BindTime::bind_time(now)),
             None => sqlx::query(
                 "DELETE FROM rh_session_marks WHERE session_key = $1 AND owner_user_id = $2",
             )

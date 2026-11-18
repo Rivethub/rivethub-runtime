@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
 use serde::Deserialize;
@@ -202,7 +201,7 @@ pub(crate) fn text_turn(turn: &TextTurn<'_>) -> Result<Mapped, TranscriptReaderE
     if turn.content.trim().is_empty() {
         return Ok(Mapped::None);
     }
-    match DateTime::parse_from_rfc3339(turn.at) {
+    match wire::time::parse_rfc3339(turn.at) {
         Ok(_) => {}
         Err(error) => {
             return Ok(Mapped::Skip(SkippedRecord {
@@ -225,7 +224,7 @@ pub(crate) fn tool_turn(
     if turn.content.is_empty() {
         return Ok(Mapped::None);
     }
-    match DateTime::parse_from_rfc3339(turn.at) {
+    match wire::time::parse_rfc3339(turn.at) {
         Ok(_) => {}
         Err(error) => {
             return Ok(Mapped::Skip(SkippedRecord {
@@ -346,11 +345,9 @@ fn capture(turn: &TextTurn<'_>, tool: ToolFields) -> Result<CaptureMessage, Tran
     })
 }
 
-fn message_instant(raw: &str) -> Result<DateTime<Utc>, TranscriptReaderError> {
-    DateTime::parse_from_rfc3339(raw)
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .map_err(|error| TranscriptReaderError::Read {
-            message: format!("transcript timestamp {raw:?} is not RFC 3339: {error}"),
-            source: Box::new(error),
-        })
+fn message_instant(raw: &str) -> Result<Timestamp, TranscriptReaderError> {
+    wire::time::parse_rfc3339(raw).map_err(|error| TranscriptReaderError::Read {
+        message: format!("transcript timestamp {raw:?} is not RFC 3339: {error}"),
+        source: Box::new(error),
+    })
 }

@@ -1,8 +1,10 @@
+use jiff::Timestamp;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
 use axum::extract::ConnectInfo;
 use axum::extract::Request;
@@ -223,7 +225,7 @@ impl Browser {
 
     pub(crate) async fn begin(&self, session: &Session) -> Result<String, ApiError> {
         let csrf = random_secret().map_err(|_| ApiError::Internal)?;
-        let now = chrono::Utc::now().timestamp();
+        let now = Timestamp::now().epoch_seconds();
         let login = Login {
             issued_at: now,
             auth_time: now,
@@ -239,8 +241,8 @@ impl Browser {
     }
 
     fn accepts(&self, login: &Login) -> bool {
-        let age = chrono::Utc::now()
-            .timestamp()
+        let age = Timestamp::now()
+            .epoch_seconds()
             .saturating_sub(login.issued_at);
         login.epoch == self.epoch.load(Ordering::Acquire)
             && u64::try_from(age).is_ok_and(|age| age < self.policy.absolute.as_secs())

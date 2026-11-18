@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -33,7 +33,7 @@ pub struct UnchunkedMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingWiki {
     pub job: ExtractWiki,
-    pub summarized_at: DateTime<Utc>,
+    pub summarized_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

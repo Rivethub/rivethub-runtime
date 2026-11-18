@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -109,9 +109,9 @@ pub struct TidySample {
     pub id: String,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
     #[serde(default)]
-    pub last_active: Option<DateTime<Utc>>,
+    pub last_active: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -133,12 +133,12 @@ pub struct TidyProposal {
     pub reason: String,
     pub evidence: TidyEvidence,
     pub proposed_by: Proposer,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub proposed_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub proposed_at: Timestamp,
     pub state: ProposalState,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub decided_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub decided_at: Option<Timestamp>,
 }
 
 #[serde_as]
@@ -147,8 +147,8 @@ pub struct TidyProposal {
 pub struct TidyBatch {
     pub batch_id: String,
     pub proposed_by: Proposer,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub proposed_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub proposed_at: Timestamp,
     pub proposals: Vec<TidyProposal>,
 }
 
@@ -214,8 +214,8 @@ pub struct WikiUpkeep {
 #[serde(rename_all = "camelCase")]
 pub struct WorkerActivity {
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub last_finished_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub last_finished_at: Option<Timestamp>,
     pub failing: u64,
 }
 

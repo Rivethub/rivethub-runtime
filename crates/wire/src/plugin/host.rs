@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -32,10 +32,10 @@ pub struct PluginRecord {
     pub error: Option<String>,
     pub last_exit: Option<PluginExit>,
     pub restarts: u32,
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub started_at: Option<DateTime<Utc>>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub installed_at: DateTime<Utc>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub started_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub installed_at: Timestamp,
     pub jobs: Vec<PluginJobStatus>,
 }
 
@@ -55,8 +55,8 @@ pub enum PluginState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginExit {
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
     pub code: Option<i32>,
     pub signal: Option<String>,
 }
@@ -76,10 +76,10 @@ pub struct PluginJobStatus {
 pub struct PluginJobRun {
     pub run_id: String,
     pub trigger: PluginJobTrigger,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub started_at: DateTime<Utc>,
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub finished_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub started_at: Timestamp,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub finished_at: Option<Timestamp>,
     pub outcome: Option<PluginJobOutcome>,
     pub message: Option<String>,
 }
@@ -121,8 +121,8 @@ pub struct PluginLogs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginLogLine {
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
     pub stream: PluginLogStream,
     pub text: String,
 }

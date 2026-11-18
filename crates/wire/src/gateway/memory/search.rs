@@ -1,6 +1,6 @@
 use super::{BrowseWindow, TagWire};
 use crate::message::Role;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -56,10 +56,13 @@ pub enum CaptureStatus {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemorySearchToolArgs {
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub since: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub before: Option<Timestamp>,
     pub window: Option<BrowseWindow>,
     pub expand: Option<bool>,
     pub synthesize: Option<bool>,
@@ -89,6 +92,7 @@ pub enum MemoryHitSource {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySearchHit {
@@ -97,7 +101,9 @@ pub struct MemorySearchHit {
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
     pub score: f64,
     pub role: Option<Role>,
     pub agent: Option<String>,

@@ -2,13 +2,13 @@ pub(crate) mod catalog;
 mod messages;
 mod trash;
 
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use kernel::memory::{DeletedSession, SessionActivity, SessionDeletion};
 use wire::gateway::session_delete::{
     SessionDeleteError, SessionDeleteRefused, SessionDeleteRequest, SessionDeleteResult,
@@ -66,10 +66,7 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
 }
 
-pub(super) async fn tombstoned(
-    gateway: &Gateway,
-    keys: &[String],
-) -> BTreeMap<String, DateTime<Utc>> {
+pub(super) async fn tombstoned(gateway: &Gateway, keys: &[String]) -> BTreeMap<String, Timestamp> {
     let Some(deletions) = gateway.session_deletion() else {
         return BTreeMap::new();
     };
@@ -96,9 +93,9 @@ pub(super) async fn trashed(gateway: &Gateway, keys: &[String]) -> BTreeSet<Stri
 }
 
 pub(super) fn hidden(
-    deleted: &BTreeMap<String, DateTime<Utc>>,
+    deleted: &BTreeMap<String, Timestamp>,
     key: &str,
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<Timestamp>,
 ) -> bool {
     deleted
         .get(key)
@@ -184,7 +181,7 @@ async fn erase(
         Some(_) => {}
     }
     let deleted = deletions
-        .delete_session(session.as_str(), Some(user.as_str()), Utc::now())
+        .delete_session(session.as_str(), Some(user.as_str()), Timestamp::now())
         .await?;
     tracing::info!(
         session = %session,

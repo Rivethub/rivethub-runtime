@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::topics::HistoryMark;
 use wire::gateway::topics::SessionHistoryList;
 use wire::gateway::topics::SessionHistoryMark;
@@ -20,7 +19,7 @@ pub(super) async fn close(
     State(gateway): State<Arc<Gateway>>,
     Path(key): Path<String>,
 ) -> Result<Json<TopicRecord>, ApiError> {
-    let now = Utc::now();
+    let now = Timestamp::now();
     closed(&gateway, &key, Some(now), now).await
 }
 
@@ -28,14 +27,14 @@ pub(super) async fn reopen(
     State(gateway): State<Arc<Gateway>>,
     Path(key): Path<String>,
 ) -> Result<Json<TopicRecord>, ApiError> {
-    closed(&gateway, &key, None, Utc::now()).await
+    closed(&gateway, &key, None, Timestamp::now()).await
 }
 
 async fn closed(
     gateway: &Gateway,
     key: &str,
-    at: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
+    at: Option<Timestamp>,
+    now: Timestamp,
 ) -> Result<Json<TopicRecord>, ApiError> {
     let store = gateway.topics()?;
     let id = resolve_id(store.as_ref(), key).await?;
@@ -61,7 +60,7 @@ pub(super) async fn mark(
         .topics()?
         .mark_history(HistoryMark {
             session,
-            at: Utc::now(),
+            at: Timestamp::now(),
         })
         .await
         .map_err(map::error)?;

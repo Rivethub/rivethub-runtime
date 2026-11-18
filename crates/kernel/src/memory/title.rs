@@ -152,7 +152,7 @@ fn placeholder(title: &str) -> bool {
 
 fn stamped_default(title: &str) -> bool {
     title.split_once(" - ").is_some_and(|(name, stamp)| {
-        name.parse::<DefaultTitle>().is_ok() && chrono::DateTime::parse_from_rfc3339(stamp).is_ok()
+        name.parse::<DefaultTitle>().is_ok() && values::time::parse_rfc3339(stamp).is_ok()
     })
 }
 

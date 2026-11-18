@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use kernel::harness_setup::CaptureMethod;
 use kernel::harness_setup::ConnectOutcome;
@@ -73,7 +72,7 @@ impl HarnessSetupService {
         id: &str,
         part: Option<ConnectPart>,
         dry_run: bool,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<SetupChange, SetupError> {
         let spec = known(id)?;
         let (probe, version) = probe_one(&self.locator, spec, &self.rh);
@@ -120,7 +119,7 @@ impl HarnessSetupService {
         id: &str,
         part: Option<ConnectPart>,
         dry_run: bool,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<SetupChange, SetupError> {
         let spec = known(id)?;
         let (edits, skipped) = self.plan(spec, part, Direction::Disconnect, None)?;
@@ -296,7 +295,7 @@ impl HarnessSetup for HarnessSetupService {
         let id = id.to_owned();
         tokio::task::spawn_blocking(move || {
             service
-                .connect_now(&id, Some(part), dry_run, Utc::now())
+                .connect_now(&id, Some(part), dry_run, Timestamp::now())
                 .map(|change| change.outcome)
         })
         .await

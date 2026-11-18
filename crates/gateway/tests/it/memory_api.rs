@@ -1,4 +1,5 @@
 use crate::common;
+use jiff::Timestamp;
 
 use std::sync::Arc;
 
@@ -69,10 +70,8 @@ fn seeded() -> Result<(Arc<testkit::FakeMemoryStore>, axum::Router), String> {
 
 fn entry(id: &str, content: &str, created_at: &str) -> MemoryEntry {
     #[expect(clippy::expect_used)]
-    fn at(created_at: &str) -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339(created_at)
-            .expect("entry created_at is an RFC 3339 literal")
-            .with_timezone(&chrono::Utc)
+    fn at(created_at: &str) -> Timestamp {
+        wire::time::parse_rfc3339(created_at).expect("entry created_at is an RFC 3339 literal")
     }
     MemoryEntry {
         provenance: None,

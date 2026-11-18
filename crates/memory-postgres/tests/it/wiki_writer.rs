@@ -1,9 +1,10 @@
 #![cfg(test)]
 
+use jiff::Timestamp;
 use std::path::Path;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
-use chrono::{DateTime, Utc};
 use kernel::wiki::builder::WikiWriteError;
 use kernel::wiki::page::{
     CitationKind, PageCitation, PagePatch, PageSource, WikiAction, normalize_slug, parse_wiki_page,
@@ -13,7 +14,7 @@ use memory_postgres::wiki_writer::{AppliedPage, WikiRepository};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn now() -> DateTime<Utc> {
+fn now() -> Timestamp {
     "2026-10-10T12:00:00Z".parse().expect("date")
 }
 
@@ -34,13 +35,13 @@ fn patch(slug: &str) -> PagePatch {
         article: None,
         article_patches: Vec::new(),
         history_entry: Some(WikiHistoryEntry {
-            date: now().date_naive(),
+            date: now().utc_date(),
             title: "Release".to_owned(),
             body: "Checked health.".to_owned(),
         }),
         add_citations: vec![PageCitation {
             summary_id: SUMMARY_ID.to_owned(),
-            date: Some(now().date_naive()),
+            date: Some(now().utc_date()),
             kind: Some(CitationKind::Leaf),
             note: Some("Release | notes".to_owned()),
         }],
@@ -152,7 +153,7 @@ async fn live_foreign_lock_is_waited_on_then_released() -> TestResult {
     let path = directory.path().join(".wiki-writer.lock");
     tokio::fs::write(
         &path,
-        format!("foreign {}\n", Utc::now().timestamp_millis()),
+        format!("foreign {}\n", Timestamp::now().epoch_millis()),
     )
     .await?;
     let repository = WikiRepository::new(directory.path().to_path_buf());

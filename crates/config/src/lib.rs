@@ -19,7 +19,7 @@ pub use enums::{
 pub use environment::{
     CLOUD_VARIABLE, CONFIG_PATH_VARIABLE, Environment, LOG_LEVEL_VARIABLE, LogLevelSetting,
     MODEL_RUN_VARIABLE, NODE_ID_VARIABLE, NODE_NAME_VARIABLE, POSTGRES_URL_VARIABLE,
-    deprecated_alias_names,
+    deprecated_alias_names, host_zone,
 };
 pub use load::{
     ConfigError, Loaded, Typed, resolve_config_path, standalone_config_yaml, type_document,

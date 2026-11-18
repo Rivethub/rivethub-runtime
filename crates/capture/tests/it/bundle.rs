@@ -1,6 +1,5 @@
 use capture::bundle::BundleError;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -40,11 +39,11 @@ struct StampState {
     state: String,
 }
 
-fn instant(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+fn instant(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
-fn message(event_id: &str, content: &str, at: Option<DateTime<Utc>>) -> CaptureMessage {
+fn message(event_id: &str, content: &str, at: Option<Timestamp>) -> CaptureMessage {
     CaptureMessage {
         event_id: event_id.to_owned(),
         role: Role::User,
@@ -196,7 +195,7 @@ fn a_v1_session_with_no_dates_parses_with_unknown_dates() -> TestResult {
         (session.origin.created_at, session.origin.updated_at),
         (None, None)
     );
-    assert_eq!(bundle.manifest.exported_at, DateTime::<Utc>::UNIX_EPOCH);
+    assert_eq!(bundle.manifest.exported_at, Timestamp::UNIX_EPOCH);
     Ok(())
 }
 

@@ -1,7 +1,5 @@
 use axum::http::StatusCode;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::model::LlmResponse;
 use kernel::model::LlmResponseKind;
 use kernel::topics::Suggestion;
@@ -45,7 +43,7 @@ fn reply(text: &str) -> Script {
     })
 }
 
-async fn tidy(api: &Api, answer: &str, now: DateTime<Utc>) -> TestResult<TidyRun> {
+async fn tidy(api: &Api, answer: &str, now: Timestamp) -> TestResult<TidyRun> {
     let provider = FakeProvider::new(vec![reply(answer)]);
     let topics = SessionTopics {
         store: api.store.clone(),
@@ -105,7 +103,7 @@ async fn seed(api: &Api) -> TestResult<Vec<SessionId>> {
 async fn a_weekly_batch_is_proposed_decided_and_remembered() -> TestResult {
     let api = Api::new(true)?;
     let members = seed(&api).await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let TidyRun::Proposed(batch) = tidy(&api, WEEKLY, now).await? else {
         return Err("the first run proposes a batch".into());
     };
@@ -156,10 +154,11 @@ async fn a_weekly_batch_is_proposed_decided_and_remembered() -> TestResult {
         .await?;
     assert_eq!(upkeep.pending_proposals, 0);
     assert!(matches!(
-        tidy(&api, WEEKLY, now + TimeDelta::days(1)).await?,
+        tidy(&api, WEEKLY, now + wire::time::elapsed_days(1)).await?,
         TidyRun::NotDue { .. }
     ));
-    let TidyRun::Proposed(later) = tidy(&api, WEEKLY, now + TimeDelta::days(8)).await? else {
+    let TidyRun::Proposed(later) = tidy(&api, WEEKLY, now + wire::time::elapsed_days(8)).await?
+    else {
         return Err("a week later the job runs again".into());
     };
     assert!(

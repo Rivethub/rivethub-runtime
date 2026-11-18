@@ -2,7 +2,7 @@ use crate::events::ContextSource;
 use crate::harness::{HarnessId, HarnessSessionSummary};
 use crate::json::JsonObject;
 use crate::session_id::SessionId;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -146,8 +146,8 @@ pub struct SessionPreview {
     pub session_id: SessionId,
     pub kind: SessionPreviewKind,
     pub text: String,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

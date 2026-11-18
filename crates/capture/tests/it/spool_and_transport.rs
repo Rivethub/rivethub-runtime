@@ -1,9 +1,10 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
 use async_trait::async_trait;
 use capture::writer::CaptureTransport as _;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use wire::capture::CaptureResult;
 
@@ -33,7 +34,7 @@ impl capture::writer::CaptureTransport for AcceptingTransport {
     }
 }
 
-fn now_at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn now_at(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 
@@ -180,7 +181,7 @@ async fn spooled_batches_replay_and_a_failure_waits_out_its_backoff()
     let [name] = deferred.as_slice() else {
         return Err("expected the failed batch to stay queued".into());
     };
-    let retry_at = (now + Duration::from_secs(30)).timestamp_millis();
+    let retry_at = (now + Duration::from_secs(30)).epoch_millis();
     assert!(name.ends_with(&format!(".1.{retry_at}.json")), "{name}");
     Ok(())
 }
@@ -243,7 +244,7 @@ async fn many_401_replays_keep_the_batch_spooled_until_a_200_delivers_it()
     let count = |path: std::path::PathBuf| std::fs::read_dir(path).map(Iterator::count);
     for hour in 1..=3 * i64::try_from(capture::spool::MAX_TRANSIENT_ATTEMPTS)? {
         writer
-            .replay(start + chrono::TimeDelta::hours(hour))
+            .replay(start + SignedDuration::from_hours(hour))
             .await?;
         assert_eq!(count(dir.path().to_path_buf())?, 1, "hour {hour}");
         assert!(
@@ -252,7 +253,9 @@ async fn many_401_replays_keep_the_batch_spooled_until_a_200_delivers_it()
         );
     }
     refusing.store(false, std::sync::atomic::Ordering::SeqCst);
-    writer.replay(start + chrono::TimeDelta::hours(100)).await?;
+    writer
+        .replay(start + SignedDuration::from_hours(100))
+        .await?;
     assert_eq!(count(dir.path().to_path_buf())?, 0);
     assert!(!dir.path().join("dead").exists());
     stub.close().await.expect("stub shuts down");
@@ -271,7 +274,7 @@ async fn a_long_refusal_never_dead_letters_a_spooled_batch()
     let writer = capture::writer::CaptureWriter::new(RefusingTransport, spool, None, None);
     for hour in 1..=3 * i64::try_from(capture::spool::MAX_TRANSIENT_ATTEMPTS)? {
         writer
-            .replay(start + chrono::TimeDelta::hours(hour))
+            .replay(start + SignedDuration::from_hours(hour))
             .await?;
         assert_eq!(std::fs::read_dir(dir.path())?.count(), 1, "hour {hour}");
         assert!(

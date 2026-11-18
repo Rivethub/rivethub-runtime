@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::topics::Decision;
 use kernel::topics::DecisionId;
 use kernel::topics::DecisionStatus;
@@ -28,8 +27,8 @@ struct DecisionRow {
     superseded_by: Option<Uuid>,
     decided_by: String,
     session_id: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
 }
 
 fn decision(row: DecisionRow) -> Result<Decision, TopicError> {
@@ -57,7 +56,7 @@ impl DecisionStore for PostgresMemory {
         sqlx::query_as!(
             DecisionRow,
             "SELECT id, topic_id, text, status, superseded_by, decided_by, session_id,
-                    created_at, updated_at
+                    created_at AS \"created_at: jiff_sqlx::Timestamp\", updated_at AS \"updated_at: jiff_sqlx::Timestamp\"
                FROM rh_topic_decisions WHERE topic_id = $1 ORDER BY created_at, id",
             topic.uuid()
         )
@@ -73,7 +72,7 @@ impl DecisionStore for PostgresMemory {
         sqlx::query_as!(
             DecisionRow,
             "SELECT id, topic_id, text, status, superseded_by, decided_by, session_id,
-                    created_at, updated_at
+                    created_at AS \"created_at: jiff_sqlx::Timestamp\", updated_at AS \"updated_at: jiff_sqlx::Timestamp\"
                FROM rh_topic_decisions WHERE id = $1",
             id.uuid()
         )
@@ -102,8 +101,8 @@ impl DecisionStore for PostgresMemory {
                 decision.superseded_by.map(DecisionId::uuid),
                 decision.by,
                 decision.session.as_ref().map(SessionId::as_str),
-                decision.created_at,
-                decision.updated_at
+                crate::time::BindTime::bind_time(decision.created_at) as _,
+                crate::time::BindTime::bind_time(decision.updated_at) as _
             )
             .execute(&mut *tx)
             .await

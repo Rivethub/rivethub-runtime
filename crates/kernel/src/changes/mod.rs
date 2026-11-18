@@ -4,8 +4,7 @@ mod today;
 
 use ::values::SessionId;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 
 use crate::BoxError;
@@ -125,21 +124,21 @@ pub struct Change {
     pub kind: ChangeKind,
     pub subject: Subject,
     pub text: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub actor: ChangeActor,
     pub source: Option<SessionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeWindow {
-    pub from: Option<DateTime<Utc>>,
-    pub to: DateTime<Utc>,
+    pub from: Option<Timestamp>,
+    pub to: Timestamp,
     pub subject: Option<SubjectKey>,
 }
 
 impl ChangeWindow {
     #[must_use]
-    pub const fn between(from: DateTime<Utc>, to: DateTime<Utc>) -> Self {
+    pub const fn between(from: Timestamp, to: Timestamp) -> Self {
         Self {
             from: Some(from),
             to,
@@ -148,7 +147,7 @@ impl ChangeWindow {
     }
 
     #[must_use]
-    pub fn contains(&self, at: DateTime<Utc>) -> bool {
+    pub fn contains(&self, at: Timestamp) -> bool {
         self.from.is_none_or(|from| at >= from) && at < self.to
     }
 
@@ -172,28 +171,28 @@ pub enum ChangeRecord {
         topic: TopicRef,
         text: String,
         session: Option<SessionId>,
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
     Created {
         topic: TopicRef,
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
     Placed {
         topic: TopicRef,
         session: SessionId,
         by: PlacementSource,
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
     Tagged {
         session: SessionId,
         key: String,
         value: String,
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
     Merged {
         into: TopicRef,
         from: String,
-        at: DateTime<Utc>,
+        at: Timestamp,
     },
 }
 

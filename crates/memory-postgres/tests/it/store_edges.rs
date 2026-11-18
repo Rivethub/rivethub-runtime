@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::memory::MemoryEntry;
 use kernel::memory::{CaptureBatchRequest, CaptureMessage};
 use kernel::memory::{MemoryStore, MemoryStoreError};
@@ -8,11 +9,11 @@ use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn stamp(text: &str) -> Result<chrono::DateTime<chrono::Utc>, chrono::ParseError> {
-    Ok(chrono::DateTime::parse_from_rfc3339(text)?.with_timezone(&chrono::Utc))
+fn stamp(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
-fn batch(content: String) -> Result<CaptureBatchRequest, chrono::ParseError> {
+fn batch(content: String) -> Result<CaptureBatchRequest, jiff::Error> {
     Ok(CaptureBatchRequest {
         session_key: "edges".to_owned(),
         agent: "agent".to_owned(),
@@ -195,7 +196,7 @@ async fn caller_time_zone_controls_calendar_windows(pool: PgPool) -> TestResult 
         Err(MemoryStoreError::InvalidRequest { .. })
     ));
     let now = "2026-10-15T03:00:00Z".parse()?;
-    let zone = chrono::FixedOffset::east_opt(19_800).ok_or("zone")?;
+    let zone = jiff::tz::Offset::from_seconds(19_800)?.to_time_zone();
     assert_eq!(
         store
             .search(query.clone().resolve_window(now, &zone))
@@ -206,7 +207,7 @@ async fn caller_time_zone_controls_calendar_windows(pool: PgPool) -> TestResult 
     );
     assert_eq!(
         store
-            .search(query.resolve_window(now, &chrono::Utc))
+            .search(query.resolve_window(now, &jiff::tz::TimeZone::UTC))
             .await?
             .results
             .len(),

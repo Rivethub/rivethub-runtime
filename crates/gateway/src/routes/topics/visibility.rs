@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
@@ -5,7 +6,6 @@ use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::routing;
-use chrono::Utc;
 use kernel::tenancy::Space;
 use kernel::tenancy::SpaceKind;
 use kernel::tenancy::TenancyError;
@@ -166,7 +166,7 @@ async fn save_settings(
         .map_err(|refused| ApiError::Forbidden(refused.to_string()))?;
     let saved = gateway
         .tenancy_store()?
-        .set_default_visibility(user.owner(), &visibility, Utc::now())
+        .set_default_visibility(user.owner(), &visibility, Timestamp::now())
         .await
         .map_err(error)?;
     Ok(Json(user_settings(Some(saved))))
@@ -202,7 +202,7 @@ async fn mark_session(
     let viewer = gateway.tenancy.viewer(&user);
     let state = gateway
         .tenancy_store()?
-        .mark_session(&viewer, &key, mark.as_ref(), Utc::now())
+        .mark_session(&viewer, &key, mark.as_ref(), Timestamp::now())
         .await
         .map_err(error)?;
     Ok(Json(session_record(key, state)))

@@ -1,6 +1,3 @@
-use chrono::DateTime;
-use chrono::Utc;
-
 use super::Topic;
 use super::TopicPageError;
 use super::TopicPageStore;
@@ -13,6 +10,8 @@ use crate::wiki::page::WikiHistoryEntry;
 use crate::wiki::page::WikiPage;
 use crate::wiki::page::WikiSlug;
 use crate::wiki::page::WikiSourceKind;
+use jiff::Timestamp;
+use values::time::TimestampFormat as _;
 
 const USER_EDIT: &str = "Edited in Memory";
 
@@ -23,7 +22,7 @@ pub struct PageEdit {
 }
 
 impl PageEdit {
-    pub fn apply_to(&self, page: &mut WikiPage, now: DateTime<Utc>) {
+    pub fn apply_to(&self, page: &mut WikiPage, now: Timestamp) {
         if let Some(text) = &self.current_state {
             text.trim().clone_into(&mut page.current_state);
         }
@@ -31,7 +30,7 @@ impl PageEdit {
             text.trim().clone_into(&mut page.article);
         }
         let entry = WikiHistoryEntry {
-            date: now.date_naive(),
+            date: now.utc_date(),
             title: USER_EDIT.to_owned(),
             body: "Edited by hand in RivetHub's Memory page.".to_owned(),
         };
@@ -64,7 +63,7 @@ pub async fn edit_topic_page(
     pages: &dyn TopicPageStore,
     topic: &Topic,
     edit: &PageEdit,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<WikiSlug>, TopicPageError> {
     let Some(owner) = page_owner(topics, topic).await? else {
         return Ok(None);

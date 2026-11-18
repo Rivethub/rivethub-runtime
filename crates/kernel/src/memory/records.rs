@@ -1,9 +1,10 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use values::{JsonObject, Role};
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryEntry {
@@ -17,10 +18,13 @@ pub struct MemoryEntry {
     pub tool_args: Option<JsonObject>,
     pub tool_result: Option<String>,
     pub metadata: Option<JsonObject>,
-    pub created_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
     pub provenance: Option<super::Provenance>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySearchResult {
@@ -32,7 +36,9 @@ pub struct MemorySearchResult {
     pub role: Option<Role>,
     pub agent: Option<String>,
     pub relevance_score: f64,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub created_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -189,12 +195,13 @@ pub struct RecentSession {
     pub session_id: String,
     pub title: Option<String>,
     pub agent: String,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub last_active: DateTime<Utc>,
+    #[serde_as(as = "values::time::EpochMillis")]
+    pub last_active: Timestamp,
     pub messages: u64,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySummaryNode {
@@ -204,9 +211,14 @@ pub struct MemorySummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-    pub earliest_at: Option<DateTime<Utc>>,
-    pub latest_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub earliest_at: Option<Timestamp>,
+    #[serde_as(as = "Option<values::time::Rfc3339>")]
+    pub latest_at: Option<Timestamp>,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub created_at: Timestamp,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

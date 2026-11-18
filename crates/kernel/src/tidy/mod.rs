@@ -4,12 +4,11 @@ mod guard;
 mod proposal;
 mod upkeep;
 
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 use thiserror::Error;
 
 use crate::BoxError;
@@ -49,7 +48,7 @@ pub use upkeep::TaskActivity;
 pub use upkeep::TypeTally;
 pub use upkeep::WikiTally;
 
-pub const WEEK: TimeDelta = TimeDelta::days(7);
+pub const WEEK: SignedDuration = values::time::elapsed_days(7);
 
 #[derive(Debug, Error)]
 pub enum TidyError {
@@ -92,19 +91,19 @@ pub trait TidyStore: Send + Sync {
         &self,
         id: ProposalId,
         state: ProposalState,
-        at: DateTime<Utc>,
+        at: Timestamp,
     ) -> Result<Proposal, TidyError>;
 
-    async fn last_batch(&self, by: Proposer) -> Result<Option<DateTime<Utc>>, TidyError>;
+    async fn last_batch(&self, by: Proposer) -> Result<Option<Timestamp>, TidyError>;
 
     async fn known(&self) -> Result<BTreeSet<Fingerprint>, TidyError>;
 
-    async fn inputs(&self, since: DateTime<Utc>) -> Result<TidyInputs, TidyError>;
+    async fn inputs(&self, since: Timestamp) -> Result<TidyInputs, TidyError>;
 }
 
 #[async_trait]
 pub trait UpkeepStore: Send + Sync {
-    async fn filing(&self, since: DateTime<Utc>) -> Result<FilingTally, TidyError>;
+    async fn filing(&self, since: Timestamp) -> Result<FilingTally, TidyError>;
 
     async fn wiki(&self) -> Result<WikiTally, TidyError>;
 

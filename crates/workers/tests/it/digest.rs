@@ -1,7 +1,8 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
 use kernel::changes::{
     ChangeError, ChangeFeed, ChangeRecord, ChangeWindow, DailyDigest, DigestRequest, DigestStore,
     TopicRef,
@@ -30,11 +31,7 @@ struct Kept(Mutex<Vec<DailyDigest>>);
 
 #[async_trait]
 impl DigestStore for Kept {
-    async fn digest(
-        &self,
-        _day: NaiveDate,
-        _owner: &Owner,
-    ) -> Result<Option<DailyDigest>, ChangeError> {
+    async fn digest(&self, _day: Date, _owner: &Owner) -> Result<Option<DailyDigest>, ChangeError> {
         Ok(None)
     }
 
@@ -48,7 +45,7 @@ impl DigestStore for Kept {
     }
 }
 
-fn at(text: &str) -> DateTime<Utc> {
+fn at(text: &str) -> Timestamp {
     text.parse().unwrap()
 }
 
@@ -113,7 +110,7 @@ async fn the_summarizer_writes_the_days_digest_from_its_changes() {
     let [digest] = written.as_slice() else {
         panic!("one digest is kept: {written:?}");
     };
-    assert_eq!(digest.day, "2026-11-05".parse::<NaiveDate>().unwrap());
+    assert_eq!(digest.day, "2026-11-05".parse::<Date>().unwrap());
     assert_eq!(digest.owner.as_str(), "owner");
     assert_eq!(digest.changes, 2);
     assert_eq!(

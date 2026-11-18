@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use values::SessionId;
@@ -23,7 +23,7 @@ pub struct WikiTopic {
     pub tags: Vec<String>,
     pub entities: Vec<String>,
     #[serde_as(as = "values::Millis")]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub excerpt: String,
     #[serde(default)]
     pub topic_id: Option<String>,
@@ -63,9 +63,9 @@ pub struct WikiPageResponse {
     pub git_sha: Option<String>,
     #[serde(default)]
     #[serde_as(as = "Option<values::Millis>")]
-    pub last_verified: Option<DateTime<Utc>>,
+    pub last_verified: Option<Timestamp>,
     #[serde_as(as = "values::Millis")]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub related: Option<Vec<String>>,
     #[serde(default)]
     pub topic_id: Option<String>,
@@ -116,7 +116,7 @@ pub struct WikiCitation {
     pub summary_id: String,
     #[serde(default)]
     #[serde_as(as = "Option<values::Millis>")]
-    pub date: Option<DateTime<Utc>>,
+    pub date: Option<Timestamp>,
     pub kind: Option<String>,
     pub note: Option<String>,
     #[serde(default)]
@@ -148,9 +148,9 @@ pub struct WikiSource {
 #[serde(rename_all = "camelCase")]
 pub struct WikiSourceSpan {
     #[serde_as(as = "values::Millis")]
-    pub earliest: DateTime<Utc>,
+    pub earliest: Timestamp,
     #[serde_as(as = "values::Millis")]
-    pub latest: DateTime<Utc>,
+    pub latest: Timestamp,
 }
 
 #[cfg(test)]
@@ -189,7 +189,7 @@ mod tests {
             sources: Vec::new(),
             git_sha: None,
             last_verified: None,
-            updated_at: DateTime::<Utc>::UNIX_EPOCH,
+            updated_at: Timestamp::UNIX_EPOCH,
             related: None,
             topic_id: Some("home".to_owned()),
         };

@@ -7,8 +7,7 @@ pub mod report;
 mod rescan;
 mod scrub;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Serialize;
 use strum::IntoEnumIterator as _;
 use thiserror::Error;
@@ -51,7 +50,7 @@ const RECHECKS: usize = 4;
 #[derive(Debug, Error)]
 pub enum SanitizeError {
     #[error("the bundle is already sanitized (at {at}); sanitize the raw bundle instead")]
-    AlreadySanitized { at: DateTime<Utc> },
+    AlreadySanitized { at: Timestamp },
     #[error(transparent)]
     Bundle(#[from] BundleError),
     #[error("sanitize policy does not serialize: {0}")]
@@ -72,8 +71,8 @@ pub enum SanitizeError {
         "the report is from the sanitize run at {report}, but the bundle is from the run at {bundle}; resolve with the report written beside this bundle"
     )]
     OtherRun {
-        bundle: DateTime<Utc>,
-        report: DateTime<Utc>,
+        bundle: Timestamp,
+        report: Timestamp,
     },
     #[error(
         "the bundle stamp says unresolved_flags is {stamped}, but its review table holds {open} open flag(s); the stamp was edited, so ingest refuses it"
@@ -148,7 +147,7 @@ pub struct Sanitized {
 pub struct Scrubbed {
     raw_digest: String,
     exported_by: BundleAuthor,
-    exported_at: DateTime<Utc>,
+    exported_at: Timestamp,
     sessions: Vec<BundledSession>,
     changes: Vec<Change>,
     collisions: Vec<Collision>,
@@ -159,7 +158,7 @@ pub struct Scrubbed {
 pub fn run(
     bundle: &SessionBundle,
     policy: &Policy,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<Sanitized, SanitizeError> {
     scrub(bundle, policy)?.seal(policy, at)
 }
@@ -227,7 +226,7 @@ impl Scrubbed {
     fn review(
         &mut self,
         key: &LocalKey,
-        at: DateTime<Utc>,
+        at: Timestamp,
     ) -> Result<Option<LocalReview>, SanitizeError> {
         let Some(decision) = &self.decision else {
             return Ok(None);
@@ -249,7 +248,7 @@ impl Scrubbed {
         Ok(Some(local))
     }
 
-    pub fn seal(mut self, policy: &Policy, at: DateTime<Utc>) -> Result<Sanitized, SanitizeError> {
+    pub fn seal(mut self, policy: &Policy, at: Timestamp) -> Result<Sanitized, SanitizeError> {
         let local = self.review(&policy.key, at)?;
         let policy_sha256 = policy.hash(&self.raw_digest)?;
         let unresolved_flags = self

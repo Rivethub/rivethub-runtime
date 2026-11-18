@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::consolidate::{WikiConsolidateStore, WikiFold, WikiTopicStats};
 use kernel::wiki::page::{FoldMark, FoldedTopic, WikiPage, fold_page, fold_text};
@@ -15,7 +15,8 @@ struct StatsRow {
     title: String,
     citations: i64,
     history_count: i32,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     bound: bool,
 }
 
@@ -56,7 +57,7 @@ impl WikiConsolidateStore for PostgresMemory {
     async fn fold_wiki(
         &self,
         fold: &WikiFold,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let directory = self
             .wiki_directory
@@ -76,7 +77,7 @@ impl PostgresMemory {
         &self,
         repository: &mut LockedRepository,
         fold: &WikiFold,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
         let mut slugs: Vec<&str> = std::iter::once(fold.parent.as_str())
@@ -165,7 +166,7 @@ async fn retire(
     tx: &mut Transaction<'_, Postgres>,
     child: &str,
     parent: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     for statement in [
         "INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, cited_at, owner_user_id)
@@ -202,7 +203,7 @@ async fn retire(
     )
     .bind(child)
     .bind(parent)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await
     .map_err(query_error)?;

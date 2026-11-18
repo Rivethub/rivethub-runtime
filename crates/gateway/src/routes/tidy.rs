@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -6,7 +7,6 @@ use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::routing;
-use chrono::Utc;
 use kernel::queue::WorkerRole;
 use kernel::tidy::Batch;
 use kernel::tidy::BatchId;
@@ -248,7 +248,7 @@ async fn approve(
     Path(segment): Path<String>,
 ) -> Result<Json<TidyProposal>, ApiError> {
     let id = proposal_id(&segment)?;
-    let approved = kernel::tidy::approve(&ports(&gateway, &user)?, id, Utc::now())
+    let approved = kernel::tidy::approve(&ports(&gateway, &user)?, id, Timestamp::now())
         .await
         .map_err(error)?;
     Ok(Json(record(approved)))
@@ -259,7 +259,7 @@ async fn reject(
     Path(segment): Path<String>,
 ) -> Result<Json<TidyProposal>, ApiError> {
     let id = proposal_id(&segment)?;
-    let rejected = kernel::tidy::reject(gateway.tidy()?.as_ref(), id, Utc::now())
+    let rejected = kernel::tidy::reject(gateway.tidy()?.as_ref(), id, Timestamp::now())
         .await
         .map_err(error)?;
     Ok(Json(record(rejected)))
@@ -288,9 +288,10 @@ async fn decide_batch(
     decision: Decision,
 ) -> Result<Json<TidyBatchDecision>, ApiError> {
     let id = batch_id(segment)?;
-    let decided = kernel::tidy::decide_batch(&ports(gateway, user)?, id, decision, Utc::now())
-        .await
-        .map_err(error)?;
+    let decided =
+        kernel::tidy::decide_batch(&ports(gateway, user)?, id, decision, Timestamp::now())
+            .await
+            .map_err(error)?;
     Ok(Json(outcome(decided)))
 }
 
@@ -305,7 +306,7 @@ pub(super) async fn upkeep(
     State(gateway): State<Arc<Gateway>>,
 ) -> Result<Json<MemoryUpkeep>, ApiError> {
     let store = gateway.upkeep()?;
-    let filing = store.filing(Utc::now() - WEEK).await.map_err(error)?;
+    let filing = store.filing(Timestamp::now() - WEEK).await.map_err(error)?;
     let wiki = store.wiki().await.map_err(error)?;
     let tasks = store.tasks().await.map_err(error)?;
     let pending = gateway.tidy()?.pending().await.map_err(error)?;
