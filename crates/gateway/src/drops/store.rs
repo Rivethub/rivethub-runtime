@@ -372,9 +372,7 @@ impl Store {
         file.sync_all().await?;
         drop(file);
         let created_at = Timestamp::now();
-        let expires_at = created_at
-            .saturating_add(self.ttl)
-            .map_err(std::io::Error::other)?;
+        let expires_at = self.expires_at(created_at)?;
         let record = Record {
             owner: reservation.owner.as_str().to_owned(),
             bytes: total,
@@ -416,6 +414,12 @@ impl Store {
             bytes: total,
             expires_at,
         })
+    }
+
+    fn expires_at(&self, created_at: Timestamp) -> Result<Timestamp, std::io::Error> {
+        created_at
+            .saturating_add(self.ttl)
+            .map_err(std::io::Error::other)
     }
 
     fn take_locked(&self, index: &mut Index, id: &DropId) -> std::io::Result<bool> {
