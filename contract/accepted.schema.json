@@ -5241,7 +5241,25 @@
           "minimum": 0,
           "type": "integer"
         },
+        "parts": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "roots": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sections": {
+          "default": 0,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sessions": {
+          "default": 0,
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -5356,11 +5374,47 @@
             }
           ]
         },
+        "qualityFlags": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rangeVerified": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "sourceFirst": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sourceLast": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "sourceMessageIds": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "summaryOrdinal": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "truncated": {
           "type": "boolean"
@@ -9734,7 +9788,10 @@
       "enum": [
         "leaf",
         "branch",
-        "root"
+        "root",
+        "session",
+        "part",
+        "section"
       ],
       "type": "string"
     },

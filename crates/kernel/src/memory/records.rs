@@ -106,6 +106,9 @@ pub enum SummaryKind {
     Leaf,
     Branch,
     Root,
+    Session,
+    Part,
+    Section,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +210,12 @@ pub struct MemorySummaryNode {
     pub earliest_at: Option<DateTime<Utc>>,
     pub latest_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub summary_ordinal: Option<u32>,
+    pub source_first: Option<u32>,
+    pub source_last: Option<u32>,
+    pub range_verified: Option<bool>,
+    #[serde(default)]
+    pub quality_flags: u32,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -241,11 +250,16 @@ pub struct MemoryMessageTally {
 
 impl SummaryKind {
     #[must_use]
+    pub const fn is_top_down(self) -> bool {
+        matches!(self, Self::Session | Self::Part | Self::Section)
+    }
+
+    #[must_use]
     pub const fn depth(self) -> i32 {
         match self {
-            Self::Leaf => 0,
-            Self::Branch => 1,
-            Self::Root => 2,
+            Self::Leaf | Self::Section => 0,
+            Self::Branch | Self::Part => 1,
+            Self::Root | Self::Session => 2,
         }
     }
 
@@ -255,6 +269,9 @@ impl SummaryKind {
             Self::Leaf => "leaf",
             Self::Branch => "branch",
             Self::Root => "root",
+            Self::Session => "session",
+            Self::Part => "part",
+            Self::Section => "section",
         }
     }
 

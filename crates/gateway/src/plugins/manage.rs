@@ -67,21 +67,23 @@ async fn forward_summaries(
             summary = written.recv() => summary,
         };
         match summary {
-            Ok(summary) => {
-                #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-                let session_id = summary.session_key.parse().ok();
-                host.publish(&PluginEvent::SummaryWritten {
-                    summary_id: summary.id.to_string(),
-                    session_id,
-                    kind: crate::memory_body::summary_kind_body(summary.kind),
-                    level: summary.depth.unsigned_abs(),
-                });
-            }
+            Ok(summary) => host.publish(&written_event(&summary)),
             Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
                 tracing::warn!(missed, "plug-in summary events lagged");
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
         }
+    }
+}
+
+fn written_event(summary: &kernel::memory::WrittenSummary) -> PluginEvent {
+    #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
+    let session_id = summary.session_key.parse().ok();
+    PluginEvent::SummaryWritten {
+        summary_id: summary.id.to_string(),
+        session_id,
+        kind: crate::memory_body::summary_kind_body(summary.kind),
+        level: summary.depth.unsigned_abs(),
     }
 }
 
@@ -336,5 +338,47 @@ impl PluginHost {
             supervisor.stop.cancel();
             supervisor.tasks.wait().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::written_event;
+    use kernel::memory::{SummaryKind, WrittenSummary};
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EventEncoding {
+        #[serde(rename = "type")]
+        name: String,
+        summary_id: String,
+        kind: String,
+        level: i32,
+    }
+
+    #[test]
+    fn top_down_archive_summary_events_encode_every_node_kind() -> serde_json::Result<()> {
+        for kind in [
+            SummaryKind::Leaf,
+            SummaryKind::Branch,
+            SummaryKind::Root,
+            SummaryKind::Session,
+            SummaryKind::Part,
+            SummaryKind::Section,
+        ] {
+            let id = uuid::Uuid::new_v4();
+            let event = written_event(&WrittenSummary {
+                id,
+                session_key: "cli:fixture".to_owned(),
+                kind,
+                depth: kind.depth(),
+            });
+            let encoded: EventEncoding = serde_json::from_slice(&serde_json::to_vec(&event)?)?;
+            assert_eq!(encoded.name, "summary.written");
+            assert_eq!(encoded.summary_id, id.to_string());
+            assert_eq!(encoded.kind, kind.as_str());
+            assert_eq!(encoded.level, kind.depth());
+        }
+        Ok(())
     }
 }

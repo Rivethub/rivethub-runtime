@@ -76,3 +76,36 @@ fn every_definition_name_is_unique() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn summary_kinds_and_counts_are_additive() -> Result<(), Box<dyn std::error::Error>> {
+    use wire::gateway::memory::{MemorySummaryCounts, MemorySummaryNode, SummaryKind};
+
+    for schema in [wire::contract::sent(), wire::contract::accepted()] {
+        let values = schema
+            .get("$defs")
+            .and_then(|defs| defs.get("SummaryKind"))
+            .and_then(|kind| kind.get("enum"))
+            .and_then(serde_json::Value::as_array)
+            .ok_or("missing summary kind enum")?;
+        let kinds: Vec<_> = values
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(
+            kinds,
+            ["leaf", "branch", "root", "session", "part", "section"]
+        );
+    }
+    let counts: MemorySummaryCounts =
+        serde_json::from_str(r#"{"leaves":2,"branches":1,"roots":1,"embedded":2,"top":1}"#)?;
+    assert_eq!((counts.sessions, counts.parts, counts.sections), (0, 0, 0));
+    let old: MemorySummaryNode = serde_json::from_str(
+        r#"{"id":"fixture","level":0,"kind":"leaf","content":"A tray","messageCount":1,
+             "createdAt":"2026-10-10T12:00:00Z","sourceMessageIds":[],"vector":"pending"}"#,
+    )?;
+    assert_eq!(old.summary_ordinal, None);
+    assert_eq!(old.quality_flags, 0);
+    assert!(serde_json::from_str::<SummaryKind>(r#""unknown""#).is_err());
+    Ok(())
+}

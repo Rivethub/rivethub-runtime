@@ -47,6 +47,9 @@ pub enum SummaryKind {
     Leaf,
     Branch,
     Root,
+    Session,
+    Part,
+    Section,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

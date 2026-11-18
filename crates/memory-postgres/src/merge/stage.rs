@@ -141,5 +141,30 @@ pub(super) async fn align_embeddings(
         .await
         .map_err(|error| Error::operation("merge embeddings", error))?;
     }
+    sqlx::query("UPDATE merge_rh_summary_passages SET embedding = NULL")
+        .execute(&mut *conn)
+        .await
+        .map_err(|error| Error::operation("merge summary passage embeddings", error))?;
     Ok(true)
+}
+
+pub(super) async fn mark_summary_repairs(conn: &mut PgConnection) -> Result<(), Error> {
+    sqlx::query(
+        "UPDATE merge_rh_summaries s SET index_needs_repair = true
+         WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair
+           AND NOT coalesce((
+            SELECT bool_and(embedded AND char_start = previous_end AND ordinal = position)
+                   AND max(char_end) = length(s.content)
+            FROM (
+                SELECT p.char_start, p.char_end, p.ordinal, p.embedding IS NOT NULL AS embedded,
+                       lag(p.char_end, 1, 0) OVER (ORDER BY p.ordinal) AS previous_end,
+                       row_number() OVER (ORDER BY p.ordinal) - 1 AS position
+                FROM merge_rh_summary_passages p WHERE p.record_id = s.id
+            ) pieces
+         ), false)",
+    )
+    .execute(conn)
+    .await
+    .map_err(|error| Error::operation("merge summary repairs", error))?;
+    Ok(())
 }

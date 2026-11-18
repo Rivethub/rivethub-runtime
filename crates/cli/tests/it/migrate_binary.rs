@@ -146,7 +146,7 @@ async fn config_warnings_print_once_and_config_parses_after_the_subcommand(
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("current 75") && stdout.contains("pending 0"),
+            stdout.contains("current 76") && stdout.contains("pending 0"),
             "the config's postgres url must be used: {stdout}"
         );
     }

@@ -163,6 +163,11 @@ pub(crate) fn memory_summary_node_body(
         earliest_at: value.earliest_at,
         latest_at: value.latest_at,
         created_at: value.created_at,
+        summary_ordinal: value.summary_ordinal,
+        source_first: value.source_first,
+        source_last: value.source_last,
+        range_verified: value.range_verified,
+        quality_flags: value.quality_flags,
         source_message_ids: value.source_message_ids,
         vector: vector_state_body(value.vector),
         truncated: value.truncated,
@@ -178,6 +183,9 @@ pub(crate) const fn summary_kind_body(
         kernel::memory::SummaryKind::Leaf => wire::gateway::memory::SummaryKind::Leaf,
         kernel::memory::SummaryKind::Branch => wire::gateway::memory::SummaryKind::Branch,
         kernel::memory::SummaryKind::Root => wire::gateway::memory::SummaryKind::Root,
+        kernel::memory::SummaryKind::Session => wire::gateway::memory::SummaryKind::Session,
+        kernel::memory::SummaryKind::Part => wire::gateway::memory::SummaryKind::Part,
+        kernel::memory::SummaryKind::Section => wire::gateway::memory::SummaryKind::Section,
     }
 }
 

@@ -36,7 +36,7 @@ fn selection(table: EmbedTable) -> Option<Selection> {
         }),
         EmbedTable::Summaries => Some(Selection {
             id: "id",
-            predicate: "length(content) > 20",
+            predicate: "pipeline_version < 7 AND length(content) > 20",
         }),
         EmbedTable::WikiTopics => Some(Selection {
             id: "slug",

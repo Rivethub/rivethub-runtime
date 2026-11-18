@@ -141,7 +141,7 @@ pub enum SummaryStoreError {
     },
     #[error("summary {id} is missing")]
     Missing { id: String },
-    #[error("stored summary kind {kind} is not leaf, branch, or root")]
+    #[error("unknown or unsupported summary kind {kind}")]
     Kind { kind: String },
     #[error("a summary count does not fit")]
     Count,

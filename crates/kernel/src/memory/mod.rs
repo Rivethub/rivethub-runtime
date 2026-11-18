@@ -326,11 +326,47 @@ impl SummaryDag {
     }
 
     #[must_use]
+    pub fn order_top_down(mut self) -> Self {
+        if let Some(root) = self
+            .summaries
+            .iter()
+            .find(|node| node.kind == SummaryKind::Session)
+            .map(|node| node.id.clone())
+        {
+            let position = |node: &MemorySummaryNode| {
+                if !node.kind.is_top_down() {
+                    0
+                } else if node.kind == SummaryKind::Session {
+                    1
+                } else if node.parent_id.as_deref() == Some(root.as_str()) {
+                    2
+                } else {
+                    3
+                }
+            };
+            self.summaries.sort_by(|left, right| {
+                position(left).cmp(&position(right)).then_with(|| {
+                    if left.kind.is_top_down() && right.kind.is_top_down() {
+                        (&left.parent_id, left.summary_ordinal, &left.id).cmp(&(
+                            &right.parent_id,
+                            right.summary_ordinal,
+                            &right.id,
+                        ))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+            });
+        }
+        self
+    }
+
+    #[must_use]
     pub fn latest(mut self, limit: usize) -> Self {
         self.summaries.sort_by(|left, right| {
-            right
-                .latest_at
-                .cmp(&left.latest_at)
+            (right.kind == SummaryKind::Session)
+                .cmp(&(left.kind == SummaryKind::Session))
+                .then_with(|| right.latest_at.cmp(&left.latest_at))
                 .then_with(|| {
                     (right.kind == SummaryKind::Leaf).cmp(&(left.kind == SummaryKind::Leaf))
                 })

@@ -60,7 +60,7 @@ async fn capture(
     Ok(())
 }
 
-async fn source_database(family: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+pub(super) async fn source_database(family: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
     let source: String =
         sqlx::query_scalar("SELECT 'rh_merge_' || substr(md5(current_database()), 1, 16)")
             .fetch_one(family)
@@ -202,5 +202,57 @@ async fn a_second_store_merges_in_private_under_its_owner(pool: PgPool) -> TestR
     sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
         .execute(&pool)
         .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::memory::{MemoryStore as _, SummaryKind, SummaryOwner};
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone());
+    let source = PostgresMemory::new(source_pool.clone());
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
+    let cancel = CancellationToken::new();
+    source.import_memory_dump(&fixture, false, &cancel).await?;
+    capture(&family, "alice", &[("cli:top-down", 1)]).await?;
+    sqlx::query(
+        "INSERT INTO rh_summaries (conversation_id, content, owner_user_id)
+         SELECT id, 'Destination notes', owner_user_id FROM rh_conversations WHERE session_key = 'cli:top-down'",
+    ).execute(&pool).await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let deferred = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(deferred.kept_family, ["cli:top-down"]);
+    assert_eq!(deferred.inserted.get("rh_summary_passages"), Some(&0));
+
+    sqlx::raw_sql(
+        "INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end, content,
+             earliest_at, latest_at, index_key)
+         SELECT gen_random_uuid(), id, 0, 0, length(content), content, earliest_at, latest_at, input_key
+         FROM rh_summaries WHERE kind = 'session';
+         UPDATE rh_summary_passages SET embedding = array_fill(0.5::real, array[1024])::halfvec;
+         UPDATE rh_summaries SET index_needs_repair = false;",
+    ).execute(&source_pool).await?;
+    let ready = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(ready.replaced, ["cli:top-down"]);
+    assert_eq!(ready.inserted.get("rh_summary_passages"), Some(&2));
+    assert_eq!(ready.inserted.get("rh_summary_deliveries"), Some(&2));
+    let dag = family
+        .summary_dag(&SummaryOwner::Session("cli:top-down".to_owned()))
+        .await?;
+    assert_eq!(dag.summaries.len(), 7);
+    assert!(
+        dag.summaries
+            .iter()
+            .any(|node| node.kind == SummaryKind::Section)
+    );
+    let repeated = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(repeated.inserted.get("rh_summaries"), Some(&0));
     Ok(())
 }

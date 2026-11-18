@@ -155,6 +155,11 @@ impl SummaryStore for MemStore {
                     .retain(|leaf| !summary.child_ids.contains(&leaf.id));
                 window.branches.push(node);
             }
+            SummaryKind::Session | SummaryKind::Part | SummaryKind::Section => {
+                return Err(SummaryStoreError::Kind {
+                    kind: summary.kind.as_str().to_owned(),
+                });
+            }
             SummaryKind::Root => {
                 window
                     .branches

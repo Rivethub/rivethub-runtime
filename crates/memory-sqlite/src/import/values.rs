@@ -13,18 +13,22 @@ pub(super) enum Conversion {
     Payload,
     Array,
     Vector,
+    Bytea,
 }
 
 impl Conversion {
     pub(super) fn for_column(name: &str, sql_type: &str, line: usize) -> Result<Self, ImportError> {
         match name {
-            "active" => Ok(Self::Boolean),
+            "active" | "range_verified" | "historical_backlog" | "index_needs_repair" => {
+                Ok(Self::Boolean)
+            }
             "embedding" => Ok(Self::Vector),
             "settings" | "metadata" | "tool_args" => Ok(Self::Object),
             "payload" => Ok(Self::Payload),
             "aliases" | "tags" | "entities" | "related" | "topics_touched" => Ok(Self::Array),
             _ if name.ends_with("_at") => Ok(Self::Timestamp),
             _ => match sql_type {
+                "BLOB" => Ok(Self::Bytea),
                 "TEXT" => Ok(Self::Text),
                 "INTEGER" => Ok(Self::Integer),
                 "REAL" => Ok(Self::Real),
@@ -72,6 +76,11 @@ impl Conversion {
                 Ok(Value::Text(serde_json::to_string(&payload)?))
             }
             Self::Array => Ok(Value::Text(serde_json::to_string(&array(&text, line)?)?)),
+            Self::Bytea => text
+                .strip_prefix("\\x")
+                .and_then(|hex| hex::decode(hex).ok())
+                .map(Value::Blob)
+                .ok_or_else(|| copy::invalid(line, "invalid hexadecimal bytea")),
             Self::Vector => {
                 let mut vector: Vec<f32> = serde_json::from_str(&text)?;
                 if width.is_some_and(|expected| expected != vector.len())

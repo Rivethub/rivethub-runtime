@@ -244,7 +244,11 @@ async fn unembedded(
             "id",
             "(length(content) > 20 OR length(tool_result) > 20)",
         ),
-        EmbedTable::Summaries => ("rh_summaries", "id", "length(content) > 20"),
+        EmbedTable::Summaries => (
+            "rh_summaries",
+            "id",
+            "pipeline_version < 7 AND length(content) > 20",
+        ),
         EmbedTable::WikiTopics => ("rh_wiki_topics", "slug", "length(search_text) > 20"),
         EmbedTable::MessageChunks => ("rh_message_chunks", "id", "btrim(content) <> ''"),
     };

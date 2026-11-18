@@ -21,10 +21,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (75, 1));
+    assert_eq!((gapped.current, gapped.pending), (76, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (75, 0));
+    assert_eq!((migrated.current, migrated.pending), (76, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -308,4 +308,111 @@ async fn a_session_keeps_one_startup_context(pool: PgPool) -> TestResult {
         .await?;
     assert_eq!(kept, 1, "a second run changes nothing");
     Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) -> TestResult {
+    let first_top_down = POSTGRES
+        .migrations
+        .partition_point(|migration| migration.version < 76);
+    let legacy = POSTGRES
+        .migrations
+        .get(..first_top_down)
+        .ok_or("missing migrations through 75")?;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Borrowed(legacy),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    before.run(&pool).await?;
+    let pending = migrate::postgres_status_pool(&pool).await?;
+    assert_eq!(
+        (pending.current, pending.required, pending.pending),
+        (75, 76, 1)
+    );
+    sqlx::raw_sql(
+        "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
+         VALUES ('10000000-0000-4000-8000-000000000001', 'cli:legacy', 'rivet', 'alice');
+         INSERT INTO rh_summaries (id, conversation_id, kind, depth, content, owner_user_id)
+         VALUES ('10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001',
+                 'leaf', 2, 'Old fixture note', 'alice');",
+    )
+    .execute(&pool)
+    .await?;
+    let status = migrate::postgres_pool(&pool).await?;
+    assert_eq!(
+        (status.current, status.required, status.pending),
+        (76, 76, 0)
+    );
+    let row: (String, i32, Option<i32>, bool) =
+        sqlx::query_as("SELECT kind, depth, summary_ordinal, index_needs_repair FROM rh_summaries")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(row, ("leaf".to_owned(), 2, None, false));
+    let marker: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM _rivetos_migrations WHERE name = '0076_top_down_summaries.sql')",
+    ).fetch_one(&pool).await?;
+    assert!(marker);
+    Ok(())
+}
+
+#[test]
+fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() -> TestResult {
+    use rusqlite::Connection;
+
+    let dir = tempfile::tempdir()?;
+    let fresh = dir.path().join("fresh.sqlite");
+    let upgraded = dir.path().join("upgraded.sqlite");
+    migrate::sqlite(&fresh)?;
+    let conn = Connection::open(&fresh)?;
+    conn.execute("VACUUM INTO ?1", [upgraded.to_string_lossy().as_ref()])?;
+    let old = Connection::open(&upgraded)?;
+    old.execute_batch(
+        "DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
+         DROP TABLE rh_summary_state; DROP TABLE rh_summary_openings;
+         DROP TABLE rh_summary_conversion; DROP TABLE rh_summary_conversion_items;
+         DROP TABLE ros_summary_deliveries;
+         DROP INDEX rh_summary_one_session; DROP INDEX rh_summary_sources_order;
+         ALTER TABLE ros_summary_sources DROP COLUMN render_key;
+         ALTER TABLE ros_summaries DROP COLUMN summary_ordinal;
+         ALTER TABLE ros_summaries DROP COLUMN index_needs_repair;
+         ALTER TABLE ros_summaries DROP COLUMN issued_part_ordinal;
+         ALTER TABLE ros_summaries DROP COLUMN input_token_estimate;
+         ALTER TABLE ros_summaries DROP COLUMN source_first;
+         ALTER TABLE ros_summaries DROP COLUMN source_last;
+         ALTER TABLE ros_summaries DROP COLUMN range_verified;
+         ALTER TABLE ros_summaries DROP COLUMN input_key;
+         ALTER TABLE ros_summaries DROP COLUMN index_key;
+         ALTER TABLE ros_summaries DROP COLUMN quality_flags;
+         ALTER TABLE ros_summaries DROP COLUMN section_char_start;
+         ALTER TABLE ros_summaries DROP COLUMN section_char_end;
+         INSERT INTO ros_summaries (id, kind, depth, content, created_at)
+           VALUES ('legacy', 'branch', 2, 'Old fixture note', '2026-10-10T00:00:00.000Z');
+         PRAGMA user_version = 35;",
+    )?;
+    drop(old);
+    let pending = migrate::sqlite_status(&upgraded)?;
+    assert_eq!(
+        (pending.current, pending.required, pending.pending),
+        (35, 36, 1)
+    );
+    let status = migrate::sqlite(&upgraded)?;
+    assert_eq!(
+        (status.current, status.required, status.pending),
+        (36, 36, 0)
+    );
+    let up = Connection::open(&upgraded)?;
+    let row: (String, i32, Option<i32>, bool) = up.query_row(
+        "SELECT kind, depth, summary_ordinal, index_needs_repair FROM ros_summaries",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(row, ("branch".to_owned(), 2, None, false));
+    assert_eq!(sqlite_definitions(&conn)?, sqlite_definitions(&up)?);
+    Ok(())
+}
+
+fn sqlite_definitions(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, String)>> {
+    conn.prepare("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect()
 }

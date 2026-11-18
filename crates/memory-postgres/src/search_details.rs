@@ -92,7 +92,7 @@ impl PostgresMemory {
         if !expand {
             return Ok(BTreeMap::new());
         }
-        let rows: Vec<ChildRow> = sqlx::query_as("SELECT parent_id, to_json(kind) AS kind, content FROM rh_summaries WHERE parent_id = ANY($1) ORDER BY parent_id, earliest_at, id")
+        let rows: Vec<ChildRow> = sqlx::query_as("SELECT parent_id, to_json(kind) AS kind, content FROM rh_summaries WHERE parent_id = ANY($1) ORDER BY parent_id, summary_ordinal NULLS FIRST, earliest_at, id")
             .bind(ids).fetch_all(&self.pool).await.map_err(|source| Error::operation("summary children", source))?;
         let mut grouped: BTreeMap<Uuid, Vec<SummaryExcerpt>> = BTreeMap::new();
         for row in rows {
@@ -123,8 +123,14 @@ impl PostgresMemory {
                 SELECT m.id::text AS id, c.session_key, m.agent, m.channel, m.role AS role_text,
                        m.content, m.tool_name, m.tool_args::text AS tool_args, m.tool_result,
                        m.metadata::text AS metadata, m.created_at, m.id AS message_id
-                FROM (SELECT DISTINCT ss.message_id FROM rh_summary_sources ss
-                       WHERE ss.summary_id = ANY (ARRAY(SELECT wanted.id UNION SELECT id FROM rh_summaries WHERE parent_id = wanted.id))) sources
+                FROM (
+                    SELECT message_id FROM rh_summary_message_ids(wanted.id)
+                    UNION
+                    SELECT ss.message_id FROM rh_summaries parent
+                    JOIN rh_summaries child ON child.parent_id = parent.id
+                    JOIN rh_summary_sources ss ON ss.summary_id = child.id
+                    WHERE parent.id = wanted.id AND parent.pipeline_version < 7
+                ) sources
                 JOIN rh_messages m ON m.id = sources.message_id
                 JOIN rh_conversations c ON c.id = m.conversation_id
                 WHERE m.role <> 'tool' AND length(m.content) > 50
@@ -132,9 +138,15 @@ impl PostgresMemory {
                 AND ($3::timestamptz IS NULL OR m.created_at >= $3)
                 AND ($4::timestamptz IS NULL OR m.created_at < $4)
                 ORDER BY m.created_at, m.id LIMIT 200) picked
-             ORDER BY wanted.id, picked.created_at, picked.message_id")
-            .bind(ids).bind(&query.agent).bind(query.since).bind(query.before)
-            .fetch_all(&self.pool).await.map_err(|source| Error::operation("summary source messages", source))?;
+             ORDER BY wanted.id, picked.created_at, picked.message_id",
+        )
+        .bind(ids)
+        .bind(&query.agent)
+        .bind(query.since)
+        .bind(query.before)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|source| Error::operation("summary source messages", source))?;
         let mut grouped: BTreeMap<Uuid, Vec<MessageEntryRow>> = BTreeMap::new();
         for row in rows {
             grouped.entry(row.summary_id).or_default().push(row.entry);

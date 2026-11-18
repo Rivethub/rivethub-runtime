@@ -90,10 +90,21 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
             .await??;
         assert_eq!(actual.len(), rows.len());
         for (actual, expected) in actual.iter().zip(rows) {
-            assert_eq!(
-                actual.as_object().ok_or("expected row object")?.len(),
-                expected.len()
-            );
+            let actual = actual.as_object().ok_or("expected row object")?;
+            let defaults = actual
+                .iter()
+                .filter(|(column, _)| !expected.contains_key(*column));
+            for (column, value) in defaults {
+                match (table, column.as_str()) {
+                    (ImportTable::Summaries, "quality_flags" | "index_needs_repair") => {
+                        assert_eq!(value, &Json::from(0), "{table}.{column}");
+                    }
+                    (ImportTable::Summaries, _) | (ImportTable::SummarySources, "render_key") => {
+                        assert!(value.is_null(), "{table}.{column}");
+                    }
+                    _ => return Err(format!("unrecorded {table}.{column}").into()),
+                }
+            }
             for (column, expected) in expected {
                 let actual = actual.get(&column).ok_or("missing column")?;
                 if (expected.is_object() || expected.is_array()) && actual.is_string() {

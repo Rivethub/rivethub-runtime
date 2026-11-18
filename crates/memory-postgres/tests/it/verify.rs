@@ -80,7 +80,7 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
     };
     assert!(
         line.contains(
-            "the memory schema reports version 9999, this build requires 75 — rolling updates migrate first; continuing"
+            "the memory schema reports version 9999, this build requires 76 — rolling updates migrate first; continuing"
         ),
         "the warning must name the rolling update: {line}"
     );

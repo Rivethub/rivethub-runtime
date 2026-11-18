@@ -61,15 +61,28 @@ pub(crate) fn read_pragmas(conn: &Connection) -> TestResult<Pragmas> {
 
 pub(crate) fn read_legacy_master_entries(conn: &Connection) -> TestResult<Vec<MasterEntry>> {
     let mut statement =
-        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' ORDER BY rowid")?;
+        conn.prepare("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT GLOB 'rh_*' AND tbl_name NOT GLOB 'rh_*' AND tbl_name <> 'ros_summary_deliveries' ORDER BY rowid")?;
     let mut rows = statement.query([])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        let mut sql: Option<String> = row.get(3)?;
+        if let Some(sql) = &mut sql {
+            if name == "ros_summaries"
+                && let Some(start) = sql.find(", summary_ordinal INTEGER")
+                && let Some(end) = sql.rfind(')')
+            {
+                sql.replace_range(start..end, "");
+            }
+            if name == "ros_summary_sources" {
+                *sql = sql.replace(", render_key BLOB CHECK (length(render_key) = 32)", "");
+            }
+        }
         out.push(MasterEntry {
             kind: row.get(0)?,
-            name: row.get(1)?,
+            name,
             tbl_name: row.get(2)?,
-            sql: row.get(3)?,
+            sql,
         });
     }
     Ok(out)
@@ -82,9 +95,13 @@ pub(crate) fn read_table_columns(conn: &Connection, table: &str) -> TestResult<V
     let mut rows = statement.query([table])?;
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if !legacy_column(table, &name) {
+            continue;
+        }
         out.push(TableColumn {
             cid: row.get(0)?,
-            name: row.get(1)?,
+            name,
             kind: row.get(2)?,
             notnull: row.get(3)?,
             dflt_value: row.get(4)?,
@@ -102,11 +119,35 @@ pub(crate) fn read_rows(conn: &Connection, table: &str) -> TestResult<Vec<BTreeM
     while let Some(row) = rows.next()? {
         let mut cells = BTreeMap::new();
         for (index, name) in names.iter().enumerate() {
-            cells.insert(name.clone(), cell(row.get_ref(index)?));
+            if legacy_column(table, name) {
+                cells.insert(name.clone(), cell(row.get_ref(index)?));
+            }
         }
         out.push(cells);
     }
     Ok(out)
+}
+
+fn legacy_column(table: &str, column: &str) -> bool {
+    !matches!(
+        (table, column),
+        ("ros_summary_sources", "render_key")
+            | (
+                "ros_summaries",
+                "summary_ordinal"
+                    | "index_needs_repair"
+                    | "issued_part_ordinal"
+                    | "input_token_estimate"
+                    | "source_first"
+                    | "source_last"
+                    | "range_verified"
+                    | "input_key"
+                    | "index_key"
+                    | "quality_flags"
+                    | "section_char_start"
+                    | "section_char_end"
+            )
+    )
 }
 
 pub(crate) fn read_fts_rows(

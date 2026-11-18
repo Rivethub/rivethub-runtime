@@ -36,6 +36,12 @@ pub struct MemorySummaryNode {
     pub earliest_at: Option<DateTime<Utc>>,
     pub latest_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub summary_ordinal: Option<u32>,
+    pub source_first: Option<u32>,
+    pub source_last: Option<u32>,
+    pub range_verified: Option<bool>,
+    #[serde(default)]
+    pub quality_flags: u32,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -53,6 +59,12 @@ pub struct MemorySummaryCounts {
     pub leaves: u64,
     pub branches: u64,
     pub roots: u64,
+    #[serde(default)]
+    pub sessions: u64,
+    #[serde(default)]
+    pub parts: u64,
+    #[serde(default)]
+    pub sections: u64,
     pub embedded: u64,
     pub top: u64,
 }

@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 rusqlite = { workspace = true, features = ["functions"] }
@@ -26,7 +27,6 @@ wire = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true }
-hex = { workspace = true }
 migrate = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }

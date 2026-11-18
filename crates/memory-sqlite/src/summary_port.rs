@@ -46,6 +46,11 @@ impl SummaryStore for SqliteStore {
     }
 
     async fn write_summary(&self, summary: NewSummary) -> Result<SummaryWrite, SummaryStoreError> {
+        if summary.kind.is_top_down() {
+            return Err(SummaryStoreError::Kind {
+                kind: summary.kind.as_str().to_owned(),
+            });
+        }
         let (id, kind, depth) = (summary.id, summary.kind, summary.depth);
         let (written, session_key) = self
             .with_conn(move |conn| write_one(conn, &summary))

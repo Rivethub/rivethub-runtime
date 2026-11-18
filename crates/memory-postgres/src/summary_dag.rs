@@ -35,23 +35,28 @@ const DAG_SQL: &str = "with recursive dag(id, level) as (
          where up.parent_id is not null
     ),
     levels as (select id, max(level) as level from dag group by id)
-    select s.id::text as id, s.parent_id::text as parent_id, l.level::bigint as level, s.kind,
+    select s.id::text as id, s.parent_id::text as parent_id, (case when s.pipeline_version = 7 then s.depth else l.level end)::bigint as level, s.kind,
            case when $2::int is null then convert_to(s.content, 'UTF8')
                 else substring(convert_to(s.content, 'UTF8') from 1 for $2) end as content,
            $2::int is not null and octet_length(s.content) > $2 as truncated,
            s.message_count, s.earliest_at, s.latest_at, s.created_at,
+           s.summary_ordinal, s.source_first, s.source_last, s.range_verified, s.quality_flags,
            case when $2::int is null
-                then array(select ss.message_id::text from rh_summary_sources ss
-                            where ss.summary_id = s.id order by ss.ordinal)
+                then array(select ss.message_id::text from rh_summary_message_ids(s.id) ss
+                            order by ss.ordinal, ss.message_id)
                 else '{}'::text[] end as source_message_ids,
-           case when s.embedding is not null then 'embedded'
+           case when s.kind = 'section' then 'skipped'
+                when s.index_needs_repair then 'pending'
+                when s.kind in ('session', 'part') then
+                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
                 else 'pending' end as vector
     from levels l
     cross join lateral (select * from rh_summaries s where s.id = l.id offset 0) s
     where $3::uuid is null or l.id = $3
-    order by l.level desc, s.latest_at, s.id";
+    order by level desc, s.latest_at, s.id";
 
 const SHAPE_SQL: &str = "with recursive dag(id, level) as (
         select id, 0 from rh_summaries where conversation_id = $1
@@ -64,8 +69,11 @@ const SHAPE_SQL: &str = "with recursive dag(id, level) as (
          where up.parent_id is not null
     ),
     levels as (select id, max(level) as level from dag group by id)
-    select s.id::text as id, s.parent_id::text as parent_id, l.level::bigint as level, s.kind,
-           s.embedding is not null as embedded, s.earliest_at, s.latest_at
+    select s.id::text as id, s.parent_id::text as parent_id, (case when s.pipeline_version = 7 then s.depth else l.level end)::bigint as level, s.kind,
+           case when s.kind = 'section' or s.index_needs_repair then false
+                when s.kind in ('session', 'part') then rh_summary_record_indexed(s.id)
+                else s.embedding is not null end as embedded,
+           s.summary_ordinal, s.earliest_at, s.latest_at
     from levels l
     cross join lateral (select * from rh_summaries s where s.id = l.id offset 0) s";
 
@@ -74,8 +82,13 @@ const PICKED_SQL: &str =
            s.kind, substring(convert_to(s.content, 'UTF8') from 1 for $2) as content,
            octet_length(s.content) > $2 as truncated,
            s.message_count, s.earliest_at, s.latest_at, s.created_at,
+           s.summary_ordinal, s.source_first, s.source_last, s.range_verified, s.quality_flags,
            '{}'::text[] as source_message_ids,
-           case when s.embedding is not null then 'embedded'
+           case when s.kind = 'section' then 'skipped'
+                when s.index_needs_repair then 'pending'
+                when s.kind in ('session', 'part') then
+                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
                 else 'pending' end as vector
@@ -83,19 +96,24 @@ const PICKED_SQL: &str =
 
 const LATEST_SQL: &str = "with picked as (
         select p.id from rh_summaries p where p.conversation_id = $1
-        order by p.latest_at desc nulls last, (p.kind = 'leaf') desc, p.id desc
+        order by (p.kind = 'session') desc, p.latest_at desc nulls last, (p.kind = 'leaf') desc, p.id desc
         limit $2
     )
     select s.id::text as id, s.parent_id::text as parent_id, s.depth::bigint as level, s.kind,
            convert_to(s.content, 'UTF8') as content, false as truncated,
            s.message_count, s.earliest_at, s.latest_at, s.created_at,
+           s.summary_ordinal, s.source_first, s.source_last, s.range_verified, s.quality_flags,
            '{}'::text[] as source_message_ids,
-           case when s.embedding is not null then 'embedded'
+           case when s.kind = 'section' then 'skipped'
+                when s.index_needs_repair then 'pending'
+                when s.kind in ('session', 'part') then
+                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
                 else 'pending' end as vector
     from picked join rh_summaries s on s.id = picked.id
-    order by s.latest_at desc nulls last, (s.kind = 'leaf') desc, s.id desc";
+    order by (s.kind = 'session') desc, s.latest_at desc nulls last, (s.kind = 'leaf') desc, s.id desc";
 
 const OWNED_SQL: &str =
     "select exists(select 1 from rh_summaries where id = $1 and conversation_id = $2)";
@@ -107,18 +125,23 @@ const CHILDREN_SQL: &str = "with recursive down(top, id, depth) as (
           from down join rh_summaries c on c.parent_id = down.id
     ),
     heights as (select top, max(depth) as level from down group by top)
-    select s.id::text as id, s.parent_id::text as parent_id, h.level::bigint as level, s.kind,
+    select s.id::text as id, s.parent_id::text as parent_id, (case when s.pipeline_version = 7 then s.depth else h.level end)::bigint as level, s.kind,
            substring(convert_to(s.content, 'UTF8') from 1 for $2) as content,
            octet_length(s.content) > $2 as truncated,
            s.message_count, s.earliest_at, s.latest_at, s.created_at,
+           s.summary_ordinal, s.source_first, s.source_last, s.range_verified, s.quality_flags,
            '{}'::text[] as source_message_ids,
-           case when s.embedding is not null then 'embedded'
+           case when s.kind = 'section' then 'skipped'
+                when s.index_needs_repair then 'pending'
+                when s.kind in ('session', 'part') then
+                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
                 else 'pending' end as vector,
            (select count(*) from rh_summaries c where c.parent_id = s.id) as children
     from heights h join rh_summaries s on s.id = h.top
-    order by coalesce(s.earliest_at, s.latest_at) nulls first, s.id::text";
+    order by s.summary_ordinal nulls first, coalesce(s.earliest_at, s.latest_at) nulls first, s.id::text";
 
 const TALLY_SQL: &str = "select count(*) as total,
         count(*) filter (where role = 'user') as \"user\",
@@ -145,6 +168,11 @@ struct DagRow {
     earliest_at: Option<DateTime<Utc>>,
     latest_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
+    summary_ordinal: Option<i32>,
+    source_first: Option<i32>,
+    source_last: Option<i32>,
+    range_verified: Option<bool>,
+    quality_flags: i32,
     source_message_ids: Vec<String>,
     vector: String,
 }
@@ -163,6 +191,7 @@ struct ShapeRow {
     level: i64,
     kind: String,
     embedded: bool,
+    summary_ordinal: Option<i32>,
     earliest_at: Option<DateTime<Utc>>,
     latest_at: Option<DateTime<Utc>>,
 }
@@ -440,7 +469,8 @@ impl PostgresMemory {
                 .map(message_tally)
                 .transpose()?
                 .unwrap_or_default(),
-        })
+        }
+        .order_top_down())
     }
 }
 
@@ -470,10 +500,7 @@ fn summary_node(row: DagRow) -> Result<MemorySummaryNode, MemoryStoreError> {
         .kind
         .parse::<SummaryKind>()
         .map_err(|error| MemoryStoreError::Query {
-            message: format!(
-                "stored summary kind {} is not leaf, branch, or root",
-                row.kind
-            ),
+            message: format!("unknown stored summary kind {}", row.kind),
             source: Box::new(error),
         })?;
     let vector = row
@@ -493,6 +520,23 @@ fn summary_node(row: DagRow) -> Result<MemorySummaryNode, MemoryStoreError> {
         earliest_at: row.earliest_at,
         latest_at: row.latest_at,
         created_at: row.created_at,
+        summary_ordinal: row
+            .summary_ordinal
+            .map(u32::try_from)
+            .transpose()
+            .map_err(count_error)?,
+        source_first: row
+            .source_first
+            .map(u32::try_from)
+            .transpose()
+            .map_err(count_error)?,
+        source_last: row
+            .source_last
+            .map(u32::try_from)
+            .transpose()
+            .map_err(count_error)?,
+        range_verified: row.range_verified,
+        quality_flags: u32::try_from(row.quality_flags).map_err(count_error)?,
         source_message_ids: row.source_message_ids,
         vector,
         truncated: row.truncated,
@@ -505,10 +549,7 @@ fn summary_shape(row: ShapeRow) -> Result<SummaryShape, MemoryStoreError> {
         .kind
         .parse::<SummaryKind>()
         .map_err(|error| MemoryStoreError::Query {
-            message: format!(
-                "stored summary kind {} is not leaf, branch, or root",
-                row.kind
-            ),
+            message: format!("unknown stored summary kind {}", row.kind),
             source: Box::new(error),
         })?;
     Ok(SummaryShape {
@@ -516,6 +557,11 @@ fn summary_shape(row: ShapeRow) -> Result<SummaryShape, MemoryStoreError> {
         parent_id: row.parent_id,
         kind,
         embedded: row.embedded,
+        summary_ordinal: row
+            .summary_ordinal
+            .map(u32::try_from)
+            .transpose()
+            .map_err(count_error)?,
         earliest_at: row.earliest_at,
         latest_at: row.latest_at,
     })

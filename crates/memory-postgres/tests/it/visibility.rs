@@ -1867,3 +1867,66 @@ async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -
     assert_eq!(bob.run(store.team_sessions(None, None, 5)).await?.len(), 0);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_archive_scopes_passages_and_private_tables(pool: PgPool) -> TestResult {
+    let probe = probe(&pool).await?;
+    let store = PostgresMemory::new(probe.clone());
+    let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
+    Scope::Maintenance
+        .run(store.import_memory_dump(&fixture, false, &tokio_util::sync::CancellationToken::new()))
+        .await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_summary_state (conversation_id, input_revision, last_input_at, settled_at, historical_only)
+           SELECT id, 1, updated_at, updated_at, false FROM rh_conversations;
+         INSERT INTO rh_summary_openings (conversation_id, content)
+           SELECT id, 'Opening note' FROM rh_conversations;
+         INSERT INTO rh_summary_runs (id, conversation_id, revision, manifest)
+           SELECT id, id, 1, '{}' FROM rh_conversations;
+         INSERT INTO rh_summary_checkpoints (run_id, artifact_key, artifact)
+           SELECT id, decode(repeat('ab', 32), 'hex'), '{}' FROM rh_summary_runs;
+         INSERT INTO rh_summary_conversion_items (conversation_id, last_input_at, estimated_tokens, state)
+           SELECT id, updated_at, 50, 'pending' FROM rh_conversations;",
+    ).execute(&pool).await?;
+    let alice = Scope::Viewer(viewer("alice")?);
+    let bob = Scope::Viewer(viewer("bob")?);
+    for (table, count, owner_count) in [
+        ("rh_summary_passages", 1, 1),
+        ("rh_summary_state", 1, 1),
+        ("rh_summary_openings", 1, 1),
+        ("rh_summary_runs", 1, 0),
+        ("rh_summary_checkpoints", 1, 0),
+        ("rh_summary_deliveries", 2, 2),
+        ("rh_summary_conversion", 1, 0),
+        ("rh_summary_conversion_items", 1, 0),
+    ] {
+        assert_eq!(
+            visible(&probe, Scope::Maintenance, table).await?,
+            count,
+            "{table}"
+        );
+        assert_eq!(
+            visible(&probe, alice.clone(), table).await?,
+            owner_count,
+            "{table}"
+        );
+        assert_eq!(visible(&probe, bob.clone(), table).await?, 0, "{table}");
+        assert_eq!(visible(&probe, Scope::Closed, table).await?, 0, "{table}");
+    }
+    let denied = alice
+        .run(async {
+            sqlx::query(
+                "INSERT INTO rh_summary_passages (id, record_id, ordinal, char_start, char_end,
+                  content, earliest_at, latest_at, index_key)
+             SELECT gen_random_uuid(), record_id, ordinal + 1, char_start, char_end,
+                  content, earliest_at, latest_at, index_key FROM rh_summary_passages",
+            )
+            .execute(&probe)
+            .await
+        })
+        .await;
+    assert!(
+        matches!(denied, Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("42501"))
+    );
+    Ok(())
+}

@@ -6,6 +6,14 @@ pub(super) fn columns(table: ImportTable) -> Option<&'static [&'static str]> {
         ImportTable::Messages => Some(messages()),
         ImportTable::Summaries => Some(summaries()),
         ImportTable::SummarySources => Some(summary_sources()),
+        ImportTable::SummaryDeliveries => Some(&[
+            "conversation_id",
+            "consumer",
+            "message_id",
+            "anchor_id",
+            "completed_version",
+            "historical_backlog",
+        ]),
         ImportTable::Tags => Some(tags()),
         ImportTable::TagTaxonomy => Some(tag_taxonomy()),
         ImportTable::WikiTopics => Some(wiki_topics()),
@@ -31,6 +39,7 @@ pub(super) fn order(table: ImportTable) -> &'static str {
     match table {
         ImportTable::Summaries => ORDER_SUMMARIES,
         ImportTable::SummarySources => ORDER_SUMMARY_SOURCES,
+        ImportTable::SummaryDeliveries => "conversation_id, consumer, message_id",
         ImportTable::TagTaxonomy => ORDER_TAXONOMY,
         ImportTable::WikiTopics => ORDER_TOPICS,
         ImportTable::WikiProvenance => ORDER_PROVENANCE,
@@ -108,11 +117,24 @@ fn summaries() -> &'static [&'static str] {
         "embed_error",
         "embed_status",
         "pipeline_version",
+        "summary_ordinal",
+        "issued_part_ordinal",
+        "input_token_estimate",
+        "source_first",
+        "source_last",
+        "range_verified",
+        "input_key",
+        "index_key",
+        "quality_flags",
+        "section_char_start",
+        "section_char_end",
+        "index_needs_repair",
+        "owner_user_id",
     ]
 }
 
 fn summary_sources() -> &'static [&'static str] {
-    &["summary_id", "message_id", "ordinal"]
+    &["summary_id", "message_id", "ordinal", "render_key"]
 }
 
 fn tags() -> &'static [&'static str] {

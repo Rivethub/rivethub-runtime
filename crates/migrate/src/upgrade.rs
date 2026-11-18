@@ -86,10 +86,18 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
             tx.execute_batch(include_str!("schema/review_marks_v33.sql"))
         }),
         SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
+        SchemaVersion::V36 => in_transaction(conn, to, add_top_down_summaries),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
     }
+}
+
+fn add_top_down_summaries(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if column_present(tx, "ros_summaries", "summary_ordinal")? {
+        return Ok(());
+    }
+    tx.execute_batch(include_str!("schema/summaries_v36.sql"))
 }
 
 fn add_daily_digest(tx: &Transaction<'_>) -> rusqlite::Result<()> {

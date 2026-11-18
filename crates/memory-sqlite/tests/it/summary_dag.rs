@@ -288,3 +288,134 @@ async fn a_conversation_reads_its_own_summary_dag_by_id() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn top_down_archive_keeps_the_full_filtered_tree_without_postgres_passages() -> TestResult {
+    use kernel::memory::{DumpOrigin, DumpSource};
+    use memory_sqlite::import::ImportTable;
+    use tokio_util::sync::CancellationToken;
+
+    let source = fresh_store()?;
+    let cancel = CancellationToken::new();
+    let fixture = testkit::recording("summary-archive/top-down.sql");
+    let imported = source.store.import_pg_dump(fixture, cancel.clone()).await?;
+    assert_eq!(imported.rows.get(&ImportTable::Summaries).copied(), Some(7));
+    let owner = SummaryOwner::Session("cli:top-down".to_owned());
+    let section = assert_mixed_tree(&source.store, &owner).await?;
+    let duplicate = execute(&source.store, "
+        INSERT INTO ros_summaries (id, conversation_id, kind, created_at)
+        SELECT 'duplicate', conversation_id, kind, created_at FROM ros_summaries WHERE kind = 'session'
+    ").await;
+    assert!(duplicate.is_err());
+
+    let bytes = source
+        .store
+        .export_pg_dump(
+            Some(instant("2026-10-11T00:00:00Z")?),
+            DumpOrigin {
+                source: DumpSource::Local,
+                host: "fixture".to_owned(),
+            },
+            cancel.clone(),
+        )
+        .await?;
+    let filtered = tempfile::NamedTempFile::new()?;
+    std::fs::write(filtered.path(), &bytes)?;
+    let target = fresh_store()?;
+    let report = target
+        .store
+        .import_pg_dump(filtered.path().to_owned(), cancel.clone())
+        .await?;
+    assert_eq!(report.rows.get(&ImportTable::Summaries).copied(), Some(4));
+    assert_eq!(
+        report.rows.get(&ImportTable::Messages).copied(),
+        Some(4),
+        "completed receipt adds its source"
+    );
+    assert_eq!(
+        report.rows.get(&ImportTable::SummaryDeliveries).copied(),
+        Some(2)
+    );
+    assert_eq!(
+        report.rows.get(&ImportTable::SummarySources).copied(),
+        Some(5)
+    );
+    assert_eq!(
+        target.store.summary_node(&owner, &section.id).await?,
+        Some(section)
+    );
+
+    let valid = String::from_utf8(bytes)?;
+    std::fs::write(
+        filtered.path(),
+        valid.replace(
+            "00000000-0000-4000-8000-000000000103\t3",
+            "00000000-0000-4000-8000-000000000103\t2",
+        ),
+    )?;
+    let invalid = fresh_store()?;
+    assert!(matches!(
+        invalid
+            .store
+            .preview_pg_dump(filtered.path().to_owned(), cancel)
+            .await,
+        Err(memory_sqlite::import::ImportError::SummaryGraph)
+    ));
+    Ok(())
+}
+
+async fn assert_mixed_tree(
+    store: &SqliteStore,
+    owner: &SummaryOwner,
+) -> TestResult<MemorySummaryNode> {
+    use kernel::memory::TreeWindow;
+    let tree = store
+        .summary_tree(owner, None, TreeWindow::ALL)
+        .await?
+        .ok_or("expected tree")?;
+    assert_eq!(
+        (
+            tree.counts.sessions,
+            tree.counts.parts,
+            tree.counts.sections
+        ),
+        (1, 1, 2)
+    );
+    assert_eq!(
+        (tree.counts.leaves, tree.counts.branches, tree.counts.roots),
+        (1, 1, 1)
+    );
+    let latest = store.summary_latest(owner, 1).await?;
+    let session = latest.summaries.first().ok_or("expected session")?;
+    assert_eq!(session.kind, SummaryKind::Session);
+    let root = &session.id;
+    let children = store
+        .summary_tree(owner, Some(root), TreeWindow::ALL)
+        .await?
+        .ok_or("expected children")?;
+    let [section, part] = children.summaries.as_slice() else {
+        return Err("expected a section and a part".into());
+    };
+    assert_eq!(
+        (section.kind, part.kind),
+        (SummaryKind::Section, SummaryKind::Part)
+    );
+    let section = store
+        .summary_node(owner, &section.id)
+        .await?
+        .ok_or("expected section")?;
+    assert_eq!(
+        section.source_message_ids,
+        ["00000000-0000-4000-8000-000000000103"]
+    );
+    assert_eq!(
+        (
+            section.source_first,
+            section.source_last,
+            section.range_verified,
+            section.quality_flags
+        ),
+        (Some(3), Some(3), Some(true), 1)
+    );
+    Ok(section)
+}

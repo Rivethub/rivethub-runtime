@@ -70,7 +70,9 @@ async fn write_rollup(
     let available = match spec.kind {
         SummaryKind::Branch => window.leaves.len(),
         SummaryKind::Root => window.branches.len(),
-        SummaryKind::Leaf => return Err(WorkerError::Count),
+        SummaryKind::Leaf | SummaryKind::Session | SummaryKind::Part | SummaryKind::Section => {
+            return Err(WorkerError::Count);
+        }
     };
     if count_of(available)? < spec.minimum {
         return Ok(0);
@@ -112,7 +114,9 @@ fn rollup_prompt(
             let nodes = window.branches.get(..take).ok_or(WorkerError::Count)?;
             root_user(&window.conversation, window.provenance.as_ref(), nodes)
         }
-        SummaryKind::Leaf => Err(WorkerError::Count),
+        SummaryKind::Leaf | SummaryKind::Session | SummaryKind::Part | SummaryKind::Section => {
+            Err(WorkerError::Count)
+        }
     }
 }
 
@@ -124,7 +128,9 @@ fn take_children(
     match kind {
         SummaryKind::Branch => take_front(&mut window.leaves, take),
         SummaryKind::Root => take_front(&mut window.branches, take),
-        SummaryKind::Leaf => Err(WorkerError::Count),
+        SummaryKind::Leaf | SummaryKind::Session | SummaryKind::Part | SummaryKind::Section => {
+            Err(WorkerError::Count)
+        }
     }
 }
 

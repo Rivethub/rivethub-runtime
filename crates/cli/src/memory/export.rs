@@ -75,7 +75,24 @@ impl MemoryExport for MemoryExporter {
 }
 
 fn copy_sources() -> Vec<CopySource<'static>> {
-    ImportTable::iter().filter_map(copy_source).collect()
+    let mut tables: Vec<_> = ImportTable::iter().filter_map(copy_source).collect();
+    tables.push(CopySource {
+        relation: "rh_summary_passages",
+        compatibility: "ros_summary_passages",
+        columns: &[
+            "id",
+            "record_id",
+            "ordinal",
+            "char_start",
+            "char_end",
+            "content",
+            "earliest_at",
+            "latest_at",
+            "index_key",
+            "embedding",
+        ],
+    });
+    tables
 }
 
 fn copy_source(table: ImportTable) -> Option<CopySource<'static>> {
@@ -85,6 +102,7 @@ fn copy_source(table: ImportTable) -> Option<CopySource<'static>> {
         ImportTable::Messages => ("rh_messages", "ros_messages"),
         ImportTable::Summaries => ("rh_summaries", "ros_summaries"),
         ImportTable::SummarySources => ("rh_summary_sources", "ros_summary_sources"),
+        ImportTable::SummaryDeliveries => ("rh_summary_deliveries", "ros_summary_deliveries"),
         ImportTable::Tags => ("rh_tags", "ros_tags"),
         ImportTable::TagTaxonomy => ("rh_tag_taxonomy", "ros_tag_taxonomy"),
         ImportTable::WikiTopics => ("rh_wiki_topics", "ros_wiki_topics"),

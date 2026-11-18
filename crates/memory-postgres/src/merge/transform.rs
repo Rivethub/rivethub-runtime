@@ -12,14 +12,21 @@ CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
+  SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
          (SELECT count(*) FROM merge_rh_messages m WHERE m.conversation_id = s.id) AS source_messages,
-         (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = t.id) AS target_messages
+         (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = t.id) AS target_messages,
+         (EXISTS (SELECT 1 FROM merge_rh_summaries a WHERE a.conversation_id = s.id AND a.index_needs_repair)
+          AND EXISTS (SELECT 1 FROM rh_summaries b WHERE b.conversation_id = t.id)) AS needs_repair
     FROM merge_rh_conversations s
-    JOIN rh_conversations t ON t.session_key = s.session_key AND t.agent = s.agent AND t.id <> s.id;
+    JOIN rh_conversations t ON t.session_key = s.session_key AND t.agent = s.agent AND t.id <> s.id
+  ) pairs;
 ";
 
 const DROP_STAGED: &str = "
+DELETE FROM merge_rh_summary_deliveries WHERE conversation_id IN (SELECT id FROM merge_drop);
+DELETE FROM merge_rh_summary_passages WHERE record_id IN (
+    SELECT s.id FROM merge_rh_summaries s JOIN merge_drop d ON d.id = s.conversation_id);
 DELETE FROM merge_rh_tags WHERE entity_id IN (
   SELECT id FROM merge_drop
   UNION SELECT m.id FROM merge_rh_messages m JOIN merge_drop d ON d.id = m.conversation_id
@@ -47,7 +54,10 @@ DELETE FROM rh_wiki_citations WHERE summary_id IN (SELECT s.id FROM rh_summaries
 DELETE FROM rh_wiki_entity_candidates WHERE summary_id IN (SELECT s.id FROM rh_summaries s JOIN merge_drop_family d ON d.target_id = s.conversation_id);
 DELETE FROM rh_wiki_deferred WHERE summary_id IN (SELECT s.id FROM rh_summaries s JOIN merge_drop_family d ON d.target_id = s.conversation_id);
 DELETE FROM rh_wiki_provenance WHERE source_id IN (SELECT s.id FROM rh_summaries s JOIN merge_drop_family d ON d.target_id = s.conversation_id);
-UPDATE rh_summaries SET parent_id = NULL WHERE parent_id IN (SELECT s.id FROM rh_summaries s JOIN merge_drop_family d ON d.target_id = s.conversation_id);
+DELETE FROM rh_summary_deliveries WHERE conversation_id IN (SELECT target_id FROM merge_drop_family);
+UPDATE rh_summaries SET parent_id = NULL
+ WHERE pipeline_version < 7 AND parent_id IN (
+     SELECT s.id FROM rh_summaries s JOIN merge_drop_family d ON d.target_id = s.conversation_id);
 DELETE FROM rh_summaries WHERE conversation_id IN (SELECT target_id FROM merge_drop_family);
 DELETE FROM rh_conversations WHERE id IN (SELECT target_id FROM merge_drop_family);
 ";
@@ -56,7 +66,7 @@ const OWNERS: &str = "
 UPDATE merge_rh_conversations s SET owner_user_id = t.owner_user_id
   FROM rh_conversations t WHERE t.id = s.id AND t.owner_user_id IS DISTINCT FROM s.owner_user_id;
 UPDATE merge_rh_conversations s SET owner_user_id = d.target_owner
-  FROM merge_dupes d WHERE d.source_id = s.id AND d.source_messages > d.target_messages;
+  FROM merge_dupes d WHERE d.source_id = s.id AND d.source_wins;
 UPDATE merge_rh_conversations c SET owner_user_id = m.owner FROM merge_moves m WHERE c.id = m.conversation;
 UPDATE merge_rh_messages x SET owner_user_id = c.owner_user_id FROM merge_rh_conversations c
  WHERE x.conversation_id = c.id AND x.owner_user_id IS DISTINCT FROM c.owner_user_id;
@@ -85,6 +95,34 @@ UPDATE merge_rh_tags x SET owner_user_id = coalesce(
     x.owner_user_id);
 ";
 
+const KEEP_EXISTING_TREE: &str = "
+CREATE TEMP TABLE merge_keep_existing_tree ON COMMIT DROP AS
+    SELECT DISTINCT incoming.conversation_id
+    FROM merge_rh_summaries incoming
+    JOIN rh_summaries current ON current.conversation_id = incoming.conversation_id
+    WHERE incoming.kind = 'session'
+      AND ((current.kind = 'session' AND incoming.id <> current.id) OR EXISTS (
+          SELECT 1 FROM merge_rh_summaries s
+          WHERE s.conversation_id = incoming.conversation_id AND s.pipeline_version = 7
+            AND (s.index_needs_repair OR (current.kind = 'session' AND NOT EXISTS (
+                SELECT 1 FROM rh_summaries t WHERE t.id = s.id)))
+      ));
+CREATE TEMP TABLE merge_drop_summary_nodes ON COMMIT DROP AS
+    SELECT id FROM merge_rh_summaries
+    WHERE pipeline_version = 7 AND conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree);
+DELETE FROM merge_rh_summary_deliveries
+    WHERE conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree);
+DELETE FROM merge_rh_summary_passages WHERE record_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_summary_sources WHERE summary_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_wiki_extractions WHERE summary_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_wiki_citations WHERE summary_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_wiki_entity_candidates WHERE summary_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_wiki_deferred WHERE summary_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_wiki_provenance WHERE source_kind = 'summary' AND source_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_tags WHERE entity_type = 'summary' AND entity_id IN (SELECT id FROM merge_drop_summary_nodes);
+DELETE FROM merge_rh_summaries WHERE id IN (SELECT id FROM merge_drop_summary_nodes);
+";
+
 const COLLISIONS: &str = "
 SELECT 'conversations', count(*) FROM merge_rh_conversations s JOIN rh_conversations t USING (id)
  WHERE (t.session_key, t.agent) IS DISTINCT FROM (s.session_key, s.agent)
@@ -92,6 +130,12 @@ UNION ALL SELECT 'messages', count(*) FROM merge_rh_messages s JOIN rh_messages 
  WHERE (t.conversation_id, t.role) IS DISTINCT FROM (s.conversation_id, s.role)
 UNION ALL SELECT 'summaries', count(*) FROM merge_rh_summaries s JOIN rh_summaries t USING (id)
  WHERE t.conversation_id IS DISTINCT FROM s.conversation_id
+    OR (t.pipeline_version = 7 OR s.pipeline_version = 7) AND
+       (t.kind, t.parent_id, t.summary_ordinal, t.input_key)
+       IS DISTINCT FROM (s.kind, s.parent_id, s.summary_ordinal, s.input_key)
+UNION ALL SELECT 'summary passages', count(*)
+  FROM merge_rh_summary_passages s JOIN rh_summary_passages t USING (id)
+ WHERE (t.record_id, t.ordinal, t.index_key) IS DISTINCT FROM (s.record_id, s.ordinal, s.index_key)
 UNION ALL SELECT 'chunks', count(*) FROM merge_rh_message_chunks s JOIN rh_message_chunks t USING (id)
  WHERE (t.message_id, t.idx) IS DISTINCT FROM (s.message_id, s.idx)
 UNION ALL SELECT 'topics', count(*) FROM merge_rh_topics s JOIN rh_topics t USING (id)
@@ -199,14 +243,13 @@ async fn count(conn: &mut PgConnection, sql: &str) -> Result<u64, Error> {
 }
 
 async fn duplicates(conn: &mut PgConnection, report: &mut MergeReport) -> Result<(), Error> {
-    let found: Vec<(String, i64, i64)> = sqlx::query_as(
-        "SELECT session_key, source_messages, target_messages FROM merge_dupes ORDER BY session_key",
-    )
-    .fetch_all(&mut *conn)
-    .await
-    .map_err(|error| Error::operation("merge duplicates", error))?;
-    for (key, source, target) in found {
-        if source > target {
+    let found: Vec<(String, bool)> =
+        sqlx::query_as("SELECT session_key, source_wins FROM merge_dupes ORDER BY session_key")
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|error| Error::operation("merge duplicates", error))?;
+    for (key, source_wins) in found {
+        if source_wins {
             report.replaced.push(key);
         } else {
             report.kept_family.push(key);
@@ -214,9 +257,9 @@ async fn duplicates(conn: &mut PgConnection, report: &mut MergeReport) -> Result
     }
     batch(
         conn,
-        "INSERT INTO merge_drop SELECT source_id FROM merge_dupes WHERE source_messages <= target_messages;
+        "INSERT INTO merge_drop SELECT source_id FROM merge_dupes WHERE NOT source_wins;
          CREATE TEMP TABLE merge_drop_family ON COMMIT DROP AS
-           SELECT target_id FROM merge_dupes WHERE source_messages > target_messages;",
+           SELECT target_id FROM merge_dupes WHERE source_wins;",
         "merge duplicates",
     )
     .await?;
@@ -284,6 +327,7 @@ pub(super) async fn run(
     )
     .await?;
     batch(conn, OWNERS, "merge owners").await?;
+    batch(conn, KEEP_EXISTING_TREE, "merge existing summary trees").await?;
     refuse_collisions(conn).await?;
     batch(conn, TOPICS, "merge topics").await?;
     report.mapped_type_topics = count(conn, "SELECT count(*) FROM merge_topic_map").await?;
@@ -321,8 +365,9 @@ pub(super) async fn insert(
         .map(|column| format!("\"{column}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    let conflict = if table == "rh_summaries" { "(id)" } else { "" };
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO public.{table} ({list}) SELECT {list} FROM {stage} ON CONFLICT DO NOTHING"
+        "INSERT INTO public.{table} ({list}) SELECT {list} FROM {stage} ON CONFLICT {conflict} DO NOTHING"
     )))
     .execute(&mut *conn)
     .await

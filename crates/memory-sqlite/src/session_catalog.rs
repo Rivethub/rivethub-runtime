@@ -107,7 +107,7 @@ SELECT g.key,
                 WHERE j.state = 'dead' AND c.id IN (SELECT value FROM json_each(g.conversations))),
        (SELECT s.content FROM ros_summaries s
          WHERE s.conversation_id IN (SELECT value FROM json_each(g.conversations))
-         ORDER BY s.depth DESC, julianday(s.created_at) DESC LIMIT 1),
+         ORDER BY (s.kind = 'session') DESC, s.depth DESC, julianday(s.created_at) DESC LIMIT 1),
        (SELECT json_extract(c.settings, '$.cwd') FROM ros_conversations c
          WHERE c.id IN (SELECT value FROM json_each(g.conversations)) AND json_valid(c.settings)
            AND json_type(c.settings, '$.cwd') = 'text'

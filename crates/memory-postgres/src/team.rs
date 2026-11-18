@@ -2,6 +2,18 @@ use std::collections::BTreeMap;
 
 use crate::{Error, PostgresMemory};
 
+#[derive(sqlx::FromRow)]
+struct TeamSessionRow {
+    owner: String,
+    session_key: String,
+    recent: chrono::DateTime<chrono::Utc>,
+    title: Option<String>,
+    summary: Option<String>,
+    first_user: Option<String>,
+    topic_name: Option<String>,
+    parent_name: Option<String>,
+}
+
 impl PostgresMemory {
     pub(crate) async fn read_recall_identity(
         &self,
@@ -48,8 +60,8 @@ impl PostgresMemory {
         before: Option<chrono::DateTime<chrono::Utc>>,
         limit: u32,
     ) -> Result<Vec<kernel::memory::TeamSession>, kernel::memory::MemoryStoreError> {
-        let rows = sqlx::query!(
-            r#"WITH sessions AS (
+        let rows = sqlx::query_as::<_, TeamSessionRow>(
+            r"WITH sessions AS (
                 SELECT c.owner_user_id AS owner, c.session_key,
                        max(c.updated_at) AS recent, array_agg(c.id) AS conversations,
                        (array_agg(c.title ORDER BY c.updated_at DESC, c.id)
@@ -63,17 +75,19 @@ impl PostgresMemory {
                     (PARTITION BY owner ORDER BY recent DESC, session_key DESC) AS position
                 FROM sessions WHERE ($1::timestamptz IS NULL OR recent >= $1)
                   AND ($2::timestamptz IS NULL OR recent < $2)
-             ) SELECT r.owner AS "owner!", r.session_key AS "session_key!", r.recent AS "recent!", r.title,
+             ) SELECT r.owner, r.session_key, r.recent, r.title,
                 (SELECT s.content FROM rh_summaries s WHERE s.conversation_id = ANY(r.conversations)
-                 ORDER BY s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,
+                 ORDER BY (s.kind = 'session') DESC, s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,
                 (SELECT m.content FROM rh_messages m WHERE m.conversation_id = ANY(r.conversations)
                  AND m.role = 'user' ORDER BY m.created_at, m.id LIMIT 1) AS first_user,
                 t.name AS topic_name, parent.name AS parent_name
              FROM ranked r LEFT JOIN rh_session_placements p ON p.session_id = r.session_key
              LEFT JOIN rh_topics t ON t.id = p.topic_id LEFT JOIN rh_topics parent ON parent.id = t.parent_id
-             WHERE r.position <= $3 ORDER BY r.owner, r.recent DESC, r.session_key DESC"#,
-            since, before, i64::from(limit),
+             WHERE r.position <= $3 ORDER BY r.owner, r.recent DESC, r.session_key DESC",
         )
+        .bind(since)
+        .bind(before)
+        .bind(i64::from(limit))
         .fetch_all(&self.pool).await
         .map_err(|source| Error::operation("team sessions", source))?;
         Ok(rows

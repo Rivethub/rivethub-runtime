@@ -28,6 +28,9 @@ pub struct SummaryCounts {
     pub leaves: u64,
     pub branches: u64,
     pub roots: u64,
+    pub sessions: u64,
+    pub parts: u64,
+    pub sections: u64,
     pub embedded: u64,
     pub top: u64,
 }
@@ -46,6 +49,7 @@ pub struct SummaryShape {
     pub id: String,
     pub parent_id: Option<String>,
     pub kind: SummaryKind,
+    pub summary_ordinal: Option<u32>,
     pub embedded: bool,
     pub earliest_at: Option<DateTime<Utc>>,
     pub latest_at: Option<DateTime<Utc>>,
@@ -57,6 +61,7 @@ impl From<&MemorySummaryNode> for SummaryShape {
             id: node.id.clone(),
             parent_id: node.parent_id.clone(),
             kind: node.kind,
+            summary_ordinal: node.summary_ordinal,
             embedded: node.vector == VectorState::Embedded,
             earliest_at: node.earliest_at,
             latest_at: node.latest_at,
@@ -87,6 +92,9 @@ pub fn cut(shapes: &[SummaryShape], parent: Option<&str>, window: TreeWindow) ->
             SummaryKind::Leaf => counts.leaves += 1,
             SummaryKind::Branch => counts.branches += 1,
             SummaryKind::Root => counts.roots += 1,
+            SummaryKind::Session => counts.sessions += 1,
+            SummaryKind::Part => counts.parts += 1,
+            SummaryKind::Section => counts.sections += 1,
         }
         if shape.embedded {
             counts.embedded += 1;
@@ -108,8 +116,16 @@ pub fn cut(shapes: &[SummaryShape], parent: Option<&str>, window: TreeWindow) ->
         }
     }
     siblings.sort_by(|left, right| {
-        (left.earliest_at.or(left.latest_at), &left.id)
-            .cmp(&(right.earliest_at.or(right.latest_at), &right.id))
+        (
+            left.summary_ordinal,
+            left.earliest_at.or(left.latest_at),
+            &left.id,
+        )
+            .cmp(&(
+                right.summary_ordinal,
+                right.earliest_at.or(right.latest_at),
+                &right.id,
+            ))
     });
     let total = siblings.iter().fold(0, |total, _| total + 1);
     let ids = siblings
@@ -183,6 +199,11 @@ mod tests {
             earliest_at: at,
             latest_at: at,
             created_at: DateTime::UNIX_EPOCH,
+            summary_ordinal: None,
+            source_first: None,
+            source_last: None,
+            range_verified: None,
+            quality_flags: 0,
             source_message_ids: Vec::new(),
             vector: if kind == SummaryKind::Leaf {
                 VectorState::Pending
@@ -233,6 +254,7 @@ mod tests {
                 roots: 1,
                 embedded: 2,
                 top: 3,
+                ..SummaryCounts::default()
             }
         );
         let whole = dag().tree(None, TreeWindow::ALL).expect("the top");

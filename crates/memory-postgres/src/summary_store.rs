@@ -405,14 +405,9 @@ fn node_from(row: NodeRow) -> Result<SummaryNode, SummaryStoreError> {
 }
 
 fn kind_of(kind: &str) -> Result<SummaryKind, SummaryStoreError> {
-    match kind {
-        "leaf" => Ok(SummaryKind::Leaf),
-        "branch" => Ok(SummaryKind::Branch),
-        "root" => Ok(SummaryKind::Root),
-        other => Err(SummaryStoreError::Kind {
-            kind: other.to_owned(),
-        }),
-    }
+    kind.parse().map_err(|_| SummaryStoreError::Kind {
+        kind: kind.to_owned(),
+    })
 }
 
 fn required_time(

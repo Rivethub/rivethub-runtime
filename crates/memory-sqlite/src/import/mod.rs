@@ -41,6 +41,7 @@ pub enum ImportTable {
     Messages,
     Summaries,
     SummarySources,
+    SummaryDeliveries,
     Tags,
     TagTaxonomy,
     WikiTopics,
@@ -150,31 +151,21 @@ fn import(
 ) -> Result<ImportReport, ImportError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
-    let mut report = ImportReport {
-        rows: BTreeMap::new(),
-    };
-    for table in ImportTable::iter() {
-        let occupied: bool = tx.query_row(
-            &format!(
-                "SELECT EXISTS(SELECT 1 FROM {})",
-                table.compatibility_name()
-            ),
-            [],
-            |row| row.get(0),
-        )?;
-        if occupied {
-            return Err(ImportError::NonEmpty { table });
-        }
-        report.rows.insert(table, 0);
-    }
+    let mut report = empty_report(&tx)?;
     let mut block: Option<columns::Block> = None;
     let mut seen = BTreeSet::new();
     let mut complete = false;
+    let mut passages = false;
+    let mut seen_passages = false;
     let mut width = None;
     for (index, line) in reader.lines().enumerate() {
         check_cancelled(cancellation)?;
         let line = line?;
         let number = index + 1;
+        if passages {
+            passages = line != "\\.";
+            continue;
+        }
         if let Some(active) = &mut block {
             if line == "\\." {
                 block = None;
@@ -196,7 +187,16 @@ fn import(
                     detail: "COPY after dump completion".into(),
                 });
             }
-            let active = columns::Block::parse(&tx, &line, number)?;
+            let (name, fields) = columns::header(&line, number)?;
+            if name == "ros_summary_passages" {
+                if seen_passages {
+                    return Err(copy::invalid(number, "duplicate summary passages block"));
+                }
+                seen_passages = true;
+                passages = true;
+                continue;
+            }
+            let active = columns::Block::parse(&tx, name, fields, number)?;
             if !seen.insert(active.table) {
                 return Err(ImportError::DuplicateTable {
                     table: active.table,
@@ -209,7 +209,7 @@ fn import(
             copy::envelope(&line, number)?;
         }
     }
-    if block.is_some() || !complete || seen.is_empty() {
+    if block.is_some() || passages || !complete || seen.is_empty() {
         return Err(ImportError::Truncated);
     }
     finish(&tx, width, &report)?;
@@ -222,11 +222,49 @@ fn import(
     Ok(report)
 }
 
+fn empty_report(conn: &Connection) -> Result<ImportReport, ImportError> {
+    let mut rows = BTreeMap::new();
+    for table in ImportTable::iter() {
+        let occupied: bool = conn.query_row(
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM {})",
+                table.compatibility_name()
+            ),
+            [],
+            |row| row.get(0),
+        )?;
+        if occupied {
+            return Err(ImportError::NonEmpty { table });
+        }
+        rows.insert(table, 0);
+    }
+    Ok(ImportReport { rows })
+}
+
 fn finish(
     tx: &rusqlite::Transaction<'_>,
     width: Option<usize>,
     report: &ImportReport,
 ) -> Result<(), ImportError> {
+    let invalid: bool = tx.query_row(include_str!("summary_graph.sql"), [], |row| row.get(0))?;
+    if invalid {
+        return Err(ImportError::SummaryGraph);
+    }
+    tx.execute(
+        "UPDATE ros_summaries SET index_needs_repair = 1
+         WHERE kind IN ('session', 'part') AND embedding IS NULL",
+        [],
+    )?;
+    let foreign_key_violation = tx
+        .query_row(
+            "SELECT 1 FROM pragma_foreign_key_check LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    if foreign_key_violation.is_some() {
+        return Err(ImportError::ForeignKeys);
+    }
     if let Some(width) = width {
         let supplied: Option<String> = tx
             .query_row(
