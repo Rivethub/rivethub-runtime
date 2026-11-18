@@ -149,11 +149,17 @@ async fn codex_capture_keeps_messages_with_unparseable_timestamps()
         return Err("Codex reader".into());
     };
     let slice = reader.capture(&session(HarnessId::Codex)).await?;
-    let messages = serde_json::to_value(slice.messages)?;
-    assert_eq!(messages[0]["created_at"], "2026-01-01T00:02:03.123Z");
-    assert!(messages[1]["created_at"].is_null());
-    assert_eq!(messages.as_array().ok_or("messages")?.len(), 2);
-    assert!(slice.skipped.is_empty());
+    let [first, second] = slice.messages.as_slice() else {
+        return Err("expected both messages".into());
+    };
+    assert_eq!(
+        serde_json::to_value(first)?
+            .get("created_at")
+            .and_then(serde_json::Value::as_str),
+        Some("2026-01-01T00:02:03.123Z")
+    );
+    assert_eq!(second.created_at, None);
+    assert_eq!(slice.skipped, []);
     Ok(())
 }
 
