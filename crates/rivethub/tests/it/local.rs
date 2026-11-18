@@ -434,7 +434,8 @@ async fn model_stub() -> std::io::Result<testkit::Stub> {
     testkit::stub_server(
         axum::Router::new()
             .route("/v1/chat/completions", axum::routing::post(complete))
-            .route("/v1/embeddings", axum::routing::post(embed_model_stub)),
+            .route("/v1/embeddings", axum::routing::post(embed_model_stub))
+            .route("/tokenize", axum::routing::post(tokenize_model_stub)),
     )
     .await
 }
@@ -477,4 +478,13 @@ async fn embed_model_stub(
             })
             .collect(),
     })
+}
+
+async fn tokenize_model_stub(
+    axum::Json(request): axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let count = request["prompt"]
+        .as_str()
+        .map_or(0, |text| text.chars().count().div_ceil(3));
+    axum::Json(serde_json::json!({ "count": count }))
 }

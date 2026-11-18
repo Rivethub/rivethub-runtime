@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use super::top_down::{
     llm::{self, Reply},
-    plan::{self, Block, Chunk, ComposePlan, Meter, Source, TranscriptPlan},
+    plan::{self, Block, Chunk, ComposePlan, Meter, PlanError, Source, TranscriptPlan},
     prompt::{self, Mode, Prompt},
     settings::{self, Limits},
 };
@@ -433,9 +433,9 @@ async fn populate(
         } else {
             0
         };
-        let composition = plan::compose(&rebased, frozen.total_tokens, run.meter, run.limits)
-            .map_err(settings_error)?;
-        run.compose(composition, &frozen.sources, &parts).await?
+        let (composition, groups) =
+            compose_input(&rebased, &parts, frozen.total_tokens, run.meter, run.limits)?;
+        run.compose(composition, &frozen.sources, &groups).await?
     };
     let mut root_reply = root_reply;
     root_reply.quality_flags |= root_flags;
@@ -581,7 +581,7 @@ impl Run<'_> {
         &'a self,
         plan: ComposePlan,
         current: &'a [Source],
-        parts: &'a [PreparedSummaryRecord],
+        parts: &'a [&'a PreparedSummaryRecord],
     ) -> Pin<Box<dyn Future<Output = Result<([u8; 32], Reply), WorkerError>> + Send + 'a>> {
         Box::pin(async move {
             let members: BTreeSet<_> = parts
@@ -614,6 +614,46 @@ impl Run<'_> {
             }
         })
     }
+}
+
+fn compose_input<'a>(
+    records: &[String],
+    parts: &'a [PreparedSummaryRecord],
+    total_tokens: usize,
+    meter: Meter,
+    limits: Limits,
+) -> Result<(ComposePlan, Vec<&'a PreparedSummaryRecord>), WorkerError> {
+    match plan::compose(records, total_tokens, meter, limits) {
+        Ok(plan) => return Ok((plan, parts.iter().collect())),
+        Err(PlanError::ComposeContext) => {}
+        Err(error) => return Err(settings_error(error)),
+    }
+    let budget = limits
+        .context_tokens()
+        .saturating_sub(2 * settings::CARRY_CEILING as usize + 2_032);
+    let mut split = Vec::new();
+    let mut owners = Vec::new();
+    for (text, part) in records.iter().zip(parts) {
+        let mut remaining = vec![text.as_str()];
+        while let Some(piece) = remaining.pop() {
+            if meter.estimate(piece) < budget {
+                split.push(piece);
+                owners.push(part);
+                continue;
+            }
+            let middle = piece
+                .char_indices()
+                .nth(piece.chars().count() / 2)
+                .map(|(byte, _)| byte)
+                .filter(|&byte| byte > 0)
+                .ok_or_else(|| settings_error(PlanError::ComposeContext))?;
+            let (left, right) = piece.split_at(middle);
+            remaining.push(right);
+            remaining.push(left);
+        }
+    }
+    let plan = plan::compose(&split, total_tokens, meter, limits).map_err(settings_error)?;
+    Ok((plan, owners))
 }
 
 async fn admission(

@@ -46,45 +46,61 @@ async fn wait_summary(path: &Path, conversation: &str) -> TestResult<Option<Stri
 
 #[tokio::test]
 async fn top_down_live_capture_settle_and_publish_on_sqlite() -> TestResult {
+    local_publish(false).await
+}
+
+#[tokio::test]
+async fn top_down_live_multipart_and_exact_tokenizer_on_sqlite() -> TestResult {
+    local_publish(true).await
+}
+
+async fn local_publish(multipart: bool) -> TestResult {
     let dir = tempfile::tempdir()?;
     let home = dir.path();
     let database = home.join(".rivethub").join("memory.sqlite");
     let stub = model_stub().await?;
     let port = testkit::ports::claim()?;
-    write_state(
+    let mut config = provider_at(
         home,
-        &provider_at(
-            home,
-            &format!("http://{}", stub.addr),
-            &format!(
-                "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
-                database.display()
-            ),
+        &format!("http://{}", stub.addr),
+        &format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n    workers: true\ngateway:\n  host: 127.0.0.1\n  port: {port}\n",
+            database.display()
         ),
-    )?;
+    );
+    if multipart {
+        config = config.replace(
+            "    type: openai-compatible",
+            "    type: vllm\n    context_window: 32768\n    probe_models: false",
+        );
+    }
+    write_state(home, &config)?;
     std::fs::create_dir_all(home.join(".rivethub"))?;
     migrate::sqlite(&database)?;
     let store = memory_sqlite::SqliteStore::open(&database)?;
     let now = chrono::Utc::now();
+    let messages = (0..if multipart { 6 } else { 1 })
+        .map(|position| kernel::memory::MemoryEntry {
+            id: None,
+            session_id: "live-ledger".into(),
+            agent: "rivet".into(),
+            channel: "test".into(),
+            role: wire::message::Role::User,
+            content: if multipart {
+                format!("Deposit {position}: {}", "hazelnut ".repeat(1750))
+            } else {
+                "Please reconcile the blue ledger.".into()
+            },
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: None,
+            created_at: Some(now + chrono::TimeDelta::milliseconds(position)),
+            provenance: None,
+        })
+        .collect();
     store
-        .append_entries(
-            vec![kernel::memory::MemoryEntry {
-                id: None,
-                session_id: "live-ledger".into(),
-                agent: "rivet".into(),
-                channel: "test".into(),
-                role: wire::message::Role::User,
-                content: "Please reconcile the blue ledger.".into(),
-                tool_name: None,
-                tool_args: None,
-                tool_result: None,
-                metadata: None,
-                created_at: Some(now),
-                provenance: None,
-            }],
-            &testkit::owner()?,
-            now,
-        )
+        .append_entries(messages, &testkit::owner()?, now)
         .await?;
     drop(store);
     let started = start(
@@ -114,5 +130,16 @@ async fn top_down_live_capture_settle_and_publish_on_sqlite() -> TestResult {
     let logs = logs?;
     closed?;
     assert_eq!(summarized?.as_deref(), Some(REPLY), "{logs}");
+    let conn = rusqlite::Connection::open(&database)?;
+    let part_count: i64 = conn.query_row(
+        "SELECT count(*) FROM ros_summaries WHERE conversation_id = ?1 AND kind = 'part'",
+        [conversation],
+        |row| row.get(0),
+    )?;
+    if multipart {
+        assert!(part_count >= 3);
+    } else {
+        assert_eq!(part_count, 0);
+    }
     Ok(())
 }

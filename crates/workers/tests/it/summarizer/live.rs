@@ -207,6 +207,7 @@ async fn parts_and_late_input(
     run(store, &script, &request, 2, 32_768, &Semaphore::new(3)).await?;
     let input = store.live_input(id).await?.ok_or("first publication")?;
     assert_eq!(input.parts.len(), 4);
+    assert!(input.parts.iter().all(|part| part.quality_flags & 2 == 2));
     let calls = script.calls.lock().await;
     assert_eq!(
         calls

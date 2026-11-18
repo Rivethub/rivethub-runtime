@@ -120,7 +120,7 @@ impl ModelProvider for Scripted {
         }
         let text = match kind {
             "TITLE_SYSTEM_PROMPT" => TITLE_ANSWER.to_owned(),
-            "TOP_DOWN_PART" if self.large_parts.load(Ordering::SeqCst) => "parsnip ".repeat(2800),
+            "TOP_DOWN_PART" if self.large_parts.load(Ordering::SeqCst) => "parsnip ".repeat(4400),
             "TOP_DOWN_PART" => "Résultat du jardin".to_owned(),
             _ if self.live_output => "A conserved ledger.
 
@@ -134,7 +134,18 @@ The reconciliation uses saffron markers."
         } else {
             FinishReason::Stop
         };
-        Ok(response(text, Some(finish)))
+        let mut response = response(text, Some(finish));
+        if kind == "TOP_DOWN_PART" && self.large_parts.load(Ordering::SeqCst) {
+            response.usage = Some(wire::stream::LlmUsage {
+                prompt_tokens: 11_000,
+                completion_tokens: 12_000,
+                reasoning_tokens: None,
+                cached_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            });
+        }
+        Ok(response)
     }
 
     async fn stream(
