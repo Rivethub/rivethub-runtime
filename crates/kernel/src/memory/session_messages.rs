@@ -76,8 +76,6 @@ impl MessagesQuery {
         }
     }
 
-    /// Returns the page's offset, its cursors and one lookahead cursor if available.
-    /// The next cursor commits to every ID already seen in transcript order.
     pub fn positioned_page(
         &self,
         mut ordered: impl ExactSizeIterator<Item = MessageCursor>,
