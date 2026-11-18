@@ -40,7 +40,8 @@ impl CaptureTransport for Transport {
 }
 
 fn end_batch() -> Result<CaptureBatchRequest, serde_json::Error> {
-    serde_json::from_value(serde_json::json!({
+    let mut batch: CaptureBatchRequest = serde_json::from_str(
+        r#"{
         "session_key":"claude-code:settle-test",
         "agent":"rivet",
         "channel":"claude-code",
@@ -50,10 +51,22 @@ fn end_batch() -> Result<CaptureBatchRequest, serde_json::Error> {
             "last_event":"SessionEnd",
             "last_ingest_at":"2026-10-10T12:00:00Z"
         },
-        "messages": (0..3).map(|n| serde_json::json!({
-            "event_id":n.to_string(), "role":"user", "content":"sample ".repeat(70)
-        })).collect::<Vec<_>>(),
-    }))
+        "messages": []
+    }"#,
+    )?;
+    batch.messages = (0..3)
+        .map(|n| wire::capture::CaptureMessage {
+            event_id: n.to_string(),
+            role: wire::message::Role::User,
+            content: "sample ".repeat(70),
+            tool_name: None,
+            tool_args: None,
+            tool_result: None,
+            metadata: None,
+            created_at: None,
+        })
+        .collect();
+    Ok(batch)
 }
 
 fn has_end(batch: &CaptureBatchRequest) -> bool {
@@ -173,17 +186,13 @@ async fn claude_clear_forwards_the_previous_session_end() -> TestResult {
     let old = "bd823506-5d8b-4c3b-9892-0b69a47ab9a4";
     let new = "2e06bd25-fe4d-40ce-bc87-d1d35ff8fda8";
     let time = "2026-10-10T12:00:00Z".parse()?;
-    let end = serde_json::json!({
-        "session_id":old, "hook_event_name":"SessionEnd", "reason":"clear", "event_id":"native-end"
-    });
-    let start = serde_json::json!({
-        "session_id":new, "hook_event_name":"SessionStart", "source":"clear"
-    });
-    assert_eq!(hook.run(&end.to_string(), time, "fixture").await.stderr, "");
-    assert_eq!(
-        hook.run(&start.to_string(), time, "fixture").await.stderr,
-        ""
+    let end = format!(
+        r#"{{"session_id":"{old}","hook_event_name":"SessionEnd","reason":"clear","event_id":"native-end"}}"#
     );
+    let start =
+        format!(r#"{{"session_id":"{new}","hook_event_name":"SessionStart","source":"clear"}}"#);
+    assert_eq!(hook.run(&end, time, "fixture").await.stderr, "");
+    assert_eq!(hook.run(&start, time, "fixture").await.stderr, "");
     let posts = transport.posts.lock();
     let [notification] = posts.as_slice() else {
         return Err("expected only the previous session's end".into());
@@ -236,9 +245,11 @@ async fn codex_empty_end_is_distinct_from_turn_boundaries_and_imports() -> TestR
     ] {
         let mut unrelated = end_batch()?;
         unrelated.session_key = key.to_owned();
-        unrelated.settings = Some(serde_json::from_value(serde_json::json!({
-            "source":source, "last_event":event, "last_ingest_at":"2026-10-10T12:00:00Z",
-        }))?);
+        let mut settings = wire::JsonObject::default();
+        settings.insert("source", source)?;
+        settings.insert("last_event", event)?;
+        settings.insert("last_ingest_at", "2026-10-10T12:00:00Z")?;
+        unrelated.settings = Some(settings);
         assert!(!has_end(&unrelated));
     }
     let mut harvested_child = end_batch()?;
