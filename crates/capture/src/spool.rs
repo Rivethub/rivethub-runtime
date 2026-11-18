@@ -220,12 +220,13 @@ impl CaptureSpool {
             || backoff(1),
             |seconds| SignedDuration::from_secs(i64::from(seconds).min(BACKOFF_CEILING_SECONDS)),
         );
+        let not_before = now.saturating_add(delay).map_err(std::io::Error::other)?;
         let target = self.dir.join(format!(
             "{}-{}.{}.{}{SUFFIX}",
             name.prefix,
             name.id,
             name.attempts,
-            (now + delay).epoch_millis()
+            not_before.epoch_millis()
         ));
         match fs::rename(path, &target).await {
             Ok(()) => Ok(()),
@@ -266,7 +267,9 @@ impl CaptureSpool {
             }
             return Ok(());
         }
-        let not_before = now + backoff(attempts);
+        let not_before = now
+            .saturating_add(backoff(attempts))
+            .map_err(std::io::Error::other)?;
         let target = self.dir.join(format!(
             "{}-{}.{attempts}.{}{SUFFIX}",
             entry.name.prefix,
@@ -312,6 +315,37 @@ fn backoff(attempts: u64) -> SignedDuration {
         .saturating_mul(1_i64 << doublings)
         .min(BACKOFF_CEILING_SECONDS);
     SignedDuration::from_secs(seconds)
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn spool_retry_deadlines_saturate_for_throttling_and_backoff()
+-> Result<(), Box<dyn std::error::Error>> {
+    let now = Timestamp::MAX;
+    let temp = tempfile::tempdir()?;
+    for throttled in [true, false] {
+        let spool = CaptureSpool::new(temp.path().join(throttled.to_string()));
+        let _path = spool.spool("{}", now).await?;
+        spool
+            .replay(1, now, |_| async {
+                let error = if throttled {
+                    PostError::Throttled {
+                        status: 429,
+                        retry_after_seconds: Some(u32::MAX),
+                    }
+                } else {
+                    PostError::Server { status: 503 }
+                };
+                Err(error)
+            })
+            .await?;
+        let entries = queued_files(spool.dir()).await?;
+        let [entry] = entries.as_slice() else {
+            return Err("expected a single queued capture".into());
+        };
+        assert_eq!(entry.name.not_before, now.epoch_millis().unsigned_abs());
+    }
+    Ok(())
 }
 
 async fn write_new(dir: &Path, body: &str, now: Timestamp) -> Result<PathBuf, SpoolError> {
