@@ -68,17 +68,22 @@ pub(crate) fn finite_or_date(time: &RawTime) -> Option<i64> {
 }
 
 fn civil_datetime(text: &str) -> Result<DateTime, jiff::Error> {
-    if let Some((_, fraction)) = text.rsplit_once('.')
+    let (date, time) = text
+        .split_once('T')
+        .ok_or_else(|| jiff::Error::from_args(format_args!("missing transcript time separator")))?;
+    let date = wire::time::parse_civil_date(date)?;
+    let time = if let Some((_, fraction)) = time.rsplit_once('.')
         && fraction.len() > 9
         && fraction.bytes().all(|byte| byte.is_ascii_digit())
     {
-        let truncated = text.len() - (fraction.len() - 9);
-        let text = text
-            .get(..truncated)
-            .ok_or_else(|| jiff::Error::from_args(format_args!("invalid fractional seconds")))?;
-        return DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text);
-    }
-    DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text)
+        let truncated = time.len() - (fraction.len() - 9);
+        time.get(..truncated)
+            .ok_or_else(|| jiff::Error::from_args(format_args!("invalid fractional seconds")))?
+    } else {
+        time
+    };
+    let time = jiff::civil::Time::strptime("%H:%M:%S%.f", time)?;
+    Ok(DateTime::from_parts(date, time))
 }
 
 pub(crate) fn parse_date(text: &str) -> Option<i64> {
@@ -185,6 +190,13 @@ pub(crate) fn from_milliseconds(millis: i64) -> Option<Timestamp> {
 #[cfg(test)]
 mod tests {
     use super::{RawTime, epoch_flex, epoch_opencode, parse_date};
+
+    #[test]
+    fn zone_less_transcript_dates_accept_signed_extended_years() {
+        assert_eq!(parse_date("+02026-01-01T00:00:00"), Some(1_767_225_600_000));
+        assert_eq!(parse_date("+02026-01-01 00:00:00"), None);
+        assert_eq!(parse_date("+02026-01-01t00:00:00"), None);
+    }
 
     #[test]
     fn source_time_forms_normalize_to_epoch_milliseconds() {
