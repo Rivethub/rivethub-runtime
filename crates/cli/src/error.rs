@@ -5,6 +5,10 @@ use thiserror::Error;
 pub enum Error {
     #[error("usage: rh memory settle <session> [--sqlite <file>] [--json]")]
     SettleUsage,
+    #[error("usage: rh memory resummarize <start|pause|resume|status|retry|release|rehearse>")]
+    ResummarizeUsage,
+    #[error(transparent)]
+    ConversionStore(#[from] kernel::memory::SummaryStoreError),
     #[error("no unique owned conversation matches {0}")]
     SettleMissing(String),
     #[error(transparent)]

@@ -38,6 +38,12 @@ use crate::time;
 
 #[async_trait]
 impl SummaryStore for SqliteStore {
+    fn summary_conversion(
+        &self,
+    ) -> Option<&dyn kernel::memory::summary_conversion::SummaryConversion> {
+        Some(self)
+    }
+
     async fn live_candidates(
         &self,
         after: Uuid,
@@ -95,18 +101,9 @@ impl SummaryStore for SqliteStore {
         root: Option<Uuid>,
         manifest: serde_json::Value,
     ) -> Result<Uuid, SummaryStoreError> {
-        self.with_conn(move |conn| {
-            let id: String = conn.query_row(
-                "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision,
-                     expected_root = excluded.expected_root, manifest = excluded.manifest
-                 WHERE rh_summary_runs.revision <= excluded.revision RETURNING id",
-                params![Uuid::new_v4().to_string(), id.to_string(), revision, root.map(|root| root.to_string()),
-                    manifest.to_string(), time::stamp(Utc::now())], |row| row.get(0)
-            ).map_err(backend::error)?;
-            parse_id(&id)
-        }).await.map_err(store_err)
+        self.with_conn(move |conn| backend::freeze(conn, id, revision, root, manifest))
+            .await
+            .map_err(store_err)
     }
 
     async fn live_checkpoint(

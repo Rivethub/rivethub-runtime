@@ -1,3 +1,4 @@
+use kernel::memory::summary_conversion::ConversionLease;
 use kernel::memory::{WrittenSummary, summary_backend::SummaryIndexes};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,7 +30,7 @@ impl SqliteStore {
         &self,
         prepared: PreparedSummaryTree,
     ) -> Result<(), SqliteError> {
-        self.replace_tree(prepared, None).await.map(drop)
+        self.replace_tree(prepared, None, None).await.map(drop)
     }
 
     pub(crate) async fn replace_live_summary(
@@ -37,25 +38,48 @@ impl SqliteStore {
         prepared: PreparedSummaryTree,
         indexes: SummaryIndexes,
     ) -> Result<(), SqliteError> {
-        let written = self.replace_tree(prepared, Some(indexes)).await?;
+        let written = self.replace_tree(prepared, Some(indexes), None).await?;
+        self.notify_summary_publication(written);
+        Ok(())
+    }
+
+    pub(crate) async fn replace_conversion_summary(
+        &self,
+        prepared: PreparedSummaryTree,
+        indexes: SummaryIndexes,
+        lease: ConversionLease,
+    ) -> Result<(), SqliteError> {
+        let written = self
+            .replace_tree(prepared, Some(indexes), Some(lease))
+            .await?;
+        self.notify_summary_publication(written);
+        Ok(())
+    }
+
+    fn notify_summary_publication(&self, written: Vec<WrittenSummary>) {
         if !written.is_empty() {
             self.notifications.send_replace(());
         }
         for notice in written {
             drop(self.summaries_written.send(notice));
         }
-        Ok(())
     }
 
     async fn replace_tree(
         &self,
         mut prepared: PreparedSummaryTree,
         indexes: Option<SummaryIndexes>,
+        conversion: Option<ConversionLease>,
     ) -> Result<Vec<WrittenSummary>, SqliteError> {
         prepared.validate_index_key(self.summary_index_key)?;
         self.with_conn(move |conn| {
             let tx = immediate(conn).map_err(failure)?;
             validate_current(&tx, &prepared)?;
+            if let Some(lease) = conversion {
+                if !crate::summary_conversion::can_publish(&tx, lease)? {
+                    return Err(SummaryReferenceError::Stale(prepared.conversation).into());
+                }
+            }
             if indexes.is_some() {
                 let revision = prepared.expected_revision.ok_or(SummaryReferenceError::Stale(prepared.conversation))?;
                 if !crate::summary_backend::eligible(&tx, prepared.conversation, revision)? {
@@ -65,7 +89,7 @@ impl SqliteStore {
                     if !prepared.expected_ids.is_empty() {
                         return Err(SqliteError::Invalid { message: "empty transcript would replace an existing summary".into() });
                     }
-                    finish_revision(&tx, &prepared)?;
+                    finish_revision(&tx, &prepared, conversion.is_some())?;
                     tx.commit().map_err(failure)?;
                     return Ok(Vec::new());
                 }
@@ -104,7 +128,9 @@ impl SqliteStore {
                  DROP TABLE summary_old_vectors;",
             ).map_err(failure)?;
             let written = if let Some(indexes) = indexes {
-                enqueue_deliveries(&tx, &prepared)?;
+                if conversion.is_none() {
+                    enqueue_deliveries(&tx, &prepared)?;
+                }
                 for (id, index) in indexes {
                     tx.execute("UPDATE ros_summaries SET embedding = ?2, index_needs_repair = 0 WHERE id = ?1",
                         params![id.to_string(), crate::vector::pack(&index.pooled)]).map_err(failure)?;
@@ -118,7 +144,7 @@ impl SqliteStore {
                 Vec::new()
             };
             tx.execute_batch(include_str!("references.sql")).map_err(failure)?;
-            finish_revision(&tx, &prepared)?;
+            finish_revision(&tx, &prepared, conversion.is_some())?;
             tx.commit().map_err(failure)?;
             Ok(written)
         }).await
@@ -166,7 +192,10 @@ fn validate_current(conn: &Connection, tree: &PreparedSummaryTree) -> Result<(),
     Ok(())
 }
 
-fn old_coverage(conn: &Connection, conversation: Uuid) -> Result<SummaryCoverage, SqliteError> {
+pub(crate) fn old_coverage(
+    conn: &Connection,
+    conversation: Uuid,
+) -> Result<SummaryCoverage, SqliteError> {
     let mut statement = conn
         .prepare(include_str!("coverage.sql"))
         .map_err(failure)?;
@@ -319,7 +348,22 @@ fn insert_record(
     Ok(())
 }
 
-fn finish_revision(conn: &Connection, prepared: &PreparedSummaryTree) -> Result<(), SqliteError> {
+fn finish_revision(
+    conn: &Connection,
+    prepared: &PreparedSummaryTree,
+    conversion: bool,
+) -> Result<(), SqliteError> {
+    if conversion {
+        conn.execute(
+            "UPDATE ros_summary_deliveries SET anchor_id = NULL, historical_backlog = 1
+                      WHERE conversation_id = ?1 AND completed_version IS NULL",
+            [prepared.conversation.to_string()],
+        )
+        .map_err(failure)?;
+        conn.execute("UPDATE rh_summary_conversion_items SET state = 'complete', reservation_expires_at = NULL
+                      WHERE conversation_id = ?1",
+                     [prepared.conversation.to_string()]).map_err(failure)?;
+    }
     conn.execute(
         "DELETE FROM rh_summary_runs WHERE conversation_id = ?1",
         [prepared.conversation.to_string()],

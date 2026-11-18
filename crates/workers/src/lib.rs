@@ -67,6 +67,7 @@ pub use summarize::SummarizeEnv;
 pub use summarize::SummarySettings;
 pub use summarize::TITLE_SYSTEM_PROMPT;
 pub use summarize::TitleCall;
+pub use summarize::conversion::handle_conversion_tick;
 pub use summarize::handle_reap;
 pub use summarize::handle_summarize;
 pub use summarize::{LiveEnv, LiveRequest, Named};

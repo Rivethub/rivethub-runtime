@@ -1,3 +1,4 @@
+pub(crate) mod conversion;
 pub(crate) mod index;
 pub(crate) mod live;
 mod llm;

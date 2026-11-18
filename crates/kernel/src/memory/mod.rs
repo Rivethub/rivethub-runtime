@@ -685,3 +685,4 @@ pub mod schedule;
 
 #[doc(hidden)]
 pub mod summary_backend;
+pub mod summary_conversion;

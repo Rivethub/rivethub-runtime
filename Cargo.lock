@@ -6009,6 +6009,7 @@ dependencies = [
  "migrate",
  "parking_lot",
  "reqwest",
+ "rusqlite",
  "schemars 1.2.3",
  "serde",
  "serde_json",

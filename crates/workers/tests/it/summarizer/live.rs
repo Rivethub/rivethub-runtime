@@ -16,7 +16,7 @@ use workers::{
 
 use super::*;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 async fn capture(
     store: &dyn MemoryStore,
@@ -699,3 +699,4 @@ where
     assert!(script.calls.lock().await.is_empty());
     Ok(())
 }
+mod conversion;

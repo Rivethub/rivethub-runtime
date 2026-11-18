@@ -86,6 +86,8 @@ pub enum WorkerError {
     ConversationMissing { id: Uuid },
     #[error("summary revision is no longer eligible")]
     SummarySuperseded,
+    #[error("historical summary conversion yielded")]
+    ConversionYield,
     #[error("summary tree changed while publishing")]
     SummaryReplan,
     #[error("the model returned an empty summary")]

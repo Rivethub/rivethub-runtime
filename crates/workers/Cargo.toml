@@ -29,6 +29,7 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+rusqlite.workspace = true
 memory-postgres.workspace = true
 memory-sqlite.workspace = true
 migrate.workspace = true

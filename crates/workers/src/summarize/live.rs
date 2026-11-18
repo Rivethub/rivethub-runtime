@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use futures::{StreamExt as _, stream};
 use kernel::memory::{
     SummaryKind,
-    summary_backend::{SummaryIndex, SummaryIndexes, SummaryInput},
+    summary_backend::{SummaryIndex, SummaryIndexes, SummaryInput, SummaryPermit},
+    summary_conversion::{ConversionCharge, ConversionLease, ConversionUsage, SummaryConversion},
     summary_reference::{
         PreparedSummaryRecord, PreparedSummaryTree, SummaryManifestEntry, SummarySectionBounds,
     },
@@ -30,6 +32,7 @@ use crate::{EmbedSettings, WorkerError};
 pub(crate) const ATTEMPTS: i32 = 3;
 const INPUT_WARNING: u32 = 1 << 4;
 const CHAT_FRAMING_TOKENS: usize = 32;
+const CONVERSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +49,108 @@ pub struct LiveEnv<'a> {
     pub permits: &'a Semaphore,
 }
 
+struct Publisher<'a> {
+    live: &'a LiveEnv<'a>,
+    conversion: Option<(&'a dyn SummaryConversion, ConversionLease)>,
+    token_workspace: OnceLock<Uuid>,
+}
+
+impl<'a> std::ops::Deref for Publisher<'a> {
+    type Target = LiveEnv<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        self.live
+    }
+}
+
+impl Publisher<'_> {
+    async fn boundary(&self, charge: Option<ConversionCharge>) -> Result<(), WorkerError> {
+        if let Some((store, lease)) = self.conversion
+            && !store.admit(lease, charge).await?
+        {
+            return Err(WorkerError::ConversionYield);
+        }
+        Ok(())
+    }
+
+    async fn freeze_run(
+        &self,
+        id: Uuid,
+        revision: i64,
+        root: Option<Uuid>,
+        manifest: serde_json::Value,
+    ) -> Result<Uuid, WorkerError> {
+        if let Some((store, lease)) = self.conversion {
+            return store
+                .freeze(lease, root, manifest)
+                .await?
+                .ok_or(WorkerError::ConversionYield);
+        }
+        Ok(self
+            .summary
+            .store
+            .freeze_live_run(id, revision, root, manifest)
+            .await?)
+    }
+
+    async fn model_slot(
+        &self,
+        id: Uuid,
+        revision: i64,
+    ) -> Result<(tokio::sync::SemaphorePermit<'_>, Box<dyn SummaryPermit>), WorkerError> {
+        if let Some((store, _)) = self.conversion {
+            let Ok(mut local) = self.permits.try_acquire_many(2) else {
+                return Err(WorkerError::ConversionYield);
+            };
+            drop(local.split(1));
+            let permit = store
+                .try_model_slot(self.summary.settings.model_concurrency)
+                .await?
+                .ok_or(WorkerError::ConversionYield)?;
+            Ok((local, permit))
+        } else {
+            let local = self
+                .permits
+                .acquire()
+                .await
+                .map_err(|_| WorkerError::Closed)?;
+            let permit = admission(self, id, revision).await?;
+            Ok((local, permit))
+        }
+    }
+
+    async fn request<T>(
+        &self,
+        future: impl Future<Output = Result<T, kernel::model::ModelProviderError>>,
+    ) -> Result<T, WorkerError> {
+        if self.conversion.is_some() {
+            tokio::time::timeout(CONVERSION_REQUEST_TIMEOUT, future)
+                .await
+                .map_err(|_| settings_error("conversion model request timed out"))?
+                .map_err(super::llm_error)
+        } else {
+            future.await.map_err(super::llm_error)
+        }
+    }
+}
+
+pub(super) async fn convert(
+    env: &LiveEnv<'_>,
+    store: &dyn SummaryConversion,
+    lease: ConversionLease,
+) -> Result<(), WorkerError> {
+    let publisher = Publisher {
+        live: env,
+        conversion: Some((store, lease)),
+        token_workspace: OnceLock::new(),
+    };
+    let request = LiveRequest {
+        conversation_id: lease.conversation,
+        revision: Some(lease.revision),
+    };
+    publish(&publisher, &request, lease.revision).await
+}
+
 #[derive(Deserialize, Serialize)]
 struct Frozen {
     profile: [u8; 32],
@@ -60,7 +165,7 @@ struct Frozen {
 }
 
 struct Run<'a> {
-    env: &'a LiveEnv<'a>,
+    env: &'a Publisher<'a>,
     id: Uuid,
     request: &'a LiveRequest,
     revision: i64,
@@ -77,9 +182,14 @@ pub async fn handle(
     let Some(revision) = request.revision else {
         return Ok(());
     };
-    let mut outcome = publish(env, request, revision).await;
+    let publisher = Publisher {
+        live: env,
+        conversion: None,
+        token_workspace: OnceLock::new(),
+    };
+    let mut outcome = publish(&publisher, request, revision).await;
     if matches!(outcome, Err(WorkerError::SummaryReplan)) {
-        outcome = publish(env, request, revision).await;
+        outcome = publish(&publisher, request, revision).await;
     }
     match outcome {
         Err(WorkerError::SummarySuperseded) => Ok(()),
@@ -101,7 +211,7 @@ pub async fn handle(
 }
 
 async fn publish(
-    env: &LiveEnv<'_>,
+    env: &Publisher<'_>,
     request: &LiveRequest,
     revision: i64,
 ) -> Result<(), WorkerError> {
@@ -112,6 +222,11 @@ async fn publish(
         return Ok(());
     };
     let blocks = plan::render(&input.messages).map_err(settings_error)?;
+    if env.conversion.is_some() && blocks.is_empty() && !input.expected_ids.is_empty() {
+        return Err(settings_error(
+            "no renderable transcript for the existing summary tree",
+        ));
+    }
     let warnings: BTreeSet<_> = input
         .messages
         .iter()
@@ -138,9 +253,19 @@ async fn publish(
         limits.thinking(),
     ))?;
     let previous = store.live_run(id).await?;
+    if env.conversion.is_some() {
+        let workspace =
+            if let Some(previous) = previous.as_ref().filter(|run| run.revision == revision) {
+                previous.id
+            } else {
+                env.freeze_run(id, revision, input.expected_root, serde_json::Value::Null)
+                    .await?
+            };
+        let _ = env.token_workspace.set(workspace);
+    }
     let resume = previous
         .as_ref()
-        .filter(|run| run.revision == revision)
+        .filter(|run| run.revision == revision && !run.manifest.is_null())
         .map(|run| decode::<Frozen>(run.manifest.clone()))
         .transpose()?
         .filter(|plan| {
@@ -154,8 +279,8 @@ async fn publish(
         )
         .await?;
         ensure_eligible(env, id, revision).await?;
-        let run_id = store
-            .freeze_live_run(id, revision, input.expected_root, encode(&frozen)?)
+        let run_id = env
+            .freeze_run(id, revision, input.expected_root, encode(&frozen)?)
             .await?;
         (run_id, frozen)
     };
@@ -165,7 +290,7 @@ async fn publish(
         owner: input.owner,
         expected_ids: input.expected_ids,
         expected_revision: Some(revision),
-        historical: false,
+        historical: env.conversion.is_some(),
         created_at: now,
         records: Vec::new(),
         retained_parts: frozen.retained.clone(),
@@ -196,6 +321,13 @@ async fn publish(
         )
         .await?;
     }
+    if let Some((conversion, lease)) = env.conversion {
+        return if conversion.publish(lease, tree, indexes).await? {
+            Ok(())
+        } else {
+            Err(WorkerError::ConversionYield)
+        };
+    }
     match store.publish_live(tree, indexes).await {
         Ok(true) => Ok(()),
         Ok(false) if store.summary_eligible(id, revision).await? => Err(WorkerError::SummaryReplan),
@@ -215,7 +347,7 @@ async fn publish(
 
 #[expect(clippy::too_many_arguments)]
 async fn freeze(
-    env: &LiveEnv<'_>,
+    env: &Publisher<'_>,
     request: &LiveRequest,
     revision: i64,
     input: &SummaryInput,
@@ -238,12 +370,7 @@ async fn freeze(
     let exact = if sample.is_empty() {
         None
     } else {
-        let local = env
-            .permits
-            .acquire()
-            .await
-            .map_err(|_| WorkerError::Closed)?;
-        let permit = admission(env, request.conversation_id, revision).await?;
+        let (local, permit) = env.model_slot(request.conversation_id, revision).await?;
         let count = tokenize(env, request.conversation_id, revision, &sample).await?;
         drop(permit);
         drop(local);
@@ -390,12 +517,19 @@ async fn populate(
                 }
             },
         ))
-        .buffer_unordered(settings::PART_PARALLELISM);
+        .buffer_unordered(if run.env.conversion.is_some() {
+            1
+        } else {
+            settings::PART_PARALLELISM
+        });
         let mut failure = None;
         while let Some(result) = jobs.next().await {
             match result {
                 Ok(part) => parts.push(part),
                 Err(error) => {
+                    if run.env.conversion.is_some() {
+                        return Err(error);
+                    }
                     failure.get_or_insert(error);
                 }
             }
@@ -492,13 +626,10 @@ impl Run<'_> {
         if let Some(saved) = store.live_checkpoint(self.id, key).await? {
             return Ok((key, decode(saved)?));
         }
-        let local = self
+        let (local, permit) = self
             .env
-            .permits
-            .acquire()
-            .await
-            .map_err(|_| WorkerError::Closed)?;
-        let permit = admission(self.env, self.request.conversation_id, self.revision).await?;
+            .model_slot(self.request.conversation_id, self.revision)
+            .await?;
         let provider = self.env.summary.provider;
         let model = &self.env.summary.settings.model;
         let tokens = self
@@ -510,12 +641,37 @@ impl Run<'_> {
             return Err(settings_error("summary request exceeds the model context"));
         }
         ensure_eligible(self.env, self.request.conversation_id, self.revision).await?;
-        let response = provider
-            .chat(llm::model_request(model, &prompt))
-            .await
-            .map_err(super::llm_error)?;
+        let charge = self
+            .env
+            .conversion
+            .map(|_| -> Result<_, WorkerError> {
+                Ok(ConversionCharge {
+                    estimate: i64::try_from(tokens - prompt.max_tokens as usize)
+                        .map_err(|_| WorkerError::Count)?,
+                    capacity: i64::try_from(self.limits.context_tokens())
+                        .map_err(|_| WorkerError::Count)?,
+                })
+            })
+            .transpose()?;
+        self.env.boundary(charge).await?;
+        let response = self
+            .env
+            .request(provider.chat(llm::model_request(model, &prompt)))
+            .await?;
         drop(permit);
         drop(local);
+        if let (Some((conversion, _)), Some(charge), Some(usage)) =
+            (self.env.conversion, charge, &response.usage)
+        {
+            conversion
+                .report(ConversionUsage {
+                    estimate: charge.estimate,
+                    input: i64::try_from(usage.prompt_tokens).map_err(|_| WorkerError::Count)?,
+                    output: i64::try_from(usage.completion_tokens)
+                        .map_err(|_| WorkerError::Count)?,
+                })
+                .await?;
+        }
         let reply = llm::parse_model_reply(&response, prompt.editorial_ceiling, sources)
             .map_err(|_| WorkerError::EmptySummary)?;
         store
@@ -657,7 +813,7 @@ fn compose_input<'a>(
 }
 
 async fn admission(
-    env: &LiveEnv<'_>,
+    env: &Publisher<'_>,
     id: Uuid,
     revision: i64,
 ) -> Result<Box<dyn kernel::memory::summary_backend::SummaryPermit>, WorkerError> {
@@ -676,21 +832,41 @@ async fn admission(
 }
 
 async fn tokenize(
-    env: &LiveEnv<'_>,
+    env: &Publisher<'_>,
     id: Uuid,
     revision: i64,
     text: &str,
 ) -> Result<Option<usize>, WorkerError> {
     ensure_eligible(env, id, revision).await?;
-    env.summary
-        .provider
-        .count_tokens(&env.summary.settings.model, text)
-        .await
-        .map_err(super::llm_error)
+    let store = env.summary.store;
+    let settings = env.summary.settings;
+    let key = if let Some(&run) = env.token_workspace.get() {
+        let key = digest(&(
+            "conversion-tokenizer-v1",
+            &settings.model,
+            &settings.model_profile,
+            text,
+        ))?;
+        if let Some(count) = store.live_checkpoint(run, key).await? {
+            return decode(count);
+        }
+        Some((run, key))
+    } else {
+        None
+    };
+    let count = env
+        .request(env.summary.provider.count_tokens(&settings.model, text))
+        .await?;
+    if let Some((run, key)) = key {
+        store
+            .save_live_checkpoint(run, revision, key, encode(&count)?)
+            .await?;
+    }
+    Ok(count)
 }
 
 async fn pack(
-    env: &LiveEnv<'_>,
+    env: &Publisher<'_>,
     id: Uuid,
     revision: i64,
     blocks: &[Block],
@@ -701,12 +877,7 @@ async fn pack(
     if !exact || blocks.is_empty() {
         return plan::pack(blocks, meter, limits, None).map_err(settings_error);
     }
-    let local = env
-        .permits
-        .acquire()
-        .await
-        .map_err(|_| WorkerError::Closed)?;
-    let permit = admission(env, id, revision).await?;
+    let (local, permit) = env.model_slot(id, revision).await?;
     let mut counts = BTreeMap::new();
     loop {
         let mut missing = BTreeMap::new();
@@ -740,8 +911,11 @@ async fn pack(
     }
 }
 
-async fn ensure_eligible(env: &LiveEnv<'_>, id: Uuid, revision: i64) -> Result<(), WorkerError> {
+async fn ensure_eligible(env: &Publisher<'_>, id: Uuid, revision: i64) -> Result<(), WorkerError> {
     super::llm::cancelled(env.summary)?;
+    if env.conversion.is_some() {
+        return env.boundary(None).await;
+    }
     if env.summary.store.summary_eligible(id, revision).await? {
         Ok(())
     } else {

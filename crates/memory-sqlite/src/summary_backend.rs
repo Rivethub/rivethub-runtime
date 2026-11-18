@@ -146,3 +146,22 @@ fn parts(conn: &Connection, id: Uuid) -> Result<Vec<PreparedSummaryRecord>, Sqli
 fn key(bytes: Option<Vec<u8>>) -> Option<[u8; 32]> {
     bytes.and_then(|bytes| bytes.try_into().ok())
 }
+
+pub(crate) fn freeze(
+    conn: &Connection,
+    id: Uuid,
+    revision: i64,
+    root: Option<Uuid>,
+    manifest: serde_json::Value,
+) -> Result<Uuid, SqliteError> {
+    let id: String = conn.query_row(
+                "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT (conversation_id) DO UPDATE SET revision = excluded.revision,
+                     expected_root = excluded.expected_root, manifest = excluded.manifest
+                 WHERE rh_summary_runs.revision <= excluded.revision RETURNING id",
+                params![Uuid::new_v4().to_string(), id.to_string(), revision, root.map(|root| root.to_string()),
+                    manifest.to_string(), crate::time::stamp(chrono::Utc::now())], |row| row.get(0)
+            ).map_err(error)?;
+    stored_uuid(id)
+}

@@ -12,6 +12,7 @@ mod import;
 mod memory_http;
 #[path = "local/summarize.rs"]
 mod summarize;
+mod summary_conversion;
 
 use std::path::Path;
 use std::time::Duration;

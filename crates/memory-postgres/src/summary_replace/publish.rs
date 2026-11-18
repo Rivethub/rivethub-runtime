@@ -1,4 +1,5 @@
 use kernel::memory::summary_backend::{SummaryIndex, SummaryIndexes};
+use kernel::memory::summary_conversion::ConversionLease;
 use std::collections::{BTreeMap, BTreeSet};
 
 use kernel::memory::summary_reference::{
@@ -77,7 +78,7 @@ impl PostgresMemory {
         &self,
         prepared: &PreparedSummaryTree,
     ) -> Result<(), ReplaceSummaryError> {
-        self.replace_tree(prepared, None).await
+        self.replace_tree(prepared, None, None).await
     }
 
     pub(crate) async fn replace_live_summary(
@@ -85,20 +86,47 @@ impl PostgresMemory {
         prepared: &PreparedSummaryTree,
         indexes: &SummaryIndexes,
     ) -> Result<(), ReplaceSummaryError> {
-        self.replace_tree(prepared, Some(indexes)).await
+        self.replace_tree(prepared, Some(indexes), None).await
+    }
+
+    pub(crate) async fn replace_conversion_summary(
+        &self,
+        prepared: &PreparedSummaryTree,
+        indexes: &SummaryIndexes,
+        lease: ConversionLease,
+    ) -> Result<(), ReplaceSummaryError> {
+        self.replace_tree(prepared, Some(indexes), Some(lease))
+            .await
     }
 
     async fn replace_tree(
         &self,
         prepared: &PreparedSummaryTree,
         indexes: Option<&SummaryIndexes>,
+        conversion: Option<ConversionLease>,
     ) -> Result<(), ReplaceSummaryError> {
         prepared.validate_index_key(self.summary_index_key)?;
         let mut tx = self.pool.begin().await.map_err(query)?;
+        if let Some(lease) = conversion {
+            if !crate::summary_conversion::can_publish(&mut tx, lease)
+                .await
+                .map_err(query)?
+            {
+                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
+            }
+        }
         exclusive(&mut tx, [prepared.conversation])
             .await
             .map_err(query)?;
         validate_current(&mut tx, prepared).await?;
+        if let Some(lease) = conversion {
+            if !crate::summary_conversion::can_publish(&mut tx, lease)
+                .await
+                .map_err(query)?
+            {
+                return Err(SummaryReferenceError::Stale(prepared.conversation).into());
+            }
+        }
         if indexes.is_some() {
             let revision = prepared
                 .expected_revision
@@ -116,7 +144,7 @@ impl PostgresMemory {
                     )
                     .into());
                 }
-                finish_revision(&mut tx, prepared).await?;
+                finish_revision(&mut tx, prepared, conversion.is_some()).await?;
                 tx.commit().await.map_err(query)?;
                 return Ok(());
             }
@@ -124,7 +152,7 @@ impl PostgresMemory {
         let mut coverage = prepared
             .coverage()
             .map_err(|error| Error::stored("summary manifest", error))?;
-        let old = old_coverage(&mut tx, prepared).await?;
+        let old = old_coverage(&mut tx, prepared.conversation, &prepared.owner).await?;
         let mut plan = prepared.clone();
         let retained = retain::plan(&mut tx, &mut plan, &mut coverage).await?;
         let prepared = &plan;
@@ -197,10 +225,10 @@ impl PostgresMemory {
             .await
             .map_err(query)?;
         remove_queue_work(&mut tx).await?;
-        if indexes.is_some() {
+        if indexes.is_some() && conversion.is_none() {
             enqueue_deliveries(&mut tx, prepared.conversation).await?;
         }
-        finish_revision(&mut tx, prepared).await?;
+        finish_revision(&mut tx, prepared, conversion.is_some()).await?;
         tx.commit().await.map_err(query)?;
         Ok(())
     }
@@ -240,13 +268,14 @@ async fn validate_current(
     Ok(())
 }
 
-async fn old_coverage(
+pub(crate) async fn old_coverage(
     conn: &mut PgConnection,
-    tree: &PreparedSummaryTree,
+    conversation: Uuid,
+    owner: &str,
 ) -> Result<SummaryCoverage, Error> {
     let links: Vec<(Uuid, Uuid)> = sqlx::query_as(OLD_COVERAGE)
-        .bind(tree.conversation)
-        .bind(&tree.owner)
+        .bind(conversation)
+        .bind(owner)
         .fetch_all(conn)
         .await
         .map_err(query)?;
@@ -461,7 +490,21 @@ async fn queue_present(conn: &mut PgConnection) -> Result<bool, Error> {
 async fn finish_revision(
     conn: &mut PgConnection,
     prepared: &PreparedSummaryTree,
+    conversion: bool,
 ) -> Result<(), Error> {
+    if conversion {
+        sqlx::query(
+            "UPDATE rh_summary_deliveries SET anchor_id = NULL, historical_backlog = true
+                     WHERE conversation_id = $1 AND completed_version IS NULL",
+        )
+        .bind(prepared.conversation)
+        .execute(&mut *conn)
+        .await
+        .map_err(query)?;
+        sqlx::query("UPDATE rh_summary_conversion_items SET state = 'complete', reservation_expires_at = NULL
+                     WHERE conversation_id = $1")
+            .bind(prepared.conversation).execute(&mut *conn).await.map_err(query)?;
+    }
     sqlx::query("DELETE FROM rh_summary_runs WHERE conversation_id = $1")
         .bind(prepared.conversation)
         .execute(&mut *conn)

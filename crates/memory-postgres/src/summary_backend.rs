@@ -156,3 +156,26 @@ pub(crate) async fn run(
         manifest,
     }))
 }
+
+pub(crate) async fn freeze(
+    conn: &mut PgConnection,
+    id: Uuid,
+    revision: i64,
+    root: Option<Uuid>,
+    manifest: Value,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (conversation_id) DO UPDATE SET revision = EXCLUDED.revision,
+                 expected_root = EXCLUDED.expected_root, manifest = EXCLUDED.manifest
+             WHERE rh_summary_runs.revision <= EXCLUDED.revision RETURNING id",
+    )
+    .bind(Uuid::new_v4())
+    .bind(id)
+    .bind(revision)
+    .bind(root)
+    .bind(manifest)
+    .fetch_one(conn)
+    .await
+}

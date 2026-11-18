@@ -153,6 +153,10 @@ pub enum SummaryStoreError {
 
 #[async_trait]
 pub trait SummaryStore: Send + Sync {
+    fn summary_conversion(&self) -> Option<&dyn super::summary_conversion::SummaryConversion> {
+        None
+    }
+
     async fn summary_state(
         &self,
         _id: Uuid,

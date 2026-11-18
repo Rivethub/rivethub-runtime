@@ -11,6 +11,7 @@ mod merge;
 mod parse;
 mod receiving;
 mod recompile;
+mod resummarize;
 mod run;
 mod sanitize;
 mod settle;
@@ -68,6 +69,11 @@ fn help() -> String {
     "Usage: rh memory <command>\n\
 Commands:\n\
   settle <session> [--sqlite <file>] [--json]\n\
+  resummarize start [--rate <tokens/min>] [--include-giants] [--sqlite <file>] [--json]\n\
+  resummarize pause|resume [--sqlite <file>] [--json]\n\
+  resummarize retry|release <conversation-id> [--sqlite <file>] [--json]\n\
+  resummarize rehearse <conversation-id>... [--sqlite <file>] [--json]\n\
+  resummarize status [--watch] [--sqlite <file>] [--json]\n\
   queue-status [--json]\n\
   retry-failed --task <identifier> [--task <identifier>] [--error <substring>] [--limit <n>] [--dry-run] [--json]\n\
   requeue --task <identifier> [--limit <n>] [--dry-run] [--json]\n\

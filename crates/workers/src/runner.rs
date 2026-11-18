@@ -341,7 +341,37 @@ where
                     .await;
             }
         };
-        let (claimed, scheduled, (), ()) = tokio::join!(claims, schedule, settle, discover);
+        let convert = async {
+            if !self.schedules
+                || !roles.contains(&WorkerRole::Summarizer)
+                || self.summaries.live_index_key().is_none()
+                || self.summary.model_concurrency < 2
+            {
+                return;
+            }
+            let Some(store) = self.summaries.summary_conversion() else {
+                return;
+            };
+            let summary = crate::summarize::SummarizeEnv {
+                store: self.summaries.as_ref(),
+                provider: self.summarizer.as_ref(),
+                queue: self.queue.as_ref(),
+                settings: &self.summary,
+                now: chrono::Utc::now(),
+                cancel: &cancel,
+            };
+            let env = crate::summarize::live::LiveEnv {
+                summary: &summary,
+                embedder: self.embedder.as_ref(),
+                embed: self.embed,
+                permits: &self.summary_permits,
+            };
+            kernel::tenancy::Scope::Maintenance
+                .run(crate::summarize::conversion::run(&env, store))
+                .await;
+        };
+        let (claimed, scheduled, (), (), ()) =
+            tokio::join!(claims, schedule, settle, discover, convert);
         let outcome = claimed.and(scheduled);
         drop(notifications);
         drop(listening);

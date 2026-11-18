@@ -156,7 +156,7 @@ pub(crate) async fn complete_legacy(
     Ok(())
 }
 
-mod publish;
+pub(crate) mod publish;
 mod retain;
 pub use publish::ReplaceSummaryError;
 

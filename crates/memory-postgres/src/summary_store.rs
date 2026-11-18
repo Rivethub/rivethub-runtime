@@ -139,6 +139,12 @@ struct PendingRow {
 
 #[async_trait]
 impl SummaryStore for PostgresMemory {
+    fn summary_conversion(
+        &self,
+    ) -> Option<&dyn kernel::memory::summary_conversion::SummaryConversion> {
+        Some(self)
+    }
+
     async fn live_candidates(
         &self,
         after: Uuid,
@@ -162,21 +168,10 @@ impl SummaryStore for PostgresMemory {
         root: Option<Uuid>,
         manifest: Value,
     ) -> Result<Uuid, SummaryStoreError> {
-        sqlx::query_scalar(
-            "INSERT INTO rh_summary_runs (id, conversation_id, revision, expected_root, manifest)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (conversation_id) DO UPDATE SET revision = EXCLUDED.revision,
-                 expected_root = EXCLUDED.expected_root, manifest = EXCLUDED.manifest
-             WHERE rh_summary_runs.revision <= EXCLUDED.revision RETURNING id",
-        )
-        .bind(Uuid::new_v4())
-        .bind(id)
-        .bind(revision)
-        .bind(root)
-        .bind(manifest)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(backend::error)
+        let mut conn = self.pool.acquire().await.map_err(backend::error)?;
+        backend::freeze(&mut conn, id, revision, root, manifest)
+            .await
+            .map_err(backend::error)
     }
 
     async fn live_checkpoint(
