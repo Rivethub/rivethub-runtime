@@ -31,7 +31,10 @@ fn http_date(text: &str, now: Timestamp) -> Option<Duration> {
 }
 
 fn parse_http_date(text: &str) -> Option<Timestamp> {
-    let (date, comments) = text.split_at(text.find('(').map_or(text.len(), std::convert::identity));
+    let (date, comments) = match text.find('(') {
+        Some(start) => text.split_at(start),
+        None => (text, ""),
+    };
     if !valid_comments(comments) {
         return None;
     }
