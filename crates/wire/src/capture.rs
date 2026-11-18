@@ -431,7 +431,6 @@ pub fn merge_imported_settings(
     })
 }
 
-#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionOrigin {
     pub author: String,
@@ -440,9 +439,11 @@ pub struct SessionOrigin {
     pub session_key: String,
     pub agent: String,
 
-    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    #[serde(default, with = "serde_with::As::<Option<crate::time::Rfc3339>>")]
+    #[schemars(with = "Option<serde_with::Schema<Timestamp, crate::time::Rfc3339>>", !default)]
     pub created_at: Option<Timestamp>,
-    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    #[serde(default, with = "serde_with::As::<Option<crate::time::Rfc3339>>")]
+    #[schemars(with = "Option<serde_with::Schema<Timestamp, crate::time::Rfc3339>>", !default)]
     pub updated_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
