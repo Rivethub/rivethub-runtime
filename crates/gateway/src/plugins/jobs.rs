@@ -184,3 +184,40 @@ async fn execute(
     let bytes = response.bytes().await.map_err(|error| error.to_string())?;
     super::parse::<PluginJobResult>(&bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::DateTime;
+
+    use super::parser;
+
+    #[test]
+    fn plugin_schedules_use_five_fields_and_find_the_next_local_occurrence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (schedule, now, next) in [
+            (
+                "*/15 * * * *",
+                "2026-12-31T23:45:00-05:00",
+                "2027-01-01T00:00:00-05:00",
+            ),
+            (
+                "30 8 * * MON",
+                "2026-11-15T12:00:00-05:00",
+                "2026-11-16T08:30:00-05:00",
+            ),
+            (
+                "@daily",
+                "2026-01-01T00:00:00+05:30",
+                "2026-01-02T00:00:00+05:30",
+            ),
+        ] {
+            let start = DateTime::parse_from_rfc3339(now)?;
+            let next_at = parser()
+                .parse(schedule)?
+                .find_next_occurrence(&start, false)?;
+            assert_eq!(next_at.to_rfc3339(), next);
+        }
+        assert!(parser().parse("0 0 0 * * *").is_err());
+        Ok(())
+    }
+}
