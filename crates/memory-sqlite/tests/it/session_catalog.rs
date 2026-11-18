@@ -203,6 +203,34 @@ async fn scoped_browse_keeps_timestamp_window_order() -> TestResult {
 }
 
 #[tokio::test]
+async fn identical_positions_use_the_same_id_tie_break_in_both_readers() -> TestResult {
+    use kernel::memory::{MessagesQuery, SummaryStore};
+
+    let (directory, memory) = store()?;
+    let (key, conversation) = session_with_two_messages(&directory, &memory, true).await?;
+    let first = memory
+        .messages(&key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    let second = memory
+        .messages(&key, &MessagesQuery::new(first.next, Some(1)))
+        .await?;
+    let panel: Vec<_> = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|row| row.content)
+        .collect();
+    let window = memory
+        .conversation(conversation)
+        .await?
+        .ok_or("summary window")?;
+    let summary: Vec<_> = window.messages.into_iter().map(|row| row.content).collect();
+    assert_eq!(panel, ["second insert", "first insert"]);
+    assert_eq!(summary, panel);
+    Ok(())
+}
+
+#[tokio::test]
 async fn unpositioned_keyset_does_not_decode_off_page_rows() -> TestResult {
     use kernel::memory::MessagesQuery;
 

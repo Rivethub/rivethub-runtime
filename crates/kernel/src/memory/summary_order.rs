@@ -40,6 +40,11 @@ impl<'a> MessagePosition<'a> {
         self
     }
 
+    #[must_use]
+    pub const fn has_line(self) -> bool {
+        self.line.is_some()
+    }
+
     fn line_key(self) -> (Option<u64>, Option<u64>, u8) {
         let ordinal = self
             .metadata

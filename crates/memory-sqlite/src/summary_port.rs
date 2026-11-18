@@ -331,7 +331,7 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
         .map_err(SqliteError::query("load messages"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("load messages"))?;
-    let messages = rows
+    let mut messages = rows
         .into_iter()
         .map(
             |(id, agent, role, content, created_at, metadata, input, result)| {
@@ -350,6 +350,11 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
             },
         )
         .collect::<Result<Vec<_>, SqliteError>>()?;
+    if messages.iter().any(|(message, metadata)| {
+        MessagePosition::new(message.created_at, message.role, metadata.as_ref()).has_line()
+    }) {
+        messages.sort_unstable_by_key(|(message, _)| (message.created_at, message.id));
+    }
     Ok(
         order_messages(messages, MemoryBrowseOrder::Asc, |(message, metadata)| {
             MessagePosition::new(message.created_at, message.role, metadata.as_ref())
