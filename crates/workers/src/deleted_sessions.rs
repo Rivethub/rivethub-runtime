@@ -26,14 +26,16 @@ pub(crate) async fn handle_purge(
             "purged memory rows written for deleted sessions"
         );
     }
-    let cutoff = match now.checked_sub(wire::time::elapsed_days(i64::from(trash_days))) {
-        Ok(cutoff) => cutoff,
-        Err(_out_of_range) => return Ok(purged),
-    };
+    let cutoff = now.checked_sub(wire::time::elapsed_days(i64::from(trash_days)));
     let emptied = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(WorkerError::Cancelled),
-        result = deletions.purge_trashed(cutoff, TRASH_PURGE_BATCH) => result?,
+        result = async {
+            match cutoff {
+                Ok(cutoff) => deletions.purge_trashed(cutoff, TRASH_PURGE_BATCH).await,
+                Err(_out_of_range) => Ok(DeletedSession::default()),
+            }
+        } => result?,
     };
     if emptied != DeletedSession::default() {
         tracing::info!(
@@ -57,6 +59,15 @@ mod tests {
     use wire::session_id::SessionId;
 
     use super::*;
+
+    #[tokio::test]
+    async fn cancellation_after_tombstone_purge_wins_over_an_out_of_range_cutoff() {
+        let cancel = CancellationToken::new();
+        let deletions = FakeSessionDeletion::default().cancel_after_tombstones(cancel.clone());
+        let result = handle_purge(&deletions, 5_000_000, at(0), &cancel).await;
+        assert!(matches!(result, Err(WorkerError::Cancelled)));
+        assert_eq!(deletions.tombstone_purges(), 1);
+    }
 
     #[tokio::test]
     async fn large_trash_retention_skips_trash_but_still_purges_tombstones()

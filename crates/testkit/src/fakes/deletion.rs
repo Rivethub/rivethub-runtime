@@ -8,6 +8,7 @@ use kernel::memory::MemoryStoreError;
 use kernel::memory::SessionActivity;
 use kernel::memory::SessionDeletion;
 use parking_lot::Mutex;
+use tokio_util::sync::CancellationToken;
 use wire::session_id::{SessionId, SessionKey};
 
 type Tombstone = (Timestamp, Option<String>);
@@ -19,6 +20,7 @@ pub struct FakeSessionDeletion {
     keeps: Mutex<BTreeMap<String, Timestamp>>,
     trash: Mutex<BTreeMap<String, Timestamp>>,
     tombstone_purges: AtomicUsize,
+    cancel_after_tombstones: Option<CancellationToken>,
 }
 
 impl FakeSessionDeletion {
@@ -68,6 +70,12 @@ impl FakeSessionDeletion {
     #[must_use]
     pub fn tombstone_purges(&self) -> usize {
         self.tombstone_purges.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn cancel_after_tombstones(mut self, token: CancellationToken) -> Self {
+        self.cancel_after_tombstones = Some(token);
+        self
     }
 }
 
@@ -139,6 +147,9 @@ impl SessionDeletion for FakeSessionDeletion {
 
     async fn purge_tombstoned(&self, _limit: u32) -> Result<DeletedSession, MemoryStoreError> {
         self.tombstone_purges.fetch_add(1, Ordering::Relaxed);
+        if let Some(token) = &self.cancel_after_tombstones {
+            token.cancel();
+        }
         Ok(DeletedSession::default())
     }
 
