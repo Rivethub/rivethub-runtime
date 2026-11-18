@@ -231,6 +231,11 @@ impl ModelProvider for OpenAiCompatible {
         model: &str,
         text: &str,
     ) -> Result<Option<usize>, ModelProviderError> {
+        #[derive(serde::Serialize)]
+        struct Tokenize<'a> {
+            model: &'a str,
+            prompt: &'a str,
+        }
         #[derive(serde::Deserialize)]
         struct Count {
             count: usize,
@@ -240,7 +245,10 @@ impl ModelProvider for OpenAiCompatible {
         }
         let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
         let url = format!("{root}/tokenize");
-        let body = serde_json::json!({ "model": model, "prompt": text });
+        let body = Tokenize {
+            model,
+            prompt: text,
+        };
         let response = token::dispatch(&self.auth, || {
             self.client
                 .post(&url)
