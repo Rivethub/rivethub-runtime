@@ -284,6 +284,8 @@ const ROOTS: &[Root] = &[
     SchemaGenerator::subschema_for::<crate::capture::ReceiptVerification>,
     SchemaGenerator::subschema_for::<crate::capture::ChecksDecision>,
     SchemaGenerator::subschema_for::<crate::capture::ReceiptChecks>,
+    SchemaGenerator::subschema_for::<crate::memory::SummaryPassage>,
+    SchemaGenerator::subschema_for::<crate::memory::PassageSection>,
     SchemaGenerator::subschema_for::<crate::memory::Verification>,
     SchemaGenerator::subschema_for::<crate::memory::ProvenanceChecks>,
     SchemaGenerator::subschema_for::<crate::memory::Provenance>,
