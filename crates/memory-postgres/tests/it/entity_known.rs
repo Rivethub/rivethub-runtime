@@ -190,8 +190,8 @@ async fn seed_summary(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T01:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T01:00:00Z")))
     .fetch_one(pool)
     .await
 }
@@ -212,7 +212,7 @@ async fn seed_fact(pool: &PgPool, entity: Uuid, summary: Uuid) -> Result<(), sql
     )
     .bind(Uuid::new_v4())
     .bind(entity)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:30:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:30:00Z")))
     .bind(Uuid::new_v4())
     .bind(summary)
     .execute(pool)

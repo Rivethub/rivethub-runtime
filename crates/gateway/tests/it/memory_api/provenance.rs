@@ -112,12 +112,10 @@ fn imported_rows_carry_provenance_and_are_quoted_over_http() {
             provenance.verification,
             wire::memory::Verification::Verified
         );
-        assert_eq!(
-            provenance
-                .origin_date
-                .map(wire::time::TimestampFormat::rfc3339_offset),
-            Some("2026-10-14T09:00:00+00:00".to_owned())
-        );
+        let date = provenance
+            .origin_date
+            .map(wire::time::TimestampFormat::rfc3339_offset);
+        assert_eq!(date.as_deref(), Some("2026-10-14T09:00:00+00:00"));
     });
     assert_eq!(lookups, 1, "search batches its origin lookup");
 

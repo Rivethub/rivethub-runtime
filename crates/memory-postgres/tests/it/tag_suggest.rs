@@ -464,7 +464,7 @@ async fn insert_taxonomy(
     .bind(&aliases)
     .bind(state)
     .bind(source)
-    .bind(memory_postgres::time::BindTime::bind_time(created_at))
+    .bind(memory_postgres::time::PgTimestamp::from(created_at))
     .execute(pool)
     .await?;
     Ok(())

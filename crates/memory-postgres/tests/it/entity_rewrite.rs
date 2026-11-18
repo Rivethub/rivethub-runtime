@@ -374,7 +374,7 @@ async fn seed_pinned(
     .bind(Uuid::new_v4())
     .bind(entity)
     .bind(key)
-    .bind(memory_postgres::time::BindTime::bind_time(at(
+    .bind(memory_postgres::time::PgTimestamp::from(at(
         "2026-11-01T00:30:00Z",
     )))
     .bind(Uuid::new_v4())
@@ -657,8 +657,8 @@ async fn seed_leaf(
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(start))
-    .bind(memory_postgres::time::BindTime::bind_time(start + SignedDuration::from_hours(1)))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(start + SignedDuration::from_hours(1)))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -673,7 +673,7 @@ async fn seed_entity(pool: &PgPool, id: Uuid, slug: &str) -> Result<(), sqlx::Er
     )
     .bind(id)
     .bind(slug)
-    .bind(memory_postgres::time::BindTime::bind_time(at(
+    .bind(memory_postgres::time::PgTimestamp::from(at(
         "2026-11-01T00:00:00Z",
     )))
     .execute(&mut *tx)
@@ -707,7 +707,7 @@ async fn seed_fact(
     .bind(Uuid::new_v4())
     .bind(entity)
     .bind(attribute)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:30:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:30:00Z")))
     .bind(Uuid::new_v4())
     .bind(value)
     .bind(conversation)

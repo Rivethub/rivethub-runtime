@@ -238,7 +238,7 @@ async fn seed(pool: &sqlx::PgPool, entity: Uuid, slug: &str) -> Result<(), sqlx:
     )
     .bind(entity)
     .bind(slug)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .execute(pool)
     .await?;
     for (parent, slug, name) in [
@@ -280,8 +280,8 @@ async fn seed_summary(memory: &PostgresMemory, conversation: Uuid) -> Result<Uui
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(start))
-    .bind(memory_postgres::time::BindTime::bind_time(start + SignedDuration::from_hours(1)))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(start + SignedDuration::from_hours(1)))
     .fetch_one(pool)
     .await
 }

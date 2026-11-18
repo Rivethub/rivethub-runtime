@@ -564,8 +564,8 @@ async fn seed_leaf(
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(start))
-    .bind(memory_postgres::time::BindTime::bind_time(start + SignedDuration::from_hours(1)))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(start + SignedDuration::from_hours(1)))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -595,7 +595,7 @@ async fn seed_entity(
     .bind(slug)
     .bind(name)
     .bind(parent)
-    .bind(memory_postgres::time::BindTime::bind_time(created))
+    .bind(memory_postgres::time::PgTimestamp::from(created))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -633,7 +633,7 @@ async fn fact(pool: &PgPool, row: FactRow<'_>) -> Result<(), sqlx::Error> {
     .bind(Uuid::new_v4())
     .bind(row.entity)
     .bind(row.attribute)
-    .bind(memory_postgres::time::BindTime::bind_time(row.as_of))
+    .bind(memory_postgres::time::PgTimestamp::from(row.as_of))
     .bind(Uuid::new_v4())
     .bind(row.value)
     .bind(row.conversation)
@@ -660,9 +660,7 @@ async fn history(
     .bind(entity)
     .bind(summary)
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(
-        at("2026-11-01T00:00:00Z").utc_date(),
-    ))
+    .bind(jiff_sqlx::Date::from(at("2026-11-01T00:00:00Z").utc_date()))
     .bind(sentence)
     .execute(&mut *tx)
     .await?;
@@ -682,7 +680,7 @@ async fn seed_mark(
          VALUES ($1, $2, $3, 'owner')",
     )
     .bind(entity)
-    .bind(memory_postgres::time::BindTime::bind_time(through))
+    .bind(memory_postgres::time::PgTimestamp::from(through))
     .bind(summary)
     .execute(&mut *tx)
     .await?;
@@ -702,7 +700,7 @@ async fn seed_embedding(
     )
     .bind(entity)
     .bind(HalfVector::from_f32_slice(&vec![0.25_f32; 1024]))
-    .bind(memory_postgres::time::BindTime::bind_time(embedded_at))
+    .bind(memory_postgres::time::PgTimestamp::from(embedded_at))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -717,7 +715,7 @@ async fn seed_type_seen(pool: &PgPool, entity: Uuid, summary: Uuid) -> Result<()
     )
     .bind(entity)
     .bind(summary)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -731,7 +729,7 @@ async fn seed_placement(pool: &PgPool, entity: Uuid) -> Result<(), sqlx::Error> 
          VALUES ('claude-code:entity-merge', $1, 'you', $2, 'owner')",
     )
     .bind(entity)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

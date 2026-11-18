@@ -196,7 +196,7 @@ async fn seed_message(
     .bind(message.tool_name)
     .bind(message.tool_args)
     .bind(message.tool_result)
-    .bind(memory_postgres::time::BindTime::bind_time(message.created_at))
+    .bind(memory_postgres::time::PgTimestamp::from(message.created_at))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -218,8 +218,8 @@ async fn seed_leaf(
     )
     .bind(conversation)
     .bind(content)
-    .bind(memory_postgres::time::BindTime::bind_time(start))
-    .bind(memory_postgres::time::BindTime::bind_time(end))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(end))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

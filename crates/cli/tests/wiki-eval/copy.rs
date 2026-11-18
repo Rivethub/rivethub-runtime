@@ -470,7 +470,7 @@ pub(crate) async fn trim_after(app: &str, until: &str, secrets: &[String]) -> Re
     ];
     for statement in statements {
         let done = sqlx::query(statement)
-            .bind(memory_postgres::time::BindTime::bind_time(cutoff))
+            .bind(memory_postgres::time::PgTimestamp::from(cutoff))
             .execute(&pool)
             .await;
         if let Err(error) = done {

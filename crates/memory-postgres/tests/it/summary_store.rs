@@ -217,7 +217,7 @@ async fn a_tool_row_shows_its_clipped_input_and_result(pool: PgPool) -> TestResu
     .bind(conversation)
     .bind(&command)
     .bind(&output)
-    .bind(memory_postgres::time::BindTime::bind_time(at(
+    .bind(memory_postgres::time::PgTimestamp::from(at(
         "2026-10-10T12:01:00Z",
     )))
     .execute(&mut *tx)
@@ -447,7 +447,7 @@ async fn seed_message(
     )
     .bind(conversation)
     .bind(content)
-    .bind(memory_postgres::time::BindTime::bind_time(created_at))
+    .bind(memory_postgres::time::PgTimestamp::from(created_at))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

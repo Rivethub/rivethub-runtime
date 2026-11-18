@@ -81,4 +81,19 @@ mod tests {
             assert!(stored(raw, "created_at").is_err(), "{raw}");
         }
     }
+
+    #[test]
+    fn leap_seconds_are_normalized_and_expanded_years_fail_storage_decoding() {
+        assert_eq!(
+            stamp(stored("2016-12-31T23:59:60.500Z", "created_at").expect("leap second")),
+            "2016-12-31T23:59:59.500Z"
+        );
+        assert!(matches!(
+            stored("+10000-01-01T00:00:00Z", "created_at"),
+            Err(crate::error::SqliteError::StoredTimestamp {
+                column: "created_at",
+                ..
+            })
+        ));
+    }
 }

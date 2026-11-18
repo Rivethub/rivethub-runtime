@@ -227,7 +227,7 @@ async fn hostname_match(pool: PgPool) -> TestResult {
     )
     .bind(Uuid::new_v4())
     .bind(hally.id)
-    .bind(memory_postgres::time::BindTime::bind_time(at(
+    .bind(memory_postgres::time::PgTimestamp::from(at(
         "2026-11-13T02:00:00Z",
     )))
     .bind(Uuid::new_v4())
@@ -337,8 +337,8 @@ async fn seed_summary(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-13T00:00:00Z")))
-    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-13T01:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-13T00:00:00Z")))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-13T01:00:00Z")))
     .fetch_one(pool)
     .await
 }

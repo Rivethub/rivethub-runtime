@@ -2,7 +2,7 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff_sqlx::ToSqlx as _;
 
-pub trait BindTime {
+pub(crate) trait BindTime {
     type Bound;
 
     fn bind_time(self) -> Self::Bound;
@@ -63,11 +63,3 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for OptionalTimestamp {
 }
 
 pub use jiff_sqlx::Timestamp as PgTimestamp;
-
-impl<T: BindTime> BindTime for Vec<T> {
-    type Bound = Vec<T::Bound>;
-
-    fn bind_time(self) -> Self::Bound {
-        self.into_iter().map(BindTime::bind_time).collect()
-    }
-}

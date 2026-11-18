@@ -184,7 +184,7 @@ pub(crate) async fn seed_recording(pool: &PgPool, row: &Summary) -> Result<(), s
         .bind(row.conversation_id).bind(format!("claude-code:{}", row.conversation_id)).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO rh_summaries (id, conversation_id, content, kind, depth, message_count, earliest_at, latest_at, created_at, model, pipeline_version, owner_user_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, 'owner')")
         .bind(row.id).bind(row.conversation_id).bind(&row.content).bind(&row.kind).bind(row.depth).bind(row.message_count)
-        .bind(memory_postgres::time::BindTime::bind_time(row.earliest_at)).bind(memory_postgres::time::BindTime::bind_time(row.latest_at)).bind(memory_postgres::time::BindTime::bind_time(row.created_at)).bind(&row.model).bind(row.pipeline_version)
+        .bind(memory_postgres::time::PgTimestamp::from(row.earliest_at)).bind(memory_postgres::time::PgTimestamp::from(row.latest_at)).bind(memory_postgres::time::PgTimestamp::from(row.created_at)).bind(&row.model).bind(row.pipeline_version)
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
