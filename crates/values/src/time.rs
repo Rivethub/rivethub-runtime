@@ -197,19 +197,17 @@ pub fn parse_rfc3339(raw: &str) -> Result<Timestamp, Error> {
     let offset = tail.get(offset_start..).ok_or_else(invalid_timestamp)?;
     let normalized = offset.strip_prefix('−').map(|digits| format!("-{digits}"));
     let offset = normalized.as_deref().unwrap_or(offset);
-    if !matches!(
-        offset.as_bytes(),
-        [b'Z' | b'z']
-            | [
-                b'+' | b'-',
-                b'0'..=b'9',
-                b'0'..=b'9',
-                b':',
-                b'0'..=b'9',
-                b'0'..=b'9'
-            ]
-    ) {
-        return Err(invalid_timestamp());
+    match offset.as_bytes() {
+        [b'Z' | b'z'] => {}
+        [
+            b'+' | b'-',
+            tens @ b'0'..=b'2',
+            ones @ b'0'..=b'9',
+            b':',
+            b'0'..=b'5',
+            b'0'..=b'9',
+        ] if *tens < b'2' || *ones < b'4' => {}
+        _ => return Err(invalid_timestamp()),
     }
     if fraction_digits > 9 || normalized.is_some() {
         let prefix = raw

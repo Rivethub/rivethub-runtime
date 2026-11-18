@@ -164,6 +164,8 @@ fn legacy_wire_spelling_and_precision() -> Result<(), Box<dyn std::error::Error>
             None,
         ),
         ("2026-01-01T01:02:03+ 0100", None, None),
+        ("2026-01-01T01:02:03+24:00", None, None),
+        ("2026-01-01T01:02:03-25:59", None, None),
         (
             "2026-01-01 01:02:03.123456789012z",
             Some("2026-01-01T01:02:03.123456789Z"),
