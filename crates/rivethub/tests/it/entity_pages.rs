@@ -187,6 +187,16 @@ async fn file_fleet(memory: &PostgresMemory) -> TestResult {
         end: at("2026-11-07T01:00:00Z"),
         owner: Some("owner".to_owned()),
     };
+    sqlx::query(
+        "INSERT INTO rh_summaries (id, content, owner_user_id, earliest_at, latest_at)
+         VALUES ($1, $2, 'owner', $3, $4)",
+    )
+    .bind(leaf.id)
+    .bind(&leaf.content)
+    .bind(leaf.start)
+    .bind(leaf.end)
+    .execute(memory.pool())
+    .await?;
     memory
         .commit(
             std::slice::from_ref(&leaf),
