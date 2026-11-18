@@ -157,7 +157,9 @@ impl crate::PostgresMemory {
                 .await?
         };
         if inserted > 0 || !positions.is_empty() {
-            writer.refresh_opening(conversation_id).await?;
+            writer
+                .refresh_opening(conversation_id, !self.missing.language)
+                .await?;
         }
         let imported = wire::capture::is_imported_session(&batch.session_key);
         writer

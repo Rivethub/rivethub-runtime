@@ -105,6 +105,41 @@ impl Api {
         })
     }
 
+    async fn writer_summary(&self, session: &str) -> TestResult<uuid::Uuid> {
+        use kernel::memory::{NewSummary, SummaryKind, SummarySource, SummaryStore as _};
+
+        let (conversation, message): (String, String) = self.database()?.query_row(
+            "SELECT c.id, m.id FROM ros_conversations c
+             JOIN ros_messages m ON m.conversation_id = c.id
+             WHERE c.session_key = ?1 ORDER BY m.created_at LIMIT 1",
+            [session],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let id = uuid::Uuid::new_v4();
+        let now = chrono::Utc::now();
+        self.store
+            .write_summary(NewSummary {
+                id,
+                conversation_id: conversation.parse()?,
+                kind: SummaryKind::Leaf,
+                depth: 0,
+                content: "Evidence for a writer fact in the fixture.".into(),
+                message_count: 1,
+                earliest_at: now,
+                latest_at: now,
+                model: "fixture".into(),
+                pipeline_version: 6,
+                created_at: now,
+                sources: vec![SummarySource {
+                    message_id: message.parse()?,
+                    ordinal: 0,
+                }],
+                child_ids: Vec::new(),
+            })
+            .await?;
+        Ok(id)
+    }
+
     fn database(&self) -> rusqlite::Result<rusqlite::Connection> {
         rusqlite::Connection::open(self.root.path().join("memory.sqlite"))
     }

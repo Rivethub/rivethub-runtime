@@ -70,7 +70,8 @@ async fn entity(api: &Api, name: &str, kind: &str) -> TestResult<TopicRecord> {
     .await
 }
 
-fn said(
+async fn said(
+    api: &Api,
     entity: &TopicRecord,
     key: &str,
     value: &str,
@@ -84,7 +85,7 @@ fn said(
         value: FactValue::new(value)?,
         said: Said::Writer {
             session: session.parse::<SessionId>()?,
-            summary: Uuid::new_v4(),
+            summary: api.writer_summary(session).await?,
             evidence: Evidence::quote(words),
             settled: false,
         },
@@ -110,29 +111,35 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
     api.store
         .assert_facts(&[
             said(
+                api,
                 &host,
                 "os",
                 "Ubuntu 22.04",
                 SECOND,
                 "web01 still runs Ubuntu 22.04",
                 now - TimeDelta::hours(3),
-            )?,
+            )
+            .await?,
             said(
+                api,
                 &host,
                 "os",
                 "Ubuntu 24.04",
                 FIRST,
                 "web01 is on Ubuntu 24.04 now",
                 now - TimeDelta::hours(2),
-            )?,
+            )
+            .await?,
             said(
+                api,
                 &host,
                 "address",
                 "192.0.2.4",
                 FIRST,
                 "web01 answers on 192.0.2.4",
                 now - TimeDelta::hours(1),
-            )?,
+            )
+            .await?,
         ])
         .await?;
     let (lab, stale) = seed_proposals(api, conversation, now).await?;

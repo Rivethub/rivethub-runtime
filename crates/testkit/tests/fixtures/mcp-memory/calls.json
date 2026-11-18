@@ -1244,13 +1244,13 @@
           "slug": "kiwi-build-cache"
         }
       },
-      "note": "small page: returned verbatim",
+      "note": "small page: projects current SQL citations",
       "kind": "result",
       "result": {
         "content": [
           {
             "type": "text",
-            "text": "---\ntitle: Kiwi build cache\nslug: kiwi-build-cache\naliases:\n  - kiwi sccache\n  - kiwi-build-cache bucket\ntags:\n  - kiwi\n  - ci\nlast_verified: 2026-09-03T02:00:00Z\n---\n\n## Summary\n\nKiwi CI uses sccache backed by the shared kiwi-build-cache bucket with a 20 GB local tier per runner. Miss ratio about 0.11; pipeline about 14 minutes.\n\n## Article\n\nThe Kiwi project moved its compiler cache off per-runner disks in September 2026. A baseline run showed a 0.83 miss ratio across 212 compile units; after the switch the ratio fell to 0.11.\n\n## See also\n\n- [[lighthouse-dashboard]]\n\n## History\n\n### 2026-09-02 — Cache moved to the shared bucket\n\n- baseline miss ratio 0.83, wall time 39m52s\n- after the switch: miss ratio 0.11, wall time 14m\n- per-runner cache volumes retired\n\n## Citations\n\n| Date | Kind | Summary | Note |\n|------|------|---------|------|\n| 2026-09-03 | leaf | `b0000000-0000-4000-8000-000000000001` | miss ratio before/after |\n| 2026-09-03 | root | `b0000000-0000-4000-8000-000000000003` | project overview |\n"
+            "text": "---\ntitle: Kiwi build cache\nslug: kiwi-build-cache\naliases:\n  - kiwi sccache\n  - kiwi-build-cache bucket\ntags:\n  - kiwi\n  - ci\nentities: []\nrelated:\n  - lighthouse-dashboard\nlast_verified: 2026-09-03T02:00:00Z\nsources: []\n---\n\n## Summary\n\nKiwi CI uses sccache backed by the shared kiwi-build-cache bucket with a 20 GB local tier per runner. Miss ratio about 0.11; pipeline about 14 minutes.\n\n## Article\n\nThe Kiwi project moved its compiler cache off per-runner disks in September 2026. A baseline run showed a 0.83 miss ratio across 212 compile units; after the switch the ratio fell to 0.11.\n\n\n## See also\n\n- [[lighthouse-dashboard]]\n\n\n## History\n\n### 2026-09-02 — Cache moved to the shared bucket\n\n- baseline miss ratio 0.83, wall time 39m52s\n- after the switch: miss ratio 0.11, wall time 14m\n- per-runner cache volumes retired\n\n## Citations\n\n| Date | Kind | Summary | Note |\n|------|------|---------|------|\n| 2026-09-03 | leaf | `b0000000-0000-4000-8000-000000000001` | miss ratio before/after |\n| 2026-09-03 | root | `b0000000-0000-4000-8000-000000000003` | project overview |\n\n"
           }
         ]
       }

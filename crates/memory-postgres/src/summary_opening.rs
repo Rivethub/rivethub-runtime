@@ -22,7 +22,11 @@ struct Turn {
 }
 
 impl CaptureWriter<'_> {
-    pub(crate) async fn refresh_opening(&mut self, id: Uuid) -> Result<(), Error> {
+    pub(crate) async fn refresh_opening(
+        &mut self,
+        id: Uuid,
+        language_available: bool,
+    ) -> Result<(), Error> {
         let Some(content) = projection(&mut self.tx, id).await? else {
             return Ok(());
         };
@@ -48,7 +52,7 @@ impl CaptureWriter<'_> {
         if !supplied {
             crate::title::seed(&mut self.tx, &head, old.as_ref(), &content).await?;
         }
-        if old.is_none() && self.queue_present {
+        if old.is_none() && self.queue_present && language_available {
             for (arm, consumer) in [
                 (filing, OpeningConsumer::Filing),
                 (title, OpeningConsumer::Title),
