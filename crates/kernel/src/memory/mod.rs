@@ -88,6 +88,7 @@ pub use records::{
     MemoryHitSource, MemoryMessageTally, MemoryScope, MemorySearchResult, MemoryStatsResponse,
     MemorySummaryNode, RecentSession, SearchMode, SummaryKind, TopTool, VectorState,
 };
+pub use records::{PassageSection, SummaryPassage};
 pub use search::SearchOutcome;
 pub use search::{SummaryDetail, SummaryExcerpt};
 pub use session_messages::CursorError;

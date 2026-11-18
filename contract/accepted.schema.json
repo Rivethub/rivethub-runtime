@@ -4859,6 +4859,16 @@
             "null"
           ]
         },
+        "passage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SummaryPassage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "provenance": {
           "anyOf": [
             {
@@ -4883,6 +4893,12 @@
           "format": "double",
           "type": "number"
         },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/PassageSection"
+          },
+          "type": "array"
+        },
         "sessionId": {
           "type": [
             "string",
@@ -4891,6 +4907,12 @@
         },
         "source": {
           "$ref": "#/$defs/MemoryHitSource"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/MemoryEntry"
+          },
+          "type": "array"
         },
         "tags": {
           "items": {
@@ -5004,6 +5026,16 @@
         },
         "id": {
           "type": "string"
+        },
+        "passage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SummaryPassage"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "relevanceScore": {
           "format": "double",
@@ -6157,6 +6189,37 @@
         "fontMono",
         "fontSize",
         "radius"
+      ],
+      "type": "object"
+    },
+    "PassageSection": {
+      "properties": {
+        "heading": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rangeVerified": {
+          "type": "boolean"
+        },
+        "sourceFirst": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sourceLast": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "heading",
+        "sourceFirst",
+        "sourceLast",
+        "rangeVerified"
       ],
       "type": "object"
     },
@@ -9794,6 +9857,23 @@
         "section"
       ],
       "type": "string"
+    },
+    "SummaryPassage": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ordinal": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "ordinal"
+      ],
+      "type": "object"
     },
     "TagAddResult": {
       "properties": {

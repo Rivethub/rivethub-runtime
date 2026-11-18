@@ -249,7 +249,7 @@ async fn search(
                 if snippets {
                     hit.content = super::memory_snippet::snippet(&hit.content, &text);
                 }
-                super::memory_rows::search_hit(hit, &origins)
+                super::memory_rows::search_hit(hit, &origins, &results.summaries)
             })
             .collect(),
         query: text,
@@ -457,7 +457,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
         results: results
             .results
             .into_iter()
-            .map(|hit| super::memory_rows::search_hit(hit, &origins))
+            .map(|hit| super::memory_rows::search_hit(hit, &origins, &results.summaries))
             .collect(),
     };
     serialize_tool(&response)

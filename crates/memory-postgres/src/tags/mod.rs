@@ -170,7 +170,7 @@ fn push_wire_columns(builder: &mut QueryBuilder<Postgres>) {
 }
 
 pub(crate) async fn summary_conversation_tags(
-    pool: &PgPool,
+    tx: &mut sqlx::PgConnection,
     summaries: &[Uuid],
 ) -> Result<BTreeMap<Uuid, Vec<TagWire>>, MemoryStoreError> {
     let mut builder = QueryBuilder::new("");
@@ -185,7 +185,7 @@ pub(crate) async fn summary_conversation_tags(
         .push(")) order by t.entity_id, t.key, t.value");
     let rows = read_rows(
         "tags list",
-        builder.build_query_as::<TagWireRow>().fetch_all(pool).await,
+        builder.build_query_as::<TagWireRow>().fetch_all(tx).await,
     )?;
     let mut grouped: BTreeMap<Uuid, Vec<TagWire>> = BTreeMap::new();
     for row in rows.shape() {

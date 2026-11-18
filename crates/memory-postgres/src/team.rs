@@ -27,31 +27,11 @@ impl PostgresMemory {
         Ok(kernel::memory::RecallIdentity { principal, people })
     }
 
-    pub(crate) async fn own_sessions(
-        &self,
-        keys: &[String],
-    ) -> Result<std::collections::BTreeSet<String>, Error> {
-        let keys = sqlx::query_scalar!(
-            "SELECT DISTINCT session_key FROM rh_conversations WHERE session_key = ANY($1) AND owner_user_id = rh_scope_principal()",
-            keys,
-        ).fetch_all(&self.pool).await.map_err(|source| Error::operation("own recall sessions", source))?;
-        Ok(keys.into_iter().collect())
-    }
-
     pub(crate) async fn team_owners(
         &self,
         keys: &[String],
     ) -> Result<BTreeMap<String, String>, Error> {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT session_key, owner_user_id FROM rh_conversations
-             WHERE session_key = ANY($1) AND owner_user_id IS NOT NULL
-               AND owner_user_id <> rh_scope_principal()",
-        )
-        .bind(keys)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|source| Error::operation("recall owners", source))?;
-        Ok(rows.into_iter().collect())
+        team_owners(&self.pool, keys).await
     }
 
     pub(crate) async fn read_team_sessions(
@@ -122,4 +102,31 @@ impl PostgresMemory {
             })
             .collect())
     }
+}
+
+pub(crate) async fn own_sessions(
+    tx: &mut sqlx::PgConnection,
+    keys: &[String],
+) -> Result<std::collections::BTreeSet<String>, Error> {
+    let keys = sqlx::query_scalar!(
+            "SELECT DISTINCT session_key FROM rh_conversations WHERE session_key = ANY($1) AND owner_user_id = rh_scope_principal()",
+            keys,
+        ).fetch_all(tx).await.map_err(|source| Error::operation("own recall sessions", source))?;
+    Ok(keys.into_iter().collect())
+}
+
+pub(crate) async fn team_owners<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    keys: &[String],
+) -> Result<BTreeMap<String, String>, Error> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT session_key, owner_user_id FROM rh_conversations
+             WHERE session_key = ANY($1) AND owner_user_id IS NOT NULL
+               AND owner_user_id <> rh_scope_principal()",
+    )
+    .bind(keys)
+    .fetch_all(executor)
+    .await
+    .map_err(|source| Error::operation("recall owners", source))?;
+    Ok(rows.into_iter().collect())
 }

@@ -109,3 +109,19 @@ fn summary_kinds_and_counts_are_additive() -> Result<(), Box<dyn std::error::Err
     assert!(serde_json::from_str::<SummaryKind>(r#""unknown""#).is_err());
     Ok(())
 }
+
+#[test]
+fn passage_search_fields_are_optional_on_old_hits() -> Result<(), Box<dyn std::error::Error>> {
+    use wire::gateway::memory::MemorySearchHit;
+
+    let old: MemorySearchHit = serde_json::from_str(
+        r#"{"id":"fixture","source":"summary","content":"A tray","score":0.5,
+             "createdAt":"2026-10-10T12:00:00Z","kind":"leaf"}"#,
+    )?;
+    assert!(old.passage.is_none() && old.sections.is_empty() && old.sources.is_empty());
+    let encoded = serde_json::to_value(old)?;
+    for field in ["passage", "sections", "sources"] {
+        assert!(encoded.get(field).is_none());
+    }
+    Ok(())
+}

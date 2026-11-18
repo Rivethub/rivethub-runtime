@@ -63,6 +63,26 @@ pub(crate) fn memory_chunk_match_body(
     }
 }
 
+pub(crate) fn passage_body(value: kernel::memory::SummaryPassage) -> wire::memory::SummaryPassage {
+    wire::memory::SummaryPassage {
+        id: value.id,
+        ordinal: value.ordinal,
+    }
+}
+
+pub(crate) fn passage_section_body(
+    value: &kernel::memory::PassageSection,
+    origin: Option<&Provenance>,
+) -> wire::memory::PassageSection {
+    wire::memory::PassageSection {
+        id: value.id.clone(),
+        heading: quoted(origin, value.heading.clone()),
+        source_first: value.source_first,
+        source_last: value.source_last,
+        range_verified: value.range_verified,
+    }
+}
+
 pub(crate) const fn memory_hit_source_body(
     value: kernel::memory::MemoryHitSource,
 ) -> wire::gateway::memory::MemoryHitSource {

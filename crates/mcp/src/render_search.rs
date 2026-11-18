@@ -83,7 +83,7 @@ pub(crate) fn search(
                 .session_id
                 .as_deref()
                 .and_then(|key| found.origins.get(key));
-            let block = if let Some(detail) = outcome.summaries.get(&hit.id) {
+            let block = if let Some(detail) = outcome.summaries.get(hit.detail_id()) {
                 summary(hit, detail, expand, origin, now, zone)?
             } else {
                 let lead = format!(
@@ -245,11 +245,17 @@ fn summary(
     now: DateTime<Utc>,
     zone: chrono_tz::Tz,
 ) -> Result<String, Error> {
-    let tags = if detail.tags.is_empty() {
-        String::new()
-    } else {
-        format!(" tags: {}", render_tags::labels(&detail.tags))
-    };
+    if let Some(passage) = &hit.passage {
+        return passage_summary(
+            hit,
+            detail,
+            passage.ordinal,
+            expand,
+            origin,
+            Clock { now, zone },
+        );
+    }
+    let tags = summary_tags(detail);
     if !expand {
         let lead = format!(
             "- [{}/{}] ({}, score: {:.3}){tags}",
@@ -291,6 +297,67 @@ fn summary(
             )?;
         }
     }
+    source_previews(&mut body, detail)?;
+    text.push('\n');
+    text.push_str(&match origin {
+        Some(provenance) => kernel::memory::quote(provenance, &body),
+        None => body,
+    });
+    Ok(text)
+}
+
+fn passage_summary(
+    hit: &MemorySearchResult,
+    detail: &SummaryDetail,
+    ordinal: u32,
+    expand: bool,
+    origin: Option<&Provenance>,
+    clock: Clock,
+) -> Result<String, Error> {
+    let tags = summary_tags(detail);
+    let lead = format!(
+        "- [{}/{} · passage {}] ({}, score: {:.3}){tags}",
+        detail.kind,
+        hit.id,
+        u64::from(ordinal) + 1,
+        dated(hit, clock.now, clock.zone),
+        hit.relevance_score,
+    );
+    let mut body = String::new();
+    if let Some(title) = &hit.title {
+        writeln!(body, "{title}")?;
+    }
+    body.push_str(&hit.content);
+    for section in &detail.sections {
+        write!(
+            body,
+            "\n  - Section {} (sources {}–{}{}): {}",
+            section.id,
+            section.source_first,
+            section.source_last,
+            if section.range_verified {
+                ""
+            } else {
+                ", inferred"
+            },
+            section.heading,
+        )?;
+    }
+    if expand {
+        source_previews(&mut body, detail)?;
+    }
+    Ok(attributed(&lead, &body, origin, clock.zone))
+}
+
+fn summary_tags(detail: &SummaryDetail) -> String {
+    if detail.tags.is_empty() {
+        String::new()
+    } else {
+        format!(" tags: {}", render_tags::labels(&detail.tags))
+    }
+}
+
+fn source_previews(body: &mut String, detail: &SummaryDetail) -> Result<(), Error> {
     if !detail.sources.is_empty() {
         write!(
             body,
@@ -313,10 +380,5 @@ fn summary(
             )?;
         }
     }
-    text.push('\n');
-    text.push_str(&match origin {
-        Some(provenance) => kernel::memory::quote(provenance, &body),
-        None => body,
-    });
-    Ok(text)
+    Ok(())
 }

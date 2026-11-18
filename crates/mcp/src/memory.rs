@@ -247,7 +247,7 @@ async fn hit_context(
         };
         match outcome
             .summaries
-            .get(&hit.id)
+            .get(hit.detail_id())
             .and_then(|detail| detail.provenance.clone())
         {
             Some(provenance) => {

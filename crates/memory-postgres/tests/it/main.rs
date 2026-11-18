@@ -26,6 +26,7 @@ mod queue_notifications;
 mod received_marks;
 mod search_filters;
 mod search_port;
+mod search_summary_passages;
 mod session_catalog;
 mod session_delete;
 mod shared_trash;

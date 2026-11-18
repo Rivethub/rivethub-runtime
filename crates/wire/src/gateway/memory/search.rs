@@ -97,6 +97,11 @@ pub enum MemoryHitSource {
 pub struct MemorySearchHit {
     pub owner: Option<String>,
     pub chunk: Option<crate::memory::MemoryChunkMatch>,
+    pub passage: Option<crate::memory::SummaryPassage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<crate::memory::PassageSection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<crate::memory::MemoryEntry>,
     pub id: String,
     pub source: MemoryHitSource,
     pub content: String,

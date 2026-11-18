@@ -1,16 +1,16 @@
 use crate::backfills::Backfill;
 use crate::error::Error;
 use crate::search::ArmRow;
-use crate::search::SearchOptions;
 use crate::search::TagFilter;
+use crate::search::{SearchOptions, SearchRead};
 use crate::search_sql::ArmContext;
-use crate::search_sql::ArmSqlRow;
 use crate::search_sql::push_embedded_semantic;
 use crate::search_sql::push_scope_conditions;
 use crate::search_sql::push_select_prefix;
 use crate::search_sql::push_time_conditions;
 use crate::search_sql::recency_columns;
 use crate::search_sql::semantic_floor;
+use crate::search_sql::{ArmSqlRow, SearchTable};
 use kernel::memory::MemoryScope;
 use kernel::memory_core::hybrid_pool;
 use pgvector::HalfVector;
@@ -35,21 +35,15 @@ fn said_only(options: &SearchOptions) -> bool {
         })
 }
 
-#[derive(Debug, Clone, Copy)]
-enum VectorPart {
-    Messages,
-    Chunks,
-    Summaries,
-}
-
-impl crate::PostgresMemory {
+impl SearchRead<'_> {
     pub(crate) async fn vector_arm_rows(
-        &self,
+        &mut self,
         options: &SearchOptions,
         tag_filter: Option<&TagFilter>,
         query_vector: &[f32],
         ef_search: u64,
     ) -> Result<Vec<ArmRow>, Error> {
+        use SearchTable::{Legacy, Message};
         let vector = HalfVector::from_f32_slice(query_vector);
         let context = ArmContext {
             options,
@@ -58,25 +52,24 @@ impl crate::PostgresMemory {
         };
         let messages = matches!(options.scope, MemoryScope::Messages | MemoryScope::Both);
         let summaries = matches!(options.scope, MemoryScope::Summaries | MemoryScope::Both);
-        let (message_rows, chunks, summary_rows) = tokio::try_join!(
-            Box::pin(self.vector_part(
-                &context,
-                &vector,
-                VectorPart::Messages,
-                messages,
-                ef_search
-            )),
-            Box::pin(self.vector_part(&context, &vector, VectorPart::Chunks, messages, ef_search)),
-            Box::pin(self.vector_part(
-                &context,
-                &vector,
-                VectorPart::Summaries,
-                summaries,
-                ef_search
-            )),
-        )?;
-        let mut rows = merge_chunk_arm(message_rows, chunks);
-        rows.extend(summary_rows);
+        crate::search::tune_hnsw(&mut self.tx, ef_search).await?;
+        let mut rows = if messages {
+            let parents = vector_table(&mut self.tx, &context, &vector, Message).await?;
+            let chunks = self.chunk_arm_rows(&context, &vector).await?;
+            merge_chunk_arm(parents, chunks)
+        } else {
+            Vec::new()
+        };
+        if summaries {
+            let mut summary_rows = vector_table(&mut self.tx, &context, &vector, Legacy).await?;
+            let mut passages = passage_vector(&mut self.tx, &context, &vector).await?;
+            if !passages.is_empty() {
+                summary_rows.append(&mut passages);
+                summary_rows.sort_by(|a, b| b.arm_score.total_cmp(&a.arm_score));
+                summary_rows.truncate(usize::try_from(hybrid_pool(options.limit))?);
+            }
+            rows.extend(summary_rows);
+        }
         rows.sort_by(|a, b| {
             b.arm_score
                 .total_cmp(&a.arm_score)
@@ -85,95 +78,21 @@ impl crate::PostgresMemory {
         Ok(rows)
     }
 
-    async fn vector_part(
-        &self,
-        context: &ArmContext<'_>,
-        vector: &HalfVector,
-        part: VectorPart,
-        wanted: bool,
-        ef_search: u64,
-    ) -> Result<Vec<ArmRow>, Error> {
-        if !wanted {
-            return Ok(Vec::new());
-        }
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|source| Error::operation("vector search", source))?;
-        crate::search::tune_hnsw(&mut tx, ef_search).await?;
-        match part {
-            VectorPart::Messages => self.vector_table(context, vector, true, &mut tx).await,
-            VectorPart::Chunks => self.chunk_arm_rows(context, vector, &mut tx).await,
-            VectorPart::Summaries => self.vector_table(context, vector, false, &mut tx).await,
-        }
-    }
-
-    async fn vector_table(
-        &self,
-        context: &ArmContext<'_>,
-        vector: &HalfVector,
-        is_message: bool,
-        tx: &mut sqlx::PgConnection,
-    ) -> Result<Vec<ArmRow>, Error> {
-        let options = context.options;
-        let tag_filter = context.tag_filter;
-        let alias = if is_message { "m" } else { "s" };
-        let table = if is_message {
-            "rh_messages m"
-        } else {
-            "rh_summaries s"
-        };
-        let distance = format!("{alias}.embedding");
-        let mut query = QueryBuilder::new("");
-        push_select_prefix(&mut query, is_message, false);
-        query.push("coalesce(1.0 - (");
-        query.push(distance.clone());
-        query.push(" <=> ");
-        query.push_bind(vector.clone());
-        query.push("), 0.0)::float8 AS score, ");
-        push_embedded_semantic(&mut query, &distance, alias, vector);
-        query.push(format!(
-            "{} FROM {table} WHERE {alias}.embedding IS NOT NULL",
-            recency_columns(alias, is_message)
-        ));
-        if let Some(filter) = tag_filter {
-            query.push(" AND ");
-            filter.push_condition(&mut query, is_message);
-        }
-        push_time_conditions(&mut query, options, alias);
-        push_scope_conditions(&mut query, options, is_message);
-        query.push(" ORDER BY ");
-        query.push(distance);
-        query.push(" <=> ");
-        query.push_bind(vector.clone());
-        query.push(format!(" LIMIT {}", hybrid_pool(options.limit)));
-        let fetched = query
-            .build_query_as::<ArmSqlRow>()
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|source| Error::operation("vector search", source))?;
-        fetched
-            .into_iter()
-            .map(|row| row.into_arm(is_message))
-            .collect()
-    }
-
     async fn chunk_arm_rows(
-        &self,
+        &mut self,
         context: &ArmContext<'_>,
         vector: &HalfVector,
-        tx: &mut sqlx::PgConnection,
     ) -> Result<Vec<ArmRow>, Error> {
+        use SearchTable::Message;
         let mut query = QueryBuilder::new("");
-        push_select_prefix(&mut query, true, true);
+        push_select_prefix(&mut query, Message, true);
         query.push(format!(
-            "coalesce(1.0 - c.distance, 0.0)::float8 AS score, \
+            "NULL::timestamptz AS newest, coalesce(1.0 - c.distance, 0.0)::float8 AS score, \
              coalesce(1.0 - c.distance, {})::float8 AS semantic, {} \
              FROM (SELECT DISTINCT ON (top.message_id) top.* FROM (\
              SELECT c.message_id, c.idx, c.char_start, c.char_end, c.content, c.embedding <=> ",
             semantic_floor("m"),
-            recency_columns("m", true)
+            recency_columns(Message)
         ));
         query.push_bind(vector.clone());
         query.push(
@@ -181,7 +100,11 @@ impl crate::PostgresMemory {
              JOIN rh_messages m ON m.id = c.message_id WHERE c.embedding IS NOT NULL",
         );
         if said_only(context.options)
-            && self.backfills.done(&self.pool, Backfill::ChunkSaid).await?
+            && self
+                .memory
+                .backfills
+                .done(&mut *self.tx, Backfill::ChunkSaid)
+                .await?
         {
             query.push(" AND c.said");
         }
@@ -189,7 +112,7 @@ impl crate::PostgresMemory {
             query.push(" AND ");
             filter.push_condition(&mut query, true);
         }
-        push_time_conditions(&mut query, context.options, "m");
+        push_time_conditions(&mut query, context.options, Message);
         push_scope_conditions(&mut query, context.options, true);
         query.push(" ORDER BY c.embedding <=> ");
         query.push_bind(vector.clone());
@@ -200,11 +123,103 @@ impl crate::PostgresMemory {
         ));
         let fetched = query
             .build_query_as::<ArmSqlRow>()
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *self.tx)
             .await
             .map_err(|source| Error::operation("chunk search", source))?;
         fetched.into_iter().map(|row| row.into_arm(true)).collect()
     }
+}
+
+async fn vector_table(
+    tx: &mut sqlx::PgConnection,
+    context: &ArmContext<'_>,
+    vector: &HalfVector,
+    table: SearchTable,
+) -> Result<Vec<ArmRow>, Error> {
+    let options = context.options;
+    let tag_filter = context.tag_filter;
+    let is_message = table.is_message();
+    let alias = table.alias();
+    let from = table.from();
+    let distance = format!("{alias}.embedding");
+    let mut query = QueryBuilder::new("");
+    push_select_prefix(&mut query, table, false);
+    query.push("NULL::timestamptz AS newest, ");
+    query.push("coalesce(1.0 - (");
+    query.push(distance.clone());
+    query.push(" <=> ");
+    query.push_bind(vector.clone());
+    query.push("), 0.0)::float8 AS score, ");
+    push_embedded_semantic(&mut query, &distance, alias, vector);
+    query.push(format!(
+        "{} FROM {from} WHERE {alias}.embedding IS NOT NULL",
+        recency_columns(table)
+    ));
+    if let Some(filter) = tag_filter {
+        query.push(" AND ");
+        filter.push_condition(&mut query, is_message);
+    }
+    table.push_eligibility(&mut query);
+    push_time_conditions(&mut query, options, table);
+    push_scope_conditions(&mut query, options, is_message);
+    query.push(" ORDER BY ");
+    query.push(distance);
+    query.push(" <=> ");
+    query.push_bind(vector.clone());
+    query.push(format!(" LIMIT {}", hybrid_pool(options.limit)));
+    let fetched = query
+        .build_query_as::<ArmSqlRow>()
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|source| Error::operation("vector search", source))?;
+    fetched
+        .into_iter()
+        .map(|row| row.into_arm(is_message))
+        .collect()
+}
+
+async fn passage_vector(
+    tx: &mut sqlx::PgConnection,
+    context: &ArmContext<'_>,
+    vector: &HalfVector,
+) -> Result<Vec<ArmRow>, Error> {
+    use SearchTable::Passage;
+    let options = context.options;
+    let mut query = QueryBuilder::new(
+        "WITH candidates AS MATERIALIZED (
+            SELECT p.id, p.record_id, p.ordinal, p.latest_at, p.content, p.embedding <=> ",
+    );
+    query.push_bind(vector.clone());
+    query.push(
+        " AS distance FROM rh_summary_passages p WHERE p.embedding IS NOT NULL
+          AND EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = p.record_id",
+    );
+    Passage.push_eligibility(&mut query);
+    if let Some(filter) = context.tag_filter {
+        query.push(" AND ");
+        filter.push_condition(&mut query, false);
+    }
+    push_scope_conditions(&mut query, options, false);
+    query.push(" OFFSET 0)");
+    push_time_conditions(&mut query, options, Passage);
+    query.push(format!(
+        " ORDER BY distance LIMIT {}) ",
+        hybrid_pool(options.limit)
+    ));
+    push_select_prefix(&mut query, Passage, false);
+    query.push(format!(
+        "NULL::timestamptz AS newest, coalesce(1.0 - p.distance, 0.0)::float8 AS score,
+         coalesce(1.0 - p.distance, {})::float8 AS semantic, {}
+         FROM candidates p JOIN rh_summaries s ON s.id = p.record_id ORDER BY p.distance",
+        semantic_floor("p"),
+        recency_columns(Passage)
+    ));
+    let fetched = query
+        .build_query_as::<ArmSqlRow>()
+        .fetch_all(tx)
+        .await
+        .map_err(|source| Error::operation("summary passage vector search", source))?;
+    fetched.into_iter().map(|row| row.into_arm(false)).collect()
 }
 
 fn merge_chunk_arm(parents: Vec<ArmRow>, chunks: Vec<ArmRow>) -> Vec<ArmRow> {

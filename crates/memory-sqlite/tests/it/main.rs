@@ -1,4 +1,5 @@
 mod common;
+mod search_summary_passages;
 mod search_support;
 
 mod append_imports;
