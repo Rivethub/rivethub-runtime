@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::Filable;
 use kernel::memory::ConversationHead;
 use kernel::memory::Provenance;
@@ -39,7 +38,8 @@ struct CitationRow {
     summary_id: Uuid,
     kind: Option<String>,
     note: Option<String>,
-    cited_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    cited_at: Timestamp,
     conversation_id: Option<Uuid>,
     session_key: Option<String>,
     agent: Option<String>,

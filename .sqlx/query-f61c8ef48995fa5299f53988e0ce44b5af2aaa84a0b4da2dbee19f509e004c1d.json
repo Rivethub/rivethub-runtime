@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT session_id, marked_at AS \"marked_at: jiff_sqlx::Timestamp\" FROM rh_session_history\n          ORDER BY marked_at DESC, session_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "session_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_session_history",
+            "name": "session_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "marked_at: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_session_history",
+            "name": "marked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f61c8ef48995fa5299f53988e0ce44b5af2aaa84a0b4da2dbee19f509e004c1d"
+}

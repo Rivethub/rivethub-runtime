@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -507,7 +508,7 @@ fn parse_state(text: &str) -> Result<TagState, rusqlite::Error> {
     })
 }
 
-fn parse_time(text: &str) -> Result<chrono::DateTime<chrono::Utc>, rusqlite::Error> {
+fn parse_time(text: &str) -> Result<Timestamp, rusqlite::Error> {
     text.parse().map_err(|source| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(source))
     })

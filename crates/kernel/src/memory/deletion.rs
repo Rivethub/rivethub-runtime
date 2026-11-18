@@ -1,15 +1,14 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::ops::AddAssign;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 
 use super::MemoryStoreError;
 use super::names_session;
 
-const TRASH_MIN_AGE: TimeDelta = TimeDelta::hours(1);
+const TRASH_MIN_AGE: SignedDuration = SignedDuration::from_hours(1);
 const TRASH_REPLY_MAX_CHARS: usize = 80;
 const TRASH_PROMPT_MAX_CHARS: usize = 280;
 pub const TOMBSTONE_PURGE_BATCH: u32 = 100;
@@ -70,13 +69,13 @@ pub trait SessionDeletion: Send + Sync {
         &self,
         session_key: &str,
         deleted_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<DeletedSession, MemoryStoreError>;
 
     async fn tombstones(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError>;
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError>;
 
     async fn session_activity(
         &self,
@@ -91,13 +90,13 @@ pub trait SessionDeletion: Send + Sync {
         &self,
         session_key: &str,
         kept_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError>;
 
     async fn kept(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError>;
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError>;
 
     async fn unkeep_session(&self, session_key: &str) -> Result<(), MemoryStoreError>;
 
@@ -105,7 +104,7 @@ pub trait SessionDeletion: Send + Sync {
         &self,
         session_key: &str,
         trashed_by: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), MemoryStoreError>;
 
     async fn restore_session(&self, session_key: &str) -> Result<(), MemoryStoreError>;
@@ -113,19 +112,19 @@ pub trait SessionDeletion: Send + Sync {
     async fn trashed(
         &self,
         session_keys: &[String],
-    ) -> Result<BTreeMap<String, DateTime<Utc>>, MemoryStoreError>;
+    ) -> Result<BTreeMap<String, Timestamp>, MemoryStoreError>;
 
     async fn purge_trashed(
         &self,
-        older_than: DateTime<Utc>,
+        older_than: Timestamp,
         limit: u32,
     ) -> Result<DeletedSession, MemoryStoreError>;
 }
 
 #[must_use]
 pub fn used_since(
-    deleted_at: DateTime<Utc>,
-    stamps: impl IntoIterator<Item = Option<DateTime<Utc>>>,
+    deleted_at: Timestamp,
+    stamps: impl IntoIterator<Item = Option<Timestamp>>,
 ) -> bool {
     stamps.into_iter().flatten().any(|stamp| stamp > deleted_at)
 }
@@ -157,8 +156,8 @@ pub enum TrashReason {
 pub struct TrashSignals<'a> {
     pub native: &'a str,
     pub title: Option<&'a str>,
-    pub updated_at: DateTime<Utc>,
-    pub now: DateTime<Utc>,
+    pub updated_at: Timestamp,
+    pub now: Timestamp,
     pub activity: &'a SessionActivity,
     pub transcript: &'a [SpokenTurn<'a>],
 }
@@ -234,7 +233,7 @@ fn preview(reply: Option<&str>) -> Option<String> {
 
 #[must_use]
 pub fn trash_verdict(signals: &TrashSignals<'_>) -> Option<TrashVerdict> {
-    if signals.now.signed_duration_since(signals.updated_at) < TRASH_MIN_AGE {
+    if signals.now.duration_since(signals.updated_at) < TRASH_MIN_AGE {
         return None;
     }
     let memory = Turns::of_memory(signals.activity);

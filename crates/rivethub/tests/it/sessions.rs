@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryStore;
 use rmcp::model::CallToolRequestParams;
 use rmcp::model::CallToolResult;
@@ -411,12 +410,12 @@ async fn imported(ana: &Node, bundle: &Path) -> TestResult {
         .column("SELECT created_at FROM ros_messages")?
         .iter()
         .map(|text| text.parse())
-        .collect::<Result<Vec<DateTime<Utc>>, _>>()?;
+        .collect::<Result<Vec<Timestamp>, _>>()?;
     dates.sort();
     let original = DATES
         .iter()
         .map(|text| text.parse())
-        .collect::<Result<Vec<DateTime<Utc>>, _>>()?;
+        .collect::<Result<Vec<Timestamp>, _>>()?;
     assert_eq!(dates, original);
     Ok(())
 }

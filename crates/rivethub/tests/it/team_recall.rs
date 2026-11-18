@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -6,7 +7,6 @@ use std::time::Duration;
 use axum::body::{Body, to_bytes};
 use axum::extract::ConnectInfo;
 use axum::http::{Request, header};
-use chrono::Utc;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::{CaptureBatchRequest, CaptureMessage};
 use kernel::owner::Owner;
@@ -62,7 +62,7 @@ async fn seed(pool: &PgPool) -> TestResult {
             &owner,
             &SHARED.parse()?,
             Some(&Visibility::Space(team()?.id)),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     Ok(())

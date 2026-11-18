@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::wiki::builder::WikiStoreError;
 use kernel::wiki::builder::WikiSummary;
 use kernel::wiki::page::WikiAction;
@@ -36,7 +36,7 @@ pub(crate) fn apply(
     summary: &WikiSummary,
     patch: &WikiPatch,
     page: Option<&WikiSlug>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<String>, WikiStoreError> {
     let slug = canonical(conn, patch, page)?;
     let aliases = alias_list(patch, &slug);
@@ -94,7 +94,7 @@ pub(crate) fn cite(
     conn: &Connection,
     slug: &str,
     summary: &WikiSummary,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     provenance(conn, slug, summary, None, &time::stamp(now))
 }
@@ -456,7 +456,7 @@ fn note(
     patch: &WikiPatch,
     slug: &str,
     row: &Existing,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let proposed = patch.slug.as_ref().to_owned();
     let mut aliases = list(&row.aliases)?;
@@ -483,7 +483,7 @@ fn note(
         conn,
         slug,
         summary,
-        Some(&patch.note(now.date_naive()).body),
+        Some(&patch.note(now.utc_date()).body),
         &at,
     )
 }

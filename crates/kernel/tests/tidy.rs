@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::Refusal;
 use kernel::filing::Target;
 use kernel::queue::WorkerRole;
@@ -40,7 +39,7 @@ fn listing(
         owner: testkit::owner().ok(),
     };
     Ok(TopicListing {
-        topic: Topic::create(TopicId::random(), new, DateTime::<Utc>::UNIX_EPOCH)?,
+        topic: Topic::create(TopicId::random(), new, Timestamp::UNIX_EPOCH)?,
         session_count: sessions,
         last_active: None,
     })
@@ -125,7 +124,7 @@ fn the_guard_refuses_small_titled_tombstoned_and_known_changes() -> TestResult {
     let app = listing("Desktop App", TopicKind::Work, None, 4)?;
     let closed = {
         let mut closed = listing("Old Spike", TopicKind::Work, None, 0)?;
-        closed.topic.closed_at = Some(DateTime::<Utc>::UNIX_EPOCH);
+        closed.topic.closed_at = Some(Timestamp::UNIX_EPOCH);
         closed
     };
     let people = listing("People", TopicKind::Type, None, 0)?;
@@ -222,7 +221,7 @@ fn suggestions_cluster_by_name_and_duplicates_fold_into_the_busier_topic() -> Te
 
 #[test]
 fn a_role_reports_its_newest_finish_and_its_failing_jobs() {
-    let at = |seconds| DateTime::<Utc>::from_timestamp(seconds, 0);
+    let at = |seconds| Some(Timestamp::constant(seconds, 0));
     let tasks = [
         TaskActivity {
             task: "embed-target".to_owned(),

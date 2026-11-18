@@ -175,11 +175,10 @@ async fn listings_count_sessions_and_take_last_activity_from_conversations() -> 
     let summary: Vec<(&str, u64, Option<String>)> = listed
         .iter()
         .map(|listing| {
-            (
-                listing.topic.name.as_str(),
-                listing.session_count,
-                listing.last_active.map(|at| at.to_rfc3339()),
-            )
+            let at = listing
+                .last_active
+                .map(wire::time::TimestampFormat::rfc3339_offset);
+            (listing.topic.name.as_str(), listing.session_count, at)
         })
         .collect();
     assert_eq!(

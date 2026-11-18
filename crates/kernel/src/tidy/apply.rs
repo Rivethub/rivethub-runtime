@@ -1,6 +1,3 @@
-use chrono::DateTime;
-use chrono::Utc;
-
 use super::BatchId;
 use super::Proposal;
 use super::ProposalId;
@@ -25,6 +22,7 @@ use crate::topics::TopicName;
 use crate::topics::TopicPageStore;
 use crate::topics::TopicStore;
 use crate::wiki::page::FoldMark;
+use jiff::Timestamp;
 
 const GONE: &str = "the topic it changes is already gone";
 const TARGET_GONE: &str = "the topic it merges into is gone";
@@ -68,7 +66,7 @@ enum Approval {
 pub async fn approve(
     ports: &TidyPorts<'_>,
     id: ProposalId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Proposal, TidyError> {
     let proposal = ports
         .tidy
@@ -87,7 +85,7 @@ pub async fn approve(
 pub async fn reject(
     tidy: &dyn TidyStore,
     id: ProposalId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Proposal, TidyError> {
     tidy.decide(id, ProposalState::Rejected, now).await
 }
@@ -96,7 +94,7 @@ pub async fn decide_batch(
     ports: &TidyPorts<'_>,
     id: BatchId,
     decision: Decision,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<BatchOutcome, TidyError> {
     let batch = ports
         .tidy
@@ -131,7 +129,7 @@ pub async fn decide_batch(
 async fn approve_pending(
     ports: &TidyPorts<'_>,
     proposal: &Proposal,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Approval, TidyError> {
     proposal.pending()?;
     let outdated = match outdated(ports.topics, &proposal.change).await? {
@@ -206,11 +204,7 @@ const fn stale(error: &TidyError) -> bool {
     )
 }
 
-async fn apply(
-    ports: &TidyPorts<'_>,
-    change: &TreeEdit,
-    now: DateTime<Utc>,
-) -> Result<(), TidyError> {
+async fn apply(ports: &TidyPorts<'_>, change: &TreeEdit, now: Timestamp) -> Result<(), TidyError> {
     let topics = ports.topics;
     match change {
         TreeEdit::Merge { source, into } => {
@@ -294,7 +288,7 @@ async fn create(
     kind: TopicKind,
     name: &TopicName,
     parent: Option<TopicId>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), TidyError> {
     if exists(topics, id).await? {
         return Ok(());
@@ -315,7 +309,7 @@ async fn file(
     ports: &TidyPorts<'_>,
     member: &Target,
     topic: TopicId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), TidyError> {
     match member {
         Target::Session(session) => {

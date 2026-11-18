@@ -1,5 +1,5 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::MemoryStore as _;
 use kernel::memory::SessionDeletion as _;
 use kernel::owner::Owner;
@@ -15,11 +15,11 @@ use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-pub(crate) fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+pub(crate) fn at(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
-fn said(event_id: &str, content: &str, created_at: DateTime<Utc>) -> CaptureMessage {
+fn said(event_id: &str, content: &str, created_at: Timestamp) -> CaptureMessage {
     CaptureMessage {
         event_id: event_id.to_owned(),
         role: Role::User,
@@ -94,8 +94,10 @@ pub(crate) fn receiver_key(
 #[derive(sqlx::FromRow)]
 struct Stored {
     owner_user_id: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
     author: Option<String>,
     origin_conversation: Option<String>,
     model: Option<String>,
@@ -242,8 +244,10 @@ struct Conversation {
     owner_user_id: String,
     title: Option<String>,
     settings: String,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
 }
 
 async fn conversation(pool: &PgPool, id: &str) -> Result<Conversation, Box<dyn std::error::Error>> {
@@ -292,7 +296,7 @@ async fn live_capture_keeps_capture_time_whatever_dates_the_batch_carries(
     let mut live = iness_native_session()?;
     live.created_at = Some(at("2031-01-01T00:00:00Z")?);
     live.updated_at = Some(at("2031-01-01T00:00:00Z")?);
-    let started = Utc::now();
+    let started = Timestamp::now();
 
     let first = capture_live(&store, "ines", &live).await?;
     live.messages = vec![said(
@@ -303,7 +307,7 @@ async fn live_capture_keeps_capture_time_whatever_dates_the_batch_carries(
     capture_live(&store, "ines", &live).await?;
 
     let row = conversation(&pool, &first.conversation_id).await?;
-    let finished = Utc::now();
+    let finished = Timestamp::now();
     assert!(
         started <= row.created_at && row.created_at <= finished,
         "{row:?}"
@@ -390,7 +394,7 @@ async fn a_message_tied_with_stored_messages_lands_after_all_of_them(pool: PgPoo
     let written = import(&store, "ines", &first).await?;
     import(&store, "ines", &second).await?;
 
-    let stored: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
+    let stored: Vec<(String, jiff_sqlx::Timestamp)> = sqlx::query_as(
         "select metadata->>'event_id', created_at from rh_messages \
          where conversation_id = $1 order by created_at, id",
     )
@@ -399,8 +403,8 @@ async fn a_message_tied_with_stored_messages_lands_after_all_of_them(pool: PgPoo
     .await?;
     let order: Vec<&str> = stored.iter().map(|(event, _)| event.as_str()).collect();
     assert_eq!(order, ["x", "a", "b", "c", "d"]);
-    let times: Vec<DateTime<Utc>> = stored.iter().map(|(_, time)| *time).collect();
-    let tick = chrono::TimeDelta::microseconds(1);
+    let times: Vec<Timestamp> = stored.iter().map(|(_, time)| time.to_jiff()).collect();
+    let tick = SignedDuration::from_micros(1);
     assert_eq!(
         times,
         [earlier, tied, tied + tick, tied + tick * 2, tied + tick * 3]
@@ -595,7 +599,7 @@ async fn times_finer_than_a_microsecond_keep_the_batch_order(pool: PgPool) -> Te
                 at(&format!("2026-10-01T09:00:00.0000000{tenth}Z"))?,
             ))
         })
-        .collect::<Result<_, chrono::ParseError>>()?;
+        .collect::<Result<_, jiff::Error>>()?;
     let owner = Owner::new("team".to_owned())?;
 
     store

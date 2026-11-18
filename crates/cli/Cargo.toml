@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde_with.workspace = true
 async-trait = { workspace = true }
 bytes = { workspace = true }
 memory-postgres.workspace = true
@@ -26,7 +27,7 @@ tar.workspace = true
 workers.workspace = true
 rustls-pki-types.workspace = true
 x509-parser.workspace = true
-chrono = { workspace = true }
+jiff = { workspace = true }
 clap = { workspace = true }
 config = { workspace = true }
 gateway = { workspace = true }

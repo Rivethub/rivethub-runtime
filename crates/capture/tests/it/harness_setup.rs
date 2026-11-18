@@ -5,8 +5,6 @@ use std::path::PathBuf;
 
 use capture::harnesses::HarnessSetupService;
 use capture::harnesses::SetupChange;
-use chrono::TimeZone;
-use chrono::Utc;
 use config::Environment;
 use kernel::harness_setup::ConnectPart;
 use kernel::harness_setup::HarnessProbe;
@@ -97,10 +95,7 @@ impl Machine {
         part: Option<ConnectPart>,
         dry_run: bool,
     ) -> Result<SetupChange, SetupError> {
-        let now = Utc
-            .with_ymd_and_hms(2026, 11, 6, 12, 0, 0)
-            .single()
-            .unwrap_or_default();
+        let now = wire::time::timestamp_at_utc(2026, 11, 6, 12, 0, 0).unwrap_or_default();
         self.service.connect_now(id, part, dry_run, now)
     }
 
@@ -403,10 +398,7 @@ fn an_oddly_formatted_config_is_backed_up_exactly_and_rewritten_as_two_space_jso
     assert!(after.contains("\"rivethub\""));
     let again = machine.connect("cursor", Some(ConnectPart::Recall), false)?;
     assert_eq!(again.diff, "");
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine
         .service
         .disconnect_now("cursor", Some(ConnectPart::Recall), false, now)?;
@@ -465,10 +457,7 @@ fn disconnecting_removes_only_rhs_entries_and_leaves_the_rest_as_it_was() -> Tes
     machine.connect("claude-code", None, false)?;
     machine.connect("codex", None, false)?;
     machine.connect("grok-build", Some(ConnectPart::Capture), false)?;
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine
         .service
         .disconnect_now("claude-code", None, false, now)?;
@@ -685,10 +674,7 @@ fn dsh_disconnect_restores_an_empty_patch_and_profile_files() -> TestResult {
     machine.write(".dsh/profiles/headless/cordis.yml", generated)?;
     machine.write(".dsh/cordis.patch.yml", "[]\n")?;
     machine.connect("dsh", None, false)?;
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine.service.disconnect_now("dsh", None, false, now)?;
     assert_eq!(
         machine.read(".dsh/profiles/headless/package.json")?,
@@ -715,10 +701,7 @@ fn dsh_disconnect_restores_comments_around_an_empty_patch() -> TestResult {
     let original = "# c\n[]\n";
     machine.write(".dsh/cordis.patch.yml", original)?;
     machine.connect("dsh", None, false)?;
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine.service.disconnect_now("dsh", None, false, now)?;
     assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
     Ok(())
@@ -734,10 +717,7 @@ fn dsh_connect_keeps_existing_patch_items() -> TestResult {
     let patched = machine.read(".dsh/cordis.patch.yml")?;
     assert!(patched.starts_with(original), "{patched}");
     assert!(patched.contains("rivethub-capture"), "{patched}");
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine.service.disconnect_now("dsh", None, false, now)?;
     assert_eq!(machine.read(".dsh/cordis.patch.yml")?, original);
     Ok(())
@@ -898,10 +878,7 @@ fn dsh_disconnect_leaves_a_recall_row_rh_did_not_write() -> TestResult {
     assert!(patched.contains("id: mine"), "{patched}");
     assert!(patched.contains("rivethub-capture"), "{patched}");
     assert!(!patched.contains("rivethub-recall"), "{patched}");
-    let now = Utc
-        .with_ymd_and_hms(2026, 11, 6, 13, 0, 0)
-        .single()
-        .unwrap_or_default();
+    let now = wire::time::timestamp_at_utc(2026, 11, 6, 13, 0, 0).unwrap_or_default();
     machine
         .service
         .disconnect_now("dsh", Some(ConnectPart::Recall), false, now)?;

@@ -1,3 +1,4 @@
+use jiff::civil::Date;
 use strum::IntoEnumIterator as _;
 
 use super::article::ArticleSection;
@@ -175,7 +176,7 @@ fn parse_history(text: &str) -> Vec<WikiHistoryEntry> {
     entries
 }
 
-fn history_heading(line: &str) -> Option<(chrono::NaiveDate, String)> {
+fn history_heading(line: &str) -> Option<(Date, String)> {
     let heading = line.strip_prefix("###")?;
     let heading = heading.strip_prefix(char::is_whitespace)?.trim();
     let (date, rest) = heading.split_at_checked(10)?;

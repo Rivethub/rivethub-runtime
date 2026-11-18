@@ -2,10 +2,10 @@ mod origins;
 mod suggestions;
 mod team;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use kernel::memory::BrowseFilter;
 use kernel::memory::EmbedModelMismatch;
 use kernel::memory::Limit;
@@ -278,7 +278,7 @@ impl MemoryStore for FakeMemoryStore {
         self.record(MemoryRequest::Append(owner.clone(), entries.clone()))
             .await;
         self.origins.remember(&batch).await;
-        let now = Utc::now();
+        let now = Timestamp::now();
         let total = entries.len() as u64;
         let inserted = {
             let mut stored = self.entries.lock().await;
@@ -306,7 +306,7 @@ impl MemoryStore for FakeMemoryStore {
         let count = batch.len() as u64;
         self.record(MemoryRequest::Append(owner.clone(), batch.clone()))
             .await;
-        let now = Utc::now();
+        let now = Timestamp::now();
         for entry in &mut batch {
             entry.id.get_or_insert_with(|| Uuid::new_v4().to_string());
             entry.created_at.get_or_insert(now);
@@ -482,8 +482,8 @@ impl MemoryStore for FakeMemoryStore {
             reason,
             decided_by: add.decided_by,
             decided_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
         })
     }
 
@@ -531,8 +531,8 @@ impl MemoryStore for FakeMemoryStore {
             source: "user".to_owned(),
             reason,
             decided_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
         })
     }
 

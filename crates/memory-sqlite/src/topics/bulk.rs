@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::filing::AllFiled;
 use kernel::filing::FiledConversation;
 use kernel::filing::FiledSession;
@@ -169,7 +170,7 @@ fn conversation_row(
     })
 }
 
-fn last_active(text: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>, TopicError> {
+fn last_active(text: Option<&str>) -> Result<Option<Timestamp>, TopicError> {
     text.map(|at| timestamp(at, "updated_at")).transpose()
 }
 

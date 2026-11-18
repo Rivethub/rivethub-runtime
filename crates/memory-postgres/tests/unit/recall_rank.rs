@@ -14,7 +14,7 @@ fn row(id: &str, session: &str) -> ArmRow {
         tool_name: None,
         conversation_id: None,
         session_id: Some(session.into()),
-        created_at: DateTime::from_timestamp(0, 0).expect("time"),
+        created_at: jiff::Timestamp::UNIX_EPOCH,
         arm_score: 1.0,
         semantic: 0.0,
         boost: 0.0,

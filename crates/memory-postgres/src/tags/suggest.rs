@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::TagJobContext;
 use kernel::memory::TagOnEntity;
@@ -235,7 +234,7 @@ async fn apply_row(
     tx: &mut Transaction<'_, Postgres>,
     row: &TagSuggestionRow,
     proposed_by: &str,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<u64, MemoryStoreError> {
     match row.kind {
         TagSuggestKind::Add => insert_tag(tx, row, proposed_by, at).await,
@@ -247,7 +246,7 @@ async fn insert_tag(
     tx: &mut Transaction<'_, Postgres>,
     row: &TagSuggestionRow,
     proposed_by: &str,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<u64, MemoryStoreError> {
     let result = sqlx::query(INSERT_TAG_SQL)
         .bind(row.entity_type.to_string())
@@ -258,7 +257,7 @@ async fn insert_tag(
         .bind(row.confidence)
         .bind(proposed_by)
         .bind(&row.reason)
-        .bind(at)
+        .bind(crate::time::BindTime::bind_time(at))
         .execute(&mut **tx)
         .await
         .map_err(|source| store_error("tag suggestions", source))?;
@@ -268,11 +267,11 @@ async fn insert_tag(
 async fn suggest_removal(
     tx: &mut Transaction<'_, Postgres>,
     row: &TagSuggestionRow,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<u64, MemoryStoreError> {
     let result = sqlx::query(REMOVAL_SQL)
         .bind(&row.reason)
-        .bind(at)
+        .bind(crate::time::BindTime::bind_time(at))
         .bind(row.entity_type.to_string())
         .bind(row.entity_id)
         .bind(&row.key)
@@ -286,7 +285,7 @@ async fn suggest_removal(
 async fn insert_vocabulary(
     tx: &mut Transaction<'_, Postgres>,
     proposal: &TagVocabularyProposal,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<u64, MemoryStoreError> {
     let aliases: Vec<String> = Vec::new();
     let result = sqlx::query(INSERT_VOCABULARY_SQL)
@@ -295,7 +294,7 @@ async fn insert_vocabulary(
         .bind(&proposal.display)
         .bind(&aliases)
         .bind(&proposal.reason)
-        .bind(at)
+        .bind(crate::time::BindTime::bind_time(at))
         .execute(&mut **tx)
         .await
         .map_err(|source| store_error("tag suggestions", source))?;

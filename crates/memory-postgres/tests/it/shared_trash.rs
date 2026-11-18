@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::Limit;
 use kernel::memory::MemoryBrowseOrder;
@@ -94,7 +94,7 @@ async fn a_trashed_session_leaves_every_reader_s_recall_on_a_pinned_login(
             &alice,
             &SessionKey::from(&shared),
             Some(&Visibility::Space(household()?)),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     let bob = PostgresMemory::new(person(&pool, "bob").await?);
@@ -106,7 +106,7 @@ async fn a_trashed_session_leaves_every_reader_s_recall_on_a_pinned_login(
 
     owner
         .clone()
-        .run(store.trash_session(SHARED, Some("alice"), Utc::now()))
+        .run(store.trash_session(SHARED, Some("alice"), Timestamp::now()))
         .await?;
     assert_eq!(
         recalled(&bob).await?,
@@ -143,7 +143,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
             &alice,
             &SessionKey::from(&shared),
             Some(&Visibility::Space(household()?)),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     let as_bob = Scope::Viewer(bob.clone());
@@ -153,7 +153,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
             &bob,
             &SessionKey::from(&shared),
             Some(&Visibility::Private),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await;
     assert!(
@@ -167,7 +167,7 @@ async fn a_reader_cannot_mark_a_session_and_a_stray_mark_changes_nothing(
             &bob,
             &SessionKey::from(&private),
             Some(&Visibility::Private),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await;
     assert!(

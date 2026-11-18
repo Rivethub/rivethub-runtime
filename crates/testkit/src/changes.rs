@@ -1,6 +1,5 @@
-use chrono::NaiveDate;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use kernel::changes::Change;
 use kernel::changes::ChangeActor;
 use kernel::changes::ChangeFeed;
@@ -226,7 +225,7 @@ pub async fn digests_are_kept_per_day_and_owner<S>(store: &S) -> Outcome
 where
     S: DigestStore,
 {
-    let day = NaiveDate::from_ymd_opt(2026, 9, 21).ok_or("a valid date")?;
+    let day = Date::new(2026, 9, 21)?;
     let owner = crate::owner()?;
     let other = Owner::new("someone-else".to_owned())?;
     same("no digest yet", store.digest(day, &owner).await?, None)?;
@@ -293,7 +292,7 @@ where
     let changes = store
         .changes(&ChangeWindow::between(
             at(0),
-            Utc::now() + TimeDelta::days(1),
+            Timestamp::now() + wire::time::elapsed_days(1),
         ))
         .await?;
     same(

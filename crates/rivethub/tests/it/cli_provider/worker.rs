@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,7 +38,7 @@ async fn composed_summarizer_runs_cli_model_without_embedder() -> TestResult {
             tool_args: None,
             tool_result: None,
             metadata: None,
-            created_at: Some(chrono::Utc::now()),
+            created_at: Some(Timestamp::now()),
         })
         .collect();
     store.append(&testkit::owner()?, messages).await?;

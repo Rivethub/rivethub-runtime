@@ -3,11 +3,11 @@ mod summaries;
 pub use search::*;
 pub use summaries::*;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::JsonObject;
 use crate::message::{Role, ToolResult};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -94,12 +94,16 @@ impl BrowseWindow {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryBrowseToolArgs {
     pub conversation_id: Option<String>,
     pub include_tools: Option<bool>,
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub since: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub before: Option<Timestamp>,
     pub window: Option<BrowseWindow>,
     pub agent: Option<String>,
     pub tag: Option<String>,
@@ -124,11 +128,14 @@ pub struct MemoryAppendToolArgs {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryIngestMessage {
     pub role: Role,
     pub content: String,
-    pub created_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
     pub tool_calls: Option<Vec<MemoryIngestToolCall>>,
 }
 
@@ -202,6 +209,7 @@ pub struct MemoryToolResponse {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryBrowseMessage {
@@ -210,7 +218,9 @@ pub struct MemoryBrowseMessage {
     pub role: Role,
     pub agent: Option<String>,
     pub content: String,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
     pub conversation_id: Option<String>,
     pub session_id: Option<String>,
     pub tool_name: Option<String>,
@@ -240,8 +250,8 @@ pub struct RecentSession {
     pub session_id: String,
     pub title: Option<String>,
     pub agent: String,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub last_active: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub last_active: Timestamp,
     pub messages: u64,
 }
 
@@ -276,20 +286,25 @@ pub enum EmbedStatus {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedHealth {
     pub status: EmbedStatus,
     pub error: Option<String>,
     pub impact: Option<String>,
-    pub checked_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub checked_at: Option<Timestamp>,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryHealthResponse {
-    pub observed_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub observed_at: Option<Timestamp>,
     pub queue_status: Option<QueueStatus>,
     pub queues: Option<QueueHealth>,
     #[serde(rename = "compaction")]
@@ -377,6 +392,7 @@ pub enum TagState {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagWire {
@@ -392,9 +408,14 @@ pub struct TagWire {
     pub proposed_by: String,
     pub reason: String,
     pub decided_by: Option<String>,
-    pub decided_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub decided_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -449,6 +470,7 @@ pub struct MemoryTagsLookupRequest {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagTaxonomyEntry {
@@ -460,20 +482,31 @@ pub struct TagTaxonomyEntry {
     pub state: TagState,
     pub source: String,
     pub reason: String,
-    pub decided_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub decided_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TagTaxonomyWire {
     pub key: String,
     pub entries: Vec<TagTaxonomyEntry>,
-    pub decided_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub decided_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub updated_at: Timestamp,
 }
 
 #[serde_with::skip_serializing_none]

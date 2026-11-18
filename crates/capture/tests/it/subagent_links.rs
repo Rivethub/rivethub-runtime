@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -229,7 +228,7 @@ async fn batch(
         &config::Paths::new(&env)?,
     )
     .ok_or("store")?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     assert_eq!(hook.run(payload, now).await.stderr, "");
     let posts = transport.posts.lock().clone();
     let [body] = posts.as_slice() else {

@@ -1,0 +1,160 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT slug, title, aliases, tags, entities, current_state, article, related,\n                    git_sha, last_verified_at AS \"last_verified_at!: crate::time::OptionalTimestamp\", updated_at AS \"updated_at: jiff_sqlx::Timestamp\", topic_id\n             FROM rh_wiki_topics WHERE slug = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "slug",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "slug"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "aliases",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "aliases"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "tags",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "tags"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "entities",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "entities"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "current_state",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "current_state"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "article",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "article"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "related",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "related"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "git_sha",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "git_sha"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "last_verified_at!: crate::time::OptionalTimestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "last_verified_at"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "topic_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "rh_wiki_topics",
+            "name": "topic_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "77b5b1211c45f560437f0bf0a79e72b56e47069a19b5e67d9ce9e7ed2b5606a0"
+}

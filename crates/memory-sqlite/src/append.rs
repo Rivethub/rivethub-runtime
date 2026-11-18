@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryEntry;
 use kernel::owner::Owner;
 use rusqlite::Transaction;
@@ -23,7 +22,7 @@ impl SqliteStore {
         &self,
         entries: Vec<MemoryEntry>,
         owner: &Owner,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, SqliteError> {
         if let Some(entry) = entries
             .iter()
@@ -75,7 +74,7 @@ fn append_one(
     tx: &Transaction<'_>,
     entry: &MemoryEntry,
     owner: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<String, SqliteError> {
     let key = ConversationKey {
         session_key: entry.session_id.clone(),

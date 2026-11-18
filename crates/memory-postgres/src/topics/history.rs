@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::topics::HistoryMark;
 use kernel::topics::TopicError;
 use sqlx::PgPool;
@@ -10,7 +9,7 @@ use super::rows::stored;
 
 struct MarkRow {
     session_id: String,
-    marked_at: DateTime<Utc>,
+    marked_at: Timestamp,
 }
 
 fn mark(row: MarkRow) -> Result<HistoryMark, TopicError> {
@@ -26,9 +25,9 @@ pub(super) async fn keep(pool: &PgPool, kept: &HistoryMark) -> Result<HistoryMar
         MarkRow,
         "INSERT INTO rh_session_history (session_id, marked_at) VALUES ($1, $2)
          ON CONFLICT (session_id) DO UPDATE SET marked_at = EXCLUDED.marked_at
-         RETURNING session_id, marked_at",
+         RETURNING session_id, marked_at AS \"marked_at: jiff_sqlx::Timestamp\"",
         kept.session.as_str(),
-        kept.at
+        crate::time::BindTime::bind_time(kept.at) as _
     )
     .fetch_one(pool)
     .await
@@ -50,7 +49,7 @@ pub(super) async fn forget(pool: &PgPool, session: &SessionId) -> Result<(), Top
 pub(super) async fn marks(pool: &PgPool) -> Result<Vec<HistoryMark>, TopicError> {
     sqlx::query_as!(
         MarkRow,
-        "SELECT session_id, marked_at FROM rh_session_history
+        "SELECT session_id, marked_at AS \"marked_at: jiff_sqlx::Timestamp\" FROM rh_session_history
           ORDER BY marked_at DESC, session_id"
     )
     .fetch_all(pool)

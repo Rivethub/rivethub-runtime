@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::SessionDeletion as _;
@@ -13,11 +12,11 @@ use wire::message::Role;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+fn at(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
-fn said(event_id: &str, created_at: DateTime<Utc>) -> CaptureMessage {
+fn said(event_id: &str, created_at: Timestamp) -> CaptureMessage {
     CaptureMessage {
         event_id: event_id.to_owned(),
         role: Role::User,

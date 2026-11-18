@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
-use chrono::Utc;
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
 use kernel::topics::DecisionStore;
@@ -78,7 +78,7 @@ async fn sync(
             deps.decisions.as_ref(),
             job,
             owners,
-            Utc::now(),
+            Timestamp::now(),
         ) => {
             result.map_err(WorkerError::from)
         }

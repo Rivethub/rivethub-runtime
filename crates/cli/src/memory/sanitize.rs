@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -8,7 +9,6 @@ use capture::share;
 use capture::share::BundlePaths;
 use capture::share::Clobber;
 use capture::share::ShareError;
-use chrono::Utc;
 use config::Environment;
 use config::MappingFile;
 
@@ -173,7 +173,7 @@ pub(super) async fn run(job: Job, env: &Environment) -> Result<Report, Error> {
             mapping: &mapping,
             key: &share::key_path(env)?,
             decider: decider.as_ref(),
-            at: Utc::now(),
+            at: Timestamp::now(),
         },
         &paths,
         Clobber::Replace,

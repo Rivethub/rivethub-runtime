@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -5,8 +6,6 @@ use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::SessionRules;
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
@@ -109,8 +108,8 @@ pub(super) fn positions(spec: &str) -> Result<Vec<Position>, serde_json::Error> 
     serde_json::from_str(&serde_json::to_string(spec)?).map(|position| vec![position])
 }
 
-pub(super) fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339("2026-11-08T12:00:00Z")?.with_timezone(&Utc))
+pub(super) fn at() -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339("2026-11-08T12:00:00Z")
 }
 
 fn object(text: &str) -> Result<JsonObject, serde_json::Error> {

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::wiki::builder::BACKFILL_PRIORITY;
 use kernel::wiki::builder::BackfillBudget;
@@ -48,7 +47,7 @@ impl WikiBuilderStore for SqliteStore {
         job: &ExtractWiki,
         patches: Vec<WikiPatch>,
         routing: &WikiRouting,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let job = job.clone();
         let routing = routing.clone();
@@ -62,7 +61,7 @@ impl WikiBuilderStore for SqliteStore {
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let error = error.to_owned();
         blocking(self, move |conn| fail(conn, summary_id, &error, now)).await
@@ -80,7 +79,7 @@ impl WikiBuilderStore for SqliteStore {
         &self,
         summary_id: Uuid,
         slug: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let slug = slug.clone();
         blocking(self, move |conn| {
@@ -119,7 +118,7 @@ fn apply_all(
     job: &ExtractWiki,
     mut patches: Vec<WikiPatch>,
     routing: &WikiRouting,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<String>, WikiStoreError> {
     reject_empty(&patches)?;
     let tx = write_tx(conn)?;
@@ -209,7 +208,7 @@ fn fail(
     conn: &Connection,
     summary_id: Uuid,
     error: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     conn.execute(
         "INSERT INTO ros_wiki_extractions
@@ -235,7 +234,7 @@ fn record_done(
     conn: &Connection,
     summary_id: Uuid,
     touched: &[String],
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     let topics =
         serde_json::to_string(touched).map_err(|source| WikiStoreError::Query(Box::new(source)))?;
@@ -345,7 +344,7 @@ fn optional_uuid(value: Option<String>) -> Result<Option<Uuid>, WikiStoreError> 
     }
 }
 
-fn time_stamp(now: DateTime<Utc>) -> String {
+fn time_stamp(now: Timestamp) -> String {
     crate::time::stamp(now)
 }
 

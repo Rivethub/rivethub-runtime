@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::path::Path;
 
 use capture::event_id::OccurrenceKind;
 use capture::event_id::occurrence_digest;
 use capture::readers::StoreReader;
 use capture::readers::TranscriptSlice;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use serde::Serialize;
 use wire::JsonObject;
@@ -61,8 +60,8 @@ fn reader(root: &Path) -> Result<StoreReader, Box<dyn std::error::Error>> {
     StoreReader::open(HarnessId::Cowork, root.to_path_buf()).ok_or_else(|| "reader".into())
 }
 
-fn at(raw: &str) -> Result<DateTime<Utc>, Box<dyn std::error::Error>> {
-    Ok(DateTime::parse_from_rfc3339(raw)?.with_timezone(&Utc))
+fn at(raw: &str) -> Result<Timestamp, Box<dyn std::error::Error>> {
+    Ok(wire::time::parse_rfc3339(raw)?)
 }
 
 fn meta(

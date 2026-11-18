@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use rusqlite::Connection;
 
 use crate::Status;
@@ -26,10 +25,10 @@ CREATE INDEX IF NOT EXISTS idx_ros_tags_removal_state ON ros_tags (removal_state
 const CONNECTION_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
 pub fn sqlite(path: &Path) -> Result<Status, Error> {
-    sqlite_at(path, Utc::now())
+    sqlite_at(path, Timestamp::now())
 }
 
-pub fn sqlite_at(path: &Path, now: DateTime<Utc>) -> Result<Status, Error> {
+pub fn sqlite_at(path: &Path, now: Timestamp) -> Result<Status, Error> {
     if !exists(path)? {
         let mut conn = open_writing(path)?;
         create_fresh(&mut conn)?;
@@ -229,11 +228,7 @@ fn create_fresh(conn: &mut Connection) -> Result<(), Error> {
     tx.commit().map_err(Error::SqliteCreate)
 }
 
-fn bring_through(
-    conn: &mut Connection,
-    from: SchemaVersion,
-    now: DateTime<Utc>,
-) -> Result<(), Error> {
+fn bring_through(conn: &mut Connection, from: SchemaVersion, now: Timestamp) -> Result<(), Error> {
     let tx = begin(conn)?;
     apply_schema(&tx)?;
     tx.commit().map_err(Error::SqliteCreate)?;

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -373,7 +374,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         &self,
         _leaves: &[kernel::wiki::entity_pass::EntityLeaf],
         _prepared: &kernel::wiki::entity_pass::PreparedEntity,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<
         Option<kernel::wiki::entity_pass::EntityView>,
         kernel::wiki::entity_pass::EntityStoreError,
@@ -385,7 +386,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         &self,
         _view: &kernel::wiki::entity_pass::EntityView,
         _prose: &kernel::wiki::entity_pass::EntityProse,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<
         kernel::wiki::entity_pass::PublishOutcome,
         kernel::wiki::entity_pass::EntityStoreError,
@@ -398,7 +399,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         _leaves: &[uuid::Uuid],
         _slugs: &[String],
         _git_sha: Option<&str>,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
         Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
     }
@@ -407,7 +408,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         &self,
         _summary_id: uuid::Uuid,
         _error: &str,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
         Err(kernel::wiki::entity_pass::EntityStoreError::DirectoryMissing)
     }
@@ -453,7 +454,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         &self,
         _entity: uuid::Uuid,
         _embedding: &[f32],
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
         Ok(())
     }
@@ -464,7 +465,7 @@ impl kernel::wiki::entity_pass::EntityStore for IdleEntities {
         _prepared: &kernel::wiki::entity_pass::PreparedEntity,
         _confidence: f32,
         _reason: &str,
-        _now: chrono::DateTime<chrono::Utc>,
+        _now: Timestamp,
     ) -> Result<(), kernel::wiki::entity_pass::EntityStoreError> {
         Ok(())
     }

@@ -1,8 +1,6 @@
 use axum::http::StatusCode;
-use chrono::DateTime;
-use chrono::SubsecRound as _;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::facts::Evidence;
 use kernel::facts::FactKey;
 use kernel::facts::FactStore as _;
@@ -33,6 +31,7 @@ use wire::gateway::topics::PlacementReply;
 use wire::gateway::topics::TopicList;
 use wire::gateway::topics::TopicRecord;
 use wire::session_id::SessionId;
+use wire::time::TimestampFormat as _;
 
 use super::Api;
 use super::TestResult;
@@ -76,7 +75,7 @@ fn said(
     value: &str,
     session: &str,
     words: &str,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> TestResult<NewClaim> {
     Ok(NewClaim {
         entity: entity.id.parse::<TopicId>()?,
@@ -94,7 +93,7 @@ fn said(
 }
 
 async fn seed(api: &Api) -> TestResult<Seeded> {
-    let now = Utc::now().trunc_subsecs(3);
+    let now = Timestamp::now().truncate_subseconds(3);
     let host = entity(api, "web01", "Hosts").await?;
     for (key, title) in [(FIRST, "Upgrade web01"), (SECOND, "Audit the fleet")] {
         testkit::filing::capture(api.store.as_ref(), key, "claude-code", title, None).await?;
@@ -115,7 +114,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "Ubuntu 22.04",
                 SECOND,
                 "web01 still runs Ubuntu 22.04",
-                now - TimeDelta::hours(3),
+                now - SignedDuration::from_hours(3),
             )?,
             said(
                 &host,
@@ -123,7 +122,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "Ubuntu 24.04",
                 FIRST,
                 "web01 is on Ubuntu 24.04 now",
-                now - TimeDelta::hours(2),
+                now - SignedDuration::from_hours(2),
             )?,
             said(
                 &host,
@@ -131,7 +130,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
                 "192.0.2.4",
                 FIRST,
                 "web01 answers on 192.0.2.4",
-                now - TimeDelta::hours(1),
+                now - SignedDuration::from_hours(1),
             )?,
         ])
         .await?;
@@ -142,7 +141,7 @@ async fn seed(api: &Api) -> TestResult<Seeded> {
 async fn seed_proposals(
     api: &Api,
     conversation: Uuid,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> TestResult<(TopicRecord, TopicRecord)> {
     let lab: TopicRecord = api
         .json(
@@ -173,9 +172,9 @@ async fn seed_proposals(
                                proposed_by, reason, created_at, updated_at)
          VALUES (?1, 'conversation', ?2, 'area', 'storage', 'area: storage', 'model',
                  'suggested', 'categorizer', 'backups', ?3, ?3)",
-        rusqlite::params![TAG, conversation.to_string(), now.to_rfc3339()],
+        rusqlite::params![TAG, conversation.to_string(), now.rfc3339_offset()],
     )?;
-    let mut batch = Batch::new(Proposer::Categorizer, now - TimeDelta::minutes(30));
+    let mut batch = Batch::new(Proposer::Categorizer, now - SignedDuration::from_mins(30));
     batch.add(
         TreeEdit::Close {
             topic: stale.id.parse()?,
@@ -186,7 +185,7 @@ async fn seed_proposals(
             samples: vec![Sample {
                 id: SECOND.to_owned(),
                 title: Some("Audit the fleet".to_owned()),
-                last_active: Some(now - TimeDelta::hours(3)),
+                last_active: Some(now - SignedDuration::from_hours(3)),
             }],
         },
     );
@@ -460,7 +459,7 @@ async fn today_shows_three_review_items_conflicts_first_and_counts_the_queue() -
            FROM ros_tags WHERE id = ?3",
         rusqlite::params![
             "00000000-0000-4000-8000-0000000000d5",
-            (Utc::now() + TimeDelta::hours(1)).to_rfc3339(),
+            (Timestamp::now() + SignedDuration::from_hours(1)).rfc3339_offset(),
             TAG
         ],
     )?;

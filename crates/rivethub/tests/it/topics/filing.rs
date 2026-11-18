@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use jiff::Timestamp;
 use kernel::filing::FilingStore as _;
 use kernel::filing::Refusal;
 use kernel::filing::Rule;
@@ -120,7 +121,7 @@ async fn file_all(api: &Api, conversations: [Uuid; 4]) -> TestResult<Vec<FilingP
         topics: &topics,
         provider: &provider,
         model: "filer",
-        now: chrono::Utc::now(),
+        now: Timestamp::now(),
         cancel: &cancel,
     };
     let mut plans = Vec::new();

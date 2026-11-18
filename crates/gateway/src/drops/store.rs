@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::{HashMap, HashSet};
 use std::io::{ErrorKind, Seek as _};
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
@@ -5,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
-use chrono::{DateTime, TimeDelta, Utc};
 use futures::{Stream, StreamExt as _};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -46,21 +47,25 @@ impl Part {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     owner: String,
     bytes: u64,
     sha256: String,
-    created_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    created_at: Timestamp,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    expires_at: Timestamp,
 }
 
 #[derive(Debug)]
 struct Entry {
     owner: UserId,
     bytes: u64,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +111,7 @@ struct Quota {
 #[derive(Debug)]
 pub(crate) struct Store {
     root: PathBuf,
-    ttl: TimeDelta,
+    ttl: SignedDuration,
     quota: Quota,
     index: Mutex<Index>,
 }
@@ -137,7 +142,7 @@ pub(crate) enum Refused {
 pub(crate) struct Stored {
     pub(crate) id: DropId,
     pub(crate) bytes: u64,
-    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) expires_at: Timestamp,
 }
 
 #[derive(Debug)]
@@ -366,8 +371,8 @@ impl Store {
         }
         file.sync_all().await?;
         drop(file);
-        let created_at = Utc::now();
-        let expires_at = created_at + self.ttl;
+        let created_at = Timestamp::now();
+        let expires_at = self.expires_at(created_at)?;
         let record = Record {
             owner: reservation.owner.as_str().to_owned(),
             bytes: total,
@@ -409,6 +414,12 @@ impl Store {
             bytes: total,
             expires_at,
         })
+    }
+
+    fn expires_at(&self, created_at: Timestamp) -> Result<Timestamp, std::io::Error> {
+        created_at
+            .saturating_add(self.ttl)
+            .map_err(std::io::Error::other)
     }
 
     fn take_locked(&self, index: &mut Index, id: &DropId) -> std::io::Result<bool> {
@@ -464,7 +475,7 @@ impl Store {
                 return Claim::Gone;
             }
         };
-        if record.expires_at <= Utc::now() {
+        if record.expires_at <= Timestamp::now() {
             self.discard(id);
             return Claim::Gone;
         }
@@ -565,7 +576,7 @@ impl Store {
     }
 
     pub(crate) fn sweep(&self, orphan_age: Duration) -> std::io::Result<usize> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let expired: Vec<DropId> = self
             .index
             .lock()

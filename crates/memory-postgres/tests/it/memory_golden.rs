@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
 use kernel::memory::{CaptureBatchRequest, CaptureResult};
 use memory_postgres::{CaptureOptions, PostgresMemory};
 use serde::Deserialize;
@@ -55,6 +55,7 @@ struct RecordedConversation {
     row: Conversation,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Deserialize, PartialEq, sqlx::FromRow)]
 struct Message {
     agent: String,
@@ -65,7 +66,10 @@ struct Message {
     tool_args: Option<Json<JsonObject>>,
     tool_result: Option<String>,
     metadata: Json<JsonObject>,
-    created_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     owner_user_id: Option<String>,
     content_hash: Option<String>,
 }

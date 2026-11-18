@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -136,7 +137,7 @@ async fn dispatch(
         provider: ctx.provider.as_ref(),
         queue: ctx.queue.as_ref(),
         model: &ctx.model,
-        now: chrono::Utc::now(),
+        now: Timestamp::now(),
         cancel: &ctx.cancel,
         topics: Some(TopicPorts {
             topics: ctx.memory.as_ref(),
@@ -156,7 +157,7 @@ async fn dispatch(
                 queue: ctx.queue.as_ref(),
                 model: &ctx.model,
                 settings: &ctx.matcher,
-                now: chrono::Utc::now(),
+                now: Timestamp::now(),
                 cancel: &ctx.cancel,
             };
             workers::entity_builder::handle_extract_entities(&entity, payload)

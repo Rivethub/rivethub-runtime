@@ -1,5 +1,4 @@
-use chrono::{DateTime, Utc};
-use chrono_tz::America::New_York;
+use jiff::Timestamp;
 use kernel::memory::{BrowseWindow, MemoryScope};
 use kernel::memory::{Limit, SearchMode, SearchQuery};
 use kernel::memory_core::TimeRange;
@@ -25,12 +24,15 @@ fn query() -> SearchQuery {
 
 #[test]
 fn search_windows_use_local_calendar_and_explicit_bounds_take_precedence() {
-    let now: DateTime<Utc> = "2026-03-09T12:00:00Z".parse().expect("now");
+    let now: Timestamp = "2026-03-09T12:00:00Z".parse().expect("now");
     let start = "2026-03-08T05:00:00Z".parse().expect("start");
     let end = "2026-03-09T04:00:00Z".parse().expect("end");
     let mut query = query();
     assert_eq!(
-        query.time_range(now, &New_York),
+        query.time_range(
+            now,
+            &values::time::bundled_zone("America/New_York").expect("bundled zone")
+        ),
         TimeRange {
             since: Some(start),
             before: Some(end)
@@ -44,7 +46,10 @@ fn search_windows_use_local_calendar_and_explicit_bounds_take_precedence() {
         query.since = since;
         query.before = before;
         assert_eq!(
-            query.time_range(now, &New_York),
+            query.time_range(
+                now,
+                &values::time::bundled_zone("America/New_York").expect("bundled zone")
+            ),
             TimeRange { since, before }
         );
     }
@@ -52,7 +57,10 @@ fn search_windows_use_local_calendar_and_explicit_bounds_take_precedence() {
     query.before = None;
     query.window = None;
     assert_eq!(
-        query.time_range(now, &New_York),
+        query.time_range(
+            now,
+            &values::time::bundled_zone("America/New_York").expect("bundled zone")
+        ),
         TimeRange {
             since: None,
             before: None

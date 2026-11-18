@@ -1,5 +1,4 @@
-use chrono::TimeZone;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityPage;
 use kernel::wiki::entity_pass::EntityRewrite;
@@ -12,10 +11,8 @@ use uuid::Uuid;
 use super::run::stored_rewrite;
 use crate::WorkerError;
 
-fn stamp() -> chrono::DateTime<Utc> {
-    Utc.timestamp_opt(1_700_000_000, 0)
-        .single()
-        .unwrap_or_default()
+fn stamp() -> Timestamp {
+    Timestamp::new(1_700_000_000, 0).unwrap_or_default()
 }
 
 fn leaf() -> EntityLeaf {

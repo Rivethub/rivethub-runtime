@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::FilingStore as _;
 use kernel::memory::CaptureBatchRequest;
@@ -73,7 +73,7 @@ async fn rows_derived_from_a_conversation_take_its_owner(pool: PgPool) -> TestRe
     )
     .fetch_one(&pool)
     .await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     store
         .write_summary(NewSummary {
             id: Uuid::new_v4(),

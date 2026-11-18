@@ -7,6 +7,7 @@ mod settings;
 mod sweep;
 mod title;
 
+use jiff::Timestamp;
 use kernel::memory::ConversationWindow;
 use kernel::memory::HEARTBEAT_SESSION_PREFIX;
 use kernel::memory::SummaryStore;
@@ -46,7 +47,7 @@ pub struct SummarizeEnv<'a> {
     pub provider: &'a dyn ModelProvider,
     pub queue: &'a dyn JobQueue,
     pub settings: &'a SummarySettings,
-    pub now: chrono::DateTime<chrono::Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }
 

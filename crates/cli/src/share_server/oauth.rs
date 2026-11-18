@@ -317,7 +317,7 @@ mod tests {
         let tokens = Tokens {
             access_token: "access".to_owned(),
             refresh_token: "refresh".to_owned(),
-            expires_at: chrono::DateTime::<chrono::Utc>::MAX_UTC,
+            expires_at: "9999-01-01T00:00:00Z".parse().expect("far future fixture"),
             scope: "drops:write".to_owned(),
         };
         server

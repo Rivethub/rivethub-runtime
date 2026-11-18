@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStoreError;
 use kernel::wiki::entity_pass::KnownEntity;
@@ -19,7 +18,8 @@ use super::sql::KNOWN_ROWS;
 struct KnownRow {
     id: Uuid,
     name: String,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     type_name: Option<String>,
 }
 
@@ -185,7 +185,7 @@ fn leading_token(text: &str) -> &str {
 
 struct PendingKnown {
     score: i32,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     entity: KnownEntity,
 }
 

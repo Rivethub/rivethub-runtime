@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::facts::FactStore;
 use kernel::review::ReviewKey;
 use kernel::review::fact_reviews;
@@ -18,6 +18,7 @@ use kernel::wiki::entity_pass::StoredRewrite;
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
 use uuid::Uuid;
+use wire::time::TimestampFormat as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -117,7 +118,7 @@ async fn mention_case(pool: PgPool) -> TestResult {
         history: Some(PreparedHistory {
             summary_id: later,
             conversation_id: Some(conversation),
-            session_on: at("2026-11-08T00:00:00Z").date_naive(),
+            session_on: at("2026-11-08T00:00:00Z").utc_date(),
             sentence: "Seen again.".to_owned(),
         }),
         session_at: at("2026-11-08T00:00:00Z"),
@@ -373,7 +374,9 @@ async fn seed_pinned(
     .bind(Uuid::new_v4())
     .bind(entity)
     .bind(key)
-    .bind(at("2026-11-01T00:30:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at(
+        "2026-11-01T00:30:00Z",
+    )))
     .bind(Uuid::new_v4())
     .bind(value)
     .execute(&mut *tx)
@@ -472,14 +475,15 @@ async fn assert_both_histories(
 
 #[derive(Debug, sqlx::FromRow)]
 struct AppliedSeen {
-    applied_through: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    applied_through: Timestamp,
     summary_id: Uuid,
 }
 
 fn session_rewrite(
     summary: Uuid,
     conversation: Uuid,
-    session_at: DateTime<Utc>,
+    session_at: Timestamp,
     summary_text: &str,
     facts: &[(&str, &str, &str)],
     sentence: &str,
@@ -496,7 +500,7 @@ fn session_rewrite(
         history: Some(PreparedHistory {
             summary_id: summary,
             conversation_id: Some(conversation),
-            session_on: session_at.date_naive(),
+            session_on: session_at.utc_date(),
             sentence: sentence.to_owned(),
         }),
         owner: "owner".to_owned(),
@@ -546,7 +550,7 @@ async fn assert_replaced(
 fn rewrite_body(
     summary: Uuid,
     conversation: Uuid,
-    session_at: DateTime<Utc>,
+    session_at: Timestamp,
     ram: &str,
     sentence: &str,
     keep_gpus: bool,
@@ -574,7 +578,7 @@ fn rewrite_body(
         history: Some(PreparedHistory {
             summary_id: summary,
             conversation_id: Some(conversation),
-            session_on: session_at.date_naive(),
+            session_on: session_at.utc_date(),
             sentence: sentence.to_owned(),
         }),
         owner: "owner".to_owned(),
@@ -589,7 +593,7 @@ fn fact(
     conversation: Uuid,
     attribute: &str,
     value: &str,
-    as_of: DateTime<Utc>,
+    as_of: Timestamp,
 ) -> PreparedFact {
     PreparedFact {
         attribute: attribute.to_owned(),
@@ -606,7 +610,8 @@ struct FactSeen {
     id: Uuid,
     attribute_key: String,
     value: String,
-    as_of: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    as_of: Timestamp,
     status: String,
 }
 
@@ -644,7 +649,7 @@ async fn seed_conversation(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
 async fn seed_leaf(
     pool: &PgPool,
     conversation: Uuid,
-    start: DateTime<Utc>,
+    start: Timestamp,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = deferred(pool).await?;
     let id = sqlx::query_scalar(
@@ -652,8 +657,8 @@ async fn seed_leaf(
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(start)
-    .bind(start + chrono::Duration::hours(1))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(start + SignedDuration::from_hours(1)))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -668,7 +673,9 @@ async fn seed_entity(pool: &PgPool, id: Uuid, slug: &str) -> Result<(), sqlx::Er
     )
     .bind(id)
     .bind(slug)
-    .bind(at("2026-11-01T00:00:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at(
+        "2026-11-01T00:00:00Z",
+    )))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -700,7 +707,7 @@ async fn seed_fact(
     .bind(Uuid::new_v4())
     .bind(entity)
     .bind(attribute)
-    .bind(at("2026-11-01T00:30:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:30:00Z")))
     .bind(Uuid::new_v4())
     .bind(value)
     .bind(conversation)
@@ -721,8 +728,8 @@ async fn deferred(
     Ok(tx)
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 async fn review_items(
@@ -730,7 +737,7 @@ async fn review_items(
     entity: Uuid,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let claims = memory.claims(TopicId::from_uuid(entity)).await?;
-    let mut items: Vec<String> = fact_reviews(&claims, Utc::now())
+    let mut items: Vec<String> = fact_reviews(&claims, Timestamp::now())
         .into_iter()
         .map(|review| {
             let group = match review.key {

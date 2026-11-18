@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::{Error, PostgresMemory};
@@ -44,8 +45,8 @@ impl PostgresMemory {
 
     pub(crate) async fn read_team_sessions(
         &self,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        before: Option<chrono::DateTime<chrono::Utc>>,
+        since: Option<Timestamp>,
+        before: Option<Timestamp>,
         limit: u32,
     ) -> Result<Vec<kernel::memory::TeamSession>, kernel::memory::MemoryStoreError> {
         let rows = sqlx::query!(
@@ -63,7 +64,7 @@ impl PostgresMemory {
                     (PARTITION BY owner ORDER BY recent DESC, session_key DESC) AS position
                 FROM sessions WHERE ($1::timestamptz IS NULL OR recent >= $1)
                   AND ($2::timestamptz IS NULL OR recent < $2)
-             ) SELECT r.owner AS "owner!", r.session_key AS "session_key!", r.recent AS "recent!", r.title,
+             ) SELECT r.owner AS "owner!", r.session_key AS "session_key!", r.recent AS "recent!: jiff_sqlx::Timestamp", r.title,
                 (SELECT s.content FROM rh_summaries s WHERE s.conversation_id = ANY(r.conversations)
                  ORDER BY s.depth DESC, s.created_at DESC, s.id LIMIT 1) AS summary,
                 (SELECT m.content FROM rh_messages m WHERE m.conversation_id = ANY(r.conversations)
@@ -72,7 +73,8 @@ impl PostgresMemory {
              FROM ranked r LEFT JOIN rh_session_placements p ON p.session_id = r.session_key
              LEFT JOIN rh_topics t ON t.id = p.topic_id LEFT JOIN rh_topics parent ON parent.id = t.parent_id
              WHERE r.position <= $3 ORDER BY r.owner, r.recent DESC, r.session_key DESC"#,
-            since, before, i64::from(limit),
+            crate::time::BindTime::bind_time(since) as _,
+            crate::time::BindTime::bind_time(before) as _, i64::from(limit),
         )
         .fetch_all(&self.pool).await
         .map_err(|source| Error::operation("team sessions", source))?;
@@ -101,7 +103,7 @@ impl PostgresMemory {
                     ),
                     owner: row.owner,
                     session_id: row.session_key,
-                    when: row.recent,
+                    when: row.recent.to_jiff(),
                     topic: row.parent_name.into_iter().chain(row.topic_name).collect(),
                     excerpt,
                 }

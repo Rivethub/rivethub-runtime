@@ -1,8 +1,6 @@
 use crate::error::Error;
-use chrono::DateTime;
-use chrono::SubsecRound as _;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::owner::Owner;
@@ -14,6 +12,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
+use wire::time::TimestampFormat as _;
 
 pub const MAX_CONTENT_CHARS: usize = 16_000;
 
@@ -36,7 +35,7 @@ impl CaptureOptions {
 #[derive(Debug)]
 pub struct CaptureWriter<'a> {
     pub(crate) tx: Transaction<'a, Postgres>,
-    undated_from: DateTime<Utc>,
+    undated_from: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,8 +55,8 @@ pub struct ConversationUpsert<'a> {
 pub enum ConversationDates {
     CaptureTime,
     Imported {
-        created_at: Option<DateTime<Utc>>,
-        updated_at: Option<DateTime<Utc>>,
+        created_at: Option<Timestamp>,
+        updated_at: Option<Timestamp>,
     },
 }
 
@@ -93,7 +92,7 @@ pub struct MessageRow<'a> {
     pub tool_result: Option<&'a str>,
     pub metadata: &'a JsonObject,
     pub owner_user_id: &'a str,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
     pub batch_index: i64,
 }
 
@@ -111,7 +110,7 @@ impl<'a> CaptureWriter<'a> {
         .await
         .map_err(|source| Error::operation("capture lock", source))?;
         let undated_from = sqlx::query_scalar!(
-            r#"select greatest(now(), max(last.created_at) + interval '1 microsecond') as "undated_from!"
+            r#"select greatest(now(), max(last.created_at) + interval '1 microsecond') as "undated_from!: jiff_sqlx::Timestamp"
                  from rh_conversations c
                  cross join lateral (
                      select m.created_at from rh_messages m
@@ -133,7 +132,10 @@ impl<'a> CaptureWriter<'a> {
         .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("embed defer", source))?;
-        Ok(Self { tx, undated_from })
+        Ok(Self {
+            tx,
+            undated_from: undated_from.to_jiff(),
+        })
     }
 
     pub(crate) async fn defer_embeddings(&mut self) -> Result<(), Error> {
@@ -187,6 +189,9 @@ impl<'a> CaptureWriter<'a> {
     }
 
     pub async fn insert_message(&mut self, row: &MessageRow<'_>) -> Result<Uuid, Error> {
+        if row.created_at.is_none() {
+            advance_placement(self.undated_from, row.batch_index, "message insert")?;
+        }
         let tool_args = row.tool_args.map(sqlx::types::Json);
         let metadata = sqlx::types::Json(row.metadata);
         let record = sqlx::query!(
@@ -206,9 +211,9 @@ impl<'a> CaptureWriter<'a> {
             row.tool_result,
             metadata as _,
             row.owner_user_id,
-            row.created_at,
+            crate::time::BindTime::bind_time(row.created_at) as _,
             row.batch_index,
-            self.undated_from,
+            crate::time::BindTime::bind_time(self.undated_from) as _,
         )
         .fetch_one(&mut *self.tx)
         .await
@@ -235,11 +240,11 @@ impl<'a> CaptureWriter<'a> {
     pub async fn untied_times(
         &mut self,
         conversation_id: Uuid,
-        times: Vec<Option<DateTime<Utc>>>,
-    ) -> Result<Vec<Option<DateTime<Utc>>>, Error> {
-        let times: Vec<Option<DateTime<Utc>>> = times
+        times: Vec<Option<Timestamp>>,
+    ) -> Result<Vec<Option<Timestamp>>, Error> {
+        let times: Vec<Option<Timestamp>> = times
             .into_iter()
-            .map(|time| time.map(|at| at.trunc_subsecs(6)))
+            .map(|time| time.map(|at| at.truncate_subseconds(6)))
             .collect();
         let mut latest = BTreeMap::new();
         let mut asked = BTreeSet::new();
@@ -247,7 +252,7 @@ impl<'a> CaptureWriter<'a> {
         loop {
             latest.extend(self.latest_by_millisecond(conversation_id, &wanted).await?);
             asked.extend(wanted);
-            let placed = untie(&times, latest.clone());
+            let placed = untie(&times, latest.clone())?;
             wanted = milliseconds(&placed)
                 .into_iter()
                 .filter(|millisecond| !asked.contains(millisecond))
@@ -261,27 +266,26 @@ impl<'a> CaptureWriter<'a> {
     async fn latest_by_millisecond(
         &mut self,
         conversation_id: Uuid,
-        milliseconds: &[DateTime<Utc>],
-    ) -> Result<Vec<(DateTime<Utc>, DateTime<Utc>)>, Error> {
+        milliseconds: &[Timestamp],
+    ) -> Result<Vec<(Timestamp, Timestamp)>, Error> {
         if milliseconds.is_empty() {
             return Ok(Vec::new());
         }
         let rows = sqlx::query!(
-            "select wanted.at as \"at!\",
+            r#"select wanted.at as "at!: jiff_sqlx::Timestamp",
                     (select max(m.created_at) from rh_messages m
                       where m.conversation_id = $1
                         and m.created_at >= wanted.at
-                        and m.created_at < wanted.at + interval '1 millisecond') as latest
-               from unnest($2::timestamptz[]) as wanted(at)",
+                        and m.created_at < wanted.at + interval '1 millisecond') as "latest!: crate::time::OptionalTimestamp"
+               from unnest($2::timestamptz[]) as wanted(at)"#,
             conversation_id,
-            milliseconds
-        )
+            crate::time::BindTime::bind_time(milliseconds) as _)
         .fetch_all(&mut *self.tx)
         .await
         .map_err(|source| Error::operation("message time lookup", source))?;
         Ok(rows
             .into_iter()
-            .filter_map(|row| row.latest.map(|latest| (row.at, latest)))
+            .filter_map(|row| Option::from(row.latest).map(|latest| (row.at.to_jiff(), latest)))
             .collect())
     }
 
@@ -343,7 +347,7 @@ pub(crate) struct PreparedMessage {
     pub(crate) metadata: JsonObject,
 }
 
-fn milliseconds(times: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
+fn milliseconds(times: &[Option<Timestamp>]) -> Vec<Timestamp> {
     times
         .iter()
         .flatten()
@@ -355,10 +359,9 @@ fn milliseconds(times: &[Option<DateTime<Utc>>]) -> Vec<DateTime<Utc>> {
 }
 
 fn untie(
-    times: &[Option<DateTime<Utc>>],
-    mut latest: BTreeMap<DateTime<Utc>, DateTime<Utc>>,
-) -> Vec<Option<DateTime<Utc>>> {
-    let tick = TimeDelta::microseconds(1);
+    times: &[Option<Timestamp>],
+    mut latest: BTreeMap<Timestamp, Timestamp>,
+) -> Result<Vec<Option<Timestamp>>, Error> {
     times
         .iter()
         .map(|time| {
@@ -368,18 +371,28 @@ fn untie(
                     .get(&millisecond(placed))
                     .filter(|&&stored| placed <= stored)
                 {
-                    placed = stored + tick;
+                    placed = advance_placement(stored, 1, "message time placement")?;
                 }
                 latest.insert(millisecond(at), placed);
                 latest.insert(millisecond(placed), placed);
-                placed
+                Ok(placed)
             })
+            .transpose()
         })
         .collect()
 }
 
-fn millisecond(at: DateTime<Utc>) -> DateTime<Utc> {
-    at - TimeDelta::nanoseconds(i64::from(at.timestamp_subsec_nanos() % 1_000_000))
+fn advance_placement(
+    at: Timestamp,
+    micros: i64,
+    operation: &'static str,
+) -> Result<Timestamp, Error> {
+    at.checked_add(SignedDuration::from_micros(micros))
+        .map_err(|source| Error::operation(operation, sqlx::Error::Encode(Box::new(source))))
+}
+
+fn millisecond(at: Timestamp) -> Timestamp {
+    at - SignedDuration::from_nanos(i64::from(at.nanosecond_of_second() % 1_000_000))
 }
 
 pub(crate) fn prepare_capture_message(message: &CaptureMessage) -> Result<PreparedMessage, Error> {

@@ -1,9 +1,11 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use wire::time::TimestampFormat as _;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use tokio_util::sync::CancellationToken;
 use wire::gateway::account::{
     Account, AccountUpdate, Hub, PendingUpdate, SignInProgress, SignInStarted, UpdateSource,
@@ -277,15 +279,15 @@ impl AccountService {
                 () = shutdown.cancelled() => return,
                 _ = beat.tick() => {}
             }
-            self.tick(Utc::now(), &shutdown).await;
+            self.tick(Timestamp::now(), &shutdown).await;
         }
     }
 
-    pub async fn tick(&self, now: DateTime<Utc>, shutdown: &CancellationToken) {
+    pub async fn tick(&self, now: Timestamp, shutdown: &CancellationToken) {
         if let Err(error) = self.send_crashes().await {
             tracing::debug!(%error, "queued crash reports were not sent");
         }
-        if let Err(error) = self.roll_usage(now.date_naive()).await {
+        if let Err(error) = self.roll_usage(now.utc_date()).await {
             tracing::debug!(%error, "the usage report was not sent");
         }
         let due = self
@@ -318,7 +320,7 @@ impl AccountService {
         Ok(())
     }
 
-    async fn roll_usage(&self, today: NaiveDate) -> Result<(), AccountError> {
+    async fn roll_usage(&self, today: Date) -> Result<(), AccountError> {
         let searches = self.counters.searches.swap(0, Ordering::Relaxed);
         let app_opens = self.counters.app_opens.swap(0, Ordering::Relaxed);
         let mut state = self.state.lock().await;
@@ -420,7 +422,7 @@ impl AccountService {
 }
 
 impl UsageDay {
-    fn starting(day: NaiveDate) -> Self {
+    fn starting(day: Date) -> Self {
         Self {
             day,
             searches: 0,

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT deleted_at AS \"deleted_at: jiff_sqlx::Timestamp\", owner_user_id FROM rh_session_tombstones WHERE session_key = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "deleted_at: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_user_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "rh_session_tombstones",
+            "name": "owner_user_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "e2b58fbbc14ccd76bcdceb15c8c55a3b4571f6cf105d693d8b3ed94a80e5b9c0"
+}

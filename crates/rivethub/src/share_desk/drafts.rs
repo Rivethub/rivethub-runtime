@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -6,8 +7,6 @@ use capture::bundle::Sealed;
 use capture::sanitize::LocalReview;
 use capture::sanitize::Report;
 use capture::sanitize::decide::Resolution;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::share::desk::DRAFT_IDLE;
 use kernel::memory::share::desk::DeskError;
 use kernel::memory::share::desk::Draft;
@@ -24,7 +23,7 @@ pub(super) struct Drafts {
 
 struct Slot {
     bytes: usize,
-    touched: DateTime<Utc>,
+    touched: Timestamp,
     draft: Held,
 }
 
@@ -65,11 +64,7 @@ pub(super) struct Reservation<'drafts> {
 }
 
 impl Reservation<'_> {
-    pub(super) fn commit(
-        mut self,
-        state: DraftState,
-        now: DateTime<Utc>,
-    ) -> Result<Draft, DeskError> {
+    pub(super) fn commit(mut self, state: DraftState, now: Timestamp) -> Result<Draft, DeskError> {
         let held = held_bytes(&state.sealed, state.local.as_ref(), &state.report)?;
         let expires_at = self.drafts.resize(self.id, held, now)?;
         let draft = super::view(self.id, &state, expires_at);
@@ -106,7 +101,7 @@ impl Drafts {
         self.slots.lock().len()
     }
 
-    pub(super) fn sweep(&self, now: DateTime<Utc>) {
+    pub(super) fn sweep(&self, now: Timestamp) {
         self.slots.lock().retain(|_, slot| {
             matches!(slot.draft, Held::Reserved) || slot.touched + DRAFT_IDLE > now
         });
@@ -115,8 +110,8 @@ impl Drafts {
     pub(super) fn get(
         &self,
         id: DraftId,
-        now: DateTime<Utc>,
-    ) -> Result<(Arc<Mutex<DraftState>>, DateTime<Utc>), DeskError> {
+        now: Timestamp,
+    ) -> Result<(Arc<Mutex<DraftState>>, Timestamp), DeskError> {
         match self.slots.lock().get_mut(&id) {
             Some(Slot {
                 touched,
@@ -141,7 +136,7 @@ impl Drafts {
     pub(super) fn reserve(
         &self,
         estimate: usize,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Reservation<'_>, DeskError> {
         let mut slots = self.slots.lock();
         let bytes: usize = slots.values().map(|slot| slot.bytes).sum();
@@ -169,8 +164,8 @@ impl Drafts {
         &self,
         id: DraftId,
         bytes: usize,
-        now: DateTime<Utc>,
-    ) -> Result<DateTime<Utc>, DeskError> {
+        now: Timestamp,
+    ) -> Result<Timestamp, DeskError> {
         let mut slots = self.slots.lock();
         let others: usize = slots
             .iter()

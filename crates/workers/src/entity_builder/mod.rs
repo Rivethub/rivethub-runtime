@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use kernel::model::FinishReason;
 use kernel::model::ModelProvider;
 use kernel::model::ModelRequest;
@@ -70,7 +70,7 @@ pub struct EntityBuilderEnv<'a> {
     pub queue: &'a dyn JobQueue,
     pub model: &'a str,
     pub settings: &'a MatcherSettings,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }
 

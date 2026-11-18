@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt as _;
@@ -14,11 +13,14 @@ const DIR: &str = "claude-pending";
 const DIR_MODE: u32 = 0o700;
 const CLAIMED: &str = ".claimed-";
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Pending {
     pub(crate) key: String,
     pub(crate) prompt: String,
-    pub(crate) at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) at: Timestamp,
 }
 
 #[derive(Debug)]

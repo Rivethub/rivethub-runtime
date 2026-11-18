@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::builder::WikiStoreError;
@@ -13,11 +13,14 @@ mod consolidate;
 
 const HISTORY_KEPT: usize = 47;
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RecompileWiki {
     pub slug: WikiSlug,
-    pub since: DateTime<Utc>,
+
+    #[serde_as(as = "values::time::Rfc3339")]
+    pub since: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,7 +33,7 @@ pub struct RecompileSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSummary {
     pub topic: Option<String>,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub content: String,
 }
 
@@ -54,13 +57,13 @@ pub trait WikiRecompileStore: Send + Sync {
     async fn recompile_source(
         &self,
         slug: &WikiSlug,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Option<RecompileSource>, WikiStoreError>;
 
     async fn store_recompiled(
         &self,
         recompiled: Recompiled,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<String, WikiStoreError>;
 }
 
@@ -68,7 +71,7 @@ pub async fn recompile(
     store: &dyn WikiRecompileStore,
     merger: &dyn PageMerger,
     job: &RecompileWiki,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<RecompileReport>, WikiStoreError> {
     let Some(source) = store.recompile_source(&job.slug, job.since).await? else {
         return Ok(None);

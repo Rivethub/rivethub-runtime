@@ -1,20 +1,22 @@
+use jiff::Timestamp;
 use std::fmt;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindRequest {
     pub query: String,
     #[serde(default)]
-    pub since: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub since: Option<Timestamp>,
     #[serde(default)]
-    pub before: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub before: Option<Timestamp>,
     #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
@@ -30,14 +32,18 @@ pub struct FindReply {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoundSession {
     pub id: Uuid,
     #[serde(default)]
     pub title: Option<String>,
     pub agent: String,
-    pub first: DateTime<Utc>,
-    pub last: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub first: Timestamp,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub last: Timestamp,
     pub messages: u64,
     pub best: f64,
     pub hits: usize,
@@ -87,10 +93,13 @@ pub struct RedactRules {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DraftReport {
     pub draft: String,
-    pub expires_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub expires_at: Timestamp,
     pub totals: Totals,
     pub rules: Vec<RuleCount>,
     pub sessions: Vec<DraftSession>,
@@ -267,10 +276,13 @@ pub struct SendConfirm {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SentReply {
     pub code: String,
-    pub expires_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub expires_at: Timestamp,
     pub bytes: u64,
     #[serde(default)]
     pub signed: Option<String>,
@@ -341,6 +353,7 @@ impl fmt::Debug for LoginRequest {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LoginStep {
@@ -349,7 +362,9 @@ pub enum LoginStep {
         user_code: String,
         verification_uri_complete: String,
         interval: u64,
-        expires_at: DateTime<Utc>,
+
+        #[serde_as(as = "crate::time::Rfc3339")]
+        expires_at: Timestamp,
     },
     Pending {
         interval: u64,

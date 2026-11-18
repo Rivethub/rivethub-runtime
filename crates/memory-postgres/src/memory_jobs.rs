@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use kernel::memory::jobs::{
     ChunkWrite, MemoryJobError, MemoryJobStore, MissingWiki, ToolCallMessage, UnchunkedMessage,
     UnembeddedStore,
@@ -180,7 +179,7 @@ impl MemoryJobStore for PostgresMemory {
     }
 
     async fn missing_wiki(&self, limit: u32) -> Result<Vec<MissingWiki>, MemoryJobError> {
-        let rows = sqlx::query_as::<_, (Uuid, Option<Uuid>, DateTime<Utc>)>(MISSING_WIKI)
+        let rows = sqlx::query_as::<_, (Uuid, Option<Uuid>, jiff_sqlx::Timestamp)>(MISSING_WIKI)
             .bind(i64::from(limit))
             .fetch_all(&self.pool)
             .await
@@ -192,7 +191,7 @@ impl MemoryJobStore for PostgresMemory {
                     summary_id,
                     conversation_id,
                 },
-                summarized_at,
+                summarized_at: summarized_at.to_jiff(),
             })
             .collect())
     }

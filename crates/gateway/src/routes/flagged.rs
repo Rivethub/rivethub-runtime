@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -5,7 +6,6 @@ use axum::Json;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
-use chrono::Utc;
 use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedGroup;
 use kernel::flagged::FlaggedId;
@@ -52,7 +52,7 @@ pub(super) async fn dismiss(
     let id = flagged_id(&segment)?;
     gateway
         .flagged()?
-        .dismiss(id, Utc::now())
+        .dismiss(id, Timestamp::now())
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

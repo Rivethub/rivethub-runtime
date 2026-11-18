@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::Path;
 
 use capture::readers::StoreReader;
@@ -5,8 +6,6 @@ use capture::share;
 use capture::share::BundlePaths;
 use capture::share::Clobber;
 use capture::share::Outcome;
-use chrono::DateTime;
-use chrono::Utc;
 use config::MappingFile;
 use kernel::memory::share::Choice;
 use kernel::memory::share::SessionRedaction;
@@ -27,8 +26,8 @@ const CLIENT: &str = "Falcon Labs";
 const GITHUB: &str = concat!("ghp_", "Pl4nTedSessN8RmT2vLx9WcN4bKp7HyJ3dFs6");
 const OUTPUT: &str = "payroll.csv: 41 rows, totals 88120";
 
-fn at() -> TestResult<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339("2026-11-10T12:00:00Z")?.with_timezone(&Utc))
+fn at() -> TestResult<Timestamp> {
+    Ok(wire::time::parse_rfc3339("2026-11-10T12:00:00Z")?)
 }
 
 fn said(event_id: &str, content: String) -> CaptureMessage {

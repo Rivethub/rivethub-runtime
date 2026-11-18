@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -6,7 +7,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
-use chrono::{DateTime, Utc};
 use gateway::Gateway;
 use gateway::tenancy::{Tenancy, UserId};
 use kernel::memory::share::desk::{
@@ -81,8 +81,8 @@ impl FakeDesk {
     }
 }
 
-fn expiry() -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH
+fn expiry() -> Timestamp {
+    Timestamp::UNIX_EPOCH
 }
 
 #[async_trait]

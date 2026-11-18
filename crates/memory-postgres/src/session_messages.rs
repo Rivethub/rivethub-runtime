@@ -30,7 +30,9 @@ impl PostgresMemory {
         let keys = stored_keys(key.as_str());
         let rows: Vec<MessageEntryRow> = sqlx::query_as(PAGE)
             .bind(&keys)
-            .bind(query.after.map(|cursor| cursor.created_at))
+            .bind(crate::time::BindTime::bind_time(
+                query.after.map(|cursor| cursor.created_at),
+            ))
             .bind(query.after.map(|cursor| cursor.id))
             .bind(i64::from(query.limit) + 1)
             .fetch_all(&self.pool)

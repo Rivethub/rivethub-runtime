@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -11,8 +12,6 @@ use capture::share::ShareError as SanitizeShareError;
 use capture::share_policy::ShareRefused;
 use capture::sign::NodeKey;
 use capture::sign::PublicKey;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use config::MappingFile;
 use kernel::memory::share::desk::DeskError;
@@ -79,7 +78,7 @@ pub struct Shared {
     pub sessions: usize,
     pub signed: Option<PublicKey>,
     pub uploaded: u64,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub code: String,
 }
 
@@ -132,7 +131,7 @@ pub struct DeviceLogin {
     pub user_code: String,
     pub verification_uri_complete: String,
     pub expires_in: Duration,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub pending: PendingLogin,
 }
 
@@ -209,11 +208,7 @@ pub async fn start(
         .await
         .map_err(oauth::failed)?;
     let expires_in = details.expires_in();
-    let lifetime = chrono::TimeDelta::from_std(expires_in)
-        .map_err(|_| ServerError::Lifetime(expires_in.as_secs()))?;
-    let expires_at = Utc::now()
-        .checked_add_signed(lifetime)
-        .ok_or(ServerError::Lifetime(expires_in.as_secs()))?;
+    let expires_at = device_deadline(Timestamp::now(), expires_in)?;
     let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
     let verification_uri_complete = openable(
         details.verification_uri_complete().map_or_else(
@@ -244,6 +239,18 @@ pub async fn start(
             task: Some(AbortOnDropHandle::new(task)),
         },
     })
+}
+
+fn device_deadline(now: Timestamp, lifetime: Duration) -> Result<Timestamp, ServerError> {
+    const LEGACY_MAX_EPOCH_NANOS: i128 = 8_210_266_876_799_999_999_999;
+    let out_of_range = || ServerError::Lifetime(lifetime.as_secs());
+    let remaining = u128::try_from(LEGACY_MAX_EPOCH_NANOS - now.as_nanosecond())
+        .map_err(|_error| out_of_range())?;
+    if lifetime.as_nanos() > remaining {
+        return Err(out_of_range());
+    }
+    now.saturating_add(lifetime)
+        .map_err(|_error| out_of_range())
 }
 
 fn openable(uri: String, server: &ShareServer) -> Result<String, ServerError> {
@@ -560,6 +567,21 @@ fn server_error(error: ServerError) -> DeskError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_device_authorization_saturates_within_the_legacy_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = "2026-11-18T00:00:00Z".parse()?;
+        assert_eq!(
+            device_deadline(now, Duration::from_hours(120_000_000))?,
+            Timestamp::MAX
+        );
+        assert!(matches!(
+            device_deadline(now, Duration::MAX),
+            Err(ServerError::Lifetime(_))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn plain_http_opens_only_for_a_loopback_share_server() {

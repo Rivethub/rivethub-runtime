@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_pass::AppliedMark;
 use kernel::wiki::entity_pass::EntityProse;
 use kernel::wiki::entity_pass::EntityStoreError;
@@ -32,7 +31,7 @@ pub(super) async fn write_history(
         .bind(entity)
         .bind(line.summary_id)
         .bind(line.conversation_id)
-        .bind(line.session_on)
+        .bind(crate::time::BindTime::bind_time(line.session_on))
         .bind(&line.sentence)
         .bind(owner)
         .execute(&mut **tx)
@@ -86,7 +85,7 @@ pub(super) async fn chosen_prose(
 pub(super) async fn advance_mark_at(
     tx: &mut Transaction<'_, Postgres>,
     entity: Uuid,
-    session_at: DateTime<Utc>,
+    session_at: Timestamp,
     session_id: Uuid,
     owner: &str,
 ) -> Result<(), EntityStoreError> {
@@ -102,7 +101,7 @@ pub(super) async fn advance_mark_at(
                  AND rh_entity_applied.summary_id < EXCLUDED.summary_id)",
     )
     .bind(entity)
-    .bind(session_at)
+    .bind(crate::time::BindTime::bind_time(session_at))
     .bind(session_id)
     .bind(owner)
     .execute(&mut **tx)
@@ -113,7 +112,8 @@ pub(super) async fn advance_mark_at(
 
 #[derive(Debug, sqlx::FromRow)]
 struct MarkRow {
-    applied_through: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    applied_through: Timestamp,
     summary_id: Uuid,
 }
 
@@ -132,7 +132,7 @@ pub(super) async fn upsert_history(
     .bind(entity)
     .bind(line.summary_id)
     .bind(line.conversation_id)
-    .bind(line.session_on)
+    .bind(crate::time::BindTime::bind_time(line.session_on))
     .bind(&line.sentence)
     .bind(owner)
     .execute(&mut **tx)

@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }
 rusqlite = { workspace = true }
 sqlx = { workspace = true, features = ["macros"] }
 thiserror = { workspace = true }

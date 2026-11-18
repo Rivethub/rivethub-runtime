@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::memory::MemoryScope;
 use kernel::memory::{Limit, SearchMode, SearchQuery};
 use memory_sqlite::{QueryEmbed, SqliteStore};
@@ -51,9 +51,11 @@ pub(crate) fn store(
 pub(crate) struct Recording {
     pub(crate) hybrid: Hybrid,
 }
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 pub(crate) struct Hybrid {
-    pub(crate) clock: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) clock: Timestamp,
     pub(crate) vectors: Vec<Vector>,
     pub(crate) summary_vectors: Vec<Vector>,
     #[serde(rename = "memorySearch")]
@@ -83,13 +85,16 @@ pub(crate) struct Options {
     pub(crate) limit: Option<u32>,
     pub(crate) tag: Option<String>,
 }
+#[serde_with::serde_as]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Hit {
     pub(crate) id: String,
     pub(crate) content: String,
     pub(crate) agent: String,
-    pub(crate) created_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) created_at: Timestamp,
     #[serde(alias = "score")]
     pub(crate) relevance_score: f64,
     #[serde(alias = "layer")]
@@ -154,9 +159,9 @@ pub(crate) async fn seed(store: &SqliteStore, recording: &Hybrid) -> TestResult 
 pub(crate) async fn reinforce(
     store: &SqliteStore,
     ids: Vec<String>,
-    clock: DateTime<Utc>,
+    clock: Timestamp,
 ) -> Result<(), memory_sqlite::SqliteError> {
-    let stamp = clock.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let stamp = clock.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
     store
         .with_conn(move |conn| {
             for id in &ids {

@@ -1,3 +1,4 @@
+use jiff::SignedDuration;
 use kernel::memory::MemoryFallback;
 use kernel::memory_core::{
     FusionItem, HYBRID_MIN_CONTENT_LEN, HYBRID_RRF_K, composite_score, fusion_score, hybrid_pool,
@@ -419,12 +420,8 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
                 result.map_err(SqliteError::query("search candidates"))?;
             row.candidate.created_at = crate::time::stored(&stamp, "created_at")?;
             let duration = plan.now - row.candidate.created_at;
-            let seconds = duration
-                .abs()
-                .to_std()
-                .map_err(|_| SqliteError::Clock)?
-                .as_secs_f64();
-            let age = if duration < chrono::TimeDelta::zero() {
+            let seconds = duration.abs().as_secs_f64();
+            let age = if duration < SignedDuration::ZERO {
                 -seconds
             } else {
                 seconds

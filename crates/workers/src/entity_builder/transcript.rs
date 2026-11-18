@@ -1,9 +1,8 @@
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::TranscriptMessage;
 use serde_json::Value;
+use wire::time::TimestampFormat as _;
 
 mod known;
 
@@ -516,8 +515,8 @@ fn elision_marker(elided: usize) -> String {
     format!("[... {elided} chars elided ...]")
 }
 
-fn stamp(time: DateTime<Utc>) -> String {
-    time.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn stamp(time: Timestamp) -> String {
+    time.rfc3339_millis()
 }
 
 #[cfg(test)]

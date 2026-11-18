@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use wire::JsonObject;
 use wire::capture::CaptureBatchRequest;
@@ -37,7 +36,7 @@ struct Meta {
 
 pub(crate) async fn batch(
     capture: &FileCapture<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<CaptureBatchRequest>, HookError> {
     let file = capture.file;
     let text = read_uncapped_async(&file.path).await?;

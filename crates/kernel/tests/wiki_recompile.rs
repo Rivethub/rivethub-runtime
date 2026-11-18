@@ -1,11 +1,11 @@
 #![cfg(test)]
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::wiki::page::{ArticleSection, WikiPage, WikiSlug};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
+fn at() -> Result<Timestamp, jiff::Error> {
     "2026-10-30T12:00:00Z".parse()
 }
 
@@ -52,7 +52,7 @@ impl kernel::wiki::recompile::WikiRecompileStore for Recorder {
     async fn recompile_source(
         &self,
         _slug: &WikiSlug,
-        _since: DateTime<Utc>,
+        _since: Timestamp,
     ) -> Result<
         Option<kernel::wiki::recompile::RecompileSource>,
         kernel::wiki::builder::WikiStoreError,
@@ -63,7 +63,7 @@ impl kernel::wiki::recompile::WikiRecompileStore for Recorder {
     async fn store_recompiled(
         &self,
         recompiled: kernel::wiki::recompile::Recompiled,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<String, kernel::wiki::builder::WikiStoreError> {
         *self.stored.lock() = Some(recompiled);
         Ok("0123456789".to_owned())
@@ -74,7 +74,7 @@ fn summary(
     topic: Option<&str>,
     at: &str,
     text: &str,
-) -> Result<kernel::wiki::recompile::SourceSummary, chrono::ParseError> {
+) -> Result<kernel::wiki::recompile::SourceSummary, jiff::Error> {
     Ok(kernel::wiki::recompile::SourceSummary {
         topic: topic.map(str::to_owned),
         at: at.parse()?,

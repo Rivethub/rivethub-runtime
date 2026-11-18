@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_match::canonical_key;
 use kernel::wiki::entity_match::cross_names_match;
 use kernel::wiki::entity_match::identity_keys;
@@ -34,7 +33,8 @@ struct HitRow {
 struct NameHit {
     id: Uuid,
     parent_id: Option<Uuid>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     type_name: String,
 }
 
@@ -52,8 +52,8 @@ pub(super) struct ResolveAt<'a> {
     pub(super) types: &'a [TypeRow],
     pub(super) owner: &'a str,
     pub(super) summary: Option<Uuid>,
-    pub(super) started: DateTime<Utc>,
-    pub(super) now: DateTime<Utc>,
+    pub(super) started: Timestamp,
+    pub(super) now: Timestamp,
 }
 
 pub(super) async fn resolve(
@@ -137,8 +137,8 @@ async fn insert_entity(
     prepared: &PreparedEntity,
     kind: &TypeRow,
     owner: &str,
-    started: DateTime<Utc>,
-    now: DateTime<Utc>,
+    started: Timestamp,
+    now: Timestamp,
 ) -> Result<Resolved, EntityStoreError> {
     let base = attribute_key(&prepared.name).unwrap_or_else(|| kind.slug.clone());
     for _attempt in 0..3 {
@@ -154,8 +154,8 @@ async fn insert_entity(
         .bind(&slug)
         .bind(&prepared.name)
         .bind(kind.id)
-        .bind(started)
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(started))
+        .bind(crate::time::BindTime::bind_time(now))
         .bind(owner)
         .execute(&mut **tx)
         .await;

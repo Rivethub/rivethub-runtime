@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::memory::jobs::{
     ChunkWrite, MemoryJobError, MemoryJobStore, UnchunkedMessage, UnembeddedStore,
 };
@@ -181,7 +182,7 @@ pub async fn handle_enqueue_stale_wiki(
         () = cancel.cancelled() => return Err(WorkerError::Cancelled),
         result = store.missing_wiki(missing_cap) => result?,
     };
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     for job in &jobs {
         let added = tokio::select! {
             biased;

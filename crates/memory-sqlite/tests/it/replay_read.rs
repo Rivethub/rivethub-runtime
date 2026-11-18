@@ -1,9 +1,8 @@
 use crate::common;
+use jiff::Timestamp;
 
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use common::Ids;
 use common::ScenarioFile;
 use common::TestResult;
@@ -114,7 +113,7 @@ struct ToolsRecording {
 
 const LEAF: &str = "The team decided to deploy the AcmeKit service with a blue-green rollout. The release branch is cut on Mondays, the deploy script runs from the release branch, and a health check on staging.example.com gates the traffic switch. Rollback is a traffic switch back to the previous colour.";
 
-async fn seed_tools_store(store: &SqliteStore, now: DateTime<Utc>) -> TestResult<String> {
+async fn seed_tools_store(store: &SqliteStore, now: Timestamp) -> TestResult<String> {
     let captured = store
         .capture(
             deploy_batch("cli:sess-1", "rivet")?,
@@ -174,7 +173,7 @@ fn seeded_rows(recording: &ToolsRecording) -> TestResult<(Json, Json)> {
 
 #[derive(Debug, PartialEq)]
 struct BrowseLine {
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     agent: String,
     role: String,
     tool_name: Option<String>,
@@ -357,7 +356,7 @@ async fn replay_read_call(
     call: &ToolCall,
     output: &str,
     ids: &Ids,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> TestResult {
     match call.tool.as_str() {
         "memory_get_full" => {

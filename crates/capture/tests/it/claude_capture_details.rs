@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::Json;
 use wire::capture::CaptureBatchRequest;
@@ -118,7 +117,7 @@ impl Home {
             ),
             &config::Paths::new(&env)?,
         );
-        let now: DateTime<Utc> = "2026-11-14T18:16:00Z".parse()?;
+        let now: Timestamp = "2026-11-14T18:16:00Z".parse()?;
         let run = hook.run(stdin, now, "1794679000000-0000000001").await;
         assert_eq!(run.stderr, "");
         Ok(())

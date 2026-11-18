@@ -1,10 +1,10 @@
 #![cfg(test)]
 use crate::session_delete::Stores;
 use crate::session_support::{Fixture, http};
+use jiff::Timestamp;
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use gateway::sessions::SessionRegistry;
 use kernel::memory::share::receive::Verification;
 use kernel::memory::{ImportOrigin, ImportReceipt, MemoryState, SessionActivity, SessionRecord};
@@ -38,10 +38,8 @@ fn encoded(key: &SessionKey) -> String {
     key.as_str().replace(':', "%3A")
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .expect("time")
-        .with_timezone(&Utc)
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).expect("time")
 }
 
 fn imported() -> SessionRecord<SessionKey> {

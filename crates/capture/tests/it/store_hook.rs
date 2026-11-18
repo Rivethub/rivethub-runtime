@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::Json;
 use wire::capture::CaptureResult;
@@ -86,7 +85,7 @@ async fn a_turn_end_posts_the_whole_log_as_a_titled_grok_conversation() -> TestR
     let home = tempfile::tempdir()?;
     let transport = FakeTransport::default();
     let hook = hook(home.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let run = hook.run(&payload("Stop"), now).await;
     assert_eq!(run.stderr, "");
     let posts = transport.posts.lock().clone();
@@ -127,7 +126,7 @@ async fn only_turn_ends_compaction_and_session_end_capture() -> TestResult {
     let home = tempfile::tempdir()?;
     let transport = FakeTransport::default();
     let hook = hook(home.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     for event in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
         assert_eq!(hook.run(&payload(event), now).await.stderr, "");
     }
@@ -156,7 +155,7 @@ async fn a_session_with_no_turns_yet_posts_nothing() -> TestResult {
         session.join("updates.jsonl"),
         "{\"method\":\"_x.ai/session/update\",\"params\":{\"sessionId\":\"s\",\"update\":{\"sessionUpdate\":\"hook_execution\",\"event_name\":\"session_start\",\"runs\":[]}}}\n",
     )?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     assert_eq!(hook.run(&payload("SessionEnd"), now).await.stderr, "");
     assert!(transport.posts.lock().is_empty());
     Ok(())
@@ -266,7 +265,7 @@ async fn an_idle_opencode_session_posts_its_parts_under_their_part_ids() -> Test
         &config::Paths::new(&env)?,
     )
     .ok_or("opencode store")?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let payload = |event: &str| {
         format!(
             r#"{{"session_id":"{OPENCODE_SESSION}","hook_event_name":"{event}","cwd":"/work/local"}}"#
@@ -353,7 +352,7 @@ async fn a_codex_turn_end_posts_its_rollout_items() -> TestResult {
         &config::Paths::new(&env)?,
     )
     .ok_or("codex store")?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let payload = |event: &str| {
         format!(
             r#"{{"session_id":"{CODEX_SESSION}","hook_event_name":"{event}","cwd":"/work/codex"}}"#
@@ -456,7 +455,7 @@ async fn a_dsh_turn_end_posts_its_transcript() -> TestResult {
     let home = tempfile::tempdir()?;
     let transport = FakeTransport::default();
     let hook = dsh_hook(home.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     for event in ["user/message", "turn/end"] {
         let payload = format!(
             r#"{{"session_id":"{DSH_SESSION}","hook_event_name":"{event}","cwd":"/work/dsh"}}"#
