@@ -1,5 +1,4 @@
 use jiff::Timestamp;
-use jiff::civil::Date;
 use jiff::civil::DateTime;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
@@ -87,7 +86,7 @@ pub(crate) fn parse_date(text: &str) -> Option<i64> {
     if let Ok(at) = wire::time::parse_rfc3339(text) {
         return Some(at.epoch_millis());
     }
-    if let Ok(date) = Date::strptime("%Y-%m-%d", text) {
+    if let Ok(date) = wire::time::parse_civil_date(text) {
         return match wire::time::date_at_utc(date) {
             Ok(at) => Some(at.epoch_millis()),
             Err(error) => {

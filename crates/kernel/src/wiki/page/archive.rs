@@ -1,5 +1,4 @@
 use jiff::Timestamp;
-use jiff::civil::Date;
 use std::collections::BTreeSet;
 use values::time::LegacyStrftime as _;
 use values::time::TimestampFormat as _;
@@ -20,7 +19,7 @@ pub fn archive_month(at: Timestamp) -> String {
 #[must_use]
 pub fn parse_archive_month(text: &str) -> Option<String> {
     let first = format!("{text}-01");
-    let valid = text.len() == 7 && Date::strptime("%Y-%m-%d", &first).is_ok();
+    let valid = text.len() == 7 && values::time::parse_civil_date(&first).is_ok();
     valid.then(|| text.to_owned())
 }
 

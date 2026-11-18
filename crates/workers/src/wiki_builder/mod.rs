@@ -343,7 +343,7 @@ fn parse_patches(text: &str) -> Result<Vec<WikiPatch>, WorkerError> {
     for patch in &mut patches {
         if let Some(Value::String(date)) = patch.pointer_mut("/history_entry/date")
             && let Some(day) = date.get(..10).filter(|day| day.len() < date.len())
-            && Date::strptime("%Y-%m-%d", day).is_ok()
+            && wire::time::parse_civil_date(day).is_ok()
         {
             *date = day.to_owned();
         }
@@ -376,7 +376,7 @@ fn dated_entry(entry: &Value) -> bool {
         || entry
             .get("date")
             .and_then(Value::as_str)
-            .is_some_and(|date| Date::strptime("%Y-%m-%d", date).is_ok())
+            .is_some_and(|date| wire::time::parse_civil_date(date).is_ok())
 }
 
 fn normalize_slug_value(value: &mut Value) {

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use jiff::civil::{Date, DateTime};
+use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{Error, SignedDuration, Timestamp};
 use serde::{Deserialize, Deserializer, Serializer};
@@ -228,15 +228,7 @@ pub fn parse_wire_timestamp(raw: &str) -> Result<Timestamp, Error> {
 }
 
 pub fn legacy_civil_timestamp(raw: &str, space_separator: bool) -> Result<(DateTime, &str), Error> {
-    let raw = raw.trim_start();
-    let (sign, digits, width) = match raw.as_bytes() {
-        [b'+', ..] => (1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
-        [b'-', ..] => (-1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
-        _ => (1, raw, 4),
-    };
-    let (year, tail) = decimal::<i16>(digits, width)?;
-    let (month, tail) = decimal(delimiter(tail, '-', space_separator)?, 2)?;
-    let (day, tail) = decimal(delimiter(tail, '-', space_separator)?, 2)?;
+    let (date, tail) = parse_date_parts(raw, space_separator)?;
     let clock = if space_separator {
         tail.trim_start()
     } else {
@@ -248,8 +240,29 @@ pub fn legacy_civil_timestamp(raw: &str, space_separator: bool) -> Result<(DateT
     let (second, tail) = decimal(delimiter(tail, ':', space_separator)?, 2)?;
     let (nanos, offset) = parse_fraction(tail)?;
     let second = if second == 60 { 59 } else { second };
-    let civil = DateTime::new(year * sign, month, day, hour, minute, second, nanos)?;
+    let civil = DateTime::from_parts(date, Time::new(hour, minute, second, nanos)?);
     Ok((civil, offset))
+}
+
+pub fn parse_civil_date(raw: &str) -> Result<Date, Error> {
+    let (date, tail) = parse_date_parts(raw, true)?;
+    if !tail.is_empty() {
+        return Err(invalid_timestamp());
+    }
+    Ok(date)
+}
+
+fn parse_date_parts(raw: &str, adjacent_delimiters: bool) -> Result<(Date, &str), Error> {
+    let raw = raw.trim_start();
+    let (sign, digits, width) = match raw.as_bytes() {
+        [b'+', ..] => (1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
+        [b'-', ..] => (-1, raw.get(1..).ok_or_else(invalid_timestamp)?, usize::MAX),
+        _ => (1, raw, 4),
+    };
+    let (year, tail) = decimal::<i16>(digits, width)?;
+    let (month, tail) = decimal(delimiter(tail, '-', adjacent_delimiters)?, 2)?;
+    let (day, tail) = decimal(delimiter(tail, '-', adjacent_delimiters)?, 2)?;
+    Ok((Date::new(year * sign, month, day)?, tail))
 }
 
 fn delimiter(raw: &str, separator: char, space_separator: bool) -> Result<&str, Error> {
@@ -417,7 +430,11 @@ impl SerializeAs<Date> for CivilDate {
 impl<'de> DeserializeAs<'de, Date> for CivilDate {
     fn deserialize_as<D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
         let raw = String::deserialize(deserializer)?;
-        Date::strptime("%Y-%m-%d", &raw).map_err(serde::de::Error::custom)
+        let (date, tail) = parse_date_parts(&raw, false).map_err(serde::de::Error::custom)?;
+        if !tail.trim().is_empty() {
+            return Err(serde::de::Error::custom(invalid_timestamp()));
+        }
+        Ok(date)
     }
 }
 

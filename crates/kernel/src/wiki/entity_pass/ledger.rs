@@ -1,6 +1,5 @@
 use super::types::LeafClock;
 use jiff::Timestamp;
-use jiff::civil::Date;
 use values::time::TimestampFormat as _;
 
 #[must_use]
@@ -19,7 +18,7 @@ pub fn place_as_of(raw: &str, leaves: &[LeafClock]) -> Timestamp {
     }
     let prefix = raw.trim().get(..10);
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let day = prefix.and_then(|text| Date::strptime("%Y-%m-%d", text).ok());
+    let day = prefix.and_then(|text| values::time::parse_civil_date(text).ok());
     if let Some(day) = day
         && let Some(leaf) = leaves
             .iter()

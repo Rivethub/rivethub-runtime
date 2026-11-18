@@ -154,8 +154,7 @@ fn is_base64_id(token: &str) -> bool {
 }
 
 fn is_time(token: &str) -> bool {
-    wire::time::parse_rfc3339(token).is_ok()
-        || jiff::civil::Date::strptime("%Y-%m-%d", token).is_ok()
+    wire::time::parse_rfc3339(token).is_ok() || wire::time::parse_civil_date(token).is_ok()
 }
 
 fn is_trivial(text: &str) -> bool {

@@ -222,3 +222,21 @@ fn negative_year_format_spelling() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(at.legacy_strftime("%Y-%m-%d"), "-0001-01-01");
     Ok(())
 }
+
+#[test]
+fn civil_dates_keep_legacy_year_width_and_serde_whitespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    use serde_with::{As, DeserializeAs as _};
+    use wire::time::{CivilDate, LegacyStrftime as _, parse_civil_date};
+
+    let signed = parse_civil_date("+02026-1-1")?;
+    assert_eq!(signed.legacy_strftime("%Y-%m-%d"), "2026-01-01");
+    assert!(parse_civil_date(" 2026 - 1 - 1 ").is_err());
+    let raw = r#"" 2026 - 1 - 1 ""#;
+    let date = CivilDate::deserialize_as(&mut serde_json::Deserializer::from_str(raw))?;
+    assert_eq!(
+        As::<CivilDate>::serialize(&date, serde_json::value::Serializer)?,
+        "2026-01-01"
+    );
+    Ok(())
+}
