@@ -40,7 +40,13 @@ impl EmbedSettings {
             if width == 0 {
                 return Err(WorkerError::Width);
             }
-            settings.width = width;
+            let expected = kernel::memory::summary_backend::SUMMARY_EMBEDDING_WIDTH;
+            if usize::try_from(width).ok() != Some(expected) {
+                return Err(WorkerError::EmbedWidth {
+                    got: width,
+                    expected,
+                });
+            }
         }
         if let Some(chars) = postgres_section(config).and_then(|postgres| postgres.chars_per_chunk)
         {

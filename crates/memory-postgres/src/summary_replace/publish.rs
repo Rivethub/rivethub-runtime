@@ -107,6 +107,11 @@ impl PostgresMemory {
         conversion: Option<ConversionLease>,
     ) -> Result<(), ReplaceSummaryError> {
         prepared.validate_index_key(self.summary_index_key)?;
+        for index in indexes.into_iter().flat_map(BTreeMap::values) {
+            index
+                .validate_width()
+                .map_err(|error| Error::protocol(error.to_string()))?;
+        }
         let mut tx = self.pool.begin().await.map_err(query)?;
         if let Some(lease) = conversion
             && !crate::summary_conversion::can_publish(&mut tx, lease)

@@ -41,6 +41,8 @@ pub enum WorkerError {
     Concurrency,
     #[error("embedding width must be at least 1")]
     Width,
+    #[error("embedding width is {got}, the summary column requires {expected} dimensions")]
+    EmbedWidth { got: u32, expected: usize },
     #[error("chunk window must be at least 1")]
     ChunkWindow,
     #[error("job payload is not an embed target: {source}")]

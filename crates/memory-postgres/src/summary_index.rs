@@ -89,6 +89,7 @@ impl PostgresMemory {
         let Some(key) = self.summary_index_key else {
             return Ok(());
         };
+        index.validate_width().map_err(error)?;
         let mut tx = self.pool.begin().await.map_err(error)?;
         let conversation: Option<Uuid> = sqlx::query_scalar(
             "SELECT conversation_id FROM rh_summaries WHERE id = $1 AND kind IN ('session', 'part')"

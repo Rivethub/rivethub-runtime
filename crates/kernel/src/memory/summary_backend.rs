@@ -65,6 +65,27 @@ pub struct SummaryIndex {
     pub pooled: Vec<f32>,
 }
 
+pub const SUMMARY_EMBEDDING_WIDTH: usize = 1024;
+
+impl SummaryIndex {
+    pub fn validate_width(&self) -> Result<(), super::EmbeddingStoreError> {
+        std::iter::once(self.pooled.len())
+            .chain(self.passages.iter().map(|passage| passage.vector.len()))
+            .try_for_each(check_summary_embedding_width)
+    }
+}
+
+pub fn check_summary_embedding_width(got: usize) -> Result<(), super::EmbeddingStoreError> {
+    if got == SUMMARY_EMBEDDING_WIDTH {
+        Ok(())
+    } else {
+        Err(super::EmbeddingStoreError::Width {
+            got,
+            expected: SUMMARY_EMBEDDING_WIDTH,
+        })
+    }
+}
+
 pub type SummaryIndexes = BTreeMap<Uuid, SummaryIndex>;
 
 pub trait SummaryPermit: Send {}

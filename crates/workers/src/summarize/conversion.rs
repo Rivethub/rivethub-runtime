@@ -78,6 +78,7 @@ fn failure_reason(error: &WorkerError) -> String {
         | WorkerError::WikiModel(..)
         | WorkerError::MissingDependencies { .. }
         | WorkerError::Concurrency
+        | WorkerError::EmbedWidth { .. }
         | WorkerError::Width
         | WorkerError::ChunkWindow
         | WorkerError::Payload { .. }

@@ -183,12 +183,10 @@ fn width_comes_from_postgres_config() {
             .width,
         workers::EmbedSettings::standard().width
     );
-    assert_eq!(
-        workers::EmbedSettings::from_config(&config_with(Some(768), None))
-            .expect("width")
-            .width,
-        768
-    );
+    let error = workers::EmbedSettings::from_config(&config_with(Some(768), None))
+        .expect_err("incompatible column width");
+    assert!(error.to_string().contains("768"));
+    assert!(error.to_string().contains("1024"));
     assert!(matches!(
         workers::EmbedSettings::from_config(&config_with(Some(0), None)),
         Err(WorkerError::Width)

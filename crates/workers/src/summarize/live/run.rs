@@ -300,7 +300,7 @@ impl Run<'_> {
         sections: &[llm::Section],
     ) -> Result<SummaryIndex, WorkerError> {
         let key = digest(&(
-            "summary-index-v1",
+            "summary-index-v2",
             row.index_key,
             &row.content,
             sources,

@@ -133,6 +133,7 @@ impl SqliteStore {
                     enqueue_deliveries(&tx, &prepared)?;
                 }
                 for (id, index) in indexes {
+                    index.validate_width().map_err(|error| SqliteError::Invalid { message: error.to_string() })?;
                     tx.execute("UPDATE ros_summaries SET embedding = ?2, index_needs_repair = 0 WHERE id = ?1",
                         params![id.to_string(), crate::vector::pack(&index.pooled)]).map_err(failure)?;
                 }

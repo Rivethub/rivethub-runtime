@@ -1,5 +1,5 @@
 use jiff::Timestamp;
-use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
+use kernel::memory::summary_backend::{SUMMARY_EMBEDDING_WIDTH, SummaryIndex, SummaryPassage};
 use kernel::model::ModelProvider;
 use uuid::Uuid;
 
@@ -46,32 +46,34 @@ pub(super) async fn prepare_index(
     sources: &[(usize, Timestamp)],
     sections: &[(std::ops::Range<usize>, std::ops::RangeInclusive<usize>)],
 ) -> Result<SummaryIndex, WorkerError> {
+    let width = SUMMARY_EMBEDDING_WIDTH;
+    if usize::try_from(embed.width).ok() != Some(width) {
+        return Err(WorkerError::EmbedWidth {
+            got: embed.width,
+            expected: width,
+        });
+    }
     let chunks = crate::embed::split_embed_text(text, 6000)?;
     let texts = chunks.iter().map(|chunk| chunk.text.clone()).collect();
     let vectors = tokio::time::timeout(embed.timeout, provider.embed(texts))
         .await
         .map_err(|_| WorkerError::EmbedTimeout)?
         .map_err(|error| WorkerError::Embed(error.to_string()))?;
-    let width = vectors
-        .first()
-        .map_or(0, |item| item.vector.len().min(embed.width as usize));
-    if width == 0
-        || vectors.len() != chunks.len()
-        || vectors.iter().any(|item| {
-            item.vector.len().min(embed.width as usize) != width
-                || item.vector.iter().any(|x| !x.is_finite())
-                || item.vector.iter().all(|x| *x == 0.0)
-        })
-    {
+    if vectors.len() != chunks.len() {
         return Err(WorkerError::Embed("incomplete summary embeddings".into()));
     }
-    let vectors: Vec<_> = vectors
-        .into_iter()
-        .map(|mut item| {
-            item.vector.truncate(width);
-            item.vector
-        })
-        .collect();
+    let vectors: Vec<_> = vectors.into_iter().map(|item| item.vector).collect();
+    for vector in &vectors {
+        if vector.len() != width {
+            return Err(WorkerError::Embed(format!(
+                "summary embedding has {} dimensions; expected {width}",
+                vector.len()
+            )));
+        }
+        if vector.iter().any(|x| !x.is_finite()) || vector.iter().all(|x| *x == 0.0) {
+            return Err(WorkerError::NullEmbedding);
+        }
+    }
     let pooled = crate::embed::mean_pool(&vectors, width)?.ok_or(WorkerError::NullEmbedding)?;
     if pooled.iter().any(|x| !x.is_finite()) || pooled.iter().all(|x| *x == 0.0) {
         return Err(WorkerError::NullEmbedding);
@@ -107,4 +109,69 @@ pub(super) async fn prepare_index(
 fn time_bounds(mut times: impl Iterator<Item = Timestamp>) -> Option<(Timestamp, Timestamp)> {
     let first = times.next()?;
     Some(times.fold((first, first), |(min, max), at| (min.min(at), max.max(at))))
+}
+
+#[cfg(test)]
+mod probes {
+    use super::*;
+    use async_trait::async_trait;
+    use kernel::model::{
+        Embedding, LlmResponse, ModelProvider, ModelProviderError, ModelRequest, ModelStreamItem,
+    };
+    use tokio::sync::mpsc::Receiver;
+
+    struct Fixed(Vec<Vec<f32>>);
+
+    #[async_trait]
+    impl ModelProvider for Fixed {
+        async fn chat(&self, _: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+            unreachable!("chat");
+        }
+
+        async fn stream(
+            &self,
+            _: ModelRequest,
+        ) -> Result<Receiver<ModelStreamItem>, ModelProviderError> {
+            unreachable!("stream");
+        }
+
+        async fn embed(&self, texts: Vec<String>) -> Result<Vec<Embedding>, ModelProviderError> {
+            assert_eq!(texts.len(), self.0.len());
+            Ok(self
+                .0
+                .iter()
+                .cloned()
+                .map(|vector| Embedding { vector })
+                .collect())
+        }
+
+        async fn list_models(&self) -> Result<Vec<String>, ModelProviderError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn summary_embedding_requires_the_full_column_width() {
+        for got in [2, 1024, 1536] {
+            let result = prepare_index(
+                &Fixed(vec![vec![0.25; got]]),
+                EmbedSettings::standard(),
+                "saffron",
+                &[(1, Timestamp::UNIX_EPOCH)],
+                &[(0..7, 1..=1)],
+            )
+            .await;
+            if got == 1024 {
+                assert_eq!(result.expect("full width").passages[0].vector.len(), got);
+            } else {
+                let error = result.expect_err("wrong embedding width");
+                assert!(matches!(error, WorkerError::Embed(_)));
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("{got} dimensions; expected 1024"))
+                );
+            }
+        }
+    }
 }
