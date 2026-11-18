@@ -205,12 +205,15 @@ fn map_record(
     mode: Mode,
 ) -> Result<Vec<Mapped>, TranscriptReaderError> {
     let position = base + 1;
-    let Ok(at) = Timestamp::from_millisecond(time_created) else {
-        return Ok(vec![Mapped::Skip(SkippedRecord {
-            position,
-            rule: SkipRule::UnparseableTimestamp,
-            detail: format!("time_created {time_created} is not a millisecond instant"),
-        })]);
+    let at = match Timestamp::from_millisecond(time_created) {
+        Ok(at) => at,
+        Err(_error) => {
+            return Ok(vec![Mapped::Skip(SkippedRecord {
+                position,
+                rule: SkipRule::UnparseableTimestamp,
+                detail: format!("time_created {time_created} is not a millisecond instant"),
+            })]);
+        }
     };
     let at = at.rfc3339_millis();
     let row = Row {

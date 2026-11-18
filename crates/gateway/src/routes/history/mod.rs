@@ -118,7 +118,7 @@ async fn plane(
     let rows = visible_rows(&gateway, &user, rows).await?;
     let mut sessions = Vec::with_capacity(rows.len());
     for row in &rows {
-        sessions.push(store_summary(&gateway, row).await);
+        sessions.push(store_summary(&gateway, row).await?);
     }
     Ok(Json(HarnessSessionList { sessions }))
 }
@@ -151,7 +151,7 @@ async fn described(
         None => None,
     };
     match described {
-        Some(row) => Ok(store_summary(gateway, &row).await),
+        Some(row) => store_summary(gateway, &row).await,
         None => Err(ApiError::Missing(format!(
             "unknown session {}",
             resolved.session
@@ -237,7 +237,7 @@ async fn rename(
             SessionRenameError::Write { .. } => ApiError::Unavailable(error.to_string()),
             SessionRenameError::Store(error) => ApiError::Transcript(error),
         })?;
-    let summary = store_summary(&gateway, &row).await;
+    let summary = store_summary(&gateway, &row).await?;
     Ok(Json(HarnessSessionResponse {
         summary,
         switches: None,

@@ -143,8 +143,9 @@ fn valid_future_expiry(raw: &str) -> bool {
     let Some((year, rest)) = unsigned.split_once('-') else {
         return false;
     };
-    let Ok(year) = year.parse::<u32>() else {
-        return false;
+    let year = match year.parse::<u32>() {
+        Ok(year) => year,
+        Err(_error) => return false,
     };
     if !(9999..=262_142).contains(&year) || (year > 9999 && !raw.starts_with('+')) {
         return false;

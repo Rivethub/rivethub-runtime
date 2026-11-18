@@ -200,7 +200,10 @@ pub(crate) async fn authorize(
     }
 }
 
-pub(crate) async fn store_summary(gateway: &Gateway, row: &StoreSession) -> HarnessSessionSummary {
+pub(crate) async fn store_summary(
+    gateway: &Gateway,
+    row: &StoreSession,
+) -> Result<HarnessSessionSummary, ApiError> {
     let cwd = match row.cwd.clone() {
         Some(cwd) => Some(cwd),
         None => recorded_cwd(gateway, row).await,
