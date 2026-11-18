@@ -1,4 +1,3 @@
-use jiff::SignedDuration;
 use jiff::Timestamp;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -208,12 +207,7 @@ pub async fn start(
         .request_async(&server)
         .await
         .map_err(oauth::failed)?;
-    let expires_in = details.expires_in();
-    let lifetime = SignedDuration::try_from(expires_in)
-        .map_err(|_| ServerError::Lifetime(expires_in.as_secs()))?;
-    let expires_at = Timestamp::now()
-        .checked_add(lifetime)
-        .map_err(|_error| ServerError::Lifetime(expires_in.as_secs()))?;
+    let expires_at = device_deadline(Timestamp::now(), details.expires_in())?;
     let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
     let verification_uri_complete = openable(
         details.verification_uri_complete().map_or_else(
@@ -244,6 +238,18 @@ pub async fn start(
             task: Some(AbortOnDropHandle::new(task)),
         },
     })
+}
+
+fn device_deadline(now: Timestamp, lifetime: Duration) -> Result<Timestamp, ServerError> {
+    const LEGACY_MAX_EPOCH_NANOS: i128 = 8_210_266_876_799_999_999_999;
+    let out_of_range = || ServerError::Lifetime(lifetime.as_secs());
+    let remaining = u128::try_from(LEGACY_MAX_EPOCH_NANOS - now.as_nanosecond())
+        .map_err(|_error| out_of_range())?;
+    if lifetime.as_nanos() > remaining {
+        return Err(out_of_range());
+    }
+    now.saturating_add(lifetime)
+        .map_err(|_error| out_of_range())
 }
 
 fn openable(uri: String, server: &ShareServer) -> Result<String, ServerError> {
@@ -560,6 +566,21 @@ fn server_error(error: ServerError) -> DeskError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_device_authorization_saturates_within_the_legacy_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let now = "2026-11-18T00:00:00Z".parse()?;
+        assert_eq!(
+            device_deadline(now, Duration::from_secs(5_000_000 * 86_400))?,
+            Timestamp::MAX
+        );
+        assert!(matches!(
+            device_deadline(now, Duration::MAX),
+            Err(ServerError::Lifetime(_))
+        ));
+        Ok(())
+    }
 
     #[test]
     fn plain_http_opens_only_for_a_loopback_share_server() {
