@@ -381,8 +381,15 @@ fn fail_one(
 
 fn later(now: Timestamp, attempt: u32) -> Result<Timestamp, SqliteError> {
     let delay = i64::try_from(retry_delay_ms(attempt)).map_err(|_| SqliteError::Clock)?;
-    now.checked_add(SignedDuration::from_millis(delay))
+    now.saturating_add(SignedDuration::from_millis(delay))
         .map_err(|_error| SqliteError::Clock)
+}
+
+#[cfg(test)]
+#[test]
+fn sqlite_retry_after_the_timestamp_ceiling_saturates() -> Result<(), SqliteError> {
+    assert_eq!(later(Timestamp::MAX, u32::MAX)?, Timestamp::MAX);
+    Ok(())
 }
 
 fn delete_job(conn: &mut Connection, id: &str, now: Timestamp) -> Result<(), SqliteError> {
