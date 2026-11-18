@@ -44,7 +44,7 @@ impl SessionObservation {
                 .unwrap_or_default();
             format!("{source}/{}:{native}", at.rfc3339_offset())
         });
-        Some(SessionObservation { at, end_key })
+        Some(Self { at, end_key })
     }
 
     #[must_use]

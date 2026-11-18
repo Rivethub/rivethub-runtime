@@ -125,25 +125,7 @@ impl PreparedSummaryTree {
         {
             return Err(InvalidSummaryManifest);
         }
-        for (id, windows) in &self.passage_windows {
-            let row = records.get(id).ok_or(InvalidSummaryManifest)?;
-            if !matches!(row.kind, SummaryKind::Session | SummaryKind::Part)
-                || self.retained_parts.contains(id)
-                || row.index_key.is_none()
-            {
-                return Err(InvalidSummaryManifest);
-            }
-            let mut end = 0i32;
-            for range in windows {
-                if range.start != end || range.end <= end || range.end - end > 6000 {
-                    return Err(InvalidSummaryManifest);
-                }
-                end = range.end;
-            }
-            if end == 0 || usize::try_from(end).ok() != Some(row.content.chars().count()) {
-                return Err(InvalidSummaryManifest);
-            }
-        }
+        self.validate_passage_windows(&records)?;
         let mut roots = records
             .values()
             .filter(|row| row.kind == SummaryKind::Session);
@@ -166,90 +148,7 @@ impl PreparedSummaryTree {
         }
 
         let root_ids: BTreeSet<_> = root_members.values().copied().collect();
-        let mut occupied = BTreeSet::new();
-        let mut issued = BTreeSet::new();
-        let mut coverages = BTreeMap::new();
-        for row in &self.records {
-            if row.ordinal < 0
-                || row.quality_flags < 0
-                || !occupied.insert((row.parent, row.kind.as_str(), row.ordinal))
-            {
-                return Err(InvalidSummaryManifest);
-            }
-            let members = match row.kind {
-                SummaryKind::Session | SummaryKind::Part => {
-                    if row.section.is_some() {
-                        return Err(InvalidSummaryManifest);
-                    }
-                    if row.kind == SummaryKind::Part
-                        && (row.parent != Some(root.id)
-                            || row.ordinal == 0
-                            || !row
-                                .issued_part_ordinal
-                                .is_some_and(|ordinal| ordinal > 0 && issued.insert(ordinal))
-                            || !row.input_tokens.is_some_and(|tokens| tokens > 0))
-                    {
-                        return Err(InvalidSummaryManifest);
-                    }
-                    let mut ordinals = BTreeSet::new();
-                    let mut members = BTreeSet::new();
-                    for entry in &row.sources {
-                        if entry.ordinal <= 0
-                            || !root_ids.contains(&entry.message)
-                            || !ordinals.insert(entry.ordinal)
-                            || !members.insert(entry.message)
-                        {
-                            return Err(InvalidSummaryManifest);
-                        }
-                    }
-                    members
-                }
-                SummaryKind::Section => {
-                    let parent = row
-                        .parent
-                        .and_then(|id| records.get(&id))
-                        .ok_or(InvalidSummaryManifest)?;
-                    let bounds = row.section.as_ref().ok_or(InvalidSummaryManifest)?;
-                    if !matches!(parent.kind, SummaryKind::Session | SummaryKind::Part)
-                        || !row.sources.is_empty()
-                        || bounds.first > bounds.last
-                        || bounds.char_start < 0
-                        || bounds.char_end <= bounds.char_start
-                        || usize::try_from(bounds.char_end).map_err(|_| InvalidSummaryManifest)?
-                            > parent.content.chars().count()
-                    {
-                        return Err(InvalidSummaryManifest);
-                    }
-                    let first = parent.sources.iter().map(|entry| entry.ordinal).min();
-                    let last = parent.sources.iter().map(|entry| entry.ordinal).max();
-                    let starts = parent
-                        .sources
-                        .iter()
-                        .any(|entry| entry.ordinal == bounds.first);
-                    let ends = parent
-                        .sources
-                        .iter()
-                        .any(|entry| entry.ordinal == bounds.last);
-                    if !(starts && ends)
-                        || (!bounds.verified
-                            && (first != Some(bounds.first) || last != Some(bounds.last)))
-                    {
-                        return Err(InvalidSummaryManifest);
-                    }
-                    parent
-                        .sources
-                        .iter()
-                        .filter(|entry| (bounds.first..=bounds.last).contains(&entry.ordinal))
-                        .map(|entry| entry.message)
-                        .collect()
-                }
-                _ => return Err(InvalidSummaryManifest),
-            };
-            if members.is_empty() {
-                return Err(InvalidSummaryManifest);
-            }
-            coverages.insert(row.id, members);
-        }
+        let coverages = self.record_coverage(&records, root.id, &root_ids)?;
 
         let parts: Vec<_> = self
             .records
@@ -274,6 +173,133 @@ impl PreparedSummaryTree {
             }
         }
         Ok(coverages)
+    }
+
+    fn validate_passage_windows(
+        &self,
+        records: &BTreeMap<Uuid, &PreparedSummaryRecord>,
+    ) -> Result<(), InvalidSummaryManifest> {
+        for (id, windows) in &self.passage_windows {
+            let row = records.get(id).ok_or(InvalidSummaryManifest)?;
+            if !matches!(row.kind, SummaryKind::Session | SummaryKind::Part)
+                || self.retained_parts.contains(id)
+                || row.index_key.is_none()
+            {
+                return Err(InvalidSummaryManifest);
+            }
+            let mut end = 0i32;
+            for range in windows {
+                if range.start != end || range.end <= end || range.end - end > 6000 {
+                    return Err(InvalidSummaryManifest);
+                }
+                end = range.end;
+            }
+            if end == 0 || usize::try_from(end).ok() != Some(row.content.chars().count()) {
+                return Err(InvalidSummaryManifest);
+            }
+        }
+        Ok(())
+    }
+
+    fn record_coverage(
+        &self,
+        records: &BTreeMap<Uuid, &PreparedSummaryRecord>,
+        root: Uuid,
+        root_ids: &BTreeSet<Uuid>,
+    ) -> Result<SummaryCoverage, InvalidSummaryManifest> {
+        let mut occupied = BTreeSet::new();
+        let mut issued = BTreeSet::new();
+        let mut coverages = BTreeMap::new();
+        for row in &self.records {
+            if row.ordinal < 0
+                || row.quality_flags < 0
+                || !occupied.insert((row.parent, row.kind.as_str(), row.ordinal))
+            {
+                return Err(InvalidSummaryManifest);
+            }
+            let members = match row.kind {
+                SummaryKind::Session | SummaryKind::Part => {
+                    if row.section.is_some() {
+                        return Err(InvalidSummaryManifest);
+                    }
+                    if row.kind == SummaryKind::Part
+                        && (row.parent != Some(root)
+                            || row.ordinal == 0
+                            || !row
+                                .issued_part_ordinal
+                                .is_some_and(|ordinal| ordinal > 0 && issued.insert(ordinal))
+                            || row.input_tokens.is_none_or(|tokens| tokens <= 0))
+                    {
+                        return Err(InvalidSummaryManifest);
+                    }
+                    let mut ordinals = BTreeSet::new();
+                    let mut members = BTreeSet::new();
+                    for entry in &row.sources {
+                        if entry.ordinal <= 0
+                            || !root_ids.contains(&entry.message)
+                            || !ordinals.insert(entry.ordinal)
+                            || !members.insert(entry.message)
+                        {
+                            return Err(InvalidSummaryManifest);
+                        }
+                    }
+                    members
+                }
+                SummaryKind::Section => Self::section_coverage(records, row)?,
+                SummaryKind::Leaf | SummaryKind::Branch | SummaryKind::Root => {
+                    return Err(InvalidSummaryManifest);
+                }
+            };
+            if members.is_empty() {
+                return Err(InvalidSummaryManifest);
+            }
+            coverages.insert(row.id, members);
+        }
+
+        Ok(coverages)
+    }
+
+    fn section_coverage(
+        records: &BTreeMap<Uuid, &PreparedSummaryRecord>,
+        row: &PreparedSummaryRecord,
+    ) -> Result<BTreeSet<Uuid>, InvalidSummaryManifest> {
+        let parent = row
+            .parent
+            .and_then(|id| records.get(&id))
+            .ok_or(InvalidSummaryManifest)?;
+        let bounds = row.section.as_ref().ok_or(InvalidSummaryManifest)?;
+        if !matches!(parent.kind, SummaryKind::Session | SummaryKind::Part)
+            || !row.sources.is_empty()
+            || bounds.first > bounds.last
+            || bounds.char_start < 0
+            || bounds.char_end <= bounds.char_start
+            || usize::try_from(bounds.char_end).map_err(|_| InvalidSummaryManifest)?
+                > parent.content.chars().count()
+        {
+            return Err(InvalidSummaryManifest);
+        }
+        let first = parent.sources.iter().map(|entry| entry.ordinal).min();
+        let last = parent.sources.iter().map(|entry| entry.ordinal).max();
+        let starts = parent
+            .sources
+            .iter()
+            .any(|entry| entry.ordinal == bounds.first);
+        let ends = parent
+            .sources
+            .iter()
+            .any(|entry| entry.ordinal == bounds.last);
+        if !(starts
+            && ends
+            && (bounds.verified || (first == Some(bounds.first) && last == Some(bounds.last))))
+        {
+            return Err(InvalidSummaryManifest);
+        }
+        Ok(parent
+            .sources
+            .iter()
+            .filter(|entry| (bounds.first..=bounds.last).contains(&entry.ordinal))
+            .map(|entry| entry.message)
+            .collect())
     }
 
     #[must_use]
