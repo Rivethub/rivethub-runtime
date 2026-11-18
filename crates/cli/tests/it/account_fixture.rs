@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -6,11 +7,14 @@ pub(crate) struct LoginFile {
     pub(crate) logins: BTreeMap<String, TokenRecord>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TokenRecord {
     pub(crate) access_token: String,
     pub(crate) refresh_token: String,
-    pub(crate) expires_at: chrono::DateTime<chrono::Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(crate) expires_at: Timestamp,
     pub(crate) scope: String,
 }
 

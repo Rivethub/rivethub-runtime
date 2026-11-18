@@ -6,6 +6,8 @@ mod no_model;
 mod sessions;
 mod topic_pages;
 
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::sync::Arc;
@@ -328,9 +330,7 @@ pub(crate) fn message(
         tool_args: None,
         tool_result: None,
         metadata: None,
-        created_at: Some(
-            chrono::Utc::now() + chrono::TimeDelta::milliseconds(i64::try_from(index)?),
-        ),
+        created_at: Some(Timestamp::now() + SignedDuration::from_millis(i64::try_from(index)?)),
     })
 }
 

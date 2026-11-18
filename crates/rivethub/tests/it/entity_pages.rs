@@ -1,8 +1,9 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use gateway::Gateway;
 use kernel::tenancy::Scope;
 use kernel::topics::TopicId;
@@ -214,7 +215,7 @@ async fn apply(memory: &PostgresMemory, entity: Uuid) -> TestResult {
         history: Some(PreparedHistory {
             summary_id: summary,
             conversation_id: Some(conversation),
-            session_on: at("2026-11-07T00:00:00Z").date_naive(),
+            session_on: at("2026-11-07T00:00:00Z").utc_date(),
             sentence: "Recorded the address.".to_owned(),
         }),
         owner: "owner".to_owned(),
@@ -237,7 +238,7 @@ async fn seed(pool: &sqlx::PgPool, entity: Uuid, slug: &str) -> Result<(), sqlx:
     )
     .bind(entity)
     .bind(slug)
-    .bind(at("2026-11-01T00:00:00Z"))
+    .bind(memory_postgres::time::PgTimestamp::from(at("2026-11-01T00:00:00Z")))
     .execute(pool)
     .await?;
     for (parent, slug, name) in [
@@ -279,8 +280,8 @@ async fn seed_summary(memory: &PostgresMemory, conversation: Uuid) -> Result<Uui
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(start)
-    .bind(start + chrono::Duration::hours(1))
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(start + SignedDuration::from_hours(1)))
     .fetch_one(pool)
     .await
 }
@@ -289,6 +290,6 @@ fn pool_of(memory: &PostgresMemory) -> &sqlx::PgPool {
     memory.pool()
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }

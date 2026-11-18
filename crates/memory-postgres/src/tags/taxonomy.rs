@@ -1,8 +1,7 @@
 use super::read_rows;
 use super::state_of;
 use super::store_error;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::TagState;
 use kernel::memory::TagTaxonomyDecision;
@@ -24,9 +23,12 @@ struct TagTaxonomyRow {
     state: String,
     source: String,
     reason: String,
-    decided_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    decided_at: Option<Timestamp>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
 }
 
 impl TryFrom<TagTaxonomyRow> for TagTaxonomyEntry {
@@ -84,13 +86,7 @@ async fn upsert_tag_taxonomy(
     upsert: &TagTaxonomyUpsert,
 ) -> Result<TagTaxonomyEntry, MemoryStoreError> {
     let record = sqlx::query!(
-        "insert into rh_tag_taxonomy (key, value, display, parent_value, aliases, state, source, \
-                                      reason) \
-         values ($1, $2, coalesce($3, ''), $4, $5, 'accepted', 'user', coalesce($6, '')) \
-         on conflict (key, value) do update set display = coalesce($3, ''), parent_value = $4, \
-           aliases = $5, reason = coalesce($6, ''), updated_at = now() \
-         returning key, value, display, parent_value, aliases, state, source, reason, decided_at, \
-                   created_at, updated_at",
+        r#"insert into rh_tag_taxonomy (key, value, display, parent_value, aliases, state, source, reason) values ($1, $2, coalesce($3, ''), $4, $5, 'accepted', 'user', coalesce($6, '')) on conflict (key, value) do update set display = coalesce($3, ''), parent_value = $4, aliases = $5, reason = coalesce($6, ''), updated_at = now() returning key, value, display, parent_value, aliases, state, source, reason, decided_at AS "decided_at!: crate::time::OptionalTimestamp", created_at AS "created_at!: jiff_sqlx::Timestamp", updated_at AS "updated_at!: jiff_sqlx::Timestamp""#,
         upsert.key,
         upsert.value,
         upsert.display.clone(),
@@ -110,9 +106,9 @@ async fn upsert_tag_taxonomy(
         state: state_of(&record.state).map_err(MemoryStoreError::from)?,
         source: record.source,
         reason: record.reason,
-        decided_at: record.decided_at,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
+        decided_at: record.decided_at.into(),
+        created_at: record.created_at.into(),
+        updated_at: record.updated_at.into(),
     })
 }
 

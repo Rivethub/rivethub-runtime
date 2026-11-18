@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::topics::PageChange;
 use kernel::topics::PageEdit;
 use kernel::topics::PageSection;
@@ -57,7 +56,7 @@ impl TopicPageStore for SqliteStore {
         &self,
         topic: TopicId,
         page: &TopicPage,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let page = page.clone();
         blocking(self, move |conn| {
@@ -72,7 +71,7 @@ impl TopicPageStore for SqliteStore {
         &self,
         slug: &WikiSlug,
         edit: &PageEdit,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<bool, WikiStoreError> {
         let (slug, edit) = (slug.clone(), edit.clone());
         blocking(self, move |conn| {
@@ -109,7 +108,7 @@ impl TopicPageStore for SqliteStore {
         root: TopicId,
         slug: &WikiSlug,
         change: &PageChange<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         for _ in 0..CHANGE_ATTEMPTS {
             let before = self
@@ -145,7 +144,7 @@ impl TopicPageStore for SqliteStore {
         &self,
         from: &WikiSlug,
         to: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let (from, to) = (from.as_ref().to_owned(), to.as_ref().to_owned());
         blocking(self, move |conn| {
@@ -168,7 +167,7 @@ impl TopicPageStore for SqliteStore {
         child: &WikiSlug,
         into: &WikiSlug,
         mark: FoldMark,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let fold = WikiFold {
             cluster: into.as_ref().to_owned(),

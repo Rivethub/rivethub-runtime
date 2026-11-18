@@ -1,9 +1,8 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use ::values::SessionId;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 
 use super::Claim;
 use super::FactId;
@@ -13,19 +12,19 @@ use super::Said;
 use super::SessionLink;
 use crate::topics::TopicId;
 
-pub const CONFLICT_WINDOW: TimeDelta = TimeDelta::hours(24);
+pub const CONFLICT_WINDOW: SignedDuration = SignedDuration::from_hours(24);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Support {
     pub session: SessionId,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub value: FactValue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Previous {
     pub value: FactValue,
-    pub until: DateTime<Utc>,
+    pub until: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +32,7 @@ pub struct FactState {
     pub id: FactId,
     pub key: FactKey,
     pub value: FactValue,
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
     pub pinned: bool,
     pub sources: Vec<Support>,
     pub candidates: Vec<Support>,
@@ -57,13 +56,13 @@ pub enum FactChange {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FactEvent {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub key: FactKey,
     pub change: FactChange,
 }
 
 #[must_use]
-pub fn facts_as_of(claims: &[Claim], as_of: Option<DateTime<Utc>>) -> Vec<FactState> {
+pub fn facts_as_of(claims: &[Claim], as_of: Option<Timestamp>) -> Vec<FactState> {
     let mut facts: Vec<FactState> = by_fact(claims, as_of)
         .into_values()
         .filter_map(|history| derive(&history))
@@ -73,7 +72,7 @@ pub fn facts_as_of(claims: &[Claim], as_of: Option<DateTime<Utc>>) -> Vec<FactSt
 }
 
 #[must_use]
-pub fn timeline(claims: &[Claim], as_of: Option<DateTime<Utc>>) -> Vec<FactEvent> {
+pub fn timeline(claims: &[Claim], as_of: Option<Timestamp>) -> Vec<FactEvent> {
     let mut events = Vec::new();
     for history in by_fact(claims, as_of).into_values() {
         let mut before: Option<FactState> = None;
@@ -107,7 +106,7 @@ pub fn connected(entity: TopicId, links: &[SessionLink]) -> Vec<(TopicId, usize)
     ranked
 }
 
-fn by_fact(claims: &[Claim], as_of: Option<DateTime<Utc>>) -> BTreeMap<FactId, Vec<&Claim>> {
+fn by_fact(claims: &[Claim], as_of: Option<Timestamp>) -> BTreeMap<FactId, Vec<&Claim>> {
     let mut grouped: BTreeMap<FactId, Vec<&Claim>> = BTreeMap::new();
     for claim in claims
         .iter()
@@ -148,7 +147,7 @@ fn derive(history: &[&Claim]) -> Option<FactState> {
     } else {
         rivals(tail, value, |claim| {
             claim.said.session() != newest.said.session()
-                && newest.at.signed_duration_since(claim.at) < CONFLICT_WINDOW
+                && newest.at.duration_since(claim.at) < CONFLICT_WINDOW
         })
     };
     let candidates = if rivals.is_empty() {

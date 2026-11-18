@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
@@ -73,10 +74,7 @@ pub(super) fn stored(field: &'static str) -> impl FnOnce(kernel::BoxError) -> To
     }
 }
 
-pub(super) fn timestamp(
-    text: &str,
-    column: &'static str,
-) -> Result<chrono::DateTime<chrono::Utc>, TopicError> {
+pub(super) fn timestamp(text: &str, column: &'static str) -> Result<Timestamp, TopicError> {
     time::stored(text, column).map_err(|error| TopicError::Unavailable(Box::new(error)))
 }
 

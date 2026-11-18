@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::WikiGapsResponse;
 use kernel::wiki::WikiLookup;
@@ -27,7 +26,8 @@ struct TopicRow {
     tags: Vec<String>,
     entities: Vec<String>,
     current_state: String,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
     topic_id: Option<Uuid>,
 }
 
@@ -101,9 +101,9 @@ impl PostgresMemory {
 
     pub(crate) async fn read_wiki_page(&self, slug: &WikiSlug) -> Result<WikiLookup, Error> {
         let row = sqlx::query!(
-            "SELECT slug, title, aliases, tags, entities, current_state, article, related,
-                    git_sha, last_verified_at, updated_at, topic_id
-             FROM rh_wiki_topics WHERE slug = $1",
+            r#"SELECT slug, title, aliases, tags, entities, current_state, article, related,
+                    git_sha, last_verified_at AS "last_verified_at!: crate::time::OptionalTimestamp", updated_at AS "updated_at: jiff_sqlx::Timestamp", topic_id
+             FROM rh_wiki_topics WHERE slug = $1"#,
             slug.as_ref()
         )
         .fetch_optional(&self.pool)
@@ -139,8 +139,8 @@ impl PostgresMemory {
             markdown,
             sources,
             git_sha: row.git_sha,
-            last_verified: row.last_verified_at,
-            updated_at: row.updated_at,
+            last_verified: row.last_verified_at.into(),
+            updated_at: row.updated_at.into(),
             related: Some(row.related),
             topic_id: row.topic_id.map(|id| id.to_string()),
         })))

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::queue::JobQueue;
 use kernel::wiki::consolidate::{ConsolidateWiki, WikiConsolidateStore, consolidation_plan};
 use tokio_util::sync::CancellationToken;
@@ -11,7 +11,7 @@ pub async fn handle_consolidate_wiki(
     store: &dyn WikiConsolidateStore,
     queue: &dyn JobQueue,
     payload: &JsonObject,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancel: &CancellationToken,
 ) -> Result<usize, WorkerError> {
     let options: ConsolidateWiki =

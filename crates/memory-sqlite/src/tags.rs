@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::Limit;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::PendingTagWire;
@@ -340,7 +339,7 @@ pub(crate) fn wire_tag(raw: RawTag) -> Result<TagWire, SqliteError> {
     })
 }
 
-fn optional_time(value: Option<String>) -> Result<Option<DateTime<Utc>>, SqliteError> {
+fn optional_time(value: Option<String>) -> Result<Option<Timestamp>, SqliteError> {
     value
         .map(|text| time::stored(&text, "decided_at"))
         .transpose()

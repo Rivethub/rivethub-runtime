@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_match::TYPE_OBSERVATION_WINDOW;
 use kernel::wiki::entity_match::dominant_type;
 use kernel::wiki::entity_pass::EntityStoreError;
@@ -66,7 +65,7 @@ pub(super) async fn ensure_type(
     wanted: &str,
     rows: &mut Vec<TypeRow>,
     owner: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<TypeRow>, EntityStoreError> {
     if let Some(found) = match_type(wanted, rows) {
         return Ok(Some(found.clone()));
@@ -94,7 +93,7 @@ pub(super) async fn ensure_type(
     .bind(id)
     .bind(&slug)
     .bind(name)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .bind(owner)
     .execute(&mut **tx)
     .await;
@@ -193,7 +192,7 @@ pub(super) async fn remember_type(
     entity: Uuid,
     summary: Uuid,
     type_name: &str,
-    observed_at: DateTime<Utc>,
+    observed_at: Timestamp,
     owner: &str,
 ) -> Result<(), EntityStoreError> {
     let trimmed = type_name.trim();
@@ -204,7 +203,7 @@ pub(super) async fn remember_type(
         .bind(entity)
         .bind(summary)
         .bind(trimmed)
-        .bind(observed_at)
+        .bind(crate::time::BindTime::bind_time(observed_at))
         .bind(owner)
         .execute(&mut **tx)
         .await

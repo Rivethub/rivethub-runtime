@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::owner::Owner;
 use kernel::review::Mark;
 use kernel::review::MarkState;
@@ -25,7 +24,8 @@ const MARK_SQL: &str = "INSERT INTO rh_review_marks (owner_user_id, item_key, st
 struct MarkRow {
     item_key: String,
     state: String,
-    at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    at: Timestamp,
 }
 
 fn unavailable(error: Error) -> ReviewError {
@@ -62,7 +62,7 @@ impl ReviewStore for PostgresMemory {
             .bind(owner.as_str())
             .bind(mark.key.to_string())
             .bind(state.to_string())
-            .bind(at)
+            .bind(crate::time::BindTime::bind_time(at))
             .execute(&self.pool)
             .await
             .map_err(|source| unavailable(Error::operation("review mark", source)))?;

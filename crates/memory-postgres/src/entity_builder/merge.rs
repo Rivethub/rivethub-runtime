@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_match::host_party_mismatch;
 use kernel::wiki::entity_pass::ENTITY_LOCK_CLASS;
 use kernel::wiki::entity_pass::EntityMerge;
@@ -15,7 +14,7 @@ pub(super) async fn merge_pair(
     tx: &mut Transaction<'_, Postgres>,
     left: Uuid,
     right: Uuid,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(Option<EntityMerge>, Option<PageFile>), sqlx::Error> {
     lock_pair(tx, left, right).await?;
     let found_left = load_side(tx, left).await?;
@@ -32,7 +31,7 @@ async fn merge_both(
     tx: &mut Transaction<'_, Postgres>,
     left: TopicSide,
     right: TopicSide,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(Option<EntityMerge>, Option<PageFile>), sqlx::Error> {
     if left.kind != "entity" || right.kind != "entity" {
         return Ok((None, None));
@@ -301,7 +300,7 @@ async fn redirect_wiki(
     tx: &mut Transaction<'_, Postgres>,
     survivor: &TopicSide,
     absorbed: &TopicSide,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Option<PageFile>, sqlx::Error> {
     super::bind::bind_page(tx, survivor.id, &survivor.slug).await?;
     if survivor.slug == absorbed.slug {
@@ -325,7 +324,7 @@ async fn redirect_wiki(
     )
     .bind(&absorbed.slug)
     .bind(&survivor.slug)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await?;
     Ok(removed)
@@ -463,14 +462,14 @@ async fn retire(
     tx: &mut Transaction<'_, Postgres>,
     survivor: &TopicSide,
     absorbed: &TopicSide,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO rh_topic_tombstones (kind, slug, deleted_at) VALUES ('entity', $1, $2)
          ON CONFLICT (kind, slug) DO UPDATE SET deleted_at = EXCLUDED.deleted_at",
     )
     .bind(&absorbed.slug)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await?;
     sqlx::query("DELETE FROM rh_topics WHERE id = $1 AND kind = 'entity'")
@@ -483,12 +482,12 @@ async fn retire(
     )
     .bind(&absorbed.slug)
     .bind(survivor.id)
-    .bind(now)
+    .bind(crate::time::BindTime::bind_time(now))
     .execute(&mut **tx)
     .await?;
     sqlx::query("UPDATE rh_topics SET updated_at = $2 WHERE id = $1")
         .bind(survivor.id)
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(now))
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -499,7 +498,8 @@ struct TopicSide {
     id: Uuid,
     name: String,
     slug: String,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     kind: String,
     owner_user_id: String,
     type_name: String,

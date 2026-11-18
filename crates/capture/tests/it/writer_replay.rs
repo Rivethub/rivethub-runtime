@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::json_eq;
 use wire::capture::CaptureResult;
@@ -122,7 +121,7 @@ async fn writer_replay_case(
         std::num::NonZeroUsize::new(max_chunk_bytes),
         redaction,
     );
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let totals = writer.write(&batch, now).await?;
     let posts = transport.posts.lock().clone();
     let mut failures = compare(&posts, &recorded, name);

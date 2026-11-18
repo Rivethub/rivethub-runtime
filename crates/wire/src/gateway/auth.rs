@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 pub const REAUTH_REQUIRED: &str = "reauth_required";
@@ -66,10 +66,12 @@ pub enum RefusalKind {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RefusedRequest {
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub kind: RefusalKind,
     pub method: String,
     pub route: String,

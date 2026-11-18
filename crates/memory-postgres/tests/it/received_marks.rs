@@ -1,4 +1,4 @@
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::tenancy::Scope;
 use kernel::tenancy::TenancyStore as _;
@@ -30,7 +30,7 @@ async fn a_received_session_is_shared_with_a_space_by_its_import_key(pool: PgPoo
     let alice = viewer("alice")?;
     let shared = Visibility::Space(household()?);
     let marked = Scope::Viewer(alice.clone())
-        .run(tenancy.mark_session(&alice, &received, Some(&shared), Utc::now()))
+        .run(tenancy.mark_session(&alice, &received, Some(&shared), Timestamp::now()))
         .await?;
     assert_eq!(marked.effective, shared);
     let bob = viewer("bob")?;

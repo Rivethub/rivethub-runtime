@@ -94,7 +94,9 @@ struct Draft {
 
 impl Folder {
     fn message(&mut self, message: CaptureMessage) -> Result<(), TranscriptReaderError> {
-        let at = message.created_at.map(|at| at.timestamp_millis());
+        let at = message
+            .created_at
+            .map(wire::time::TimestampFormat::epoch_millis);
         match message.role {
             Role::User => self.user(message.content, at),
             Role::Assistant => match message.content.strip_prefix(THINKING) {

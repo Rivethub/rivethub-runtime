@@ -7,6 +7,7 @@ use crate::capture::UpsertedConversation;
 use crate::capture::prepare_capture_message;
 use crate::error::Error;
 use async_trait::async_trait;
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
@@ -557,8 +558,8 @@ impl MemoryStore for crate::PostgresMemory {
 
     async fn team_sessions(
         &self,
-        since: Option<chrono::DateTime<chrono::Utc>>,
-        before: Option<chrono::DateTime<chrono::Utc>>,
+        since: Option<Timestamp>,
+        before: Option<Timestamp>,
         limit: u32,
     ) -> Result<Vec<kernel::memory::TeamSession>, MemoryStoreError> {
         self.read_team_sessions(since, before, limit).await

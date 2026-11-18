@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::wiki::entity_pass::EntityLeaf;
 use kernel::wiki::entity_pass::EntityStore;
 use memory_postgres::PostgresMemory;
@@ -166,7 +165,7 @@ struct Message<'a> {
     tool_name: Option<&'a str>,
     tool_args: Option<serde_json::Value>,
     tool_result: Option<&'a str>,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 }
 
 fn note<'a>(role: &'a str, content: &'a str, created_at: &str) -> Message<'a> {
@@ -197,7 +196,7 @@ async fn seed_message(
     .bind(message.tool_name)
     .bind(message.tool_args)
     .bind(message.tool_result)
-    .bind(message.created_at)
+    .bind(memory_postgres::time::PgTimestamp::from(message.created_at))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -208,8 +207,8 @@ async fn seed_leaf(
     pool: &PgPool,
     conversation: Uuid,
     content: &str,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: Timestamp,
+    end: Timestamp,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = deferred(pool).await?;
     let id = sqlx::query_scalar(
@@ -219,8 +218,8 @@ async fn seed_leaf(
     )
     .bind(conversation)
     .bind(content)
-    .bind(start)
-    .bind(end)
+    .bind(memory_postgres::time::PgTimestamp::from(start))
+    .bind(memory_postgres::time::PgTimestamp::from(end))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -255,6 +254,6 @@ async fn deferred(
     Ok(tx)
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }

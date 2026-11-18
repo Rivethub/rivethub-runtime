@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +40,7 @@ pub struct PatchFact {
 
 impl WikiPatch {
     #[must_use]
-    pub fn note(&self, day: NaiveDate) -> WikiHistoryEntry {
+    pub fn note(&self, day: Date) -> WikiHistoryEntry {
         let article = self.article.as_deref().map_or("", str::trim);
         let article = match article.strip_prefix("# ") {
             Some(rest) => rest

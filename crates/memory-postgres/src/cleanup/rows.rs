@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::cleanup::SnapshotConversation;
 use kernel::cleanup::SnapshotCorrection;
 use kernel::cleanup::SnapshotHead;
@@ -21,7 +20,8 @@ pub(super) struct ConversationRow {
     title: Option<String>,
     cwd: Option<String>,
     summary: Option<String>,
-    last_active: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    last_active: Timestamp,
     opening: Option<String>,
     user_turns: i64,
     task_origin: Option<String>,
@@ -65,8 +65,10 @@ pub(super) struct TopicRow {
     pub(super) directory_kind: Option<String>,
     pub(super) directory_node: Option<String>,
     pub(super) directory_path: Option<String>,
-    pub(super) created_at: DateTime<Utc>,
-    pub(super) updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(super) created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(super) updated_at: Timestamp,
 }
 
 #[derive(Debug, sqlx::FromRow)]

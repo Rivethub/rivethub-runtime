@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -19,8 +19,8 @@ use crate::session_id::SessionId;
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PluginEventDelivery {
     pub seq: u64,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
     pub missed: u64,
     pub event: PluginEvent,
 }
@@ -62,8 +62,8 @@ pub enum PluginEvent {
 pub struct PluginJobRequest {
     pub run_id: String,
     pub trigger: PluginJobTrigger,
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub scheduled_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub scheduled_at: Option<Timestamp>,
 }
 
 #[serde_with::skip_serializing_none]
@@ -128,6 +128,6 @@ pub struct PluginNotification {
     pub text: Option<String>,
     pub tone: Option<ViewTone>,
     pub action: Option<ViewAction>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub ts: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub ts: Timestamp,
 }

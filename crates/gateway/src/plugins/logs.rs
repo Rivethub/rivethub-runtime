@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use chrono::Utc;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
 use wire::plugin::PluginId;
@@ -56,7 +56,7 @@ impl LogSink {
             tracing::info!(plugin = plugin.as_ref(), "{text}");
         }
         let line = PluginLogLine {
-            at: Utc::now(),
+            at: Timestamp::now(),
             stream,
             text,
         };
@@ -110,7 +110,7 @@ async fn report_dropped(open: &mut BTreeMap<PathBuf, OpenLog>, dropped: &Dropped
     for (folder, count) in lost {
         tracing::warn!(folder = %folder.display(), "{count} plug-in log lines dropped");
         let notice = PluginLogLine {
-            at: Utc::now(),
+            at: Timestamp::now(),
             stream: PluginLogStream::Host,
             text: format!(
                 "{count} lines dropped: the plug-in wrote faster than its log could be saved"

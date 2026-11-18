@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -335,8 +334,8 @@ pub fn turns_of(lines: &[Line]) -> Turns {
         let Some(text) = line.timestamp.as_deref() else {
             continue;
         };
-        let at = match DateTime::parse_from_rfc3339(text) {
-            Ok(at) => at.with_timezone(&Utc),
+        let at = match wire::time::parse_rfc3339(text) {
+            Ok(at) => at,
             Err(error) => {
                 turns.skipped.push(SkippedLine {
                     number: line.number,
@@ -390,7 +389,7 @@ impl TranscriptReader for ClaudeTranscriptReader {
     async fn tail(
         &self,
         session: &SessionId,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<Turn>, TranscriptReaderError> {
         Ok(self
             .read(session)

@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobKeyMode;
@@ -262,7 +261,7 @@ async fn consolidate_wiki(
 
 async fn export(
     out: Option<PathBuf>,
-    since: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
     sqlite: Option<PathBuf>,
     env: &Environment,
     shutdown: &CancellationToken,

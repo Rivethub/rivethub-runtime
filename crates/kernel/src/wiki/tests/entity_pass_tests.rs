@@ -1,10 +1,6 @@
 #[test]
 fn the_facts_section_lists_every_current_fact_after_the_prose() {
-    let at = |d: &str| {
-        chrono::DateTime::parse_from_rfc3339(d)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-    };
+    let at = |d: &str| values::time::parse_rfc3339(d).unwrap();
     let facts = vec![
         LiveFact {
             attribute: "ram".into(),
@@ -34,11 +30,12 @@ fn the_facts_section_lists_every_current_fact_after_the_prose() {
     assert_eq!(article_with_facts("Only prose.", &[]), "Only prose.");
 }
 use super::*;
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use uuid::Uuid;
 
-fn at(secs: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs, 0).unwrap()
+fn at(secs: i64) -> Timestamp {
+    Timestamp::new(secs, 0).unwrap()
 }
 
 fn uid(n: u128) -> Uuid {
@@ -144,11 +141,7 @@ fn as_of_stays_inside_the_leaf_and_never_uses_processing_time() {
 
 #[test]
 fn an_earlier_session_is_older_and_the_same_session_is_not() {
-    let at = |text: &str| {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-    };
+    let at = |text: &str| values::time::parse_rfc3339(text).unwrap();
     let mark = AppliedMark {
         at: at("2026-11-07T00:00:00Z"),
         summary_id: uuid::Uuid::from_u128(2),
@@ -179,19 +172,19 @@ fn an_earlier_session_is_older_and_the_same_session_is_not() {
 fn history_is_one_entry_per_summary_newest_first() {
     let lines = [
         HistoryLine {
-            date: NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            date: Date::new(2024, 1, 2).unwrap(),
             sentence: "first".to_owned(),
             summary_id: uid(1),
             conversation_id: None,
         },
         HistoryLine {
-            date: NaiveDate::from_ymd_opt(2024, 3, 4).unwrap(),
+            date: Date::new(2024, 3, 4).unwrap(),
             sentence: "later".to_owned(),
             summary_id: uid(2),
             conversation_id: None,
         },
         HistoryLine {
-            date: NaiveDate::from_ymd_opt(2024, 3, 4).unwrap(),
+            date: Date::new(2024, 3, 4).unwrap(),
             sentence: "duplicate".to_owned(),
             summary_id: uid(2),
             conversation_id: None,
@@ -306,22 +299,14 @@ fn a_rewrite_parses_and_the_later_value_becomes_the_snapshot() {
     let line = session_history(
         uid(4),
         Some(uid(9)),
-        NaiveDate::from_ymd_opt(2023, 11, 14).unwrap(),
+        Date::new(2023, 11, 14).unwrap(),
         &rewrite.history_sentence,
     );
     assert_eq!(
         line.map(|item| item.sentence),
         Some("RAM is 152 GB available.".to_owned())
     );
-    assert!(
-        session_history(
-            uid(4),
-            None,
-            NaiveDate::from_ymd_opt(2023, 11, 14).unwrap(),
-            "  "
-        )
-        .is_none()
-    );
+    assert!(session_history(uid(4), None, Date::new(2023, 11, 14).unwrap(), "  ").is_none());
 }
 
 #[test]

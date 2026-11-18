@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -38,8 +37,8 @@ pub struct UserSettings {
     #[serde(default)]
     pub chosen: bool,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub default_since: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub default_since: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

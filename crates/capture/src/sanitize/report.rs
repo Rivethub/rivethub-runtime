@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::fmt;
+use wire::time::LegacyStrftime as _;
 
-use chrono::DateTime;
-use chrono::Utc;
 use wire::capture::BundledSession;
 
 use super::decide::Decision;
@@ -217,7 +217,7 @@ impl SessionLine {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Report {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub policy_sha256: String,
     pub bundle_sha256: String,
     pub sessions: Vec<SessionLine>,
@@ -327,7 +327,7 @@ impl Report {
             format_args!(
                 "Sanitized {sessions} {} at {}: {totals}.\n",
                 plural(sessions, "session", "sessions"),
-                self.at.format("%Y-%m-%d %H:%M:%S UTC"),
+                self.at.legacy_strftime("%Y-%m-%d %H:%M:%S UTC"),
             ),
         );
         if let Some(decision) = &self.decision {

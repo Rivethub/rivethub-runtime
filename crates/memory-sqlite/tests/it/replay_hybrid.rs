@@ -1,6 +1,6 @@
 use crate::search_support;
+use jiff::Timestamp;
 
-use chrono::{DateTime, Utc};
 use kernel::memory::{SearchMode, SearchOutcome, SearchQuery};
 use memory_sqlite::SqliteStore;
 use search_support::{AccessRow, Case, Hybrid, Options, Recording, TestResult};
@@ -73,11 +73,7 @@ fn request(text: &str, options: &Options) -> TestResult<SearchQuery> {
     Ok(query)
 }
 
-async fn search(
-    store: &SqliteStore,
-    clock: DateTime<Utc>,
-    case: &Case,
-) -> TestResult<SearchOutcome> {
+async fn search(store: &SqliteStore, clock: Timestamp, case: &Case) -> TestResult<SearchOutcome> {
     let store = if case.degraded.is_some() {
         store
             .clone()
@@ -91,7 +87,11 @@ async fn search(
         store.clone()
     };
     let actual = store
-        .search_at(request(&case.query, &case.options)?, clock, &Utc)
+        .search_at(
+            request(&case.query, &case.options)?,
+            clock,
+            &jiff::tz::TimeZone::UTC,
+        )
         .await?;
     assert_eq!(
         actual.degraded.is_some(),

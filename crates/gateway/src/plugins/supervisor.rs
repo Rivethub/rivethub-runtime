@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::os::unix::process::ExitStatusExt as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
 use tokio::io::{AsyncRead, BufReader};
 use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
@@ -192,14 +192,14 @@ async fn stop_child(host: &PluginHost, plugin: &PluginId, child: &mut Child) -> 
 fn exit_of(status: std::io::Result<std::process::ExitStatus>) -> PluginExit {
     match status {
         Ok(status) => PluginExit {
-            at: Utc::now(),
+            at: Timestamp::now(),
             code: status.code(),
             signal: status.signal().map(signal_name),
         },
         Err(error) => {
             tracing::warn!(%error, "plug-in exit status unreadable");
             PluginExit {
-                at: Utc::now(),
+                at: Timestamp::now(),
                 code: None,
                 signal: None,
             }

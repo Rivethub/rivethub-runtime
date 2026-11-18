@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -61,7 +60,7 @@ pub(crate) struct RunInput<'a> {
     pub(crate) model: &'a str,
     pub(crate) base_url: &'a str,
     pub(crate) concurrency: u32,
-    pub(crate) started_at: DateTime<Utc>,
+    pub(crate) started_at: Timestamp,
     pub(crate) wall_ms: u64,
     pub(crate) setup_ms: u64,
     pub(crate) steps: &'a [StepRecord],
@@ -315,7 +314,7 @@ fn run_json(input: &RunInput<'_>, printed: &Printed) -> Result<Vec<u8>, Failure>
         base_url: input.base_url.to_owned(),
         concurrency: input.concurrency,
         started_at: input.started_at,
-        finished_at: Utc::now(),
+        finished_at: Timestamp::now(),
         wall_ms: input.wall_ms,
         setup_ms: input.setup_ms,
         summaries: input
@@ -406,6 +405,7 @@ struct StepJson {
     invariants: Invariants,
 }
 
+#[serde_with::serde_as]
 #[derive(Serialize)]
 struct RunJson {
     label: String,
@@ -413,8 +413,11 @@ struct RunJson {
     model: String,
     base_url: String,
     concurrency: u32,
-    started_at: DateTime<Utc>,
-    finished_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    started_at: Timestamp,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    finished_at: Timestamp,
     wall_ms: u64,
     setup_ms: u64,
     summaries: u32,

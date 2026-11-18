@@ -1,4 +1,5 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -54,11 +55,13 @@ impl From<WikiSlug> for String {
     }
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WikiHistoryEntry {
     #[schemars(with = "String")]
-    pub date: NaiveDate,
+    #[serde_as(as = "crate::time::CivilDate")]
+    pub date: Date,
     pub title: String,
     pub body: String,
 }
@@ -71,7 +74,7 @@ pub struct WikiCitation {
     pub summary_id: String,
     #[serde(default)]
     #[serde_as(as = "Option<crate::time::Millis>")]
-    pub date: Option<DateTime<Utc>>,
+    pub date: Option<Timestamp>,
     pub kind: Option<String>,
     pub note: Option<String>,
     #[serde(default)]
@@ -134,9 +137,9 @@ pub struct WikiPageEdit {
 #[serde(rename_all = "camelCase")]
 pub struct WikiSourceSpan {
     #[serde_as(as = "crate::time::Millis")]
-    pub earliest: DateTime<Utc>,
+    pub earliest: Timestamp,
     #[serde_as(as = "crate::time::Millis")]
-    pub latest: DateTime<Utc>,
+    pub latest: Timestamp,
 }
 
 #[serde_as]
@@ -159,9 +162,9 @@ pub struct WikiPageResponse {
     pub git_sha: Option<String>,
     #[serde(default)]
     #[serde_as(as = "Option<crate::time::Millis>")]
-    pub last_verified: Option<DateTime<Utc>>,
+    pub last_verified: Option<Timestamp>,
     #[serde_as(as = "crate::time::Millis")]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub related: Option<Vec<String>>,
     #[serde(default)]
     pub topic_id: Option<String>,
@@ -205,7 +208,7 @@ pub struct WikiTopic {
     pub tags: Vec<String>,
     pub entities: Vec<String>,
     #[serde_as(as = "crate::time::Millis")]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub excerpt: String,
     #[serde(default)]
     pub topic_id: Option<String>,

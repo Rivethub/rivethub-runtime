@@ -1,12 +1,11 @@
 mod samples;
 mod upkeep;
 
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::conversation_keys;
 use kernel::tidy::Batch;
 use kernel::tidy::BatchId;
@@ -89,7 +88,7 @@ pub(crate) fn count(value: i64) -> Result<u64, TidyError> {
     u64::try_from(value).map_err(stored("count"))
 }
 
-fn at(text: &str, column: &'static str) -> Result<DateTime<Utc>, TidyError> {
+fn at(text: &str, column: &'static str) -> Result<Timestamp, TidyError> {
     crate::time::stored(text, column).map_err(|error| TidyError::Unavailable(Box::new(error)))
 }
 
@@ -261,7 +260,7 @@ fn title(conn: &Connection, session: &SessionId) -> Result<Option<String>, TidyE
     .map_err(failed("tidy titles"))
 }
 
-fn recent(conn: &Connection, since: DateTime<Utc>) -> Result<Vec<RecentFiling>, TidyError> {
+fn recent(conn: &Connection, since: Timestamp) -> Result<Vec<RecentFiling>, TidyError> {
     let mut statement = conn
         .prepare(
             "SELECT topic_id, count(*) FROM (
@@ -326,7 +325,7 @@ impl TidyStore for SqliteStore {
         &self,
         id: ProposalId,
         state: ProposalState,
-        decided: DateTime<Utc>,
+        decided: Timestamp,
     ) -> Result<Proposal, TidyError> {
         self.tidy("tidy decide", move |conn| {
             let changed = conn
@@ -348,7 +347,7 @@ impl TidyStore for SqliteStore {
         .await
     }
 
-    async fn last_batch(&self, by: Proposer) -> Result<Option<DateTime<Utc>>, TidyError> {
+    async fn last_batch(&self, by: Proposer) -> Result<Option<Timestamp>, TidyError> {
         self.tidy("tidy last batch", move |conn| {
             conn.query_row(
                 "SELECT max(proposed_at) FROM rh_tidy_batches WHERE proposed_by = ?1",
@@ -379,7 +378,7 @@ impl TidyStore for SqliteStore {
         .await
     }
 
-    async fn inputs(&self, since: DateTime<Utc>) -> Result<TidyInputs, TidyError> {
+    async fn inputs(&self, since: Timestamp) -> Result<TidyInputs, TidyError> {
         self.tidy("tidy inputs", move |conn| {
             Ok(TidyInputs {
                 suggestions: suggestions(conn)?,

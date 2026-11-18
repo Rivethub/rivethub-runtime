@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use kernel::wiki::builder::{
     DeferredWiki, ExtractWiki, WikiBuilderStore, WikiRouting, WikiStoreError, WikiWork,
 };
@@ -50,7 +50,7 @@ impl WikiBuilderStore for WikiStore {
         job: &ExtractWiki,
         patches: Vec<WikiPatch>,
         _routing: &WikiRouting,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let topics: Vec<String> = patches
             .into_iter()
@@ -69,7 +69,7 @@ impl WikiBuilderStore for WikiStore {
         &self,
         _summary_id: Uuid,
         _error: &str,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         Ok(())
     }
@@ -86,7 +86,7 @@ impl WikiBuilderStore for WikiStore {
         &self,
         _summary_id: Uuid,
         _slug: &WikiSlug,
-        _now: DateTime<Utc>,
+        _now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         Ok(())
     }

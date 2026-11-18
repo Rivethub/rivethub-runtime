@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::model_calls::{
     CallTotals, CredentialHeader, ModelCall, ProxyHeaders, TurnMetadata, correlate,
 };
@@ -38,7 +38,7 @@ fn codex_headers(metadata: &str) -> Result<ProxyHeaders, CredentialHeader> {
 fn call(outcome: CallOutcome, model: Option<&str>, usage: Option<CallUsage>) -> ModelCall {
     ModelCall {
         call_id: "call".to_owned(),
-        started_at: DateTime::<Utc>::UNIX_EPOCH,
+        started_at: Timestamp::UNIX_EPOCH,
         finished_at: None,
         provider: "anthropic".to_owned(),
         model_requested: None,

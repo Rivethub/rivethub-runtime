@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::queue::JobId;
 use kernel::topics::TopicId;
@@ -84,7 +84,7 @@ pub(super) async fn record(
     summaries: &[&WikiSummary],
     touched: &[String],
     git_sha: Option<&String>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), WikiStoreError> {
     for summary in summaries {
         sqlx::query(
@@ -96,7 +96,7 @@ pub(super) async fn record(
         .bind(summary.id)
         .bind(WIKI_PIPELINE_VERSION)
         .bind(touched)
-        .bind(now)
+        .bind(crate::time::BindTime::bind_time(now))
         .bind(git_sha)
         .bind(summary.owner.as_ref().map(Owner::as_str))
         .execute(&mut **tx)

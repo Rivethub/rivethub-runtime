@@ -1,13 +1,14 @@
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::fmt::Write as _;
+use wire::time::LegacyStrftime as _;
+use wire::time::TimestampFormat as _;
 
 use axum::http::StatusCode;
 use axum::http::header;
 use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use chrono::SecondsFormat;
 use kernel::wiki::WikiFilter;
 use kernel::wiki::page::WikiSlug;
 use wire::gateway::wiki::WikiMissBody;
@@ -85,9 +86,7 @@ pub(super) fn index(topics: &WikiTopicList, filter: &WikiFilter) -> Result<Strin
     for topic in &topics.topics {
         output.push_str("<li><h2>");
         link(&mut output, &topic.slug, &topic.title)?;
-        let updated = topic
-            .updated_at
-            .to_rfc3339_opts(SecondsFormat::Millis, true);
+        let updated = topic.updated_at.rfc3339_millis();
         write!(
             output,
             "</h2><p>{}</p><time>{}</time></li>",
@@ -121,7 +120,7 @@ pub(super) fn index(topics: &WikiTopicList, filter: &WikiFilter) -> Result<Strin
 
 pub(super) fn article(page: &WikiPageResponse) -> Result<String, WikiError> {
     let mut output = document(&page.title);
-    let updated = page.updated_at.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let updated = page.updated_at.rfc3339_millis();
     write!(
         output,
         "<p>Updated <time>{}</time></p><section><h2>Current state</h2><pre>{}</pre></section>",
@@ -154,7 +153,7 @@ pub(super) fn article(page: &WikiPageResponse) -> Result<String, WikiError> {
     if !page.history.is_empty() {
         output.push_str("<section><h2>History</h2>");
         for entry in &page.history {
-            let date = entry.date.to_string();
+            let date = entry.date.legacy_strftime("%Y-%m-%d");
             write!(
                 output,
                 "<h3>{}</h3><time>{}</time><pre>{}</pre>",

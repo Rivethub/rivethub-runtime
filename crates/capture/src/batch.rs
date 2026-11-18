@@ -1,7 +1,10 @@
-use chrono::{DateTime, Utc};
+use std::marker::PhantomData;
+
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde_with::DeserializeAs;
+use serde_with::Same;
 use serde_with::serde_as;
 use thiserror::Error;
 use wire::JsonObject;
@@ -16,11 +19,11 @@ pub enum BatchError {
     Invalid(&'static str),
 }
 
-struct NotNull;
+struct NotNull<Adapter = Same>(PhantomData<Adapter>);
 
-impl<'de, T: Deserialize<'de>> DeserializeAs<'de, Option<T>> for NotNull {
+impl<'de, T, Adapter: DeserializeAs<'de, T>> DeserializeAs<'de, Option<T>> for NotNull<Adapter> {
     fn deserialize_as<D: Deserializer<'de>>(deserializer: D) -> Result<Option<T>, D::Error> {
-        T::deserialize(deserializer).map(Some)
+        Adapter::deserialize_as(deserializer).map(Some)
     }
 }
 
@@ -44,12 +47,12 @@ struct BatchBody {
     #[serde_as(as = "NotNull")]
     #[serde(default)]
     finalize: Option<bool>,
-    #[serde_as(as = "NotNull")]
+    #[serde_as(as = "NotNull<wire::time::Rfc3339>")]
     #[serde(default)]
-    created_at: Option<DateTime<Utc>>,
-    #[serde_as(as = "NotNull")]
+    created_at: Option<Timestamp>,
+    #[serde_as(as = "NotNull<wire::time::Rfc3339>")]
     #[serde(default)]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<Timestamp>,
     messages: Vec<CaptureMessage>,
 }
 

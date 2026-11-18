@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8,8 +7,8 @@ pub struct SessionDigest {
     pub conversation_id: Uuid,
     pub title: Option<String>,
     pub agent: String,
-    pub first: DateTime<Utc>,
-    pub last: DateTime<Utc>,
+    pub first: Timestamp,
+    pub last: Timestamp,
     pub messages: u64,
     pub imported_from: Option<String>,
 }

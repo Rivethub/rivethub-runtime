@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -60,7 +59,7 @@ fn place(root: &Path, relative: &str, fixture: &str) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-fn stamp(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn stamp(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 
@@ -125,6 +124,41 @@ async fn replay(
 
 fn codex_name() -> String {
     format!("sessions/2026/10/14/rollout-2026-10-14T12-00-00-{SESSION}.jsonl")
+}
+
+#[tokio::test]
+async fn codex_capture_keeps_messages_with_unparseable_timestamps()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(codex_name());
+    std::fs::create_dir_all(path.parent().ok_or("rollout directory")?)?;
+    let mut lines = Vec::new();
+    for stamp in [
+        " 2026-01-01T01:02:03.123456789012 +0100",
+        "2026-01-01T01:02:03+01:00:00",
+    ] {
+        let stamp = serde_json::to_string(stamp)?;
+        lines.push(format!(
+            r#"{{"timestamp":{stamp},"type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"hello"}}]}}}}"#
+        ));
+    }
+    std::fs::write(path, lines.join("\n"))?;
+    let StoreReader::Codex(reader) = open(HarnessId::Codex, dir.path())? else {
+        return Err("Codex reader".into());
+    };
+    let slice = reader.capture(&session(HarnessId::Codex)).await?;
+    let [first, second] = slice.messages.as_slice() else {
+        return Err("expected both messages".into());
+    };
+    assert_eq!(
+        serde_json::to_value(first)?
+            .get("created_at")
+            .and_then(testkit::Json::as_str),
+        Some("2026-01-01T00:02:03.123Z")
+    );
+    assert_eq!(second.created_at, None);
+    assert_eq!(slice.skipped, []);
+    Ok(())
 }
 
 #[tokio::test]

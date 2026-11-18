@@ -51,7 +51,7 @@ pub enum SqliteError {
         column: &'static str,
         value: String,
         #[source]
-        source: chrono::ParseError,
+        source: jiff::Error,
     },
     #[error("a stored count does not fit an unsigned count")]
     Count(#[source] TryFromIntError),

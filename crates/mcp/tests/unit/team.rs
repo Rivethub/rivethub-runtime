@@ -1,11 +1,12 @@
 use super::*;
+use jiff::Timestamp;
 
 fn session(owner: &str, title: &str, excerpt: Option<&str>) -> kernel::memory::TeamSession {
     kernel::memory::TeamSession {
         owner: owner.into(),
         session_id: title.into(),
         title: title.into(),
-        when: chrono::DateTime::from_timestamp(0, 0).expect("when"),
+        when: Timestamp::new(0, 0).expect("when"),
         topic: vec!["Work".into(), "Release".into()],
         excerpt: excerpt.map(str::to_owned),
     }
@@ -24,8 +25,8 @@ fn team_sessions_are_grouped_and_all_session_text_is_quoted_data() {
     ];
     let reply = render(
         records,
-        chrono_tz::UTC,
-        chrono::DateTime::from_timestamp(0, 0).expect("now"),
+        &jiff::tz::TimeZone::UTC,
+        Timestamp::new(0, 0).expect("now"),
     )
     .expect("render");
     let text = serde_json::to_string(&reply).expect("json");
@@ -57,13 +58,14 @@ fn introduction_names_only_co_members_and_is_absent_for_one_person() {
 fn team_time_is_relative_and_minute_precision_without_an_empty_topic_separator() {
     let mut record = session("ines", "Recent work", None);
     record.topic.clear();
-    record.when = chrono::DateTime::parse_from_rfc3339("2026-11-14T01:37:50.445744Z")
-        .expect("when")
-        .to_utc();
-    let now = chrono::DateTime::parse_from_rfc3339("2026-11-14T01:42:50Z")
-        .expect("now")
-        .to_utc();
-    let reply = render(vec![record], chrono_tz::America::New_York, now).expect("render");
+    record.when = wire::time::parse_rfc3339("2026-11-14T01:37:50.445744Z").expect("when");
+    let now = wire::time::parse_rfc3339("2026-11-14T01:42:50Z").expect("now");
+    let reply = render(
+        vec![record],
+        &wire::time::bundled_zone("America/New_York").expect("bundled zone"),
+        now,
+    )
+    .expect("render");
     let text = serde_json::to_string(&reply).expect("json");
     assert!(text.contains("Recent work · 4m ago · 2026-11-13 20:37 EST\\n"));
     assert!(!text.contains("445744"));

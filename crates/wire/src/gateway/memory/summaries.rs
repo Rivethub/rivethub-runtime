@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::SummaryKind;
@@ -24,6 +24,7 @@ pub enum VectorState {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySummaryNode {
@@ -33,9 +34,14 @@ pub struct MemorySummaryNode {
     pub kind: SummaryKind,
     pub content: String,
     pub message_count: u32,
-    pub earliest_at: Option<DateTime<Utc>>,
-    pub latest_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub earliest_at: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub latest_at: Option<Timestamp>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

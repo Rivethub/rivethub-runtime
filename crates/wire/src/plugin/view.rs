@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -220,8 +220,8 @@ pub enum ViewInline {
     Badge { text: String, tone: ViewTone },
     #[serde(rename_all = "camelCase")]
     Time {
-        #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-        at: DateTime<Utc>,
+        #[serde_as(as = "crate::time::EpochMillis")]
+        at: Timestamp,
         style: Option<ViewTimeStyle>,
     },
     #[serde(rename_all = "camelCase")]

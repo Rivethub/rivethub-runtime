@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::memory::MemoryMessageTally;
 use kernel::memory::MemoryStoreError;
 use kernel::memory::MemorySummaryNode;
@@ -142,9 +141,12 @@ struct DagRow {
     content: Vec<u8>,
     truncated: bool,
     message_count: i32,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
     source_message_ids: Vec<String>,
     vector: String,
 }
@@ -163,8 +165,10 @@ struct ShapeRow {
     level: i64,
     kind: String,
     embedded: bool,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

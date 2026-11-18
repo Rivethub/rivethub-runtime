@@ -1,6 +1,6 @@
 use crate::Extra;
 use crate::session_id::SessionId;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use strum::Display;
@@ -37,9 +37,9 @@ pub struct HarnessSessionSummary {
     pub title: Option<String>,
     pub cwd: Option<String>,
     #[serde_as(as = "crate::time::Millis")]
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[serde_as(as = "crate::time::Millis")]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub status: HarnessSessionStatus,
     pub blocked: Option<bool>,
     pub supersedes: Option<SessionId>,

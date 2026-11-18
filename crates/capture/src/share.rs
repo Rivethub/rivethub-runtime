@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use config::Config;
 use config::Environment;
 use config::MappingFile;
@@ -211,7 +210,7 @@ pub struct Job<'a> {
     pub mapping: &'a MappingFile,
     pub key: &'a Path,
     pub decider: Option<&'a Decider>,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[derive(Debug)]
@@ -292,7 +291,7 @@ pub struct Chosen {
 pub fn chosen(
     author: BundleAuthor,
     sessions: Vec<(BundledSession, Choice)>,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<Chosen, BundleError> {
     let mut rules = BTreeMap::new();
     let mut kept = Vec::with_capacity(sessions.len());

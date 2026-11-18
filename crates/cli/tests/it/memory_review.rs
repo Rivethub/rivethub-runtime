@@ -9,6 +9,7 @@ mod places;
 #[path = "memory_review/spans.rs"]
 mod spans;
 
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -343,7 +344,7 @@ fn sealed(sessions: Vec<wire::capture::BundledSession>) -> Vec<u8> {
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Sanitization::Raw,
         sessions,
     )

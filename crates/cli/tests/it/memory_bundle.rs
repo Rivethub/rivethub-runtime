@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::support;
+use jiff::Timestamp;
 
 use std::path::Path;
 
@@ -464,7 +465,7 @@ fn planted_bundle(directory: &Path, sanitization: wire::capture::Sanitization) -
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         sanitization,
         vec![session],
     )
@@ -556,7 +557,7 @@ async fn a_forged_sanitized_stamp_is_held_when_a_secret_still_matches() {
     let forged = planted_bundle(
         node.directory.path(),
         wire::capture::Sanitization::Sanitized(wire::capture::SanitizeStamp {
-            at: chrono::DateTime::UNIX_EPOCH,
+            at: Timestamp::UNIX_EPOCH,
             policy_sha256: "0".repeat(64),
             passes: vec!["secrets".to_owned()],
             unresolved_flags: 0,

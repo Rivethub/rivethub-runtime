@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::support;
+use jiff::Timestamp;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -50,7 +51,8 @@ struct Conversation {
     owner_user_id: String,
     title: Option<String>,
     settings: String,
-    created_at: chrono::DateTime<chrono::Utc>,
+    #[sqlx(try_from = "memory_postgres::time::PgTimestamp")]
+    created_at: Timestamp,
 }
 
 async fn conversations(pool: &PgPool) -> Vec<Conversation> {
@@ -142,7 +144,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
         &format!("gateway:\n  host: 127.0.0.1\n  port: {port}\n"),
     );
     let receiver = environment(&receiver_home);
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let live =
         cli::capture_hook::hook(&receiver, &hook_tool("toolu_ines1", "ines-native"), now).await;
     assert_eq!(live.stderr, "");
@@ -168,9 +170,7 @@ async fn an_import_never_touches_the_receivers_native_session_with_the_same_key(
     assert_eq!(imported.title.as_deref(), Some("dana sender title"));
     assert_eq!(
         imported.created_at,
-        "2026-10-01T09:00:00Z"
-            .parse::<chrono::DateTime<chrono::Utc>>()
-            .expect("date")
+        "2026-10-01T09:00:00Z".parse::<Timestamp>().expect("date")
     );
     assert!(
         after.iter().any(|row| row == native_before),

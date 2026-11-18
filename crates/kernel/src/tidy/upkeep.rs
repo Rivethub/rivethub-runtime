@@ -1,9 +1,7 @@
-use chrono::DateTime;
-use chrono::Utc;
-
 use crate::queue::WorkerRole;
 use crate::topics::TopicId;
 use crate::topics::TopicName;
+use jiff::Timestamp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilingTally {
@@ -31,14 +29,14 @@ pub struct WikiTally {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskActivity {
     pub task: String,
-    pub last_finished: Option<DateTime<Utc>>,
+    pub last_finished: Option<Timestamp>,
     pub failing: u64,
     pub queued: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RoleActivity {
-    pub last_finished: Option<DateTime<Utc>>,
+    pub last_finished: Option<Timestamp>,
     pub failing: u64,
     pub queued: u64,
 }

@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -60,7 +60,7 @@ impl EventQueue {
         state.seq += 1;
         Some(PluginEventDelivery {
             seq: state.seq,
-            at: Utc::now(),
+            at: Timestamp::now(),
             missed: std::mem::take(&mut state.missed),
             event,
         })

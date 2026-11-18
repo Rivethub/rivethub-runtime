@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::memory::ConversationWindow;
 use kernel::memory::PendingConversation;
 use kernel::queue::FixedJob;
@@ -22,7 +21,7 @@ const RECENT_IDLE_PRIORITY: i16 = -20;
 const RECENT_STALE_PRIORITY: i16 = -10;
 const IDLE_PRIORITY: i16 = 0;
 const STALE_PRIORITY: i16 = 10;
-const RECENT: TimeDelta = TimeDelta::hours(24);
+const RECENT: SignedDuration = SignedDuration::from_hours(24);
 const SUMMARIZE_ATTEMPTS: i32 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,7 +118,7 @@ pub(super) fn unfinished(
 
 pub(super) fn partial_allowed(
     trigger: SummaryTrigger,
-    latest: Option<DateTime<Utc>>,
+    latest: Option<Timestamp>,
     count: u32,
     batch: u32,
     env: &SummarizeEnv<'_>,
@@ -161,7 +160,7 @@ async fn enqueue(
     env: &SummarizeEnv<'_>,
     id: Uuid,
     trigger: SummaryTrigger,
-    latest: Option<DateTime<Utc>>,
+    latest: Option<Timestamp>,
 ) -> Result<(), WorkerError> {
     env.queue
         .enqueue(summarize_job(
@@ -179,7 +178,7 @@ fn summarize_job(
     id: Uuid,
     trigger: SummaryTrigger,
     priority: i16,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Job, WorkerError> {
     let payload = SummarizePayload {
         conversation_id: id,
@@ -196,7 +195,7 @@ fn summarize_job(
     })
 }
 
-fn priority_of(trigger: SummaryTrigger, latest: Option<DateTime<Utc>>, now: DateTime<Utc>) -> i16 {
+fn priority_of(trigger: SummaryTrigger, latest: Option<Timestamp>, now: Timestamp) -> i16 {
     let recent = message_age(latest, now).is_some_and(|age| age < RECENT);
     match (trigger, recent) {
         (SummaryTrigger::SessionStale, true) => RECENT_STALE_PRIORITY,
@@ -212,13 +211,13 @@ fn priority_of(trigger: SummaryTrigger, latest: Option<DateTime<Utc>>, now: Date
     }
 }
 
-fn aged(latest: Option<DateTime<Utc>>, now: DateTime<Utc>, minimum: TimeDelta) -> bool {
+fn aged(latest: Option<Timestamp>, now: Timestamp, minimum: SignedDuration) -> bool {
     match message_age(latest, now) {
         Some(age) => age >= minimum,
         None => false,
     }
 }
 
-fn message_age(latest: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Option<TimeDelta> {
-    latest.map(|at| now.signed_duration_since(at))
+fn message_age(latest: Option<Timestamp>, now: Timestamp) -> Option<SignedDuration> {
+    latest.map(|at| now.duration_since(at))
 }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::harness::HarnessId;
@@ -28,17 +28,22 @@ pub enum SharedWith {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionOriginLabel {
     pub author: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub updated_at: Option<Timestamp>,
     pub verification: Option<crate::capture::ReceiptVerification>,
     pub bundle_id: Option<String>,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummaryRow {
@@ -47,8 +52,11 @@ pub struct SessionSummaryRow {
     pub title: String,
     pub harness: Option<HarnessId>,
     pub origin: Option<SessionOriginLabel>,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub started_at: Timestamp,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub ended_at: Option<Timestamp>,
     pub message_count: u64,
     pub topic: Option<TopicPath>,
     pub visibility: SharedWith,
@@ -106,6 +114,7 @@ pub struct SessionTag {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
@@ -116,7 +125,9 @@ pub struct SessionMessage {
     pub tool_name: Option<String>,
     pub tool_args: Option<crate::JsonObject>,
     pub tool_result: Option<String>,
-    pub created_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub created_at: Timestamp,
 }
 
 #[serde_with::skip_serializing_none]

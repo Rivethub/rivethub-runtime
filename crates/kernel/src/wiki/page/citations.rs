@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use strum::IntoEnumIterator as _;
 
 use super::slug::{is_link_target, normalize_slug};
@@ -108,7 +108,7 @@ fn bullet_entry(line: &str) -> Option<PageCitation> {
     })
 }
 
-pub(super) fn iso_date(text: &str) -> Option<NaiveDate> {
+pub(super) fn iso_date(text: &str) -> Option<Date> {
     let mut parts = text.split('-');
     let (Some(year), Some(month), Some(day), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
@@ -118,17 +118,13 @@ pub(super) fn iso_date(text: &str) -> Option<NaiveDate> {
     if year.len() != 4 || month.len() != 2 || day.len() != 2 {
         return None;
     }
-    NaiveDate::from_ymd_opt(number(year)?, number(month)?, number(day)?)
-}
-
-fn number<T>(text: &str) -> Option<T>
-where
-    T: From<u8> + std::ops::Mul<Output = T> + std::ops::Add<Output = T>,
-{
-    text.bytes().try_fold(T::from(0), |value, byte| {
-        byte.is_ascii_digit()
-            .then(|| value * T::from(10) + T::from(byte - b'0'))
-    })
+    match Date::strptime("%Y-%m-%d", text) {
+        Ok(date) => Some(date),
+        Err(error) => {
+            tracing::trace!(%error, "wiki citation date is invalid");
+            None
+        }
+    }
 }
 
 fn citation_kind(text: &str) -> Option<CitationKind> {

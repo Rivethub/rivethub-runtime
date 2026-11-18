@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
 use kernel::queue::{FixedJob, Job, JobKeyMode, JobName, JobQueue as _};
 use kernel::wiki::page::WikiSlug;
 use kernel::wiki::recompile::RecompileWiki;
@@ -17,7 +17,7 @@ const PRIORITY: i16 = 5;
 
 pub(super) struct RecompileArgs {
     min_bytes: u64,
-    since: DateTime<Utc>,
+    since: Timestamp,
     slugs: Vec<WikiSlug>,
     dry_run: bool,
     json: bool,
@@ -41,7 +41,7 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
     let mut scan = Scan::new(args);
     let mut parsed = RecompileArgs {
         min_bytes: MIN_BYTES,
-        since: DateTime::<Utc>::MIN_UTC,
+        since: Timestamp::MIN,
         slugs: Vec::new(),
         dry_run: false,
         json: false,
@@ -61,8 +61,7 @@ pub(super) fn parse(args: &[String]) -> Result<RecompileArgs, Error> {
         match scan.option("--since", None) {
             Taken::Value(value) => {
                 since = Some(
-                    DateTime::parse_from_rfc3339(&value)
-                        .map(|parsed| parsed.with_timezone(&Utc))
+                    wire::time::parse_rfc3339(&value)
                         .map_err(|_| Error::SinceInvalid(value.clone()))?,
                 );
                 continue;

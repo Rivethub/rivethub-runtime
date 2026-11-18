@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::Utc;
 use kernel::facts::Evidence;
 use kernel::facts::FactKey;
 use kernel::facts::FactValue;
@@ -91,7 +91,7 @@ pub(super) async fn assert_snapshot(
     let quote = Evidence::quote(evidence);
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
     let by = Owner::new(owner.to_owned()).ok();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut sessions: HashMap<Uuid, SessionId> = HashMap::new();
     for fact in snapshot {
         #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]

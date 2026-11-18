@@ -51,7 +51,7 @@ fn page() -> WikiPageResponse {
         ),
         see_also: None,
         history: vec![WikiHistoryEntry {
-            date: chrono::NaiveDate::from_ymd_opt(2026, 10, 1).expect("date"),
+            date: jiff::civil::Date::new(2026, 10, 1).expect("date"),
             title: "Start".to_owned(),
             body: "First release".to_owned(),
         }],
@@ -71,9 +71,7 @@ fn page() -> WikiPageResponse {
         sources: Vec::new(),
         git_sha: Some("abc123".to_owned()),
         last_verified: None,
-        updated_at: chrono::DateTime::parse_from_rfc3339("2026-10-14T00:00:00.000Z")
-            .expect("instant")
-            .with_timezone(&chrono::Utc),
+        updated_at: wire::time::parse_rfc3339("2026-10-14T00:00:00.000Z").expect("instant"),
         related: Some(vec!["quotes 'and' $(substitutions) 🚀".to_owned()]),
         topic_id: None,
     }

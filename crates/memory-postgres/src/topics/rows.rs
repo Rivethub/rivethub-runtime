@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::owner::Owner;
 use kernel::tenancy::SessionVisibility;
 use kernel::tenancy::Visibility;
@@ -35,9 +34,12 @@ pub(super) struct TopicRow {
     pub(super) directory_kind: Option<String>,
     pub(super) directory_node: Option<String>,
     pub(super) directory_path: Option<String>,
-    pub(super) created_at: DateTime<Utc>,
-    pub(super) updated_at: DateTime<Utc>,
-    pub(super) closed_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(super) created_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(super) updated_at: Timestamp,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    pub(super) closed_at: Option<Timestamp>,
     pub(super) owner_user_id: Option<String>,
     pub(super) visibility: String,
     pub(super) visibility_mark: Option<String>,
@@ -77,7 +79,8 @@ pub(super) struct ListingRow {
     #[sqlx(flatten)]
     pub(super) topic: TopicRow,
     pub(super) placed_sessions: i64,
-    pub(super) last_active: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    pub(super) last_active: Option<Timestamp>,
 }
 
 pub(super) struct AliasRow {
@@ -89,7 +92,7 @@ pub(super) struct PlacementRow {
     pub(super) session_id: String,
     pub(super) topic_id: Uuid,
     pub(super) placed_by: String,
-    pub(super) placed_at: DateTime<Utc>,
+    pub(super) placed_at: Timestamp,
     pub(super) owner_user_id: String,
 }
 
@@ -105,9 +108,11 @@ pub(super) struct PlacedRow {
     pub(super) session_id: String,
     pub(super) topic_id: Uuid,
     pub(super) placed_by: String,
-    pub(super) placed_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    pub(super) placed_at: Timestamp,
     pub(super) owner_user_id: String,
-    pub(super) last_active: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    pub(super) last_active: Option<Timestamp>,
 }
 
 pub(super) fn failed(operation: &'static str) -> impl FnOnce(sqlx::Error) -> TopicError {
@@ -246,9 +251,9 @@ pub(super) async fn visible(
 ) -> Result<Option<Topic>, TopicError> {
     let row = sqlx::query_as!(
         TopicRow,
-        "SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,
-                created_at, updated_at, closed_at, owner_user_id, visibility, visibility_mark
-           FROM rh_topics WHERE id = $1",
+        r#"SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,
+                created_at AS "created_at: jiff_sqlx::Timestamp", updated_at AS "updated_at: jiff_sqlx::Timestamp", closed_at AS "closed_at!: crate::time::OptionalTimestamp", owner_user_id, visibility, visibility_mark
+           FROM rh_topics WHERE id = $1"#,
         id.uuid()
     )
     .fetch_optional(&mut *conn)
@@ -269,9 +274,9 @@ pub(super) async fn by_id(
 ) -> Result<Option<Topic>, TopicError> {
     let row = sqlx::query_as!(
         TopicRow,
-        "SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,
-                created_at, updated_at, closed_at, owner_user_id, visibility, visibility_mark
-           FROM rh_topics WHERE id = $1 FOR UPDATE",
+        r#"SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,
+                created_at AS "created_at: jiff_sqlx::Timestamp", updated_at AS "updated_at: jiff_sqlx::Timestamp", closed_at AS "closed_at!: crate::time::OptionalTimestamp", owner_user_id, visibility, visibility_mark
+           FROM rh_topics WHERE id = $1 FOR UPDATE"#,
         id.uuid()
     )
     .fetch_optional(&mut *conn)
@@ -293,15 +298,15 @@ pub(super) async fn by_slug(
 ) -> Result<Option<Topic>, TopicError> {
     let row = sqlx::query_as!(
         TopicRow,
-        "SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind, t.directory_node,
-                t.directory_path, t.created_at, t.updated_at, t.closed_at, t.owner_user_id,
+        r#"SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind, t.directory_node,
+                t.directory_path, t.created_at AS "created_at: jiff_sqlx::Timestamp", t.updated_at AS "updated_at: jiff_sqlx::Timestamp", t.closed_at AS "closed_at!: crate::time::OptionalTimestamp", t.owner_user_id,
                 t.visibility, t.visibility_mark
            FROM rh_topics t
           WHERE t.kind = $2
             AND (t.slug = $1
                  OR t.id = (SELECT r.topic_id FROM rh_topic_redirects r WHERE r.slug = $1))
           ORDER BY (t.slug = $1) DESC
-          LIMIT 1",
+          LIMIT 1"#,
         slug.as_str(),
         kind.to_string()
     )
@@ -323,7 +328,7 @@ pub(super) async fn placement_of(
 ) -> Result<Option<Placement>, TopicError> {
     sqlx::query_as!(
         PlacementRow,
-        "SELECT session_id, topic_id, placed_by, placed_at, owner_user_id
+        "SELECT session_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\", owner_user_id
            FROM rh_session_placements WHERE session_id = $1",
         session.as_str()
     )

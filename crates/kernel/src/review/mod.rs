@@ -1,12 +1,11 @@
 mod facts;
 mod key;
 
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 use thiserror::Error;
 
 use crate::BoxError;
@@ -20,7 +19,7 @@ pub use self::key::FilingTarget;
 pub use self::key::ReviewKey;
 pub use self::key::UnknownReviewKey;
 
-pub const SNOOZE: TimeDelta = TimeDelta::hours(24);
+pub const SNOOZE: SignedDuration = SignedDuration::from_hours(24);
 
 #[derive(Debug, Error)]
 pub enum ReviewError {
@@ -30,8 +29,8 @@ pub enum ReviewError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mark {
-    Decided { at: DateTime<Utc> },
-    Snoozed { until: DateTime<Utc> },
+    Decided { at: Timestamp },
+    Snoozed { until: Timestamp },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumString)]
@@ -43,7 +42,7 @@ pub enum MarkState {
 
 impl Mark {
     #[must_use]
-    pub const fn of(state: MarkState, at: DateTime<Utc>) -> Self {
+    pub const fn of(state: MarkState, at: Timestamp) -> Self {
         match state {
             MarkState::Decided => Self::Decided { at },
             MarkState::Snoozed => Self::Snoozed { until: at },
@@ -51,7 +50,7 @@ impl Mark {
     }
 
     #[must_use]
-    pub const fn parts(self) -> (MarkState, DateTime<Utc>) {
+    pub const fn parts(self) -> (MarkState, Timestamp) {
         match self {
             Self::Decided { at } => (MarkState::Decided, at),
             Self::Snoozed { until } => (MarkState::Snoozed, until),
@@ -85,7 +84,7 @@ impl Marks {
     }
 
     #[must_use]
-    pub fn open(&self, key: &ReviewKey, now: DateTime<Utc>) -> bool {
+    pub fn open(&self, key: &ReviewKey, now: Timestamp) -> bool {
         match self.0.get(key) {
             None => true,
             Some(Mark::Decided { .. }) => false,

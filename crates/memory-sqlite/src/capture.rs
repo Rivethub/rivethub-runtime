@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::CaptureResult;
@@ -71,7 +70,7 @@ impl SqliteStore {
         batch: CaptureBatchRequest,
         owner: &Owner,
         node: Option<&str>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<CaptureResult, SqliteError> {
         let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
@@ -140,7 +139,7 @@ impl PreparedBatch {
         })
     }
 
-    fn stamps(&self) -> Vec<Option<DateTime<Utc>>> {
+    fn stamps(&self) -> Vec<Option<Timestamp>> {
         self.messages
             .iter()
             .map(|message| match message.created_at {
@@ -163,7 +162,7 @@ impl PreparedBatch {
         &self,
         tx: &Transaction<'_>,
         owner: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
         embed: bool,
     ) -> Result<CaptureResult, SqliteError> {
         let conversation = match self.key.find(tx)? {
@@ -240,9 +239,9 @@ impl PreparedBatch {
         &self,
         tx: &Transaction<'_>,
         id: &str,
-        stored_updated_at: DateTime<Utc>,
+        stored_updated_at: Timestamp,
         owner: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), SqliteError> {
         let updated_at = self.updated_at.at(now).max(stored_updated_at);
         let (settings, title) = if self.imported {
@@ -328,7 +327,7 @@ impl PreparedMessage {
         &self,
         tx: &Transaction<'_>,
         target: &Target<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Outcome, SqliteError> {
         let conversation_id = target.conversation_id;
         if let Some(stored) = self.stored_by_event(tx, conversation_id)? {
@@ -422,7 +421,7 @@ fn queue_if_absent(
     message: &PreparedMessage,
     id: &str,
     embed: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), SqliteError> {
     if !embed || message.role != Role::Tool {
         return Ok(());
@@ -437,7 +436,7 @@ fn queue_inserted(
     tx: &Transaction<'_>,
     id: &str,
     embed: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), SqliteError> {
     if !embed {
         return Ok(());

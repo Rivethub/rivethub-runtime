@@ -1,3 +1,5 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::str::FromStr as _;
@@ -7,12 +9,6 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::routing;
-use chrono::DateTime;
-use chrono::Datelike as _;
-use chrono::Local;
-use chrono::NaiveDate;
-use chrono::TimeDelta;
-use chrono::Utc;
 use kernel::changes::Change;
 use kernel::changes::ChangeActor;
 use kernel::changes::ChangeKind;
@@ -61,17 +57,22 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct TodayParams {
-    date: Option<NaiveDate>,
+    #[serde_as(as = "Option<wire::time::CivilDate>")]
+    date: Option<Date>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ChangeParams {
-    from: Option<DateTime<Utc>>,
-    to: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    from: Option<Timestamp>,
+    #[serde_as(as = "Option<wire::time::Rfc3339>")]
+    to: Option<Timestamp>,
     subject: Option<String>,
     limit: Option<usize>,
 }
@@ -91,27 +92,31 @@ fn subject_key(text: &str) -> Result<SubjectKey, ApiError> {
         })
 }
 
-fn bounds(date: NaiveDate) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
-    let range = day_window(date, &Local);
+fn bounds(date: Date) -> Result<(Timestamp, Timestamp), ApiError> {
+    let range = day_window(date, &config::host_zone());
     range
         .since
         .zip(range.before)
         .ok_or_else(|| ApiError::BadRequest("date is out of range".to_owned()))
 }
 
-fn month_end(date: NaiveDate) -> Result<DateTime<Utc>, ApiError> {
+fn month_end(date: Date) -> Result<Timestamp, ApiError> {
     let first = date
-        .with_day(1)
-        .and_then(|first| first.checked_add_months(chrono::Months::new(1)))
-        .ok_or_else(|| ApiError::BadRequest("date is out of range".to_owned()))?;
+        .first_of_month()
+        .checked_add(jiff::Span::new().months(1))
+        .map_err(|_error| ApiError::BadRequest("date is out of range".to_owned()))?;
     bounds(first).map(|(start, _)| start)
 }
 
-fn month_start(date: NaiveDate) -> Result<DateTime<Utc>, ApiError> {
-    let first = date
-        .with_day(1)
-        .ok_or_else(|| ApiError::BadRequest("date is out of range".to_owned()))?;
-    bounds(first).map(|(start, _)| start)
+fn month_start(date: Date) -> Result<Timestamp, ApiError> {
+    bounds(date.first_of_month()).map(|(start, _)| start)
+}
+
+fn lookback_start(start: Timestamp) -> Timestamp {
+    match start.checked_sub(wire::time::elapsed_days(LOOKBACK_DAYS)) {
+        Ok(at) => at,
+        Err(_out_of_range) => Timestamp::MIN,
+    }
 }
 
 struct Titles(BTreeMap<SessionId, String>);
@@ -207,7 +212,7 @@ async fn changes(
 ) -> Result<Json<Vec<today::Change>>, ApiError> {
     let window = ChangeWindow {
         from: params.from,
-        to: params.to.unwrap_or_else(Utc::now),
+        to: params.to.unwrap_or_else(Timestamp::now),
         subject: params.subject.as_deref().map(subject_key).transpose()?,
     };
     let mut found = gateway.changes()?.changes(&window).await?;
@@ -226,8 +231,8 @@ async fn changes(
 async fn day_sessions(
     gateway: &Gateway,
     lineage: &Lineage,
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: Timestamp,
+    end: Timestamp,
 ) -> Result<Vec<SessionRecord>, ApiError> {
     let catalog = catalog(gateway)?;
     let mut query = SessionQuery::new(SessionView::All);
@@ -275,8 +280,8 @@ async fn sources(
 async fn summary(
     gateway: &Gateway,
     user: &UserId,
-    date: NaiveDate,
-    (start, end): (DateTime<Utc>, DateTime<Utc>),
+    date: Date,
+    (start, end): (Timestamp, Timestamp),
     day: &[Change],
     sessions: usize,
 ) -> Result<String, ApiError> {
@@ -306,7 +311,7 @@ impl DaySessions {
     async fn load(
         gateway: &Gateway,
         user: &UserId,
-        (start, end): (DateTime<Utc>, DateTime<Utc>),
+        (start, end): (Timestamp, Timestamp),
         day: &[Change],
     ) -> Result<Self, ApiError> {
         let lineage = lineage(gateway).await;
@@ -385,10 +390,12 @@ async fn digest(
     user: UserId,
     Query(params): Query<TodayParams>,
 ) -> Result<Json<today::TodayDigest>, ApiError> {
-    let today = Utc::now().with_timezone(&Local).date_naive();
+    let today = Timestamp::now()
+        .to_zoned_datetime(config::host_zone())
+        .date();
     let date = params.date.unwrap_or(today);
     let (start, end) = bounds(date)?;
-    let from = month_start(date)?.min(start - TimeDelta::days(LOOKBACK_DAYS));
+    let from = month_start(date)?.min(lookback_start(start));
     let all = gateway
         .changes()?
         .changes(&ChangeWindow::between(from, month_end(date)?.max(end)))
@@ -416,7 +423,7 @@ async fn digest(
     .await?;
     let entries = sessions.entries(&day, &titles);
     let queue = if gateway.review.is_some() {
-        super::review::open(&gateway, &user, Utc::now()).await?
+        super::review::open(&gateway, &user, Timestamp::now()).await?
     } else {
         Vec::new()
     };
@@ -428,7 +435,7 @@ async fn digest(
         needs_you: needs_you(queue),
         review_count,
         entries,
-        activity_by_day: kernel::changes::activity(&all, date, &Local)
+        activity_by_day: kernel::changes::activity(&all, date, &config::host_zone())
             .into_iter()
             .map(|entry| today::ActivityDay {
                 date: entry.date,
@@ -447,4 +454,13 @@ fn needs_you(mut queue: Vec<ReviewItem>) -> Vec<ReviewItem> {
     queue.sort_by_key(|item| item.group != ReviewGroup::Conflict);
     queue.truncate(NEEDS_YOU);
     queue
+}
+
+#[cfg(test)]
+#[test]
+fn today_lookback_clamps_to_the_earliest_supported_instant() -> Result<(), jiff::Error> {
+    let date = wire::time::parse_civil_date("-9999-02-01")?;
+    let start = wire::time::date_at_utc(date)?;
+    assert_eq!(lookback_start(start), Timestamp::MIN);
+    Ok(())
 }

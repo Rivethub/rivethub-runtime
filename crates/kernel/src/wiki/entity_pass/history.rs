@@ -1,5 +1,6 @@
-use chrono::NaiveDate;
+use jiff::civil::Date;
 use uuid::Uuid;
+use values::time::TimestampFormat as _;
 
 use super::super::page::WikiHistoryEntry;
 use super::prepare::cap_chars;
@@ -46,7 +47,7 @@ pub fn snapshot_of(facts: &[LiveFact], history: &[HistoryLine]) -> String {
                 "{} {} {} {}",
                 fact.attribute,
                 fact.status.as_str(),
-                fact.as_of.to_rfc3339(),
+                fact.as_of.rfc3339_offset(),
                 fact.value
             )
         })
@@ -64,7 +65,7 @@ pub fn snapshot_of(facts: &[LiveFact], history: &[HistoryLine]) -> String {
 pub fn session_history(
     summary_id: Uuid,
     conversation_id: Option<Uuid>,
-    session_on: NaiveDate,
+    session_on: Date,
     sentence: &str,
 ) -> Option<PreparedHistory> {
     let sentence = cap_chars(sentence.trim(), HISTORY_CHARS);

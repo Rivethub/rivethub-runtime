@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -19,12 +19,12 @@ pub struct FlaggedJob {
     pub error: String,
     pub failures: u32,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub first_failed_at: Option<DateTime<Utc>>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub last_failed_at: DateTime<Utc>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub flagged_at: DateTime<Utc>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub first_failed_at: Option<Timestamp>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub last_failed_at: Timestamp,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub flagged_at: Timestamp,
 }
 
 #[serde_as]
@@ -34,8 +34,8 @@ pub struct FlaggedGroup {
     pub task: String,
     pub cause: String,
     pub count: u64,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub last_failed_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub last_failed_at: Timestamp,
     pub sample: FlaggedJob,
 }
 

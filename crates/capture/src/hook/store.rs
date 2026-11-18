@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use wire::JsonObject;
@@ -189,7 +188,7 @@ impl StoreCapture {
         event: &str,
         cwd: Option<String>,
         finalize: bool,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Option<CaptureBatchRequest>, String> {
         let profile = self.harness.profile();
         let session = SessionId::new(profile.harness, native);
@@ -296,7 +295,7 @@ impl<T: CaptureTransport> StoreHook<T> {
         &self.log_file
     }
 
-    pub async fn run(&self, stdin: &str, now: DateTime<Utc>) -> HookRun {
+    pub async fn run(&self, stdin: &str, now: Timestamp) -> HookRun {
         let payload = match serde_json::from_str::<HookPayload>(stdin) {
             Ok(payload) => payload,
             Err(error) => {
@@ -337,7 +336,7 @@ impl<T: CaptureTransport> StoreHook<T> {
     }
 }
 
-fn log_line(event: &str, session_key: &str, totals: &Totals, now: DateTime<Utc>) -> String {
+fn log_line(event: &str, session_key: &str, totals: &Totals, now: Timestamp) -> String {
     format!(
         "{} {event} {session_key}: updated conv {} — +{} msg (had {})",
         iso_at(now),

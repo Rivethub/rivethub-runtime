@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::LeftOut;
 use kernel::filing::bare_session_prefix;
 use kernel::tidy::FilingTally;
@@ -27,7 +26,7 @@ struct FailingRow {
 
 #[async_trait]
 impl UpkeepStore for PostgresMemory {
-    async fn filing(&self, since: DateTime<Utc>) -> Result<FilingTally, TidyError> {
+    async fn filing(&self, since: Timestamp) -> Result<FilingTally, TidyError> {
         let left_out = LeftOut::rules();
         let row = sqlx::query!(
             r#"SELECT count(*) FILTER (WHERE f.left_out) AS "left_out!",
@@ -48,8 +47,7 @@ impl UpkeepStore for PostgresMemory {
             &left_out.key_prefixes,
             &left_out.channels,
             bare_session_prefix(),
-            since
-        )
+            crate::time::BindTime::bind_time(since) as _)
         .fetch_one(&self.pool)
         .await
         .map_err(failed("filing upkeep"))?;
@@ -100,24 +98,25 @@ impl UpkeepStore for PostgresMemory {
     }
 
     async fn tasks(&self) -> Result<Vec<TaskActivity>, TidyError> {
-        let mut tasks: BTreeMap<String, TaskActivity> =
-            sqlx::query!("SELECT task, finished_at FROM rh_worker_runs")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(failed("worker runs"))?
-                .into_iter()
-                .map(|row| {
-                    (
-                        row.task.clone(),
-                        TaskActivity {
-                            task: row.task,
-                            last_finished: Some(row.finished_at),
-                            failing: 0,
-                            queued: 0,
-                        },
-                    )
-                })
-                .collect();
+        let mut tasks: BTreeMap<String, TaskActivity> = sqlx::query!(
+            "SELECT task, finished_at AS \"finished_at: jiff_sqlx::Timestamp\" FROM rh_worker_runs"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(failed("worker runs"))?
+        .into_iter()
+        .map(|row| {
+            (
+                row.task.clone(),
+                TaskActivity {
+                    task: row.task,
+                    last_finished: Some(row.finished_at.to_jiff()),
+                    failing: 0,
+                    queued: 0,
+                },
+            )
+        })
+        .collect();
         let queued = GraphileQueue::schema_present(&self.pool)
             .await
             .map_err(|error| TidyError::Unavailable(Box::new(error)))?;

@@ -1,5 +1,4 @@
-use chrono::Duration;
-use chrono::TimeDelta;
+use jiff::SignedDuration;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -36,8 +35,8 @@ pub struct SummarySettings {
     pub root_batch: u32,
     pub min_leaves_for_branch: u32,
     pub min_branches_for_root: u32,
-    pub idle: TimeDelta,
-    pub stale: TimeDelta,
+    pub idle: SignedDuration,
+    pub stale: SignedDuration,
     pub stale_min_batch: u32,
     pub max_leaf_rounds: u32,
     pub pipeline_version: i32,
@@ -99,8 +98,8 @@ impl SummarySettings {
             root_batch: parts.root_batch,
             min_leaves_for_branch: parts.min_leaves_for_branch,
             min_branches_for_root: parts.min_branches_for_root,
-            idle: minutes(parts.idle_minutes)?,
-            stale: minutes(parts.stale_minutes)?,
+            idle: SignedDuration::from_mins(i64::from(parts.idle_minutes)),
+            stale: SignedDuration::from_mins(i64::from(parts.stale_minutes)),
             stale_min_batch: parts.stale_min_batch,
             max_leaf_rounds: parts.max_leaf_rounds,
             pipeline_version: parts.pipeline_version,
@@ -137,13 +136,6 @@ fn require_positive(name: &str, value: u32) -> Result<(), WorkerError> {
         Err(invalid(format!("{name} must be at least 1")))
     } else {
         Ok(())
-    }
-}
-
-fn minutes(value: u32) -> Result<TimeDelta, WorkerError> {
-    match Duration::try_minutes(i64::from(value)) {
-        Some(duration) => Ok(duration),
-        None => Err(invalid("a minute window does not fit")),
     }
 }
 
