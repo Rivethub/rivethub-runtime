@@ -14,7 +14,7 @@ async fn drops_with_a_large_configured_ttl_saturate_at_the_timestamp_ceiling()
     let mut settings = config(dir.path().join("drops"));
     settings.ttl = wire::time::elapsed_days(5_000_000);
     let store = Store::open(&settings)?;
-    let owner: UserId = "alice".parse()?;
+    let owner = UserId::new("alice".to_owned())?;
     let body = bytes::Bytes::from_static(b"age-encryption.org/v1\nsealed");
     let reservation = store.reserve(&owner, u64::try_from(body.len())?)?;
     let stored = store

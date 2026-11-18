@@ -207,7 +207,8 @@ pub async fn start(
         .request_async(&server)
         .await
         .map_err(oauth::failed)?;
-    let expires_at = device_deadline(Timestamp::now(), details.expires_in())?;
+    let expires_in = details.expires_in();
+    let expires_at = device_deadline(Timestamp::now(), expires_in)?;
     let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
     let verification_uri_complete = openable(
         details.verification_uri_complete().map_or_else(

@@ -459,7 +459,8 @@ fn needs_you(mut queue: Vec<ReviewItem>) -> Vec<ReviewItem> {
 #[cfg(test)]
 #[test]
 fn today_lookback_clamps_to_the_earliest_supported_instant() -> Result<(), jiff::Error> {
-    let start = "-9999-02-01T00:00:00Z".parse()?;
+    let date = wire::time::parse_civil_date("-9999-02-01")?;
+    let start = wire::time::date_at_utc(date)?;
     assert_eq!(lookback_start(start), Timestamp::MIN);
     Ok(())
 }
