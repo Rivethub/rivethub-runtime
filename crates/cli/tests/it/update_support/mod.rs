@@ -368,6 +368,18 @@ async fn web_list(headers: HeaderMap, State(assets): State<Arc<Assets>>) -> Resp
     axum::Json(releases).into_response()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebManifest {
+    schema_version: u32,
+    version: &'static str,
+    commit: String,
+    channel: &'static str,
+    min_rh_version: &'static str,
+    asset: String,
+    sha256: String,
+}
+
 async fn web_download(
     Path((version, name)): Path<(String, String)>,
     State(assets): State<Arc<Assets>>,
@@ -381,15 +393,15 @@ async fn web_download(
         } else {
             &web.archive
         };
-        axum::Json(serde_json::json!({
-            "schemaVersion": 1,
-            "version": web.version,
-            "commit": "a".repeat(40),
-            "channel": "stable",
-            "minRhVersion": web.minimum,
-            "asset": web.asset_name(),
-            "sha256": hex::encode(Sha256::digest(data))
-        }))
+        axum::Json(WebManifest {
+            schema_version: 1,
+            version: web.version,
+            commit: "a".repeat(40),
+            channel: "stable",
+            min_rh_version: web.minimum,
+            asset: web.asset_name(),
+            sha256: hex::encode(Sha256::digest(data)),
+        })
         .into_response()
     } else if name == web.asset_name() {
         web.archive.clone().into_response()

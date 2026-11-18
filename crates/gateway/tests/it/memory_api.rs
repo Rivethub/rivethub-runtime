@@ -173,14 +173,11 @@ fn search_rejections(app: &axum::Router) -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
+#[tokio::test]
+async fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
     let (gateway, _) = common::gateway();
     let app = gateway.router(false);
-    let response = block_on(answer(
-        app,
-        recorded("GET", "/api/memory/contract", Vec::new()),
-    ))?;
+    let response = answer(app, recorded("GET", "/api/memory/contract", Vec::new())).await?;
     assert_eq!(response.status, 200);
     let body =
         serde_json::from_slice::<wire::gateway::memory::MemoryContractResponse>(&response.body)
@@ -200,7 +197,7 @@ fn memory_contract_is_a_header_and_a_route() -> Result<(), String> {
         "/mesh.json",
         "/ca/v1/chain",
     ] {
-        let answered = block_on(answer(app.clone(), recorded("GET", removed, Vec::new())))?;
+        let answered = answer(app.clone(), recorded("GET", removed, Vec::new())).await?;
         assert_eq!(answered.status, 404, "{removed}");
     }
     Ok(())
