@@ -10,8 +10,6 @@ use uuid::Uuid;
 
 use crate::Error;
 
-const OPENING_CHARS: usize = 2000;
-
 #[derive(Debug, sqlx::FromRow)]
 pub(super) struct ConversationRow {
     id: Uuid,
@@ -20,9 +18,8 @@ pub(super) struct ConversationRow {
     channel: String,
     title: Option<String>,
     cwd: Option<String>,
-    summary: Option<String>,
     last_active: DateTime<Utc>,
-    opening: Option<String>,
+    opening: String,
     user_turns: i64,
     task_origin: Option<String>,
 }
@@ -38,7 +35,7 @@ impl ConversationRow {
                 title: self.title,
             },
             cwd: self.cwd.filter(|cwd| !cwd.trim().is_empty()),
-            summary: self.summary,
+            summary: Some(self.opening.clone()),
             last_active: self.last_active,
             task_parent: None,
             task_origin: self
@@ -47,9 +44,7 @@ impl ConversationRow {
                 .map(TaskOrigin::from_str)
                 .transpose()
                 .map_err(|source| Error::stored("task origin", source))?,
-            opening: self
-                .opening
-                .map(|opening| opening.chars().take(OPENING_CHARS).collect()),
+            opening: Some(self.opening),
             user_turns: u32::try_from(self.user_turns)?,
             parent_session: None,
         })

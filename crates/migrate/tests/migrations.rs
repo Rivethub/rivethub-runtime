@@ -21,10 +21,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (76, 1));
+    assert_eq!((gapped.current, gapped.pending), (77, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (76, 0));
+    assert_eq!((migrated.current, migrated.pending), (77, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -327,7 +327,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (75, 76, 1)
+        (75, 77, 2)
     );
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
@@ -341,7 +341,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (76, 76, 0)
+        (77, 77, 0)
     );
     let row: (String, i32, Option<i32>, bool) =
         sqlx::query_as("SELECT kind, depth, summary_ordinal, index_needs_repair FROM rh_summaries")
@@ -351,6 +351,11 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let marker: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM _rivetos_migrations WHERE name = '0076_top_down_summaries.sql')",
     ).fetch_one(&pool).await?;
+    let opening: (String, bool, bool) =
+        sqlx::query_as("SELECT content, filing_armed, title_armed FROM rh_summary_openings")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(opening, ("Old fixture note".to_owned(), true, true));
     assert!(marker);
     Ok(())
 }
@@ -369,6 +374,7 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     old.execute_batch(
         "DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
          DROP TABLE rh_summary_state; DROP TABLE rh_summary_openings;
+         ALTER TABLE ros_conversations DROP COLUMN title_from_capture;
          DROP TABLE rh_summary_conversion; DROP TABLE rh_summary_conversion_items;
          DROP TABLE ros_summary_deliveries;
          DROP INDEX rh_summary_one_session; DROP INDEX rh_summary_sources_order;
@@ -393,12 +399,12 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let pending = migrate::sqlite_status(&upgraded)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, 36, 1)
+        (35, 37, 2)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (36, 36, 0)
+        (37, 37, 0)
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(

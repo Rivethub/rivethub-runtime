@@ -20,6 +20,7 @@ mod memory_jobs;
 mod memory_review;
 mod memory_sanitize_sessions;
 mod memory_titles;
+mod memory_top_down_opening;
 mod migrate_binary;
 mod open;
 mod process;

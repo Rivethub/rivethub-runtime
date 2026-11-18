@@ -17,7 +17,9 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
+use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::queue::Job;
 use rusqlite::OptionalExtension as _;
 use rusqlite::params_from_iter;
 use rusqlite::types::Value;
@@ -66,6 +68,38 @@ impl SummaryStore for SqliteStore {
             tracing::trace!("written summary has no listener");
         }
         Ok(written)
+    }
+
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        self.with_conn(move |conn| crate::title::load(conn, &id.to_string()))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn finish_opening_title(
+        &self,
+        opening: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        let opening = opening.clone();
+        let title = title.map(str::to_owned);
+        self.with_conn(move |conn| crate::title::finish(conn, &opening, title.as_deref()))
+            .await
+            .map_err(store_err)
+    }
+
+    async fn opening_filing(&self, id: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Self::opening_filing(self, id).await.map_err(store_err)
+    }
+
+    async fn finish_opening_filing(&self, id: Uuid) -> Result<(), SummaryStoreError> {
+        Self::finish_opening_filing(self, id)
+            .await
+            .map_err(store_err)
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Self::undelivered_openings(self).await.map_err(store_err)
     }
 
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError> {
@@ -195,7 +229,6 @@ fn write_one(
     }
     let written = if summary.kind == SummaryKind::Leaf {
         let conversation = summary.conversation_id.to_string();
-        crate::title::title_from_first_leaf(&tx, &conversation)?;
         leaf_write(&tx, &conversation)?
     } else {
         SummaryWrite::Added
@@ -480,7 +513,7 @@ fn latest_message(
     }
 }
 
-fn parse_id(id: &str) -> Result<Uuid, SqliteError> {
+pub(crate) fn parse_id(id: &str) -> Result<Uuid, SqliteError> {
     Uuid::parse_str(id).map_err(|source| SqliteError::Query {
         operation: "summary id",
         source: rusqlite::Error::FromSqlConversionFailure(

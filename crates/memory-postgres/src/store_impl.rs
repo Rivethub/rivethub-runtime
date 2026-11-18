@@ -118,6 +118,9 @@ impl crate::PostgresMemory {
                 .fill_positions(conversation_id, &conversation.owner_user_id, &positions)
                 .await?;
         }
+        if inserted > 0 || !positions.is_empty() {
+            writer.refresh_opening(conversation_id).await?;
+        }
         if batch.finalize == Some(true) {
             let imported = wire::capture::is_imported_session(&batch.session_key);
             writer

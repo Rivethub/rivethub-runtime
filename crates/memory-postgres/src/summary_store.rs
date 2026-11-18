@@ -14,7 +14,9 @@ use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
+use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
+use kernel::queue::Job;
 use sqlx::PgPool;
 use sqlx::Row;
 use sqlx::types::Json;
@@ -202,12 +204,6 @@ impl SummaryStore for PostgresMemory {
             }
         }
         let written = if summary.kind == SummaryKind::Leaf {
-            crate::title::title_from_first_leaf(&mut tx, summary.conversation_id)
-                .await
-                .map_err(|error| SummaryStoreError::Query {
-                    message: error.to_string(),
-                    source: Box::new(error),
-                })?;
             let leaves: i64 = sqlx::query_scalar(LEAVES_SQL)
                 .bind(summary.conversation_id)
                 .bind(SummaryKind::Leaf.as_str())
@@ -236,6 +232,39 @@ impl SummaryStore for PostgresMemory {
         Ok(written)
     }
 
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|source| query_err("opening title", source))?;
+        crate::title::load(&mut conn, id).await.map_err(opening_err)
+    }
+
+    async fn finish_opening_title(
+        &self,
+        opening: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        self.apply_opening_title(opening, title)
+            .await
+            .map_err(opening_err)
+    }
+
+    async fn opening_filing(&self, id: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Self::opening_filing(self, id).await.map_err(opening_err)
+    }
+
+    async fn finish_opening_filing(&self, id: Uuid) -> Result<(), SummaryStoreError> {
+        Self::finish_opening_filing(self, id)
+            .await
+            .map_err(opening_err)
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Self::undelivered_openings(self).await.map_err(opening_err)
+    }
+
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError> {
         let mut conn = self
             .pool
@@ -248,6 +277,13 @@ impl SummaryStore for PostgresMemory {
                 message: error.to_string(),
                 source: Box::new(error),
             })
+    }
+}
+
+fn opening_err(error: crate::Error) -> SummaryStoreError {
+    SummaryStoreError::Query {
+        message: error.to_string(),
+        source: Box::new(error),
     }
 }
 

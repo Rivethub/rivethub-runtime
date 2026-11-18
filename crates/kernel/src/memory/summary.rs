@@ -5,7 +5,9 @@ use thiserror::Error;
 use uuid::Uuid;
 use values::Role;
 
+use super::summary_opening::OpeningTitle;
 use crate::BoxError;
+use crate::queue::Job;
 
 pub const HEARTBEAT_SESSION_PREFIX: &str = "heartbeat:";
 
@@ -159,4 +161,18 @@ pub trait SummaryStore: Send + Sync {
     async fn write_summary(&self, summary: NewSummary) -> Result<SummaryWrite, SummaryStoreError>;
 
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError>;
+
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError>;
+
+    async fn finish_opening_title(
+        &self,
+        opening: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError>;
+
+    async fn opening_filing(&self, id: Uuid) -> Result<Option<bool>, SummaryStoreError>;
+
+    async fn finish_opening_filing(&self, id: Uuid) -> Result<(), SummaryStoreError>;
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError>;
 }

@@ -7,8 +7,8 @@ use crate::error::WorkerError;
 use crate::filing::{FilingEnv, SessionTopics, file_target, handle_file};
 use crate::role::ProcessRole;
 use crate::summarize::{
-    SummarizeEnv, SummarySettings, handle_enqueue_idle, handle_enqueue_stale, handle_reap,
-    handle_summarize,
+    SummarizeEnv, SummarySettings, handle_enqueue_idle, handle_enqueue_openings,
+    handle_enqueue_stale, handle_opening_title, handle_reap, handle_summarize,
 };
 use crate::wiki_builder::{
     WikiBuilderDeps, WikiBuilderEnv, handle_consolidate_wiki, handle_extract_wiki,
@@ -100,6 +100,8 @@ pub(crate) async fn dispatch<Q: JobQueue>(
         JobName::Fixed(FixedJob::SummarizeConversation) => {
             handle_summarize(&summarize, &job.payload).await.map(|_| ())
         }
+        JobName::Fixed(FixedJob::TitleConversation) => dispatch_title(env, &summarize, job).await,
+        JobName::Fixed(FixedJob::EnqueueOpenings) => handle_enqueue_openings(&summarize).await,
         JobName::Fixed(FixedJob::EnqueueIdle) => handle_enqueue_idle(&summarize).await.map(|_| ()),
         JobName::Fixed(FixedJob::EnqueueStaleSummaries) => {
             handle_enqueue_stale(&summarize).await.map(|_| ())
@@ -124,6 +126,20 @@ pub(crate) async fn dispatch<Q: JobQueue>(
     }
 }
 
+async fn dispatch_title(
+    env: &JobEnv,
+    summarize: &SummarizeEnv<'_>,
+    job: &ClaimedJob,
+) -> Result<(), WorkerError> {
+    let request: kernel::memory::summary_opening::OpeningJob = job
+        .payload
+        .deserialize()
+        .map_err(WorkerError::summary_payload)?;
+    let id = request.conversation_id;
+    let scope = crate::scopes::conversation_scope(env.scopes.as_ref(), id).await?;
+    crate::scopes::within(scope, handle_opening_title(summarize, id)).await
+}
+
 async fn dispatch_file(
     env: &JobEnv,
     job: &ClaimedJob,
@@ -144,9 +160,18 @@ async fn dispatch_file(
         cancel,
     };
     let scope = crate::scopes::conversation_scope(env.scopes.as_ref(), conversation).await?;
-    crate::scopes::within(scope, handle_file(&filing, conversation))
-        .await
-        .map(|_| ())
+    crate::scopes::within(scope, async {
+        let armed = env.summaries.opening_filing(conversation).await?;
+        if armed == Some(false) {
+            return Ok(());
+        }
+        handle_file(&filing, conversation).await?;
+        if armed == Some(true) {
+            env.summaries.finish_opening_filing(conversation).await?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 async fn dispatch_digest(

@@ -87,10 +87,21 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
         }),
         SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
         SchemaVersion::V36 => in_transaction(conn, to, add_top_down_summaries),
+        SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))
         }),
     }
+}
+
+pub(crate) fn add_opening_work(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !column_present(tx, "ros_conversations", "title_from_capture")? {
+        tx.execute_batch(
+            "ALTER TABLE ros_conversations ADD COLUMN title_from_capture INTEGER NOT NULL DEFAULT 0
+                 CHECK (title_from_capture IN (0, 1))",
+        )?;
+    }
+    tx.execute_batch(include_str!("schema/opening_work_v37.sql"))
 }
 
 fn add_top_down_summaries(tx: &Transaction<'_>) -> rusqlite::Result<()> {

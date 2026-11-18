@@ -30,9 +30,10 @@ pub use prompt::BRANCH_SYSTEM_PROMPT;
 pub use prompt::LEAF_SYSTEM_PROMPT;
 pub use prompt::ROOT_SYSTEM_PROMPT;
 pub use title::Named;
-pub use title::TITLE_LEAVES;
 pub use title::TITLE_SYSTEM_PROMPT;
 pub use title::TitleCall;
+pub(crate) use title::handle_enqueue_openings;
+pub(crate) use title::handle_opening_title;
 
 use crate::error::WorkerError;
 

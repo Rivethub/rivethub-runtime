@@ -3,6 +3,7 @@ use memory_postgres::PostgresMemory;
 use memory_postgres::SCHEMA_VERSION;
 use sqlx::ConnectOptions as _;
 use sqlx::PgPool;
+use tracing::instrument::WithSubscriber as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -67,7 +68,9 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
     .execute(&pool)
     .await?;
     let (guard, lines) = testkit::logs::recorded();
-    PostgresMemory::connect(&url(&pool)).await?;
+    PostgresMemory::connect(&url(&pool))
+        .with_current_subscriber()
+        .await?;
     drop(guard);
     let lines: Vec<String> = lines
         .lock()
@@ -79,9 +82,9 @@ async fn a_newer_schema_is_accepted_with_one_warning(pool: PgPool) -> TestResult
         return Err(format!("exactly one rolling-update warning, got {lines:?}").into());
     };
     assert!(
-        line.contains(
-            "the memory schema reports version 9999, this build requires 76 — rolling updates migrate first; continuing"
-        ),
+        line.contains(&format!(
+            "the memory schema reports version 9999, this build requires {SCHEMA_VERSION} — rolling updates migrate first; continuing"
+        )),
         "the warning must name the rolling update: {line}"
     );
     Ok(())

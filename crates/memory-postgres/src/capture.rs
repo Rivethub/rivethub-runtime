@@ -36,6 +36,7 @@ impl CaptureOptions {
 
 #[derive(Debug)]
 pub struct CaptureWriter<'a> {
+    pub(crate) queue_present: bool,
     pub(crate) tx: Transaction<'a, Postgres>,
     undated_from: DateTime<Utc>,
 }
@@ -141,7 +142,11 @@ impl<'a> CaptureWriter<'a> {
         .execute(&mut *tx)
         .await
         .map_err(|source| Error::operation("embed defer", source))?;
-        Ok(Self { tx, undated_from })
+        Ok(Self {
+            tx,
+            undated_from,
+            queue_present: queued,
+        })
     }
 
     pub(crate) async fn defer_embeddings(&mut self) -> Result<(), Error> {

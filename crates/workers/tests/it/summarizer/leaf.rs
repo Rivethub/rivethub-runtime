@@ -308,7 +308,7 @@ async fn configured_token_caps_bound_the_leaf_request() {
 }
 
 #[tokio::test]
-async fn the_first_leaf_names_a_session_whose_title_is_weak() {
+async fn the_first_leaf_no_longer_runs_the_title_model() {
     let weak = Uuid::parse_str("00000000-0000-4000-8000-000000000004").expect("id");
     let named = Uuid::parse_str("00000000-0000-4000-8000-000000000005").expect("id");
     let store = Arc::new(MemStore::new(vec![
@@ -349,18 +349,8 @@ async fn the_first_leaf_names_a_session_whose_title_is_weak() {
         .iter()
         .map(|call| call.kind.clone())
         .collect();
-    assert_eq!(
-        kinds,
-        [
-            "LEAF_SYSTEM_PROMPT",
-            "TITLE_SYSTEM_PROMPT",
-            "LEAF_SYSTEM_PROMPT"
-        ]
-    );
-    assert_eq!(
-        *store.retitled.lock().await,
-        [(weak, "Plan blue-green AcmeKit deploys".to_owned())]
-    );
+    assert_eq!(kinds, ["LEAF_SYSTEM_PROMPT", "LEAF_SYSTEM_PROMPT"]);
+    assert!(store.retitled.lock().await.is_empty());
 }
 
 #[tokio::test]

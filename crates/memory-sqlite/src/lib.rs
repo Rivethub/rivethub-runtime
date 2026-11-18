@@ -29,6 +29,7 @@ mod session_messages;
 pub use search::embed::QueryEmbed;
 mod stats;
 mod summary_dag;
+mod summary_opening;
 mod summary_port;
 mod tags;
 mod tags_suggest;
@@ -91,7 +92,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 36;
+pub const SCHEMA_VERSION: i64 = 37;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 

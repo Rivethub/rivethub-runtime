@@ -348,6 +348,8 @@ fn tasks_for(role: WorkerRole) -> Vec<JobName> {
             fixed(FixedJob::SummarizeConversation),
             fixed(FixedJob::SynthesizeToolCall),
             fixed(FixedJob::EnqueueIdle),
+            fixed(FixedJob::TitleConversation),
+            fixed(FixedJob::EnqueueOpenings),
             fixed(FixedJob::EnqueueStaleSummaries),
             fixed(FixedJob::ReapDeadJobs),
             fixed(FixedJob::SyncTopicPage),
@@ -384,12 +386,16 @@ fn port_max_attempts(name: &JobName) -> u32 {
 
 fn fixed_attempts(fixed: FixedJob) -> u32 {
     match fixed {
-        FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall | FixedJob::DigestDay => 3,
+        FixedJob::TitleConversation
+        | FixedJob::SummarizeConversation
+        | FixedJob::SynthesizeToolCall
+        | FixedJob::DigestDay => 3,
         FixedJob::FileConversation | FixedJob::ExtractWiki | FixedJob::ExtractEntities => 2,
         FixedJob::EmbedTarget
         | FixedJob::EnqueueUnembedded
         | FixedJob::EnqueueUnchunked
         | FixedJob::EnqueueIdle
+        | FixedJob::EnqueueOpenings
         | FixedJob::EnqueueWikiBackfill
         | FixedJob::ConsolidateWiki
         | FixedJob::RecompileWiki

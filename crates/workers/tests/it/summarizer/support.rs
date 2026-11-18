@@ -81,6 +81,7 @@ impl MemStore {
             windows: Mutex::new(windows),
             written: Mutex::new(Vec::new()),
             retitled: Mutex::new(Vec::new()),
+            openings: Mutex::new(Vec::new()),
         }
     }
 }
@@ -179,6 +180,45 @@ impl SummaryStore for MemStore {
         } else {
             SummaryWrite::Added
         })
+    }
+
+    async fn opening_title(&self, id: Uuid) -> Result<Option<OpeningTitle>, SummaryStoreError> {
+        Ok(self
+            .openings
+            .lock()
+            .await
+            .iter()
+            .find(|opening| opening.head.id == id)
+            .cloned())
+    }
+
+    async fn finish_opening_title(
+        &self,
+        snapshot: &OpeningTitle,
+        title: Option<&str>,
+    ) -> Result<bool, SummaryStoreError> {
+        let mut openings = self.openings.lock().await;
+        let Some(opening) = openings.iter_mut().find(|opening| **opening == *snapshot) else {
+            return Ok(false);
+        };
+        opening.armed = false;
+        if let Some(title) = title {
+            opening.head.title = Some(title.to_owned());
+        }
+        drop(openings);
+        Ok(title.is_some())
+    }
+
+    async fn opening_filing(&self, _: Uuid) -> Result<Option<bool>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    async fn finish_opening_filing(&self, _: Uuid) -> Result<(), SummaryStoreError> {
+        Ok(())
+    }
+
+    async fn undelivered_openings(&self) -> Result<Vec<Job>, SummaryStoreError> {
+        Ok(Vec::new())
     }
 
     async fn retitle(&self, id: Uuid, title: &str) -> Result<bool, SummaryStoreError> {
@@ -532,7 +572,11 @@ impl JobQueue for Seen {
 
 fn default_attempts(name: &JobName) -> u32 {
     match name {
-        JobName::Fixed(FixedJob::SummarizeConversation | FixedJob::SynthesizeToolCall) => 3,
+        JobName::Fixed(
+            FixedJob::TitleConversation
+            | FixedJob::SummarizeConversation
+            | FixedJob::SynthesizeToolCall,
+        ) => 3,
         JobName::Fixed(FixedJob::FileConversation | FixedJob::ExtractWiki) => 2,
         JobName::Fixed(FixedJob::EmbedTarget) => 5,
         JobName::Fixed(_) => 25,

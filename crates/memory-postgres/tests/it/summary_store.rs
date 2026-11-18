@@ -282,7 +282,7 @@ async fn a_written_summary_is_announced_to_watchers(pool: PgPool) -> TestResult 
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn the_first_leaf_titles_only_conversations_without_a_real_title(pool: PgPool) -> TestResult {
+async fn backfill_titles_uses_openings_and_leaves_do_not_set_titles(pool: PgPool) -> TestResult {
     let memory = PostgresMemory::new(pool.clone());
     let untitled = seed_untitled(&pool, "cli:untitled").await?;
     let named = seed_conversation(&pool, "cli:named", "Named by the hook").await?;
@@ -301,29 +301,18 @@ async fn the_first_leaf_titles_only_conversations_without_a_real_title(pool: PgP
     memory
         .write_summary(titled_leaf(named, "Moved the build to the new host."))
         .await?;
-    assert_eq!(
-        stored_title(&pool, untitled).await?.as_deref(),
-        Some("Moved the build to the new host.")
-    );
+    assert_eq!(stored_title(&pool, untitled).await?, None);
     assert_eq!(
         stored_title(&pool, named).await?.as_deref(),
         Some("Named by the hook")
     );
-    memory
-        .write_summary(titled_leaf(placeholder, "### Port the parser"))
-        .await?;
-    assert_eq!(
-        stored_title(&pool, placeholder).await?.as_deref(),
-        Some("Port the parser")
-    );
-    sqlx::query("update rh_conversations set title = null where id = $1")
-        .bind(untitled)
-        .execute(&pool)
-        .await?;
-    sqlx::query("update rh_conversations set title = 'dsh session' where id = $1")
-        .bind(placeholder)
-        .execute(&pool)
-        .await?;
+    seed_opening(
+        &pool,
+        untitled,
+        "Moved the build to the new host. Then slept.",
+    )
+    .await?;
+    seed_opening(&pool, placeholder, "### Port the parser").await?;
     assert_eq!(memory.backfill_titles(true).await?, 2);
     assert_eq!(stored_title(&pool, untitled).await?, None);
     assert_eq!(memory.backfill_titles(false).await?, 2);
@@ -353,18 +342,14 @@ async fn model_titles_replace_only_weak_or_missing_titles(pool: PgPool) -> TestR
     let bare = seed_untitled(&pool, "cli:bare").await?;
     for (id, content) in [
         (weak, "**Kimi Code session start**\n- Began."),
-        (weak, "A second leaf."),
         (named, "Moved the build."),
         (sandbox, "Ran a sandbox check."),
     ] {
-        seed_leaf(&pool, id, content).await?;
+        seed_opening(&pool, id, content).await?;
     }
-    let untitled = memory.untitled(1).await?;
-    let listed: Vec<(Uuid, usize)> = untitled
-        .iter()
-        .map(|item| (item.head.id, item.leaves.len()))
-        .collect();
-    assert_eq!(listed, [(weak, 1)]);
+    let untitled = memory.untitled().await?;
+    let listed: Vec<Uuid> = untitled.iter().map(|item| item.head.id).collect();
+    assert_eq!(listed, [weak]);
     assert!(memory.retitle(weak, "Port the AcmeKit parser").await?);
     assert!(!memory.retitle(named, "Something else").await?);
     assert!(memory.retitle(bare, "Rotate the AcmeKit keys").await?);
@@ -453,17 +438,13 @@ async fn seed_message(
     Ok(id)
 }
 
-async fn seed_leaf(pool: &PgPool, conversation: Uuid, content: &str) -> Result<(), sqlx::Error> {
-    let mut tx = deferred(pool).await?;
-    sqlx::query(
-        "insert into rh_summaries (conversation_id, content, kind, earliest_at, latest_at, owner_user_id)
-         values ($1, $2, 'leaf', clock_timestamp(), clock_timestamp(), 'owner')",
-    )
-    .bind(conversation)
-    .bind(content)
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await
+async fn seed_opening(pool: &PgPool, id: Uuid, content: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO rh_summary_openings (conversation_id, content) VALUES ($1, $2)")
+        .bind(id)
+        .bind(content)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 async fn deferred(

@@ -77,7 +77,7 @@ impl SqliteStore {
         let prepared = PreparedBatch::new(batch, owner, node)?;
         let owner = owner.clone();
         let embed = self.embed_armed();
-        let result = self
+        let (result, opening_jobs) = self
             .with_conn(move |conn| {
                 let tx = conn
                     .transaction()
@@ -87,14 +87,14 @@ impl SqliteStore {
                         session_key = %prepared.key.session_key,
                         "capture dropped for a deleted session"
                     );
-                    return prepared.dropped();
+                    return Ok((prepared.dropped()?, false));
                 }
                 let result = prepared.write(&tx, owner.as_str(), now, embed)?;
                 tx.commit().map_err(SqliteError::query("capture commit"))?;
                 Ok(result)
             })
             .await?;
-        if embed {
+        if embed || opening_jobs {
             self.notifications.send_replace(());
         }
         Ok(result)
@@ -166,7 +166,7 @@ impl PreparedBatch {
         owner: &str,
         now: DateTime<Utc>,
         embed: bool,
-    ) -> Result<CaptureResult, SqliteError> {
+    ) -> Result<(CaptureResult, bool), SqliteError> {
         let conversation = match self.key.find(tx)? {
             Some(found) => {
                 self.update_conversation(tx, &found.id, found.updated_at, owner, now)?;
@@ -176,6 +176,7 @@ impl PreparedBatch {
                 key: &self.key,
                 channel: self.channel.as_deref(),
                 title: self.title.as_deref(),
+                title_from_capture: self.title.is_some(),
                 settings: self
                     .settings
                     .as_ref()
@@ -209,19 +210,23 @@ impl PreparedBatch {
         };
         let mut inserted: u64 = 0;
         let mut skipped: u64 = 0;
+        let mut changed = false;
         for message in &self.messages {
             match message.write(tx, &target, now)? {
                 Outcome::Inserted(id) => {
+                    changed = true;
                     inserted += 1;
                     queue_inserted(tx, &id, embed, now)?;
                 }
                 Outcome::Filled(id) => {
+                    changed = true;
                     skipped += 1;
                     queue_if_absent(tx, message, &id, embed, now)?;
                 }
                 Outcome::Skipped => skipped += 1,
             }
         }
+        let opening_jobs = changed && crate::summary_opening::refresh(tx, &conversation.id, now)?;
         if self.finalize {
             tx.execute(
                 "UPDATE ros_conversations SET active = 0 WHERE id = ?1 AND active = 1",
@@ -229,12 +234,15 @@ impl PreparedBatch {
             )
             .map_err(SqliteError::query("conversation finalize"))?;
         }
-        Ok(CaptureResult {
-            ok: true,
-            conversation_id: conversation.id,
-            inserted,
-            skipped,
-        })
+        Ok((
+            CaptureResult {
+                ok: true,
+                conversation_id: conversation.id,
+                inserted,
+                skipped,
+            },
+            opening_jobs,
+        ))
     }
 
     fn update_conversation(
@@ -273,6 +281,7 @@ impl PreparedBatch {
             "UPDATE ros_conversations
                 SET updated_at = ?2,
                     title = coalesce(?3, title),
+                    title_from_capture = title_from_capture OR ?3 IS NOT NULL,
                     settings = coalesce(?4, settings),
                     task_id = coalesce(?5, task_id),
                     owner_user_id = coalesce(owner_user_id, ?6)

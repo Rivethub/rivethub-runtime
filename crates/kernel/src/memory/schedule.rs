@@ -36,6 +36,7 @@ impl WorkerRole {
             ],
             Self::Summarizer => vec![
                 cron("idle-enqueue", FixedJob::EnqueueIdle, 5),
+                cron("opening-sweep", FixedJob::EnqueueOpenings, 5),
                 cron(
                     "stale-compaction-sweep",
                     FixedJob::EnqueueStaleSummaries,

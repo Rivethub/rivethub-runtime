@@ -44,6 +44,7 @@ mod stats;
 mod stats_cache;
 mod store_impl;
 mod summary_dag;
+mod summary_opening;
 mod summary_store;
 mod summary_watch;
 mod tags;
@@ -83,7 +84,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 76;
+pub const SCHEMA_VERSION: i64 = 77;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]

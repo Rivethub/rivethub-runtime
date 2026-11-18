@@ -1,14 +1,12 @@
 use std::time::Duration;
 
 use futures::StreamExt as _;
-use kernel::memory::SummaryStore as _;
 use memory_postgres::PostgresMemory;
 use memory_postgres::Untitled;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use workers::Named;
-use workers::TITLE_LEAVES;
 use workers::TitleCall;
 use workers::WorkerError;
 
@@ -66,7 +64,7 @@ pub(in crate::memory) async fn backfill(
     shutdown: &CancellationToken,
 ) -> Result<Report, Error> {
     let memory = PostgresMemory::connect(url).await?;
-    let untitled = memory.untitled(TITLE_LEAVES).await?;
+    let untitled = memory.untitled().await?;
     let provider = providers::OpenAiCompatible::build(
         config::ProviderType::Vllm,
         &config::provider::OpenaiProvider {
@@ -95,15 +93,10 @@ pub(in crate::memory) async fn backfill(
         })
         .buffer_unordered(model.concurrency);
     while let Some((item, named)) = answers.next().await {
-        let (id, before) = (item.head.id, item.head.title);
+        let (id, before) = (item.head.id, item.head.title.clone());
         match named {
             Ok(Named::Title(after)) => {
-                if dry_run
-                    || memory
-                        .retitle(id, &after)
-                        .await
-                        .map_err(WorkerError::from)?
-                {
+                if dry_run || memory.apply_opening_title(&item, Some(&after)).await? {
                     outcome.titled += 1;
                     outcome.pairs.push(Pair { id, before, after });
                 }
@@ -127,8 +120,7 @@ pub(in crate::memory) async fn backfill(
 }
 
 async fn name(call: &TitleCall<'_>, item: &Untitled) -> Result<Named, WorkerError> {
-    let leaves: Vec<&str> = item.leaves.iter().map(String::as_str).collect();
-    tokio::time::timeout(CALL_TIMEOUT, call.name(&leaves))
+    tokio::time::timeout(CALL_TIMEOUT, call.name(&[&item.content]))
         .await
         .map_err(|_| WorkerError::ModelTimeout {
             seconds: CALL_TIMEOUT.as_secs(),

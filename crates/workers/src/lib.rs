@@ -72,7 +72,6 @@ pub use summarize::SummarizeOutcome;
 pub use summarize::SummaryParts;
 pub use summarize::SummarySettings;
 pub use summarize::SummaryTrigger;
-pub use summarize::TITLE_LEAVES;
 pub use summarize::TITLE_SYSTEM_PROMPT;
 pub use summarize::TitleCall;
 pub use summarize::handle_enqueue_idle;

@@ -92,22 +92,11 @@ impl PostgresMemory {
 
     async fn snapshot_conversations(&self) -> Result<Vec<SnapshotConversation>, Error> {
         let rows = sqlx::query_as::<_, ConversationRow>(
-            "WITH first AS (
-                 SELECT DISTINCT ON (conversation_id) conversation_id, id
-                   FROM rh_summaries
-                  WHERE kind = 'leaf' AND conversation_id IS NOT NULL
-                  ORDER BY conversation_id, earliest_at NULLS LAST, created_at
-             )
-             SELECT c.id, c.session_key, c.agent, c.channel, c.title,
-                    c.settings->>'cwd' AS cwd, s.content AS summary,
-                    c.updated_at AS last_active, opening.content AS opening,
-                    turns.count AS user_turns, t.origin AS task_origin
-               FROM first
-               JOIN rh_summaries s ON s.id = first.id
-               JOIN rh_conversations c ON c.id = first.conversation_id
-               LEFT JOIN LATERAL (SELECT m.content FROM rh_messages m
-                                   WHERE m.conversation_id = c.id AND m.role = 'user'
-                                   ORDER BY m.created_at LIMIT 1) opening ON true
+            "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
+                    c.settings->>'cwd' AS cwd, opening.content AS opening,
+                    c.updated_at AS last_active, turns.count AS user_turns, t.origin AS task_origin
+               FROM rh_summary_openings opening
+               JOIN rh_conversations c ON c.id = opening.conversation_id
                LEFT JOIN LATERAL (SELECT count(*) AS count FROM rh_messages m
                                    WHERE m.conversation_id = c.id AND m.role = 'user') turns ON true
                LEFT JOIN rh_tasks_archive t ON c.session_key = 'task:' || t.id::text

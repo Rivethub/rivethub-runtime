@@ -5,7 +5,6 @@ use kernel::memory::NewSummary;
 use kernel::memory::SummaryKind;
 use kernel::memory::SummaryNode;
 use kernel::memory::SummarySource;
-use kernel::memory::SummaryWrite;
 use kernel::memory::WindowMessage;
 use kernel::model::FinishReason;
 use uuid::Uuid;
@@ -50,13 +49,8 @@ pub(super) async fn write_leaves(
         let content = work_first(&require_text(&response)?, &window.conversation.agent);
         let taken = take_front(&mut window.messages, usize_of(take)?)?;
         let summary = leaf_record(env, &window.conversation, &taken, content)?;
-        let conversation_id = summary.conversation_id;
         let node = node_from(&summary);
-        let stored = env.store.write_summary(summary).await?;
-        if stored == SummaryWrite::FirstLeaf {
-            enqueue_filing(env, conversation_id).await?;
-            super::title::title_first_leaf(env, &window.conversation, &node.content).await?;
-        }
+        env.store.write_summary(summary).await?;
         window.leaves.push(node);
         written = written.checked_add(1).ok_or(WorkerError::Count)?;
         rounds = rounds.checked_add(1).ok_or(WorkerError::Count)?;
@@ -154,14 +148,6 @@ pub(super) fn count_of(value: usize) -> Result<u32, WorkerError> {
 
 pub(super) fn usize_of(value: u32) -> Result<usize, WorkerError> {
     usize::try_from(value).map_err(|_| WorkerError::Count)
-}
-
-async fn enqueue_filing(env: &SummarizeEnv<'_>, conversation_id: Uuid) -> Result<(), WorkerError> {
-    env.queue
-        .enqueue(crate::filing::file_conversation_job(conversation_id)?)
-        .await
-        .map(|_| ())
-        .map_err(WorkerError::queue)
 }
 
 fn shrink_batch(batch: u32) -> Result<u32, WorkerError> {

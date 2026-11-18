@@ -14,6 +14,7 @@ use kernel::memory::SummaryStore;
 use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
 use kernel::memory::WindowMessage;
+use kernel::memory::summary_opening::OpeningTitle;
 use kernel::model::Embedding;
 use kernel::model::FinishReason;
 use kernel::model::LlmResponse;
@@ -144,6 +145,7 @@ struct MemStore {
     windows: Mutex<Vec<ConversationWindow>>,
     written: Mutex<Vec<NewSummary>>,
     retitled: Mutex<Vec<(Uuid, String)>>,
+    openings: Mutex<Vec<OpeningTitle>>,
 }
 
 #[derive(Debug)]
@@ -304,6 +306,8 @@ fn read_trigger(payload: &wire::JsonObject) -> SummaryTrigger {
 mod leaf;
 mod support;
 mod sweeps;
+#[path = "summarizer/opening.rs"]
+mod top_down_opening;
 mod triggers;
 
 use support::*;

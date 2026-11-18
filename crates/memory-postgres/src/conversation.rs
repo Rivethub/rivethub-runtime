@@ -54,6 +54,13 @@ impl CaptureWriter<'_> {
         .fetch_one(&mut *self.tx)
         .await
         .map_err(|source| Error::operation("conversation upsert", source))?;
+        if upsert.title.is_some() {
+            sqlx::query("UPDATE rh_conversations SET title_from_capture = true WHERE id = $1 AND NOT title_from_capture")
+                .bind(record.id)
+                .execute(&mut *self.tx)
+                .await
+                .map_err(|source| Error::operation("preserve capture title", source))?;
+        }
         Ok(UpsertedConversation {
             id: record.id,
             owner_user_id: record.owner_user_id,

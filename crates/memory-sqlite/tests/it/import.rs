@@ -96,7 +96,8 @@ async fn replay(dump: &str, expectation: &str, summaries: i64) -> Result {
                 .filter(|(column, _)| !expected.contains_key(*column));
             for (column, value) in defaults {
                 match (table, column.as_str()) {
-                    (ImportTable::Summaries, "quality_flags" | "index_needs_repair") => {
+                    (ImportTable::Summaries, "quality_flags" | "index_needs_repair")
+                    | (ImportTable::Conversations, "title_from_capture") => {
                         assert_eq!(value, &Json::from(0), "{table}.{column}");
                     }
                     (ImportTable::Summaries, _) | (ImportTable::SummarySources, "render_key") => {

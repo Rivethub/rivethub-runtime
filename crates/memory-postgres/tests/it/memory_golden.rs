@@ -183,9 +183,20 @@ async fn capture_batch_golden(pool: PgPool) -> TestResult {
         .filter(|tag| tag.source != "rule")
         .collect();
     assert_eq!(tags.iter().collect::<Vec<_>>(), kept);
-    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM graphile_worker._private_jobs")
-        .fetch_one(&pool)
-        .await?;
-    assert_eq!(jobs, count);
+    let jobs: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT t.identifier, count(*) FROM graphile_worker._private_jobs j
+          JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+         GROUP BY t.identifier ORDER BY t.identifier",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        jobs,
+        [
+            ("embed-target".to_owned(), count),
+            ("file-conversation".to_owned(), 2),
+            ("title-conversation".to_owned(), 2),
+        ]
+    );
     Ok(())
 }

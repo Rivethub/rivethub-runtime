@@ -83,7 +83,7 @@
             "recentSessions": [
               {
                 "sessionId": "cli:sess-1",
-                "title": null,
+                "title": "how do we deploy the AcmeKit service to staging",
                 "agent": "rivet",
                 "lastActive": "2026-10-10T12:00:00.000Z",
                 "messages": 3

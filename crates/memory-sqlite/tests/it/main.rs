@@ -29,7 +29,8 @@ mod search_parity;
 mod session_catalog;
 mod session_delete;
 mod summary_dag;
-mod summary_title;
+#[path = "summary_title.rs"]
+mod top_down_opening;
 mod topics;
 mod unembedded_sweep;
 mod wiki_consolidate;
