@@ -87,7 +87,7 @@ pub(crate) async fn run_summary_expiry(
     inactivity: jiff::SignedDuration,
     cancel: &CancellationToken,
 ) {
-    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+    let mut ticks = tokio::time::interval(std::time::Duration::from_mins(5));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {

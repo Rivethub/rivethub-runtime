@@ -247,6 +247,15 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         {
             tracing::warn!("capture spool replay failed; the new batch is already saved: {error}");
         }
+        self.deliver_saved(saved, &kept, now).await
+    }
+
+    async fn deliver_saved(
+        &self,
+        saved: Vec<(&CaptureBatchRequest, String, PathBuf)>,
+        kept: &[PathBuf],
+        now: Timestamp,
+    ) -> Result<Totals, WriteError> {
         let mut totals = Totals::default();
         let mut rejected = None;
         for (index, (chunk, body, path)) in saved.into_iter().enumerate() {

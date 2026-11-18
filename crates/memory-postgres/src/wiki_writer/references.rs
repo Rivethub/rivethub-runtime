@@ -3,7 +3,6 @@ use kernel::wiki::page::{
     parse_wiki_page, serialize_wiki_page,
 };
 use kernel::wiki::{WikiCitation, WikiSource};
-use wire::time::TimestampFormat as _;
 
 fn summary_source(kind: WikiSourceKind) -> bool {
     matches!(
@@ -43,7 +42,7 @@ pub(crate) fn project(
     page.citations
         .extend(citations.map(|citation| PageCitation {
             summary_id: citation.summary_id.clone(),
-            date: citation.date.map(|at| at.utc_date()),
+            date: citation.date.map(wire::time::TimestampFormat::utc_date),
             kind: match citation.kind.as_deref() {
                 Some("leaf") => Some(CitationKind::Leaf),
                 Some("branch") => Some(CitationKind::Branch),

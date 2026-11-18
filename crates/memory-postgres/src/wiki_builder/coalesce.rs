@@ -1,4 +1,5 @@
 use jiff::Timestamp;
+use kernel::memory::summary_reference::SummaryConsumer;
 use kernel::owner::Owner;
 use kernel::queue::JobId;
 use kernel::topics::TopicId;
@@ -102,7 +103,6 @@ pub(super) async fn record(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
-        use kernel::memory::summary_reference::SummaryConsumer;
         if let Some(delivery) = &summary.delivery {
             crate::summary_replace::complete(
                 tx,

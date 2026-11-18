@@ -59,11 +59,12 @@ pub fn observed(
     })
 }
 
+const KEY: &str = "claude-code:settlement-fixture";
+
 pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     store: &S,
     owner: &Owner,
 ) -> TestResult {
-    const KEY: &str = "claude-code:settlement-fixture";
     let first = batch(KEY, vec![message("one", "2026-01-03T01:00:00Z")?]);
     let id: Uuid = store
         .capture(first.clone(), owner, None)
@@ -99,6 +100,15 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     assert_eq!(duplicate.settled_at, marked.settled_at);
     assert_eq!(duplicate.last_input_at, initial.last_input_at);
 
+    observe_reopened_revision(store, owner, id, initial.last_input_at).await
+}
+
+async fn observe_reopened_revision(
+    store: &(impl MemoryStore + SummaryStore),
+    owner: &Owner,
+    id: Uuid,
+    last_input_at: Timestamp,
+) -> TestResult {
     let two = message("two", "2026-01-03T01:01:00Z")?;
     let reopen = observed(
         batch(KEY, vec![two]),
@@ -110,7 +120,7 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     let active = store.summary_state(id).await?.ok_or("reopened state")?;
     assert_eq!(active.input_revision, 2);
     assert_eq!(active.unsettled_since, Some(active.last_input_at));
-    assert!(active.last_input_at >= initial.last_input_at);
+    assert!(active.last_input_at >= last_input_at);
     assert!(!store.summary_eligible(id, 1).await?);
     assert!(!store.summary_eligible(id, 2).await?);
 
@@ -166,19 +176,20 @@ pub async fn revision_lifecycle<S: MemoryStore + SummaryStore>(
     store.capture(last, owner, None).await?;
     assert!(store.summary_eligible(id, 4).await?);
 
+    assert_unknown_session_stays_absent(store, owner).await
+}
+
+async fn assert_unknown_session_stays_absent(
+    store: &(impl MemoryStore + SummaryStore),
+    owner: &Owner,
+) -> TestResult {
     let ghost = observed(
         batch("claude-code:never-seen", vec![]),
         "SessionEnd",
         "2026-01-03T01:11:00Z",
         true,
     )?;
-    assert!(
-        store
-            .capture(ghost, owner, None)
-            .await?
-            .conversation_id
-            .is_empty()
-    );
+    assert_eq!(store.capture(ghost, owner, None).await?.conversation_id, "");
     assert!(
         store
             .mark_summary_settled("claude-code:never-seen", owner)

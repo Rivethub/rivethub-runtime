@@ -52,6 +52,12 @@ pub(crate) async fn lock_conversation(
     Ok(())
 }
 
+fn find_input<'a>(rows: &'a [SummaryInput], id: &Uuid) -> Option<&'a SummaryInput> {
+    rows.binary_search_by_key(id, |input| input.id)
+        .ok()
+        .and_then(|index| rows.get(index))
+}
+
 pub(crate) async fn shared_visible(
     tx: &mut Transaction<'_, Postgres>,
     ids: &[Uuid],
@@ -70,10 +76,9 @@ pub(crate) async fn shared_visible(
     let after = inputs(tx, ids).await?;
     let mut guarded = Vec::with_capacity(after.len());
     for current in after {
-        let Ok(index) = before.binary_search_by_key(&current.id, |input| input.id) else {
+        let Some(old) = find_input(&before, &current.id) else {
             continue;
         };
-        let old = &before[index];
         if old != &current {
             return Err(SummaryReferenceError::Stale(old.id).into());
         }
@@ -198,11 +203,10 @@ pub(crate) async fn external(
     }
     let after = inputs(&mut conn, ids).await?;
     for id in ids {
-        let search = |rows: &[SummaryInput]| rows.binary_search_by_key(id, |input| input.id);
-        let (Ok(old), Ok(current)) = (search(&before), search(&after)) else {
+        let (Some(old), Some(current)) = (find_input(&before, id), find_input(&after, id)) else {
             return Err(SummaryReferenceError::Gone(*id).into());
         };
-        if before[old] != after[current] {
+        if old != current {
             return Err(SummaryReferenceError::Stale(*id).into());
         }
     }

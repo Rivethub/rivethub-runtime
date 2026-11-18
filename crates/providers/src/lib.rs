@@ -231,12 +231,12 @@ impl ModelProvider for OpenAiCompatible {
         model: &str,
         text: &str,
     ) -> Result<Option<usize>, ModelProviderError> {
-        if self.variant != Variant::Vllm {
-            return Ok(None);
-        }
         #[derive(serde::Deserialize)]
         struct Count {
             count: usize,
+        }
+        if self.variant != Variant::Vllm {
+            return Ok(None);
         }
         let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
         let url = format!("{root}/tokenize");
