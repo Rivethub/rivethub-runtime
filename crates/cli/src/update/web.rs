@@ -280,14 +280,16 @@ async fn candidates(
                 continue;
             };
             if accepts(channel, build_channel) {
-                let url = release::asset(&release, MANIFEST)?;
-                let bytes =
-                    release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await?;
-                let manifest: Manifest =
-                    serde_json::from_slice(&bytes).map_err(|_| UpdateError::WebManifest)?;
-                manifest.validate(&version, build_channel)?;
-                let archive = release::asset(&release, &manifest.asset)?;
-                candidates.push((manifest, archive));
+                let Some(candidate) =
+                    candidate(client, &release, &version, build_channel, shutdown).await?
+                else {
+                    tracing::warn!(
+                        tag = %release.tag_name,
+                        "skipping a web release without a valid manifest"
+                    );
+                    continue;
+                };
+                candidates.push(candidate);
             }
         }
         if last_page {
@@ -295,6 +297,33 @@ async fn candidates(
         }
     }
     Ok(candidates)
+}
+
+async fn candidate(
+    client: &reqwest::Client,
+    release: &release::Release,
+    version: &Version,
+    channel: Channel,
+    shutdown: &CancellationToken,
+) -> Result<Option<(Manifest, Url)>, UpdateError> {
+    let Ok(url) = release::asset(release, MANIFEST) else {
+        return Ok(None);
+    };
+    let bytes = match release::download(client, url, MANIFEST_LIMIT as usize, shutdown).await {
+        Ok(bytes) => bytes,
+        Err(UpdateError::AssetSize) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes) else {
+        return Ok(None);
+    };
+    if manifest.validate(version, channel).is_err() {
+        return Ok(None);
+    }
+    let Ok(archive) = release::asset(release, &manifest.asset) else {
+        return Ok(None);
+    };
+    Ok(Some((manifest, archive)))
 }
 
 fn installed(directory: &Path) -> Result<Manifest, UpdateError> {

@@ -243,6 +243,7 @@ pub(crate) struct WebRelease {
     pub(crate) minimum: &'static str,
     pub(crate) archive: Vec<u8>,
     pub(crate) bad_digest: bool,
+    pub(crate) broken_manifest: bool,
 }
 
 impl WebRelease {
@@ -388,6 +389,9 @@ async fn web_download(
         return StatusCode::NOT_FOUND.into_response();
     };
     if name == "web-manifest.json" {
+        if web.broken_manifest {
+            return "{}".into_response();
+        }
         let data = if web.bad_digest {
             b"wrong".as_slice()
         } else {

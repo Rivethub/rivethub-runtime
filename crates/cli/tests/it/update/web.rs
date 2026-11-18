@@ -64,6 +64,7 @@ fn build(version: &'static str, minimum: &'static str, contents: Contents) -> Re
         minimum,
         archive: tar.into_inner()?.finish()?,
         bad_digest: false,
+        broken_manifest: false,
     })
 }
 
@@ -208,6 +209,29 @@ async fn a_bad_web_update_keeps_the_previous_bundle_and_the_new_runtime() -> Res
         assert!(!web_root(&fixture).join("2.0.0").exists());
         server.close().await?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_release_with_a_broken_manifest_is_skipped_for_the_next_best() -> Result {
+    let fixture = Fixture::new()?;
+    let mut broken = build("1.3.0", "0.9.0", Contents::Site)?;
+    broken.broken_manifest = true;
+    let server = server_with_web(
+        Published::Good,
+        vec![broken, build("1.2.0", "0.9.0", Contents::Site)?],
+    )
+    .await?;
+    let updater = updater(&fixture, &server, "0.9.0")?;
+    let mut args = args();
+    args.web_only = true;
+    let report = updater
+        .run(&args, &fixture.env(), &CancellationToken::new())
+        .await;
+    assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    assert_eq!(report.stdout, "Web: Installed 1.2.0.\n");
+    assert_active(&fixture, "1.2.0")?;
+    server.close().await?;
     Ok(())
 }
 
