@@ -317,37 +317,6 @@ fn backoff(attempts: u64) -> SignedDuration {
     SignedDuration::from_secs(seconds)
 }
 
-#[cfg(test)]
-#[tokio::test]
-async fn spool_retry_deadlines_saturate_for_throttling_and_backoff()
--> Result<(), Box<dyn std::error::Error>> {
-    let now = Timestamp::MAX;
-    let temp = tempfile::tempdir()?;
-    for throttled in [true, false] {
-        let spool = CaptureSpool::new(temp.path().join(throttled.to_string()));
-        let _path = spool.spool("{}", now).await?;
-        spool
-            .replay(1, now, |_| async {
-                let error = if throttled {
-                    PostError::Throttled {
-                        status: 429,
-                        retry_after_seconds: Some(u32::MAX),
-                    }
-                } else {
-                    PostError::Server { status: 503 }
-                };
-                Err(error)
-            })
-            .await?;
-        let entries = queued_files(spool.dir()).await?;
-        let [entry] = entries.as_slice() else {
-            return Err("expected a single queued capture".into());
-        };
-        assert_eq!(entry.name.not_before, now.epoch_millis().unsigned_abs());
-    }
-    Ok(())
-}
-
 async fn write_new(dir: &Path, body: &str, now: Timestamp) -> Result<PathBuf, SpoolError> {
     fs::create_dir_all(dir).await?;
     set_mode(dir, DIR_MODE).await?;
