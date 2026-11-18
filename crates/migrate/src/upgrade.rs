@@ -87,6 +87,9 @@ fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<
         }),
         SchemaVersion::V34 => in_transaction(conn, to, add_daily_digest),
         SchemaVersion::V36 => in_transaction(conn, to, add_top_down_summaries),
+        SchemaVersion::V38 => in_transaction(conn, to, |tx| {
+            tx.execute_batch(include_str!("schema/summary_index_v38.sql"))
+        }),
         SchemaVersion::V37 => in_transaction(conn, to, add_opening_work),
         SchemaVersion::V35 => in_transaction(conn, to, |tx| {
             tx.execute_batch(include_str!("schema/model_calls_v35.sql"))

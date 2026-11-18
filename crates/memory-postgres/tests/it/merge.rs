@@ -212,8 +212,8 @@ async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree
     use kernel::memory::{MemoryStore as _, SummaryKind, SummaryOwner};
 
     let source_pool = source_database(&pool).await?;
-    let family = PostgresMemory::new(pool.clone());
-    let source = PostgresMemory::new(source_pool.clone());
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
     let fixture = std::fs::read_to_string(testkit::recording("summary-archive/top-down.sql"))?;
     let cancel = CancellationToken::new();
     source.import_memory_dump(&fixture, false, &cancel).await?;
@@ -254,5 +254,107 @@ async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree
     );
     let repeated = family.merge_store(&source, &request, &cancel).await?;
     assert_eq!(repeated.inserted.get("rh_summaries"), Some(&0));
+    Ok(())
+}
+
+fn one_indexed_summary(node: Uuid, text: &str, specification: u8) -> String {
+    let vector = format!("[{}0]", "0,".repeat(1023));
+    let fingerprint = format!("{specification:02x}").repeat(32);
+    let chars = text.chars().count();
+    let conversation = Uuid::from_u128(0xc1);
+    let message = Uuid::from_u128(0xc2);
+    let passage = Uuid::from_u128(node.as_u128() + 100);
+    format!(
+        "COPY public.ros_conversations (id, session_key, agent, channel, owner_user_id) FROM stdin;
+{conversation}\tcli:keep\tfixture\tcli\talice
+\\.
+COPY public.ros_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id) FROM stdin;
+{message}\t{conversation}\tfixture\tcli\tuser\tMeasure the spring.\t2024-01-01\talice
+\\.
+COPY public.ros_summaries (id, conversation_id, kind, depth, content, owner_user_id, message_count, earliest_at, latest_at, pipeline_version, summary_ordinal, source_first, source_last, input_key) FROM stdin;
+{node}\t{conversation}\tsession\t2\t{text}\talice\t1\t2024-01-01\t2024-01-01\t7\t0\t1\t1\t\\\\x{}
+\\.
+COPY public.ros_summary_sources (summary_id, message_id, ordinal) FROM stdin;
+{node}\t{message}\t1
+\\.
+COPY public.ros_summary_passages (id, record_id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding) FROM stdin;
+{passage}\t{node}\t0\t0\t{chars}\t{text}\t2024-01-01\t2024-01-01\t\\\\x{fingerprint}\t{vector}
+\\.
+-- PostgreSQL database dump complete\n",
+        "ab".repeat(32)
+    )
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_foreign_model_passage_is_cleared_during_import(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let root = Uuid::from_u128(0xc5);
+    let dump = one_indexed_summary(root, "Alpha beta gamma.", 0xcd);
+    store
+        .import_memory_dump(&dump, false, &CancellationToken::new())
+        .await?;
+    let result: (bool, bool, bool) = sqlx::query_as(
+        "SELECT rh_summary_record_indexed(s.id), s.index_needs_repair, p.embedding IS NULL
+         FROM rh_summaries s JOIN rh_summary_passages p ON p.record_id = s.id WHERE s.id = $1",
+    )
+    .bind(root)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(result, (false, true, true));
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgPool) -> TestResult {
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
+    let existing = Uuid::from_u128(0xa1);
+    let incoming = Uuid::from_u128(0xa2);
+    let cancel = CancellationToken::new();
+    family
+        .import_memory_dump(
+            &one_indexed_summary(existing, "Destination session", 0xab),
+            false,
+            &cancel,
+        )
+        .await?;
+    source
+        .import_memory_dump(
+            &one_indexed_summary(incoming, "Incoming finished session", 0xab),
+            false,
+            &cancel,
+        )
+        .await?;
+    let ready: bool = sqlx::query_scalar("SELECT rh_summary_record_indexed($1)")
+        .bind(incoming)
+        .fetch_one(&source_pool)
+        .await?;
+    assert!(ready);
+    let report = family
+        .merge_store(
+            &source,
+            &MergeRequest {
+                owner: Owner::new("alice".to_owned())?,
+                moves: BTreeMap::new(),
+                dry_run: false,
+            },
+            &cancel,
+        )
+        .await?;
+    assert_eq!(
+        report.dropped_summary_trees,
+        [memory_postgres::merge::DroppedSummaryTree {
+            conversation: Uuid::from_u128(0xc1),
+            session_key: "cli:keep".to_owned(),
+            incoming_session: incoming,
+            destination_session: Some(existing),
+        }]
+    );
+    let summary: (Uuid, String) = sqlx::query_as("SELECT id, content FROM rh_summaries")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(summary, (existing, "Destination session".to_owned()));
+    assert_eq!(report.inserted.get("rh_summary_passages"), Some(&0));
     Ok(())
 }

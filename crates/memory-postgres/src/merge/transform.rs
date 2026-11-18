@@ -12,12 +12,14 @@ CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
-  SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AS source_wins FROM (
+  SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AND NOT has_visible_tree AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
          (SELECT count(*) FROM merge_rh_messages m WHERE m.conversation_id = s.id) AS source_messages,
          (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = t.id) AS target_messages,
          (EXISTS (SELECT 1 FROM merge_rh_summaries a WHERE a.conversation_id = s.id AND a.index_needs_repair)
-          AND EXISTS (SELECT 1 FROM rh_summaries b WHERE b.conversation_id = t.id)) AS needs_repair
+          AND EXISTS (SELECT 1 FROM rh_summaries b WHERE b.conversation_id = t.id)) AS needs_repair,
+         EXISTS (SELECT 1 FROM rh_summaries existing WHERE existing.conversation_id = t.id
+                 AND existing.kind = 'session') AS has_visible_tree
     FROM merge_rh_conversations s
     JOIN rh_conversations t ON t.session_key = s.session_key AND t.agent = s.agent AND t.id <> s.id
   ) pairs;
@@ -107,6 +109,9 @@ CREATE TEMP TABLE merge_keep_existing_tree ON COMMIT DROP AS
             AND (s.index_needs_repair OR (current.kind = 'session' AND NOT EXISTS (
                 SELECT 1 FROM rh_summaries t WHERE t.id = s.id)))
       ));
+";
+
+const DROP_STAGED_TREE: &str = "
 CREATE TEMP TABLE merge_drop_summary_nodes ON COMMIT DROP AS
     SELECT id FROM merge_rh_summaries
     WHERE pipeline_version = 7 AND conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree);
@@ -255,6 +260,14 @@ async fn duplicates(conn: &mut PgConnection, report: &mut MergeReport) -> Result
             report.kept_family.push(key);
         }
     }
+    report.dropped_summary_trees = sqlx::query_as(
+        "SELECT d.source_id AS conversation, d.session_key, incoming.id AS incoming_session,
+                existing.id AS destination_session
+         FROM merge_dupes d JOIN merge_rh_summaries incoming ON incoming.conversation_id = d.source_id
+         LEFT JOIN rh_summaries existing ON existing.conversation_id = d.target_id AND existing.kind = 'session'
+         WHERE NOT d.source_wins AND incoming.kind = 'session'
+         ORDER BY d.session_key, incoming.id",
+    ).fetch_all(&mut *conn).await.map_err(|error| Error::operation("merge dropped summary trees", error))?;
     batch(
         conn,
         "INSERT INTO merge_drop SELECT source_id FROM merge_dupes WHERE NOT source_wins;
@@ -328,6 +341,23 @@ pub(super) async fn run(
     .await?;
     batch(conn, OWNERS, "merge owners").await?;
     batch(conn, KEEP_EXISTING_TREE, "merge existing summary trees").await?;
+    report.dropped_summary_trees.extend(
+        sqlx::query_as(
+            "SELECT incoming.conversation_id AS conversation, c.session_key,
+                    incoming.id AS incoming_session, existing.id AS destination_session
+             FROM merge_keep_existing_tree keep
+             JOIN merge_rh_summaries incoming ON incoming.conversation_id = keep.conversation_id
+             JOIN merge_rh_conversations c ON c.id = keep.conversation_id
+             LEFT JOIN rh_summaries existing ON existing.conversation_id = keep.conversation_id
+                                              AND existing.kind = 'session'
+             WHERE incoming.kind = 'session'
+             ORDER BY c.session_key, incoming.id",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|error| Error::operation("merge dropped summary trees", error))?,
+    );
+    batch(conn, DROP_STAGED_TREE, "merge drop staged summary trees").await?;
     refuse_collisions(conn).await?;
     batch(conn, TOPICS, "merge topics").await?;
     report.mapped_type_topics = count(conn, "SELECT count(*) FROM merge_topic_map").await?;

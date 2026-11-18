@@ -64,7 +64,7 @@ async fn seed(pool: &PgPool) -> TestResult {
         .execute(&mut *tx)
         .await?;
     sqlx::raw_sql(SEED).execute(&mut *tx).await?;
-    sqlx::query("UPDATE rh_summaries SET content=$1 WHERE id IN ($2,$3)")
+    sqlx::query("UPDATE rh_summaries SET content=$1, index_key=input_key WHERE id IN ($2,$3)")
         .bind(format!("{FIRST}{SECOND}"))
         .bind(Uuid::parse_str(OWNER)?)
         .bind(Uuid::parse_str("00000000-0000-4000-8000-000000000021")?)

@@ -23,6 +23,7 @@ use wire::message::Role;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SearchOptions {
     pub(crate) since: Option<DateTime<Utc>>,
+    pub(crate) summary_index_key: Option<[u8; 32]>,
     pub(crate) before: Option<DateTime<Utc>>,
     pub(crate) text: String,
     pub(crate) mode: SearchMode,
@@ -290,6 +291,7 @@ impl crate::PostgresMemory {
             return Err(Error::UnresolvedWindow);
         }
         let options = SearchOptions {
+            summary_index_key: self.summary_index_key,
             since: query.since,
             before: query.before,
             text: query.text.clone(),

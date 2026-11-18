@@ -94,7 +94,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 37;
+pub const SCHEMA_VERSION: i64 = 38;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -114,6 +114,7 @@ pub struct SqliteStore {
     clock: SharedClock,
     query_embed: Option<QueryEmbed>,
     embed_model: Option<String>,
+    summary_index_key: Option<[u8; 32]>,
     notifications: tokio::sync::watch::Sender<()>,
     summaries_written: tokio::sync::broadcast::Sender<kernel::memory::WrittenSummary>,
 }
@@ -139,6 +140,12 @@ impl SqliteStore {
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Utc::now)))
+    }
+
+    #[must_use]
+    pub fn with_summary_index_key(mut self, key: [u8; 32]) -> Self {
+        self.summary_index_key = Some(key);
+        self
     }
 
     #[must_use]
@@ -251,6 +258,7 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         clock,
         query_embed: None,
         embed_model: None,
+        summary_index_key: None,
         notifications: tokio::sync::watch::channel(()).0,
         summaries_written: tokio::sync::broadcast::channel(SUMMARY_WRITTEN_BUFFER).0,
     }

@@ -48,7 +48,7 @@ const DAG_SQL: &str = "with recursive dag(id, level) as (
            case when s.kind = 'section' then 'skipped'
                 when s.index_needs_repair then 'pending'
                 when s.kind in ('session', 'part') then
-                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                    case when ($4::bytea is null or s.index_key = $4) and rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
                 when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
@@ -71,7 +71,7 @@ const SHAPE_SQL: &str = "with recursive dag(id, level) as (
     levels as (select id, max(level) as level from dag group by id)
     select s.id::text as id, s.parent_id::text as parent_id, (case when s.pipeline_version = 7 then s.depth else l.level end)::bigint as level, s.kind,
            case when s.kind = 'section' or s.index_needs_repair then false
-                when s.kind in ('session', 'part') then rh_summary_record_indexed(s.id)
+                when s.kind in ('session', 'part') then ($2::bytea is null or s.index_key = $2) and rh_summary_record_indexed(s.id)
                 else s.embedding is not null end as embedded,
            s.summary_ordinal, s.earliest_at, s.latest_at
     from levels l
@@ -87,7 +87,7 @@ const PICKED_SQL: &str =
            case when s.kind = 'section' then 'skipped'
                 when s.index_needs_repair then 'pending'
                 when s.kind in ('session', 'part') then
-                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                    case when ($3::bytea is null or s.index_key = $3) and rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
                 when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
@@ -107,7 +107,7 @@ const LATEST_SQL: &str = "with picked as (
            case when s.kind = 'section' then 'skipped'
                 when s.index_needs_repair then 'pending'
                 when s.kind in ('session', 'part') then
-                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                    case when ($3::bytea is null or s.index_key = $3) and rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
                 when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
@@ -134,7 +134,7 @@ const CHILDREN_SQL: &str = "with recursive down(top, id, depth) as (
            case when s.kind = 'section' then 'skipped'
                 when s.index_needs_repair then 'pending'
                 when s.kind in ('session', 'part') then
-                    case when rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
+                    case when ($3::bytea is null or s.index_key = $3) and rh_summary_record_indexed(s.id) then 'embedded' else 'pending' end
                 when s.embedding is not null then 'embedded'
                 when s.embed_status = 'failed' then 'failed'
                 when s.embed_status = 'unembeddable' then 'skipped'
@@ -242,6 +242,7 @@ impl PostgresMemory {
         let rows = sqlx::query_as::<_, DagRow>(LATEST_SQL)
             .bind(conversation)
             .bind(i64::try_from(limit).map_err(count_error)?)
+            .bind(self.summary_index_key.as_ref().map(<[_; 32]>::as_slice))
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("latest summaries", source))?;
@@ -287,6 +288,7 @@ impl PostgresMemory {
         }
         let shapes = sqlx::query_as::<_, ShapeRow>(SHAPE_SQL)
             .bind(conversation)
+            .bind(self.summary_index_key.as_ref().map(<[_; 32]>::as_slice))
             .fetch_all(&self.pool);
         let tally = async {
             if parent.is_some() {
@@ -352,6 +354,7 @@ impl PostgresMemory {
         sqlx::query_as::<_, DagRow>(PICKED_SQL)
             .bind(ids)
             .bind(preview)
+            .bind(self.summary_index_key.as_ref().map(<[_; 32]>::as_slice))
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("summary tree", source))?
@@ -385,6 +388,7 @@ impl PostgresMemory {
         let rows = sqlx::query_as::<_, ChildRow>(CHILDREN_SQL)
             .bind(parent)
             .bind(preview)
+            .bind(self.summary_index_key.as_ref().map(<[_; 32]>::as_slice))
             .fetch_all(&self.pool)
             .await
             .map_err(|source| Error::operation("summary children", source))?;
@@ -445,6 +449,7 @@ impl PostgresMemory {
             .bind(conversation)
             .bind(preview)
             .bind(only)
+            .bind(self.summary_index_key.as_ref().map(<[_; 32]>::as_slice))
             .fetch_all(&self.pool);
         let tally = async {
             if only.is_some() {

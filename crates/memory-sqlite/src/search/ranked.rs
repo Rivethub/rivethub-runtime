@@ -351,7 +351,10 @@ const MESSAGE_CANDIDATES: &str = "SELECT id, content, created_at, conversation_i
          AND (?6 IS NULL OR role NOT IN (SELECT value FROM json_each(?6)))
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = m.conversation_id)";
 
-const SUMMARY_CANDIDATES: &str = "SELECT id, content, CASE WHEN kind IN ('session', 'part') THEN latest_at ELSE created_at END AS search_time, conversation_id, NULL, NULL, embedding, access_count, 0.6,
+const SUMMARY_CANDIDATES: &str = "SELECT id, content, CASE WHEN kind IN ('session', 'part') THEN latest_at ELSE created_at END AS search_time, conversation_id, NULL, NULL,
+         CASE WHEN kind IN ('session', 'part') AND (index_needs_repair OR index_key IS NULL
+                    OR (?4 IS NOT NULL AND index_key IS NOT ?4)) THEN NULL ELSE embedding END,
+         access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
          FROM ros_summaries s WHERE kind <> 'section' AND (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
          AND (?2 IS NULL OR search_time >= ?2) AND (?3 IS NULL OR search_time < ?3)
@@ -367,6 +370,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
         .prepare(sql)
         .map_err(SqliteError::query("search candidates"))?;
     let role = plan.role.map(|role| role.to_string());
+    let key = plan.summary_index_key.as_ref().map(<[_; 32]>::as_slice);
     let filters: Vec<&dyn rusqlite::ToSql> = if message {
         vec![
             &plan.agent,
@@ -377,7 +381,7 @@ fn load_table(conn: &Connection, plan: &Plan, message: bool) -> Result<Vec<ArmRo
             &plan.exclude_roles,
         ]
     } else {
-        vec![&plan.agent, &plan.since, &plan.before]
+        vec![&plan.agent, &plan.since, &plan.before, &key]
     };
     let mapped = statement
         .query_map(filters.as_slice(), |row| {

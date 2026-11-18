@@ -87,6 +87,7 @@ const SUMMARY_BUMP: &str = "UPDATE ros_summaries \
 #[derive(Debug, Clone)]
 struct Plan {
     pattern: Option<String>,
+    summary_index_key: Option<[u8; 32]>,
     text: String,
     mode: SearchMode,
     scope: MemoryScope,
@@ -139,7 +140,8 @@ impl SqliteStore {
         now: DateTime<Utc>,
         zone: &Tz,
     ) -> Result<SearchOutcome, SqliteError> {
-        let plan = Plan::prepare(query, now, zone)?;
+        let mut plan = Plan::prepare(query, now, zone)?;
+        plan.summary_index_key = self.summary_index_key;
         let semantic = matches!(plan.mode, SearchMode::Hybrid | SearchMode::Vector);
         let (vector, degraded) = if semantic {
             match &self.query_embed {
@@ -221,6 +223,7 @@ impl Plan {
             limit
         };
         Ok(Self {
+            summary_index_key: None,
             pattern,
             text: query.text,
             mode: query.mode,

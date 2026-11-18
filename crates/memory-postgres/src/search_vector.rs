@@ -195,6 +195,10 @@ async fn passage_vector(
           AND EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = p.record_id",
     );
     Passage.push_eligibility(&mut query);
+    query.push(" AND p.index_key = s.index_key");
+    if let Some(key) = &options.summary_index_key {
+        query.push(" AND s.index_key = ").push_bind(key.as_slice());
+    }
     if let Some(filter) = context.tag_filter {
         query.push(" AND ");
         filter.push_condition(&mut query, false);

@@ -88,7 +88,7 @@ pub use queue::PostgresQueue;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
-pub const SCHEMA_VERSION: i64 = 77;
+pub const SCHEMA_VERSION: i64 = 78;
 pub(crate) const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug)]
@@ -98,6 +98,7 @@ pub struct PostgresMemory {
     wiki_owner: Option<kernel::owner::Owner>,
     pool: PgPool,
     embed: Option<embed::EmbedArm>,
+    summary_index_key: Option<[u8; 32]>,
     access: std::sync::Arc<access::AccessLog>,
     stats_cache: std::sync::Arc<stats_cache::StatsCache>,
     backfills: std::sync::Arc<backfills::Backfills>,
@@ -122,6 +123,7 @@ impl PostgresMemory {
             wiki_owner: None,
             pool,
             embed: None,
+            summary_index_key: None,
             access: std::sync::Arc::default(),
             stats_cache: std::sync::Arc::default(),
             backfills: std::sync::Arc::default(),
@@ -151,6 +153,12 @@ impl PostgresMemory {
     #[must_use]
     pub fn with_wiki_owner(mut self, owner: kernel::owner::Owner) -> Self {
         self.wiki_owner = Some(owner);
+        self
+    }
+
+    #[must_use]
+    pub fn with_summary_index_key(mut self, key: [u8; 32]) -> Self {
+        self.summary_index_key = Some(key);
         self
     }
 

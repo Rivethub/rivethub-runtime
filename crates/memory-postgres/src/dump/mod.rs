@@ -60,7 +60,13 @@ impl PostgresMemory {
     ) -> Result<ImportedDump, Error> {
         let parsed = parse::parse(dump)?;
         let mut conn = begin(&self.pool).await?;
-        let imported = import_tables(&mut conn, &parsed, cancellation).await;
+        let imported = import_tables(
+            &mut conn,
+            &parsed,
+            cancellation,
+            self.summary_index_key.as_ref(),
+        )
+        .await;
         match imported {
             Ok(rows) => {
                 commit(&mut conn, !dry_run).await?;
@@ -167,6 +173,7 @@ async fn import_tables(
     conn: &mut PgConnection,
     parsed: &parse::Parsed,
     cancellation: &CancellationToken,
+    index_key: Option<&[u8; 32]>,
 ) -> Result<BTreeMap<String, u64>, Error> {
     sqlx::query("SET LOCAL rivet.defer_embed_enqueue = 'on'")
         .execute(&mut *conn)
@@ -191,7 +198,7 @@ async fn import_tables(
         rows.insert(block.relation.table_name().to_owned(), count);
     }
     validate_summary_graph(conn).await?;
-    mark_summary_index_repairs(conn).await?;
+    mark_summary_index_repairs(conn, index_key).await?;
     Ok(rows)
 }
 
@@ -212,7 +219,23 @@ pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<()
     Ok(())
 }
 
-pub(crate) async fn mark_summary_index_repairs(conn: &mut PgConnection) -> Result<(), Error> {
+async fn mark_summary_index_repairs(
+    conn: &mut PgConnection,
+    key: Option<&[u8; 32]>,
+) -> Result<(), Error> {
+    let key = key.map(<[_; 32]>::as_slice);
+    for statement in [
+        "UPDATE rh_summary_passages SET embedding = NULL
+         WHERE embedding IS NOT NULL AND index_key IS DISTINCT FROM $1",
+        "UPDATE rh_summaries SET index_key = $1
+         WHERE kind IN ('session', 'part') AND index_key IS DISTINCT FROM $1",
+    ] {
+        sqlx::query(statement)
+            .bind(key)
+            .execute(&mut *conn)
+            .await
+            .map_err(|error| Error::operation("import summary embedding specification", error))?;
+    }
     sqlx::query(
         "UPDATE rh_summaries s SET index_needs_repair = true
          WHERE s.kind IN ('session', 'part') AND NOT s.index_needs_repair

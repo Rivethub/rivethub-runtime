@@ -10,7 +10,7 @@ use crate::error::Error;
 use crate::upgrade;
 use crate::version::SchemaVersion;
 
-const CURRENT: SchemaVersion = SchemaVersion::V37;
+const CURRENT: SchemaVersion = SchemaVersion::V38;
 
 const SCHEMA_SQL: &str = include_str!("schema/schema_v7.sql");
 

@@ -419,3 +419,57 @@ async fn assert_mixed_tree(
     );
     Ok(section)
 }
+
+#[tokio::test]
+async fn top_down_foreign_model_pooled_vector_is_cleared_during_import() -> TestResult {
+    let local = fresh_store()?;
+    let store = local.store.with_summary_index_key([0xab; 32]);
+    let dump = tempfile::NamedTempFile::new()?;
+    let root = uuid::Uuid::from_u128(0xc5);
+    let conversation = uuid::Uuid::from_u128(0xc1);
+    let message = uuid::Uuid::from_u128(0xc2);
+    let vector = format!("[{}1]", "0,".repeat(1023));
+    std::fs::write(dump.path(), format!(
+        "COPY public.ros_conversations (id, session_key, agent, channel, created_at, updated_at, owner_user_id) FROM stdin;
+{conversation}\tcli:keep\tfixture\tcli\t2024-01-01T00:00:00Z\t2024-01-01T00:00:00Z\talice
+\\.
+COPY public.ros_messages (id, conversation_id, agent, channel, role, content, created_at) FROM stdin;
+{message}\t{conversation}\tfixture\tcli\tuser\tMeasure the spring.\t2024-01-01T00:00:00Z
+\\.
+COPY public.ros_summaries (id, conversation_id, kind, depth, content, message_count, earliest_at, latest_at, created_at, pipeline_version, summary_ordinal, source_first, source_last, input_key, index_key, embedding) FROM stdin;
+{root}\t{conversation}\tsession\t2\tAlpha beta gamma.\t1\t2024-01-01T00:00:00Z\t2024-01-01T00:00:00Z\t2024-01-01T00:00:00Z\t7\t0\t1\t1\t\\\\x{}\t\\\\x{}\t{vector}
+\\.
+COPY public.ros_summary_sources (summary_id, message_id, ordinal) FROM stdin;
+{root}\t{message}\t1
+\\.
+-- PostgreSQL database dump complete\n",
+        "ab".repeat(32), "cd".repeat(32),
+    ))?;
+    store
+        .import_pg_dump(
+            dump.path().to_path_buf(),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
+    let result = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT index_needs_repair, embedding IS NULL, index_key FROM ros_summaries",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, bool>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .map_err(|source| memory_sqlite::SqliteError::Query {
+                operation: "test index specification",
+                source,
+            })
+        })
+        .await?;
+    assert_eq!(result, (true, true, vec![0xab; 32]));
+    Ok(())
+}

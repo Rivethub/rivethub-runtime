@@ -25,7 +25,8 @@ async fn seed(store: &memory_sqlite::SqliteStore) -> TestResult {
              ('section','c','session','clementine sectionduplicate with a vector that would otherwise match',
                'section',0,'2026-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z',7,1,1,1,X'0000803F00000000'),
              ('legacy','c',NULL,'The clementine leaf was written recently about an older orchard project.',
-               'leaf',0,'2026-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z',6,NULL,NULL,NULL,X'0000803F00000000');",
+               'leaf',0,'2026-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z',6,NULL,NULL,NULL,X'0000803F00000000');
+             UPDATE ros_summaries SET index_key = zeroblob(32) WHERE kind IN ('session', 'part');",
         )
         .map_err(failed)?;
         Ok(())

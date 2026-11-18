@@ -28,6 +28,7 @@ pub struct MergeReport {
     pub staged: BTreeMap<String, u64>,
     pub inserted: BTreeMap<String, u64>,
     pub kept_family: Vec<String>,
+    pub dropped_summary_trees: Vec<DroppedSummaryTree>,
     pub replaced: Vec<String>,
     pub moved_conversations: u64,
     pub mapped_type_topics: u64,
@@ -37,6 +38,15 @@ pub struct MergeReport {
     pub embeddings_cleared: bool,
     pub committed: bool,
     pub millis: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DroppedSummaryTree {
+    pub conversation: Uuid,
+    pub session_key: String,
+    pub incoming_session: Uuid,
+    pub destination_session: Option<Uuid>,
 }
 
 impl PostgresMemory {
@@ -88,7 +98,8 @@ impl PostgresMemory {
             .await
             .map_err(|error| Error::operation("merge source snapshot", error))?;
         report.embeddings_cleared = stage::align_embeddings(source, self, &mut tx).await?;
-        stage::mark_summary_repairs(&mut tx).await?;
+        report.embeddings_cleared |=
+            stage::mark_summary_repairs(&mut tx, self.summary_index_key.as_ref()).await?;
         let conversations: Vec<Uuid> = sqlx::query_scalar(
             "SELECT id FROM rh_conversations UNION SELECT id FROM merge_rh_conversations",
         )

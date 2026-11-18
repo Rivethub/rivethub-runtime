@@ -113,12 +113,19 @@ impl SqliteStore {
         cancellation: CancellationToken,
         apply: bool,
     ) -> Result<ImportReport, ImportError> {
+        let index_key = self.summary_index_key;
         let conn = self.conn.clone();
         self.pending
             .spawn_blocking(move || {
                 let file =
                     File::open(&path).map_err(|source| ImportError::File { path, source })?;
-                import(&mut conn.lock(), BufReader::new(file), &cancellation, apply)
+                import(
+                    &mut conn.lock(),
+                    BufReader::new(file),
+                    &cancellation,
+                    apply,
+                    index_key.as_ref(),
+                )
             })
             .await?
     }
@@ -148,6 +155,7 @@ fn import(
     reader: impl BufRead,
     cancellation: &CancellationToken,
     apply: bool,
+    index_key: Option<&[u8; 32]>,
 ) -> Result<ImportReport, ImportError> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
@@ -212,7 +220,7 @@ fn import(
     if block.is_some() || passages || !complete || seen.is_empty() {
         return Err(ImportError::Truncated);
     }
-    finish(&tx, width, &report)?;
+    finish(&tx, width, &report, index_key)?;
     check_cancelled(cancellation)?;
     if apply {
         tx.commit()?;
@@ -245,15 +253,17 @@ fn finish(
     tx: &rusqlite::Transaction<'_>,
     width: Option<usize>,
     report: &ImportReport,
+    index_key: Option<&[u8; 32]>,
 ) -> Result<(), ImportError> {
     let invalid: bool = tx.query_row(include_str!("summary_graph.sql"), [], |row| row.get(0))?;
     if invalid {
         return Err(ImportError::SummaryGraph);
     }
     tx.execute(
-        "UPDATE ros_summaries SET index_needs_repair = 1
-         WHERE kind IN ('session', 'part') AND embedding IS NULL",
-        [],
+        "UPDATE ros_summaries SET embedding = NULL, index_key = ?1, index_needs_repair = 1
+         WHERE kind IN ('session', 'part')
+           AND (embedding IS NULL OR index_key IS NULL OR index_key IS NOT ?1)",
+        [index_key.map(<[_; 32]>::as_slice)],
     )?;
     let foreign_key_violation = tx
         .query_row(

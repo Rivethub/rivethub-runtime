@@ -21,10 +21,10 @@ async fn a_migration_missing_below_the_newest_is_pending_until_migrate_applies_i
         .await?;
 
     let gapped = migrate::postgres_status_pool(&pool).await?;
-    assert_eq!((gapped.current, gapped.pending), (77, 1));
+    assert_eq!((gapped.current, gapped.pending), (78, 1));
 
     let migrated = migrate::postgres_pool(&pool).await?;
-    assert_eq!((migrated.current, migrated.pending), (77, 0));
+    assert_eq!((migrated.current, migrated.pending), (78, 0));
     let index: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('idx_rh_messages_unembedded')::text")
             .fetch_one(&pool)
@@ -327,7 +327,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (75, 77, 2)
+        (75, 78, 3)
     );
     sqlx::raw_sql(
         "INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
@@ -341,7 +341,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (77, 77, 0)
+        (78, 78, 0)
     );
     let row: (String, i32, Option<i32>, bool) =
         sqlx::query_as("SELECT kind, depth, summary_ordinal, index_needs_repair FROM rh_summaries")
@@ -399,12 +399,12 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let pending = migrate::sqlite_status(&upgraded)?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),
-        (35, 37, 2)
+        (35, 38, 3)
     );
     let status = migrate::sqlite(&upgraded)?;
     assert_eq!(
         (status.current, status.required, status.pending),
-        (37, 37, 0)
+        (38, 38, 0)
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(
