@@ -2,7 +2,6 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use wire::time::LegacyStrftime as _;
 
 use kernel::memory::{MemoryStore, Provenance, Verification};
 use rmcp::model::{CallToolResult, ToolAnnotations};
@@ -100,10 +99,7 @@ fn render(
                 "{} · {} · {}",
                 record.title,
                 crate::render_search::age(record.when, now),
-                record
-                    .when
-                    .to_zoned_datetime(zone.clone())
-                    .legacy_strftime("%Y-%m-%d %H:%M %Z")
+                crate::render_memory::timestamp_minutes(record.when, zone)
             );
             if !record.topic.is_empty() {
                 write!(heading, " · {}", record.topic.join(" / "))?;

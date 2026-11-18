@@ -177,13 +177,43 @@ pub(crate) fn browse(
 }
 
 pub(crate) fn timestamp(date: Timestamp, zone: &TimeZone) -> String {
-    date.to_zoned_datetime(zone.clone())
-        .legacy_strftime("%Y-%m-%d %H:%M:%S %Z")
+    local_time(date, zone, "%Y-%m-%d %H:%M:%S")
+}
+
+pub(crate) fn timestamp_minutes(date: Timestamp, zone: &TimeZone) -> String {
+    local_time(date, zone, "%Y-%m-%d %H:%M")
+}
+
+fn local_time(date: Timestamp, zone: &TimeZone, pattern: &str) -> String {
+    let info = display_offset(date, zone);
+    let local = date.to_zoned_datetime(TimeZone::fixed(info.offset()));
+    format!("{} {}", local.legacy_strftime(pattern), info.abbreviation())
+}
+
+fn display_offset(date: Timestamp, zone: &TimeZone) -> jiff::tz::TimeZoneOffsetInfo<'_> {
+    const LAST_BUNDLED_RULE_INSTANT: Timestamp = Timestamp::constant(4_102_444_799, 0);
+    zone.to_offset_info(date.min(LAST_BUNDLED_RULE_INSTANT))
 }
 
 pub(crate) fn local_date(date: Timestamp, zone: &TimeZone) -> String {
-    date.to_zoned_datetime(zone.clone())
+    display_offset(date, zone)
+        .offset()
+        .to_datetime(date)
+        .date()
         .legacy_strftime("%Y-%m-%d")
+}
+
+#[cfg(test)]
+#[test]
+fn timestamps_after_the_bundled_rule_horizon_keep_the_final_offset() -> Result<(), jiff::Error> {
+    let zone = wire::time::bundled_zone("America/New_York")?;
+    let before = "2099-07-01T04:30:00Z".parse()?;
+    let after = "2100-07-01T04:30:00Z".parse()?;
+    assert_eq!(timestamp(before, &zone), "2099-07-01 00:30:00 EDT");
+    assert_eq!(timestamp(after, &zone), "2100-06-30 23:30:00 EST");
+    assert_eq!(timestamp_minutes(after, &zone), "2100-06-30 23:30 EST");
+    assert_eq!(local_date(after, &zone), "2100-06-30");
+    Ok(())
 }
 
 pub(crate) fn get_full(

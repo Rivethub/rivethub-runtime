@@ -1,7 +1,6 @@
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use std::fmt::Write as _;
-use wire::time::LegacyStrftime as _;
 
 use kernel::memory::MemoryStore;
 use kernel::memory::SessionDigest;
@@ -78,10 +77,7 @@ fn render(
     if found.is_empty() {
         writeln!(out, "No sessions match \"{query}\".")?;
     }
-    let day = |at: Timestamp| {
-        at.to_zoned_datetime(zone.clone())
-            .legacy_strftime("%Y-%m-%d")
-    };
+    let day = |at: Timestamp| crate::render_memory::local_date(at, zone);
     for (index, (ranked, digest)) in found.iter().enumerate() {
         let imported = kernel::memory::is_imported(&digest.key);
         write!(
