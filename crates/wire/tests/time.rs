@@ -96,8 +96,7 @@ fn default_wire_parser_accepts_an_offset_without_a_colon() -> Result<(), Box<dyn
 }
 
 #[test]
-fn leap_seconds_survive_capture_and_canonical_wire_output() -> Result<(), Box<dyn std::error::Error>>
-{
+fn leap_seconds_normalize_to_the_preceding_second() -> Result<(), Box<dyn std::error::Error>> {
     let stamp: SanitizeStamp = serde_json::from_value(json!({
         "at": "2016-12-31T23:59:60.5Z", "policy_sha256": "hash", "passes": [], "unresolved_flags": 0
     }))?;
@@ -108,29 +107,22 @@ fn leap_seconds_survive_capture_and_canonical_wire_output() -> Result<(), Box<dy
         serde_json::to_value(stamp)?
             .get("at")
             .and_then(serde_json::Value::as_str),
-        Some("2016-12-31T23:59:60.500Z")
+        Some("2016-12-31T23:59:59.500Z")
     );
     assert_eq!(
         serde_json::to_value(capture)?
             .get("created_at")
             .and_then(serde_json::Value::as_str),
-        Some("2016-12-31T23:59:60.500Z")
+        Some("2016-12-31T23:59:59.500Z")
     );
     Ok(())
 }
 
 #[test]
-fn default_wire_timestamps_keep_expanded_years() -> Result<(), Box<dyn std::error::Error>> {
-    let stamp: SanitizeStamp = serde_json::from_value(json!({
+fn default_wire_timestamps_reject_a_year_outside_the_supported_range() {
+    assert!(serde_json::from_value::<SanitizeStamp>(json!({
         "at": "+10000-01-01T00:00:00Z", "policy_sha256": "hash", "passes": [], "unresolved_flags": 0
-    }))?;
-    assert_eq!(
-        serde_json::to_value(stamp)?
-            .get("at")
-            .and_then(serde_json::Value::as_str),
-        Some("+10000-01-01T00:00:00Z")
-    );
-    Ok(())
+    })).is_err());
 }
 
 #[test]
