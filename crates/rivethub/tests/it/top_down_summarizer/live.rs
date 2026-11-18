@@ -673,9 +673,19 @@ where
             max_attempts: Some(2),
         })
         .await?;
-    let mut deps = crate::common::deps(store.clone(), script.clone());
-    deps.summaries = store.clone();
-    deps.embed = EmbedSettings::standard();
+    let deps = workers::WorkerDeps {
+        targets: store.clone(),
+        summaries: store.clone(),
+        summarizer: script.clone(),
+        categorizer: workers::RoleModel {
+            provider: script.clone(),
+            model: "fake-chat".to_owned(),
+        },
+        embedder: script.clone(),
+        embed: EmbedSettings::standard(),
+        summary: SummarySettings::standard("fake-chat")?,
+        scopes: None,
+    };
     let runner = workers::Runner::new(
         queue.clone(),
         workers::RunnerConfig::new(workers::ProcessRole::Embedder, 1)?,

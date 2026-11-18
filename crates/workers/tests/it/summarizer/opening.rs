@@ -33,7 +33,7 @@ async fn title_job_names_an_active_opening_and_preserves_a_supplied_title()
     for id in [id, manual] {
         queue.enqueue(OpeningConsumer::Title.job(id)?).await?;
     }
-    let script = Arc::new(Scripted::success());
+    let script = Arc::new(Scripted::default());
     let mut worker_deps = deps(Arc::new(Store::new()), script.clone());
     worker_deps.summaries = store.clone();
     let runner = Runner::new(

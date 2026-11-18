@@ -2,6 +2,7 @@
 mod top_down;
 
 use kernel::memory::MemoryEntry;
+use kernel::model::ModelProvider as _;
 use std::collections::BTreeMap;
 use wire::JsonObject;
 
@@ -202,8 +203,8 @@ impl Playback {
 
 fn check_request(request: &ModelRequest, expected: RequestBody, step: &str) {
     let [system, user] = expected.messages;
-    let system_text = super::support::system_text(request).expect("system text");
-    let user_text = super::support::user_text(request).expect("user text");
+    let system_text = super::script::system_text(request).expect("system text");
+    let user_text = super::script::user_text(request).expect("user text");
     assert_eq!(
         system_text.as_bytes(),
         system.content.as_bytes(),
@@ -253,7 +254,7 @@ async fn top_down_prompt_parity_requests() {
         let plan = check_packing(&case, &blocks, meter, limits);
 
         let mut playback = Playback {
-            provider: Scripted::success(),
+            provider: Scripted::default(),
             requests: case.requests.into_iter(),
         };
         let chunk_count = plan.chunks.len();
