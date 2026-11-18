@@ -12,6 +12,7 @@ use config::Environment;
 use kernel::memory::share::desk::TokenStore;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_with::{DeserializeAs, SerializeAs, serde_as};
 
 use super::Login;
 use super::ServerError;
@@ -93,13 +94,11 @@ enum Record {
     Team(TeamRecord),
 }
 
+#[serde_as]
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeviceRecord {
-    #[serde(
-        serialize_with = "serialize_login_expiry",
-        deserialize_with = "deserialize_login_expiry"
-    )]
+    #[serde_as(as = "LoginExpiry")]
     expires_at: Timestamp,
     scope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,11 +107,21 @@ struct DeviceRecord {
     refresh_token: Option<String>,
 }
 
-fn serialize_login_expiry<S: serde::Serializer>(
-    value: &Timestamp,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&wire::time::TimestampFormat::rfc3339_z(*value))
+struct LoginExpiry;
+
+impl SerializeAs<Timestamp> for LoginExpiry {
+    fn serialize_as<S: serde::Serializer>(
+        value: &Timestamp,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        wire::time::Rfc3339::serialize_as(value, serializer)
+    }
+}
+
+impl<'de> DeserializeAs<'de, Timestamp> for LoginExpiry {
+    fn deserialize_as<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Timestamp, D::Error> {
+        deserialize_login_expiry(deserializer)
+    }
 }
 
 fn deserialize_login_expiry<'de, D: serde::Deserializer<'de>>(
