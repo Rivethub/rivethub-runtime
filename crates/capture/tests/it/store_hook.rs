@@ -164,7 +164,8 @@ async fn top_down_settle_a_session_end_with_no_turns_posts_an_empty_marker() -> 
         return Err("expected one end".into());
     };
     let batch: wire::capture::CaptureBatchRequest = serde_json::from_str(body)?;
-    assert!(batch.messages.is_empty());
+    drop(posts);
+    assert_eq!(batch.messages, []);
     assert!(
         batch
             .session_observation()

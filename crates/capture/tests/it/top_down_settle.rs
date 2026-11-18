@@ -26,7 +26,8 @@ impl CaptureTransport for Transport {
                 message: error.to_string(),
             })?;
         self.posts.lock().push(batch);
-        if let Some(error) = self.failures.lock().pop_front() {
+        let failure = self.failures.lock().pop_front();
+        if let Some(error) = failure {
             return Err(error);
         }
         Ok(CaptureResult {
@@ -95,8 +96,10 @@ async fn immediate_end_waits_and_preserves_legacy_finalize_after_client_rejectio
             posts.iter().map(has_end).collect::<Vec<_>>(),
             [false, false, !reject]
         );
-        assert_eq!(posts[2].finalize, Some(true));
-        assert_eq!(posts[2].messages[0].event_id, "2");
+        let last = posts.last().ok_or("final chunk")?;
+        assert_eq!(last.finalize, Some(true));
+        assert_eq!(last.messages.first().ok_or("final message")?.event_id, "2");
+        drop(posts);
     }
     Ok(())
 }
@@ -142,10 +145,11 @@ async fn replay_end_waits_for_backoff_or_ages_out_after_a_dead_predecessor() -> 
             replay.replay(now + SignedDuration::from_secs(31)).await?;
         }
         let posts = transport.posts.lock();
-        let final_chunk = posts.last().ok_or("final chunk")?;
+        let (final_chunk, predecessors) = posts.split_last().ok_or("final chunk")?;
         assert_eq!(final_chunk.finalize, Some(true));
         assert_eq!(has_end(final_chunk), !reject);
-        assert!(posts[..posts.len() - 1].iter().all(|batch| !has_end(batch)));
+        assert!(predecessors.iter().all(|batch| !has_end(batch)));
+        drop(posts);
     }
     Ok(())
 }
@@ -189,6 +193,7 @@ async fn claude_clear_forwards_the_previous_session_end() -> TestResult {
         .session_observation()
         .and_then(|observation| observation.end_key)
         .ok_or("end marker")?;
+    drop(posts);
     assert!(key.ends_with("native-end"));
     Ok(())
 }
@@ -220,8 +225,9 @@ async fn codex_empty_end_is_distinct_from_turn_boundaries_and_imports() -> TestR
     let [notification] = posts.as_slice() else {
         return Err("expected one notification".into());
     };
-    assert!(notification.messages.is_empty());
+    assert_eq!(notification.messages, []);
     assert!(has_end(notification));
+    drop(posts);
     for (key, source, event) in [
         ("dsh:invented", "dsh-hook", "turn/end"),
         ("opencode:invented", "opencode-hook", "session.idle"),
