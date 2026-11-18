@@ -3,6 +3,7 @@ use crate::capture::CaptureWriter;
 use crate::capture::ConversationDates;
 use crate::capture::ConversationUpsert;
 use crate::capture::MessageRow;
+use crate::capture::StagedMessages;
 use crate::capture::UpsertedConversation;
 use crate::capture::prepare_capture_message;
 use crate::error::Error;
@@ -79,18 +80,9 @@ impl crate::PostgresMemory {
         }
         let conversation = upsert_batch_conversation(&mut writer, batch, channel, options).await?;
         let conversation_id = conversation.id;
-        let event_ids: Vec<String> = batch
-            .messages
-            .iter()
-            .map(|message| message.event_id.clone())
-            .collect();
-        let seen = writer.seen_event_ids(conversation_id, &event_ids).await?;
-        let fresh: Vec<(usize, &CaptureMessage)> = batch
-            .messages
-            .iter()
-            .enumerate()
-            .filter(|(_, message)| !seen.contains(&message.event_id))
-            .collect();
+        let StagedMessages { fresh, positions } = writer
+            .stage_messages(conversation_id, &batch.messages)
+            .await?;
         let stamps = writer
             .untied_times(
                 conversation_id,
@@ -120,6 +112,11 @@ impl crate::PostgresMemory {
                 })
                 .await?;
             inserted += 1;
+        }
+        if !positions.is_empty() {
+            writer
+                .fill_positions(conversation_id, &conversation.owner_user_id, &positions)
+                .await?;
         }
         if batch.finalize == Some(true) {
             let imported = wire::capture::is_imported_session(&batch.session_key);

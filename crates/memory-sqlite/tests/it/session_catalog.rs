@@ -207,7 +207,7 @@ async fn identical_positions_use_the_same_id_tie_break_in_both_readers() -> Test
     use kernel::memory::{MessagesQuery, SummaryStore};
 
     let (directory, memory) = store()?;
-    let (key, conversation) = session_with_two_messages(&directory, &memory, true).await?;
+    let (key, conversation) = session_with_two_messages(&directory, &memory).await?;
     let first = memory
         .messages(&key, &MessagesQuery::new(None, Some(1)))
         .await?;
@@ -231,43 +231,23 @@ async fn identical_positions_use_the_same_id_tie_break_in_both_readers() -> Test
 }
 
 #[tokio::test]
-async fn unpositioned_keyset_does_not_decode_off_page_rows() -> TestResult {
-    use kernel::memory::MessagesQuery;
-
-    let (directory, memory) = store()?;
-    let (key, _) = session_with_two_messages(&directory, &memory, false).await?;
-    connection(&directory)?.execute(
-        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, metadata, created_at, owner_user_id)
-         SELECT 'off-page', conversation_id, agent, channel, role, 'outside page', 'not JSON',
-                '2030-01-01T00:00:00.000Z', owner_user_id FROM ros_messages LIMIT 1",
-        [],
-    )?;
-    let page = memory
-        .messages(&key, &MessagesQuery::new(None, Some(1)))
-        .await?;
-    assert_eq!(page.total, 3);
-    assert_eq!(
-        page.items.first().ok_or("page message")?.content,
-        "second insert"
-    );
-    Ok(())
+async fn a_tool_replay_fills_position_and_invalidates_an_earlier_cursor() -> TestResult {
+    let (_directory, memory) = store()?;
+    testkit::session_messages::a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+        &memory, &memory, &memory,
+    )
+    .await
 }
 
 async fn session_with_two_messages(
     directory: &TempDir,
     memory: &SqliteStore,
-    positioned: bool,
 ) -> TestResult<(wire::session_id::SessionKey, uuid::Uuid)> {
     use kernel::memory::CaptureMessage;
     use testkit::topics::at;
     use wire::message::Role;
 
     let key = "claude-code:00000000-0000-4000-8000-0000000000e7".parse()?;
-    let metadata = if positioned {
-        r#"{"session_jsonl_line":0}"#
-    } else {
-        r#"{"session_jsonl_line":"0"}"#
-    };
     let make = |content: &str| -> TestResult<CaptureMessage> {
         Ok(CaptureMessage {
             event_id: content.to_owned(),
@@ -276,7 +256,7 @@ async fn session_with_two_messages(
             tool_name: None,
             tool_args: None,
             tool_result: None,
-            metadata: Some(serde_json::from_str(metadata)?),
+            metadata: Some(serde_json::from_str(r#"{"session_jsonl_line":0}"#)?),
             created_at: Some(at(10)),
         })
     };

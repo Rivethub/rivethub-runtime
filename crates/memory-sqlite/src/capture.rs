@@ -32,6 +32,7 @@ struct PreparedMessage {
     tool_args: Option<String>,
     tool_result: Option<String>,
     metadata: String,
+    position_patch: Option<String>,
     created_at: Stamp,
 }
 
@@ -308,7 +309,18 @@ impl PreparedMessage {
             full_content_length,
             full_tool_result_length,
         })?;
+        let mut position = JsonObject::default();
+        wire::capture::add_transcript_position(&mut position, message.metadata.as_ref()).map_err(
+            |source| SqliteError::Encode {
+                column: "position metadata",
+                source,
+            },
+        )?;
+        let position_patch = (!position.as_map().is_empty())
+            .then(|| encode(&position, "position metadata"))
+            .transpose()?;
         Ok(Self {
+            position_patch,
             event_id: message.event_id.clone(),
             role: message.role,
             content: content.to_owned(),
@@ -335,6 +347,7 @@ impl PreparedMessage {
             if self.fill_pending(tx, &stored)? {
                 return Ok(Outcome::Filled(stored));
             }
+            self.fill_position(tx, &stored)?;
             return Ok(Outcome::Skipped);
         }
         if let Some(hook_row) = self.unclaimed_hook_row(tx, conversation_id)? {
@@ -390,6 +403,26 @@ impl PreparedMessage {
             )
             .map_err(SqliteError::query("pending tool result fill"))?;
         Ok(changed > 0)
+    }
+
+    fn fill_position(&self, tx: &Transaction<'_>, id: &str) -> Result<(), SqliteError> {
+        let Some(patch) = &self.position_patch else {
+            return Ok(());
+        };
+        tx.execute(
+            "UPDATE ros_messages SET metadata = json_patch(metadata, (
+                 SELECT json_group_object(field.key, ?2 -> field.key)
+                   FROM json_each(?2) AS field
+                  WHERE json_type(metadata, '$.' || field.key) IS NULL
+             ))
+             WHERE id = ?1 AND EXISTS (
+                 SELECT 1 FROM json_each(?2) AS field
+                  WHERE json_type(metadata, '$.' || field.key) IS NULL
+             )",
+            params![id, patch],
+        )
+        .map_err(SqliteError::query("transcript position fill"))?;
+        Ok(())
     }
 
     fn unclaimed_hook_row(

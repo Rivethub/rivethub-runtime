@@ -199,6 +199,36 @@ fn keeps_all_identical_positions_and_rows_attached_to_one_anchor() {
 }
 
 #[test]
+fn a_replayed_line_takes_precedence_over_the_kept_hook_sequence() {
+    let path = "session.jsonl";
+    let user = row(1, 30, Role::User, &lined(path, 0, r#""uuid":"ask""#));
+    let assistant = row(
+        2,
+        20,
+        Role::Assistant,
+        &lined(path, 1, r#""uuid":"answer""#),
+    );
+    let reply = row(4, 10, Role::Assistant, &lined(path, 3, r#""uuid":"reply""#));
+    let kept_hook = row(
+        3,
+        50,
+        Role::Tool,
+        &format!(
+            r#"{{"session_jsonl_path":"{path}","tool_use_id":"toolu_synthetic_read","event_id":"claude-code:s:tool:toolu_synthetic_read","hook_producer":"producer-a","hook_sequence":1,"session_jsonl_line":2,"ordinal":1,"assistant_uuid":"answer"}}"#
+        ),
+    );
+    assert_eq!(
+        ordered(vec![user, assistant, kept_hook, reply]),
+        [1, 2, 3, 4],
+        "the kept hook row should take the line the dropped transcript copy carried"
+    );
+}
+
+fn lined(path: &str, line: u64, extra: &str) -> String {
+    format!(r#"{{"session_jsonl_path":"{path}","session_jsonl_line":{line},{extra}}}"#)
+}
+
+#[test]
 fn out_of_range_cursor_timestamps_are_errors() {
     use kernel::memory::MessageCursor;
     use uuid::Uuid;

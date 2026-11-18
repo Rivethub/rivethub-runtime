@@ -458,3 +458,130 @@ pub async fn session_and_summary_readers_use_hook_coordinates(
     }
     Ok(())
 }
+
+pub async fn a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+    memory: &dyn MemoryStore,
+    catalog: &dyn SessionCatalog,
+    summaries: &dyn SummaryStore,
+) -> TestResult {
+    let key: SessionKey = "claude-code:41414141-4141-4141-4141-414141414141".parse()?;
+    let (messages, batch) = tool_replay(&key)?;
+    capture_session_fixture(memory, &key, messages).await?;
+    let first = catalog
+        .messages(&key, &MessagesQuery::new(None, Some(3)))
+        .await?;
+    assert_eq!(
+        first
+            .items
+            .last()
+            .ok_or("last message on first page")?
+            .content,
+        "The key is in the drawer"
+    );
+    let cursor = MessageCursor::decode(&first.next.ok_or("next page")?.encode())?;
+    let old_tool = catalog
+        .messages(&key, &MessagesQuery::new(Some(cursor), None))
+        .await?
+        .items
+        .into_iter()
+        .next()
+        .ok_or("early tool")?;
+
+    let owner = crate::owner()?;
+    let result = memory.capture(batch.clone(), &owner, None).await?;
+    assert_eq!((result.inserted, result.skipped), (0, 1));
+    assert_cursor_error(catalog, &key, cursor).await;
+
+    let query = MessagesQuery::new(None, None);
+    let fixed = catalog.messages(&key, &query).await?;
+    assert_eq!(
+        contents(&fixed.items),
+        [
+            "Find the cabin key",
+            "Looking in the drawer",
+            "[tool call] Read",
+            "The key is in the drawer"
+        ]
+    );
+    let tool = fixed.items.get(2).ok_or("positioned tool")?;
+    let mut expected = old_tool;
+    let metadata = expected.metadata.as_mut().ok_or("original tool metadata")?;
+    metadata.insert("session_jsonl_line", 2)?;
+    metadata.insert("ordinal", 1)?;
+    metadata.insert("assistant_uuid", "answer")?;
+    assert_eq!(*tool, expected);
+
+    let conversation = Uuid::parse_str(&result.conversation_id)?;
+    let window = summaries
+        .conversation(conversation)
+        .await?
+        .ok_or("summary window")?;
+    let summary: Vec<_> = window
+        .messages
+        .iter()
+        .map(|row| row.content.as_str())
+        .collect();
+    assert_eq!(summary, contents(&fixed.items));
+
+    let result = memory.capture(batch, &owner, None).await?;
+    assert_eq!((result.inserted, result.skipped), (0, 1));
+    assert_eq!(catalog.messages(&key, &query).await?, fixed);
+    Ok(())
+}
+
+fn tool_replay(key: &SessionKey) -> TestResult<(Vec<CaptureMessage>, CaptureBatchRequest)> {
+    let path = "/tmp/synthetic-session.jsonl";
+    let mut live = row(50, Role::Tool, "[tool call] Read");
+    live.event_id = format!("{key}:tool:toolu_synthetic_read");
+    live.tool_name = Some("Read".to_owned());
+    live.tool_args = Some(serde_json::from_str(r#"{"path":"drawer"}"#)?);
+    live.tool_result = Some("Found it live".to_owned());
+    live.metadata = Some(JsonObject::from_serialize(&serde_json::json!({
+        "session_jsonl_path": path,
+        "tool_use_id": "toolu_synthetic_read",
+        "hook_producer": "producer-a",
+        "hook_sequence": 1,
+        "source": "claude-code-hook",
+        "native_event_id": null
+    }))?);
+    let mut opening = positioned(20, path, 1, "Looking in the drawer")?;
+    opening.role = Role::Assistant;
+    let mut closing = positioned(10, path, 3, "The key is in the drawer")?;
+    closing.role = Role::Assistant;
+    let mut replay = row(19, Role::Tool, "Replay content");
+    replay.event_id.clone_from(&live.event_id);
+    replay.tool_args = Some(serde_json::from_str(r#"{"path":"different"}"#)?);
+    replay.tool_result = Some("Replay result".to_owned());
+    replay.metadata = Some(JsonObject::from_serialize(&serde_json::json!({
+        "session_jsonl_path": "/tmp/different-session.jsonl",
+        "session_jsonl_line": 2,
+        "ordinal": 1,
+        "tool_use_id": "conflicting-id",
+        "assistant_uuid": "answer",
+        "native_event_id": "does not replace stored null",
+        "source": "claude-code-transcript",
+        "unrelated": true
+    }))?);
+    let batch = CaptureBatchRequest {
+        session_key: key.to_string(),
+        agent: "opus".to_owned(),
+        channel: Some("cli".to_owned()),
+        title: None,
+        settings: None,
+        task_id: None,
+        finalize: None,
+        created_at: Some(at(1)),
+        updated_at: Some(at(50)),
+        messages: vec![replay],
+    };
+
+    Ok((
+        vec![
+            live,
+            positioned(30, path, 0, "Find the cabin key")?,
+            opening,
+            closing,
+        ],
+        batch,
+    ))
+}

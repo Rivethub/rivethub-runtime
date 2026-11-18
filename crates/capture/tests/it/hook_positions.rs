@@ -96,16 +96,16 @@ fn meta<'a>(message: &'a CaptureMessage, key: &str) -> &'a Json {
         .unwrap_or(&Json::Null)
 }
 
-fn ordered(mut messages: Vec<CaptureMessage>) -> Vec<String> {
+fn ordered(mut messages: Vec<CaptureMessage>, captured_at: DateTime<Utc>) -> Vec<String> {
     messages.sort_by_key(|message| {
         (
-            message.created_at.unwrap_or_else(|| at(100)),
+            message.created_at.unwrap_or(captured_at),
             message.event_id.clone(),
         )
     });
     order_messages(messages, MemoryBrowseOrder::Asc, |message| {
         MessagePosition::new(
-            message.created_at.unwrap_or_else(|| at(100)),
+            message.created_at.unwrap_or(captured_at),
             message.role,
             message.metadata.as_ref(),
         )
@@ -133,6 +133,7 @@ async fn a_live_tool_keeps_its_place_even_when_the_positioned_replay_is_deduplic
     std::fs::write(&file, [ASK, "", TURN, RESULT, REPLY].join("\n") + "\n")?;
     assert_eq!(capture.run(&stop(&file)?, at(2), "stop").await.stderr, "");
 
+    let captured_at = DateTime::parse_from_rfc3339("2026-10-10T12:05:00Z")?.with_timezone(&Utc);
     let rows = std::mem::take(&mut *posts.0.lock());
     let live = rows.first().ok_or("live tool post")?;
     assert_eq!(meta(live, "session_jsonl_line"), &2);
@@ -157,7 +158,7 @@ async fn a_live_tool_keeps_its_place_even_when_the_positioned_replay_is_deduplic
         .cloned()
         .collect();
     assert_eq!(
-        ordered(first_writes),
+        ordered(first_writes, captured_at),
         [
             "Find the cabin key",
             "Looking in the drawer",
@@ -232,12 +233,10 @@ async fn unanchored_hooks_keep_producer_order_across_restarts_and_retries() -> T
         assert_eq!(meta(row, "hook_sequence"), &seq);
     }
     assert_eq!(
-        ordered(vec![
-            last.clone(),
-            named.clone(),
-            idless.clone(),
-            first.clone()
-        ]),
+        ordered(
+            vec![last.clone(), named.clone(), idless.clone(), first.clone()],
+            at(5),
+        ),
         [
             "First observation",
             "[tool call] Read",
@@ -287,7 +286,7 @@ async fn grok_hook_posts_the_updates_coordinate_and_native_call_id() -> TestResu
         file.to_str().ok_or("fixture path")?
     );
     assert_eq!(meta(tool, "tool_use_id"), "call-a");
-    assert_eq!(ordered(rows), ["Find it", "[tool] Read"]);
+    assert_eq!(ordered(rows, at(5)), ["Find it", "[tool] Read"]);
     Ok(())
 }
 
@@ -321,6 +320,92 @@ async fn metadata_elision_keeps_tool_coordinates_and_correlation() -> TestResult
     assert_eq!(meta(row, "ordinal"), &1);
     assert_eq!(meta(row, "assistant_uuid"), "answer");
     assert_eq!(meta(row, "tool_use_id"), CALL);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_supplies_the_position_of_a_previously_unanchored_tool() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let file = home.path().join(format!("{SESSION}.jsonl"));
+    std::fs::write(&file, format!("{ASK}\n"))?;
+    let posts = Posts::default();
+    let capture = hook(home.path(), &posts)?;
+    let posted_at = DateTime::parse_from_rfc3339("2026-10-10T12:05:00Z")?.with_timezone(&Utc);
+    assert_eq!(
+        capture
+            .run(&tool(&file, Some(CALL))?, posted_at, "live")
+            .await
+            .stderr,
+        ""
+    );
+    std::fs::write(&file, [ASK, "", TURN, RESULT, REPLY].join("\n") + "\n")?;
+    assert_eq!(
+        capture.run(&stop(&file)?, posted_at, "stop").await.stderr,
+        ""
+    );
+
+    let rows = std::mem::take(&mut *posts.0.lock());
+    let live = rows.first().ok_or("live tool post")?;
+    assert_eq!(meta(live, "session_jsonl_line"), &Json::Null);
+    assert_eq!(meta(live, "tool_use_id"), CALL);
+    assert!(meta(live, "hook_sequence").as_u64().is_some());
+    let replay = rows
+        .iter()
+        .filter(|row| row.event_id == live.event_id)
+        .nth(1)
+        .ok_or("transcript replay of the same tool")?;
+    assert!(
+        meta(replay, "session_jsonl_line").as_u64().is_some(),
+        "the later copy carries the transcript line"
+    );
+    let mut kept = live.clone();
+    wire::capture::add_transcript_position(
+        kept.metadata.get_or_insert_default(),
+        replay.metadata.as_ref(),
+    )?;
+    let event_id = kept.event_id.clone();
+    let retained = std::iter::once(kept)
+        .chain(rows.into_iter().filter(|row| row.event_id != event_id))
+        .collect();
+    assert_eq!(
+        ordered(retained, posted_at),
+        [
+            "Find the cabin key",
+            "Looking in the drawer",
+            "[tool call] Read",
+            "The key is in the drawer"
+        ],
+        "the kept hook row should sort where the dropped transcript copy would have"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn metadata_elision_keeps_the_unanchored_tool_sequence() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let file = home.path().join(format!("{SESSION}.jsonl"));
+    std::fs::write(&file, ASK)?;
+    let posts = Posts::default();
+    let writer = CaptureWriter::new(
+        posts.clone(),
+        CaptureSpool::new(home.path().join("spool")),
+        std::num::NonZeroUsize::new(2_000),
+        None,
+    );
+    let capture = ClaudeHook::new(writer, &paths(home.path())?);
+    let run = capture
+        .run(&tool(&file, Some(CALL))?, at(1), &"k".repeat(4_000))
+        .await;
+    assert_eq!(run.stderr, "");
+    let rows = std::mem::take(&mut *posts.0.lock());
+    let [row] = rows.as_slice() else {
+        return Err("expected one tool post".into());
+    };
+    assert_eq!(meta(row, "metadata_elided"), &true);
+    assert_eq!(meta(row, "session_jsonl_line"), &Json::Null);
+    assert_eq!(meta(row, "hook_sequence"), &1);
+    let producer = meta(row, "hook_producer").as_str().ok_or("hook producer")?;
+    uuid::Uuid::parse_str(producer)?;
     Ok(())
 }
 
@@ -382,6 +467,6 @@ async fn opencode_v2_hook_positions_parts_by_native_event_and_part_order() -> Te
     assert_eq!(meta(tool, "session_store_position"), &131_073);
     assert_eq!(meta(reply, "session_store_position"), &131_074);
     assert_eq!(meta(tool, "tool_use_id"), "read-a");
-    assert_eq!(ordered(rows), ["Find it", "key", "Found it"]);
+    assert_eq!(ordered(rows, at(5)), ["Find it", "key", "Found it"]);
     Ok(())
 }

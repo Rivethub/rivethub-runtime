@@ -18,27 +18,18 @@ const CONTENT_LIMIT: usize = 16_000;
 pub const DEFAULT_CHUNK_BYTES: usize = 768 * 1024;
 const DEFAULT_REPLAY_MAX: usize = 50;
 
-pub(crate) fn metadata_keep() -> &'static [&'static str] {
-    &[
-        "event_id",
-        "session_jsonl_path",
-        "session_jsonl_line",
-        "session_store_position",
-        "store_format",
-        "tool_use_id",
-        "assistant_uuid",
-        "uuid",
-        "hook_producer",
-        "hook_sequence",
-        "session_sqlite_path",
-        "session_sqlite_part_id",
-        "truncated",
-        "ordinal",
-        "native_event_id",
-        "source",
-        "metadata_elided",
-        "full_metadata_bytes",
-    ]
+pub(crate) fn keep_metadata_key(key: &str) -> bool {
+    wire::capture::is_transcript_position_key(key)
+        || [
+            "event_id",
+            "hook_producer",
+            "hook_sequence",
+            "truncated",
+            "source",
+            "metadata_elided",
+            "full_metadata_bytes",
+        ]
+        .contains(&key)
 }
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<u32> {
@@ -368,7 +359,7 @@ fn filter_metadata(
     original_bytes: usize,
 ) -> Result<JsonObject, serde_json::Error> {
     let mut kept = metadata.clone();
-    kept.retain(|key| metadata_keep().contains(&key) || is_full_length_key(key));
+    kept.retain(|key| keep_metadata_key(key) || is_full_length_key(key));
     kept.insert("metadata_elided", true)?;
     kept.insert("full_metadata_bytes", original_bytes)?;
     Ok(kept)

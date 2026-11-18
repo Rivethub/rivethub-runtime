@@ -546,3 +546,75 @@ async fn new_hook_coordinates_reach_session_and_summary_readers(pool: PgPool) ->
     )
     .await
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::tenancy::{Scope, Viewer};
+
+    let pool = crate::common::probe(&pool).await?;
+    let memory = PostgresMemory::new(pool);
+    Scope::Viewer(Viewer::new(testkit::owner()?, Vec::new()))
+        .run(testkit::session_messages::a_tool_replay_fills_position_and_invalidates_an_earlier_cursor(
+            &memory, &memory, &memory,
+        ))
+        .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn identical_positions_use_the_same_id_tie_break_in_both_readers(pool: PgPool) -> TestResult {
+    use kernel::memory::{CaptureMessage, MessagesQuery, SummaryStore};
+    use wire::message::Role;
+
+    let memory = PostgresMemory::new(pool.clone());
+    let key = "claude-code:00000000-0000-4000-8000-0000000000e7".parse()?;
+    let messages = ["first insert", "second insert"]
+        .into_iter()
+        .map(
+            |content| -> Result<CaptureMessage, Box<dyn std::error::Error>> {
+                Ok(CaptureMessage {
+                    event_id: content.to_owned(),
+                    role: Role::User,
+                    content: content.to_owned(),
+                    tool_name: None,
+                    tool_args: None,
+                    tool_result: None,
+                    metadata: Some(serde_json::from_str(r#"{"session_jsonl_line":0}"#)?),
+                    created_at: Some(at(10)),
+                })
+            },
+        )
+        .collect::<Result<_, _>>()?;
+    testkit::session_messages::capture_session_fixture(&memory, &key, messages).await?;
+    sqlx::query(
+        "UPDATE rh_messages SET created_at = $1, id = CASE content
+             WHEN 'first insert' THEN '90000000-0000-4000-8000-000000000001'::uuid
+             ELSE '10000000-0000-4000-8000-000000000002'::uuid END",
+    )
+    .bind(at(10))
+    .execute(&pool)
+    .await?;
+    let first = memory
+        .messages(&key, &MessagesQuery::new(None, Some(1)))
+        .await?;
+    let second = memory
+        .messages(&key, &MessagesQuery::new(first.next, Some(1)))
+        .await?;
+    let panel: Vec<_> = first
+        .items
+        .into_iter()
+        .chain(second.items)
+        .map(|row| row.content)
+        .collect();
+    let id = memory
+        .get(&key)
+        .await?
+        .and_then(|row| row.conversation)
+        .ok_or("conversation")?;
+    let window = memory.conversation(id).await?.ok_or("summary window")?;
+    let summary: Vec<_> = window.messages.into_iter().map(|row| row.content).collect();
+    assert_eq!(panel, ["second insert", "first insert"]);
+    assert_eq!(summary, panel);
+    Ok(())
+}
