@@ -112,6 +112,13 @@ fn month_start(date: Date) -> Result<Timestamp, ApiError> {
     bounds(date.first_of_month()).map(|(start, _)| start)
 }
 
+fn lookback_start(start: Timestamp) -> Timestamp {
+    match start.checked_sub(wire::time::elapsed_days(LOOKBACK_DAYS)) {
+        Ok(at) => at,
+        Err(_out_of_range) => Timestamp::MIN,
+    }
+}
+
 struct Titles(BTreeMap<SessionId, String>);
 
 impl Titles {
@@ -388,7 +395,7 @@ async fn digest(
         .date();
     let date = params.date.unwrap_or(today);
     let (start, end) = bounds(date)?;
-    let from = month_start(date)?.min(start - wire::time::elapsed_days(LOOKBACK_DAYS));
+    let from = month_start(date)?.min(lookback_start(start));
     let all = gateway
         .changes()?
         .changes(&ChangeWindow::between(from, month_end(date)?.max(end)))
@@ -447,4 +454,12 @@ fn needs_you(mut queue: Vec<ReviewItem>) -> Vec<ReviewItem> {
     queue.sort_by_key(|item| item.group != ReviewGroup::Conflict);
     queue.truncate(NEEDS_YOU);
     queue
+}
+
+#[cfg(test)]
+#[test]
+fn today_lookback_clamps_to_the_earliest_supported_instant() -> Result<(), jiff::Error> {
+    let start = "-9999-02-01T00:00:00Z".parse()?;
+    assert_eq!(lookback_start(start), Timestamp::MIN);
+    Ok(())
 }
