@@ -27,21 +27,14 @@ impl SessionObservation {
         let settings = settings?;
         let source = live_source(session_key, settings)?;
         settings
-            .get("last_event")?
-            .as_str()
+            .get_str("last_event")
             .filter(|event| !event.is_empty())?;
-        let observed = settings.get("last_ingest_at")?.as_str()?;
+        let observed = settings.get_str("last_ingest_at")?;
         let at = crate::time::parse_rfc3339(observed).ok()?;
         let end_key = (Self::is_session_end(session_key, Some(settings), finalize)
-            && settings
-                .get("summary_end_suppressed")
-                .and_then(serde_json::Value::as_bool)
-                != Some(true))
+            && settings.get_bool("summary_end_suppressed") != Some(true))
         .then(|| {
-            let native = settings
-                .get("last_event_id")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
+            let native = settings.get_str("last_event_id").unwrap_or_default();
             format!("{source}/{}:{native}", at.rfc3339_offset())
         });
         Some(Self { at, end_key })
@@ -63,15 +56,12 @@ impl SessionObservation {
         };
         finalize == Some(true)
             && direct_session_hook
-            && settings
-                .get("last_event")
-                .and_then(serde_json::Value::as_str)
-                == Some("SessionEnd")
+            && settings.get_str("last_event") == Some("SessionEnd")
     }
 }
 
 fn live_source<'a>(session_key: &str, settings: &'a JsonObject) -> Option<&'a str> {
-    let source = settings.get("source")?.as_str()?;
+    let source = settings.get_str("source")?;
     let prefix = match source {
         "claude-code-hook" => "claude-code:",
         "codex-hook" => "codex:",
