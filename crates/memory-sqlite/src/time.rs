@@ -42,3 +42,27 @@ pub(crate) fn stored(text: &str, column: &'static str) -> Result<DateTime<Utc>, 
             source,
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{stamp, stored};
+
+    #[test]
+    fn stored_time_keeps_fixed_milliseconds_and_accepts_existing_offset_forms() {
+        for (raw, expected) in [
+            ("1969-12-31T23:59:59.999999999Z", "1969-12-31T23:59:59.999Z"),
+            ("2026-01-01 01:00:00.5+01", "2026-01-01T00:00:00.500Z"),
+            ("2026-01-01 01:00:00+0100", "2026-01-01T00:00:00.000Z"),
+            ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.000Z"),
+        ] {
+            assert_eq!(stamp(stored(raw, "created_at").expect(raw)), expected);
+        }
+        for raw in [
+            "2026-01-01",
+            "2026-01-01 00:00:00",
+            "2026-01-01T00:00:00Z[UTC]",
+        ] {
+            assert!(stored(raw, "created_at").is_err(), "{raw}");
+        }
+    }
+}

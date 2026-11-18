@@ -139,3 +139,32 @@ fn ctime_ms(metadata: &Metadata) -> i64 {
         .saturating_mul(1000)
         .saturating_add(metadata.ctime_nsec() / 1_000_000)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{RawTime, epoch_flex, epoch_opencode, parse_date};
+
+    #[test]
+    fn source_time_forms_normalize_to_epoch_milliseconds() {
+        for (raw, expected) in [
+            (" 1970-01-01 ", Some(0)),
+            ("1969-12-31T23:59:59.999999999Z", Some(-1)),
+            ("1970-01-01t01:00:00.5+01:00", Some(500)),
+            ("1970-01-01T00:00:00.000999", Some(0)),
+            ("1970-01-01 00:00:00.5", None),
+            ("1970-01-01T00:00", None),
+            ("1970-02-29", None),
+        ] {
+            assert_eq!(parse_date(raw), expected, "{raw}");
+        }
+        assert_eq!(
+            epoch_flex(&RawTime::Number(1_000_000_001.5)),
+            1_000_000_001_500
+        );
+        assert_eq!(
+            epoch_opencode(&RawTime::Number(1_000_000_001.5)),
+            1_000_000_001_500
+        );
+        assert_eq!(epoch_flex(&RawTime::Number(-0.5)), -1);
+    }
+}

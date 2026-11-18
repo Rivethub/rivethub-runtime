@@ -320,3 +320,26 @@ fn summary(
     });
     Ok(text)
 }
+
+#[cfg(test)]
+mod time_tests {
+    use super::age;
+    use crate::render_memory::timestamp;
+    use chrono::{DateTime, Utc};
+    use chrono_tz::America::New_York;
+
+    fn instant(value: &str) -> DateTime<Utc> {
+        value.parse().expect(value)
+    }
+
+    #[test]
+    fn fall_back_repeats_the_local_hour_with_distinct_abbreviations() {
+        let before = instant("2026-11-01T05:14:33Z");
+        let after = instant("2026-11-01T06:14:33Z");
+        assert_eq!(timestamp(before, New_York), "2026-11-01 01:14:33 EDT");
+        assert_eq!(timestamp(after, New_York), "2026-11-01 01:14:33 EST");
+        assert_eq!(age(before, after), "1h ago");
+        assert_eq!(age(after, after), "just now");
+        assert_eq!(age(after, instant("2026-11-03T05:14:33Z")), "1d ago");
+    }
+}

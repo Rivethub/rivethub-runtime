@@ -35,6 +35,7 @@ mod summary_dag;
 mod summary_store;
 mod tag_suggest;
 mod tags;
+mod time;
 mod topics;
 mod vector_search;
 mod verify;
