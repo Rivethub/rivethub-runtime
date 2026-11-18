@@ -434,7 +434,7 @@ fn settings_for(
         .ok_or(HookError::Missing("claude-code session id"))?
         .to_owned();
     let cwd = payload.cwd.as_ref().map(|path| path.display().to_string());
-    let settings = if event.reads_transcript() {
+    let mut settings = if event.reads_transcript() {
         JsonObject::from_serialize(&TranscriptSettings {
             source: SOURCE,
             file: payload
@@ -457,6 +457,9 @@ fn settings_for(
             last_ingest_at: iso_at(now),
         })?
     };
+    if let Some(id) = &payload.event_id {
+        settings.insert("last_event_id", id)?;
+    }
     Ok(settings)
 }
 

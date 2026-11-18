@@ -43,6 +43,8 @@ struct PreparedBatch {
     title: Option<String>,
     settings: Option<JsonObject>,
     imported: bool,
+    observation: Option<wire::capture::SessionObservation>,
+    is_end: bool,
     task_id: Option<String>,
     node: Option<String>,
     finalize: bool,
@@ -114,6 +116,16 @@ impl PreparedBatch {
                 message: error.to_string(),
             })?;
         let imported = owned_key.is_some();
+        let observation = wire::capture::SessionObservation::from_capture(
+            &batch.session_key,
+            batch.settings.as_ref(),
+            batch.finalize,
+        );
+        let is_end = wire::capture::SessionObservation::is_session_end(
+            &batch.session_key,
+            batch.settings.as_ref(),
+            batch.finalize,
+        );
         let messages = batch
             .messages
             .iter()
@@ -132,6 +144,8 @@ impl PreparedBatch {
                 .map(str::to_owned),
             settings: batch.settings,
             imported,
+            observation,
+            is_end,
             task_id: batch.task_id,
             node: node.map(str::to_owned),
             finalize: batch.finalize == Some(true),
@@ -167,7 +181,23 @@ impl PreparedBatch {
         now: DateTime<Utc>,
         embed: bool,
     ) -> Result<(CaptureResult, bool), SqliteError> {
-        let conversation = match self.key.find(tx)? {
+        let found = self.key.find(tx)?;
+        let prior = if let Some(found) = &found
+            && self.observation.is_some()
+        {
+            crate::settlement::prior_observation(tx, &found.id, &self.key.session_key)?
+        } else {
+            None
+        };
+        let conversation = match found {
+            None if self.messages.is_empty() && self.is_end => {
+                return Ok((self.dropped()?, false));
+            }
+            Some(found) if found.owner.as_deref().is_some_and(|stored| stored != owner) => {
+                return Err(SqliteError::Invalid {
+                    message: "this session belongs to another user".to_owned(),
+                });
+            }
             Some(found) => {
                 self.update_conversation(tx, &found.id, found.updated_at, owner, now)?;
                 found
@@ -211,8 +241,9 @@ impl PreparedBatch {
         let mut inserted: u64 = 0;
         let mut skipped: u64 = 0;
         let mut changed = false;
+        let mut before = None;
         for message in &self.messages {
-            match message.write(tx, &target, now)? {
+            match message.write(tx, &target, now, &mut before, inserted == 0)? {
                 Outcome::Inserted(id) => {
                     changed = true;
                     inserted += 1;
@@ -227,6 +258,22 @@ impl PreparedBatch {
             }
         }
         let opening_jobs = changed && crate::summary_opening::refresh(tx, &conversation.id, now)?;
+        let enriched = if let Some(before) = before
+            && inserted == 0
+        {
+            before != crate::settlement::rendered_inputs(tx, &conversation.id)?
+        } else {
+            false
+        };
+        crate::settlement::record_capture(
+            tx,
+            &conversation.id,
+            now,
+            inserted > 0 || enriched,
+            self.imported,
+            self.observation.as_ref(),
+            prior,
+        )?;
         if self.finalize {
             tx.execute(
                 "UPDATE ros_conversations SET active = 0 WHERE id = ?1 AND active = 1",
@@ -350,9 +397,17 @@ impl PreparedMessage {
         tx: &Transaction<'_>,
         target: &Target<'_>,
         now: DateTime<Utc>,
+        before: &mut Option<Vec<crate::settlement::RenderInput>>,
+        compare: bool,
     ) -> Result<Outcome, SqliteError> {
         let conversation_id = target.conversation_id;
         if let Some(stored) = self.stored_by_event(tx, conversation_id)? {
+            if compare
+                && before.is_none()
+                && (self.tool_result.is_some() || self.position_patch.is_some())
+            {
+                *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
+            }
             if self.fill_pending(tx, &stored)? {
                 return Ok(Outcome::Filled(stored));
             }
@@ -360,6 +415,9 @@ impl PreparedMessage {
             return Ok(Outcome::Skipped);
         }
         if let Some(hook_row) = self.unclaimed_hook_row(tx, conversation_id)? {
+            if compare && before.is_none() {
+                *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
+            }
             tx.execute(
                 "UPDATE ros_messages SET metadata = ?2 WHERE id = ?1",
                 params![hook_row, self.metadata],

@@ -317,7 +317,17 @@ where
             cancel.cancel();
             scheduled
         };
-        let (claimed, scheduled) = tokio::join!(claims, schedule);
+        let settle = async {
+            if self.schedules && roles.contains(&WorkerRole::Summarizer) {
+                crate::schedule::run_summary_expiry(
+                    self.summaries.as_ref(),
+                    self.summary.inactivity,
+                    &cancel,
+                )
+                .await;
+            }
+        };
+        let (claimed, scheduled, ()) = tokio::join!(claims, schedule, settle);
         let outcome = claimed.and(scheduled);
         drop(notifications);
         drop(listening);

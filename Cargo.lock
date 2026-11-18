@@ -1897,6 +1897,8 @@ dependencies = [
  "hyper-util",
  "kernel",
  "landlock",
+ "memory-sqlite",
+ "migrate",
  "nix 0.30.1",
  "parking_lot",
  "percent-encoding",

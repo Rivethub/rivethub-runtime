@@ -74,3 +74,46 @@ pub(crate) async fn run(
         enqueue_due(queue, &entries, Utc::now(), cancel).await?;
     }
 }
+
+pub(crate) async fn run_summary_expiry(
+    store: &dyn kernel::memory::SummaryStore,
+    inactivity: chrono::TimeDelta,
+    cancel: &CancellationToken,
+) {
+    let mut ticks = tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => return,
+            _ = ticks.tick() => {}
+        }
+        let now = Utc::now();
+        let Some(cutoff) = now.checked_sub_signed(inactivity) else {
+            tracing::error!("summary inactivity cutoff is outside the supported date range");
+            return;
+        };
+        let mut after = None;
+        loop {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let page = kernel::tenancy::Scope::Maintenance
+                .run(store.expire_summary_page(
+                    after,
+                    cutoff,
+                    now,
+                    kernel::memory::settlement::SETTLEMENT_PAGE_SIZE,
+                ))
+                .await;
+            match page {
+                Ok(page) if page.next.is_some() => after = page.next,
+                Ok(_) => break,
+                Err(error) => {
+                    tracing::warn!("summary settlement sweep failed: {error}");
+                    break;
+                }
+            }
+        }
+    }
+}

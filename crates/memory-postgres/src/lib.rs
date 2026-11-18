@@ -40,6 +40,7 @@ mod session_activity;
 mod session_catalog;
 mod session_marks;
 mod session_messages;
+mod settlement;
 mod stats;
 mod stats_cache;
 mod store_impl;

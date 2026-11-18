@@ -12,7 +12,7 @@ use wire::capture::CaptureMessage;
 use wire::capture::CaptureResult;
 
 use crate::redaction::Redaction;
-use crate::spool::CaptureSpool;
+use crate::spool::{CaptureSpool, EndChunk};
 
 const CONTENT_LIMIT: usize = 16_000;
 pub const DEFAULT_CHUNK_BYTES: usize = 768 * 1024;
@@ -213,9 +213,28 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         let prepared = prepare(batch, self.redaction.as_ref())?;
         let chunks = split_chunks(&prepared, self.max_chunk_bytes)?;
         let mut saved = Vec::with_capacity(chunks.len());
-        for chunk in &chunks {
+        let bundle = prepared
+            .session_observation()
+            .is_some_and(|observation| observation.end_key.is_some())
+            .then(uuid::Uuid::now_v7);
+        for (index, chunk) in chunks.iter().enumerate() {
             let body = body_text(chunk)?;
-            let path = self.spool.spool(&body, now).await?;
+            let path = match bundle {
+                Some(bundle) => {
+                    self.spool
+                        .spool_end(
+                            &body,
+                            now,
+                            EndChunk {
+                                bundle,
+                                index,
+                                count: chunks.len(),
+                            },
+                        )
+                        .await?
+                }
+                None => self.spool.spool(&body, now).await?,
+            };
             saved.push((chunk, body, path));
         }
         self.warn_on_overflow().await;
@@ -232,10 +251,13 @@ impl<T: CaptureTransport> CaptureWriter<T> {
         let mut totals = Totals::default();
         let mut rejected = None;
         for (index, (chunk, body, path)) in saved.into_iter().enumerate() {
+            let Some(body) = self.spool.delivery_body(&path, body, false).await? else {
+                continue;
+            };
             match self.transport.post(body).await {
                 Ok(result) => {
                     totals.add(&result);
-                    if let Err(error) = self.spool.discard(&path).await {
+                    if let Err(error) = self.spool.delivered(&path).await {
                         tracing::warn!(
                             "delivered batch {} was not removed: {error}",
                             path.display()
@@ -375,7 +397,21 @@ fn split_chunks(
     if let Some(settings) = &base.settings {
         let bytes = encoded(settings)?.len();
         if bytes > max_chunk_bytes {
-            base.settings = Some(elided_blob(bytes)?);
+            let mut kept = elided_blob(bytes)?;
+            if batch.session_observation().is_some() {
+                for key in [
+                    "source",
+                    "last_event",
+                    "last_ingest_at",
+                    "last_event_id",
+                    "summary_end_suppressed",
+                ] {
+                    if let Some(value) = settings.get(key) {
+                        kept.insert(key, value)?;
+                    }
+                }
+            }
+            base.settings = Some(kept);
         }
     }
     let mut chunks: Vec<CaptureBatchRequest> = Vec::new();

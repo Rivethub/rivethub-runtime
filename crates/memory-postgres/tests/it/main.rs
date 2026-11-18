@@ -37,6 +37,7 @@ mod summary_store;
 mod tag_suggest;
 mod tags;
 mod top_down_opening;
+mod top_down_settle;
 mod topics;
 mod vector_search;
 mod verify;

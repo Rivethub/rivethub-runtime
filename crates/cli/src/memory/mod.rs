@@ -13,6 +13,7 @@ mod receiving;
 mod recompile;
 mod run;
 mod sanitize;
+mod settle;
 mod share;
 mod store;
 mod target;
@@ -66,6 +67,7 @@ fn attach(notice: Option<String>, result: Result<Report, crate::Error>) -> Repor
 fn help() -> String {
     "Usage: rh memory <command>\n\
 Commands:\n\
+  settle <session> [--sqlite <file>] [--json]\n\
   queue-status [--json]\n\
   retry-failed --task <identifier> [--task <identifier>] [--error <substring>] [--limit <n>] [--dry-run] [--json]\n\
   requeue --task <identifier> [--limit <n>] [--dry-run] [--json]\n\

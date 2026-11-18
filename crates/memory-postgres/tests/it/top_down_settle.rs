@@ -1,0 +1,204 @@
+use chrono::{TimeDelta, Utc};
+use kernel::memory::settlement::SettleStatus;
+use kernel::memory::{MemoryStore as _, SummaryStore as _};
+use kernel::owner::Owner;
+use kernel::tenancy::{Scope, Viewer};
+use memory_postgres::PostgresMemory;
+use sqlx::PgPool;
+use testkit::settlement::{TestResult, batch, expire, message, position_fills, revision_lifecycle};
+use uuid::Uuid;
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn revisions_and_ownership(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(crate::common::probe(&pool).await?);
+    let alice = Owner::new("alice".to_owned())?;
+    let bob = Owner::new("bob".to_owned())?;
+    let scope = Scope::Viewer(Viewer::new(alice.clone(), Vec::new()));
+    scope
+        .clone()
+        .run(revision_lifecycle(&store, &alice))
+        .await?;
+    scope.clone().run(position_fills(&store, &alice)).await?;
+
+    let id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM rh_conversations WHERE session_key = 'claude-code:settlement-fixture'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    let bob_scope = Scope::Viewer(Viewer::new(bob.clone(), Vec::new()));
+    assert!(
+        bob_scope
+            .clone()
+            .run(store.summary_state(id))
+            .await?
+            .is_none()
+    );
+    assert!(!bob_scope.clone().run(store.summary_eligible(id, 4)).await?);
+    assert!(
+        bob_scope
+            .clone()
+            .run(store.mark_summary_settled(&id.to_string(), &bob))
+            .await?
+            .is_none()
+    );
+    assert!(
+        bob_scope
+            .run(store.mark_summary_settled(&id.to_string(), &alice))
+            .await?
+            .is_none()
+    );
+
+    sqlx::query("UPDATE rh_summary_state SET summarized_through = input_revision WHERE conversation_id = $1")
+        .bind(id).execute(&pool).await?;
+    let result = scope
+        .clone()
+        .run(store.mark_summary_settled(&id.to_string(), &alice))
+        .await?
+        .ok_or("summarized")?;
+    assert_eq!(result.status, SettleStatus::AlreadySummarized);
+    assert!(!scope.run(store.summary_eligible(id, 4)).await?);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let alice = Owner::new("alice".to_owned())?;
+    let live: Uuid = store
+        .capture(
+            batch("cli:live", vec![message("live", "2026-01-02T01:00:00Z")?]),
+            &alice,
+            None,
+        )
+        .await?
+        .conversation_id
+        .parse()?;
+    let historical: Uuid = store
+        .capture(
+            batch("cli:past", vec![message("past", "2026-01-02T01:00:00Z")?]),
+            &alice,
+            None,
+        )
+        .await?
+        .conversation_id
+        .parse()?;
+    sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1")
+        .bind(historical)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE rh_conversations SET updated_at = clock_timestamp() + interval '5 days' WHERE id = $1")
+        .bind(historical).execute(&pool).await?;
+    let beat: Uuid = store
+        .capture(
+            batch(
+                "heartbeat:pulse",
+                vec![message("pulse", "2026-01-02T01:00:00Z")?],
+            ),
+            &alice,
+            None,
+        )
+        .await?
+        .conversation_id
+        .parse()?;
+    store
+        .mark_summary_settled(&beat.to_string(), &alice)
+        .await?
+        .ok_or("heartbeat mark")?;
+    assert!(!store.summary_eligible(beat, 1).await?);
+    assert!(store.summary_state(historical).await?.is_none());
+    assert!(!store.summary_eligible(live, 1).await?);
+    expire(&store, Utc::now() + TimeDelta::minutes(2), 1).await?;
+    assert!(store.summary_eligible(live, 1).await?);
+    assert!(store.summary_eligible(historical, 0).await?);
+    let state = store
+        .summary_state(historical)
+        .await?
+        .ok_or("historical seed")?;
+    assert!(state.historical_only);
+    assert_eq!(
+        state.last_input_at,
+        "2026-01-02T01:00:00Z".parse::<chrono::DateTime<Utc>>()?
+    );
+    let promoted = store
+        .mark_summary_settled(&historical.to_string(), &alice)
+        .await?
+        .ok_or("manual historical mark")?;
+    assert_eq!(promoted.settled_at, state.settled_at);
+    assert!(
+        !store
+            .summary_state(historical)
+            .await?
+            .ok_or("manual historical state")?
+            .historical_only
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn older_legacy_end_does_not_override_known_activity_and_late_input_clears_failure(
+    pool: PgPool,
+) -> TestResult {
+    use kernel::memory::SessionDeletion as _;
+    use testkit::settlement::observed;
+
+    let store = PostgresMemory::new(pool.clone());
+    let owner = Owner::new("alice".to_owned())?;
+    let key = "claude-code:legacy-watermark";
+    let keep = observed(
+        batch(key, vec![message("first", "2026-01-02T01:00:00Z")?]),
+        "Stop",
+        "2026-01-02T01:10:00Z",
+        false,
+    )?;
+    let id: Uuid = store
+        .capture(keep, &owner, None)
+        .await?
+        .conversation_id
+        .parse()?;
+    sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    let old_end = observed(
+        batch(key, vec![]),
+        "SessionEnd",
+        "2026-01-02T01:09:00Z",
+        true,
+    )?;
+    store.capture(old_end, &owner, None).await?;
+    assert!(!store.summary_eligible(id, 0).await?);
+    assert!(
+        store
+            .summary_state(id)
+            .await?
+            .ok_or("legacy state")?
+            .historical_only
+    );
+
+    store
+        .mark_summary_settled(key, &owner)
+        .await?
+        .ok_or("first mark")?;
+    store
+        .trash_session(key, Some(owner.as_str()), Utc::now())
+        .await?;
+    assert!(!store.summary_eligible(id, 0).await?);
+    store.restore_session(key).await?;
+    assert!(store.summary_eligible(id, 0).await?);
+
+    sqlx::query("UPDATE rh_summary_state SET summarized_through = 0, failed_revision = 0 WHERE conversation_id = $1")
+        .bind(id).execute(&pool).await?;
+    store
+        .capture(
+            batch(key, vec![message("late", "2026-01-01T00:00:00Z")?]),
+            &owner,
+            None,
+        )
+        .await?;
+    let state = store.summary_state(id).await?.ok_or("reopened state")?;
+    assert_eq!(state.input_revision, 1);
+    assert_eq!(state.summarized_through, Some(0));
+    assert_eq!(state.failed_revision, None);
+    assert_eq!(state.settled_at, None);
+    Ok(())
+}

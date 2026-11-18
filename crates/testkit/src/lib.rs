@@ -25,6 +25,7 @@ pub mod session_delete;
 pub mod session_imports;
 pub mod session_messages;
 pub mod session_records;
+pub mod settlement;
 pub mod sqlite;
 pub mod stub;
 pub mod sweeps;

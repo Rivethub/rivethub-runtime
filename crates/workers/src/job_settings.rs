@@ -92,7 +92,11 @@ pub fn tuned_summary(
     let branch =
         positive(env, "RIVETHUB_SUMMARY_BRANCH_TOKENS")?.unwrap_or(settings.branch_max_tokens);
     let root = positive(env, "RIVETHUB_SUMMARY_ROOT_TOKENS")?.unwrap_or(settings.root_max_tokens);
-    settings.with_max_tokens(leaf, branch, root)
+    let mut settings = settings.with_max_tokens(leaf, branch, root)?;
+    if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_INACTIVITY_MINUTES")? {
+        settings.inactivity = chrono::TimeDelta::minutes(i64::from(minutes));
+    }
+    Ok(settings)
 }
 
 pub fn tuned_embed(

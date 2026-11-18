@@ -133,6 +133,7 @@ struct HookPayload {
     hook_event_name: Option<String>,
     cwd: Option<PathBuf>,
     agent_id: Option<String>,
+    event_id: Option<String>,
 }
 
 impl HookPayload {
@@ -198,7 +199,8 @@ impl StoreCapture {
             .capture(&session)
             .await
             .map_err(|error| error.to_string())?;
-        if slice.messages.is_empty() {
+        let messages = slice.messages;
+        if messages.is_empty() && event != "SessionEnd" {
             return Ok(None);
         }
         let settings = JsonObject::from_serialize(&HookSettings {
@@ -220,7 +222,7 @@ impl StoreCapture {
             finalize: finalize.then_some(true),
             created_at: None,
             updated_at: None,
-            messages: slice.messages,
+            messages,
         }))
     }
 
@@ -316,11 +318,17 @@ impl<T: CaptureTransport> StoreHook<T> {
         };
         let cwd = payload.cwd.as_ref().map(|path| path.display().to_string());
         let finalize = trigger == Trigger::Finalize;
-        let batch = match self.capture.batch(native, event, cwd, finalize, now).await {
+        let mut batch = match self.capture.batch(native, event, cwd, finalize, now).await {
             Ok(Some(batch)) => batch,
             Ok(None) => return HookRun::done(),
             Err(error) => return HookRun::failed(error),
         };
+        if let Some(event_id) = payload.event_id
+            && let Some(settings) = &mut batch.settings
+            && let Err(error) = settings.insert("last_event_id", event_id)
+        {
+            return HookRun::failed(error.to_string());
+        }
         match self.writer.write(&batch, now).await {
             Ok(totals) => {
                 let line = log_line(event, &batch.session_key, &totals, now);

@@ -34,6 +34,7 @@ pub(super) async fn run(
     stdout_is_terminal: bool,
 ) -> Result<Report, Error> {
     match command {
+        MemoryCommand::Settle(args) => super::settle::run(args, env).await,
         MemoryCommand::QueueStatus { json } => queue_status(json, env).await,
         MemoryCommand::Retry {
             tasks,

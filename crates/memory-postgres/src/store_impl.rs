@@ -78,6 +78,37 @@ impl crate::PostgresMemory {
         if let Some(dropped) = dropped_when_deleted(&mut writer, batch).await? {
             return Ok(dropped);
         }
+        let observation = wire::capture::SessionObservation::from_capture(
+            &batch.session_key,
+            batch.settings.as_ref(),
+            batch.finalize,
+        );
+        if batch.messages.is_empty()
+            && wire::capture::SessionObservation::is_session_end(
+                &batch.session_key,
+                batch.settings.as_ref(),
+                batch.finalize,
+            )
+        {
+            let existing = writer
+                .existing_conversation(&batch.session_key, &batch.agent, options.owner.as_str())
+                .await?;
+            if existing.is_none() {
+                return Ok(CaptureResult {
+                    ok: true,
+                    conversation_id: String::new(),
+                    inserted: 0,
+                    skipped: 0,
+                });
+            }
+        }
+        let prior = if observation.is_some() {
+            writer
+                .prior_summary_observation(&batch.session_key, &batch.agent)
+                .await?
+        } else {
+            None
+        };
         let conversation = upsert_batch_conversation(&mut writer, batch, channel, options).await?;
         let conversation_id = conversation.id;
         let StagedMessages { fresh, positions } = writer
@@ -113,16 +144,32 @@ impl crate::PostgresMemory {
                 .await?;
             inserted += 1;
         }
-        if !positions.is_empty() {
+        let reordered = if positions.is_empty() {
+            false
+        } else {
             writer
-                .fill_positions(conversation_id, &conversation.owner_user_id, &positions)
-                .await?;
-        }
+                .fill_positions(
+                    conversation_id,
+                    &conversation.owner_user_id,
+                    &positions,
+                    inserted == 0,
+                )
+                .await?
+        };
         if inserted > 0 || !positions.is_empty() {
             writer.refresh_opening(conversation_id).await?;
         }
+        let imported = wire::capture::is_imported_session(&batch.session_key);
+        writer
+            .record_summary_input(
+                conversation_id,
+                inserted > 0 || reordered,
+                imported,
+                observation.as_ref(),
+                prior,
+            )
+            .await?;
         if batch.finalize == Some(true) {
-            let imported = wire::capture::is_imported_session(&batch.session_key);
             writer
                 .finalize_conversation(conversation_id, imported)
                 .await?;
@@ -374,6 +421,16 @@ impl MemoryStore for crate::PostgresMemory {
         self.capture_batch(&batch, &options)
             .await
             .map_err(MemoryStoreError::from)
+    }
+
+    async fn mark_summary_settled(
+        &self,
+        session: &str,
+        owner: &Owner,
+    ) -> Result<Option<kernel::memory::settlement::SettleResult>, MemoryStoreError> {
+        self.mark_settled(session, owner.as_str())
+            .await
+            .map_err(Into::into)
     }
 
     async fn append(

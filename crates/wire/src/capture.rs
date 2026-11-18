@@ -1,3 +1,6 @@
+mod settlement;
+pub use settlement::SessionObservation;
+
 use crate::JsonObject;
 use crate::message::Role;
 use chrono::{DateTime, Utc};

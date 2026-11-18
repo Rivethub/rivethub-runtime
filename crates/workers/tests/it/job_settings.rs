@@ -151,3 +151,21 @@ fn the_backfill_grows_only_into_free_model_slots() {
     assert_eq!(backfill_budget(None, 6, 8).idle, 1);
     assert_eq!(backfill_budget(load(0, 0), 6, 8).busy, 1);
 }
+
+#[test]
+fn top_down_settle_inactivity_is_a_positive_minute_setting() -> Result<(), WorkerError> {
+    let standard = workers::SummarySettings::standard("unused")?;
+    assert_eq!(standard.inactivity, chrono::TimeDelta::hours(24));
+    let variable = "RIVETHUB_SUMMARY_INACTIVITY_MINUTES";
+    let tuned = |value| {
+        workers::tuned_summary(
+            standard.clone(),
+            &Environment::from_vars([(variable, value)]),
+        )
+    };
+    assert_eq!(tuned("1")?.inactivity, chrono::TimeDelta::minutes(1));
+    for bad in ["0", "-1", "invalid", "4294967296"] {
+        assert!(matches!(tuned(bad), Err(WorkerError::JobSetting { name }) if name == variable));
+    }
+    Ok(())
+}

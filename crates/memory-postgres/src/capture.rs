@@ -347,8 +347,14 @@ impl<'a> CaptureWriter<'a> {
         conversation_id: Uuid,
         owner_user_id: &str,
         positions: &PositionPatches<'_>,
-    ) -> Result<(), Error> {
-        sqlx::query(
+        compare_order: bool,
+    ) -> Result<bool, Error> {
+        let before = if compare_order {
+            Some(crate::settlement::rendered_order(&mut self.tx, conversation_id).await?)
+        } else {
+            None
+        };
+        let result = sqlx::query(
             "update rh_messages m set metadata = replay.patch || m.metadata
                from jsonb_each($3) as replay(event_id, patch)
                cross join lateral (
@@ -369,7 +375,14 @@ impl<'a> CaptureWriter<'a> {
         .execute(&mut *self.tx)
         .await
         .map_err(|source| Error::operation("transcript position fill", source))?;
-        Ok(())
+        if let Some(before) = before
+            && result.rows_affected() > 0
+        {
+            return Ok(
+                before != crate::settlement::rendered_order(&mut self.tx, conversation_id).await?
+            );
+        }
+        Ok(false)
     }
 
     pub async fn seen_event_ids(

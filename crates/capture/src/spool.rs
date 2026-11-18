@@ -8,13 +8,15 @@ use chrono::TimeDelta;
 use chrono::Utc;
 use thiserror::Error;
 use tokio::fs;
-use wire::capture::CaptureResult;
+use uuid::Uuid;
+use wire::capture::{CaptureBatchRequest, CaptureResult};
 
 use crate::writer::PostError;
 
 const FILE_MODE: u32 = 0o600;
 const DIR_MODE: u32 = 0o700;
 const DEAD_DIR: &str = "dead";
+const ACK_DIR: &str = "acked";
 const SUFFIX: &str = ".json";
 pub const MAX_TRANSIENT_ATTEMPTS: u64 = 8;
 const BACKOFF_BASE_SECONDS: i64 = 30;
@@ -64,6 +66,48 @@ struct Name {
     not_before: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EndChunk {
+    pub(crate) bundle: Uuid,
+    pub(crate) index: usize,
+    pub(crate) count: usize,
+}
+
+impl EndChunk {
+    fn id(self) -> String {
+        format!(
+            "end-{}-{:08}-{:08}",
+            self.bundle.simple(),
+            self.index,
+            self.count
+        )
+    }
+
+    fn parse(id: &str) -> Option<Self> {
+        let mut fields = id.strip_prefix("end-")?.split('-');
+        let bundle = Uuid::parse_str(fields.next()?).ok()?;
+        let index = fields.next()?.parse().ok()?;
+        let count = fields.next()?.parse().ok()?;
+        (index < count && fields.next().is_none()).then_some(Self {
+            bundle,
+            index,
+            count,
+        })
+    }
+
+    fn final_chunk(self) -> bool {
+        self.index + 1 == self.count
+    }
+
+    fn ack_path(self, dir: &Path) -> PathBuf {
+        dir.join(ACK_DIR).join(self.id())
+    }
+
+    fn rejection_path(self, dir: &Path) -> PathBuf {
+        self.ack_path(dir).with_extension("rejected")
+    }
+}
+
 #[derive(Debug)]
 struct Entry {
     path: PathBuf,
@@ -85,7 +129,84 @@ impl CaptureSpool {
     }
 
     pub async fn spool(&self, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
-        write_new(&self.dir, body, now).await
+        write_new(&self.dir, body, now, &Uuid::now_v7().simple().to_string()).await
+    }
+
+    pub(crate) async fn spool_end(
+        &self,
+        body: &str,
+        now: DateTime<Utc>,
+        chunk: EndChunk,
+    ) -> Result<PathBuf, SpoolError> {
+        write_new(&self.dir, body, now, &chunk.id()).await
+    }
+
+    pub(crate) async fn delivery_body(
+        &self,
+        path: &Path,
+        body: String,
+        replay: bool,
+    ) -> Result<Option<String>, SpoolError> {
+        let chunk = parse_name(path).and_then(|name| EndChunk::parse(&name.id));
+        let Some(chunk) = chunk else {
+            return if replay {
+                suppress_end(body).map(Some)
+            } else {
+                Ok(Some(body))
+            };
+        };
+        if !chunk.final_chunk() {
+            return Ok(Some(body));
+        }
+
+        let mut rejected = false;
+        let mut dead = None;
+        for index in 0..chunk.index {
+            let predecessor = EndChunk { index, ..chunk };
+            if fs::try_exists(predecessor.rejection_path(&self.dir)).await? {
+                rejected = true;
+                continue;
+            }
+            if fs::try_exists(predecessor.ack_path(&self.dir)).await? {
+                continue;
+            }
+            let dead = match &dead {
+                Some(entries) => entries,
+                None => dead.insert(queued_files(&self.dead_dir()).await?),
+            };
+            if !dead.iter().any(|entry| entry.name.id == predecessor.id()) {
+                return Ok(None);
+            }
+            rejected = true;
+        }
+        if rejected {
+            suppress_end(body).map(Some)
+        } else {
+            Ok(Some(body))
+        }
+    }
+
+    pub(crate) async fn delivered(&self, path: &Path) -> Result<(), SpoolError> {
+        let Some(chunk) = parse_name(path).and_then(|name| EndChunk::parse(&name.id)) else {
+            return self.discard(path).await;
+        };
+        if chunk.final_chunk() {
+            self.discard(path).await?;
+            for index in 0..chunk.index {
+                let predecessor = EndChunk { index, ..chunk };
+                remove_present(&predecessor.ack_path(&self.dir)).await?;
+                remove_present(&predecessor.rejection_path(&self.dir)).await?;
+            }
+            return Ok(());
+        }
+        let ack = self.dir.join(ACK_DIR);
+        fs::create_dir_all(&ack).await?;
+        set_mode(&ack, DIR_MODE).await?;
+        match fs::rename(path, chunk.ack_path(&self.dir)).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub async fn discard(&self, path: &Path) -> Result<(), SpoolError> {
@@ -166,8 +287,11 @@ impl CaptureSpool {
                     continue;
                 }
             };
+            let Some(body) = self.delivery_body(&entry.path, body, true).await? else {
+                continue;
+            };
             match post(body).await {
-                Ok(_) => remove_present(&entry.path).await?,
+                Ok(_) => self.delivered(&entry.path).await?,
                 Err(PostError::Client { status }) => {
                     if let Some(moved) = self.dead_letter(&entry.path).await? {
                         tracing::warn!(
@@ -237,6 +361,14 @@ impl CaptureSpool {
     pub async fn requeue_dead(&self) -> Result<usize, std::io::Error> {
         let mut moved = 0;
         for entry in queued_files(&self.dead_dir()).await? {
+            if let Some(chunk) = EndChunk::parse(&entry.name.id)
+                && !chunk.final_chunk()
+            {
+                let ack = self.dir.join(ACK_DIR);
+                fs::create_dir_all(&ack).await?;
+                set_mode(&ack, DIR_MODE).await?;
+                fs::write(chunk.rejection_path(&self.dir), b"").await?;
+            }
             let target = self
                 .dir
                 .join(format!("{}-{}{SUFFIX}", entry.name.prefix, entry.name.id));
@@ -314,14 +446,15 @@ fn backoff(attempts: u64) -> TimeDelta {
     TimeDelta::seconds(seconds)
 }
 
-async fn write_new(dir: &Path, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
+async fn write_new(
+    dir: &Path,
+    body: &str,
+    now: DateTime<Utc>,
+    id: &str,
+) -> Result<PathBuf, SpoolError> {
     fs::create_dir_all(dir).await?;
     set_mode(dir, DIR_MODE).await?;
-    let name = format!(
-        "{}-{}{SUFFIX}",
-        now.timestamp_millis(),
-        uuid::Uuid::now_v7().simple()
-    );
+    let name = format!("{}-{id}{SUFFIX}", now.timestamp_millis());
     let target = dir.join(&name);
     let temporary = dir.join(format!("{name}.tmp"));
     fs::write(&temporary, body).await?;
@@ -396,4 +529,20 @@ fn decimal(text: &str) -> Option<u64> {
 
 async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
     fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await
+}
+
+fn suppress_end(body: String) -> Result<String, SpoolError> {
+    if body.contains("SessionEnd")
+        && let Ok(mut batch) = serde_json::from_str::<CaptureBatchRequest>(&body)
+        && batch
+            .session_observation()
+            .is_some_and(|observation| observation.end_key.is_some())
+        && let Some(settings) = &mut batch.settings
+    {
+        settings
+            .insert("summary_end_suppressed", true)
+            .map_err(std::io::Error::other)?;
+        return serde_json::to_string(&batch).map_err(|error| std::io::Error::other(error).into());
+    }
+    Ok(body)
 }

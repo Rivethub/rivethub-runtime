@@ -30,6 +30,7 @@ mod records;
 mod search;
 mod session_messages;
 mod sessions;
+pub mod settlement;
 pub mod share;
 mod suggest;
 mod summary;
@@ -539,6 +540,14 @@ pub trait MemoryStore: Send + Sync {
         owner: &Owner,
         node: Option<&str>,
     ) -> Result<CaptureResult, MemoryStoreError>;
+
+    async fn mark_summary_settled(
+        &self,
+        _session: &str,
+        _owner: &Owner,
+    ) -> Result<Option<settlement::SettleResult>, MemoryStoreError> {
+        Ok(None)
+    }
 
     async fn append(&self, owner: &Owner, batch: Vec<MemoryEntry>)
     -> Result<u64, MemoryStoreError>;

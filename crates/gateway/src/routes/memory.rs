@@ -4,8 +4,9 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::handler::Handler;
+use axum::http::StatusCode;
 use axum::routing;
 use axum::routing::MethodRouter;
 use kernel::memory::BrowseFilter;
@@ -14,6 +15,7 @@ use kernel::memory::Limit;
 use kernel::memory::MemoryEntry;
 use kernel::memory::SearchQuery;
 use kernel::memory::TagLiteral;
+use kernel::memory::settlement::SettleResult;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
@@ -114,6 +116,10 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
             routing::get(super::memory_archive::children).fallback(super::method_not_allowed),
         )
         .route(
+            "/conversations/{id}/settle",
+            routing::post(settle).fallback(super::method_not_allowed),
+        )
+        .route(
             "/conversations/{id}/summaries",
             routing::get(super::memory_archive::conversation_summaries)
                 .fallback(super::method_not_allowed),
@@ -137,6 +143,19 @@ pub(crate) fn router() -> Router<Arc<Gateway>> {
         )
         .nest("/tags", super::tags::router())
         .fallback(unknown)
+}
+
+async fn settle(
+    State(gateway): State<Arc<Gateway>>,
+    user: UserId,
+    Path(session): Path<String>,
+) -> Result<(StatusCode, Json<SettleResult>), ApiError> {
+    let result = gateway
+        .store()
+        .mark_summary_settled(&session, user.owner())
+        .await?
+        .ok_or(ApiError::NotFound("conversation not found"))?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
 fn tool_route<H, T>(handler: H) -> MethodRouter<Arc<Gateway>>

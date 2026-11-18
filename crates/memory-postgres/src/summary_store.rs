@@ -14,6 +14,7 @@ use kernel::memory::SummaryStoreError;
 use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
+use kernel::memory::settlement::{SettlementPage, SummaryState};
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::queue::Job;
@@ -133,6 +134,28 @@ struct PendingRow {
 
 #[async_trait]
 impl SummaryStore for PostgresMemory {
+    async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
+        self.read_summary_state(id).await.map_err(settlement_error)
+    }
+
+    async fn summary_eligible(&self, id: Uuid, revision: i64) -> Result<bool, SummaryStoreError> {
+        self.eligible_summary(id, revision)
+            .await
+            .map_err(settlement_error)
+    }
+
+    async fn expire_summary_page(
+        &self,
+        after: Option<Uuid>,
+        cutoff: DateTime<Utc>,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<SettlementPage, SummaryStoreError> {
+        self.expire_settlement(after, cutoff, now, limit)
+            .await
+            .map_err(settlement_error)
+    }
+
     async fn conversation(
         &self,
         id: Uuid,
@@ -459,6 +482,13 @@ fn required_time(
 fn query_err(operation: &'static str, source: sqlx::Error) -> SummaryStoreError {
     SummaryStoreError::Query {
         message: format!("{operation}: {source}"),
+        source: Box::new(source),
+    }
+}
+
+fn settlement_error(source: crate::Error) -> SummaryStoreError {
+    SummaryStoreError::Query {
+        message: "summary settlement".to_owned(),
         source: Box::new(source),
     }
 }

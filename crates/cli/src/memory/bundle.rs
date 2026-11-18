@@ -346,7 +346,7 @@ pub(super) async fn exporter(env: &Environment) -> Result<BundleAuthor, Error> {
     })
 }
 
-async fn node_owner(config: &Config, env: &Environment) -> Result<String, Error> {
+pub(super) async fn node_owner(config: &Config, env: &Environment) -> Result<String, Error> {
     let path = config.users_file(env);
     let Some(path) = path else {
         return Ok(DEFAULT_OWNER_ID.to_owned());

@@ -877,3 +877,48 @@ async fn config_url_is_used_when_the_environment_is_unset(pool: PgPool) {
     let report = run(&["memory", "queue-status"], &environment).await;
     assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
 }
+
+#[tokio::test]
+async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::SummaryStore as _;
+    use testkit::settlement::{batch, message};
+
+    let (home, environment) = env(&[]);
+    let path = home.path().join("settle.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(&path)?;
+    let owner = kernel::owner::Owner::new(wire::gateway::users::DEFAULT_OWNER_ID.to_owned())?;
+    let key = "cli:invented-session";
+    let captured = store
+        .capture(
+            batch(key, vec![message("entry", "2026-01-01T00:00:00Z")?]),
+            &owner,
+            None,
+            chrono::Utc::now(),
+        )
+        .await?;
+    let id = captured.conversation_id.parse()?;
+    let db = path.to_str().ok_or("sqlite path")?;
+    let first = memory(
+        &["settle", key, "--sqlite", db, "--json"],
+        &environment,
+        false,
+    )
+    .await;
+    assert_eq!(first.exit, Exit::Ok, "{}", first.stderr);
+    let result: serde_json::Value = serde_json::from_str(&first.stdout)?;
+    assert_eq!(result["status"], "settled");
+    assert_eq!(result["inputRevision"], 1);
+    let second = memory(&["settle", key, "--sqlite", db], &environment, false).await;
+    assert_eq!(second.exit, Exit::Ok);
+    assert!(second.stdout.contains("revision 1 already settled"));
+    assert!(store.summary_eligible(id, 1).await?);
+    let missing = memory(
+        &["settle", "cli:unknown", "--sqlite", db],
+        &environment,
+        false,
+    )
+    .await;
+    assert_eq!(missing.exit, Exit::Failure);
+    Ok(())
+}

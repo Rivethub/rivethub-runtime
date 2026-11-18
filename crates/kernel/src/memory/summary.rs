@@ -153,6 +153,30 @@ pub enum SummaryStoreError {
 
 #[async_trait]
 pub trait SummaryStore: Send + Sync {
+    async fn summary_state(
+        &self,
+        _id: Uuid,
+    ) -> Result<Option<super::settlement::SummaryState>, SummaryStoreError> {
+        Ok(None)
+    }
+
+    async fn summary_eligible(&self, _id: Uuid, _revision: i64) -> Result<bool, SummaryStoreError> {
+        Ok(false)
+    }
+
+    async fn expire_summary_page(
+        &self,
+        _after: Option<Uuid>,
+        _cutoff: DateTime<Utc>,
+        _now: DateTime<Utc>,
+        _limit: u32,
+    ) -> Result<super::settlement::SettlementPage, SummaryStoreError> {
+        Ok(super::settlement::SettlementPage {
+            next: None,
+            settled: 0,
+        })
+    }
+
     async fn conversation(&self, id: Uuid)
     -> Result<Option<ConversationWindow>, SummaryStoreError>;
 

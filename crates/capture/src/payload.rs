@@ -43,6 +43,7 @@ pub struct HookPayload {
     pub tool_use_id: Option<String>,
     pub last_assistant_message: Option<String>,
     pub agent_id: Option<String>,
+    pub event_id: Option<String>,
     pub agent_type: Option<String>,
     pub agent_transcript_path: Option<std::path::PathBuf>,
 }
@@ -62,6 +63,7 @@ struct HookPayloadWire {
     tool_use_id: Option<String>,
     last_assistant_message: Option<String>,
     agent_id: Option<String>,
+    event_id: Option<String>,
     agent_type: Option<String>,
     agent_transcript_path: Option<std::path::PathBuf>,
 }
@@ -100,6 +102,7 @@ impl From<HookPayloadWire> for HookPayload {
             tool_use_id: wire.tool_use_id,
             last_assistant_message: wire.last_assistant_message,
             agent_id: wire.agent_id,
+            event_id: wire.event_id,
             agent_type: wire.agent_type,
             agent_transcript_path: wire.agent_transcript_path,
         }

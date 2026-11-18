@@ -72,6 +72,7 @@ impl SqliteStore {
                 }
                 let mut opening_jobs = false;
                 for id in conversations {
+                    crate::settlement::record_capture(&tx, &id, now, true, false, None, None)?;
                     opening_jobs |= crate::summary_opening::refresh(&tx, &id, now)?;
                 }
                 tx.commit().map_err(SqliteError::query("append commit"))?;

@@ -144,7 +144,7 @@ async fn only_turn_ends_compaction_and_session_end_capture() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_session_with_no_turns_yet_posts_nothing() -> TestResult {
+async fn top_down_settle_a_session_end_with_no_turns_posts_an_empty_marker() -> TestResult {
     let home = tempfile::tempdir()?;
     let transport = FakeTransport::default();
     let hook = hook(home.path(), &transport)?;
@@ -157,8 +157,21 @@ async fn a_session_with_no_turns_yet_posts_nothing() -> TestResult {
         "{\"method\":\"_x.ai/session/update\",\"params\":{\"sessionId\":\"s\",\"update\":{\"sessionUpdate\":\"hook_execution\",\"event_name\":\"session_start\",\"runs\":[]}}}\n",
     )?;
     let now: DateTime<Utc> = NOW_TEXT.parse()?;
-    assert_eq!(hook.run(&payload("SessionEnd"), now).await.stderr, "");
+    assert_eq!(hook.run(&payload("Stop"), now).await.stderr, "");
     assert!(transport.posts.lock().is_empty());
+    assert_eq!(hook.run(&payload("SessionEnd"), now).await.stderr, "");
+    let posts = transport.posts.lock();
+    let [body] = posts.as_slice() else {
+        return Err("expected one end".into());
+    };
+    let batch: wire::capture::CaptureBatchRequest = serde_json::from_str(body)?;
+    assert!(batch.messages.is_empty());
+    assert!(
+        batch
+            .session_observation()
+            .and_then(|o| o.end_key)
+            .is_some()
+    );
     Ok(())
 }
 

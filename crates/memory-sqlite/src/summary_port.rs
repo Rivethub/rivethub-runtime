@@ -17,6 +17,7 @@ use kernel::memory::SummaryWrite;
 use kernel::memory::ToolUse;
 use kernel::memory::WindowMessage;
 use kernel::memory::WrittenSummary;
+use kernel::memory::settlement::{SettlementPage, SummaryState};
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::queue::Job;
@@ -32,6 +33,26 @@ use crate::time;
 
 #[async_trait]
 impl SummaryStore for SqliteStore {
+    async fn summary_state(&self, id: Uuid) -> Result<Option<SummaryState>, SummaryStoreError> {
+        self.read_summary_state(id).await.map_err(store_err)
+    }
+
+    async fn summary_eligible(&self, id: Uuid, revision: i64) -> Result<bool, SummaryStoreError> {
+        self.eligible_summary(id, revision).await.map_err(store_err)
+    }
+
+    async fn expire_summary_page(
+        &self,
+        after: Option<Uuid>,
+        cutoff: DateTime<Utc>,
+        now: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<SettlementPage, SummaryStoreError> {
+        self.expire_settlement(after, cutoff, now, limit)
+            .await
+            .map_err(store_err)
+    }
+
     async fn conversation(
         &self,
         id: Uuid,
