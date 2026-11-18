@@ -259,7 +259,19 @@ async fn execute(
 mod tests {
 
     use super::{ScheduleTime, parser};
+    use croner::errors::CronError;
     use jiff::ZonedDateTime;
+
+    #[test]
+    fn numeric_sunday_with_last_modifier_reaches_the_search_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let start = ScheduleTime("2024-09-30T20:00:00-04:00[America/New_York]".parse()?);
+        let result = parser()
+            .parse("0 0 * * 7L")?
+            .find_next_occurrence(&start, false);
+        assert!(matches!(result, Err(CronError::TimeSearchLimitExceeded)));
+        Ok(())
+    }
 
     #[test]
     fn plugin_schedules_use_five_fields_and_find_the_next_local_occurrence()
