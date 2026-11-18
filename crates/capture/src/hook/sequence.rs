@@ -19,13 +19,22 @@ struct Ledger {
     events: BTreeMap<String, NonZeroU64>,
 }
 
-pub(super) fn position(path: &Path, event_id: String) -> io::Result<Position> {
-    let mut ledger: Ledger = match File::open(path) {
-        Ok(file) => serde_json::from_reader(BufReader::new(file))?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ledger {
+impl Ledger {
+    fn fresh() -> Self {
+        Self {
             producer: Uuid::new_v4(),
             events: BTreeMap::new(),
+        }
+    }
+}
+
+pub(super) fn position(path: &Path, event_id: String) -> io::Result<Position> {
+    let (mut ledger, unreadable) = match File::open(path) {
+        Ok(file) => match serde_json::from_reader(BufReader::new(file)) {
+            Ok(ledger) => (ledger, None),
+            Err(error) => (Ledger::fresh(), Some(error)),
         },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (Ledger::fresh(), None),
         Err(error) => return Err(error),
     };
     let hook_sequence = if let Some(sequence) = ledger.events.get(&event_id) {
@@ -46,6 +55,9 @@ pub(super) fn position(path: &Path, event_id: String) -> io::Result<Position> {
         staged.as_file().sync_all()?;
         staged.persist(path).map_err(|error| error.error)?;
         File::open(dir)?.sync_all()?;
+        if let Some(error) = unreadable {
+            tracing::warn!(%error, "unreadable hook sequence was replaced");
+        }
         sequence
     };
     Ok(Position {

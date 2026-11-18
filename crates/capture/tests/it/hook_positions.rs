@@ -410,6 +410,98 @@ async fn metadata_elision_keeps_the_unanchored_tool_sequence() -> TestResult {
 }
 
 #[tokio::test]
+async fn unreadable_sequence_files_recover_without_losing_prompts() -> TestResult {
+    for bad_ledger in [r#"{"next":1}"#, r#"{"producer":"#] {
+        let home = tempfile::tempdir()?;
+        let file = home.path().join(format!("{SESSION}.jsonl"));
+        std::fs::write(&file, "")?;
+        let posts = Posts::default();
+        let capture = hook(home.path(), &posts)?;
+        assert_eq!(
+            capture
+                .run(&tool(&file, Some(CALL))?, at(1), "first")
+                .await
+                .stderr,
+            ""
+        );
+        let ledger = home
+            .path()
+            .join(format!(".rivethub/claude-pending/{SESSION}.sequence"));
+        std::fs::write(&ledger, bad_ledger)?;
+        assert_eq!(
+            capture
+                .run(&prompt("Held observation")?, at(2), "ask")
+                .await
+                .stderr,
+            ""
+        );
+        assert_eq!(
+            capture
+                .run(&tool(&file, None)?, at(3), "second")
+                .await
+                .stderr,
+            ""
+        );
+        assert_eq!(capture.run(&stop(&file)?, at(4), "stop").await.stderr, "");
+        let rows = std::mem::take(&mut *posts.0.lock());
+        let [first, second, held] = rows.as_slice() else {
+            return Err("expected two tools and a held prompt".into());
+        };
+        assert_eq!(held.content, "Held observation");
+        assert_eq!(meta(first, "hook_sequence"), &1);
+        assert_eq!(meta(held, "hook_sequence"), &1);
+        assert_eq!(meta(second, "hook_sequence"), &2);
+        let producer = meta(held, "hook_producer").as_str().ok_or("new producer")?;
+        assert_ne!(meta(first, "hook_producer"), producer);
+        assert_eq!(meta(second, "hook_producer"), producer);
+        let state: Json = serde_json::from_slice(&std::fs::read(&ledger)?)?;
+        assert_eq!(state.get("producer"), Some(&Json::from(producer)));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_sequence_write_still_saves_the_tool_and_pending_prompt() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let file = home.path().join(format!("{SESSION}.jsonl"));
+    std::fs::write(&file, "")?;
+    let ledger = home
+        .path()
+        .join(format!(".rivethub/claude-pending/{SESSION}.sequence"));
+    std::fs::create_dir_all(&ledger)?;
+    let posts = Posts::default();
+    let capture = hook(home.path(), &posts)?;
+    assert_eq!(
+        capture
+            .run(&tool(&file, Some(CALL))?, at(1), "tool")
+            .await
+            .stderr,
+        ""
+    );
+    assert_eq!(
+        capture
+            .run(&prompt("Held without a position")?, at(2), "ask")
+            .await
+            .stderr,
+        ""
+    );
+    assert_eq!(posts.0.lock().len(), 1);
+    assert_eq!(capture.run(&stop(&file)?, at(3), "stop").await.stderr, "");
+    let rows = std::mem::take(&mut *posts.0.lock());
+    let [tool, held] = rows.as_slice() else {
+        return Err("expected a tool and a held prompt".into());
+    };
+    assert_eq!(tool.content, "[tool call] Read");
+    assert_eq!(held.content, "Held without a position");
+    for row in &rows {
+        assert_eq!(meta(row, "hook_producer"), &Json::Null);
+        assert_eq!(meta(row, "hook_sequence"), &Json::Null);
+    }
+    assert!(ledger.is_dir());
+    Ok(())
+}
+
+#[tokio::test]
 async fn opencode_v2_hook_positions_parts_by_native_event_and_part_order() -> TestResult {
     const NATIVE: &str = "ses_synthetic_hook_positions";
     let home = tempfile::tempdir()?;

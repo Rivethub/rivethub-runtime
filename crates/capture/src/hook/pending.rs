@@ -1,3 +1,4 @@
+use std::io::{self, Write as _};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -6,7 +7,6 @@ use chrono::DateTime;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt as _;
 
 use super::sequence;
 use crate::store_path::single_component;
@@ -86,61 +86,56 @@ impl PendingPrompts {
         .map_err(std::io::Error::other)?
     }
 
-    async fn locked_position(
-        &self,
-        native: &str,
-        event_id: String,
-        locked: Locked,
-    ) -> std::io::Result<(sequence::Position, Locked)> {
-        let path = self.dir.join(format!("{native}.sequence"));
-        tokio::task::spawn_blocking(move || {
-            let position = sequence::position(&path, event_id)?;
-            Ok((position, locked))
-        })
-        .await
-        .map_err(std::io::Error::other)?
+    fn sequence_file(&self, native: &str) -> PathBuf {
+        self.dir.join(format!("{native}.sequence"))
     }
 
     pub(super) async fn position(
         &self,
         native: &str,
         event_id: String,
-    ) -> std::io::Result<sequence::Position> {
+    ) -> io::Result<sequence::Position> {
         if !single_component(native) {
-            return Err(std::io::Error::other("invalid session for hook sequence"));
+            return Err(io::Error::other("invalid session for hook sequence"));
         }
-        let (position, _) = self
-            .locked_position(native, event_id, self.lock(native).await?)
-            .await?;
-        Ok(position)
+        let locked = self.lock(native).await?;
+        let path = self.sequence_file(native);
+        tokio::task::spawn_blocking(move || {
+            let _locked = locked;
+            sequence::position(&path, event_id)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 
     pub(super) async fn add(
         &self,
         session: &wire::session_id::SessionId,
         mut pending: Pending,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         let native = session.native();
         let Some(file) = self.file(native) else {
             return Ok(());
         };
-        let (position, _locked) = self
-            .locked_position(
-                native,
-                pending.event_id(session.as_str()),
-                self.lock(native).await?,
-            )
-            .await?;
-        pending.position = Some(position);
-        let mut line = serde_json::to_string(&pending)?;
-        line.push('\n');
-        let mut handle = tokio::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(file)
-            .await?;
-        handle.write_all(line.as_bytes()).await?;
-        handle.flush().await
+        let locked = self.lock(native).await?;
+        let path = self.sequence_file(native);
+        let event_id = pending.event_id(session.as_str());
+        tokio::task::spawn_blocking(move || {
+            let _locked = locked;
+            match sequence::position(&path, event_id) {
+                Ok(position) => pending.position = Some(position),
+                Err(error) => tracing::warn!(%error, "prompt hook position was not saved"),
+            }
+            let mut line = serde_json::to_vec(&pending)?;
+            line.push(b'\n');
+            let mut handle = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(file)?;
+            handle.write_all(&line)
+        })
+        .await
+        .map_err(io::Error::other)?
     }
 
     pub(crate) async fn claim(&self, native: &str) -> std::io::Result<Claim> {
