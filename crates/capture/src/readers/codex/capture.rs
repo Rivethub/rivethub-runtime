@@ -28,7 +28,7 @@ struct Line {
     #[serde_as(as = "DefaultOnError")]
     #[serde(rename = "type", default)]
     kind: Option<String>,
-    #[serde_as(as = "DefaultOnError")]
+    #[serde_as(as = "DefaultOnError<Option<wire::time::Rfc3339>>")]
     #[serde(default)]
     timestamp: Option<Timestamp>,
     #[serde(default)]

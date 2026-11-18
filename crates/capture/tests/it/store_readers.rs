@@ -127,6 +127,37 @@ fn codex_name() -> String {
 }
 
 #[tokio::test]
+async fn codex_capture_keeps_messages_with_unparseable_timestamps()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(codex_name());
+    std::fs::create_dir_all(path.parent().ok_or("rollout directory")?)?;
+    let lines = [
+        " 2026-01-01T01:02:03.123456789012 +0100",
+        "2026-01-01T01:02:03+01:00:00",
+    ]
+    .map(|stamp| {
+        serde_json::json!({
+            "timestamp": stamp,
+            "type": "response_item",
+            "payload": {"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+        })
+        .to_string()
+    });
+    std::fs::write(path, lines.join("\n"))?;
+    let StoreReader::Codex(reader) = open(HarnessId::Codex, dir.path())? else {
+        return Err("Codex reader".into());
+    };
+    let slice = reader.capture(&session(HarnessId::Codex)).await?;
+    let messages = serde_json::to_value(slice.messages)?;
+    assert_eq!(messages[0]["created_at"], "2026-01-01T00:02:03.123Z");
+    assert!(messages[1]["created_at"].is_null());
+    assert_eq!(messages.as_array().ok_or("messages")?.len(), 2);
+    assert!(slice.skipped.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn codex_rollout_maps_events_and_paired_tools() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     place(
