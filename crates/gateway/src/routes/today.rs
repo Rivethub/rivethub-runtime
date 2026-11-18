@@ -93,7 +93,7 @@ fn subject_key(text: &str) -> Result<SubjectKey, ApiError> {
 }
 
 fn bounds(date: Date) -> Result<(Timestamp, Timestamp), ApiError> {
-    let range = day_window(date, &jiff::tz::TimeZone::system());
+    let range = day_window(date, &wire::time::host_zone());
     range
         .since
         .zip(range.before)
@@ -384,7 +384,7 @@ async fn digest(
     Query(params): Query<TodayParams>,
 ) -> Result<Json<today::TodayDigest>, ApiError> {
     let today = Timestamp::now()
-        .to_zoned_datetime(jiff::tz::TimeZone::system())
+        .to_zoned_datetime(wire::time::host_zone())
         .date();
     let date = params.date.unwrap_or(today);
     let (start, end) = bounds(date)?;
@@ -428,7 +428,7 @@ async fn digest(
         needs_you: needs_you(queue),
         review_count,
         entries,
-        activity_by_day: kernel::changes::activity(&all, date, &jiff::tz::TimeZone::system())
+        activity_by_day: kernel::changes::activity(&all, date, &wire::time::host_zone())
             .into_iter()
             .map(|entry| today::ActivityDay {
                 date: entry.date,

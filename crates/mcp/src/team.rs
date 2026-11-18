@@ -56,11 +56,8 @@ pub(crate) async fn call(
 ) -> Result<CallToolResult, Error> {
     let limit = crate::memory::limit(Args::NAME, args.limit, 5, 20)?;
     let window = crate::memory::window(args.window.unwrap_or(BrowseWindow::Last7d));
-    let range = kernel::memory_core::resolve_window(
-        window,
-        Timestamp::now(),
-        &jiff::tz::TimeZone::system(),
-    );
+    let range =
+        kernel::memory_core::resolve_window(window, Timestamp::now(), &wire::time::host_zone());
     let records = store
         .team_sessions(range.since, range.before, limit.get())
         .await?;

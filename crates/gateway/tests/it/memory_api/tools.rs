@@ -90,7 +90,7 @@ fn browse_rejects_bad_filters() {
     let today = kernel::memory_core::resolve_window(
         kernel::memory::BrowseWindow::Today,
         Timestamp::now(),
-        &jiff::tz::TimeZone::system(),
+        &wire::time::host_zone(),
     );
     assert_eq!(filter.since, today.since);
     assert_eq!(filter.before, today.before);

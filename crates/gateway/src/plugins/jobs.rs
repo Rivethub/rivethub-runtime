@@ -133,7 +133,7 @@ pub(super) async fn schedule(
         return;
     }
     loop {
-        let now = ScheduleTime(ZonedDateTime::now());
+        let now = ScheduleTime(Timestamp::now().to_zoned_datetime(wire::time::host_zone()));
         let next: Vec<(Timestamp, &RouteName)> = scheduled
             .iter()
             .filter_map(|entry| match entry.cron.find_next_occurrence(&now, false) {

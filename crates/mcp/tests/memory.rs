@@ -26,7 +26,7 @@ async fn memory_requests_reach_kernel_with_resolved_windows() {
     let today = kernel::memory_core::resolve_window(
         BrowseWindow::Today,
         Timestamp::now(),
-        &jiff::tz::TimeZone::system(),
+        &wire::time::host_zone(),
     );
     for (name, args) in [
         (

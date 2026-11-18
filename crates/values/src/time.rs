@@ -7,6 +7,10 @@ use serde::{Deserialize, Deserializer, Serializer};
 use serde_with::schemars_1::JsonSchemaAs;
 use serde_with::{DeserializeAs, SerializeAs};
 
+mod host;
+
+pub use host::host_zone;
+
 pub trait TimestampFormat {
     fn rfc3339_offset(self) -> String;
     fn rfc3339_z(self) -> String;
