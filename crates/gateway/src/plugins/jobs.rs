@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, Utc};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds};
 use tokio_util::sync::CancellationToken;
@@ -57,8 +57,8 @@ pub(super) async fn schedule(
         return;
     }
     loop {
-        let now = Local::now();
-        let next: Vec<(DateTime<Local>, &RouteName)> = scheduled
+        let now = jiff02::Zoned::now();
+        let next: Vec<(jiff02::Zoned, &RouteName)> = scheduled
             .iter()
             .filter_map(|entry| match entry.cron.find_next_occurrence(&now, false) {
                 Ok(at) => Some((at, &entry.job)),
@@ -68,10 +68,10 @@ pub(super) async fn schedule(
                 }
             })
             .collect();
-        let Some(soonest) = next.iter().map(|(at, _)| *at).min() else {
+        let Some(soonest) = next.iter().map(|(at, _)| at).min() else {
             return;
         };
-        let wait = match (soonest - now).to_std() {
+        let wait = match Duration::try_from(soonest.duration_since(&now)) {
             Ok(wait) => wait,
             Err(error) => {
                 tracing::trace!(%error, "the next plug-in job run is already due");
@@ -82,14 +82,15 @@ pub(super) async fn schedule(
             () = stop.cancelled() => return,
             () = tokio::time::sleep(wait) => {}
         }
-        for (at, job) in next.iter().filter(|(at, _)| *at == soonest) {
-            match start(
-                &host,
-                &plugin,
-                job,
-                PluginJobTrigger::Schedule,
-                Some(at.with_timezone(&Utc)),
-            ) {
+        for (at, job) in next.iter().filter(|(at, _)| at == soonest) {
+            let stamp = match Timestamp::from_nanosecond(at.timestamp().as_nanosecond()) {
+                Ok(stamp) => stamp,
+                Err(error) => {
+                    tracing::warn!(%error, job = job.as_ref(), "scheduled time is out of range");
+                    continue;
+                }
+            };
+            match start(&host, &plugin, job, PluginJobTrigger::Schedule, Some(stamp)) {
                 Ok(_) => {}
                 Err(HostError::Conflict(reason)) => host.log(
                     &plugin,
@@ -111,13 +112,13 @@ pub(super) fn start(
     plugin: &PluginId,
     job: &RouteName,
     trigger: PluginJobTrigger,
-    scheduled_at: Option<DateTime<Utc>>,
+    scheduled_at: Option<Timestamp>,
 ) -> Result<PluginJobRun, HostError> {
     let declared = host.job(plugin, job)?;
     let run = PluginJobRun {
         run_id: uuid::Uuid::new_v4().to_string(),
         trigger,
-        started_at: Utc::now(),
+        started_at: Timestamp::now(),
         finished_at: None,
         outcome: None,
         message: None,
@@ -145,7 +146,7 @@ pub(super) fn start(
             &plugin,
             &job,
             PluginJobRun {
-                finished_at: Some(Utc::now()),
+                finished_at: Some(Timestamp::now()),
                 outcome: Some(outcome),
                 message,
                 ..started
@@ -187,7 +188,6 @@ async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
 
     use super::parser;
 
@@ -211,11 +211,12 @@ mod tests {
                 "2026-01-02T00:00:00+05:30",
             ),
         ] {
-            let start = DateTime::parse_from_rfc3339(now)?;
+            let offset = now.get(19..).ok_or("offset")?;
+            let start: jiff02::Zoned = format!("{now}[{offset}]").parse()?;
             let next_at = parser()
                 .parse(schedule)?
                 .find_next_occurrence(&start, false)?;
-            assert_eq!(next_at.to_rfc3339(), next);
+            assert_eq!(next_at.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string(), next);
         }
         assert!(parser().parse("0 0 0 * * *").is_err());
         Ok(())

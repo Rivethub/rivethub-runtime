@@ -13,8 +13,10 @@ mod memory_http;
 #[path = "local/summarize.rs"]
 mod summarize;
 
+use jiff::Timestamp;
 use std::path::Path;
 use std::time::Duration;
+use wire::time::TimestampFormat as _;
 
 use kernel::memory::MemoryEntry;
 use tokio::process::Command;
@@ -106,7 +108,7 @@ async fn local_serves_health_and_sqlite_memory_then_stops_on_sigterm() -> TestRe
     let marker = "local-sqlite-marker";
     {
         let store = memory_sqlite::SqliteStore::open(&database)?;
-        let now = chrono::Utc::now();
+        let now = Timestamp::now();
         store
             .append_entries(
                 vec![MemoryEntry {
@@ -394,7 +396,7 @@ fn seed_summary(path: &Path) -> TestResult {
     }
     migrate::sqlite(path)?;
     let conn = rusqlite::Connection::open(path)?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = Timestamp::now().rfc3339_millis();
     let conversation = "00000000-0000-4000-8000-0000000000c7";
     let session = format!("claude-code:{conversation}");
     let topic = "00000000-0000-4000-8000-0000000000e7";

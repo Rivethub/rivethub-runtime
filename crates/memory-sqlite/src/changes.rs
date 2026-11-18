@@ -1,9 +1,8 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
 use kernel::changes::ChangeError;
 use kernel::changes::ChangeFeed;
 use kernel::changes::ChangeRecord;
@@ -98,7 +97,7 @@ fn session(key: &str) -> Result<SessionId, SqliteError> {
     SessionId::from_str(key).map_err(|error| invalid("session id", error))
 }
 
-fn stored(text: &str) -> Result<DateTime<Utc>, SqliteError> {
+fn stored(text: &str) -> Result<Timestamp, SqliteError> {
     time::stored(text, "change time")
 }
 
@@ -302,7 +301,7 @@ impl ChangeFeed for SqliteStore {
 
 fn digest_row(
     conn: &Connection,
-    day: NaiveDate,
+    day: Date,
     owner: &Owner,
 ) -> Result<Option<DailyDigest>, SqliteError> {
     let found: Option<(String, u32, String)> = conn
@@ -329,11 +328,7 @@ fn digest_row(
 
 #[async_trait]
 impl DigestStore for SqliteStore {
-    async fn digest(
-        &self,
-        day: NaiveDate,
-        owner: &Owner,
-    ) -> Result<Option<DailyDigest>, ChangeError> {
+    async fn digest(&self, day: Date, owner: &Owner) -> Result<Option<DailyDigest>, ChangeError> {
         let owner = owner.clone();
         self.with_conn(move |conn| digest_row(conn, day, &owner))
             .await
@@ -366,7 +361,8 @@ impl DigestStore for SqliteStore {
     async fn request_digest(&self, request: &DigestRequest) -> Result<(), ChangeError> {
         let job = request.job()?;
         let payload = serde_json::to_string(&job.payload).map_err(unavailable)?;
-        let insert = crate::port::job_insert(&job, payload, Utc::now()).map_err(unavailable)?;
+        let insert =
+            crate::port::job_insert(&job, payload, Timestamp::now()).map_err(unavailable)?;
         self.with_conn(move |conn| crate::queue::enqueue_in(conn, &insert))
             .await
             .map_err(unavailable)

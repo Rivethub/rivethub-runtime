@@ -3,9 +3,9 @@ mod context;
 mod preview;
 mod rows;
 
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::Utc;
 use kernel::transcript::HarnessToolOutput;
 use kernel::transcript::{
     StoreSession, StoreTranscript, ToolOutputRead, TranscriptRead, TranscriptWindow,
@@ -205,7 +205,7 @@ pub(crate) async fn store_summary(gateway: &Gateway, row: &StoreSession) -> Harn
         Some(cwd) => Some(cwd),
         None => recorded_cwd(gateway, row).await,
     };
-    rows::summary(row, cwd, Utc::now())
+    rows::summary(row, cwd, Timestamp::now())
 }
 
 async fn recorded_cwd(gateway: &Gateway, row: &StoreSession) -> Option<String> {

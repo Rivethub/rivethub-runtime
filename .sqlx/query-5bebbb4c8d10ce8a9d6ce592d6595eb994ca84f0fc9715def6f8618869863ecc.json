@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into rh_tag_taxonomy (key, value, display, parent_value, aliases, state, source, reason) values ($1, $2, coalesce($3, ''), $4, $5, 'accepted', 'user', coalesce($6, '')) on conflict (key, value) do update set display = coalesce($3, ''), parent_value = $4, aliases = $5, reason = coalesce($6, ''), updated_at = now() returning key, value, display, parent_value, aliases, state, source, reason, decided_at, created_at, updated_at",
+  "query": "insert into rh_tag_taxonomy (key, value, display, parent_value, aliases, state, source, reason) values ($1, $2, coalesce($3, ''), $4, $5, 'accepted', 'user', coalesce($6, '')) on conflict (key, value) do update set display = coalesce($3, ''), parent_value = $4, aliases = $5, reason = coalesce($6, ''), updated_at = now() returning key, value, display, parent_value, aliases, state, source, reason, decided_at AS \"decided_at!: crate::time::OptionalTimestamp\", created_at AS \"created_at!: jiff_sqlx::Timestamp\", updated_at AS \"updated_at!: jiff_sqlx::Timestamp\"",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,7 @@
       },
       {
         "ordinal": 8,
-        "name": "decided_at",
+        "name": "decided_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -104,7 +104,7 @@
       },
       {
         "ordinal": 9,
-        "name": "created_at",
+        "name": "created_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -115,7 +115,7 @@
       },
       {
         "ordinal": 10,
-        "name": "updated_at",
+        "name": "updated_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -149,5 +149,5 @@
       false
     ]
   },
-  "hash": "4277b7ef0180885c308f74182e8c83868884a824f9ea9a0c1fbc8e33769695bf"
+  "hash": "5bebbb4c8d10ce8a9d6ce592d6595eb994ca84f0fc9715def6f8618869863ecc"
 }

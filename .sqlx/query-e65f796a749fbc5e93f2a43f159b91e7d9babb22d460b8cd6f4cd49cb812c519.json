@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT session_key, kept_at FROM rh_session_keeps WHERE session_key = ANY($1)",
+  "query": "SELECT session_key, deleted_at AS \"deleted_at: jiff_sqlx::Timestamp\" FROM rh_session_tombstones WHERE session_key = ANY($1)",
   "describe": {
     "columns": [
       {
@@ -9,19 +9,19 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "rh_session_keeps",
+            "table": "rh_session_tombstones",
             "name": "session_key"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "kept_at",
+        "name": "deleted_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "rh_session_keeps",
-            "name": "kept_at"
+            "table": "rh_session_tombstones",
+            "name": "deleted_at"
           }
         }
       }
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "74e31bcfa1ada3b8580c8a0cee91160d943653b6e46aaa2674fbeeef415e1569"
+  "hash": "e65f796a749fbc5e93f2a43f159b91e7d9babb22d460b8cd6f4cd49cb812c519"
 }

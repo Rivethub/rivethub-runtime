@@ -1,6 +1,7 @@
 #![cfg(test)]
 
-use chrono::{DateTime, NaiveDate, Utc};
+use jiff::Timestamp;
+use jiff::civil::Date;
 use kernel::wiki::page::archive::{
     ArchivePart, SEGMENT_BUDGET, next_part, settle_archive, unarchived,
 };
@@ -13,15 +14,15 @@ use kernel::wiki::recompile::{rebase_recompiled, restore_history};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
+fn at() -> Result<Timestamp, jiff::Error> {
     "2026-10-30T12:00:00Z".parse()
 }
 
-fn day(text: &str) -> Result<NaiveDate, chrono::ParseError> {
+fn day(text: &str) -> Result<Date, jiff::Error> {
     text.parse()
 }
 
-fn entry(date: &str, title: &str, body: &str) -> Result<WikiHistoryEntry, chrono::ParseError> {
+fn entry(date: &str, title: &str, body: &str) -> Result<WikiHistoryEntry, jiff::Error> {
     Ok(WikiHistoryEntry {
         date: day(date)?,
         title: title.to_owned(),

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::io::Write as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -16,7 +17,6 @@ use capture::sign::KeyParseError;
 use capture::sign::PublicKey;
 use capture::sign::SignError;
 use capture::sign::TrustError;
-use chrono::Utc;
 use config::Environment;
 use thiserror::Error;
 
@@ -299,7 +299,7 @@ pub async fn read_bundle_file(path: &Path) -> Result<Vec<u8>, Error> {
 pub fn code_line(shared: &Shared) -> String {
     format!(
         "share code (works once, expires {}; send it privately): {}",
-        shared.expires_at.format("%Y-%m-%d"),
+        shared.expires_at.strftime("%Y-%m-%d"),
         shared.code
     )
 }
@@ -373,7 +373,7 @@ async fn receive(
             fetched.ciphertext_path().display()
         )));
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let receipt = fetched.receipt(now);
     let imports: Vec<_> = plan
         .imports

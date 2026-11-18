@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,7 +58,7 @@ impl Worker {
                 directory: None,
                 owner: Some(Owner::new(person.to_owned())?),
             },
-            chrono::Utc::now(),
+            Timestamp::now(),
         )?;
         let made = self
             .as_person(person)

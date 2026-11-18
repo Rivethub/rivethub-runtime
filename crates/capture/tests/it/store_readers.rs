@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReader;
 use kernel::transcript::TranscriptReaderError;
 use kernel::transcript::Turn;
@@ -60,7 +59,7 @@ fn place(root: &Path, relative: &str, fixture: &str) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-fn stamp(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn stamp(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 

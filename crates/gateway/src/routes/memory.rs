@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -228,7 +229,7 @@ async fn search(
     };
     let results = gateway
         .store()
-        .search(query.resolve_window(chrono::Utc::now(), &chrono::Local))
+        .search(query.resolve_window(Timestamp::now(), &jiff::tz::TimeZone::system()))
         .await?;
     let origins = super::memory_rows::search_origins(&gateway, &results).await?;
     let snippets = params.snippet == Some(true);
@@ -281,7 +282,7 @@ async fn browse(
     };
     let entries = gateway
         .store()
-        .browse(filter.resolve_window(chrono::Utc::now(), &chrono::Local))
+        .browse(filter.resolve_window(Timestamp::now(), &jiff::tz::TimeZone::system()))
         .await?;
     Ok(Json(
         super::memory_rows::browse_response(&gateway, entries).await?,
@@ -315,7 +316,7 @@ async fn health(
         MemoryHealthStatus::Degraded
     };
     Ok(Json(MemoryHealthResponse {
-        observed_at: Some(chrono::Utc::now()),
+        observed_at: Some(Timestamp::now()),
         queue_status: None,
         queues: None,
         summarizer: None,
@@ -440,7 +441,7 @@ async fn search_tool(gateway: &Gateway, args: MemorySearchToolArgs) -> Result<St
     };
     let results = gateway
         .store()
-        .search(query.resolve_window(chrono::Utc::now(), &chrono::Local))
+        .search(query.resolve_window(Timestamp::now(), &jiff::tz::TimeZone::system()))
         .await?;
     let origins = super::memory_rows::search_origins(gateway, &results).await?;
     let response = MemorySearchResponse {
@@ -491,7 +492,7 @@ async fn browse_tool(gateway: &Gateway, args: MemoryBrowseToolArgs) -> Result<St
     };
     let entries = gateway
         .store()
-        .browse(filter.resolve_window(chrono::Utc::now(), &chrono::Local))
+        .browse(filter.resolve_window(Timestamp::now(), &jiff::tz::TimeZone::system()))
         .await?;
     serialize_tool(&super::memory_rows::browse_response(gateway, entries).await?)
 }

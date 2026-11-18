@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
 schemars = { workspace = true }
@@ -27,7 +27,6 @@ uuid = { workspace = true }
 values = { workspace = true }
 
 [dev-dependencies]
-chrono-tz = { workspace = true }
 testkit = { workspace = true }
 uuid = { workspace = true }
 

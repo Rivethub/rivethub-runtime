@@ -1,13 +1,12 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 use std::sync::Arc;
+use wire::time::TimestampFormat as _;
 
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
-use chrono::DateTime;
-use chrono::SubsecRound as _;
-use chrono::Utc;
 use kernel::topics::Decision;
 use kernel::topics::DecisionId;
 use kernel::topics::DecisionText;
@@ -120,6 +119,6 @@ async fn found(gateway: &Gateway, key: &str, id: &str) -> Result<Decision, ApiEr
         .map_err(map::error)
 }
 
-fn now() -> DateTime<Utc> {
-    Utc::now().trunc_subsecs(3)
+fn now() -> Timestamp {
+    Timestamp::now().truncate_subseconds(3)
 }

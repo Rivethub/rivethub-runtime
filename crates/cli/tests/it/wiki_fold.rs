@@ -1,4 +1,5 @@
 #![cfg(test)]
+use wire::time::TimestampFormat as _;
 
 use crate::wiki_support;
 
@@ -48,13 +49,13 @@ async fn seed_topic(
                     article: None,
                     article_patches: Vec::new(),
                     history_entry: Some(WikiHistoryEntry {
-                        date: now().date_naive(),
+                        date: now().utc_date(),
                         title: topic.history.to_owned(),
                         body: format!("{} happened.", topic.history),
                     }),
                     add_citations: vec![PageCitation {
                         summary_id: summary_id.clone(),
-                        date: Some(now().date_naive()),
+                        date: Some(now().utc_date()),
                         kind: Some(CitationKind::Leaf),
                         note: None,
                     }],

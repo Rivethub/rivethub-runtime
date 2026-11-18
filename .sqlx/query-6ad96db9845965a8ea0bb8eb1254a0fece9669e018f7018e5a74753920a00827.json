@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.id, p.batch_id, b.proposed_by, b.proposed_at,\n                      p.change AS \"change: Json<EditRecord>\", p.reason,\n                      p.evidence AS \"evidence: Json<Evidence>\", p.state, p.decided_at\n                 FROM rh_tidy_proposals p\n                 JOIN rh_tidy_batches b ON b.id = p.batch_id\n                WHERE ($1 = false OR p.state = 'pending')\n                  AND ($2::uuid IS NULL OR p.id = $2)\n                  AND ($3::uuid IS NULL OR p.batch_id = $3)\n                ORDER BY b.proposed_at DESC, b.id, p.position",
+  "query": "SELECT p.id, p.batch_id, b.proposed_by, b.proposed_at AS \"proposed_at: jiff_sqlx::Timestamp\",\n                      p.change AS \"change: Json<EditRecord>\", p.reason,\n                      p.evidence AS \"evidence: Json<Evidence>\", p.state, p.decided_at AS \"decided_at!: crate::time::OptionalTimestamp\"\n                 FROM rh_tidy_proposals p\n                 JOIN rh_tidy_batches b ON b.id = p.batch_id\n                WHERE ($1 = false OR p.state = 'pending')\n                  AND ($2::uuid IS NULL OR p.id = $2)\n                  AND ($3::uuid IS NULL OR p.batch_id = $3)\n                ORDER BY b.proposed_at DESC, b.id, p.position",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "proposed_at",
+        "name": "proposed_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -93,7 +93,7 @@
       },
       {
         "ordinal": 8,
-        "name": "decided_at",
+        "name": "decided_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -122,5 +122,5 @@
       true
     ]
   },
-  "hash": "713c5046873513c61ac014d6abaffb8ad7e1fffd17147f12b2b5f0ae580768b8"
+  "hash": "6ad96db9845965a8ea0bb8eb1254a0fece9669e018f7018e5a74753920a00827"
 }

@@ -363,7 +363,7 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
         let log = AuthLog::default();
         let request = RefusedRequest {
-            at: chrono::Utc::now(),
+            at: jiff::Timestamp::now(),
             kind: RefusalKind::InsufficientScope,
             method: "PUT".to_owned(),
             route: "/api/wiki/pages/a".to_owned(),

@@ -1,11 +1,9 @@
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Timelike;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::ConversationHead;
 use kernel::memory::Provenance;
 use kernel::memory::SummaryNode;
 use kernel::memory::WindowMessage;
+use wire::time::TimestampFormat as _;
 
 use crate::error::WorkerError;
 
@@ -253,24 +251,23 @@ fn display_index(index: usize) -> Result<u32, WorkerError> {
     u32::try_from(shown).map_err(|_| WorkerError::Count)
 }
 
-fn span_value(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
+fn span_value(start: Timestamp, end: Timestamp) -> String {
     format!("{} → {}", prompt_time(start), prompt_time(end))
 }
 
-fn prompt_time(at: DateTime<Utc>) -> String {
-    if at.timestamp_subsec_nanos() == 0 && at.second() == 0 {
-        format!("{}Z", at.format("%Y-%m-%dT%H:%M"))
-    } else if at.timestamp_subsec_nanos() == 0 {
-        format!("{}Z", at.format("%Y-%m-%dT%H:%M:%S"))
+fn prompt_time(at: Timestamp) -> String {
+    if at.nanosecond_of_second() == 0 && jiff::tz::TimeZone::UTC.to_datetime(at).second() == 0 {
+        format!("{}Z", at.strftime("%Y-%m-%dT%H:%M"))
+    } else if at.nanosecond_of_second() == 0 {
+        format!("{}Z", at.strftime("%Y-%m-%dT%H:%M:%S"))
     } else {
-        at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+        at.rfc3339_z()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use chrono::Utc;
+
     use kernel::memory::ConversationHead;
     use kernel::memory::WindowMessage;
     use uuid::Uuid;
@@ -286,10 +283,7 @@ mod tests {
             channel: "cli".to_owned(),
             title: None,
         };
-        let at = Utc
-            .with_ymd_and_hms(2026, 11, 1, 12, 0, 0)
-            .single()
-            .expect("time");
+        let at = wire::time::timestamp_at_utc(2026, 11, 1, 12, 0, 0).expect("time");
         let messages = [WindowMessage {
             id: Uuid::nil(),
             agent: "rivet-deepseek".to_owned(),

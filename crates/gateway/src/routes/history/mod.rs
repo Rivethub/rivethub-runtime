@@ -1,11 +1,11 @@
 mod previews;
 
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::extract::{Path, RawQuery, State};
 use axum::routing::{get, put};
 use axum::{Json, Router};
-use chrono::DateTime;
 use kernel::transcript::{ListLimit, SessionRenameError, StoreSession, TranscriptWindow};
 use wire::gateway::sessions::{
     HarnessSessionResponse, HarnessSessionTitleRequest, HarnessSessionTranscriptResponse,
@@ -73,11 +73,7 @@ async fn listed(gateway: &Gateway, harnesses: &[HarnessId], limit: ListLimit) ->
         .zip(keys)
         .filter(|(row, key)| {
             !trashed.contains(key)
-                && !super::session_delete::hidden(
-                    &deleted,
-                    key,
-                    DateTime::from_timestamp_millis(row.updated_at),
-                )
+                && !super::session_delete::hidden(&deleted, key, history_stamp(row.updated_at))
         })
         .map(|(row, _)| row)
         .collect()
@@ -266,4 +262,14 @@ async fn tool_output(
             .await
             .map(crate::history::body::harness_tool_output_body)?,
     ))
+}
+
+pub(crate) fn history_stamp(millis: i64) -> Option<Timestamp> {
+    match Timestamp::from_millisecond(millis) {
+        Ok(at) => Some(at),
+        Err(error) => {
+            tracing::debug!(%error, millis, "history timestamp exceeds the supported range");
+            None
+        }
+    }
 }

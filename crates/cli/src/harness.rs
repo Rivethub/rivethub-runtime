@@ -1,10 +1,10 @@
 use capture::harnesses::HarnessSetupService;
 use capture::harnesses::SetupChange;
-use chrono::Utc;
 use clap::Args;
 use clap::Subcommand;
 use config::Environment;
 use config::Paths;
+use jiff::Timestamp;
 use kernel::harness_setup::CaptureActivity;
 use kernel::harness_setup::CaptureHistory;
 use kernel::harness_setup::ConnectOutcome;
@@ -63,7 +63,7 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
         HarnessCommand::Status { json } => {
             let activity = capture_activity(env).await;
             let statuses = tokio::task::spawn_blocking(move || {
-                let now = Utc::now();
+                let now = Timestamp::now();
                 service
                     .probe_now()
                     .into_iter()
@@ -89,7 +89,7 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
         HarnessCommand::Connect(args) => {
             let dry_run = args.dry_run;
             let outcome = tokio::task::spawn_blocking(move || {
-                service.connect_now(&args.id, args.part(), args.dry_run, Utc::now())
+                service.connect_now(&args.id, args.part(), args.dry_run, Timestamp::now())
             })
             .await??;
             Ok(change_report(&outcome, dry_run, "connected"))
@@ -97,7 +97,7 @@ pub(crate) async fn run(command: HarnessCommand, env: &Environment) -> Result<Re
         HarnessCommand::Disconnect(args) => {
             let dry_run = args.dry_run;
             let outcome = tokio::task::spawn_blocking(move || {
-                service.disconnect_now(&args.id, args.part(), args.dry_run, Utc::now())
+                service.disconnect_now(&args.id, args.part(), args.dry_run, Timestamp::now())
             })
             .await??;
             Ok(change_report(&outcome, dry_run, "disconnected"))

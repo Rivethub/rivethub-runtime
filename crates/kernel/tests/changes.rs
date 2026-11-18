@@ -1,9 +1,7 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
-use chrono_tz::America::New_York;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use kernel::changes::Change;
 use kernel::changes::ChangeActor;
 use kernel::changes::ChangeKind;
@@ -17,11 +15,11 @@ use kernel::changes::learned;
 use kernel::changes::recently_updated;
 use kernel::topics::TopicId;
 
-fn day(text: &str) -> NaiveDate {
+fn day(text: &str) -> Date {
     text.parse().unwrap()
 }
 
-fn instant(text: &str) -> DateTime<Utc> {
+fn instant(text: &str) -> Timestamp {
     text.parse().unwrap()
 }
 
@@ -164,7 +162,11 @@ fn activity_scales_each_day_of_the_month_against_the_busiest_in_the_node_zone() 
         entity(NAS, "nas-01"),
         "2026-11-01T03:00:00Z",
     ));
-    let days = activity(&changes, day("2026-11-17"), &New_York);
+    let days = activity(
+        &changes,
+        day("2026-11-17"),
+        &values::time::bundled_zone("America/New_York").expect("bundled zone"),
+    );
     assert_eq!(days.len(), 30);
     let level = |date: &str| {
         days.iter()

@@ -1,10 +1,10 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::request::Parts;
-use chrono::Utc;
 use kernel::harness_setup::CaptureHistory;
 use kernel::harness_setup::ConnectOutcome;
 use kernel::harness_setup::ConnectPart;
@@ -43,7 +43,7 @@ pub(crate) async fn status(
     let setup = gateway.harness_setup()?;
     let activity = gateway.store().capture_activity().await?;
     let probes = setup.probe().await.map_err(setup_error)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let statuses = probes
         .into_iter()
         .map(|probe| {

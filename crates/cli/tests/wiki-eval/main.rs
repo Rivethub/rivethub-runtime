@@ -8,13 +8,13 @@ mod report;
 mod scratch;
 mod slice;
 
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 use std::time::Instant;
 
-use chrono::Utc;
 use clap::Parser;
 
 use failure::Failure;
@@ -114,7 +114,7 @@ async fn run(args: &Args) -> Result<(), Failure> {
     }
     let setup_ms = millis(setup.elapsed());
     let dir = prepare_dir(&args.runs, &args.label).await?;
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let wall = Instant::now();
     let prepared = Prepared {
         args,
@@ -138,7 +138,7 @@ struct Prepared<'a> {
     dir: &'a Path,
     ids: &'a [uuid::Uuid],
     hidden: &'a [String],
-    started_at: chrono::DateTime<Utc>,
+    started_at: Timestamp,
     wall: Instant,
     setup_ms: u64,
     matcher: &'a workers::entity_builder::MatcherSettings,
@@ -320,7 +320,10 @@ fn copied(counts: &copy::Counts, expected: usize) -> Result<(), Failure> {
 
 async fn prepare_dir(runs: &Path, label: &str) -> Result<PathBuf, Failure> {
     let root = absolute(runs).await?;
-    let dir = root.join(format!("{}-{label}", Utc::now().format("%Y%m%dT%H%M%SZ")));
+    let dir = root.join(format!(
+        "{}-{label}",
+        Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
+    ));
     if tokio::fs::try_exists(&dir)
         .await
         .map_err(|source| Failure::Write {

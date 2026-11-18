@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
@@ -5,8 +6,6 @@ use axum::Router;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::routing;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::Correction;
 use kernel::filing::Target;
@@ -124,7 +123,7 @@ async fn place(
         .conversation_placement(conversation)
         .await
         .map_err(map::error)?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let placed = filing
         .place_conversation(ConversationPlacement {
             conversation,
@@ -164,7 +163,7 @@ async fn unplace(
         Target::Conversation(conversation),
         filed,
         None,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await?;
     Ok(Json(ConversationPlacementReply { placement: None }))
@@ -175,7 +174,7 @@ pub(super) async fn correct(
     target: Target,
     filed: Option<(PlacementSource, TopicId)>,
     to: Option<TopicId>,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<(), ApiError> {
     if let Some(correction) = Correction::of(target, filed, to, at) {
         gateway

@@ -3,11 +3,10 @@ mod job;
 mod parse;
 mod prompt;
 
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::Answer;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::Evidence;
@@ -66,7 +65,7 @@ pub struct FilingEnv<'a> {
     pub topics: &'a SessionTopics,
     pub provider: &'a dyn ModelProvider,
     pub model: &'a str,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
 }
 

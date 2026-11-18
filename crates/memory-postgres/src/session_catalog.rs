@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::stored_keys;
 use kernel::memory::ImportOrigin;
 use kernel::memory::ImportReceipt;
@@ -136,8 +135,10 @@ struct Row {
     owner: Option<String>,
     session_key: String,
     title: Option<String>,
-    started_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    started_at: Timestamp,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    updated_at: Timestamp,
     active: bool,
     kept: bool,
     trashed: bool,
@@ -267,7 +268,9 @@ impl PostgresMemory {
             .bind(select.view.map(|view| view.to_string()))
             .bind(select.topic.map(TopicId::uuid))
             .bind(select.text)
-            .bind(select.after.map(|cursor| cursor.started_at))
+            .bind(crate::time::BindTime::bind_time(
+                select.after.map(|cursor| cursor.started_at),
+            ))
             .bind(select.after.map(|cursor| cursor.key.as_str()))
             .bind(select.limit)
             .bind(select.keys.map(|keys| {

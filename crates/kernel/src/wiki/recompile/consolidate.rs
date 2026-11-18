@@ -165,7 +165,7 @@ fn newest(items: &[&SourceSummary], budget: usize) -> Vec<String> {
     for item in items {
         let text = format!(
             "{}: {}",
-            item.at.format("%Y-%m-%d %H:%M"),
+            item.at.strftime("%Y-%m-%d %H:%M"),
             fit(&item.content, ITEM).kept
         );
         if used.saturating_add(text.len()) > budget && !material.is_empty() {

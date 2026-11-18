@@ -1,7 +1,5 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
-
-use chrono::DateTime;
-use chrono::Utc;
 
 use super::Alias;
 use super::MAX_DEPTH;
@@ -108,7 +106,7 @@ impl MergePlan {
     }
 
     #[must_use]
-    pub fn merged(&self, mut into: Topic, now: DateTime<Utc>) -> Topic {
+    pub fn merged(&self, mut into: Topic, now: Timestamp) -> Topic {
         into.aliases.extend(self.aliases.iter().cloned());
         into.aliases = super::distinct_aliases(into.aliases);
         into.parent = self.into_parent;

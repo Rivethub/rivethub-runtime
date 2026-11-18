@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -160,7 +159,7 @@ impl ProposedTree {
         self.chain(id).iter().any(|topic| topic.id == ancestor)
     }
 
-    pub fn listings(&self, now: DateTime<Utc>) -> Result<Vec<TopicListing>, TopicError> {
+    pub fn listings(&self, now: Timestamp) -> Result<Vec<TopicListing>, TopicError> {
         self.topics
             .iter()
             .map(|topic| {

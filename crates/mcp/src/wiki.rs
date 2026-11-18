@@ -97,7 +97,7 @@ pub async fn search(store: &dyn MemoryStore, args: Search) -> Result<CallToolRes
                     "## {} ({}) — verified {}\n{banner}{}",
                     topic.title,
                     topic.slug,
-                    topic.updated_at.format("%Y-%m-%d"),
+                    topic.updated_at.strftime("%Y-%m-%d"),
                     topic.excerpt
                 )
             })

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select wanted.at as \"at!: jiff_sqlx::Timestamp\",\n                    (select max(m.created_at) from rh_messages m\n                      where m.conversation_id = $1\n                        and m.created_at >= wanted.at\n                        and m.created_at < wanted.at + interval '1 millisecond') as \"latest!: crate::time::OptionalTimestamp\"\n               from unnest($2::timestamptz[]) as wanted(at)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "at!: jiff_sqlx::Timestamp",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "latest!: crate::time::OptionalTimestamp",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "063dc7c627339c12861faf6fda48b054325aaefb6115317a8b150ad08cb2feec"
+}

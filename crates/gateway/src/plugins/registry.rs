@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use wire::JsonObject;
 use wire::plugin::manifest::{Permission, PluginManifest};
@@ -14,6 +14,7 @@ pub(super) const MANIFEST_FILE: &str = "rivethub-plugin.json";
 const REGISTRY_FILE: &str = "registry.json";
 const UNREADABLE_FILE: &str = "registry.unreadable.json";
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct Stored {
@@ -21,7 +22,9 @@ pub(super) struct Stored {
     pub(super) manifest: PluginManifest,
     pub(super) enabled: bool,
     pub(super) granted: Vec<Permission>,
-    pub(super) installed_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub(super) installed_at: Timestamp,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) settings: BTreeMap<String, ViewValue>,
 }

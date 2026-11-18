@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde_with::DeserializeAs;
@@ -46,10 +46,10 @@ struct BatchBody {
     finalize: Option<bool>,
     #[serde_as(as = "NotNull")]
     #[serde(default)]
-    created_at: Option<DateTime<Utc>>,
+    created_at: Option<Timestamp>,
     #[serde_as(as = "NotNull")]
     #[serde(default)]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<Timestamp>,
     messages: Vec<CaptureMessage>,
 }
 

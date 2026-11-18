@@ -698,13 +698,13 @@ dependencies = [
  "aws-lc-rs",
  "axum",
  "base64 0.22.1",
- "chrono",
  "config",
  "flate2",
  "futures",
  "getrandom 0.4.3",
  "hex",
  "hmac 0.12.1",
+ "jiff 1.0.1",
  "kernel",
  "nix 0.30.1",
  "parking_lot",
@@ -838,16 +838,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chrono-tz"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
-dependencies = [
- "chrono",
- "phf",
-]
-
-[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -918,7 +908,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "capture",
- "chrono",
  "clap",
  "config",
  "flate2",
@@ -927,6 +916,7 @@ dependencies = [
  "hex",
  "hyper",
  "hyper-util",
+ "jiff 1.0.1",
  "kernel",
  "keyring",
  "mcp",
@@ -949,6 +939,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "serde_with",
  "sha2 0.10.9",
  "sqlx",
  "strum 0.27.2",
@@ -1158,12 +1149,12 @@ dependencies = [
 
 [[package]]
 name = "croner"
-version = "4.0.2"
+version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26d09284075f5c87675790d1ad74212a7863eb8bdf228cdbd364f08a152fc62d"
+checksum = "0097e28936e948e8f759478e1b5ec2e5ca70ab62cf38aaa9bd3aa660023e3fca"
 dependencies = [
- "chrono",
  "derive_builder",
+ "jiff 0.2.38",
  "strum 0.27.2",
 ]
 
@@ -1884,7 +1875,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "config",
  "croner",
  "futures",
@@ -1895,6 +1885,8 @@ dependencies = [
  "http-body",
  "hyper",
  "hyper-util",
+ "jiff 0.2.38",
+ "jiff 1.0.1",
  "kernel",
  "landlock",
  "nix 0.30.1",
@@ -2593,7 +2585,6 @@ checksum = "ed5d126d72eb017f10b302e73bdeca446bea405ee449af4d9e7866d6b082d83e"
 dependencies = [
  "jiff-core 1.0.1",
  "jiff-static 1.0.1",
- "jiff-tzdb 1.0.0",
  "jiff-tzdb-platform 1.0.0",
  "log",
  "portable-atomic",
@@ -2622,6 +2613,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jiff-sqlx"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4996ad290ff7f7081becdda47e28556fbebb81618c599eac5d09182b5a60e38"
+dependencies = [
+ "jiff 1.0.1",
+ "sqlx",
+]
+
+[[package]]
 name = "jiff-static"
 version = "0.2.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2647,9 +2648,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-tzdb"
-version = "0.1.9"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa8377070c6bae868759445e5a77f66d84f0b72f3a054bfb00e6d038b8282da7"
+checksum = "c1283705eb0a21404d2bfd6eef2a7593d240bc42a0bdb39db0ad6fa2ec026524"
 
 [[package]]
 name = "jiff-tzdb"
@@ -2663,7 +2664,7 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
 dependencies = [
- "jiff-tzdb 0.1.9",
+ "jiff-tzdb 0.1.4",
 ]
 
 [[package]]
@@ -2750,8 +2751,7 @@ name = "kernel"
 version = "0.8.3"
 dependencies = [
  "async-trait",
- "chrono",
- "chrono-tz",
+ "jiff 1.0.1",
  "parking_lot",
  "regex",
  "schemars 1.2.3",
@@ -2900,8 +2900,7 @@ version = "0.8.3"
 dependencies = [
  "async-trait",
  "axum",
- "chrono",
- "chrono-tz",
+ "jiff 1.0.1",
  "kernel",
  "nix 0.30.1",
  "reqwest",
@@ -2909,6 +2908,7 @@ dependencies = [
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "strum 0.27.2",
  "subtle",
@@ -2952,15 +2952,17 @@ name = "memory-postgres"
 version = "0.8.3"
 dependencies = [
  "async-trait",
- "chrono",
  "futures",
  "hex",
+ "jiff 1.0.1",
+ "jiff-sqlx",
  "kernel",
  "migrate",
  "parking_lot",
  "pgvector",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "sqlx",
  "strum 0.27.2",
@@ -2979,8 +2981,8 @@ name = "memory-sqlite"
 version = "0.8.3"
 dependencies = [
  "async-trait",
- "chrono",
  "hex",
+ "jiff 1.0.1",
  "kernel",
  "migrate",
  "parking_lot",
@@ -2988,6 +2990,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "sqlx",
  "strum 0.27.2",
@@ -3005,8 +3008,8 @@ dependencies = [
 name = "migrate"
 version = "0.8.3"
 dependencies = [
- "chrono",
  "hex",
+ "jiff 1.0.1",
  "memory-sqlite",
  "rusqlite",
  "serde",
@@ -3358,24 +3361,6 @@ checksum = "3673cba5b9a124916096a423b806a9f29620972c6c97b08db5f2053e9428b481"
 dependencies = [
  "half",
  "sqlx",
-]
-
-[[package]]
-name = "phf"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
-dependencies = [
- "phf_shared",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
-dependencies = [
- "siphasher",
 ]
 
 [[package]]
@@ -3883,8 +3868,6 @@ dependencies = [
  "async-trait",
  "axum",
  "capture",
- "chrono",
- "chrono-tz",
  "cli",
  "config",
  "flate2",
@@ -3892,6 +3875,7 @@ dependencies = [
  "gateway",
  "harness-acp",
  "hex",
+ "jiff 1.0.1",
  "kernel",
  "mcp",
  "memory-postgres",
@@ -4576,12 +4560,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "siphasher"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4654,7 +4632,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cfg-if",
- "chrono",
  "crc",
  "crossbeam-queue",
  "either",
@@ -4728,7 +4705,6 @@ dependencies = [
  "bitflags 2.13.2",
  "byteorder",
  "bytes",
- "chrono",
  "crc",
  "digest 0.11.3",
  "dotenvy",
@@ -4756,7 +4732,6 @@ dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",
  "byteorder",
- "chrono",
  "crc",
  "dotenvy",
  "etcetera",
@@ -4789,7 +4764,6 @@ version = "0.9.0"
 source = "git+https://github.com/launchbadge/sqlx?rev=10462fa4414c6c7f1ed1d39bb31678e3b726878c#10462fa4414c6c7f1ed1d39bb31678e3b726878c"
 dependencies = [
  "atoi",
- "chrono",
  "flume",
  "form_urlencoded",
  "futures-channel",
@@ -4975,10 +4949,10 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "chrono",
  "futures",
  "hex",
  "httparse",
+ "jiff 1.0.1",
  "kernel",
  "parking_lot",
  "regex",
@@ -5620,7 +5594,8 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 name = "values"
 version = "0.8.3"
 dependencies = [
- "chrono",
+ "jiff 1.0.1",
+ "jiff-tzdb 0.1.4",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -6022,8 +5997,8 @@ name = "wire"
 version = "0.8.3"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "hex",
+ "jiff 1.0.1",
  "percent-encoding",
  "schemars 1.2.3",
  "serde",
@@ -6049,16 +6024,17 @@ name = "workers"
 version = "0.8.3"
 dependencies = [
  "async-trait",
- "chrono",
  "config",
  "futures",
  "hex",
+ "jiff 1.0.1",
  "kernel",
  "parking_lot",
  "reqwest",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "strum 0.27.2",
  "testkit",

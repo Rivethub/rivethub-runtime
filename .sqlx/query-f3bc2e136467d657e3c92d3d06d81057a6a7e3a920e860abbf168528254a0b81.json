@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind, t.directory_node,\n                t.directory_path, t.created_at, t.updated_at, t.closed_at, t.owner_user_id,\n                t.visibility, t.visibility_mark\n           FROM rh_topics t\n          WHERE t.kind = $2\n            AND (t.slug = $1\n                 OR t.id = (SELECT r.topic_id FROM rh_topic_redirects r WHERE r.slug = $1))\n          ORDER BY (t.slug = $1) DESC\n          LIMIT 1",
+  "query": "SELECT t.id, t.kind, t.slug, t.name, t.parent_id, t.directory_kind, t.directory_node,\n                t.directory_path, t.created_at AS \"created_at: jiff_sqlx::Timestamp\", t.updated_at AS \"updated_at: jiff_sqlx::Timestamp\", t.closed_at AS \"closed_at!: crate::time::OptionalTimestamp\", t.owner_user_id,\n                t.visibility, t.visibility_mark\n           FROM rh_topics t\n          WHERE t.kind = $2\n            AND (t.slug = $1\n                 OR t.id = (SELECT r.topic_id FROM rh_topic_redirects r WHERE r.slug = $1))\n          ORDER BY (t.slug = $1) DESC\n          LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,7 @@
       },
       {
         "ordinal": 8,
-        "name": "created_at",
+        "name": "created_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -104,7 +104,7 @@
       },
       {
         "ordinal": 9,
-        "name": "updated_at",
+        "name": "updated_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -115,7 +115,7 @@
       },
       {
         "ordinal": 10,
-        "name": "closed_at",
+        "name": "closed_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -181,5 +181,5 @@
       true
     ]
   },
-  "hash": "41e6c0751684cd7b9899675d8455c52e8f24887a9a474768be3b1510c2ad3543"
+  "hash": "f3bc2e136467d657e3c92d3d06d81057a6a7e3a920e860abbf168528254a0b81"
 }

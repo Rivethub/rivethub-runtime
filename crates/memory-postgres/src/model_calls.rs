@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::str::FromStr;
 
 use async_trait::async_trait;
@@ -23,8 +24,8 @@ struct Row {
     session_key: Option<String>,
     turn_id: Option<String>,
     request_kind: Option<String>,
-    started_at: chrono::DateTime<chrono::Utc>,
-    finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    started_at: Timestamp,
+    finished_at: Option<Timestamp>,
     provider: String,
     model_requested: Option<String>,
     model_served: Option<String>,
@@ -107,8 +108,8 @@ impl ModelCallStore for PostgresMemory {
                 call.session.as_ref().map(SessionId::as_str),
                 call.turn.as_ref().and_then(|turn| turn.turn_id.as_deref()),
                 call.turn.as_ref().and_then(|turn| turn.request_kind.as_deref()),
-                call.started_at,
-                call.finished_at,
+            crate::time::BindTime::bind_time(call.started_at) as _,
+            crate::time::BindTime::bind_time(call.finished_at) as _,
                 call.provider,
                 call.model_requested,
                 call.model_served,
@@ -141,12 +142,12 @@ impl ModelCallStore for PostgresMemory {
     async fn session_calls(&self, session: &SessionId) -> Result<Vec<ModelCall>, MemoryStoreError> {
         let rows = sqlx::query_as!(
             Row,
-            "SELECT call_id, session_key, turn_id, request_kind, started_at, finished_at, provider,
+            r#"SELECT call_id, session_key, turn_id, request_kind, started_at AS "started_at: jiff_sqlx::Timestamp", finished_at AS "finished_at!: crate::time::OptionalTimestamp", provider,
                     model_requested, model_served, account, status_code, outcome, retry_after_secs,
                     input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
                     reasoning_tokens
                FROM rh_model_calls WHERE session_key = $1
-              ORDER BY started_at, call_id",
+              ORDER BY started_at, call_id"#,
             session.as_str()
         )
         .fetch_all(&self.pool)

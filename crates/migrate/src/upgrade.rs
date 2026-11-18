@@ -1,4 +1,4 @@
-use chrono::{DateTime, SecondsFormat, Utc};
+use jiff::Timestamp;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
@@ -10,7 +10,7 @@ use crate::version::SchemaVersion;
 pub(crate) fn ladder(
     conn: &mut Connection,
     from: SchemaVersion,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), Error> {
     let mut current = from;
     while let Some(next) = current.next() {
@@ -20,7 +20,7 @@ pub(crate) fn ladder(
     Ok(())
 }
 
-fn step(conn: &mut Connection, to: SchemaVersion, now: DateTime<Utc>) -> Result<(), Error> {
+fn step(conn: &mut Connection, to: SchemaVersion, now: Timestamp) -> Result<(), Error> {
     match to {
         SchemaVersion::V1 | SchemaVersion::V2 | SchemaVersion::V4 | SchemaVersion::V5 => Ok(()),
         SchemaVersion::V3 => in_transaction(conn, to, |tx| {
@@ -292,7 +292,7 @@ fn add_tag_removal_columns(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     )
 }
 
-fn move_embed_queue_into_jobs(tx: &Transaction<'_>, now: DateTime<Utc>) -> rusqlite::Result<()> {
+fn move_embed_queue_into_jobs(tx: &Transaction<'_>, now: Timestamp) -> rusqlite::Result<()> {
     let stamp = timestamp(now);
     tx.execute(
         r"INSERT INTO ros_jobs (id, task, job_key, payload, run_at, attempts, max_attempts, state, last_error, locked_at, created_at, updated_at)
@@ -318,6 +318,6 @@ fn column_present(conn: &Connection, table: &str, column: &str) -> rusqlite::Res
 }
 
 #[must_use]
-fn timestamp(now: DateTime<Utc>) -> String {
-    now.to_rfc3339_opts(SecondsFormat::Millis, true)
+fn timestamp(now: Timestamp) -> String {
+    format!("{now:.3}")
 }

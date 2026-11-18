@@ -1,16 +1,15 @@
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::Utc;
-
 use super::types::LeafClock;
+use jiff::Timestamp;
+use jiff::civil::Date;
+use values::time::TimestampFormat as _;
 
 #[must_use]
-pub fn place_as_of(raw: &str, leaves: &[LeafClock]) -> DateTime<Utc> {
+pub fn place_as_of(raw: &str, leaves: &[LeafClock]) -> Timestamp {
     let Some(fallback) = leaves.last().map(|leaf| leaf.start) else {
-        return DateTime::UNIX_EPOCH;
+        return Timestamp::UNIX_EPOCH;
     };
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(raw.trim()) {
-        let time = parsed.with_timezone(&Utc);
+    if let Ok(parsed) = values::time::parse_rfc3339(raw.trim()) {
+        let time = parsed;
         if leaves
             .iter()
             .any(|leaf| time >= leaf.start && time <= leaf.end)
@@ -20,11 +19,11 @@ pub fn place_as_of(raw: &str, leaves: &[LeafClock]) -> DateTime<Utc> {
     }
     let prefix = raw.trim().get(..10);
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let day = prefix.and_then(|text| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok());
+    let day = prefix.and_then(|text| Date::strptime("%Y-%m-%d", text).ok());
     if let Some(day) = day
         && let Some(leaf) = leaves
             .iter()
-            .find(|leaf| leaf.start.date_naive() == day || leaf.end.date_naive() == day)
+            .find(|leaf| leaf.start.utc_date() == day || leaf.end.utc_date() == day)
     {
         return leaf.start;
     }

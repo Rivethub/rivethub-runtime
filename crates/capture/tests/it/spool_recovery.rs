@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::Duration;
@@ -6,8 +7,6 @@ use async_trait::async_trait;
 use capture::spool::CaptureSpool;
 use capture::writer::CaptureWriter;
 use capture::writer::PostError;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use wire::capture::CaptureBatchRequest;
 use wire::capture::CaptureResult;
@@ -67,7 +66,7 @@ impl capture::writer::CaptureTransport for &RuleTransport {
     }
 }
 
-fn now_at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+fn now_at(text: &str) -> Result<Timestamp, jiff::Error> {
     text.parse()
 }
 

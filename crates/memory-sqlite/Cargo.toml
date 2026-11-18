@@ -8,8 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde_with.workspace = true
 async-trait = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 kernel = { workspace = true }
 parking_lot = { workspace = true }
 rusqlite = { workspace = true, features = ["functions"] }

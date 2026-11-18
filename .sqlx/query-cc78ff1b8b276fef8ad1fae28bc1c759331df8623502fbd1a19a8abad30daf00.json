@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select c.session_key as key, c.id as conversation_id, c.title, c.agent, min(m.created_at) as \"first!\", max(m.created_at) as \"last!\", count(m.id) as \"messages!\", case when c.session_key like 'import:%' then c.settings -> 'origin' ->> 'author' end as imported_from from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and c.session_key = any($2) and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key) group by c.id order by c.session_key, c.id",
+  "query": "select c.session_key as key, c.id as conversation_id, c.title, c.agent, min(m.created_at) as \"first!: jiff_sqlx::Timestamp\", max(m.created_at) as \"last!: jiff_sqlx::Timestamp\", count(m.id) as \"messages!\", case when c.session_key like 'import:%' then c.settings -> 'origin' ->> 'author' end as imported_from from rh_conversations c join rh_messages m on m.conversation_id = c.id where c.owner_user_id = $1 and c.session_key = any($2) and not exists (select 1 from rh_session_trash tr where tr.session_key = c.session_key) group by c.id order by c.session_key, c.id",
   "describe": {
     "columns": [
       {
@@ -49,13 +49,13 @@
       },
       {
         "ordinal": 4,
-        "name": "first!",
+        "name": "first!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": "Expression"
       },
       {
         "ordinal": 5,
-        "name": "last!",
+        "name": "last!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": "Expression"
       },
@@ -89,5 +89,5 @@
       null
     ]
   },
-  "hash": "88b04dc6aedbe6a679391e4b271b559088945ee7614b9699347cd197c706f8e9"
+  "hash": "cc78ff1b8b276fef8ad1fae28bc1c759331df8623502fbd1a19a8abad30daf00"
 }

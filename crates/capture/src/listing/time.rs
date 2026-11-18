@@ -1,11 +1,11 @@
+use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::civil::DateTime;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::time::SystemTime;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::NaiveDate;
-use chrono::NaiveDateTime;
-use chrono::Utc;
 use rusqlite::types::Value as SqlValue;
 
 use super::field::Field;
@@ -70,18 +70,26 @@ pub(crate) fn finite_or_date(time: &RawTime) -> Option<i64> {
 
 pub(crate) fn parse_date(text: &str) -> Option<i64> {
     let text = text.trim();
-    if let Ok(at) = DateTime::parse_from_rfc3339(text) {
-        return Some(at.timestamp_millis());
+    if let Ok(at) = wire::time::parse_rfc3339(text) {
+        return Some(at.epoch_millis());
     }
-    if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-        return Some(
-            date.and_time(chrono::NaiveTime::MIN)
-                .and_utc()
-                .timestamp_millis(),
-        );
+    if let Ok(date) = Date::strptime("%Y-%m-%d", text) {
+        return match wire::time::date_at_utc(date) {
+            Ok(at) => Some(at.epoch_millis()),
+            Err(error) => {
+                tracing::debug!(%error, "capture date is out of range");
+                None
+            }
+        };
     }
-    if let Ok(naive) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(naive.and_utc().timestamp_millis());
+    if let Ok(naive) = DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", text) {
+        return match jiff::tz::TimeZone::UTC.to_timestamp(naive) {
+            Ok(at) => Some(at.epoch_millis()),
+            Err(error) => {
+                tracing::debug!(%error, "capture datetime is out of range");
+                None
+            }
+        };
     }
     None
 }
@@ -92,7 +100,18 @@ pub(crate) fn floor_ms(value: f64) -> i64 {
 }
 
 pub(crate) fn system_ms(time: SystemTime) -> i64 {
-    DateTime::<Utc>::from(time).timestamp_millis()
+    let (millis, negative) = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(elapsed) => (elapsed.as_millis(), false),
+        Err(error) => (error.duration().as_nanos().div_ceil(1_000_000), true),
+    };
+    match (i64::try_from(millis), negative) {
+        (Ok(ms), false) => ms,
+        (Ok(ms), true) => -ms,
+        (Err(error), negative) => {
+            tracing::debug!(%error, "file timestamp exceeds epoch millisecond range");
+            if negative { i64::MIN } else { i64::MAX }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +157,16 @@ fn ctime_ms(metadata: &Metadata) -> i64 {
         .ctime()
         .saturating_mul(1000)
         .saturating_add(metadata.ctime_nsec() / 1_000_000)
+}
+
+pub(crate) fn from_milliseconds(millis: i64) -> Option<Timestamp> {
+    match Timestamp::from_millisecond(millis) {
+        Ok(at) => Some(at),
+        Err(error) => {
+            tracing::debug!(%error, millis, "capture timestamp is outside the supported range");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

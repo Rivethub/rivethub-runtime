@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use tokio_util::sync::CancellationToken;
 
 use super::MemoryStoreError;
@@ -9,7 +8,7 @@ use super::MemoryStoreError;
 pub trait MemoryExport: Send + Sync {
     async fn export(
         &self,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         cancellation: CancellationToken,
     ) -> Result<Vec<u8>, MemoryStoreError>;
 }

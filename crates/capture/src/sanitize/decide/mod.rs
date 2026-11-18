@@ -6,14 +6,13 @@ mod render;
 mod resolve;
 mod slots;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::ops::Range;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Utc;
 use wire::capture::BundledSession;
 use wire::capture::FlagMark;
 use wire::capture::FlagStamp;
@@ -86,7 +85,7 @@ impl Flag {
 }
 
 impl Decision {
-    pub(super) fn stamp(&self, key: &LocalKey, at: DateTime<Utc>) -> ReviewStamp {
+    pub(super) fn stamp(&self, key: &LocalKey, at: Timestamp) -> ReviewStamp {
         sealed(
             key,
             at,
@@ -111,7 +110,7 @@ impl Decision {
     pub(super) fn local(
         &self,
         key: &LocalKey,
-        at: DateTime<Utc>,
+        at: Timestamp,
         unreviewed: (&[BundledSession], &wire::capture::BundleAuthor),
     ) -> Result<LocalReview, serde_json::Error> {
         LocalReview {
@@ -145,11 +144,11 @@ fn framed(bytes: &[u8]) -> Vec<u8> {
     [bytes.len().to_string().as_bytes(), b":", bytes].concat()
 }
 
-fn stamp_time(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+fn stamp_time(at: Timestamp) -> String {
+    at.rfc3339_z()
 }
 
-fn sealed_parts(at: DateTime<Utc>, unresolved: usize, review: &ReviewStamp) -> Vec<Vec<u8>> {
+fn sealed_parts(at: Timestamp, unresolved: usize, review: &ReviewStamp) -> Vec<Vec<u8>> {
     let mut parts: Vec<String> = vec![
         stamp_time(at),
         unresolved.to_string(),
@@ -167,7 +166,7 @@ fn sealed_parts(at: DateTime<Utc>, unresolved: usize, review: &ReviewStamp) -> V
 
 pub(super) fn sealed(
     key: &LocalKey,
-    at: DateTime<Utc>,
+    at: Timestamp,
     unresolved: usize,
     mut review: ReviewStamp,
 ) -> ReviewStamp {
@@ -179,7 +178,7 @@ pub(super) fn sealed(
 
 pub(super) fn holds_stamp_seal(
     key: &LocalKey,
-    at: DateTime<Utc>,
+    at: Timestamp,
     unresolved: usize,
     review: &ReviewStamp,
 ) -> bool {

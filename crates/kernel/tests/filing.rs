@@ -1,8 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::TimeZone;
-use chrono::Utc;
 use kernel::filing::ConversationPlacement;
 use kernel::filing::Correction;
 use kernel::filing::Evidence;
@@ -36,10 +34,8 @@ static NO_GENERIC: BTreeSet<String> = BTreeSet::new();
 
 const TASK: &str = "0199e2a0-7b3c-7a00-8000-0000000000a1";
 
-fn at(minute: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 29, 12, minute, 0)
-        .single()
-        .unwrap_or_default()
+fn at(minute: i8) -> Timestamp {
+    values::time::timestamp_at_utc(2026, 10, 29, 12, minute, 0).unwrap_or_default()
 }
 
 fn head(session_key: &str, channel: &str) -> ConversationHead {

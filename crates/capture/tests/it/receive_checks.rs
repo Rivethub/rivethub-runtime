@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -12,8 +13,6 @@ use capture::receive::Decisions;
 use capture::receive::Family;
 use capture::rules::injection;
 use capture::sanitize::Field;
-use chrono::DateTime;
-use chrono::Utc;
 use wire::JsonObject;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
@@ -143,7 +142,7 @@ fn bundle(sessions: Vec<BundledSession>) -> Result<SessionBundle, capture::bundl
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        DateTime::<Utc>::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Sanitization::Raw,
         sessions,
     )?

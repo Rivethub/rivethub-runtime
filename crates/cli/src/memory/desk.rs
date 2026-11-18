@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -11,8 +13,6 @@ use capture::share::ShareError as SanitizeShareError;
 use capture::share_policy::ShareRefused;
 use capture::sign::NodeKey;
 use capture::sign::PublicKey;
-use chrono::DateTime;
-use chrono::Utc;
 use config::Environment;
 use config::MappingFile;
 use kernel::memory::share::desk::DeskError;
@@ -79,7 +79,7 @@ pub struct Shared {
     pub sessions: usize,
     pub signed: Option<PublicKey>,
     pub uploaded: u64,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub code: String,
 }
 
@@ -132,7 +132,7 @@ pub struct DeviceLogin {
     pub user_code: String,
     pub verification_uri_complete: String,
     pub expires_in: Duration,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub pending: PendingLogin,
 }
 
@@ -209,11 +209,11 @@ pub async fn start(
         .await
         .map_err(oauth::failed)?;
     let expires_in = details.expires_in();
-    let lifetime = chrono::TimeDelta::from_std(expires_in)
+    let lifetime = SignedDuration::try_from(expires_in)
         .map_err(|_| ServerError::Lifetime(expires_in.as_secs()))?;
-    let expires_at = Utc::now()
-        .checked_add_signed(lifetime)
-        .ok_or(ServerError::Lifetime(expires_in.as_secs()))?;
+    let expires_at = Timestamp::now()
+        .checked_add(lifetime)
+        .map_err(|_error| ServerError::Lifetime(expires_in.as_secs()))?;
     let interval = Arc::new(AtomicU64::new(details.interval().as_secs()));
     let verification_uri_complete = openable(
         details.verification_uri_complete().map_or_else(

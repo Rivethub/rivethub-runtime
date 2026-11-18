@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::time::Duration;
 
 use config::Environment;
@@ -23,7 +24,7 @@ pub(super) fn replay_captures(
                 () = shutdown.cancelled() => return,
                 _ = beat.tick() => {}
             }
-            if let Err(error) = cli::capture_hook::replay_spool(&env, chrono::Utc::now()).await {
+            if let Err(error) = cli::capture_hook::replay_spool(&env, Timestamp::now()).await {
                 tracing::debug!(%error, "spooled captures were not resent");
             }
         }

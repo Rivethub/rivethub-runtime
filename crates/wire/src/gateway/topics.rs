@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -60,13 +60,13 @@ pub struct TopicRecord {
     pub parent: Option<String>,
     #[serde(default)]
     pub directory: Option<TopicDirectory>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub created_at: DateTime<Utc>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub updated_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub created_at: Timestamp,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub updated_at: Timestamp,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub closed_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub closed_at: Option<Timestamp>,
     #[serde(default)]
     pub owner: Option<String>,
     #[serde(default)]
@@ -84,8 +84,8 @@ pub struct TopicSummary {
     pub topic: TopicRecord,
     pub session_count: u64,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub last_active: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub last_active: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -143,8 +143,8 @@ pub struct TopicPlacement {
     pub session_id: SessionId,
     pub topic_id: String,
     pub by: PlacedBy,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
 }
 
 #[serde_with::skip_serializing_none]
@@ -179,8 +179,8 @@ pub struct PlacementRequest {
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistoryMark {
     pub session_id: SessionId,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub marked_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub marked_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -199,8 +199,8 @@ pub struct TopicSession {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub last_active: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub last_active: Option<Timestamp>,
     #[serde(default)]
     pub node: Option<String>,
     #[serde(default)]
@@ -220,8 +220,8 @@ pub struct ConversationPlacement {
     pub conversation_id: String,
     pub topic_id: String,
     pub by: PlacedBy,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub at: Timestamp,
 }
 
 #[serde_as]
@@ -235,8 +235,8 @@ pub struct TopicConversation {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    #[serde_as(as = "Option<serde_with::TimestampMilliSeconds>")]
-    pub last_active: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::EpochMillis>")]
+    pub last_active: Option<Timestamp>,
     #[serde(default)]
     pub node: Option<String>,
 }
@@ -318,10 +318,10 @@ pub struct TopicDecision {
     pub by: String,
     #[serde(default)]
     pub session_id: Option<SessionId>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub created_at: DateTime<Utc>,
-    #[serde_as(as = "serde_with::TimestampMilliSeconds")]
-    pub updated_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub created_at: Timestamp,
+    #[serde_as(as = "crate::time::EpochMillis")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

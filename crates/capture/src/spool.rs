@@ -1,11 +1,11 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 use thiserror::Error;
 use tokio::fs;
 use wire::capture::CaptureResult;
@@ -84,7 +84,7 @@ impl CaptureSpool {
         self.dir.join(DEAD_DIR)
     }
 
-    pub async fn spool(&self, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
+    pub async fn spool(&self, body: &str, now: Timestamp) -> Result<PathBuf, SpoolError> {
         write_new(&self.dir, body, now).await
     }
 
@@ -123,7 +123,7 @@ impl CaptureSpool {
     pub async fn replay<F, Future_>(
         &self,
         max: usize,
-        now: DateTime<Utc>,
+        now: Timestamp,
         post: F,
     ) -> Result<(), ReplayError>
     where
@@ -136,7 +136,7 @@ impl CaptureSpool {
     pub async fn replay_except<F, Future_>(
         &self,
         max: usize,
-        now: DateTime<Utc>,
+        now: Timestamp,
         skip: &[PathBuf],
         post: F,
     ) -> Result<(), ReplayError>
@@ -146,7 +146,7 @@ impl CaptureSpool {
     {
         let mut queued = queued_files(&self.dir).await?;
         queued.sort_by(|a, b| (a.name.prefix, &a.name.id).cmp(&(b.name.prefix, &b.name.id)));
-        let now_millis = now.timestamp_millis().unsigned_abs();
+        let now_millis = now.epoch_millis().unsigned_abs();
         let due = queued
             .into_iter()
             .filter(|entry| entry.name.not_before <= now_millis && !skip.contains(&entry.path))
@@ -207,7 +207,7 @@ impl CaptureSpool {
     pub async fn hold(
         &self,
         path: &Path,
-        now: DateTime<Utc>,
+        now: Timestamp,
         retry_after_seconds: Option<u32>,
     ) -> Result<(), SpoolError> {
         let name = parse_name(path).ok_or_else(|| {
@@ -218,14 +218,14 @@ impl CaptureSpool {
         })?;
         let delay = retry_after_seconds.map_or_else(
             || backoff(1),
-            |seconds| TimeDelta::seconds(i64::from(seconds).min(BACKOFF_CEILING_SECONDS)),
+            |seconds| SignedDuration::from_secs(i64::from(seconds).min(BACKOFF_CEILING_SECONDS)),
         );
         let target = self.dir.join(format!(
             "{}-{}.{}.{}{SUFFIX}",
             name.prefix,
             name.id,
             name.attempts,
-            (now + delay).timestamp_millis()
+            (now + delay).epoch_millis()
         ));
         match fs::rename(path, &target).await {
             Ok(()) => Ok(()),
@@ -252,7 +252,7 @@ impl CaptureSpool {
     async fn defer(
         &self,
         entry: &Entry,
-        now: DateTime<Utc>,
+        now: Timestamp,
         error: &PostError,
     ) -> Result<(), SpoolError> {
         let attempts = entry.name.attempts.saturating_add(1);
@@ -271,7 +271,7 @@ impl CaptureSpool {
             "{}-{}.{attempts}.{}{SUFFIX}",
             entry.name.prefix,
             entry.name.id,
-            not_before.timestamp_millis()
+            not_before.epoch_millis()
         ));
         match fs::rename(&entry.path, &target).await {
             Ok(()) => {
@@ -306,20 +306,20 @@ impl CaptureSpool {
     }
 }
 
-fn backoff(attempts: u64) -> TimeDelta {
+fn backoff(attempts: u64) -> SignedDuration {
     let doublings = attempts.saturating_sub(1).min(16);
     let seconds = BACKOFF_BASE_SECONDS
         .saturating_mul(1_i64 << doublings)
         .min(BACKOFF_CEILING_SECONDS);
-    TimeDelta::seconds(seconds)
+    SignedDuration::from_secs(seconds)
 }
 
-async fn write_new(dir: &Path, body: &str, now: DateTime<Utc>) -> Result<PathBuf, SpoolError> {
+async fn write_new(dir: &Path, body: &str, now: Timestamp) -> Result<PathBuf, SpoolError> {
     fs::create_dir_all(dir).await?;
     set_mode(dir, DIR_MODE).await?;
     let name = format!(
         "{}-{}{SUFFIX}",
-        now.timestamp_millis(),
+        now.epoch_millis(),
         uuid::Uuid::now_v7().simple()
     );
     let target = dir.join(&name);

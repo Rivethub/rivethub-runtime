@@ -178,7 +178,9 @@ async fn listings_count_sessions_and_take_last_activity_from_conversations() -> 
             (
                 listing.topic.name.as_str(),
                 listing.session_count,
-                listing.last_active.map(|at| at.to_rfc3339()),
+                listing
+                    .last_active
+                    .map(wire::time::TimestampFormat::rfc3339_offset),
             )
         })
         .collect();

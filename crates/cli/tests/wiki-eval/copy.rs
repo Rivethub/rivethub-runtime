@@ -456,7 +456,7 @@ SELECT
     (SELECT count(*) FROM rh_session_placements) AS placements";
 
 pub(crate) async fn trim_after(app: &str, until: &str, secrets: &[String]) -> Result<(), Failure> {
-    let cutoff = chrono::DateTime::parse_from_rfc3339(until).map_err(|error| Failure::Usage {
+    let cutoff = wire::time::parse_rfc3339(until).map_err(|error| Failure::Usage {
         detail: format!("--until: {error}"),
     })?;
     let pool = sqlx::PgPool::connect(app)
@@ -469,7 +469,10 @@ pub(crate) async fn trim_after(app: &str, until: &str, secrets: &[String]) -> Re
         "DELETE FROM rh_messages WHERE created_at >= $1",
     ];
     for statement in statements {
-        let done = sqlx::query(statement).bind(cutoff).execute(&pool).await;
+        let done = sqlx::query(statement)
+            .bind(memory_postgres::time::BindTime::bind_time(cutoff))
+            .execute(&pool)
+            .await;
         if let Err(error) = done {
             pool.close().await;
             return Err(crate::failure::database(&error, secrets));

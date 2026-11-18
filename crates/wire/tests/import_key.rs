@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use sha2::Digest as _;
 use sha2::Sha256;
 use wire::capture::BundledSession;
@@ -136,7 +137,7 @@ fn re_exporting_an_undated_import_leaves_its_dates_absent() -> TestResult {
         batch: undated.import_batch()?,
     };
     stored.batch.session_key = owned("ines", &undated)?;
-    let imported_at = chrono::DateTime::parse_from_rfc3339("2026-11-09T12:00:00Z")?.to_utc();
+    let imported_at = wire::time::parse_rfc3339("2026-11-09T12:00:00Z")?;
     stored.batch.created_at = Some(imported_at);
     stored.batch.updated_at = Some(imported_at);
 
@@ -167,7 +168,7 @@ fn a_sanitized_identity_keys_the_conversation_instead_of_its_display_id() -> Tes
 fn receipt(fingerprint: Option<&str>) -> wire::capture::Receipt {
     wire::capture::Receipt {
         bundle_id: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
-        received_at: chrono::DateTime::UNIX_EPOCH,
+        received_at: Timestamp::UNIX_EPOCH,
         verification: if fingerprint.is_some() {
             wire::capture::ReceiptVerification::Verified
         } else {

@@ -21,6 +21,7 @@ use kernel::wiki::entity_vocab::vocabulary;
 use serde::Serialize;
 use tokio::sync::Semaphore;
 use tokio::sync::SemaphorePermit;
+use wire::time::TimestampFormat as _;
 
 use super::super::EntityBuilderEnv;
 use super::super::gather;
@@ -277,7 +278,7 @@ fn mention_note(
         history: session_history(
             lead.id,
             lead.conversation_id,
-            lead.start.date_naive(),
+            lead.start.utc_date(),
             sentence,
         ),
         session_at: lead.start,
@@ -424,7 +425,7 @@ fn shown<'a>(facts: &'a [LiveFact], fixed: &[String]) -> Vec<ShownFact<'a>> {
         .map(|fact| ShownFact {
             attribute: &fact.attribute,
             value: &fact.value,
-            as_of: fact.as_of.to_rfc3339(),
+            as_of: fact.as_of.rfc3339_offset(),
             status: fact.status.as_str(),
             fixed: fixed.iter().any(|key| key == &fact.attribute),
         })
@@ -435,8 +436,11 @@ fn session_range(leaves: &[EntityLeaf]) -> (String, String) {
     let start = leaves.iter().map(|leaf| leaf.start).min();
     let end = leaves.iter().map(|leaf| leaf.end).max();
     (
-        start.map(|time| time.to_rfc3339()).unwrap_or_default(),
-        end.map(|time| time.to_rfc3339()).unwrap_or_default(),
+        start
+            .map(wire::time::TimestampFormat::rfc3339_offset)
+            .unwrap_or_default(),
+        end.map(wire::time::TimestampFormat::rfc3339_offset)
+            .unwrap_or_default(),
     )
 }
 
@@ -480,7 +484,7 @@ pub(in crate::entity_builder) fn stored_rewrite(
         history: session_history(
             lead.id,
             lead.conversation_id,
-            lead.start.date_naive(),
+            lead.start.utc_date(),
             &reconciled.history_sentence,
         ),
         owner: owner_of(view, leaves)?,

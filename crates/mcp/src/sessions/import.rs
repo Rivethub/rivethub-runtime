@@ -130,8 +130,8 @@ fn listed(session: &ListedSession) -> String {
     let dates = match session.dates {
         Some((created, updated)) => format!(
             "{} to {}",
-            created.format("%Y-%m-%d"),
-            updated.format("%Y-%m-%d")
+            created.strftime("%Y-%m-%d"),
+            updated.strftime("%Y-%m-%d")
         ),
         None => "undated".to_owned(),
     };

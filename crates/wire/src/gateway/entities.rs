@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -26,11 +25,14 @@ pub struct SessionMention {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FactSource {
     pub session: SessionMention,
-    pub at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub value: String,
     #[serde(default)]
     pub imported_from: Option<Provenance>,
@@ -42,21 +44,27 @@ pub struct FactConflict {
     pub candidates: Vec<FactSource>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FactPrevious {
     pub value: String,
-    pub until: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub until: Timestamp,
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Fact {
     pub id: String,
     pub key: String,
     pub value: String,
-    pub since: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub since: Timestamp,
     pub pinned: bool,
     pub sources: Vec<FactSource>,
     #[serde(default)]
@@ -90,10 +98,12 @@ pub enum ChangeKind {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineEntry {
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub text: String,
     pub kind: ChangeKind,
     #[serde(default)]

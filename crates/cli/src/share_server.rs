@@ -1,3 +1,5 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -6,8 +8,6 @@ use capture::sanitize::KeyError;
 use capture::seal::CodeError;
 use capture::seal::ShareServer;
 use capture::share_policy::{BadAllowedServer, SharePolicy, ShareRefused};
-use chrono::DateTime;
-use chrono::Utc;
 use clap::Subcommand;
 use config::Environment;
 use kernel::memory::share::desk::TokenStore;
@@ -40,7 +40,7 @@ const CA_CAP: u64 = 1024 * 1024;
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const LIFETIME_WHEN_UNSTATED: Duration = Duration::from_mins(15);
-const REFRESH_MARGIN: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
+const REFRESH_MARGIN: SignedDuration = SignedDuration::from_secs(60);
 
 #[derive(Debug, Subcommand)]
 pub enum ShareCommand {
@@ -163,7 +163,7 @@ fn retry_hint(wait: Option<Duration>) -> String {
 pub(crate) struct Tokens {
     pub(crate) access_token: String,
     pub(crate) refresh_token: String,
-    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) expires_at: Timestamp,
     pub(crate) scope: String,
 }
 
@@ -325,7 +325,7 @@ impl ShareServers {
                         lines.push_str(" (scope ");
                         lines.push_str(scope);
                         lines.push_str("); the access token renews itself, next at ");
-                        lines.push_str(&expires_at.format("%Y-%m-%d %H:%M UTC").to_string());
+                        lines.push_str(&expires_at.strftime("%Y-%m-%d %H:%M UTC").to_string());
                     }
                     Listed::Team { user } => {
                         lines.push_str(" as ");
@@ -415,7 +415,8 @@ impl Server {
             Ok(tokens) => tokens,
             Err(team) => return Ok(team),
         };
-        if rejected.is_none() && tokens.expires_at - REFRESH_MARGIN > Utc::now() {
+        if rejected.is_none() && tokens.expires_at.duration_since(Timestamp::now()) > REFRESH_MARGIN
+        {
             return Ok(tokens.access_token);
         }
         let _lock = self.lock().await?;
@@ -423,7 +424,7 @@ impl Server {
             Ok(tokens) => tokens,
             Err(team) => return Ok(team),
         };
-        let fresh = tokens.expires_at - REFRESH_MARGIN > Utc::now();
+        let fresh = tokens.expires_at.duration_since(Timestamp::now()) > REFRESH_MARGIN;
         let renewed_elsewhere = rejected.is_some_and(|token| token != tokens.access_token);
         if (fresh && rejected.is_none()) || renewed_elsewhere {
             return Ok(tokens.access_token);
@@ -472,10 +473,9 @@ impl Tokens {
             .or_else(|| previous.map(|tokens| tokens.scope.clone()))
             .unwrap_or_else(|| SCOPE.to_owned());
         let lifetime = issued.expires_in().unwrap_or(LIFETIME_WHEN_UNSTATED);
-        let out_of_range = || ServerError::Lifetime(lifetime.as_secs());
-        let expires_at = Utc::now()
-            .checked_add_signed(chrono::TimeDelta::from_std(lifetime).map_err(|_| out_of_range())?)
-            .ok_or_else(out_of_range)?;
+        let expires_at = Timestamp::now()
+            .saturating_add(lifetime)
+            .map_err(|_error| ServerError::Lifetime(lifetime.as_secs()))?;
         Ok(Self {
             access_token: issued.access_token().secret().clone(),
             refresh_token,

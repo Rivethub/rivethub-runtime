@@ -1,9 +1,8 @@
+use jiff::SignedDuration as Duration;
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::NewSummary;
@@ -105,6 +104,7 @@ struct Tables {
     jobs: Vec<JobRow>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Deserialize)]
 struct SummaryRow {
     conversation_id: Uuid,
@@ -113,11 +113,16 @@ struct SummaryRow {
     content: String,
     kind: String,
     message_count: u32,
-    earliest_at: DateTime<Utc>,
-    latest_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    earliest_at: Timestamp,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    latest_at: Timestamp,
     model: String,
     pipeline_version: i32,
-    created_at: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    created_at: Timestamp,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,10 +204,8 @@ fn chat_calls(scenario: &Scenario) -> Vec<ChatCall> {
     }
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .expect("timestamp")
-        .with_timezone(&Utc)
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).expect("timestamp")
 }
 
 fn settings() -> SummarySettings {
@@ -229,7 +232,7 @@ fn small_parts() -> SummaryParts {
     }
 }
 
-fn messages(start: DateTime<Utc>, count: usize) -> Vec<WindowMessage> {
+fn messages(start: Timestamp, count: usize) -> Vec<WindowMessage> {
     (0..count)
         .map(|index| WindowMessage {
             id: Uuid::new_v4(),
@@ -242,7 +245,7 @@ fn messages(start: DateTime<Utc>, count: usize) -> Vec<WindowMessage> {
             content: format!("message number {index} about deploying the AcmeKit service"),
             tool: None,
             created_at: start
-                .checked_add_signed(Duration::minutes(i64::try_from(index).expect("index")))
+                .checked_add(Duration::from_mins(i64::try_from(index).expect("index")))
                 .expect("message time"),
         })
         .collect()

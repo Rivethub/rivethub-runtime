@@ -1,8 +1,6 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::TimeZone;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::MemoryStore as _;
@@ -452,7 +450,7 @@ async fn insert_taxonomy(
     value: &str,
     display: &str,
     state: &str,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
 ) -> Result<(), sqlx::Error> {
     let aliases: Vec<String> = Vec::new();
     let source = if state == "accepted" { "user" } else { "model" };
@@ -466,7 +464,7 @@ async fn insert_taxonomy(
     .bind(&aliases)
     .bind(state)
     .bind(source)
-    .bind(created_at)
+    .bind(memory_postgres::time::BindTime::bind_time(created_at))
     .execute(pool)
     .await?;
     Ok(())
@@ -557,8 +555,6 @@ fn id(suffix: u8) -> Uuid {
     Uuid::parse_str(&format!("00000000-0000-4000-8000-{suffix:012x}")).expect("uuid")
 }
 
-fn stamp(second: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 10, 12, 0, second)
-        .single()
-        .expect("time")
+fn stamp(second: i8) -> Timestamp {
+    wire::time::timestamp_at_utc(2026, 10, 10, 12, 0, second).expect("time")
 }

@@ -1,10 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use parking_lot::Mutex;
 use testkit::capture::entries;
 use wire::capture::CaptureResult;
@@ -80,7 +79,7 @@ fn prepare_store(root: &Path) -> std::io::Result<PathBuf> {
 async fn posted_bodies(
     entry: &testkit::capture::EntryRecord,
     transcript_text: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let inner = tempfile::tempdir()?;
     let transport = FakeTransport::new();
@@ -97,7 +96,7 @@ async fn malformed_payloads_exit_cleanly() -> Result<(), Box<dyn std::error::Err
     let inner = tempfile::tempdir()?;
     let transport = FakeTransport::new();
     let hook = hook_in(inner.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     for stdin in ["{", "{}", "", "{\"hook_event_name\":\"UserPromptSubmit\"}"] {
         let run = hook.run(stdin, now, "1791656243919-30e4c5d70").await;
         assert_eq!(run.exit, 0, "stdin {stdin}");
@@ -112,7 +111,7 @@ async fn an_empty_prompt_is_not_held() -> Result<(), Box<dyn std::error::Error>>
     let inner = tempfile::tempdir()?;
     let transport = FakeTransport::new();
     let hook = hook_in(inner.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let stdin = r#"{"session_id":"33333333-3333-3333-3333-333333333333","hook_event_name":"UserPromptSubmit","prompt":"  "}"#;
     let run = hook.run(stdin, now, "1791656243919-30e4c5d70").await;
     assert_eq!((run.exit, run.stderr.as_str()), (0, ""));
@@ -127,7 +126,7 @@ async fn a_failed_log_write_does_not_fail_the_run() -> Result<(), Box<dyn std::e
     std::fs::write(inner.path().join(".rivethub"), b"not a directory")?;
     let transport = FakeTransport::new();
     let hook = hook_in(inner.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let stdin = r#"{"session_id":"33333333-3333-3333-3333-333333333333","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"toolu_1"}"#;
     let run = hook.run(stdin, now, "1791656243919-30e4c5d70").await;
     assert_eq!(run.exit, 0);
@@ -201,7 +200,7 @@ async fn a_turn_end_keys_rows_by_transcript_uuid_and_flushes_held_prompts()
     let transcript = store_with_thinking(outer.path())?;
     let transport = FakeTransport::new();
     let hook = hook_in(outer.path(), &transport)?;
-    let now: DateTime<Utc> = NOW_TEXT.parse()?;
+    let now: Timestamp = NOW_TEXT.parse()?;
     let session = "33333333-3333-3333-3333-333333333333";
     for (prompt, key) in [
         ("list the files", "k1"),

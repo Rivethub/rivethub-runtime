@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest as _;
@@ -63,7 +62,7 @@ pub struct Sealed {
 
 pub fn seal(
     exported_by: BundleAuthor,
-    exported_at: DateTime<Utc>,
+    exported_at: Timestamp,
     sanitization: Sanitization,
     sessions: Vec<BundledSession>,
 ) -> Result<Sealed, BundleError> {
@@ -106,9 +105,11 @@ struct Covered<'a> {
     version: u32,
 }
 
+#[serde_with::serde_as]
 #[derive(Serialize)]
 struct CoveredManifest<'a> {
-    exported_at: DateTime<Utc>,
+    #[serde_as(as = "wire::time::Rfc3339")]
+    exported_at: Timestamp,
     exported_by: &'a BundleAuthor,
     sanitization: &'a Sanitization,
     session_count: usize,
@@ -163,7 +164,7 @@ fn upgrade(first: FirstBundle) -> Result<SessionBundle, BundleError> {
         .iter()
         .filter_map(|session| session.origin.updated_at)
         .max()
-        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
+        .unwrap_or(Timestamp::UNIX_EPOCH);
     Ok(seal(
         BundleAuthor {
             user: UNKNOWN_ORIGIN.to_owned(),

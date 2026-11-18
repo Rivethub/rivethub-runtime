@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::NewSummary;
@@ -107,21 +106,25 @@ struct NodeRow {
     kind: String,
     content: String,
     message_count: i32,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
     depth: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 struct LatestRow {
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
 struct PendingRow {
     id: Uuid,
     unsummarized: i64,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
 }
 
 #[async_trait]
@@ -165,10 +168,10 @@ impl SummaryStore for PostgresMemory {
             .bind(&summary.content)
             .bind(summary.kind.as_str())
             .bind(message_count)
-            .bind(summary.earliest_at)
-            .bind(summary.latest_at)
+            .bind(crate::time::BindTime::bind_time(summary.earliest_at))
+            .bind(crate::time::BindTime::bind_time(summary.latest_at))
             .bind(&summary.model)
-            .bind(summary.created_at)
+            .bind(crate::time::BindTime::bind_time(summary.created_at))
             .bind(summary.pipeline_version)
             .execute(&mut *tx)
             .await
@@ -342,7 +345,8 @@ fn message_from(row: &sqlx::postgres::PgRow) -> Result<WindowMessage, SummarySto
             .map_err(|source| query_err("read message content", source))?,
         tool: tool_use(row)?,
         created_at: row
-            .try_get("created_at")
+            .try_get::<jiff_sqlx::Timestamp, _>("created_at")
+            .map(jiff_sqlx::Timestamp::to_jiff)
             .map_err(|source| query_err("read message time", source))?,
     })
 }
@@ -396,10 +400,7 @@ fn kind_of(kind: &str) -> Result<SummaryKind, SummaryStoreError> {
     }
 }
 
-fn required_time(
-    value: Option<DateTime<Utc>>,
-    id: Uuid,
-) -> Result<DateTime<Utc>, SummaryStoreError> {
+fn required_time(value: Option<Timestamp>, id: Uuid) -> Result<Timestamp, SummaryStoreError> {
     match value {
         Some(time) => Ok(time),
         None => Err(SummaryStoreError::Missing { id: id.to_string() }),

@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use kernel::wiki::builder::WikiWriteError;
 use kernel::wiki::page::WikiPage;
 use kernel::wiki::page::archive::{
@@ -16,7 +16,7 @@ pub(super) async fn bound(
     root: &Path,
     previous: Option<&WikiPage>,
     page: &mut WikiPage,
-    at: DateTime<Utc>,
+    at: Timestamp,
     extra: Vec<Archived>,
 ) -> Result<Vec<String>, WikiWriteError> {
     let mut archived = extra;

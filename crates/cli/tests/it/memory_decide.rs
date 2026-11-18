@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::support;
+use jiff::Timestamp;
 
 use std::path::Path;
 
@@ -128,7 +129,7 @@ fn raw_bundle(directory: &Path) -> String {
             user: "dana".to_owned(),
             node: "desk".to_owned(),
         },
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Sanitization::Raw,
         vec![session],
     )

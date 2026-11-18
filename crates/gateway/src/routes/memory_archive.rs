@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use axum::Json;
@@ -220,7 +221,7 @@ pub(crate) async fn export(
     drop(abandoned);
     let disposition = format!(
         "attachment; filename=\"memory-{}.sql.gz\"",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+        Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
     );
     Ok((
         [

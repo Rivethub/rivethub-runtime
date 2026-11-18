@@ -1,6 +1,8 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
+use jiff::civil::Date;
 use std::sync::Arc;
 
-use chrono::{DateTime, NaiveDate, Utc};
 use kernel::memory::jobs::MissingWiki;
 use kernel::memory::{EmbedTable, EmbedTarget};
 use kernel::model::FinishReason;
@@ -53,7 +55,7 @@ pub struct WikiBuilderEnv<'a> {
     pub provider: &'a dyn ModelProvider,
     pub queue: &'a dyn JobQueue,
     pub model: &'a str,
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     pub cancel: &'a CancellationToken,
     pub topics: Option<TopicPorts<'a>>,
 }
@@ -75,11 +77,13 @@ struct CoalescedInput<'a> {
     types: Vec<String>,
 }
 
+#[serde_with::serde_as]
 #[derive(Serialize)]
 struct DatedSummary<'a> {
     id: uuid::Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
-    date: Option<NaiveDate>,
+    #[serde_as(as = "Option<wire::time::CivilDate>")]
+    date: Option<Date>,
     content: &'a str,
 }
 
@@ -99,9 +103,9 @@ pub fn extract_wiki_job(job: &ExtractWiki) -> Result<Job, WorkerError> {
     })
 }
 
-pub fn missing_wiki_job(missing: &MissingWiki, now: DateTime<Utc>) -> Result<Job, WorkerError> {
+pub fn missing_wiki_job(missing: &MissingWiki, now: Timestamp) -> Result<Job, WorkerError> {
     let mut job = extract_wiki_job(&missing.job)?;
-    if now.signed_duration_since(missing.summarized_at) < chrono::TimeDelta::hours(24) {
+    if now.duration_since(missing.summarized_at) < SignedDuration::from_hours(24) {
         job.priority = RECENT_WIKI_PRIORITY;
     }
     Ok(job)
@@ -268,7 +272,9 @@ async fn extract_coalesced(
                 .into_iter()
                 .map(|summary| DatedSummary {
                     id: summary.id,
-                    date: summary.created_at.map(|at| at.date_naive()),
+                    date: summary
+                        .created_at
+                        .map(wire::time::TimestampFormat::utc_date),
                     content: &summary.content,
                 })
                 .collect(),
@@ -337,7 +343,7 @@ fn parse_patches(text: &str) -> Result<Vec<WikiPatch>, WorkerError> {
     for patch in &mut patches {
         if let Some(Value::String(date)) = patch.pointer_mut("/history_entry/date")
             && let Some(day) = date.get(..10).filter(|day| day.len() < date.len())
-            && NaiveDate::parse_from_str(day, "%Y-%m-%d").is_ok()
+            && Date::strptime("%Y-%m-%d", day).is_ok()
         {
             *date = day.to_owned();
         }
@@ -370,7 +376,7 @@ fn dated_entry(entry: &Value) -> bool {
         || entry
             .get("date")
             .and_then(Value::as_str)
-            .is_some_and(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
+            .is_some_and(|date| Date::strptime("%Y-%m-%d", date).is_ok())
 }
 
 fn normalize_slug_value(value: &mut Value) {

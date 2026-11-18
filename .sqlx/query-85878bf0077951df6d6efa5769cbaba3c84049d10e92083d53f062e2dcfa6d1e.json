@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT conversation_id, topic_id, placed_by, placed_at\n               FROM rh_conversation_placements WHERE conversation_id = $1 FOR UPDATE",
+  "query": "DELETE FROM rh_conversation_placements WHERE conversation_id = $1\n             RETURNING conversation_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\"",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "placed_at",
+        "name": "placed_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -60,5 +60,5 @@
       false
     ]
   },
-  "hash": "547977e3a91e4e8e12701ce380b77195b0e26ba4e074ddf5b6f6c208ccb2e28e"
+  "hash": "85878bf0077951df6d6efa5769cbaba3c84049d10e92083d53f062e2dcfa6d1e"
 }

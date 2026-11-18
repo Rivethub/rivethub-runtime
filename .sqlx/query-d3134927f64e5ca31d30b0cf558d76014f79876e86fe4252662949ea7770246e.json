@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT max(proposed_at) FROM rh_tidy_batches WHERE proposed_by = $1",
+  "query": "SELECT max(proposed_at) AS \"max!: crate::time::OptionalTimestamp\" FROM rh_tidy_batches WHERE proposed_by = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "max",
+        "name": "max!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": "Expression"
       }
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "157932a1e8bc412e2905c1b46fb2eae0179233a364809ac617fe78dc0efb4449"
+  "hash": "d3134927f64e5ca31d30b0cf558d76014f79876e86fe4252662949ea7770246e"
 }

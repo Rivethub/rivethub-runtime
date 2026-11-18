@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::SessionDeletion as _;
@@ -21,15 +20,15 @@ fn author(user: &str) -> BundleAuthor {
     }
 }
 
-fn at(text: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339(text)?.with_timezone(&Utc))
+fn at(text: &str) -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339(text)
 }
 
 fn object(text: &str) -> Result<JsonObject, serde_json::Error> {
     serde_json::from_str(text)
 }
 
-fn said(event_id: &str, content: &str, created_at: DateTime<Utc>) -> CaptureMessage {
+fn said(event_id: &str, content: &str, created_at: Timestamp) -> CaptureMessage {
     CaptureMessage {
         event_id: event_id.to_owned(),
         role: Role::User,
@@ -264,7 +263,7 @@ async fn a_batch_that_waits_on_the_session_lock_sorts_after_the_batch_holding_it
     let key = "claude-code:overlap";
     let undated = |content: &str| CaptureMessage {
         created_at: None,
-        ..said(&format!("evt-{content}"), content, Utc::now())
+        ..said(&format!("evt-{content}"), content, Timestamp::now())
     };
     let id = captured(&store, "dana", &batch(key, vec![undated("seed")])).await?;
     let warm = (pool.acquire().await?, pool.acquire().await?);

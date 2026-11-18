@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::transcript::StoreSession;
 use kernel::transcript::linked_parent;
 use wire::harness::HarnessSessionStatus;
@@ -9,7 +8,7 @@ use wire::session_id::SessionId;
 pub(crate) fn summary(
     row: &StoreSession,
     cwd: Option<String>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> HarnessSessionSummary {
     let updated_at = if row.updated_at == 0 {
         now
@@ -39,14 +38,15 @@ pub(crate) fn summary(
     }
 }
 
-fn epoch_ms(ms: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(ms).unwrap_or(DateTime::UNIX_EPOCH)
+fn epoch_ms(ms: i64) -> Timestamp {
+    Timestamp::from_millisecond(ms).unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use chrono::Utc;
+    use jiff::Timestamp;
+    use wire::time::TimestampFormat as _;
+
     use kernel::transcript::StoreSession;
     use wire::harness::HarnessId;
     use wire::harness::HarnessSessionStatus;
@@ -54,8 +54,8 @@ mod tests {
 
     use super::summary;
 
-    fn now() -> DateTime<Utc> {
-        DateTime::from_timestamp(1_800_000_000, 0).unwrap_or_default()
+    fn now() -> Timestamp {
+        Timestamp::new(1_800_000_000, 0).unwrap_or_default()
     }
 
     #[test]
@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(summary.harness_id, HarnessId::ClaudeCode);
         assert_eq!(summary.title, None);
         assert_eq!(summary.status, HarnessSessionStatus::Ended);
-        assert_eq!(summary.created_at, DateTime::UNIX_EPOCH);
+        assert_eq!(summary.created_at, Timestamp::UNIX_EPOCH);
         assert_eq!(summary.updated_at, now());
         let json = serde_json::to_string(&summary).unwrap_or_default();
         assert!(
@@ -92,7 +92,10 @@ mod tests {
         assert_eq!(summary.title.as_deref(), Some("plan"));
         assert_eq!(summary.cwd.as_deref(), Some("/home/user/w"));
         assert_eq!(summary.created_at, summary.updated_at);
-        assert_eq!(summary.updated_at.to_rfc3339(), "2026-10-01T00:00:00+00:00");
+        assert_eq!(
+            summary.updated_at.rfc3339_offset(),
+            "2026-10-01T00:00:00+00:00"
+        );
         assert_eq!(summary.model.as_deref(), Some("grok-4"));
         assert_eq!(summary.agent_name.as_deref(), Some("explore"));
         assert_eq!(

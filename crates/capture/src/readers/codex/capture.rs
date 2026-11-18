@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReaderError;
 use serde::Deserialize;
 use serde::Serialize;
@@ -31,7 +30,7 @@ struct Line {
     kind: Option<String>,
     #[serde_as(as = "DefaultOnError")]
     #[serde(default)]
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
     #[serde(default)]
     payload: Option<Payload>,
 }

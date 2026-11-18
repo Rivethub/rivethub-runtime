@@ -1,21 +1,19 @@
-use chrono::DateTime;
-use chrono::SecondsFormat;
-use chrono::Utc;
-
 use crate::error::SqliteError;
+use jiff::Timestamp;
+use wire::time::TimestampFormat as _;
 
-pub(crate) fn stamp(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::Millis, true)
+pub(crate) fn stamp(at: Timestamp) -> String {
+    at.rfc3339_millis()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stamp {
-    Source(DateTime<Utc>),
+    Source(Timestamp),
     CaptureTime,
 }
 
-impl From<Option<DateTime<Utc>>> for Stamp {
-    fn from(source: Option<DateTime<Utc>>) -> Self {
+impl From<Option<Timestamp>> for Stamp {
+    fn from(source: Option<Timestamp>) -> Self {
         match source {
             Some(at) => Self::Source(at),
             None => Self::CaptureTime,
@@ -24,7 +22,7 @@ impl From<Option<DateTime<Utc>>> for Stamp {
 }
 
 impl Stamp {
-    pub(crate) const fn at(self, now: DateTime<Utc>) -> DateTime<Utc> {
+    pub(crate) const fn at(self, now: Timestamp) -> Timestamp {
         match self {
             Self::Source(at) => at,
             Self::CaptureTime => now,
@@ -32,15 +30,33 @@ impl Stamp {
     }
 }
 
-pub(crate) fn stored(text: &str, column: &'static str) -> Result<DateTime<Utc>, SqliteError> {
-    DateTime::parse_from_rfc3339(text)
-        .or_else(|_| DateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f%#z"))
-        .map(|parsed| parsed.with_timezone(&Utc))
-        .map_err(|source| SqliteError::StoredTimestamp {
-            column,
-            value: text.to_owned(),
-            source,
-        })
+pub(crate) fn stored(text: &str, column: &'static str) -> Result<Timestamp, SqliteError> {
+    parse_sqlite_timestamp(text).map_err(|source| SqliteError::StoredTimestamp {
+        column,
+        value: text.to_owned(),
+        source,
+    })
+}
+
+fn parse_sqlite_timestamp(raw: &str) -> Result<Timestamp, jiff::Error> {
+    match wire::time::parse_rfc3339(raw) {
+        Ok(at) => Ok(at),
+        Err(strict) => {
+            let Some((date, suffix)) = raw.split_once(' ') else {
+                return Err(strict);
+            };
+            let Some(offset_start) = suffix.find(['+', '-', 'Z', 'z']) else {
+                return Err(strict);
+            };
+            let (time, offset) = suffix.split_at(offset_start);
+            let offset = offset.trim();
+            if matches!(offset.as_bytes(), [b'+' | b'-', b'0'..=b'9', b'0'..=b'9']) {
+                wire::time::parse_wire_timestamp(&format!("{date}T{}{offset}00", time.trim_end()))
+            } else {
+                wire::time::parse_wire_timestamp(&format!("{date}T{time}{offset}"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

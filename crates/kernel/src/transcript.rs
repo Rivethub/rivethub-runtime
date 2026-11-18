@@ -1,7 +1,6 @@
 use crate::BoxError;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 use values::HarnessId;
 use values::Role;
@@ -48,7 +47,7 @@ pub enum SessionRenameError {
 pub struct Turn {
     pub role: Role,
     pub content: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[async_trait]
@@ -63,7 +62,7 @@ pub trait TranscriptReader: Send + Sync {
     async fn tail(
         &self,
         session: &SessionId,
-        since: DateTime<Utc>,
+        since: Timestamp,
     ) -> Result<Vec<Turn>, TranscriptReaderError>;
 }
 

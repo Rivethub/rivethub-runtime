@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use kernel::queue::FixedJob;
 use kernel::queue::Job;
 use kernel::queue::JobId;
@@ -52,7 +53,7 @@ struct Opened {
 fn open() -> TestResult<Opened> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("memory.sqlite");
-    migrate::sqlite_at(&path, chrono::Utc::now())?;
+    migrate::sqlite_at(&path, Timestamp::now())?;
     let store = SqliteStore::open(&path)?;
     Ok(Opened { _dir: dir, store })
 }
@@ -157,7 +158,7 @@ async fn arming_keeps_a_waiting_job_in_line_and_only_raises_it() -> TestResult {
     let arm = |target: &str, priority: i16| -> TestResult<Job> {
         Ok(Job {
             priority,
-            run_at: Some(chrono::Utc::now()),
+            run_at: Some(Timestamp::now()),
             ..keyed(target, "compact-c1", JobKeyMode::Arm)?
         })
     };
@@ -237,7 +238,7 @@ async fn a_null_payload_is_dead_on_claim() -> TestResult {
     let store = &opened.store;
     store
         .enqueue_job(
-            memory_sqlite::JobInsert::new("embed-target", "null".to_owned(), chrono::Utc::now())
+            memory_sqlite::JobInsert::new("embed-target", "null".to_owned(), Timestamp::now())
                 .key("poison"),
         )
         .await?;

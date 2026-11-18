@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::facts::Claim;
 use kernel::facts::EntityHistory;
 use kernel::facts::FactSession;
@@ -41,7 +40,7 @@ pub(super) async fn build(
     entity: &Topic,
     kind: &Filed,
     viewer: &Viewer,
-    as_of: Option<DateTime<Utc>>,
+    as_of: Option<Timestamp>,
 ) -> Result<EntityArticle, ApiError> {
     let facts = gateway.facts()?;
     let claims: Vec<Claim> = facts
@@ -150,7 +149,7 @@ fn history(
     entity: &Topic,
     claims: &[Claim],
     lines: &[EntityHistory],
-    as_of: Option<DateTime<Utc>>,
+    as_of: Option<Timestamp>,
     titles: &Titles,
 ) -> Vec<TimelineEntry> {
     let mut entries: Vec<TimelineEntry> = timeline(claims, None)
@@ -212,7 +211,7 @@ async fn rows(
         .session_visibility(viewer, &wanted)
         .await
         .map_err(super::super::topics::visibility_error)?;
-    let kept: BTreeMap<String, DateTime<Utc>> = match gateway.session_deletion() {
+    let kept: BTreeMap<String, Timestamp> = match gateway.session_deletion() {
         Some(deletions) => deletions
             .kept(
                 &keys

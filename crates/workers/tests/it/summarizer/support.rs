@@ -1,11 +1,12 @@
 use super::*;
+use jiff::Timestamp;
 
 pub(super) fn bind<'a>(
     store: &'a MemStore,
     script: &'a Scripted,
     jobs: &'a Seen,
     settings: &'a SummarySettings,
-    now: DateTime<Utc>,
+    now: Timestamp,
     token: &'a CancellationToken,
 ) -> SummarizeEnv<'a> {
     SummarizeEnv {

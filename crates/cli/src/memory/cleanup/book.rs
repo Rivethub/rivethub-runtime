@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::path::PathBuf;
 
-use chrono::Utc;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::AsyncWriteExt as _;
@@ -82,7 +82,10 @@ impl Book {
     }
 
     pub(super) async fn note(&self, line: &str) -> Result<(), Error> {
-        let stamped = format!("{} {line}\n", Utc::now().format("%Y-%m-%dT%H:%M:%SZ"));
+        let stamped = format!(
+            "{} {line}\n",
+            Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        );
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)

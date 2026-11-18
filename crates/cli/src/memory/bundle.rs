@@ -1,9 +1,9 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 
 use capture::receive::Blocked;
 use capture::receive::Decisions;
-use chrono::Utc;
 use config::Config;
 use config::Environment;
 use memory_postgres::PostgresMemory;
@@ -183,7 +183,7 @@ pub(super) async fn ingest(
             conversation_id: String::new(),
         }
     } else {
-        crate::capture_hook::ingest_bundle(env, &imports, None, Utc::now()).await?
+        crate::capture_hook::ingest_bundle(env, &imports, None, Timestamp::now()).await?
     };
     Ok(Report::success(format!(
         "ingested {sessions}{decided}{open}: {} inserted, {} skipped\n",
@@ -213,7 +213,7 @@ async fn ingest_raw(
         return Ok(Report::success(lines.concat()));
     }
     let imports: Vec<_> = shown.iter().map(|session| (*session, None)).collect();
-    let totals = crate::capture_hook::ingest_bundle(env, &imports, None, Utc::now()).await?;
+    let totals = crate::capture_hook::ingest_bundle(env, &imports, None, Timestamp::now()).await?;
     Ok(Report::success(format!(
         "ingested {sessions}{state}{open}: {} inserted, {} skipped\n",
         totals.inserted, totals.skipped
@@ -244,8 +244,8 @@ fn listed(session: &BundledSession) -> String {
     let dates = match (origin.created_at, origin.updated_at) {
         (Some(created), Some(updated)) => format!(
             "{} to {}",
-            created.format("%Y-%m-%d"),
-            updated.format("%Y-%m-%d")
+            created.strftime("%Y-%m-%d"),
+            updated.strftime("%Y-%m-%d")
         ),
         _ => "undated".to_owned(),
     };
@@ -299,7 +299,8 @@ pub(super) async fn share(
         .map(BundledSession::forwarding_stored_origin)
         .collect();
     let count = sessions.len();
-    let mut text = capture::bundle::seal(author, Utc::now(), Sanitization::Raw, sessions)?.text;
+    let mut text =
+        capture::bundle::seal(author, Timestamp::now(), Sanitization::Raw, sessions)?.text;
     text.push(b'\n');
     capture::share::write_file(out.clone(), text, capture::share::Clobber::Replace).await?;
     let noun = if count == 1 { "session" } else { "sessions" };

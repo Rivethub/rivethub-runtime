@@ -1,7 +1,9 @@
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use wire::time::TimestampFormat as _;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use kernel::memory::BrowseFilter;
 use kernel::memory::MemoryEntry;
 use kernel::memory::{MemoryBrowseOrder, TagWire};
@@ -92,25 +94,22 @@ pub(crate) fn browse(
     filter: &BrowseFilter,
     sessions: &BTreeMap<String, Vec<TagWire>>,
     origins: &Origins,
-    zone: chrono_tz::Tz,
+    zone: &TimeZone,
 ) -> Result<String, Error> {
     let mut details = Vec::new();
     if let Some(window) = filter.window {
         details.push(format!("window=\"{window}\""));
     }
     if let Some(since) = filter.since {
-        let precision = if filter.window.is_some() {
-            SecondsFormat::Millis
+        let since = if filter.window.is_some() {
+            since.rfc3339_millis()
         } else {
-            SecondsFormat::AutoSi
+            since.rfc3339_z()
         };
-        details.push(format!("since={}", since.to_rfc3339_opts(precision, true)));
+        details.push(format!("since={since}"));
     }
     if let Some(before) = filter.before {
-        details.push(format!(
-            "before={}",
-            before.to_rfc3339_opts(SecondsFormat::AutoSi, true)
-        ));
+        details.push(format!("before={}", before.rfc3339_z()));
     }
     if !filter.include_tools {
         details.push("tools excluded (include_tools=true to show)".to_owned());
@@ -176,14 +175,16 @@ pub(crate) fn browse(
     Ok(text)
 }
 
-pub(crate) fn timestamp(date: DateTime<Utc>, zone: chrono_tz::Tz) -> String {
-    date.with_timezone(&zone)
-        .format("%Y-%m-%d %H:%M:%S %Z")
+pub(crate) fn timestamp(date: Timestamp, zone: &TimeZone) -> String {
+    date.to_zoned_datetime(zone.clone())
+        .strftime("%Y-%m-%d %H:%M:%S %Z")
         .to_string()
 }
 
-pub(crate) fn local_date(date: DateTime<Utc>, zone: chrono_tz::Tz) -> String {
-    date.with_timezone(&zone).format("%Y-%m-%d").to_string()
+pub(crate) fn local_date(date: Timestamp, zone: &TimeZone) -> String {
+    date.to_zoned_datetime(zone.clone())
+        .strftime("%Y-%m-%d")
+        .to_string()
 }
 
 pub(crate) fn get_full(

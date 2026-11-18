@@ -1,8 +1,8 @@
+use jiff::Timestamp;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use capture::share::Chosen;
-use chrono::Utc;
 use config::Environment;
 use kernel::memory::share::Choice;
 use kernel::memory::share::SessionChoices;
@@ -146,7 +146,7 @@ pub(super) async fn load(store: Store, env: &Environment) -> Result<Chosen, Erro
         Target::Sqlite(path) => SessionStore::Sqlite(open_sqlite(&path).await?),
     };
     let chosen = sessions.chosen(&author, &owner, &store.choices).await?;
-    Ok(capture::share::chosen(author, chosen, Utc::now())?)
+    Ok(capture::share::chosen(author, chosen, Timestamp::now())?)
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 use crate::common::PROBE;
 use crate::common::probe;
+use jiff::SignedDuration as Duration;
+use jiff::Timestamp;
+use wire::time::TimestampFormat as _;
 
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
 use kernel::filing::FilingStore as _;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
@@ -162,7 +162,7 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
             &alice,
             &SessionKey::from(&second),
             Some(&shared),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     assert_eq!(marked.effective, shared);
@@ -195,7 +195,11 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
         assert!(owners.clone().into_keys().all(|key| key != FIRST));
         let future = members
             .clone()
-            .run(memory.team_sessions(Some(Utc::now() + Duration::days(1)), None, 5))
+            .run(memory.team_sessions(
+                Some(Timestamp::now() + wire::time::elapsed_days(1)),
+                None,
+                5,
+            ))
             .await?;
         assert_eq!(future.len(), 0);
         assert!(owners.len() <= 1);
@@ -207,7 +211,7 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
             &bob,
             &SessionKey::from(&second),
             Some(&Visibility::Private),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await;
     assert!(refused.is_err(), "only the owner marks a session");
@@ -232,7 +236,7 @@ async fn a_shared_session_shows_to_the_space_and_a_private_one_does_not(
             &alice,
             &SessionKey::from(&second),
             Some(&Visibility::Private),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     assert_eq!(visible(&probe, members, "rh_messages").await?, 0);
@@ -245,7 +249,7 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
     let probe = probe(&pool).await?;
     let alice = viewer("alice")?;
     let members = Scope::Viewer(viewer("bob")?);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let topic = store
         .create(Topic::create(
             TopicId::random(),
@@ -299,7 +303,7 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
             &alice,
             &SessionKey::from(&first),
             Some(&Visibility::Private),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     assert_eq!(
@@ -318,7 +322,7 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
             &alice,
             &SessionKey::from(&second),
             Some(&shared),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     assert_eq!(
@@ -365,13 +369,18 @@ async fn a_session_follows_its_topic_unless_it_is_marked(pool: PgPool) -> TestRe
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn a_shared_default_applies_to_sessions_started_after_it(pool: PgPool) -> TestResult {
     let (store, tenancy) = seed(&pool).await?;
-    let started: DateTime<Utc> = sqlx::query_scalar("SELECT max(created_at) FROM rh_conversations")
-        .fetch_one(&pool)
-        .await?;
+    let started: jiff_sqlx::Timestamp =
+        sqlx::query_scalar("SELECT max(created_at) FROM rh_conversations")
+            .fetch_one(&pool)
+            .await?;
     let alice = Owner::new("alice".to_owned())?;
     let shared = Visibility::Space(household()?);
     tenancy
-        .set_default_visibility(&alice, &shared, started + Duration::microseconds(1))
+        .set_default_visibility(
+            &alice,
+            &shared,
+            started.to_jiff() + Duration::from_micros(1),
+        )
         .await?;
     store
         .capture_batch(
@@ -427,7 +436,7 @@ async fn the_filing_listing_reads_each_session_as_the_visibility_store_does(
     let (store, _) = seed(&pool).await?;
     let probe = probe(&pool).await?;
     let alice = viewer("alice")?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let topic = store
         .create(Topic::create(
             TopicId::random(),
@@ -517,7 +526,7 @@ async fn the_categorizer_files_a_session_captured_under_its_bare_key(pool: PgPoo
                 directory: None,
                 owner: Some(alice.principal().clone()),
             },
-            Utc::now(),
+            Timestamp::now(),
         )?)
         .await?;
     let categorizer = PostgresMemory::new(probe(&pool).await?);
@@ -526,7 +535,7 @@ async fn the_categorizer_files_a_session_captured_under_its_bare_key(pool: PgPoo
             session: SessionId::try_from(format!("claude-code:{bare}"))?,
             topic: topic.id,
             by: PlacementSource::Categorizer,
-            at: Utc::now(),
+            at: Timestamp::now(),
             owner: None,
         }))
         .await?;
@@ -673,7 +682,7 @@ async fn a_pinned_login_keeps_its_person_whatever_it_sets(pool: PgPool) -> TestR
             &alice,
             &SessionKey::try_from(FIRST.to_owned())?,
             Some(&Visibility::Space(household()?)),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     store
@@ -794,7 +803,7 @@ async fn work_topic(
                 directory: None,
                 owner: Some(owner.principal().clone()),
             },
-            Utc::now(),
+            Timestamp::now(),
         )?)
         .await?;
     Ok(topic.id)
@@ -963,7 +972,7 @@ async fn a_pinned_login_sees_its_own_session_state_and_no_one_elses(pool: PgPool
     Scope::Closed
         .run(as_person.mark_history(HistoryMark {
             session: SessionId::try_from(UNCAPTURED.to_owned())?,
-            at: Utc::now(),
+            at: Timestamp::now(),
         }))
         .await?;
     assert_eq!(
@@ -1440,7 +1449,7 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
     let alice = viewer("alice")?;
     let owners = Scope::Viewer(alice.clone());
     let members = Scope::Viewer(viewer("bob")?);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let hosts = store
         .list()
         .await?
@@ -1522,7 +1531,7 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
             &alice,
             &SessionKey::from(&second),
             Some(&shared),
-            Utc::now(),
+            Timestamp::now(),
         ))
         .await?;
     assert_eq!(
@@ -1546,8 +1555,6 @@ async fn a_review_mark_is_read_and_written_only_by_its_owner(pool: PgPool) -> Te
     use kernel::review::ReviewMark;
     use kernel::review::ReviewStore as _;
 
-    use chrono::SubsecRound as _;
-
     let probe = probe(&pool).await?;
     let store = PostgresMemory::new(probe.clone());
     let alice = viewer("alice")?;
@@ -1556,7 +1563,7 @@ async fn a_review_mark_is_read_and_written_only_by_its_owner(pool: PgPool) -> Te
     let mark = ReviewMark {
         key: ReviewKey::Tag(TagId::from_uuid(Uuid::new_v4())),
         mark: Mark::Decided {
-            at: Utc::now().trunc_subsecs(3),
+            at: Timestamp::now().truncate_subseconds(3),
         },
     };
     owners
@@ -1596,7 +1603,7 @@ async fn the_change_feed_shows_a_viewer_only_what_they_may_read(pool: PgPool) ->
     let (store, _) = seed(&pool).await?;
     let probe = probe(&pool).await?;
     let alice = viewer("alice")?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let topic = store
         .create(Topic::create(
             TopicId::random(),
@@ -1621,7 +1628,8 @@ async fn the_change_feed_shows_a_viewer_only_what_they_may_read(pool: PgPool) ->
         })
         .await?;
     let scoped = PostgresMemory::new(probe);
-    let window = ChangeWindow::between(now - Duration::hours(1), now + Duration::hours(1));
+    let window =
+        ChangeWindow::between(now - Duration::from_hours(1), now + Duration::from_hours(1));
     let kinds = |changes: Vec<kernel::changes::Change>| {
         changes
             .into_iter()
@@ -1706,7 +1714,7 @@ async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool
         (&viewer("carol")?, THIRD),
     ] {
         tenancy
-            .mark_session(who, &key.parse()?, Some(&space), Utc::now())
+            .mark_session(who, &key.parse()?, Some(&space), Timestamp::now())
             .await?;
     }
     sqlx::query("UPDATE rh_conversations SET updated_at = CASE WHEN session_key = $1 THEN now() - interval '2 days' ELSE now() END")
@@ -1729,11 +1737,19 @@ async fn team_recall_groups_owners_limits_each_and_obeys_the_window(pool: PgPool
     assert!(!all.iter().any(|row| row.session_id == FIRST));
     let recent = scope
         .clone()
-        .run(reader.team_sessions(Some(Utc::now() - Duration::days(1)), None, 5))
+        .run(reader.team_sessions(
+            Some(Timestamp::now() - wire::time::elapsed_days(1)),
+            None,
+            5,
+        ))
         .await?;
     assert_eq!(recent.len(), 2);
     let older = scope
-        .run(reader.team_sessions(None, Some(Utc::now() - Duration::days(1)), 5))
+        .run(reader.team_sessions(
+            None,
+            Some(Timestamp::now() - wire::time::elapsed_days(1)),
+            5,
+        ))
         .await?;
     assert_eq!(older.len(), 1);
     assert_eq!(older.first().expect("older record").session_id, SECOND);
@@ -1849,7 +1865,7 @@ async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -
             &alice,
             &SECOND.parse()?,
             Some(&Visibility::Space(household()?)),
-            Utc::now(),
+            Timestamp::now(),
         )
         .await?;
     let store = PostgresMemory::new(probe(&pool).await?);
@@ -1862,7 +1878,7 @@ async fn memory_team_omits_a_shared_session_trashed_by_its_owner(pool: PgPool) -
         1
     );
     Scope::Viewer(alice)
-        .run(store.trash_session(SECOND, Some("alice"), Utc::now()))
+        .run(store.trash_session(SECOND, Some("alice"), Timestamp::now()))
         .await?;
     assert_eq!(bob.run(store.team_sessions(None, None, 5)).await?.len(), 0);
     Ok(())

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, topic_id, text, status, superseded_by, decided_by, session_id,\n                    created_at, updated_at\n               FROM rh_topic_decisions WHERE topic_id = $1 ORDER BY created_at, id",
+  "query": "SELECT id, topic_id, text, status, superseded_by, decided_by, session_id,\n                    created_at AS \"created_at: jiff_sqlx::Timestamp\", updated_at AS \"updated_at: jiff_sqlx::Timestamp\"\n               FROM rh_topic_decisions WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -82,7 +82,7 @@
       },
       {
         "ordinal": 7,
-        "name": "created_at",
+        "name": "created_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -93,7 +93,7 @@
       },
       {
         "ordinal": 8,
-        "name": "updated_at",
+        "name": "updated_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -120,5 +120,5 @@
       false
     ]
   },
-  "hash": "81a032d38ed00881883c2a0dce69d82ebec4f1c20596be1c4b0ef51c03e9aacb"
+  "hash": "2499f3a2a5c77963942143c92ae4fd8f50cc37fa950f38078ba3a5ab65b71fe0"
 }

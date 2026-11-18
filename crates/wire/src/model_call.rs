@@ -1,6 +1,6 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use values::{CallOutcome, CallUsage};
 
@@ -10,11 +10,15 @@ pub struct ModelCallBatchRequest {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CapturedModelCall {
     pub call_id: String,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub started_at: Timestamp,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub finished_at: Option<Timestamp>,
     pub provider: String,
     pub model_requested: Option<String>,
     pub model_served: Option<String>,
@@ -37,11 +41,15 @@ pub struct ModelCallBatchResult {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StoredModelCall {
     pub call_id: String,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub started_at: Timestamp,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub finished_at: Option<Timestamp>,
     pub provider: String,
     pub model_requested: Option<String>,
     pub model_served: Option<String>,

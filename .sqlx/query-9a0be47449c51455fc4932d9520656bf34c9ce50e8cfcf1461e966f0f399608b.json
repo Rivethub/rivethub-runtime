@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM rh_session_placements WHERE session_id = $1\n             RETURNING session_id, topic_id, placed_by, placed_at, owner_user_id",
+  "query": "SELECT session_id, topic_id, placed_by, placed_at AS \"placed_at: jiff_sqlx::Timestamp\", owner_user_id\n           FROM rh_session_placements WHERE session_id = $1",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "placed_at",
+        "name": "placed_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -72,5 +72,5 @@
       false
     ]
   },
-  "hash": "ffe336f1d82676a7b91c18e774247c90228581cc933a6c4db71ff963e29556b7"
+  "hash": "9a0be47449c51455fc4932d9520656bf34c9ce50e8cfcf1461e966f0f399608b"
 }

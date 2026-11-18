@@ -1,27 +1,27 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT session_id, marked_at FROM rh_session_history\n          ORDER BY marked_at DESC, session_id",
+  "query": "SELECT task, finished_at AS \"finished_at: jiff_sqlx::Timestamp\" FROM rh_worker_runs",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "session_id",
+        "name": "task",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "rh_session_history",
-            "name": "session_id"
+            "table": "rh_worker_runs",
+            "name": "task"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "marked_at",
+        "name": "finished_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "rh_session_history",
-            "name": "marked_at"
+            "table": "rh_worker_runs",
+            "name": "finished_at"
           }
         }
       }
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "fd3535127a901ed6a672871d8649e081f2c413620a9a39853da9f19513d5a1b7"
+  "hash": "fc06c0845f3ffbcbed057fa1041b810d4906feaa8418734ace3d2c49c5cc42f3"
 }

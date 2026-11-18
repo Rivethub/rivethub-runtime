@@ -1,4 +1,5 @@
 use super::*;
+use jiff::Timestamp;
 
 #[test]
 fn search_requires_q_and_maps_hits() {
@@ -88,8 +89,8 @@ fn browse_rejects_bad_filters() {
     assert_eq!(filter.window, None);
     let today = kernel::memory_core::resolve_window(
         kernel::memory::BrowseWindow::Today,
-        chrono::Utc::now(),
-        &chrono::Local,
+        Timestamp::now(),
+        &jiff::tz::TimeZone::system(),
     );
     assert_eq!(filter.since, today.since);
     assert_eq!(filter.before, today.before);
@@ -297,7 +298,7 @@ fn browse_tool_validates_args() {
 
 #[test]
 fn browse_tool_carries_filters_to_the_port() {
-    let started = chrono::Utc::now();
+    let started = Timestamp::now();
     let (store, app) = seeded().expect("seed store");
     let response = post(
         &app,
@@ -333,8 +334,8 @@ fn browse_tool_carries_filters_to_the_port() {
     );
     assert_eq!(filter.window, None);
     let since = filter.since.expect("resolved window start");
-    assert!(since >= started - chrono::Duration::days(7));
-    assert!(since <= chrono::Utc::now() - chrono::Duration::days(7));
+    assert!(since >= started - wire::time::elapsed_days(7));
+    assert!(since <= Timestamp::now() - wire::time::elapsed_days(7));
     assert_eq!(filter.before, None);
     assert!(filter.include_tools);
     assert_eq!(filter.order, kernel::memory::MemoryBrowseOrder::Asc);

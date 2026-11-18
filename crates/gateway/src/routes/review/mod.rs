@@ -3,6 +3,7 @@ mod facts;
 mod filing;
 mod proposals;
 
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
 use std::sync::Arc;
@@ -14,8 +15,6 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::review::Marks;
 use kernel::review::ReviewError;
 use kernel::review::ReviewKey;
@@ -83,7 +82,7 @@ impl Source {
         self,
         gateway: &Gateway,
         topics: &Topics,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<Item>, ApiError> {
         match self {
             Self::Facts => facts::items(gateway, topics, now).await,
@@ -163,13 +162,13 @@ async fn queue(
     State(gateway): State<Arc<Gateway>>,
     user: UserId,
 ) -> Result<Json<Vec<ReviewItem>>, ApiError> {
-    Ok(Json(open(&gateway, &user, Utc::now()).await?))
+    Ok(Json(open(&gateway, &user, Timestamp::now()).await?))
 }
 
 pub(crate) async fn open(
     gateway: &Gateway,
     user: &UserId,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<ReviewItem>, ApiError> {
     let marks = Marks::of(
         gateway
@@ -210,7 +209,7 @@ async fn decision(
     if marks.decided(&key) {
         return Ok(StatusCode::NO_CONTENT);
     }
-    let now = Utc::now();
+    let now = Timestamp::now();
     let topics = Topics::load(&gateway).await?;
     let item = Source::of(&key)
         .items(&gateway, &topics, now)

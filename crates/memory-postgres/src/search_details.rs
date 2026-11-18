@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use crate::search::MemorySearchHit;
-use chrono::{DateTime, Utc};
 use kernel::memory::MemoryEntry;
 use kernel::memory::{MemoryHitSource, SummaryKind};
 use kernel::memory::{MemoryStoreError, SearchQuery, SummaryDetail, SummaryExcerpt};
@@ -15,8 +15,10 @@ struct SummaryRow {
     id: Uuid,
     kind: Json<SummaryKind>,
     conversation_id: Uuid,
-    earliest_at: Option<DateTime<Utc>>,
-    latest_at: Option<DateTime<Utc>>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    earliest_at: Option<Timestamp>,
+    #[sqlx(try_from = "crate::time::OptionalTimestamp")]
+    latest_at: Option<Timestamp>,
     import_settings: Option<String>,
 }
 
@@ -133,7 +135,7 @@ impl PostgresMemory {
                 AND ($4::timestamptz IS NULL OR m.created_at < $4)
                 ORDER BY m.created_at, m.id LIMIT 200) picked
              ORDER BY wanted.id, picked.created_at, picked.message_id")
-            .bind(ids).bind(&query.agent).bind(query.since).bind(query.before)
+            .bind(ids).bind(&query.agent).bind(crate::time::BindTime::bind_time(query.since)).bind(crate::time::BindTime::bind_time(query.before))
             .fetch_all(&self.pool).await.map_err(|source| Error::operation("summary source messages", source))?;
         let mut grouped: BTreeMap<Uuid, Vec<MessageEntryRow>> = BTreeMap::new();
         for row in rows {

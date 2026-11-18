@@ -11,8 +11,7 @@ use capture::sign::NodeKey;
 use capture::sign::Trust;
 use capture::sign::TrustStore;
 use capture::sign::Verification;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
@@ -25,8 +24,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const DROP_ID: &str = "AAAAAAAAAAAAAAAAAAAAAA";
 
-const fn at() -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH
+const fn at() -> Timestamp {
+    Timestamp::UNIX_EPOCH
 }
 
 fn session(content: &str) -> BundledSession {

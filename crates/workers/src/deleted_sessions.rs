@@ -1,6 +1,4 @@
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::DeletedSession;
 use kernel::memory::SessionDeletion;
 use kernel::memory::TOMBSTONE_PURGE_BATCH;
@@ -12,10 +10,10 @@ use crate::WorkerError;
 pub(crate) async fn handle_purge(
     deletions: &dyn SessionDeletion,
     trash_days: u32,
-    now: DateTime<Utc>,
+    now: Timestamp,
     cancel: &CancellationToken,
 ) -> Result<DeletedSession, WorkerError> {
-    let cutoff = now - TimeDelta::days(i64::from(trash_days));
+    let cutoff = now - wire::time::elapsed_days(i64::from(trash_days));
     let mut purged = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(WorkerError::Cancelled),
@@ -49,7 +47,7 @@ pub(crate) async fn handle_purge(
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeDelta;
+
     use testkit::FakeSessionDeletion;
     use testkit::topics::at;
     use tokio_util::sync::CancellationToken;
@@ -63,12 +61,12 @@ mod tests {
         let deletions = FakeSessionDeletion::default();
         let old = SessionId::new(wire::harness::HarnessId::ClaudeCode, "old");
         let recent = SessionId::new(wire::harness::HarnessId::ClaudeCode, "recent");
-        let now = at(0) + TimeDelta::days(40);
+        let now = at(0) + wire::time::elapsed_days(40);
         deletions
-            .trash_session(old.as_str(), None, now - TimeDelta::days(31))
+            .trash_session(old.as_str(), None, now - wire::time::elapsed_days(31))
             .await?;
         deletions
-            .trash_session(recent.as_str(), None, now - TimeDelta::days(29))
+            .trash_session(recent.as_str(), None, now - wire::time::elapsed_days(29))
             .await?;
         handle_purge(&deletions, 30, now, &CancellationToken::new()).await?;
         assert!(!deletions.is_trashed(&old));

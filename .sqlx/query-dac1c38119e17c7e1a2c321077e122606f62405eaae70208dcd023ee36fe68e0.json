@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "insert into rh_tags (entity_type, entity_id, key, value, display, source, state, proposed_by, reason, decided_by, decided_at) values ($1, $2, $3, $4, coalesce($5, ''), 'user', 'accepted', '', coalesce($6, ''), $7::text, case when $7::text is null then null else now() end) on conflict (entity_type, entity_id, key, value) do update set state = 'accepted', decided_by = coalesce($7::text, rh_tags.decided_by), decided_at = case when $7::text is null then rh_tags.decided_at else now() end, updated_at = now() returning id::text as \"id!\", entity_type, entity_id::text as \"entity_id!\", key, value, display, source, state, confidence, proposed_by, reason, decided_by, decided_at, created_at, updated_at",
+  "query": "insert into rh_tags (entity_type, entity_id, key, value, display, source, state, proposed_by, reason, decided_by, decided_at) values ($1, $2, $3, $4, coalesce($5, ''), 'user', 'accepted', '', coalesce($6, ''), $7::text, case when $7::text is null then null else now() end) on conflict (entity_type, entity_id, key, value) do update set state = 'accepted', decided_by = coalesce($7::text, rh_tags.decided_by), decided_at = case when $7::text is null then rh_tags.decided_at else now() end, updated_at = now() returning id::text as \"id!\", entity_type, entity_id::text as \"entity_id!\", key, value, display, source, state, confidence, proposed_by, reason, decided_by, decided_at AS \"decided_at!: crate::time::OptionalTimestamp\", created_at AS \"created_at!: jiff_sqlx::Timestamp\", updated_at AS \"updated_at!: jiff_sqlx::Timestamp\"",
   "describe": {
     "columns": [
       {
@@ -127,7 +127,7 @@
       },
       {
         "ordinal": 12,
-        "name": "decided_at",
+        "name": "decided_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -138,7 +138,7 @@
       },
       {
         "ordinal": 13,
-        "name": "created_at",
+        "name": "created_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -149,7 +149,7 @@
       },
       {
         "ordinal": 14,
-        "name": "updated_at",
+        "name": "updated_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -188,5 +188,5 @@
       false
     ]
   },
-  "hash": "8c6d822fc0c48c12b4ab76c3360350242c140d7f3fca0648566f66eac7e13a4a"
+  "hash": "dac1c38119e17c7e1a2c321077e122606f62405eaae70208dcd023ee36fe68e0"
 }

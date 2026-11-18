@@ -1,4 +1,5 @@
 use super::*;
+use jiff::Timestamp;
 use kernel::model::ModelCallFailure;
 use workers::OutageCause;
 use workers::WorkerError;
@@ -273,11 +274,11 @@ fn wired_id() -> Uuid {
     Uuid::parse_str("00000000-0000-4000-8000-0000000000a1").expect("id")
 }
 
-fn sample(id: Uuid, now: DateTime<Utc>, case: WindowCase) -> ConversationWindow {
+fn sample(id: Uuid, now: Timestamp, case: WindowCase) -> ConversationWindow {
     let (start, count) = match case {
         WindowCase::Young => (now, 2),
-        WindowCase::Idle => (now - Duration::minutes(20), 6),
-        WindowCase::Stale => (now - Duration::minutes(5_761), 2),
+        WindowCase::Idle => (now - Duration::from_mins(20), 6),
+        WindowCase::Stale => (now - Duration::from_mins(5_761), 2),
         WindowCase::Full => (now, 10),
     };
     window(id, "cli:triggers", "Triggers", messages(start, count))
@@ -286,7 +287,7 @@ fn sample(id: Uuid, now: DateTime<Utc>, case: WindowCase) -> ConversationWindow 
 async fn run_case(
     payload: &wire::JsonObject,
     sample: ConversationWindow,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<u32, WorkerError> {
     let store = Arc::new(MemStore::new(vec![sample]));
     let script = Arc::new(Scripted::success());

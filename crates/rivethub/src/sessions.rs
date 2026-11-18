@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,7 +15,6 @@ use capture::share::Clobber;
 use capture::share::Decider;
 use capture::share::Outcome;
 use capture::share::SetupError;
-use chrono::Utc;
 use cli::memory::SessionStore;
 use config::Config;
 use config::Environment;
@@ -143,7 +143,8 @@ impl SessionShare for NodeShare {
             .store
             .chosen(&self.author, &self.owner, &job.sessions)
             .await?;
-        let chosen = share::chosen(self.author.clone(), sessions, Utc::now()).map_err(failed)?;
+        let chosen =
+            share::chosen(self.author.clone(), sessions, Timestamp::now()).map_err(failed)?;
         let outcome = share::sanitize(
             share::Job {
                 bundle: &chosen.bundle,
@@ -151,7 +152,7 @@ impl SessionShare for NodeShare {
                 mapping: &mapping,
                 key: &self.key,
                 decider: decider.as_ref(),
-                at: Utc::now(),
+                at: Timestamp::now(),
             },
             &paths,
             Clobber::Refuse,

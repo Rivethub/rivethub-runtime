@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::fmt;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use thiserror::Error;
 
 #[async_trait]
@@ -101,8 +100,8 @@ pub struct Inbound {
     pub title: String,
     pub agent: String,
     pub messages: usize,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
+    pub updated_at: Option<Timestamp>,
     pub findings: usize,
     pub rows: Vec<FindingRow>,
     pub secret: bool,
@@ -144,7 +143,7 @@ pub struct ImportedSession {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Imported {
     pub bundle: String,
-    pub received_at: DateTime<Utc>,
+    pub received_at: Timestamp,
     pub author: String,
     pub verification: Verification,
     pub signer: Option<Signer>,

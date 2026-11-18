@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::fmt;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use uuid::Uuid;
 use values::SessionId;
 
@@ -82,8 +81,8 @@ pub struct Decision {
     pub superseded_by: Option<DecisionId>,
     pub by: String,
     pub session: Option<SessionId>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 impl Decision {
@@ -93,7 +92,7 @@ impl Decision {
         text: DecisionText,
         by: &str,
         session: Option<SessionId>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Self {
         Self {
             id: DecisionId::random(),
@@ -108,7 +107,7 @@ impl Decision {
         }
     }
 
-    pub fn edit(&self, text: DecisionText, now: DateTime<Utc>) -> Result<Self, TopicError> {
+    pub fn edit(&self, text: DecisionText, now: Timestamp) -> Result<Self, TopicError> {
         self.active()?;
         Ok(Self {
             text,
@@ -120,7 +119,7 @@ impl Decision {
     pub fn supersede(
         &self,
         replacement: Option<&Self>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Self, TopicError> {
         self.active()?;
         if replacement.is_some_and(|next| next.topic != self.topic || next.id == self.id) {
@@ -142,7 +141,7 @@ impl Decision {
     }
 
     fn line(&self) -> String {
-        let when = self.created_at.format("%Y-%m-%d");
+        let when = self.created_at.strftime("%Y-%m-%d");
         match self.status {
             DecisionStatus::Active => format!("- {} ({}, {when})", self.text.as_str(), self.by),
             DecisionStatus::Superseded => format!(

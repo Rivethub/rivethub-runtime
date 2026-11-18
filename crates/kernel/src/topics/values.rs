@@ -1,9 +1,8 @@
+use jiff::Timestamp;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::DateTime;
-use chrono::Utc;
 use uuid::Uuid;
 
 use super::TopicError;
@@ -236,9 +235,9 @@ pub struct Topic {
     pub aliases: Vec<Alias>,
     pub parent: Option<TopicId>,
     pub directory: Option<Root>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub closed_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub closed_at: Option<Timestamp>,
     pub owner: Option<Owner>,
     pub visibility: Visibility,
     pub visibility_mark: Option<Visibility>,
@@ -281,7 +280,7 @@ pub struct TopicChanges {
 }
 
 impl Topic {
-    pub fn create(id: TopicId, new: NewTopic, now: DateTime<Utc>) -> Result<Self, TopicError> {
+    pub fn create(id: TopicId, new: NewTopic, now: Timestamp) -> Result<Self, TopicError> {
         if new.kind == TopicKind::Entity && new.parent.is_none() {
             return Err(TopicError::EntityWithoutType);
         }
@@ -303,7 +302,7 @@ impl Topic {
     }
 
     #[must_use]
-    pub fn closed(mut self, at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Self {
+    pub fn closed(mut self, at: Option<Timestamp>, now: Timestamp) -> Self {
         self.closed_at = at;
         self.updated_at = now;
         self
@@ -328,7 +327,7 @@ impl Topic {
         Ok(())
     }
 
-    pub fn apply(mut self, changes: TopicChanges, now: DateTime<Utc>) -> Result<Self, TopicError> {
+    pub fn apply(mut self, changes: TopicChanges, now: Timestamp) -> Result<Self, TopicError> {
         if let Some(name) = changes.name {
             self.slug = Slug::fold(name.as_str())?;
             let former = std::mem::replace(&mut self.name, name);
@@ -361,7 +360,7 @@ impl Topic {
 pub struct TopicListing {
     pub topic: Topic,
     pub session_count: u64,
-    pub last_active: Option<DateTime<Utc>>,
+    pub last_active: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

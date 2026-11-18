@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::tenancy::Scope;
 use kernel::wiki::entity_pass::EntityStore;
 use memory_postgres::PostgresMemory;
@@ -9,6 +9,7 @@ use pgvector::HalfVector;
 use sqlx::PgPool;
 use sqlx::Row;
 use uuid::Uuid;
+use wire::time::TimestampFormat as _;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -283,12 +284,12 @@ async fn assert_pages(
     younger: Uuid,
     newer_summary: Uuid,
 ) -> TestResult {
-    let embedded: DateTime<Utc> =
+    let embedded: jiff_sqlx::Timestamp =
         sqlx::query_scalar("SELECT embedded_at FROM rh_entity_embeddings WHERE entity_id = $1")
             .bind(older)
             .fetch_one(pool)
             .await?;
-    assert_eq!(embedded, at("2026-11-08T00:00:00Z"));
+    assert_eq!(embedded.to_jiff(), at("2026-11-08T00:00:00Z"));
     let mark: Uuid =
         sqlx::query_scalar("SELECT summary_id FROM rh_entity_applied WHERE entity_id = $1")
             .bind(older)
@@ -356,7 +357,7 @@ struct FactRow<'a> {
     entity: Uuid,
     attribute: &'a str,
     value: &'a str,
-    as_of: DateTime<Utc>,
+    as_of: Timestamp,
     summary: Uuid,
     conversation: Uuid,
 }
@@ -555,7 +556,7 @@ async fn seed_conversation(pool: &PgPool) -> Result<Uuid, sqlx::Error> {
 async fn seed_leaf(
     pool: &PgPool,
     conversation: Uuid,
-    start: DateTime<Utc>,
+    start: Timestamp,
 ) -> Result<Uuid, sqlx::Error> {
     let mut tx = deferred(pool).await?;
     let id = sqlx::query_scalar(
@@ -563,8 +564,8 @@ async fn seed_leaf(
          VALUES ($1, 'leaf', 'leaf', $2, $3, 'owner') RETURNING id",
     )
     .bind(conversation)
-    .bind(start)
-    .bind(start + chrono::Duration::hours(1))
+    .bind(memory_postgres::time::BindTime::bind_time(start))
+    .bind(memory_postgres::time::BindTime::bind_time(start + SignedDuration::from_hours(1)))
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -583,7 +584,7 @@ async fn seed_entity(
     slug: &str,
     name: &str,
     parent: Uuid,
-    created: DateTime<Utc>,
+    created: Timestamp,
 ) -> Result<(), sqlx::Error> {
     let mut tx = deferred(pool).await?;
     sqlx::query(
@@ -594,7 +595,7 @@ async fn seed_entity(
     .bind(slug)
     .bind(name)
     .bind(parent)
-    .bind(created)
+    .bind(memory_postgres::time::BindTime::bind_time(created))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -632,7 +633,7 @@ async fn fact(pool: &PgPool, row: FactRow<'_>) -> Result<(), sqlx::Error> {
     .bind(Uuid::new_v4())
     .bind(row.entity)
     .bind(row.attribute)
-    .bind(row.as_of)
+    .bind(memory_postgres::time::BindTime::bind_time(row.as_of))
     .bind(Uuid::new_v4())
     .bind(row.value)
     .bind(row.conversation)
@@ -659,7 +660,9 @@ async fn history(
     .bind(entity)
     .bind(summary)
     .bind(conversation)
-    .bind(at("2026-11-01T00:00:00Z").date_naive())
+    .bind(memory_postgres::time::BindTime::bind_time(
+        at("2026-11-01T00:00:00Z").utc_date(),
+    ))
     .bind(sentence)
     .execute(&mut *tx)
     .await?;
@@ -671,7 +674,7 @@ async fn seed_mark(
     pool: &PgPool,
     entity: Uuid,
     summary: Uuid,
-    through: DateTime<Utc>,
+    through: Timestamp,
 ) -> Result<(), sqlx::Error> {
     let mut tx = deferred(pool).await?;
     sqlx::query(
@@ -679,7 +682,7 @@ async fn seed_mark(
          VALUES ($1, $2, $3, 'owner')",
     )
     .bind(entity)
-    .bind(through)
+    .bind(memory_postgres::time::BindTime::bind_time(through))
     .bind(summary)
     .execute(&mut *tx)
     .await?;
@@ -690,7 +693,7 @@ async fn seed_mark(
 async fn seed_embedding(
     pool: &PgPool,
     entity: Uuid,
-    embedded_at: DateTime<Utc>,
+    embedded_at: Timestamp,
 ) -> Result<(), sqlx::Error> {
     let mut tx = deferred(pool).await?;
     sqlx::query(
@@ -699,7 +702,7 @@ async fn seed_embedding(
     )
     .bind(entity)
     .bind(HalfVector::from_f32_slice(&vec![0.25_f32; 1024]))
-    .bind(embedded_at)
+    .bind(memory_postgres::time::BindTime::bind_time(embedded_at))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -714,7 +717,7 @@ async fn seed_type_seen(pool: &PgPool, entity: Uuid, summary: Uuid) -> Result<()
     )
     .bind(entity)
     .bind(summary)
-    .bind(at("2026-11-01T00:00:00Z"))
+    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -728,7 +731,7 @@ async fn seed_placement(pool: &PgPool, entity: Uuid) -> Result<(), sqlx::Error> 
          VALUES ('claude-code:entity-merge', $1, 'you', $2, 'owner')",
     )
     .bind(entity)
-    .bind(at("2026-11-01T00:00:00Z"))
+    .bind(memory_postgres::time::BindTime::bind_time(at("2026-11-01T00:00:00Z")))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -780,6 +783,6 @@ async fn deferred(
     Ok(tx)
 }
 
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text).map_or(DateTime::UNIX_EPOCH, |time| time.with_timezone(&Utc))
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).unwrap_or(Timestamp::UNIX_EPOCH)
 }

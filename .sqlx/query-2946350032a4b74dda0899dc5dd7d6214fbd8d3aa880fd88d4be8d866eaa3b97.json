@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,\n                created_at, updated_at, closed_at, owner_user_id, visibility, visibility_mark\n           FROM rh_topics WHERE id = $1",
+  "query": "SELECT id, kind, slug, name, parent_id, directory_kind, directory_node, directory_path,\n                created_at AS \"created_at: jiff_sqlx::Timestamp\", updated_at AS \"updated_at: jiff_sqlx::Timestamp\", closed_at AS \"closed_at!: crate::time::OptionalTimestamp\", owner_user_id, visibility, visibility_mark\n           FROM rh_topics WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,7 @@
       },
       {
         "ordinal": 8,
-        "name": "created_at",
+        "name": "created_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -104,7 +104,7 @@
       },
       {
         "ordinal": 9,
-        "name": "updated_at",
+        "name": "updated_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -115,7 +115,7 @@
       },
       {
         "ordinal": 10,
-        "name": "closed_at",
+        "name": "closed_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -180,5 +180,5 @@
       true
     ]
   },
-  "hash": "60b63b6b22829cf07e7d2ef5f9ea8b84b6ace13b5c125b3351763cd65c11158d"
+  "hash": "2946350032a4b74dda0899dc5dd7d6214fbd8d3aa880fd88d4be8d866eaa3b97"
 }

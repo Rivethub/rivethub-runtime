@@ -10,7 +10,7 @@ mod topics;
 pub(crate) use topics::store as store_wiki_page;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use kernel::owner::Owner;
 use kernel::wiki::builder::{
     BACKFILL_PRIORITY, BackfillBudget, DeferredWiki, ExtractWiki, RouteLease,
@@ -32,7 +32,8 @@ struct SummaryRow {
     content: String,
     session_key: Option<String>,
     owner_user_id: String,
-    created_at: DateTime<Utc>,
+    #[sqlx(try_from = "jiff_sqlx::Timestamp")]
+    created_at: Timestamp,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -102,7 +103,7 @@ impl WikiBuilderStore for PostgresMemory {
         job: &ExtractWiki,
         patches: Vec<WikiPatch>,
         routing: &WikiRouting,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let home = {
             let mut connection = self.pool.acquire().await.map_err(query_error)?;
@@ -135,7 +136,7 @@ impl WikiBuilderStore for PostgresMemory {
         &self,
         summary_id: Uuid,
         error: &str,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         sqlx::query(
             "INSERT INTO rh_wiki_extractions (summary_id, status, pipeline_version, error, extracted_at, owner_user_id)
@@ -145,7 +146,7 @@ impl WikiBuilderStore for PostgresMemory {
              WHERE rh_wiki_extractions.status = 'failed' OR rh_wiki_extractions.pipeline_version < $2
                 OR (rh_wiki_extractions.status = 'done' AND rh_wiki_extractions.git_sha IS NULL AND cardinality(rh_wiki_extractions.topics_touched) > 0)",
         )
-        .bind(summary_id).bind(WIKI_PIPELINE_VERSION).bind(error).bind(now)
+        .bind(summary_id).bind(WIKI_PIPELINE_VERSION).bind(error).bind(crate::time::BindTime::bind_time(now))
         .execute(&self.pool).await.map_err(query_error)?;
         Ok(())
     }
@@ -162,7 +163,7 @@ impl WikiBuilderStore for PostgresMemory {
         &self,
         summary_id: Uuid,
         slug: &WikiSlug,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), WikiStoreError> {
         let placed = self.place_note_page(slug, None).await?;
         let cited = WikiSlug::try_from(placed.key)
@@ -203,7 +204,7 @@ impl PostgresMemory {
         repository: &mut crate::wiki_writer::LockedRepository,
         work: Work<'_>,
         mut patches: Vec<WikiPatch>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Vec<String>, WikiStoreError> {
         let Work { job, routing, home } = work;
         for patch in &mut patches {
@@ -237,7 +238,7 @@ impl PostgresMemory {
             Some(page) if within(&mut tx, page.as_ref(), home).await? => Some(page),
             Some(_) | None => None,
         };
-        let date: DateTime<Utc> =
+        let date: jiff_sqlx::Timestamp =
             sqlx::query_scalar("SELECT created_at FROM rh_summaries WHERE id = $1")
                 .bind(job.summary_id)
                 .fetch_one(&mut *tx)
@@ -245,7 +246,7 @@ impl PostgresMemory {
                 .map_err(query_error)?;
         let source = topics::Source {
             summary: &summary,
-            date,
+            date: date.to_jiff(),
             topic_page,
             merged: &routing.merged,
             home,

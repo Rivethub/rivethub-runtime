@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::collections::HashMap;
 
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::transcript::TranscriptReaderError;
 use serde::Serialize;
 use wire::JsonObject;
@@ -51,7 +50,7 @@ struct Stitch<'a> {
 
 struct Row<'a> {
     position: u64,
-    at: Option<DateTime<Utc>>,
+    at: Option<Timestamp>,
     tool_use_id: Option<&'a str>,
     pending_result: Option<bool>,
 }
@@ -268,12 +267,12 @@ fn draft(row: &Row<'_>, message: CaptureMessage) -> Draft {
     }
 }
 
-fn instant(raw: Option<&str>, position: u64) -> Result<Option<DateTime<Utc>>, SkippedRecord> {
+fn instant(raw: Option<&str>, position: u64) -> Result<Option<Timestamp>, SkippedRecord> {
     let Some(raw) = raw else {
         return Ok(None);
     };
-    DateTime::parse_from_rfc3339(raw)
-        .map(|at| Some(at.with_timezone(&Utc)))
+    wire::time::parse_rfc3339(raw)
+        .map(Some)
         .map_err(|error| SkippedRecord {
             position,
             rule: SkipRule::UnparseableTimestamp,

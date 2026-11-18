@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 
 use capture::share_policy::SharePolicy;
-use chrono::{DateTime, Utc};
 use config::{Config, Environment, Paths};
 use nix::sys::statvfs::{Statvfs, statvfs};
 use serde::{Deserialize, Serialize};
@@ -72,10 +72,13 @@ pub struct Summary {
     pub fail: usize,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DoctorReport {
     pub version: String,
-    pub timestamp: DateTime<Utc>,
+
+    #[serde_as(as = "wire::time::Rfc3339")]
+    pub timestamp: Timestamp,
     pub checks: Vec<Check>,
     pub summary: Summary,
 }
@@ -92,7 +95,7 @@ impl DoctorReport {
         }
         Self {
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             checks,
             summary,
         }

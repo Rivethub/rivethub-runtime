@@ -1,6 +1,5 @@
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use kernel::facts::Claim;
 use kernel::facts::Evidence;
 use kernel::facts::FactId;
@@ -23,11 +22,12 @@ use kernel::topics::TopicId;
 use uuid::Uuid;
 use values::HarnessId;
 use values::SessionId;
+use values::time::TimestampFormat as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn hours(count: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH + TimeDelta::days(20_000) + TimeDelta::hours(count)
+fn hours(count: i64) -> Timestamp {
+    Timestamp::UNIX_EPOCH + values::time::elapsed_days(20_000) + SignedDuration::from_hours(count)
 }
 
 fn session(n: u8) -> SessionId {
@@ -151,7 +151,7 @@ fn sources_that_disagree_make_one_conflict_with_quoted_evidence() -> TestResult 
         review.key,
         ReviewKey::Conflict {
             fact: backup.fact,
-            version: hours(2).timestamp_millis(),
+            version: hours(2).epoch_millis(),
         }
     );
     let quoted: Vec<(&str, Option<&str>)> = review
@@ -190,7 +190,7 @@ fn a_new_writer_fact_is_reviewed_until_it_is_old_or_yours() -> TestResult {
         review.key,
         ReviewKey::Fact {
             fact: os.fact,
-            version: hours(48).timestamp_millis(),
+            version: hours(48).epoch_millis(),
         }
     );
     assert_eq!(review.state.value.as_str(), "Ubuntu 24.04");
@@ -203,7 +203,7 @@ fn a_new_writer_fact_is_reviewed_until_it_is_old_or_yours() -> TestResult {
         Some("Ubuntu 22.04")
     );
 
-    let later = hours(48) + FACT_NEW_FOR + TimeDelta::hours(1);
+    let later = hours(48) + FACT_NEW_FOR + SignedDuration::from_hours(1);
     assert!(
         fact_reviews(&fresh, later).is_empty(),
         "a fact recorded more than the window ago is no longer new"

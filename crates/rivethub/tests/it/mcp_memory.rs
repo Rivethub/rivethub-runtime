@@ -1,3 +1,4 @@
+use jiff::tz::TimeZone;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -133,7 +134,7 @@ async fn recorded_memory_text() -> TestResult {
         ),
         shutdown.clone(),
     )
-    .display_zone(chrono_tz::Tz::UTC)
+    .display_zone(TimeZone::UTC)
     .build()?;
     let (client_io, server_io) = tokio::io::duplex(65536);
     let task = tokio::spawn(mcp::transport::serve_io(

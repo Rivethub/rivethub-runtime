@@ -1,7 +1,7 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::os::unix::fs::PermissionsExt as _;
 use std::time::{Duration, SystemTime};
-
-use chrono::{TimeDelta, Utc};
 
 use super::{Claim, Part, Record, Store};
 use crate::drops::{DropId, DropsConfig, OpenError, Rates};
@@ -13,20 +13,20 @@ fn config(root: std::path::PathBuf) -> DropsConfig {
         max_bytes: 64 << 20,
         per_user_drops: 50,
         per_user_bytes: 512 << 20,
-        ttl: TimeDelta::days(7),
+        ttl: wire::time::elapsed_days(7),
         rates: Rates::default(),
     }
 }
 
-fn plant(root: &std::path::Path, expires_in: TimeDelta) -> DropId {
+fn plant(root: &std::path::Path, expires_in: SignedDuration) -> DropId {
     let id = DropId::generate().expect("random source");
     let body = b"age-encryption.org/v1\nsealed";
     let record = Record {
         owner: "alice".to_owned(),
         bytes: body.len() as u64,
         sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(body)),
-        created_at: Utc::now(),
-        expires_at: Utc::now() + expires_in,
+        created_at: Timestamp::now(),
+        expires_at: Timestamp::now() + expires_in,
     };
     let name = |part: Part| root.join(format!("{}{}", id.as_str(), part.suffix()));
     std::fs::write(name(Part::Body), body).expect("body");
@@ -60,9 +60,9 @@ fn expired_drops_are_swept_and_a_live_one_is_kept() {
     std::fs::create_dir(&root).expect("root");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("mode");
     for _ in 0..3 {
-        plant(&root, TimeDelta::seconds(-1));
+        plant(&root, SignedDuration::from_secs(-1));
     }
-    let kept = plant(&root, TimeDelta::days(1));
+    let kept = plant(&root, wire::time::elapsed_days(1));
     let store = Store::open(&config(root.clone())).expect("open");
     assert_eq!(store.sweep(Duration::from_secs(3600)).expect("sweep"), 3);
     assert_eq!(
@@ -104,7 +104,7 @@ fn a_claim_cut_by_a_crash_is_released_at_start() {
     let root = dir.path().join("drops");
     std::fs::create_dir(&root).expect("root");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("mode");
-    let id = plant(&root, TimeDelta::days(1));
+    let id = plant(&root, wire::time::elapsed_days(1));
     std::fs::rename(
         root.join(format!("{}.age", id.as_str())),
         root.join(format!("{}.sending", id.as_str())),
@@ -158,7 +158,7 @@ fn alice() -> UserId {
 fn a_revoke_during_a_download_that_fails_wins() {
     let dir = tempfile::tempdir().expect("temp");
     let root = private_root(&dir);
-    let id = plant(&root, TimeDelta::days(1));
+    let id = plant(&root, wire::time::elapsed_days(1));
     let store = Store::open(&config(root.clone())).expect("open");
     assert!(
         store.take(&id).expect("claim"),
@@ -178,7 +178,7 @@ fn a_revoke_during_a_download_that_fails_wins() {
 fn a_revoke_is_acknowledged_only_after_the_root_is_synced() {
     let dir = tempfile::tempdir().expect("temp");
     let root = private_root(&dir);
-    let id = plant(&root, TimeDelta::days(1));
+    let id = plant(&root, wire::time::elapsed_days(1));
     let store = Store::open(&config(root.clone())).expect("open");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o300)).expect("mode");
     let revoked = store.revoke(&id, &alice());
@@ -195,7 +195,7 @@ fn a_revoke_is_acknowledged_only_after_the_root_is_synced() {
 fn an_expiry_that_loses_the_claim_leaves_the_download_alone() {
     let dir = tempfile::tempdir().expect("temp");
     let root = private_root(&dir);
-    let id = plant(&root, TimeDelta::seconds(-1));
+    let id = plant(&root, SignedDuration::from_secs(-1));
     let store = Store::open(&config(root.clone())).expect("open");
     assert!(
         store.take(&id).expect("claim"),
@@ -216,7 +216,7 @@ fn an_expiry_that_loses_the_claim_leaves_the_download_alone() {
 fn a_record_without_its_body_is_deleted_at_start() {
     let dir = tempfile::tempdir().expect("temp");
     let root = private_root(&dir);
-    let id = plant(&root, TimeDelta::days(1));
+    let id = plant(&root, wire::time::elapsed_days(1));
     std::fs::remove_file(root.join(format!("{}.age", id.as_str()))).expect("burned body");
     let store = Store::open(&config(root.clone())).expect("open");
     assert_eq!(names(&root), Vec::<String>::new());
@@ -227,7 +227,7 @@ fn a_record_without_its_body_is_deleted_at_start() {
 fn a_drop_whose_files_cannot_be_deleted_is_not_consumed() {
     let dir = tempfile::tempdir().expect("temp");
     let root = private_root(&dir);
-    let id = plant(&root, TimeDelta::days(1));
+    let id = plant(&root, wire::time::elapsed_days(1));
     let store = Store::open(&config(root.clone())).expect("open");
     assert!(store.take(&id).expect("claim"));
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500)).expect("mode");

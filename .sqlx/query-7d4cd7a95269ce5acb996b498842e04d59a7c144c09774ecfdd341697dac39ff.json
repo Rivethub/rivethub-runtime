@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT call_id, session_key, turn_id, request_kind, started_at, finished_at, provider,\n                    model_requested, model_served, account, status_code, outcome, retry_after_secs,\n                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,\n                    reasoning_tokens\n               FROM rh_model_calls WHERE session_key = $1\n              ORDER BY started_at, call_id",
+  "query": "SELECT call_id, session_key, turn_id, request_kind, started_at AS \"started_at: jiff_sqlx::Timestamp\", finished_at AS \"finished_at!: crate::time::OptionalTimestamp\", provider,\n                    model_requested, model_served, account, status_code, outcome, retry_after_secs,\n                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,\n                    reasoning_tokens\n               FROM rh_model_calls WHERE session_key = $1\n              ORDER BY started_at, call_id",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       },
       {
         "ordinal": 4,
-        "name": "started_at",
+        "name": "started_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -60,7 +60,7 @@
       },
       {
         "ordinal": 5,
-        "name": "finished_at",
+        "name": "finished_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -228,5 +228,5 @@
       true
     ]
   },
-  "hash": "fa548dc0153719cc3aa62e87bab1d7bd40d4d9701fe034bdd5e58e6b4022f3e1"
+  "hash": "7d4cd7a95269ce5acb996b498842e04d59a7c144c09774ecfdd341697dac39ff"
 }

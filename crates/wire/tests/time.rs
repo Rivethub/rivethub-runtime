@@ -31,8 +31,18 @@ fn timestamp_precision_survives_wire_serialization() -> Result<(), Box<dyn std::
         let capture: CaptureMessage = serde_json::from_value(json!({
             "event_id": "message", "role": "user", "content": "body", "created_at": raw
         }))?;
-        assert_eq!(serde_json::to_value(stamp)?["at"], automatic);
-        assert_eq!(serde_json::to_value(capture)?["created_at"], millis);
+        assert_eq!(
+            serde_json::to_value(stamp)?
+                .get("at")
+                .and_then(serde_json::Value::as_str),
+            Some(automatic)
+        );
+        assert_eq!(
+            serde_json::to_value(capture)?
+                .get("created_at")
+                .and_then(serde_json::Value::as_str),
+            Some(millis)
+        );
     }
     Ok(())
 }
@@ -70,7 +80,12 @@ fn default_wire_parser_accepts_an_offset_without_a_colon() -> Result<(), Box<dyn
     let stamp: SanitizeStamp = serde_json::from_value(json!({
         "at": raw, "policy_sha256": "hash", "passes": [], "unresolved_flags": 0
     }))?;
-    assert_eq!(serde_json::to_value(stamp)?["at"], "2025-12-31T23:00:00Z");
+    assert_eq!(
+        serde_json::to_value(stamp)?
+            .get("at")
+            .and_then(serde_json::Value::as_str),
+        Some("2025-12-31T23:00:00Z")
+    );
     assert!(
         serde_json::from_value::<CaptureMessage>(json!({
             "event_id": "message", "role": "user", "content": "body", "created_at": raw
@@ -90,12 +105,16 @@ fn leap_seconds_survive_capture_and_canonical_wire_output() -> Result<(), Box<dy
         "event_id": "message", "role": "user", "content": "body", "created_at": "2016-12-31T23:59:60.5Z"
     }))?;
     assert_eq!(
-        serde_json::to_value(stamp)?["at"],
-        "2016-12-31T23:59:60.500Z"
+        serde_json::to_value(stamp)?
+            .get("at")
+            .and_then(serde_json::Value::as_str),
+        Some("2016-12-31T23:59:60.500Z")
     );
     assert_eq!(
-        serde_json::to_value(capture)?["created_at"],
-        "2016-12-31T23:59:60.500Z"
+        serde_json::to_value(capture)?
+            .get("created_at")
+            .and_then(serde_json::Value::as_str),
+        Some("2016-12-31T23:59:60.500Z")
     );
     Ok(())
 }
@@ -105,7 +124,12 @@ fn default_wire_timestamps_keep_expanded_years() -> Result<(), Box<dyn std::erro
     let stamp: SanitizeStamp = serde_json::from_value(json!({
         "at": "+10000-01-01T00:00:00Z", "policy_sha256": "hash", "passes": [], "unresolved_flags": 0
     }))?;
-    assert_eq!(serde_json::to_value(stamp)?["at"], "+10000-01-01T00:00:00Z");
+    assert_eq!(
+        serde_json::to_value(stamp)?
+            .get("at")
+            .and_then(serde_json::Value::as_str),
+        Some("+10000-01-01T00:00:00Z")
+    );
     Ok(())
 }
 
@@ -116,14 +140,25 @@ fn plugin_timestamps_round_to_a_signed_millisecond() -> Result<(), Box<dyn std::
     let mut event: PluginEventDelivery = serde_json::from_value(json!({
         "seq": 1, "at": -1, "missed": 0, "event": { "type": "settings.changed", "values": {} }
     }))?;
-    assert_eq!(serde_json::to_value(&event)?["at"], -1);
+    assert_eq!(
+        serde_json::to_value(&event)?
+            .get("at")
+            .and_then(serde_json::Value::as_i64),
+        Some(-1)
+    );
     for (raw, expected) in [
         ("1969-12-31T23:59:59.999500000Z", -1),
         ("1969-12-31T23:59:59.999500001Z", 0),
         ("1970-01-01T00:00:00.000500000Z", 1),
     ] {
         event.at = raw.parse()?;
-        assert_eq!(serde_json::to_value(&event)?["at"], expected, "{raw}");
+        assert_eq!(
+            serde_json::to_value(&event)?
+                .get("at")
+                .and_then(serde_json::Value::as_i64),
+            Some(expected),
+            "{raw}"
+        );
     }
     Ok(())
 }

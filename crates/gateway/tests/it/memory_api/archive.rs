@@ -1,6 +1,5 @@
 use super::*;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::MemoryExport;
 use kernel::memory::MemoryMessageTally;
 use kernel::memory::MemoryStoreError;
@@ -16,14 +15,14 @@ const DUMP: &[u8] = &[0x1f, 0x8b, 0x08, 0x00, 0x2d, 0x2d];
 
 #[derive(Default)]
 struct RecordingExport {
-    calls: parking_lot::Mutex<Vec<Option<DateTime<Utc>>>>,
+    calls: parking_lot::Mutex<Vec<Option<Timestamp>>>,
 }
 
 #[async_trait::async_trait]
 impl MemoryExport for RecordingExport {
     async fn export(
         &self,
-        since: Option<DateTime<Utc>>,
+        since: Option<Timestamp>,
         _cancellation: CancellationToken,
     ) -> Result<Vec<u8>, MemoryStoreError> {
         self.calls.lock().push(since);
@@ -45,10 +44,8 @@ fn header<'a>(response: &'a testkit::Response, name: &str) -> Option<&'a str> {
 }
 
 #[expect(clippy::expect_used)]
-fn at(text: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(text)
-        .expect("RFC 3339 literal")
-        .with_timezone(&Utc)
+fn at(text: &str) -> Timestamp {
+    wire::time::parse_rfc3339(text).expect("RFC 3339 literal")
 }
 
 fn node(

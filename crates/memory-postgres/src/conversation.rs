@@ -47,8 +47,8 @@ impl CaptureWriter<'_> {
             upsert.settings.is_some(),
             upsert.task_id.is_some(),
             upsert.node,
-            created_at,
-            updated_at,
+            crate::time::BindTime::bind_time(created_at) as _,
+            crate::time::BindTime::bind_time(updated_at) as _,
             imported,
         )
         .fetch_one(&mut *self.tx)

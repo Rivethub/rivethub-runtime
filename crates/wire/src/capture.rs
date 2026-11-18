@@ -1,6 +1,6 @@
 use crate::JsonObject;
 use crate::message::Role;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use sha2::{Digest as _, Sha256};
@@ -18,10 +18,10 @@ pub struct CaptureBatchRequest {
     pub finalize: Option<bool>,
     #[serde(default)]
     #[serde_as(as = "Option<crate::time::Millis>")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
     #[serde(default)]
     #[serde_as(as = "Option<crate::time::Millis>")]
-    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<Timestamp>,
     pub messages: Vec<CaptureMessage>,
 }
 
@@ -49,7 +49,7 @@ pub struct CaptureMessage {
     pub metadata: Option<JsonObject>,
     #[serde(default)]
     #[serde_as(as = "Option<crate::time::Millis>")]
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<Timestamp>,
 }
 
 impl CaptureBatchRequest {
@@ -90,9 +90,11 @@ pub struct SessionBundle {
     pub sessions: Vec<BundledSession>,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BundleManifest {
-    pub exported_at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub exported_at: Timestamp,
     pub exported_by: BundleAuthor,
     pub sanitization: Sanitization,
     pub session_count: usize,
@@ -112,9 +114,11 @@ pub enum Sanitization {
     Sanitized(SanitizeStamp),
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SanitizeStamp {
-    pub at: DateTime<Utc>,
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub at: Timestamp,
     pub policy_sha256: String,
     pub passes: Vec<String>,
     pub unresolved_flags: u32,
@@ -177,10 +181,13 @@ pub enum ReceiptVerification {
     UnknownKey,
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Receipt {
     pub bundle_id: String,
-    pub received_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub received_at: Timestamp,
     pub verification: ReceiptVerification,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_fingerprint: Option<String>,
@@ -424,6 +431,7 @@ pub fn merge_imported_settings(
     })
 }
 
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionOrigin {
     pub author: String,
@@ -431,8 +439,11 @@ pub struct SessionOrigin {
     pub conversation_id: String,
     pub session_key: String,
     pub agent: String,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub updated_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
 }

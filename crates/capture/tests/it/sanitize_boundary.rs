@@ -1,11 +1,10 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use capture::sanitize;
 use capture::sanitize::LocalKey;
 use capture::sanitize::Policy;
 use capture::sanitize::SessionRules;
-use chrono::DateTime;
-use chrono::Utc;
 use wire::capture::BundleAuthor;
 use wire::capture::BundledSession;
 use wire::capture::CaptureBatchRequest;
@@ -20,8 +19,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const PASSWORD: &str = "hunter2PLANTEDq8RmT2v";
 const KEY_VALUE: &str = "PLANTEDkeyLx9WcN4bKp7Hy";
 
-fn at() -> Result<DateTime<Utc>, chrono::ParseError> {
-    Ok(DateTime::parse_from_rfc3339("2026-11-09T12:00:00Z")?.with_timezone(&Utc))
+fn at() -> Result<Timestamp, jiff::Error> {
+    wire::time::parse_rfc3339("2026-11-09T12:00:00Z")
 }
 
 fn message(event_id: &str, content: &str) -> CaptureMessage {

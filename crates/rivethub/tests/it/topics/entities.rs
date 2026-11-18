@@ -1,10 +1,10 @@
+use jiff::SignedDuration;
+use jiff::Timestamp;
 use std::sync::Arc;
+use wire::time::TimestampFormat as _;
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
-use chrono::DateTime;
-use chrono::TimeDelta;
-use chrono::Utc;
 use kernel::facts::Claim;
 use kernel::facts::EntityHistory;
 use kernel::facts::Evidence;
@@ -36,8 +36,8 @@ use super::TestResult;
 const FIRST: &str = "claude-code:00000000-0000-4000-8000-0000000000e1";
 const SECOND: &str = "claude-code:00000000-0000-4000-8000-0000000000e2";
 
-fn hour(count: i64) -> DateTime<Utc> {
-    DateTime::<Utc>::UNIX_EPOCH + TimeDelta::days(20_400) + TimeDelta::hours(count)
+fn hour(count: i64) -> Timestamp {
+    Timestamp::UNIX_EPOCH + wire::time::elapsed_days(20_400) + SignedDuration::from_hours(count)
 }
 
 async fn entity(api: &Api, name: &str, kind: &str) -> TestResult<TopicRecord> {
@@ -261,7 +261,7 @@ async fn an_article_shows_facts_sources_conflicts_and_connections() -> TestResul
 async fn as_of_shows_the_entity_as_it_stood() -> TestResult {
     let api = Api::new(true)?;
     let host = seeded(&api).await?;
-    let cut = hour(24).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let cut = hour(24).rfc3339_seconds();
     let then: EntityArticle = api
         .json(
             "GET",
@@ -307,7 +307,7 @@ async fn your_fact_resolves_a_conflict_and_a_pin_outlasts_the_writer() -> TestRe
     assert!(pinned.conflict.is_none(), "your fact resolves the conflict");
     api.store
         .assert_facts(&[NewClaim {
-            at: Utc::now() + TimeDelta::hours(1),
+            at: Timestamp::now() + SignedDuration::from_hours(1),
             ..said(&host, "address", "192.0.2.77", FIRST, 0)?
         }])
         .await?;

@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use kernel::memory::BrowseFilter;
 use kernel::memory::Limit;
 use kernel::memory::MemoryEntry;
@@ -28,7 +27,7 @@ pub enum MemoryRequest {
     GetFull(String),
     Context {
         session: String,
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     ListTags(TagListQuery),
     PendingTags(Limit),

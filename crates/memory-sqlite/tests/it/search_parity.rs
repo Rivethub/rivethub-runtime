@@ -1,6 +1,6 @@
 use crate::search_support;
+use jiff::Timestamp;
 
-use chrono::Utc;
 use kernel::memory::SearchMode;
 use search_support::{TestResult, failed, query, store};
 
@@ -57,7 +57,11 @@ async fn trigram_similarity_and_threshold_match_postgres(pool: sqlx::PgPool) -> 
             Ok(())
         }).await?;
         let result = store
-            .search_at(query(needle, SearchMode::Trigram), Utc::now(), &Utc)
+            .search_at(
+                query(needle, SearchMode::Trigram),
+                Timestamp::now(),
+                &jiff::tz::TimeZone::UTC,
+            )
             .await?;
         assert_eq!(result.results.len(), usize::from(expected), "{needle}");
     }

@@ -11,8 +11,7 @@ mod values;
 
 use ::values::SessionId;
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use thiserror::Error;
 
 use crate::BoxError;
@@ -130,14 +129,14 @@ pub trait TopicStore: Send + Sync {
         &self,
         id: TopicId,
         changes: TopicChanges,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError>;
 
     async fn merge(
         &self,
         source: TopicId,
         into: TopicId,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError>;
 
     async fn delete(&self, id: TopicId) -> Result<(), TopicError>;
@@ -145,8 +144,8 @@ pub trait TopicStore: Send + Sync {
     async fn set_closed(
         &self,
         id: TopicId,
-        closed: Option<DateTime<Utc>>,
-        now: DateTime<Utc>,
+        closed: Option<Timestamp>,
+        now: Timestamp,
     ) -> Result<Topic, TopicError>;
 
     async fn find(&self, key: &TopicKey) -> Result<Option<Topic>, TopicError>;

@@ -1,8 +1,10 @@
+use jiff::Timestamp;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::net::SocketAddr;
+use wire::time::TimestampFormat as _;
 
 use axum::extract::ConnectInfo;
 use axum::extract::FromRequestParts;
@@ -18,7 +20,6 @@ use axum::http::request::Parts;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use chrono::Utc;
 use parking_lot::Mutex;
 use sha2::Digest as _;
 use sha2::Sha256;
@@ -301,7 +302,7 @@ pub(crate) async fn guard(
     if let Some(kind) = refusal {
         state.gateway.auth_log().refuse(
             RefusedRequest {
-                at: Utc::now(),
+                at: Timestamp::now(),
                 kind,
                 method: request.method().to_string(),
                 route: path.clone(),
@@ -448,7 +449,7 @@ impl FromRequestParts<std::sync::Arc<crate::Gateway>> for FreshLogin {
 fn fresh(gateway: &crate::Gateway, parts: &Parts) -> Result<FreshLogin, ApiError> {
     let (_, credential) = crate::tenancy::authenticate(gateway, parts)?;
     if let crate::tenancy::Credential::Session { auth_time } = credential {
-        let age = chrono::Utc::now().timestamp().saturating_sub(auth_time);
+        let age = Timestamp::now().epoch_seconds().saturating_sub(auth_time);
         let window = gateway.browser().policy().fresh.as_secs();
         if !u64::try_from(age).is_ok_and(|age| age < window) {
             return Err(ApiError::ReauthRequired);

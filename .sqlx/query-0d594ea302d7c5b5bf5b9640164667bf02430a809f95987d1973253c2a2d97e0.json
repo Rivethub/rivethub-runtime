@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "select t.id::text as \"id!\", t.entity_type, t.entity_id::text as \"entity_id!\", t.key, t.value, t.display, t.source, t.state, t.confidence, t.proposed_by, CASE WHEN t.removal_state = 'suggested' THEN t.removal_reason ELSE t.reason END AS \"reason!\", t.decided_by, t.decided_at, t.created_at, t.updated_at, (t.removal_state = 'suggested') as \"is_removal?\", c.session_key as \"session_key?\", c.title as \"title?\", c.agent as \"agent?\", c.id::text as \"conversation_id?\", (select left(m.content, 120) from rh_messages m\n                  where m.conversation_id = c.id order by m.created_at asc limit 1) as excerpt from rh_tags t left join rh_summaries s on t.entity_type = 'summary' and s.id = t.entity_id left join rh_conversations c on (t.entity_type = 'conversation' and c.id = t.entity_id) OR c.id = s.conversation_id where t.state = 'suggested' or t.removal_state = 'suggested' order by t.created_at desc limit $1",
+  "query": "select t.id::text as \"id!\", t.entity_type, t.entity_id::text as \"entity_id!\", t.key, t.value, t.display, t.source, t.state, t.confidence, t.proposed_by, CASE WHEN t.removal_state = 'suggested' THEN t.removal_reason ELSE t.reason END AS \"reason!\", t.decided_by, t.decided_at AS \"decided_at!: crate::time::OptionalTimestamp\", t.created_at AS \"created_at!: jiff_sqlx::Timestamp\", t.updated_at AS \"updated_at!: jiff_sqlx::Timestamp\", (t.removal_state = 'suggested') as \"is_removal?\", c.session_key as \"session_key?\", c.title as \"title?\", c.agent as \"agent?\", c.id::text as \"conversation_id?\", (select left(m.content, 120) from rh_messages m\n                  where m.conversation_id = c.id order by m.created_at asc limit 1) as excerpt from rh_tags t left join rh_summaries s on t.entity_type = 'summary' and s.id = t.entity_id left join rh_conversations c on (t.entity_type = 'conversation' and c.id = t.entity_id) OR c.id = s.conversation_id where t.state = 'suggested' or t.removal_state = 'suggested' order by t.created_at desc limit $1",
   "describe": {
     "columns": [
       {
@@ -122,7 +122,7 @@
       },
       {
         "ordinal": 12,
-        "name": "decided_at",
+        "name": "decided_at!: crate::time::OptionalTimestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -133,7 +133,7 @@
       },
       {
         "ordinal": 13,
-        "name": "created_at",
+        "name": "created_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -144,7 +144,7 @@
       },
       {
         "ordinal": 14,
-        "name": "updated_at",
+        "name": "updated_at!: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -234,5 +234,5 @@
       null
     ]
   },
-  "hash": "60b275ad070cb6ce79787c8f8069753ea9d7f13358329363bba1637e8bcfed81"
+  "hash": "0d594ea302d7c5b5bf5b9640164667bf02430a809f95987d1973253c2a2d97e0"
 }

@@ -154,8 +154,8 @@ fn is_base64_id(token: &str) -> bool {
 }
 
 fn is_time(token: &str) -> bool {
-    chrono::DateTime::parse_from_rfc3339(token).is_ok()
-        || chrono::NaiveDate::parse_from_str(token, "%Y-%m-%d").is_ok()
+    wire::time::parse_rfc3339(token).is_ok()
+        || jiff::civil::Date::strptime("%Y-%m-%d", token).is_ok()
 }
 
 fn is_trivial(text: &str) -> bool {

@@ -1,7 +1,6 @@
+use jiff::Timestamp;
 use std::fmt;
 
-use chrono::DateTime;
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -70,6 +69,7 @@ pub struct FindingRow {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundSession {
@@ -80,9 +80,11 @@ pub struct InboundSession {
     pub agent: String,
     pub messages: usize,
     #[serde(default)]
-    pub created_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub created_at: Option<Timestamp>,
     #[serde(default)]
-    pub updated_at: Option<DateTime<Utc>>,
+    #[serde_as(as = "Option<crate::time::Rfc3339>")]
+    pub updated_at: Option<Timestamp>,
     pub findings: usize,
     pub rows: Vec<FindingRow>,
     pub secret: bool,
@@ -128,11 +130,14 @@ pub struct ImportedSession {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_with::serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReply {
     pub bundle: String,
-    pub received_at: DateTime<Utc>,
+
+    #[serde_as(as = "crate::time::Rfc3339")]
+    pub received_at: Timestamp,
     pub author: String,
     pub verification: ReceiptVerification,
     #[serde(default)]

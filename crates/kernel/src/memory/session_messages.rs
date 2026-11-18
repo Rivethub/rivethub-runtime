@@ -1,5 +1,6 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use uuid::Uuid;
+use values::time::TimestampFormat as _;
 
 use super::MemoryEntry;
 
@@ -12,14 +13,14 @@ pub struct CursorError(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageCursor {
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     pub id: Uuid,
 }
 
 impl MessageCursor {
     #[must_use]
     pub fn encode(&self) -> String {
-        format!("{}.{}", self.created_at.timestamp_micros(), self.id)
+        format!("{}.{}", self.created_at.epoch_micros(), self.id)
     }
 
     pub fn decode(text: &str) -> Result<Self, CursorError> {
@@ -27,7 +28,7 @@ impl MessageCursor {
         let (micros, id) = text.split_once('.').ok_or_else(invalid)?;
         let micros: i64 = micros.parse().map_err(|_| invalid())?;
         Ok(Self {
-            created_at: DateTime::from_timestamp_micros(micros).ok_or_else(invalid)?,
+            created_at: Timestamp::from_microsecond(micros).map_err(|_error| invalid())?,
             id: Uuid::parse_str(id).map_err(|_| invalid())?,
         })
     }

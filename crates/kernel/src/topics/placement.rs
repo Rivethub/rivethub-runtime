@@ -1,5 +1,4 @@
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
 use values::SessionId;
 
 use super::TopicId;
@@ -42,7 +41,7 @@ pub struct Placement {
     pub session: SessionId,
     pub topic: TopicId,
     pub by: PlacementSource,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub owner: Option<Owner>,
 }
 
@@ -74,13 +73,13 @@ impl PlacementOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryMark {
     pub session: SessionId,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacedSession {
     pub placement: Placement,
-    pub last_active: Option<DateTime<Utc>>,
+    pub last_active: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,3 +1,4 @@
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use kernel::memory::MemoryEntry;
@@ -56,7 +57,7 @@ async fn seed(pool: &PgPool) -> TestResult {
             created_at: Some(time.parse()?),
         })
     })
-    .collect::<Result<Vec<_>, chrono::ParseError>>()?;
+    .collect::<Result<Vec<_>, jiff::Error>>()?;
     memory.append(&testkit::owner()?, entries).await?;
     let mut tx = testkit::capture_tx(pool).await?;
     sqlx::query("INSERT INTO rh_summaries (conversation_id, content, kind, depth, message_count, created_at, owner_user_id) SELECT conversation_id, content, 'leaf', 0, 1, created_at, owner_user_id FROM rh_messages")
@@ -110,7 +111,7 @@ async fn every_arm_filters_both_tables_before_limiting(pool: PgPool) -> TestResu
                 .search(
                     query
                         .clone()
-                        .resolve_window(chrono::Utc::now(), &chrono::Utc),
+                        .resolve_window(Timestamp::now(), &jiff::tz::TimeZone::UTC),
                 )
                 .await?;
             assert_eq!(outcome.results.len(), 1, "{mode:?} {scope:?}");
@@ -217,7 +218,7 @@ async fn window_filters_and_each_explicit_bound_overrides_it(pool: PgPool) -> Te
             .search(
                 query
                     .clone()
-                    .resolve_window(chrono::Utc::now(), &chrono::Utc)
+                    .resolve_window(Timestamp::now(), &jiff::tz::TimeZone::UTC)
             )
             .await?
             .results
@@ -229,13 +230,13 @@ async fn window_filters_and_each_explicit_bound_overrides_it(pool: PgPool) -> Te
         .search(
             query
                 .clone()
-                .resolve_window(chrono::Utc::now(), &chrono::Utc),
+                .resolve_window(Timestamp::now(), &jiff::tz::TimeZone::UTC),
         )
         .await?;
     assert_eq!(outcome.results.len(), 1);
     assert_eq!(
         outcome.results.first().ok_or("missing result")?.created_at,
-        "2026-10-11T00:00:00Z".parse::<chrono::DateTime<chrono::Utc>>()?
+        "2026-10-11T00:00:00Z".parse::<Timestamp>()?
     );
     query.before = None;
     query.since = Some("2100-01-01T00:00:00Z".parse()?);
@@ -264,10 +265,7 @@ async fn chunk_only_parents_respect_time_bounds(pool: PgPool) -> TestResult {
     let [hit] = outcome.results.as_slice() else {
         return Err("one chunk parent".into());
     };
-    assert_eq!(
-        hit.created_at,
-        "2026-10-12T00:00:00Z".parse::<chrono::DateTime<chrono::Utc>>()?
-    );
+    assert_eq!(hit.created_at, "2026-10-12T00:00:00Z".parse::<Timestamp>()?);
     Ok(())
 }
 

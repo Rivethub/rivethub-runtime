@@ -1,4 +1,6 @@
 pub mod jobs;
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -6,8 +8,6 @@ use std::ops::RangeInclusive;
 use std::str::FromStr;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use thiserror::Error;
 use uuid::Uuid;
 use values::Role;
@@ -264,8 +264,8 @@ pub struct SearchQuery {
     pub tool_name: Option<String>,
     pub tag: Option<TagLiteral>,
     pub limit: Limit,
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
+    pub before: Option<Timestamp>,
     pub window: Option<BrowseWindow>,
     pub expand: Option<bool>,
     pub synthesize: Option<bool>,
@@ -273,7 +273,7 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     #[must_use]
-    pub fn resolve_window<Tz: chrono::TimeZone>(mut self, now: DateTime<Utc>, zone: &Tz) -> Self {
+    pub fn resolve_window(mut self, now: Timestamp, zone: &TimeZone) -> Self {
         let range = self.time_range(now, zone);
         self.since = range.since;
         self.before = range.before;
@@ -282,11 +282,7 @@ impl SearchQuery {
     }
 
     #[must_use]
-    pub fn time_range<Tz: chrono::TimeZone>(
-        &self,
-        now: DateTime<Utc>,
-        zone: &Tz,
-    ) -> crate::memory_core::TimeRange {
+    pub fn time_range(&self, now: Timestamp, zone: &TimeZone) -> crate::memory_core::TimeRange {
         match (self.since, self.before, self.window) {
             (None, None, Some(window)) => crate::memory_core::resolve_window(window, now, zone),
             _ => crate::memory_core::TimeRange {
@@ -353,8 +349,8 @@ pub struct BrowseFilter {
     pub tool_name: Option<String>,
     pub tag: Option<TagLiteral>,
     pub window: Option<BrowseWindow>,
-    pub since: Option<DateTime<Utc>>,
-    pub before: Option<DateTime<Utc>>,
+    pub since: Option<Timestamp>,
+    pub before: Option<Timestamp>,
     pub include_tools: bool,
     pub order: MemoryBrowseOrder,
     pub limit: Limit,
@@ -362,7 +358,7 @@ pub struct BrowseFilter {
 
 impl BrowseFilter {
     #[must_use]
-    pub fn resolve_window<Tz: chrono::TimeZone>(mut self, now: DateTime<Utc>, zone: &Tz) -> Self {
+    pub fn resolve_window(mut self, now: Timestamp, zone: &TimeZone) -> Self {
         if self.since.is_none()
             && self.before.is_none()
             && let Some(window) = self.window
@@ -591,8 +587,8 @@ pub trait MemoryStore: Send + Sync {
 
     async fn team_sessions(
         &self,
-        _since: Option<DateTime<Utc>>,
-        _before: Option<DateTime<Utc>>,
+        _since: Option<Timestamp>,
+        _before: Option<Timestamp>,
         _limit: u32,
     ) -> Result<Vec<TeamSession>, MemoryStoreError> {
         Ok(Vec::new())

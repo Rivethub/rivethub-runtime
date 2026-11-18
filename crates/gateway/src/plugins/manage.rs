@@ -1,7 +1,7 @@
+use jiff::Timestamp;
 use std::path::Path;
 use std::sync::Arc;
 
-use chrono::Utc;
 use tokio_util::task::TaskTracker;
 use wire::plugin::PluginId;
 use wire::plugin::host::{PluginLogStream, PluginRecord, PluginState};
@@ -147,7 +147,7 @@ impl PluginHost {
                     manifest,
                     enabled: false,
                     granted: Vec::new(),
-                    installed_at: Utc::now(),
+                    installed_at: Timestamp::now(),
                     settings: std::collections::BTreeMap::new(),
                 },
                 live: Live::new(PluginState::Disabled),

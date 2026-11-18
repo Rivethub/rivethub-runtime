@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO rh_session_history (session_id, marked_at) VALUES ($1, $2)\n         ON CONFLICT (session_id) DO UPDATE SET marked_at = EXCLUDED.marked_at\n         RETURNING session_id, marked_at",
+  "query": "SELECT session_id, marked_at AS \"marked_at: jiff_sqlx::Timestamp\" FROM rh_session_history\n          ORDER BY marked_at DESC, session_id",
   "describe": {
     "columns": [
       {
@@ -16,7 +16,7 @@
       },
       {
         "ordinal": 1,
-        "name": "marked_at",
+        "name": "marked_at: jiff_sqlx::Timestamp",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
@@ -27,15 +27,12 @@
       }
     ],
     "parameters": {
-      "Left": [
-        "Text",
-        "Timestamptz"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "b11d36db3b4edb2bfe3b67fe284d0d4b04f309a5b82714df0553baeb35c51274"
+  "hash": "f61c8ef48995fa5299f53988e0ce44b5af2aaa84a0b4da2dbee19f509e004c1d"
 }

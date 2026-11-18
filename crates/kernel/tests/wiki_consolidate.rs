@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use jiff::Timestamp;
 use kernel::wiki::consolidate::{
     ConsolidateWiki, WikiFold, WikiTopicStats, consolidation_plan, is_slug_variant,
 };
@@ -18,7 +18,7 @@ fn topic(slug: &str, title: &str, citations: u64) -> WikiTopicStats {
         title: title.to_owned(),
         citations,
         history: 0,
-        created_at: DateTime::<Utc>::UNIX_EPOCH,
+        created_at: Timestamp::UNIX_EPOCH,
         bound: false,
     }
 }
@@ -105,7 +105,7 @@ fn citations_then_history_then_age_pick_a_survivor_among_prefixed_pages()
 -> Result<(), serde_json::Error> {
     let older = WikiTopicStats {
         history: 3,
-        created_at: DateTime::<Utc>::UNIX_EPOCH - Duration::days(1),
+        created_at: Timestamp::UNIX_EPOCH - values::time::elapsed_days(1),
         ..topic("rivethub-repository", "RivetHub repository", 5)
     };
     let plan = consolidation_plan(

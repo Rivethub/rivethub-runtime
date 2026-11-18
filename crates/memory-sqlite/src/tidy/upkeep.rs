@@ -1,8 +1,7 @@
+use jiff::Timestamp;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::DateTime;
-use chrono::Utc;
 use kernel::filing::LeftOut;
 use kernel::filing::bare_session_prefix;
 use kernel::tidy::FilingTally;
@@ -139,7 +138,7 @@ fn tasks(conn: &Connection) -> Result<Vec<TaskActivity>, TidyError> {
 
 #[async_trait]
 impl UpkeepStore for SqliteStore {
-    async fn filing(&self, since: DateTime<Utc>) -> Result<FilingTally, TidyError> {
+    async fn filing(&self, since: Timestamp) -> Result<FilingTally, TidyError> {
         let left_out = LeftOut::rules();
         let prefixes = serde_json::to_string(&left_out.key_prefixes).map_err(stored("prefixes"))?;
         let channels = serde_json::to_string(&left_out.channels).map_err(stored("channels"))?;

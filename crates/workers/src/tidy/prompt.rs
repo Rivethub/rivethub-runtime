@@ -99,7 +99,7 @@ fn activity(listing: &TopicListing, filed: Option<u64>) -> String {
         parts.push(format!("{filed} filed this week"));
     }
     if let Some(at) = listing.last_active {
-        parts.push(format!("last active {}", at.format("%Y-%m-%d")));
+        parts.push(format!("last active {}", at.strftime("%Y-%m-%d")));
     }
     if listing.topic.closed_at.is_some() {
         parts.push("closed".to_owned());
