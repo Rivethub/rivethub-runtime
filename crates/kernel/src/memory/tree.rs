@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use super::MemoryMessageTally;
 use super::MemorySummaryNode;
-use super::SummaryDag;
 use super::SummaryKind;
 use super::VectorState;
+use super::{SUMMARY_PREVIEW_BYTES, SummaryDag};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TreeWindow {
@@ -178,6 +178,75 @@ impl SummaryDag {
                 MemoryMessageTally::default()
             },
         })
+    }
+}
+
+impl SummaryDag {
+    #[must_use]
+    pub fn outline(mut self) -> Self {
+        for node in &mut self.summaries {
+            node.source_message_ids.clear();
+            if node.content.len() > SUMMARY_PREVIEW_BYTES {
+                let mut end = SUMMARY_PREVIEW_BYTES;
+                while !node.content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                node.content.truncate(end);
+                node.truncated = true;
+            }
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn order_top_down(mut self) -> Self {
+        if let Some(root) = self
+            .summaries
+            .iter()
+            .find(|node| node.kind == SummaryKind::Session)
+            .map(|node| node.id.clone())
+        {
+            let position = |node: &MemorySummaryNode| {
+                if !node.kind.is_top_down() {
+                    0
+                } else if node.kind == SummaryKind::Session {
+                    1
+                } else if node.parent_id.as_deref() == Some(root.as_str()) {
+                    2
+                } else {
+                    3
+                }
+            };
+            self.summaries.sort_by(|left, right| {
+                position(left).cmp(&position(right)).then_with(|| {
+                    if left.kind.is_top_down() && right.kind.is_top_down() {
+                        (&left.parent_id, left.summary_ordinal, &left.id).cmp(&(
+                            &right.parent_id,
+                            right.summary_ordinal,
+                            &right.id,
+                        ))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+            });
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn latest(mut self, limit: usize) -> Self {
+        self.summaries.sort_by(|left, right| {
+            (right.kind == SummaryKind::Session)
+                .cmp(&(left.kind == SummaryKind::Session))
+                .then_with(|| right.latest_at.cmp(&left.latest_at))
+                .then_with(|| {
+                    (right.kind == SummaryKind::Leaf).cmp(&(left.kind == SummaryKind::Leaf))
+                })
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.summaries.truncate(limit);
+        self
     }
 }
 
