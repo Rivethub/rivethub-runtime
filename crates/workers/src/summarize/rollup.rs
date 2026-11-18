@@ -135,16 +135,8 @@ fn rollup_record(
     children: &[SummaryNode],
     content: String,
 ) -> Result<NewSummary, WorkerError> {
-    let earliest_at = children
-        .iter()
-        .map(|child| child.earliest_at)
-        .min()
-        .ok_or(WorkerError::Count)?;
-    let latest_at = children
-        .iter()
-        .map(|child| child.latest_at)
-        .max()
-        .ok_or(WorkerError::Count)?;
+    let first = children.first().ok_or(WorkerError::Count)?;
+    let last = children.last().ok_or(WorkerError::Count)?;
     let message_count = children
         .iter()
         .try_fold(0u32, |total, child| total.checked_add(child.message_count))
@@ -156,8 +148,8 @@ fn rollup_record(
         depth: kind.depth(),
         content,
         message_count,
-        earliest_at,
-        latest_at,
+        earliest_at: first.earliest_at,
+        latest_at: last.latest_at,
         model: env.settings.model.clone(),
         pipeline_version: env.settings.pipeline_version,
         created_at: env.now,

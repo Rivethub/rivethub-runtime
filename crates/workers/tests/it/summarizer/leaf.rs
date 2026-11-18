@@ -460,3 +460,46 @@ async fn leaf_prompt_and_record_use_timestamp_extrema_in_transcript_order() {
     assert!(leaf.sources.iter().map(|source| source.message_id).eq(ids));
     drop(written);
 }
+
+#[tokio::test]
+async fn rollup_record_uses_first_and_last_child_bounds() {
+    let id = Uuid::new_v4();
+    let first = at("2026-10-28T10:00:00Z");
+    let last = at("2026-10-28T12:00:00Z");
+    let mut leaves_only = window(id, "cli:bounds", "Bounds", Vec::new());
+    leaves_only.leaves = [
+        (first, at("2026-10-28T18:00:00Z")),
+        (at("2026-10-28T11:00:00Z"), last),
+    ]
+    .into_iter()
+    .map(|(earliest_at, latest_at)| SummaryNode {
+        id: Uuid::new_v4(),
+        kind: SummaryKind::Leaf,
+        content: LEAF_TEXT.to_owned(),
+        message_count: 5,
+        earliest_at,
+        latest_at,
+        depth: 0,
+    })
+    .collect();
+    let store = Arc::new(MemStore::new(vec![leaves_only]));
+    let script = Arc::new(Scripted::success());
+    let settings = SummarySettings::from_parts(SummaryParts {
+        min_leaves_for_branch: 2,
+        branch_batch: 2,
+        ..small_parts()
+    })
+    .expect("settings");
+    let jobs = Arc::new(Seen::default());
+    let token = cancel();
+    let env = bind(&store, &script, &jobs, &settings, last, &token);
+    handle_summarize(&env, &payload_of(id, SummaryTrigger::Explicit))
+        .await
+        .expect("summarize");
+
+    let written = store.written.lock().await;
+    let branch = written.first().expect("branch record");
+    assert_eq!(branch.kind, SummaryKind::Branch);
+    assert_eq!((branch.earliest_at, branch.latest_at), (first, last));
+    drop(written);
+}
