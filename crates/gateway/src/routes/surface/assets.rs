@@ -13,8 +13,6 @@ use axum::response::Response;
 use tower::ServiceExt as _;
 use tower_http::services::ServeDir;
 
-use super::static_blocked;
-use crate::Gateway;
 use crate::error::ApiError;
 
 const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
@@ -40,28 +38,15 @@ enum Decision {
     Reject,
 }
 
-pub(super) async fn serve(
-    gateway: &Gateway,
-    method: &Method,
-    path: &str,
-) -> Result<Response, ApiError> {
-    let Some(root) = gateway.settings().static_dir.clone() else {
-        return Err(ApiError::NotFound("not found"));
-    };
-    if *method != Method::GET && *method != Method::HEAD {
-        return Err(ApiError::NotFound("not found"));
-    }
-    if static_blocked(path) {
-        return Err(ApiError::NotFound("not found"));
-    }
+pub(super) async fn serve(root: &Path, method: &Method, path: &str) -> Result<Response, ApiError> {
     let owned = path.to_owned();
-    let root_for_class = root.clone();
+    let root_for_class = root.to_owned();
     let joined = tokio::task::spawn_blocking(move || decide(&root_for_class, &owned)).await;
     match super::super::join_task(joined)?? {
         Decision::Reject => Err(ApiError::NotFound("not found")),
-        Decision::File => read_served(&root, method, path, path).await,
-        Decision::Index => read_served(&root, method, &index_path(path), path).await,
-        Decision::Spa => read_served(&root, method, "/index.html", path).await,
+        Decision::File => read_served(root, method, path, path).await,
+        Decision::Index => read_served(root, method, &index_path(path), path).await,
+        Decision::Spa => read_served(root, method, "/index.html", path).await,
     }
 }
 

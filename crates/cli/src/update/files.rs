@@ -26,24 +26,7 @@ impl Installation {
             .canonicalize()?;
         regular(&directory, &binary)?;
         let lock_path = directory.join(".rh-update.lock");
-        match lock_path.symlink_metadata() {
-            Ok(metadata) if !metadata.is_file() => return Err(UpdateError::Path(lock_path)),
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        let lock = OpenOptions::new()
-            .custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits())
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(lock_path)?;
-        match lock.try_lock() {
-            Ok(()) => {}
-            Err(std::fs::TryLockError::WouldBlock) => return Err(UpdateError::Busy),
-            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
-        }
+        let lock = lock(&lock_path)?;
         let staging = tempfile::Builder::new()
             .prefix(".rh-update-")
             .tempdir_in(&directory)?;
@@ -86,6 +69,28 @@ impl Installation {
         File::open(&self.directory)?.sync_all()?;
         Ok(())
     }
+}
+
+pub(super) fn lock(lock_path: &Path) -> Result<File, UpdateError> {
+    match lock_path.symlink_metadata() {
+        Ok(metadata) if !metadata.is_file() => return Err(UpdateError::Path(lock_path.to_owned())),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let lock = OpenOptions::new()
+        .custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits())
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(UpdateError::Busy),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
+    Ok(lock)
 }
 
 pub(super) fn regular(root: &Path, path: &Path) -> Result<(), UpdateError> {

@@ -84,6 +84,26 @@ pub(super) async fn stage(
     Ok(revision)
 }
 
+pub(super) async fn runtime_version(
+    staging: &Path,
+    env: &Environment,
+    shutdown: &CancellationToken,
+) -> Result<String, UpdateError> {
+    let mut rh = tokio::process::Command::new(staging.join("rh"));
+    rh.env_clear()
+        .envs(env.iter())
+        .kill_on_drop(true)
+        .arg("version");
+    let result = require_success(capture(rh, "rh", shutdown).await?)?;
+    let version = result
+        .stdout
+        .strip_prefix("RivetHub v")
+        .and_then(|version| version.split_whitespace().next())
+        .ok_or_else(|| UpdateError::Version(result.stdout.clone()))?;
+    semver::Version::parse(version).map_err(|_| UpdateError::Version(version.to_owned()))?;
+    Ok(version.to_owned())
+}
+
 async fn git(
     root: &Path,
     args: &[&str],

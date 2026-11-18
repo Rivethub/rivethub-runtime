@@ -95,6 +95,7 @@ async fn health(env: &Environment) -> Result<Report, Error> {
         parts.push(format!("; uptime {uptime}s"));
     }
     parts.push("\n".to_owned());
+    parts.push(web_line(env, &loaded.config).await);
     if let Some(policy) = &health.response.policy {
         parts.push(policy_line(policy));
     }
@@ -107,6 +108,25 @@ async fn health(env: &Environment) -> Result<Report, Error> {
     let mut report = Report::success(parts.join(""));
     report.stderr = notices;
     Ok(report)
+}
+
+async fn web_line(env: &Environment, config: &Config) -> String {
+    if gateway::explicit_static_dir(config, env).is_some() {
+        return "Web: explicit static_dir\n".to_owned();
+    }
+    if let Ok(state) = gateway::state_dir(env) {
+        let current = gateway::managed_web_link(&state);
+        if let Ok(target) = tokio::fs::read_link(&current).await
+            && let Some(version) = target.to_str()
+            && semver::Version::parse(version).is_ok()
+            && tokio::fs::metadata(current.join("index.html"))
+                .await
+                .is_ok_and(|entry| entry.is_file())
+        {
+            return format!("Web: {version}\n");
+        }
+    }
+    "Web: none\n".to_owned()
 }
 
 async fn fetch(client: &reqwest::Client, url: url::Url) -> Result<Health, Error> {

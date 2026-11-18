@@ -41,7 +41,9 @@ use crate::auth::DenialLog;
 
 pub use crate::login::AuthPolicy;
 pub use crate::models::ModelAssignment;
-pub use crate::settings::{REQUEST_DEADLINE, Settings, SettingsError, state_dir};
+pub use crate::settings::{
+    REQUEST_DEADLINE, Settings, SettingsError, explicit_static_dir, managed_web_link, state_dir,
+};
 pub use crate::store_ports::StorePorts;
 pub use crate::tls_resolve::private_ca;
 

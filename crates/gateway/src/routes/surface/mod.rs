@@ -1,5 +1,6 @@
 mod assets;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -27,28 +28,55 @@ pub(super) fn mount(router: Router<Arc<Gateway>>) -> Router<Arc<Gateway>> {
         .fallback(fallback)
 }
 
-const NO_APP_PAGE: &str = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>RivetHub</title></head>\n<body>\n<h1>This RivetHub node is running</h1>\n<p>The web app is not installed on this node.</p>\n<p>Agents read memory over MCP. The app is in preview.</p>\n</body>\n</html>\n";
+const NO_APP_PAGE: &str = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>RivetHub</title></head>\n<body>\n<h1>This RivetHub node is running</h1>\n<p>The web app is not installed on this node. Run <code>rh update</code> to install it.</p>\n<p>Agents read memory over MCP. The app is in preview.</p>\n</body>\n</html>\n";
 
 async fn root_get(State(gateway): State<Arc<Gateway>>) -> Response {
     if let Some(target) = gateway.settings().root_redirect.clone() {
         return redirect(&target).into_response();
     }
-    if gateway.settings().static_dir.is_none() {
+    let Some(root) = static_root(&gateway).await else {
         return no_app_page(&Method::GET);
-    }
+    };
     gateway.count(crate::account::UsageEvent::AppOpen);
-    assets::serve(&gateway, &Method::GET, "/")
+    assets::serve(&root, &Method::GET, "/")
         .await
         .into_response()
 }
 
 async fn root_head(State(gateway): State<Arc<Gateway>>) -> Response {
-    if gateway.settings().static_dir.is_none() {
+    let Some(root) = static_root(&gateway).await else {
         return no_app_page(&Method::HEAD);
-    }
-    assets::serve(&gateway, &Method::HEAD, "/")
+    };
+    assets::serve(&root, &Method::HEAD, "/")
         .await
         .into_response()
+}
+
+async fn static_root(gateway: &Gateway) -> Option<PathBuf> {
+    if let Some(root) = &gateway.settings().static_dir {
+        return Some(root.clone());
+    }
+    let link = crate::managed_web_link(&gateway.settings().state_dir);
+    match managed_root(link).await {
+        Ok(root) => root,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the managed web bundle");
+            None
+        }
+    }
+}
+
+async fn managed_root(link: PathBuf) -> std::io::Result<Option<PathBuf>> {
+    let root = match tokio::fs::canonicalize(link).await {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    match tokio::fs::metadata(root.join("index.html")).await {
+        Ok(metadata) => Ok(metadata.is_file().then_some(root)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn no_app_page(method: &Method) -> Response {
@@ -85,12 +113,13 @@ fn redirect(target: &str) -> Result<Response, ApiError> {
 async fn fallback(State(gateway): State<Arc<Gateway>>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
-    if method != Method::GET && method != Method::HEAD {
+    if !serves_public_asset(&method, &path) {
         return super::not_found().await.into_response();
     }
-    assets::serve(&gateway, &method, &path)
-        .await
-        .into_response()
+    let Some(root) = static_root(&gateway).await else {
+        return super::not_found().await.into_response();
+    };
+    assets::serve(&root, &method, &path).await.into_response()
 }
 
 pub(super) fn serves_public_asset(method: &Method, path: &str) -> bool {
