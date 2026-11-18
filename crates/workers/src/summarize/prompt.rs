@@ -28,8 +28,7 @@ pub(super) fn leaf_user(
     provenance: Option<&Provenance>,
     messages: &[WindowMessage],
 ) -> Result<String, WorkerError> {
-    let start = messages.first().ok_or(WorkerError::Count)?.created_at;
-    let end = messages.last().ok_or(WorkerError::Count)?.created_at;
+    let (start, end) = super::leaf::leaf_span(messages)?;
     let count = messages.len();
     let header = header(
         head,

@@ -413,3 +413,50 @@ async fn imported_leaf_prompt_quotes_the_transcript() {
     );
     assert_eq!(user.matches("[end]").count(), 1, "{user}");
 }
+
+#[tokio::test]
+async fn leaf_prompt_and_record_use_timestamp_extrema_in_transcript_order() {
+    let id = Uuid::new_v4();
+    let start = at("2026-10-28T10:00:00Z");
+    let end = at("2026-10-28T18:00:00Z");
+    let mut rows = messages(start, 3);
+    for (row, stamp) in rows
+        .iter_mut()
+        .zip([end, start, at("2026-10-28T10:05:00Z")])
+    {
+        row.created_at = stamp;
+    }
+    let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+    let store = Arc::new(MemStore::new(vec![window(
+        id,
+        "cli:bounds",
+        "Bounds",
+        rows,
+    )]));
+    let script = Arc::new(Scripted::success());
+    let settings = small_settings();
+    let jobs = Arc::new(Seen::default());
+    let token = cancel();
+    let env = bind(&store, &script, &jobs, &settings, end, &token);
+    handle_summarize(&env, &payload_of(id, SummaryTrigger::Explicit))
+        .await
+        .expect("summarize");
+
+    let prompt = script
+        .calls
+        .lock()
+        .await
+        .first()
+        .expect("leaf prompt")
+        .user
+        .clone();
+    assert!(
+        prompt.contains("2026-10-28T10:00Z → 2026-10-28T18:00Z"),
+        "{prompt}"
+    );
+    let written = store.written.lock().await;
+    let leaf = written.first().expect("leaf record");
+    assert_eq!((leaf.earliest_at, leaf.latest_at), (start, end));
+    assert!(leaf.sources.iter().map(|source| source.message_id).eq(ids));
+    drop(written);
+}

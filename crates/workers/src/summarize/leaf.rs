@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use kernel::memory::ConversationHead;
 use kernel::memory::ConversationWindow;
 use kernel::memory::NewSummary;
@@ -86,16 +87,7 @@ fn leaf_record(
     messages: &[WindowMessage],
     content: String,
 ) -> Result<NewSummary, WorkerError> {
-    let start = messages
-        .iter()
-        .map(|message| message.created_at)
-        .min()
-        .ok_or(WorkerError::Count)?;
-    let end = messages
-        .iter()
-        .map(|message| message.created_at)
-        .max()
-        .ok_or(WorkerError::Count)?;
+    let (start, end) = leaf_span(messages)?;
     let mut sources = Vec::with_capacity(messages.len());
     for (index, message) in messages.iter().enumerate() {
         sources.push(SummarySource {
@@ -118,6 +110,22 @@ fn leaf_record(
         sources,
         child_ids: Vec::new(),
     })
+}
+
+pub(super) fn leaf_span(
+    messages: &[WindowMessage],
+) -> Result<(DateTime<Utc>, DateTime<Utc>), WorkerError> {
+    let start = messages
+        .iter()
+        .map(|message| message.created_at)
+        .min()
+        .ok_or(WorkerError::Count)?;
+    let end = messages
+        .iter()
+        .map(|message| message.created_at)
+        .max()
+        .ok_or(WorkerError::Count)?;
+    Ok((start, end))
 }
 
 pub(super) fn node_from(summary: &NewSummary) -> SummaryNode {
