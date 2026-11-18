@@ -7,6 +7,23 @@ use super::{Claim, Part, Record, Store};
 use crate::drops::{DropId, DropsConfig, OpenError, Rates};
 use crate::tenancy::UserId;
 
+#[tokio::test]
+async fn drops_with_a_large_configured_ttl_saturate_at_the_timestamp_ceiling()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let mut settings = config(dir.path().join("drops"));
+    settings.ttl = wire::time::elapsed_days(5_000_000);
+    let store = Store::open(&settings)?;
+    let owner: UserId = "alice".parse()?;
+    let body = bytes::Bytes::from_static(b"age-encryption.org/v1\nsealed");
+    let reservation = store.reserve(&owner, u64::try_from(body.len())?)?;
+    let stored = store
+        .receive(reservation, futures::stream::iter([Ok(body)]))
+        .await?;
+    assert_eq!(stored.expires_at, Timestamp::MAX);
+    Ok(())
+}
+
 fn config(root: std::path::PathBuf) -> DropsConfig {
     DropsConfig {
         root,

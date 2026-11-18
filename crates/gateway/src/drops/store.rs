@@ -372,7 +372,9 @@ impl Store {
         file.sync_all().await?;
         drop(file);
         let created_at = Timestamp::now();
-        let expires_at = created_at + self.ttl;
+        let expires_at = created_at
+            .saturating_add(self.ttl)
+            .map_err(std::io::Error::other)?;
         let record = Record {
             owner: reservation.owner.as_str().to_owned(),
             bytes: total,
