@@ -285,6 +285,7 @@ mod tests {
 
     fn summary(content: &str) -> WikiSummary {
         WikiSummary {
+            delivery: None,
             id: Uuid::new_v4(),
             conversation_id: None,
             content: content.to_owned(),

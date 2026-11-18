@@ -243,7 +243,15 @@ async fn check_summary(pool: &PgPool, memory: &PostgresMemory) -> TestResult {
         .expect("summary");
     assert_eq!(loaded.content, "summary body");
     assert_eq!(loaded.tool_result, None);
-    EmbeddingStore::write(memory, stored(target.clone(), "unused", Vec::new())).await?;
+    EmbeddingStore::write(
+        memory,
+        stored(
+            target.clone(),
+            &kernel::memory::summary_reference::embedding_input_hash("summary body"),
+            Vec::new(),
+        ),
+    )
+    .await?;
     settle(
         memory,
         &target,

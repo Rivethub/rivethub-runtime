@@ -20,7 +20,7 @@ pub(super) const LEAF: &str = "\
 SELECT s.id, s.conversation_id, s.content,
        coalesce(s.earliest_at, s.created_at) AS start_at,
        coalesce(s.latest_at, s.earliest_at, s.created_at) AS end_at,
-       s.owner_user_id
+       s.owner_user_id, s.input_key
   FROM rh_summaries s WHERE s.id = $1";
 
 pub(super) const DONE: &str = "\

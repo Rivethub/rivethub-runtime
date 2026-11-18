@@ -97,6 +97,11 @@ impl EntityLease for PgLease {
         }
         let conn = held(&mut self.conn)?;
         let mut tx = conn.begin().await.map_err(query_error)?;
+        let inputs: Vec<_> = std::iter::once(body.session_id)
+            .chain(body.history.iter().map(|line| line.summary_id))
+            .chain(body.facts.iter().map(|fact| fact.summary_id))
+            .collect();
+        guard(&mut tx, &inputs, &body.owner).await?;
         let view = load_view(&mut tx, self.id).await?;
         let older = mark_is_ahead(&mut tx, view.id, body).await?;
         write_rewrite(&mut tx, view.id, body, older).await?;
@@ -120,6 +125,10 @@ impl EntityLease for PgLease {
         }
         let conn = held(&mut self.conn)?;
         let mut tx = conn.begin().await.map_err(query_error)?;
+        let inputs: Vec<_> = std::iter::once(note.session_id)
+            .chain(note.history.iter().map(|line| line.summary_id))
+            .collect();
+        guard(&mut tx, &inputs, &note.owner).await?;
         let view = load_view(&mut tx, self.id).await?;
         if let Some(line) = &note.history {
             upsert_history(&mut tx, view.id, line, &note.owner).await?;
@@ -252,4 +261,20 @@ pub(super) async fn commit_page(
         git_sha: sha,
         slug: view.slug.clone(),
     })
+}
+
+async fn guard(
+    tx: &mut Transaction<'_, Postgres>,
+    ids: &[Uuid],
+    owner: &str,
+) -> Result<(), EntityStoreError> {
+    let inputs = crate::summary_replace::shared(tx, ids)
+        .await
+        .map_err(super::error::fence_error)?;
+    if let Some(input) = inputs.iter().find(|input| input.owner_user_id != owner) {
+        return Err(
+            kernel::memory::summary_reference::SummaryReferenceError::Stale(input.id).into(),
+        );
+    }
+    Ok(())
 }

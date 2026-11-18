@@ -56,7 +56,7 @@ async fn a_type_alias_and_its_decision_are_stored(pool: PgPool) -> TestResult {
 
 async fn new_kind(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let fleet = commit(&memory, &leaf, "north", "Fleets", &[], None).await?;
     assert_eq!(fleet.type_name, "Fleets");
     assert_eq!(fleet.type_slug, "fleets");
@@ -73,7 +73,7 @@ async fn new_kind(pool: PgPool) -> TestResult {
 
 async fn name_pairs(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let pairs = [
         (
             "Hugging Face",
@@ -132,7 +132,7 @@ async fn name_pairs(pool: PgPool) -> TestResult {
 
 async fn repo_tails(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let repo = commit(&memory, &leaf, "acme/datahub", "Repos", &[], None).await?;
     assert!(contains(&memory, &["datahub".to_owned()], "Services", repo.id).await?);
     let bound = commit(&memory, &leaf, "datahub", "Services", &[], None).await?;
@@ -165,8 +165,8 @@ async fn repo_tails(pool: PgPool) -> TestResult {
 
 async fn concurrent(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let left_leaf = leaf();
-    let right_leaf = leaf();
+    let left_leaf = leaf(&pool).await?;
+    let right_leaf = leaf(&pool).await?;
     let (left, right) = tokio::join!(
         commit(
             &memory,
@@ -188,7 +188,7 @@ async fn concurrent(pool: PgPool) -> TestResult {
 
 async fn rejected_alias(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let nvidia = commit(&memory, &leaf, "nvidia", "Organizations", &[], None).await?;
     let card = commit(
         &memory,
@@ -210,7 +210,7 @@ async fn rejected_alias(pool: PgPool) -> TestResult {
 
 async fn hostname_match(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let hally = commit(&memory, &leaf, "hally", "Hosts", &["G9".to_owned()], None).await?;
     let summary = seed_summary(&pool).await?;
     sqlx::query(
@@ -271,7 +271,7 @@ async fn hostname_match(pool: PgPool) -> TestResult {
 
 async fn stored_type(pool: PgPool) -> TestResult {
     let memory = memory(&pool).await?;
-    let leaf = leaf();
+    let leaf = leaf(&pool).await?;
     let host = commit(&memory, &leaf, "hally", "Hosts", &[], None).await?;
     assert_eq!(host.type_name, "Hosts");
     memory.remember_type_alias("Hosts", "machine").await?;
@@ -392,15 +392,18 @@ async fn commit(
         .ok_or_else(|| "commit skipped".into())
 }
 
-fn leaf() -> EntityLeaf {
-    EntityLeaf {
+async fn leaf(pool: &PgPool) -> Result<EntityLeaf, sqlx::Error> {
+    let leaf = EntityLeaf {
+        delivery: None,
         id: Uuid::new_v4(),
         conversation_id: None,
         content: "leaf".to_owned(),
         start: at("2026-11-07T00:00:00Z"),
         end: at("2026-11-07T01:00:00Z"),
         owner: Some("owner".to_owned()),
-    }
+    };
+    crate::common::seed_entity_leaf(pool, &leaf).await?;
+    Ok(leaf)
 }
 
 fn at(text: &str) -> DateTime<Utc> {

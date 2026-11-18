@@ -9,6 +9,7 @@ pub(super) fn store_error(error: WikiStoreError) -> EntityStoreError {
     match error {
         WikiStoreError::DirectoryMissing => EntityStoreError::DirectoryMissing,
         WikiStoreError::Page(error) => EntityStoreError::Page(error),
+        WikiStoreError::Reference(error) => EntityStoreError::Reference(error),
         WikiStoreError::Missing(id) => EntityStoreError::Missing(id),
         WikiStoreError::Query(error) => EntityStoreError::Query(error),
         WikiStoreError::ConversationMismatch(id) => {
@@ -19,5 +20,12 @@ pub(super) fn store_error(error: WikiStoreError) -> EntityStoreError {
         | WikiStoreError::InvalidPatch(slug) => {
             EntityStoreError::Query(Box::new(std::io::Error::other(slug)))
         }
+    }
+}
+
+pub(super) fn fence_error(error: crate::summary_replace::FenceError) -> EntityStoreError {
+    match error {
+        crate::summary_replace::FenceError::Reference(error) => error.into(),
+        crate::summary_replace::FenceError::Query(error) => query_error(error),
     }
 }

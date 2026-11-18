@@ -37,3 +37,5 @@ mod unembedded_sweep;
 mod wiki_consolidate;
 mod wiki_imports;
 mod wiki_routes;
+
+mod top_down_references;

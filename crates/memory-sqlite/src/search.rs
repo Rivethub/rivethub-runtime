@@ -583,9 +583,8 @@ fn bump(conn: &mut Connection, rows: &[Candidate], at: &str) -> Result<(), Sqlit
     if rows.is_empty() {
         return Ok(());
     }
-    let tx = conn
-        .transaction()
-        .map_err(SqliteError::query("search access"))?;
+    let tx =
+        crate::summary_replace::immediate(conn).map_err(SqliteError::query("search access"))?;
     for row in rows {
         bump_one(&tx, row, at)?;
     }
@@ -602,7 +601,7 @@ fn bump_one(tx: &rusqlite::Transaction<'_>, row: &Candidate, at: &str) -> Result
     let updated = tx
         .execute(sql, params![at, row.id])
         .map_err(SqliteError::query("search access"))?;
-    if updated == 1 {
+    if updated == 1 || row.source() == MemoryHitSource::Summary {
         Ok(())
     } else {
         Err(SqliteError::MissingHit { id: row.id.clone() })

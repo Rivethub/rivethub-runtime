@@ -17,9 +17,8 @@ const SUMMARIES: i64 = 400;
 
 #[derive(Debug, sqlx::FromRow)]
 struct SummaryRow {
+    id: Uuid,
     topic_id: Option<Uuid>,
-    created_at: DateTime<Utc>,
-    content: String,
 }
 
 #[async_trait]
@@ -38,8 +37,9 @@ impl WikiRecompileStore for PostgresMemory {
         };
         let history = repository.history_since(&local, since).await?;
         page.meta.slug = slug.clone();
-        let summaries = sqlx::query_as::<_, SummaryRow>(
-            "SELECT p.topic_id, s.created_at, s.content
+        let mut conn = self.pool.acquire().await.map_err(query_error)?;
+        let rows = sqlx::query_as::<_, SummaryRow>(
+            "SELECT s.id, p.topic_id
                FROM rh_wiki_citations w
                JOIN rh_summaries s ON s.id = w.summary_id
                LEFT JOIN rh_conversations c ON c.id = s.conversation_id
@@ -50,16 +50,27 @@ impl WikiRecompileStore for PostgresMemory {
         )
         .bind(slug.as_ref())
         .bind(SUMMARIES)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await
-        .map_err(query_error)?
-        .into_iter()
-        .map(|row| SourceSummary {
-            topic: row.topic_id.map(|topic| topic.to_string()),
-            at: row.created_at,
-            content: row.content,
-        })
-        .collect();
+        .map_err(query_error)?;
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let job = kernel::wiki::builder::ExtractWiki {
+                summary_id: row.id,
+                conversation_id: None,
+            };
+            let input = match super::load_summary(&mut conn, &job, false).await {
+                Ok(input) => input,
+                Err(error) if error.obsolete_input() => continue,
+                Err(error) => return Err(error),
+            };
+            summaries.push(SourceSummary {
+                topic: row.topic_id.map(|topic| topic.to_string()),
+                at: input.created_at.unwrap_or(since),
+                content: input.content.clone(),
+                input: Some(input),
+            });
+        }
         Ok(Some(RecompileSource {
             page,
             history,
@@ -116,6 +127,7 @@ impl PostgresMemory {
         now: DateTime<Utc>,
     ) -> Result<String, WikiStoreError> {
         let Recompiled {
+            inputs,
             base,
             mut page,
             mut archived,
@@ -123,6 +135,13 @@ impl PostgresMemory {
         } = recompiled;
         let slug = placed.key.clone();
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        let ids: Vec<_> = inputs.iter().map(|input| input.id).collect();
+        let current = crate::summary_replace::shared(&mut tx, &ids)
+            .await
+            .map_err(super::fence_error)?;
+        for input in &inputs {
+            super::validate_input(&current, input)?;
+        }
         lock_slug(&mut tx, &slug).await?;
         let current = repository.read(&placed.local).await?.map(|mut current| {
             current.meta.slug = page.meta.slug.clone();

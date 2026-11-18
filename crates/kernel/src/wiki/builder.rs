@@ -72,10 +72,20 @@ pub struct WikiSummary {
     pub owner: Option<Owner>,
     #[serde(skip)]
     pub created_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
+    pub delivery: Option<SummaryDelivery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SummaryDelivery {
+    pub input_key: Vec<u8>,
+    pub pending: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WikiRouting {
+    pub deferred: Option<DeferredWiki>,
+    pub input: Option<WikiSummary>,
     pub topic_page: Option<WikiSlug>,
     pub cited: Vec<WikiSlug>,
     pub merged: Vec<MergedPage>,
@@ -130,6 +140,8 @@ pub enum WikiWork {
 
 #[derive(Debug, Error)]
 pub enum WikiStoreError {
+    #[error(transparent)]
+    Reference(#[from] crate::memory::summary_reference::SummaryReferenceError),
     #[error("wiki directory is not configured")]
     DirectoryMissing,
     #[error("wiki page write failed: {0}")]
@@ -146,6 +158,16 @@ pub enum WikiStoreError {
     TopicMissing(String),
     #[error("invalid wiki patch: {0}")]
     InvalidPatch(String),
+}
+
+impl WikiStoreError {
+    #[must_use]
+    pub const fn obsolete_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Reference(_) | Self::Missing(_) | Self::ConversationMismatch(_)
+        )
+    }
 }
 
 #[async_trait]
@@ -193,6 +215,14 @@ pub trait WikiBuilderStore: Send + Sync {
     ) -> Result<Vec<Coalescable>, WikiStoreError> {
         let _: (Uuid, TopicId, u32) = (lead, topic, limit);
         Ok(Vec::new())
+    }
+
+    async fn lease_summary_effects(
+        &self,
+        _ids: &[Uuid],
+        _expected: &[&WikiSummary],
+    ) -> Result<RouteLease, WikiStoreError> {
+        Ok(RouteLease::sole())
     }
 
     async fn lease_route(&self, route: &str) -> Result<Option<RouteLease>, WikiStoreError> {

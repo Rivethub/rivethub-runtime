@@ -32,6 +32,7 @@ mod stats;
 mod summary_dag;
 mod summary_opening;
 mod summary_port;
+mod summary_replace;
 mod tags;
 mod tags_suggest;
 mod tags_write;

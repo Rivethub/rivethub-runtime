@@ -253,10 +253,11 @@ impl SqliteStore {
     async fn facts<T, F>(&self, operation: &'static str, work: F) -> Result<T, FactError>
     where
         T: Send + 'static,
-        F: FnOnce(&Connection) -> Result<T, FactError> + Send + 'static,
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, FactError> + Send + 'static,
     {
         self.with_conn(move |conn| {
-            let tx = conn.transaction().map_err(SqliteError::query(operation))?;
+            let tx =
+                crate::summary_replace::immediate(conn).map_err(SqliteError::query(operation))?;
             let done = work(&tx);
             if done.is_ok() {
                 tx.commit().map_err(SqliteError::query(operation))?;
@@ -273,7 +274,34 @@ impl FactStore for SqliteStore {
     async fn assert_facts(&self, claims: &[NewClaim]) -> Result<(), FactError> {
         let claims = claims.to_vec();
         self.facts("fact claim", move |conn| {
-            claims.iter().try_for_each(|claim| insert(conn, claim))
+            for claim in &claims {
+                if let Said::Writer { summary, .. } = &claim.said {
+                    let input = crate::summary_replace::shared(conn, *summary).map_err(
+                        |error| match error {
+                            crate::summary_replace::FenceError::Reference(error) => {
+                                FactError::SummaryReference(error)
+                            }
+                            crate::summary_replace::FenceError::Query(error) => {
+                                failed("fact source")(error)
+                            }
+                        },
+                    )?;
+                    if claim
+                        .owner
+                        .as_ref()
+                        .is_some_and(|owner| Some(owner.as_str()) != input.owner.as_deref())
+                    {
+                        return Err(
+                            kernel::memory::summary_reference::SummaryReferenceError::Stale(
+                                *summary,
+                            )
+                            .into(),
+                        );
+                    }
+                }
+                insert(conn, claim)?;
+            }
+            Ok(())
         })
         .await
     }

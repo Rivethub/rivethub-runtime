@@ -62,6 +62,7 @@ pub struct ClaimedSqliteJob {
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum FailOutcome {
+    Gone,
     Retry,
     Dead,
 }
@@ -335,30 +336,38 @@ fn fail_one(
     error: &str,
     now: DateTime<Utc>,
 ) -> Result<FailOutcome, SqliteError> {
-    let tx = conn
-        .transaction()
-        .map_err(SqliteError::query("job fail begin"))?;
+    let tx =
+        crate::summary_replace::immediate(conn).map_err(SqliteError::query("job fail begin"))?;
     let found = tx
         .query_row(
-            "SELECT attempts, max_attempts FROM ros_jobs WHERE id = ?1",
+            "SELECT attempts, max_attempts, task, payload FROM ros_jobs WHERE id = ?1",
             [id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(SqliteError::query("job fail load"))?;
-    let Some((attempts, max_attempts)) = found else {
+    let Some((attempts, max_attempts, task, payload)) = found else {
         return Err(SqliteError::MissingJob { id: id.to_owned() });
     };
+    if !crate::summary_replace::live_job(&tx, &task, &payload)? {
+        tx.execute("DELETE FROM ros_jobs WHERE id = ?1", [id])
+            .map_err(SqliteError::query("discard expired summary job"))?;
+        tx.commit().map_err(SqliteError::query("job fail commit"))?;
+        return Ok(FailOutcome::Gone);
+    }
     let attempts = u32::try_from(attempts).map_err(SqliteError::Count)?;
     let max_attempts = u32::try_from(max_attempts).map_err(SqliteError::Count)?;
-    let outcome = if attempts >= max_attempts.min(kernel::flagged::FLAG_AFTER_FAILURES) {
-        FailOutcome::Dead
+    let (outcome, state) = if attempts >= max_attempts.min(kernel::flagged::FLAG_AFTER_FAILURES) {
+        (FailOutcome::Dead, JobState::Dead)
     } else {
-        FailOutcome::Retry
-    };
-    let state = match outcome {
-        FailOutcome::Dead => JobState::Dead,
-        FailOutcome::Retry => JobState::Queued,
+        (FailOutcome::Retry, JobState::Queued)
     };
     let run_at = later(now, attempts)?;
     let clipped: String = error.chars().take(ERROR_CHARS).collect();

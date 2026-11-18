@@ -21,25 +21,18 @@ struct DeferredRow {
 }
 
 pub(super) async fn defer(pool: &PgPool, deferred: DeferredWiki) -> Result<(), WikiStoreError> {
-    sqlx::query(
-        "INSERT INTO rh_wiki_deferred
-             (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at,
-              owner_user_id)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, (SELECT owner_user_id FROM rh_summaries WHERE id = $1))
-         ON CONFLICT (summary_id) DO UPDATE SET waits_session = EXCLUDED.waits_session,
-            waits_conversation = EXCLUDED.waits_conversation, applied_topic = EXCLUDED.applied_topic,
-            patches = EXCLUDED.patches, deferred_at = EXCLUDED.deferred_at",
+    let mut tx = pool.begin().await.map_err(query_error)?;
+    guard(&mut tx, deferred.summary_id).await?;
+    upsert(&mut tx, &deferred).await?;
+    crate::summary_replace::complete_legacy(
+        &mut tx,
+        deferred.summary_id,
+        kernel::memory::summary_reference::SummaryConsumer::Wiki,
+        kernel::wiki::builder::WIKI_PIPELINE_VERSION,
     )
-    .bind(deferred.summary_id)
-    .bind(deferred.waits.session().map(SessionId::as_str))
-    .bind(deferred.waits.conversation())
-    .bind(deferred.applied.map(TopicId::uuid))
-    .bind(encoded(&deferred.patches)?)
-    .bind(deferred.at)
-    .execute(pool)
     .await
     .map_err(query_error)?;
-    Ok(())
+    tx.commit().await.map_err(query_error)
 }
 
 pub(super) async fn unsettled(
@@ -86,6 +79,7 @@ pub(super) async fn cite(
         summary_id,
         conversation_id: None,
     };
+    guard(&mut tx, summary_id).await?;
     let summary = load_summary(&mut tx, &job, false).await?;
     topics::cite(&mut tx, slug.as_ref(), &summary, now).await?;
     tx.commit().await.map_err(query_error)
@@ -97,6 +91,7 @@ pub(super) async fn uncite(
     slug: &WikiSlug,
 ) -> Result<(), WikiStoreError> {
     let mut tx = pool.begin().await.map_err(query_error)?;
+    guard(&mut tx, summary_id).await?;
     for statement in [
         "DELETE FROM rh_wiki_citations WHERE topic_slug = $1 AND summary_id = $2
             AND NOT EXISTS (SELECT 1 FROM rh_wiki_extractions e
@@ -122,4 +117,39 @@ fn encoded<T: serde::Serialize>(value: &T) -> Result<String, WikiStoreError> {
 
 fn invalid(error: impl std::fmt::Display) -> WikiStoreError {
     WikiStoreError::InvalidPatch(error.to_string())
+}
+
+async fn guard(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Uuid,
+) -> Result<(), WikiStoreError> {
+    crate::summary_replace::shared(tx, &[id])
+        .await
+        .map_err(super::fence_error)?;
+    Ok(())
+}
+
+pub(super) async fn upsert(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    deferred: &DeferredWiki,
+) -> Result<(), WikiStoreError> {
+    sqlx::query(
+        "INSERT INTO rh_wiki_deferred
+             (summary_id, waits_session, waits_conversation, applied_topic, patches, deferred_at,
+              owner_user_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, (SELECT owner_user_id FROM rh_summaries WHERE id = $1))
+         ON CONFLICT (summary_id) DO UPDATE SET waits_session = EXCLUDED.waits_session,
+            waits_conversation = EXCLUDED.waits_conversation, applied_topic = EXCLUDED.applied_topic,
+            patches = EXCLUDED.patches, deferred_at = EXCLUDED.deferred_at",
+    )
+    .bind(deferred.summary_id)
+    .bind(deferred.waits.session().map(SessionId::as_str))
+    .bind(deferred.waits.conversation())
+    .bind(deferred.applied.map(TopicId::uuid))
+    .bind(encoded(&deferred.patches)?)
+    .bind(deferred.at)
+    .execute(&mut **tx)
+    .await
+    .map_err(query_error)?;
+    Ok(())
 }

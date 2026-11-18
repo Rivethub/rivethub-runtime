@@ -106,7 +106,7 @@ impl JobQueue for SqliteStore {
             .await
             .map_err(|error| missing(id, error))?;
         match outcome {
-            FailOutcome::Retry | FailOutcome::Dead => Ok(()),
+            FailOutcome::Gone | FailOutcome::Retry | FailOutcome::Dead => Ok(()),
         }
     }
 
@@ -304,7 +304,8 @@ fn claim_message(error: &SqliteError) -> Option<String> {
         | SqliteError::TagTablesMissing
         | SqliteError::Invalid { .. }
         | SqliteError::Width { .. }
-        | SqliteError::EmbedModel { .. } => None,
+        | SqliteError::EmbedModel { .. }
+        | SqliteError::SummaryReference(_) => None,
     }
 }
 

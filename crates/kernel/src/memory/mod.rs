@@ -36,6 +36,7 @@ mod suggest;
 mod summary;
 pub mod summary_opening;
 pub mod summary_order;
+pub mod summary_reference;
 mod tags;
 mod title;
 mod tree;
@@ -150,6 +151,8 @@ pub use tree::{SummaryCounts, SummaryShape, SummaryTree, TreeCut, TreeWindow, cu
 
 #[derive(Debug, Error)]
 pub enum MemoryStoreError {
+    #[error(transparent)]
+    SummaryReference(#[from] summary_reference::SummaryReferenceError),
     #[error("memory store is unavailable")]
     Unavailable(#[source] BoxError),
     #[error("memory query failed: {message}")]

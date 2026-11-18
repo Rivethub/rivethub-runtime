@@ -258,6 +258,11 @@ impl PostgresMemory {
         now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
+            crate::summary_replace::shared(&mut tx, &[id])
+                .await
+                .map_err(super::fence_error)?;
+        }
         lock_slug(&mut tx, slug.as_ref()).await?;
         let mut stored = repository
             .read(&placed.local)
@@ -287,6 +292,11 @@ impl PostgresMemory {
         now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError> {
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        if let Some(id) = kernel::wiki::origin::NoteOrigin::current() {
+            crate::summary_replace::shared(&mut tx, &[id])
+                .await
+                .map_err(super::fence_error)?;
+        }
         lock_slug(&mut tx, &placed.key).await?;
         let local = WikiSlug::try_from(placed.local.clone())
             .map_err(|error| WikiStoreError::InvalidPatch(error.to_string()))?;

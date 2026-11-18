@@ -166,7 +166,10 @@ pub async fn handle_extract_wiki(
     let work = tokio::select! {
         biased;
         () = env.cancel.cancelled() => return Err(WorkerError::Cancelled),
-        result = env.store.wiki_work(&job) => result?,
+        result = env.store.wiki_work(&job) => match result {
+            Err(error) if error.obsolete_input() => return Ok(Vec::new()),
+            result => result?,
+        },
     };
     let topics = match work {
         WikiWork::Complete { topics } => topics,
@@ -179,10 +182,20 @@ pub async fn handle_extract_wiki(
             ) => {
                 return Err(error);
             }
+            Err(
+                WorkerError::WikiStore(error) | WorkerError::TopicPage(TopicPageError::Wiki(error)),
+            ) if error.obsolete_input() => return Ok(Vec::new()),
             Err(error) => {
-                env.store
+                if let Err(failure) = env
+                    .store
                     .fail_wiki(job.summary_id, &error.to_string(), env.now)
-                    .await?;
+                    .await
+                {
+                    if failure.obsolete_input() {
+                        return Ok(Vec::new());
+                    }
+                    return Err(failure.into());
+                }
                 return Err(error);
             }
         },

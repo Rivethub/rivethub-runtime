@@ -29,6 +29,8 @@ pub use self::state::timeline;
 
 #[derive(Debug, Error)]
 pub enum FactError {
+    #[error(transparent)]
+    SummaryReference(#[from] crate::memory::summary_reference::SummaryReferenceError),
     #[error("A fact needs a key with a letter or digit.")]
     EmptyKey,
     #[error("A fact needs a value.")]

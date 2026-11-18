@@ -7,7 +7,7 @@ use kernel::facts::NewClaim;
 use kernel::facts::Said;
 use kernel::facts::SessionLink;
 use kernel::facts::facts_as_of;
-use kernel::memory::MemoryStore;
+use kernel::memory::{MemoryStore, NewSummary, SummaryKind, SummaryStore};
 use kernel::topics::NewTopic;
 use kernel::topics::Topic;
 use kernel::topics::TopicId;
@@ -117,12 +117,13 @@ fn shown(facts: &[FactState]) -> Vec<(&str, &str, bool, Vec<&str>)> {
 
 pub async fn facts_keep_claims_pins_and_merges<S>(store: &S) -> Outcome
 where
-    S: TopicStore + FactStore + MemoryStore,
+    S: TopicStore + FactStore + MemoryStore + SummaryStore,
 {
     let host = entity(store, "web01", "Hosts").await?;
     let person = entity(store, "Ana", "People").await?;
     let (first, second) = (session(FIRST)?, session(SECOND)?);
-    let (one, two) = (Uuid::new_v4(), Uuid::new_v4());
+    let one = summarized(store, &first, "Set up web01").await?;
+    let two = summarized(store, &second, "Check web01 again").await?;
     store
         .assert_facts(&[
             writer(&host, "OS", "Ubuntu 22.04", &first, one, 0)?,
@@ -183,10 +184,8 @@ where
     let mut stored = store.session_links().await?;
     stored.sort();
     same("sessions link entities", stored, links)?;
-    crate::filing::capture(store, first.as_str(), "claude-code", "Set up web01", None).await?;
-    let sessions = store
-        .fact_sessions(&[first.clone(), second.clone()])
-        .await?;
+    let missing = session("00000000-0000-4000-8000-0000000000f3")?;
+    let sessions = store.fact_sessions(&[first.clone(), missing]).await?;
     same(
         "a captured session has its title and messages",
         sessions
@@ -232,4 +231,32 @@ where
         0,
     )?;
     Ok(())
+}
+
+pub(crate) async fn summarized<S: MemoryStore + SummaryStore>(
+    store: &S,
+    session: &SessionId,
+    text: &str,
+) -> Result<Uuid, Box<dyn std::error::Error>> {
+    let conversation_id =
+        crate::filing::capture(store, session.as_str(), "claude-code", text, None).await?;
+    let id = Uuid::new_v4();
+    store
+        .write_summary(NewSummary {
+            id,
+            conversation_id,
+            kind: SummaryKind::Leaf,
+            depth: 0,
+            content: text.to_owned(),
+            message_count: 1,
+            earliest_at: at(0),
+            latest_at: at(0),
+            model: "fixture".to_owned(),
+            pipeline_version: 6,
+            created_at: at(0),
+            sources: Vec::new(),
+            child_ids: Vec::new(),
+        })
+        .await?;
+    Ok(id)
 }

@@ -295,6 +295,21 @@ async fn chat_release_notes_do_not_reset_the_first_suggestions() -> TestResult {
         .into_iter()
         .filter(|tag| tag.value == "release-notes")
         .collect();
+    for row in &release {
+        if row.entity_type == "summary" {
+            let id = Uuid::parse_str(&row.entity_id)?;
+            if id != summary_id {
+                seed_summary(
+                    &fresh.store,
+                    id,
+                    Some(conversation_id),
+                    "Release note summary.",
+                    &pending.created_at,
+                )
+                .await?;
+            }
+        }
+    }
     let release_vocab: Vec<RecordedVocab> = chat_vocab
         .into_iter()
         .filter(|row| row.value == "release-notes")
@@ -378,6 +393,14 @@ async fn missing_summaries_and_missing_tables_fail_closed() -> TestResult {
 async fn a_check_failure_rolls_the_suggestion_write_back() -> TestResult {
     let fresh = fresh_store()?;
     let summary = Uuid::parse_str("00000000-0000-4000-8000-000000000040")?;
+    seed_summary(
+        &fresh.store,
+        summary,
+        None,
+        "Suggestion source.",
+        common::RECORDED_START,
+    )
+    .await?;
     let stored = fresh
         .store
         .store_tag_suggestions(TagSuggestionWrite {

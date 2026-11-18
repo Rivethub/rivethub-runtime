@@ -179,6 +179,7 @@ async fn file_fleet(memory: &PostgresMemory) -> TestResult {
         history: Vec::new(),
     };
     let leaf = EntityLeaf {
+        delivery: None,
         id: Uuid::new_v4(),
         conversation_id: None,
         content: "The north fleet is based at the yard.".to_owned(),

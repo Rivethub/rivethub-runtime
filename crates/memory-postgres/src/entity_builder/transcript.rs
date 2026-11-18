@@ -45,7 +45,11 @@ pub(super) async fn load_transcript(
     if leaves.is_empty() {
         return Ok(Vec::new());
     }
-    let summary_ids: Vec<Uuid> = leaves.iter().map(|leaf| leaf.id).collect();
+    let summary_ids: Vec<Uuid> = leaves
+        .iter()
+        .filter(|leaf| leaf.delivery.is_none())
+        .map(|leaf| leaf.id)
+        .collect();
     let links = sqlx::query_as::<_, SourceLink>(SOURCE_LINKS)
         .bind(&summary_ids)
         .fetch_all(pool)
@@ -58,6 +62,10 @@ pub(super) async fn load_transcript(
         wanted.insert(link.message_id);
     }
     for leaf in leaves {
+        if let Some(delivery) = &leaf.delivery {
+            wanted.extend(delivery.pending.iter().copied());
+            continue;
+        }
         if covered.contains(&leaf.id) {
             continue;
         }

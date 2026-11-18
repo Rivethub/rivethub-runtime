@@ -33,8 +33,11 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;
 
+use super::error::fence_error;
 use crate::PostgresMemory;
 use crate::graphile::GraphileQueue;
+use crate::summary_replace;
+use kernel::memory::summary_reference::{SummaryConsumer, SummaryReferenceError};
 
 use super::error::query_error;
 
@@ -69,6 +72,7 @@ const BACKFILL_PRIORITY: i16 = 50;
 
 #[derive(Debug, sqlx::FromRow)]
 struct LeafRow {
+    input_key: Option<Vec<u8>>,
     id: Uuid,
     conversation_id: Option<Uuid>,
     content: String,
@@ -106,11 +110,28 @@ impl EntityStore for PostgresMemory {
     async fn entity_work(&self, job: &ExtractEntities) -> Result<EntityWork, EntityStoreError> {
         let row = leaf_row(&self.pool, job.summary_id).await?;
         if let Some(wanted) = job.conversation_id
-            && row.conversation_id.is_some_and(|id| id != wanted)
+            && row.conversation_id != Some(wanted)
         {
-            return Err(EntityStoreError::Query(Box::new(std::io::Error::other(
-                "conversation does not own summary",
-            ))));
+            return Err(SummaryReferenceError::Stale(job.summary_id).into());
+        }
+        if let Some(key) = row.input_key.clone() {
+            let mut conn = self.pool.acquire().await.map_err(query_error)?;
+            let pending =
+                summary_replace::pending(&mut conn, job.summary_id, SummaryConsumer::Entity)
+                    .await
+                    .map_err(query_error)?;
+            return if pending.is_empty() {
+                Ok(EntityWork::Complete {
+                    entities: Vec::new(),
+                })
+            } else {
+                let mut leaf = leaf_from(row);
+                leaf.delivery = Some(kernel::wiki::builder::SummaryDelivery {
+                    input_key: key,
+                    pending,
+                });
+                Ok(EntityWork::Pending(leaf))
+            };
         }
         if let Some(entities) = done_entities(&self.pool, job.summary_id).await? {
             return Ok(EntityWork::Complete { entities });
@@ -165,6 +186,23 @@ impl EntityStore for PostgresMemory {
         };
         let started = leaves.first().map_or(now, |leaf| leaf.start);
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        let ids: Vec<_> = leaves
+            .iter()
+            .map(|leaf| leaf.id)
+            .chain(prepared.facts.iter().map(|fact| fact.summary_id))
+            .chain(prepared.history.iter().map(|item| item.summary_id))
+            .collect();
+        let inputs = summary_replace::shared(&mut tx, &ids)
+            .await
+            .map_err(fence_error)?;
+        for input in &inputs {
+            if input.owner_user_id != owner {
+                return Err(SummaryReferenceError::Stale(input.id).into());
+            }
+            if let Some(leaf) = leaves.iter().find(|leaf| leaf.id == input.id) {
+                validate_leaf(&mut tx, input, leaf).await?;
+            }
+        }
         lock_names(&mut tx, prepared).await?;
         let mut types = type_rows(&mut tx).await?;
         let Some(kind) = ensure_type(&mut tx, &prepared.type_name, &mut types, &owner, now).await?
@@ -205,6 +243,10 @@ impl EntityStore for PostgresMemory {
     ) -> Result<PublishOutcome, EntityStoreError> {
         let directory = self.wiki_home("").map_err(store_error)?;
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        let ids: Vec<_> = view.history.iter().map(|line| line.summary_id).collect();
+        summary_replace::shared(&mut tx, &ids)
+            .await
+            .map_err(fence_error)?;
         lock_view(&mut tx, view).await?;
         let fresh = load_view(&mut tx, view.id).await?;
         if fresh.snapshot != view.snapshot {
@@ -242,18 +284,18 @@ impl EntityStore for PostgresMemory {
         git_sha: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<(), EntityStoreError> {
-        for id in leaves {
-            sqlx::query(FINISH)
-                .bind(id)
-                .bind(ENTITY_PIPELINE_VERSION)
-                .bind(slugs)
-                .bind(git_sha)
-                .bind(now)
-                .execute(&self.pool)
-                .await
-                .map_err(query_error)?;
-        }
-        Ok(())
+        finish(self, leaves, &[], slugs, git_sha, now).await
+    }
+
+    async fn finish_entity_delivery(
+        &self,
+        leaves: &[EntityLeaf],
+        slugs: &[String],
+        git_sha: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<(), EntityStoreError> {
+        let ids: Vec<_> = leaves.iter().map(|leaf| leaf.id).collect();
+        finish(self, &ids, leaves, slugs, git_sha, now).await
     }
 
     async fn fail_entity(
@@ -262,15 +304,19 @@ impl EntityStore for PostgresMemory {
         error: &str,
         now: DateTime<Utc>,
     ) -> Result<(), EntityStoreError> {
+        let mut tx = self.pool.begin().await.map_err(query_error)?;
+        summary_replace::shared(&mut tx, &[summary_id])
+            .await
+            .map_err(fence_error)?;
         sqlx::query(FAIL)
             .bind(summary_id)
             .bind(ENTITY_PIPELINE_VERSION)
             .bind(error)
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(query_error)?;
-        Ok(())
+        tx.commit().await.map_err(query_error)
     }
 
     async fn entity_backfill(
@@ -337,6 +383,10 @@ impl EntityStore for PostgresMemory {
         let payload = serde_json::to_string(&decision.candidates)
             .map_err(|error| EntityStoreError::Query(Box::new(error)))?;
         let choice = (!decision.choice.is_empty()).then(|| decision.choice.clone());
+        let mut tx = self.pool.begin().await.map_err(query_error)?;
+        summary_replace::shared(&mut tx, &[summary])
+            .await
+            .map_err(fence_error)?;
         let inserted = sqlx::query(RECORD_DECISION)
             .bind(Uuid::new_v4())
             .bind(summary)
@@ -350,13 +400,13 @@ impl EntityStore for PostgresMemory {
             .bind(&decision.model)
             .bind(decision.entity_id)
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(query_error)?;
         if inserted.rows_affected() == 0 {
             return Err(EntityStoreError::Missing(summary));
         }
-        Ok(())
+        tx.commit().await.map_err(query_error)
     }
 
     async fn remember_embedding(
@@ -386,6 +436,10 @@ impl EntityStore for PostgresMemory {
         reason: &str,
         now: DateTime<Utc>,
     ) -> Result<(), EntityStoreError> {
+        let mut tx = self.pool.begin().await.map_err(query_error)?;
+        summary_replace::shared(&mut tx, &[summary])
+            .await
+            .map_err(fence_error)?;
         let inserted = sqlx::query(HOLD)
             .bind(Uuid::new_v4())
             .bind(summary)
@@ -395,13 +449,13 @@ impl EntityStore for PostgresMemory {
             .bind(reason)
             .bind(hold_payload(prepared))
             .bind(now)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(query_error)?;
         if inserted.rows_affected() == 0 {
             return Err(EntityStoreError::Missing(summary));
         }
-        Ok(())
+        tx.commit().await.map_err(query_error)
     }
 
     async fn merge_entities(
@@ -414,6 +468,20 @@ impl EntityStore for PostgresMemory {
             return Ok(None);
         }
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT summary_id FROM rh_entity_history WHERE entity_id = ANY($1)
+             UNION SELECT summary_id FROM rh_entity_applied WHERE entity_id = ANY($1)
+             UNION SELECT summary_id FROM rh_entity_type_seen WHERE entity_id = ANY($1)
+             UNION SELECT c.summary_id FROM rh_entity_fact_claims c
+             JOIN rh_entity_facts f ON f.id = c.fact_id WHERE f.topic_id = ANY($1) AND c.summary_id IS NOT NULL
+             UNION SELECT c.summary_id FROM rh_wiki_citations c
+             JOIN rh_wiki_topics p ON p.slug = c.topic_slug WHERE p.topic_id = ANY($1)
+             UNION SELECT p.source_id FROM rh_wiki_provenance p
+             JOIN rh_wiki_topics w ON w.slug = p.topic_slug WHERE w.topic_id = ANY($1) AND p.source_kind = 'summary'",
+        ).bind([left, right].as_slice()).fetch_all(&mut *tx).await.map_err(query_error)?;
+        summary_replace::shared_visible(&mut tx, &ids)
+            .await
+            .map_err(fence_error)?;
         let (merged, removed) = super::merge::merge_pair(&mut tx, left, right, now)
             .await
             .map_err(query_error)?;
@@ -434,6 +502,7 @@ fn leaf_from(row: LeafRow) -> EntityLeaf {
         row.end_at
     };
     EntityLeaf {
+        delivery: None,
         id: row.id,
         conversation_id: row.conversation_id,
         content: row.content,
@@ -448,6 +517,7 @@ fn sibling_from(row: SiblingRow) -> FollowingLeaf {
         job: row.job_id.map(JobId::new),
         done: row.done,
         leaf: leaf_from(LeafRow {
+            input_key: None,
             id: row.id,
             conversation_id: row.conversation_id,
             content: row.content,
@@ -539,4 +609,79 @@ async fn lock_all(
             .map_err(query_error)?;
     }
     Ok(())
+}
+
+async fn validate_leaf(
+    tx: &mut Transaction<'_, Postgres>,
+    input: &summary_replace::SummaryInput,
+    leaf: &EntityLeaf,
+) -> Result<(), EntityStoreError> {
+    if input.conversation_id != leaf.conversation_id
+        || input.content != leaf.content
+        || Some(input.owner_user_id.as_str()) != leaf.owner.as_deref()
+        || input.input_key.as_ref() != leaf.delivery.as_ref().map(|delivery| &delivery.input_key)
+    {
+        return Err(SummaryReferenceError::Stale(input.id).into());
+    }
+    if let Some(delivery) = &leaf.delivery
+        && summary_replace::pending(tx, input.id, SummaryConsumer::Entity)
+            .await
+            .map_err(query_error)?
+            != delivery.pending
+    {
+        return Err(SummaryReferenceError::Stale(input.id).into());
+    }
+    Ok(())
+}
+
+async fn finish(
+    store: &PostgresMemory,
+    ids: &[Uuid],
+    leaves: &[EntityLeaf],
+    slugs: &[String],
+    git_sha: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<(), EntityStoreError> {
+    let mut tx = store.pool.begin().await.map_err(query_error)?;
+    let inputs = summary_replace::shared(&mut tx, ids)
+        .await
+        .map_err(fence_error)?;
+    for input in &inputs {
+        let leaf = leaves.iter().find(|leaf| leaf.id == input.id);
+        if let Some(leaf) = leaf {
+            validate_leaf(&mut tx, input, leaf).await?;
+        } else if input.input_key.is_some() {
+            return Err(SummaryReferenceError::Stale(input.id).into());
+        }
+        sqlx::query(FINISH)
+            .bind(input.id)
+            .bind(ENTITY_PIPELINE_VERSION)
+            .bind(slugs)
+            .bind(git_sha)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(query_error)?;
+        if let Some(delivery) = leaf.and_then(|leaf| leaf.delivery.as_ref()) {
+            summary_replace::complete(
+                &mut tx,
+                input.id,
+                SummaryConsumer::Entity,
+                &delivery.pending,
+                ENTITY_PIPELINE_VERSION,
+            )
+            .await
+            .map_err(fence_error)?;
+        } else {
+            summary_replace::complete_legacy(
+                &mut tx,
+                input.id,
+                SummaryConsumer::Entity,
+                ENTITY_PIPELINE_VERSION,
+            )
+            .await
+            .map_err(query_error)?;
+        }
+    }
+    tx.commit().await.map_err(query_error)
 }

@@ -170,6 +170,9 @@ impl WikiRouter<'_> {
         target: Option<&TopicTarget>,
         patches: Vec<WikiPatch>,
     ) -> Result<Vec<String>, TopicPageError> {
+        let expected: Vec<_> = std::iter::once(summary).chain(&also).collect();
+        let ids: Vec<_> = expected.iter().map(|input| input.id).collect();
+        let _fence = self.wiki.lease_summary_effects(&ids, &expected).await?;
         NoteOrigin::run(
             summary.id,
             Box::pin(self.apply_notes(job, summary, also, target, patches)),
@@ -211,7 +214,16 @@ impl WikiRouter<'_> {
         let mut touched = Vec::new();
         for held in self.wiki.unsettled_notes(DEFERRALS_PER_SWEEP).await? {
             let summary = held.summary_id;
-            touched.extend(NoteOrigin::run(summary, Box::pin(self.settle(held))).await?);
+            let _fence = match self.wiki.lease_summary_effects(&[summary], &[]).await {
+                Ok(fence) => fence,
+                Err(error) if error.obsolete_input() => continue,
+                Err(error) => return Err(error.into()),
+            };
+            match NoteOrigin::run(summary, Box::pin(self.settle(held))).await {
+                Ok(topics) => touched.extend(topics),
+                Err(TopicPageError::Wiki(error)) if error.obsolete_input() => {}
+                Err(error) => return Err(error),
+            }
         }
         touched.sort();
         touched.dedup();
@@ -283,25 +295,27 @@ impl WikiRouter<'_> {
         target: Option<&TopicTarget>,
         mut routed: Routed,
     ) -> Result<Vec<String>, TopicPageError> {
-        if !routed.notes.is_empty()
+        let deferred = if !routed.notes.is_empty()
             && let Some(waits) = self.topics.waits_on(summary).await?
         {
-            self.wiki
-                .defer_wiki(DeferredWiki {
-                    summary_id: summary.id,
-                    waits,
-                    applied: target.map(|topic| topic.topic),
-                    patches: routed.notes,
-                    at: self.now,
-                })
-                .await?;
-        }
+            Some(DeferredWiki {
+                summary_id: summary.id,
+                waits,
+                applied: target.map(|topic| topic.topic),
+                patches: routed.notes,
+                at: self.now,
+            })
+        } else {
+            None
+        };
         routed.cited.extend(routed.written.iter().cloned());
         routed
             .cited
             .sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
         routed.cited.dedup();
         let routing = WikiRouting {
+            deferred,
+            input: Some(summary.clone()),
             topic_page: target.map(|topic| topic.page_slug.clone()),
             cited: routed.cited,
             merged: routed.merged,

@@ -146,6 +146,7 @@ async fn entity_transcript_prefers_sources_and_falls_back_to_the_window(
 
 fn leaf(id: Uuid, conversation: Uuid, start: &str, end: &str) -> EntityLeaf {
     EntityLeaf {
+        delivery: None,
         id,
         conversation_id: Some(conversation),
         content: "leaf".to_owned(),

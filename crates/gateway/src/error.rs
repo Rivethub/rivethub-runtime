@@ -148,6 +148,14 @@ impl ApiError {
 
 fn store_error(error: MemoryStoreError) -> (StatusCode, GatewayError) {
     match error {
+        MemoryStoreError::SummaryReference(error) => {
+            use kernel::memory::summary_reference::SummaryReferenceError;
+            let status = match error {
+                SummaryReferenceError::Gone(_) => StatusCode::NOT_FOUND,
+                SummaryReferenceError::Stale(_) => StatusCode::CONFLICT,
+            };
+            (status, GatewayError::new(error.to_string()))
+        }
         MemoryStoreError::InvalidRequest { message } => {
             (StatusCode::BAD_REQUEST, GatewayError::new(message))
         }

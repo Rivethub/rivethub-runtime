@@ -114,7 +114,10 @@ pub async fn handle_extract_entities(
     let work = tokio::select! {
         biased;
         () = env.cancel.cancelled() => return Err(WorkerError::Cancelled),
-        result = env.store.entity_work(&job) => result?,
+        result = env.store.entity_work(&job) => match result {
+            Err(error) if error.obsolete_input() => return Ok(Vec::new()),
+            result => result?,
+        },
     };
     match work {
         EntityWork::Complete { entities } => {
@@ -147,15 +150,25 @@ async fn fail_hard(
     job: &ExtractEntities,
     error: WorkerError,
 ) -> Result<Vec<String>, WorkerError> {
+    if matches!(&error, WorkerError::EntityStore(source) if source.obsolete_input()) {
+        return Ok(Vec::new());
+    }
     if matches!(
         error,
         WorkerError::Cancelled | WorkerError::ProviderOutage { .. }
     ) {
         return Err(error);
     }
-    env.store
+    if let Err(failure) = env
+        .store
         .fail_entity(job.summary_id, &error.to_string(), env.now)
-        .await?;
+        .await
+    {
+        if failure.obsolete_input() {
+            return Ok(Vec::new());
+        }
+        return Err(failure.into());
+    }
     Err(error)
 }
 
@@ -255,9 +268,8 @@ async fn finish_job(
         .rev()
         .map(|page| page.git_sha.as_str())
         .find(|sha| !sha.is_empty());
-    let ids: Vec<Uuid> = leaves.iter().map(|leaf| leaf.id).collect();
     env.store
-        .finish_entities(&ids, &slugs, sha, env.now)
+        .finish_entity_delivery(leaves, &slugs, sha, env.now)
         .await?;
     embed_pages(env, &slugs).await?;
     Ok(slugs)

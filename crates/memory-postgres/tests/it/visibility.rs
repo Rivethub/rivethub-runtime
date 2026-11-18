@@ -1475,10 +1475,22 @@ async fn a_fact_claim_shows_only_with_its_entity_and_its_session(pool: PgPool) -
             at: now,
         })
     };
+    let mut summaries = std::collections::BTreeMap::new();
+    for session in [FIRST, SECOND] {
+        let summary: Uuid = sqlx::query_scalar(
+            "INSERT INTO rh_summaries (conversation_id, owner_user_id, content)
+             SELECT id, owner_user_id, 'Fact source.' FROM rh_conversations WHERE session_key = $1
+             RETURNING id",
+        )
+        .bind(session)
+        .fetch_one(&pool)
+        .await?;
+        summaries.insert(session, summary);
+    }
     let writer = |session: &str| -> Result<Said, Box<dyn std::error::Error>> {
         Ok(Said::Writer {
             session: SessionId::try_from(session.to_owned())?,
-            summary: Uuid::new_v4(),
+            summary: summaries[session],
             evidence: None,
             settled: false,
         })

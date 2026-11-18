@@ -60,8 +60,13 @@ impl TopicPageStore for SqliteStore {
         now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError> {
         let page = page.clone();
+        let origin = kernel::wiki::origin::NoteOrigin::current();
         blocking(self, move |conn| {
-            let tx = conn.transaction().map_err(query)?;
+            let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+            if let Some(id) = origin {
+                crate::summary_replace::shared(&tx, id)
+                    .map_err(crate::wiki_builder::fence_error)?;
+            }
             save(&tx, topic, &page, &time::stamp(now))?;
             tx.commit().map_err(query)
         })
@@ -75,8 +80,13 @@ impl TopicPageStore for SqliteStore {
         now: DateTime<Utc>,
     ) -> Result<bool, WikiStoreError> {
         let (slug, edit) = (slug.clone(), edit.clone());
+        let origin = kernel::wiki::origin::NoteOrigin::current();
         blocking(self, move |conn| {
-            let tx = conn.transaction().map_err(query)?;
+            let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+            if let Some(id) = origin {
+                crate::summary_replace::shared(&tx, id)
+                    .map_err(crate::wiki_builder::fence_error)?;
+            }
             let owner = tx
                 .query_row(
                     "SELECT topic_id FROM rh_topic_pages WHERE page_slug = ?1",
@@ -111,6 +121,7 @@ impl TopicPageStore for SqliteStore {
         change: &PageChange<'_>,
         now: DateTime<Utc>,
     ) -> Result<(), WikiStoreError> {
+        let origin = kernel::wiki::origin::NoteOrigin::current();
         for _ in 0..CHANGE_ATTEMPTS {
             let before = self
                 .topic_page(slug)
@@ -122,7 +133,11 @@ impl TopicPageStore for SqliteStore {
                 return Ok(());
             }
             let swapped = blocking(self, move |conn| {
-                let tx = conn.transaction().map_err(query)?;
+                let tx = crate::summary_replace::immediate(conn).map_err(query)?;
+                if let Some(id) = origin {
+                    crate::summary_replace::shared(&tx, id)
+                        .map_err(crate::wiki_builder::fence_error)?;
+                }
                 if read(&tx, &before.slug)?.as_ref() != Some(&before) {
                     return Ok(false);
                 }

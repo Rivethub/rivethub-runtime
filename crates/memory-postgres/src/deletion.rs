@@ -161,15 +161,23 @@ async fn purge(
     owner: Option<&str>,
 ) -> Result<DeletedSession, Error> {
     let fail = |operation| move |source| Error::operation(operation, source);
-    let conversations: Vec<Uuid> = sqlx::query_scalar!(
+    let conversations: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM rh_conversations
-          WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2) FOR UPDATE",
-        session_key,
-        owner
+          WHERE session_key = $1 AND ($2::text IS NULL OR owner_user_id = $2)",
     )
+    .bind(session_key)
+    .bind(owner)
     .fetch_all(&mut *conn)
     .await
     .map_err(fail("session conversations"))?;
+    crate::summary_replace::exclusive(conn, conversations.iter().copied())
+        .await
+        .map_err(fail("lock summary purge"))?;
+    sqlx::query("DELETE FROM rh_summary_deliveries WHERE conversation_id = ANY($1)")
+        .bind(&conversations)
+        .execute(&mut *conn)
+        .await
+        .map_err(fail("delete summary deliveries"))?;
     let summaries: Vec<Uuid> = sqlx::query_scalar!(
         "SELECT id FROM rh_summaries WHERE conversation_id = ANY($1)",
         &conversations

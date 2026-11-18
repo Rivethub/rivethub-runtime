@@ -89,6 +89,15 @@ impl PostgresMemory {
             .map_err(|error| Error::operation("merge source snapshot", error))?;
         report.embeddings_cleared = stage::align_embeddings(source, self, &mut tx).await?;
         stage::mark_summary_repairs(&mut tx).await?;
+        let conversations: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM rh_conversations UNION SELECT id FROM merge_rh_conversations",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|error| Error::operation("merge summary conversations", error))?;
+        crate::summary_replace::exclusive(&mut tx, conversations)
+            .await
+            .map_err(|error| Error::operation("merge summary fence", error))?;
         transform::run(&mut tx, request, &mut report).await?;
         for (table, staged) in &columns {
             let rows = transform::insert(&mut tx, table.name(), staged).await?;

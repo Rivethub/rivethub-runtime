@@ -32,16 +32,31 @@ impl SqliteStore {
         decided_by: Option<String>,
     ) -> Result<u64, MemoryStoreError> {
         let at = time::stamp(self.now());
-        self.with_conn(move |conn| decide_tags(conn, &ids, decision, decided_by.as_deref(), &at))
-            .await
-            .map_err(MemoryStoreError::from)
+        self.with_conn(move |conn| {
+            let tx = crate::summary_replace::immediate(conn)
+                .map_err(SqliteError::query("tags decide"))?;
+            let changed = decide_tags(&tx, &ids, decision, decided_by.as_deref(), &at)?;
+            tx.commit().map_err(SqliteError::query("tags decide"))?;
+            Ok(changed)
+        })
+        .await
+        .map_err(MemoryStoreError::from)
     }
 
     pub(crate) async fn tags_add(&self, add: TagAdd) -> Result<TagWire, MemoryStoreError> {
         let at = time::stamp(self.now());
-        self.with_conn(move |conn| add_tag(conn, &add, &at))
-            .await
-            .map_err(MemoryStoreError::from)
+        self.with_conn(move |conn| {
+            let tx =
+                crate::summary_replace::immediate(conn).map_err(SqliteError::query("tag add"))?;
+            if let (TagEntityType::Summary, TagEntity::Id(id)) = (add.entity_type, &add.entity) {
+                guard(&tx, *id)?;
+            }
+            let tag = add_tag(&tx, &add, &at)?;
+            tx.commit().map_err(SqliteError::query("tag add"))?;
+            Ok(tag)
+        })
+        .await
+        .map_err(MemoryStoreError::from)
     }
 }
 
@@ -62,7 +77,9 @@ fn decide_tags(
                     SET state = ?2, \
                         source = CASE WHEN source = 'rule' AND ?2 = 'accepted' THEN 'user' ELSE source END, \
                         decided_by = ?3, decided_at = ?4, updated_at = ?4 \
-                  WHERE id = ?1 AND state <> ?2",
+                  WHERE id = ?1 AND state <> ?2
+                  AND (entity_type <> 'summary' OR EXISTS (
+                      SELECT 1 FROM ros_summaries s WHERE s.id = ros_tags.entity_id))",
                 params_from_iter([
                     Value::Text(id.uuid().to_string()),
                     Value::Text(state.clone()),
@@ -197,4 +214,12 @@ fn actor(decided_by: Option<&str>) -> String {
         Some(name) => name.to_owned(),
         None => "owner".to_owned(),
     }
+}
+
+pub(crate) fn guard(tx: &rusqlite::Transaction<'_>, id: Uuid) -> Result<(), SqliteError> {
+    crate::summary_replace::shared(tx, id).map_err(|error| match error {
+        crate::summary_replace::FenceError::Reference(error) => error.into(),
+        crate::summary_replace::FenceError::Query(error) => SqliteError::query("tag source")(error),
+    })?;
+    Ok(())
 }

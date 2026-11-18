@@ -46,6 +46,9 @@ mod stats_cache;
 mod store_impl;
 mod summary_dag;
 mod summary_opening;
+mod summary_replace;
+#[doc(hidden)]
+pub use summary_replace::ReplaceSummaryError;
 mod summary_store;
 mod summary_watch;
 mod tags;

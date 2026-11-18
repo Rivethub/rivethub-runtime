@@ -6,8 +6,8 @@ use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedId;
 use kernel::flagged::FlaggedJob;
 use kernel::flagged::FlaggedJobs;
-use rusqlite::Connection;
 use rusqlite::params;
+use rusqlite::{Connection, OptionalExtension as _};
 use serde_json::Value;
 use wire::JsonObject;
 
@@ -53,14 +53,34 @@ impl FlaggedJobs for SqliteStore {
         let raw = i64::from(id);
         let changed = self
             .with_conn(move |conn| {
-                conn.execute(
-                    "UPDATE ros_jobs
+                let tx = crate::summary_replace::immediate(conn)
+                    .map_err(SqliteError::query("retry flagged job"))?;
+                let job: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT task, payload FROM ros_jobs WHERE rowid = ?1 AND state = 'dead'",
+                        [raw],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(SqliteError::query("retry flagged job"))?;
+                let Some((task, payload)) = job else {
+                    return Ok(0);
+                };
+                if !crate::summary_replace::live_job(&tx, &task, &payload)? {
+                    return Ok(0);
+                }
+                let changed = tx
+                    .execute(
+                        "UPDATE ros_jobs
                         SET state = 'queued', attempts = 0, run_at = ?2, last_error = NULL,
                             locked_at = NULL, updated_at = ?2
                       WHERE rowid = ?1 AND state = 'dead'",
-                    params![raw, now],
-                )
-                .map_err(SqliteError::query("retry flagged job"))
+                        params![raw, now],
+                    )
+                    .map_err(SqliteError::query("retry flagged job"))?;
+                tx.commit()
+                    .map_err(SqliteError::query("retry flagged job"))?;
+                Ok(changed)
             })
             .await
             .map_err(unavailable)?;

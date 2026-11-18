@@ -102,6 +102,27 @@ pub(super) async fn record(
         .execute(&mut **tx)
         .await
         .map_err(query_error)?;
+        use kernel::memory::summary_reference::SummaryConsumer;
+        if let Some(delivery) = &summary.delivery {
+            crate::summary_replace::complete(
+                tx,
+                summary.id,
+                SummaryConsumer::Wiki,
+                &delivery.pending,
+                WIKI_PIPELINE_VERSION,
+            )
+            .await
+            .map_err(super::fence_error)?;
+        } else {
+            crate::summary_replace::complete_legacy(
+                tx,
+                summary.id,
+                SummaryConsumer::Wiki,
+                WIKI_PIPELINE_VERSION,
+            )
+            .await
+            .map_err(query_error)?;
+        }
     }
     Ok(())
 }

@@ -5,7 +5,9 @@ use kernel::flagged::FlaggedError;
 use kernel::flagged::FlaggedId;
 use kernel::flagged::FlaggedJob;
 use kernel::flagged::FlaggedJobs;
-use sqlx::PgPool;
+use kernel::memory::summary_reference::summary_job_target;
+use sqlx::{PgPool, Postgres, Transaction};
+use uuid::Uuid;
 use wire::JsonObject;
 
 use crate::PostgresMemory;
@@ -115,6 +117,19 @@ pub(crate) async fn fail(
         .begin()
         .await
         .map_err(|source| Error::operation("fail", source))?;
+    let live = live_jobs(&mut tx, &[id]).await?;
+    if !live.contains(&id) {
+        sqlx::query(crate::graphile_sql::COMPLETE)
+            .bind(id)
+            .bind(worker)
+            .execute(&mut *tx)
+            .await
+            .map_err(|source| Error::operation("discard expired summary job", source))?;
+        return tx
+            .commit()
+            .await
+            .map_err(|source| Error::operation("fail", source));
+    }
     let failed: Option<FailedRow> = sqlx::query_as(FAIL)
         .bind(id)
         .bind(error)
@@ -144,9 +159,25 @@ pub(crate) async fn flag_stuck(pool: &PgPool, after: u32) -> Result<u64, Error> 
     if ids.is_empty() {
         return Ok(0);
     }
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|source| Error::operation("flag jobs", source))?;
+    let live = live_jobs(&mut tx, &ids).await?;
+    let gone: Vec<_> = ids.into_iter().filter(|id| !live.contains(id)).collect();
+    sqlx::query(
+        "DELETE FROM graphile_worker._private_jobs WHERE id = ANY($1) AND locked_at IS NULL",
+    )
+    .bind(&gone)
+    .execute(&mut *tx)
+    .await
+    .map_err(|source| Error::operation("discard expired summary jobs", source))?;
     let flagged: i64 = sqlx::query_scalar(FLAG)
-        .bind(ids)
-        .fetch_one(pool)
+        .bind(live)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|source| Error::operation("flag jobs", source))?;
+    tx.commit()
         .await
         .map_err(|source| Error::operation("flag jobs", source))?;
     Ok(u64::try_from(flagged)?)
@@ -193,11 +224,32 @@ impl FlaggedJobs for PostgresMemory {
     }
 
     async fn retry(&self, id: FlaggedId) -> Result<(), FlaggedError> {
+        let mut tx = self.pool.begin().await.map_err(unavailable)?;
+        let job: Option<(String, serde_json::Value)> =
+            sqlx::query_as("SELECT task, payload FROM rh_flagged_jobs WHERE id = $1")
+                .bind(i64::from(id))
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(unavailable)?;
+        if let Some((task, payload)) = job
+            && let Some(summary) = summary_job_target(&task, &payload)
+        {
+            match crate::summary_replace::shared(&mut tx, &[summary]).await {
+                Ok(_) => (),
+                Err(crate::summary_replace::FenceError::Reference(_)) => {
+                    return Err(FlaggedError::Missing(id));
+                }
+                Err(crate::summary_replace::FenceError::Query(error)) => {
+                    return Err(unavailable(error));
+                }
+            }
+        }
         let queued: Option<i64> = sqlx::query_scalar(RETRY)
             .bind(i64::from(id))
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(unavailable)?;
+        tx.commit().await.map_err(unavailable)?;
         queued.map(|_| ()).ok_or(FlaggedError::Missing(id))
     }
 
@@ -238,4 +290,34 @@ fn job(row: FlaggedRow) -> Result<FlaggedJob, FlaggedError> {
 
 fn unavailable(error: sqlx::Error) -> FlaggedError {
     FlaggedError::Unavailable(Box::new(error))
+}
+
+async fn live_jobs(tx: &mut Transaction<'_, Postgres>, jobs: &[i64]) -> Result<Vec<i64>, Error> {
+    let rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT j.id, t.identifier, j.payload::jsonb FROM graphile_worker._private_jobs j
+         JOIN graphile_worker._private_tasks t ON t.id = j.task_id WHERE j.id = ANY($1)",
+    )
+    .bind(jobs)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(|source| Error::operation("flag job inputs", source))?;
+    let targets: std::collections::BTreeMap<_, _> = rows
+        .into_iter()
+        .filter_map(|(job, task, payload)| {
+            summary_job_target(&task, &payload).map(|summary| (job, summary))
+        })
+        .collect();
+    let ids: Vec<Uuid> = targets.values().copied().collect();
+    let live = crate::summary_replace::shared_visible(tx, &ids)
+        .await
+        .map_err(|source| Error::stored("flag job inputs", source))?;
+    Ok(jobs
+        .iter()
+        .copied()
+        .filter(|job| {
+            targets
+                .get(job)
+                .is_none_or(|id| live.binary_search_by_key(id, |value| value.id).is_ok())
+        })
+        .collect())
 }
