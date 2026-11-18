@@ -34,7 +34,7 @@ async fn inventory(conn: &mut PgConnection, cutoff: Timestamp) -> Result<(), sql
         "SELECT c.id FROM rh_conversations c CROSS JOIN rh_summary_conversion ctl
          WHERE ctl.inventory_after IS NULL OR c.id > ctl.inventory_after ORDER BY c.id LIMIT $1",
     )
-    .bind(INVENTORY_PAGE_SIZE)
+    .bind(i64::from(INVENTORY_PAGE_SIZE))
     .fetch_all(&mut *conn)
     .await?;
     measure(conn, &page, cutoff).await?;
@@ -43,7 +43,7 @@ async fn inventory(conn: &mut PgConnection, cutoff: Timestamp) -> Result<(), sql
          SET inventory_after = coalesce($1, inventory_after), inventory_complete = $2",
     )
     .bind(page.last())
-    .bind(i64::try_from(page.len()).unwrap_or(INVENTORY_PAGE_SIZE) < INVENTORY_PAGE_SIZE)
+    .bind(page.len() < usize::from(INVENTORY_PAGE_SIZE))
     .execute(conn)
     .await?;
     Ok(())

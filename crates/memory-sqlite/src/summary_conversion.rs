@@ -48,10 +48,7 @@ fn inventory(conn: &Connection, cutoff: Timestamp) -> Result<(), SqliteError> {
     conn.execute(
         "UPDATE rh_summary_conversion
          SET inventory_after = coalesce(?1, inventory_after), inventory_complete = ?2",
-        params![
-            page.last(),
-            i64::try_from(page.len()).unwrap_or(INVENTORY_PAGE_SIZE) < INVENTORY_PAGE_SIZE
-        ],
+        params![page.last(), page.len() < usize::from(INVENTORY_PAGE_SIZE)],
     )
     .map_err(error)?;
     Ok(())

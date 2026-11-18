@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 pub const GIANT_TOKENS: i64 = 1_000_000;
 pub const DEFAULT_RATE: i64 = 200_000;
-pub const INVENTORY_PAGE_SIZE: i64 = 200;
+pub const INVENTORY_PAGE_SIZE: u16 = 200;
 pub const LEASE: SignedDuration = SignedDuration::from_mins(20);
 
 #[doc(hidden)]
