@@ -26,6 +26,7 @@ capture = { path = "crates/capture", version = "0.8.3" }
 cargo_metadata = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
+jiff = { version = "1.0.1", features = ["serde", "tzdb-bundle-always"] }
 clap = { version = "4", features = ["derive"] }
 cli = { path = "crates/cli", version = "0.8.3" }
 config = { path = "crates/config", version = "0.8.3" }

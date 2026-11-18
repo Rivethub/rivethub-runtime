@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use chrono::DateTime;
-use chrono::Utc;
+use jiff::Timestamp;
+use jiff::fmt::rfc2822;
 use reqwest::header::HeaderMap;
 use reqwest::header::RETRY_AFTER;
 
-pub(crate) fn hint(headers: &HeaderMap, now: DateTime<Utc>) -> Option<Duration> {
+pub(crate) fn hint(headers: &HeaderMap, now: Timestamp) -> Option<Duration> {
     let value = headers.get(RETRY_AFTER)?;
     let text = String::from_utf8_lossy(value.as_bytes());
     let text = text.trim();
@@ -24,13 +24,11 @@ fn delay_seconds(text: &str) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-fn http_date(text: &str, now: DateTime<Utc>) -> Option<Duration> {
+fn http_date(text: &str, now: Timestamp) -> Option<Duration> {
     #[cfg_attr(dylint_lib = "rr_lints", expect(fallback))]
-    let date = DateTime::parse_from_rfc2822(text).ok()?;
-    let wait = date.with_timezone(&Utc).signed_duration_since(now);
-    Some(Duration::from_secs(
-        wait.num_seconds().max(0).unsigned_abs(),
-    ))
+    let date = rfc2822::parse(text).ok()?;
+    let wait = date.timestamp().duration_since(now);
+    Some(Duration::from_secs(wait.as_secs().max(0).unsigned_abs()))
 }
 
 #[cfg(test)]
@@ -44,10 +42,8 @@ mod tests {
         headers
     }
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-10-19T12:00:00Z")
-            .expect("fixed clock")
-            .with_timezone(&Utc)
+    fn now() -> Timestamp {
+        "2026-10-19T12:00:00Z".parse().expect("fixed clock")
     }
 
     #[test]
