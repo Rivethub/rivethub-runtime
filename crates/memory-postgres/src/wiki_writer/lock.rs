@@ -423,11 +423,13 @@ mod tests {
         let root = tempfile::tempdir()?;
         let released = {
             let holder = WriterLock::acquire(root.path()).await?;
-            assert!(matches!(
+            let Err(error @ WikiWriteError::LockTimeout) =
                 tokio::time::timeout(ACQUIRE_TIMEOUT + DEADLINE, WriterLock::acquire(root.path()))
-                    .await?,
-                Err(WikiWriteError::LockTimeout)
-            ));
+                    .await?
+            else {
+                return Err("local waiter did not time out".into());
+            };
+            assert_eq!(error.to_string(), "wiki writer lock timed out");
             holder.release().await
         };
         released?;

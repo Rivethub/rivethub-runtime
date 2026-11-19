@@ -239,7 +239,7 @@ pub enum WikiWriteError {
     Io(#[from] std::io::Error),
     #[error("wiki page: {0}")]
     Page(#[from] WikiPageError),
-    #[error("wiki writer lock exhausted 200 attempts")]
+    #[error("wiki writer lock timed out")]
     LockTimeout,
     #[error("wiki path escapes its repository: {0}")]
     Containment(std::path::PathBuf),
