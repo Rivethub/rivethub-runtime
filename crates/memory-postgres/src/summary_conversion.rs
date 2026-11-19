@@ -190,6 +190,11 @@ impl SummaryConversion for PostgresMemory {
         let mut tx = self.pool.begin().await.map_err(error)?;
         lock(&mut tx).await.map_err(error)?;
         let query = match action {
+            ConversionControl::ArmOpening { conversation } => {
+                crate::title::arm_historical(&mut tx, conversation).await.map_err(error)?;
+                tx.commit().await.map_err(error)?;
+                return self.status().await;
+            }
             ConversionControl::Start { rate, include_giants } => sqlx::query(
                 "UPDATE rh_summary_conversion SET enabled = true, include_giants = $1,
                  bucket_tokens = CASE WHEN charged_tokens = 0 AND bucket_tokens = 0 AND inventory_after IS NULL

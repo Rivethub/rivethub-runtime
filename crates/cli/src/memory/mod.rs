@@ -72,7 +72,7 @@ Commands:\n\
   settle <session> [--sqlite <file>] [--json]\n\
   resummarize start [--rate <tokens/min>] [--include-giants] [--sqlite <file>] [--json]\n\
   resummarize pause|resume [--sqlite <file>] [--json]\n\
-  resummarize retry|release <conversation-id> [--sqlite <file>] [--json]\n\
+  resummarize retry|release|arm-opening <conversation-id> [--sqlite <file>] [--json]\n\
   resummarize rehearse <conversation-id>... [--sqlite <file>] [--json]\n\
   resummarize status [--watch] [--sqlite <file>] [--json]\n\
   queue-status [--json]\n\

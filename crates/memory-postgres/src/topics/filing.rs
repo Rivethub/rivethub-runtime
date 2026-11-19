@@ -71,6 +71,7 @@ impl FilingStore for PostgresMemory {
                 agent: row.agent,
                 channel: row.channel,
                 title: row.title,
+                trashed: false,
             },
             cwd: row.cwd.filter(|cwd| !cwd.trim().is_empty()),
             summary: row.summary,
@@ -111,6 +112,7 @@ impl FilingStore for PostgresMemory {
             agent: row.agent,
             channel: row.channel,
             title: row.title,
+            trashed: false,
         }))
     }
 

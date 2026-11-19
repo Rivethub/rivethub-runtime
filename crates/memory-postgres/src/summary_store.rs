@@ -98,6 +98,8 @@ pub(crate) struct HeadRow {
     session_key: String,
     agent: String,
     channel: String,
+    #[sqlx(default)]
+    trashed: bool,
     title: Option<String>,
 }
 
@@ -109,6 +111,7 @@ impl From<HeadRow> for ConversationHead {
             agent: row.agent,
             channel: row.channel,
             title: row.title,
+            trashed: row.trashed,
         }
     }
 }

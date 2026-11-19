@@ -930,3 +930,75 @@ async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn st
     assert_eq!(missing.exit, Exit::Failure);
     Ok(())
 }
+
+#[tokio::test]
+async fn resummarize_arms_one_historical_opening_once() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let conn = rusqlite::Connection::open(&database).unwrap();
+    conn.execute_batch(
+        "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000001','cli:historical','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'),
+                ('00000000-0000-0000-0000-000000000002','cli:trashed','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+         INSERT INTO rh_summary_openings (conversation_id, content, historical_pending)
+         SELECT id, 'Invented equipment review', 1 FROM ros_conversations;
+         INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-01-01Z');",
+    ).unwrap();
+    let (_home, environment) = env(&[]);
+    for id in [
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+    ] {
+        let report = run(
+            &[
+                "memory",
+                "resummarize",
+                "arm-opening",
+                id,
+                "--sqlite",
+                database.to_str().unwrap(),
+                "--json",
+            ],
+            &environment,
+        )
+        .await;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    }
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed AND title_armed"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE historical_pending"
+        ),
+        1
+    );
+    conn.execute_batch("UPDATE rh_summary_openings SET filing_armed = 0, title_armed = 0")
+        .unwrap();
+    let retry = run(
+        &[
+            "memory",
+            "resummarize",
+            "arm-opening",
+            "00000000-0000-0000-0000-000000000001",
+            "--sqlite",
+            database.to_str().unwrap(),
+            "--json",
+        ],
+        &environment,
+    )
+    .await;
+    assert_eq!(retry.exit, Exit::Ok, "{}", retry.stderr);
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed OR title_armed"
+        ),
+        0
+    );
+}

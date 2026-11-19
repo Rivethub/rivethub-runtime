@@ -1,8 +1,11 @@
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use sqlx::PgPool;
+use sqlx::migrate::{Migrate, MigrateError, Migrator};
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgConnection, PgPool, Postgres};
 
 use crate::Status;
 use crate::error::Error;
@@ -31,10 +34,91 @@ pub async fn postgres(url: &str) -> Result<Status, Error> {
 }
 
 pub async fn postgres_pool(pool: &PgPool) -> Result<Status, Error> {
-    POSTGRES.run(pool).await.map_err(Error::PostgresMigrate)?;
+    postgres_apply(pool.acquire().await.map_err(Error::PostgresConnect)?).await?;
     require_tracked(pool).await?;
     backfill(pool).await?;
     postgres_status_pool(pool).await
+}
+
+const SUMMARY_SCHEMA: i64 = 76;
+const SUMMARY_INDEXES: [(&str, &str, &str); 2] = [
+    (
+        "rh_summary_one_session",
+        "DROP INDEX CONCURRENTLY rh_summary_one_session",
+        "CREATE UNIQUE INDEX CONCURRENTLY rh_summary_one_session
+         ON rh_summaries (conversation_id) WHERE kind = 'session'",
+    ),
+    (
+        "rh_summary_sources_order",
+        "DROP INDEX CONCURRENTLY rh_summary_sources_order",
+        "CREATE INDEX CONCURRENTLY rh_summary_sources_order
+         ON rh_summary_sources (summary_id, ordinal)",
+    ),
+];
+
+pub async fn postgres_apply(mut conn: PoolConnection<Postgres>) -> Result<(), Error> {
+    conn.close_on_drop();
+    apply(&mut conn).await.map_err(Error::PostgresMigrate)
+}
+
+async fn apply(conn: &mut PgConnection) -> Result<(), MigrateError> {
+    conn.lock().await?;
+    let migrator = Migrator {
+        migrations: Cow::Borrowed(POSTGRES.migrations.as_ref()),
+        locking: false,
+        ..Migrator::DEFAULT
+    };
+    migrator
+        .run_direct(Some(SUMMARY_SCHEMA - 1), conn, false)
+        .await?;
+    let applied = conn.list_applied_migrations("_sqlx_migrations").await?;
+    if !applied
+        .iter()
+        .any(|migration| migration.version == SUMMARY_SCHEMA)
+    {
+        prepare_summary_indexes(conn).await?;
+        apply_summary_schema(&migrator, conn).await?;
+    }
+    migrator.run_direct(None, conn, false).await?;
+    conn.unlock().await
+}
+
+async fn apply_summary_schema(
+    migrator: &Migrator,
+    conn: &mut PgConnection,
+) -> Result<(), MigrateError> {
+    for _ in 0..80 {
+        let result = migrator.run_direct(Some(SUMMARY_SCHEMA), conn, false).await;
+        if !matches!(&result, Err(MigrateError::ExecuteMigration(sqlx::Error::Database(error), SUMMARY_SCHEMA))
+            if error.code().as_deref() == Some("55P03"))
+        {
+            return result;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    migrator.run_direct(Some(SUMMARY_SCHEMA), conn, false).await
+}
+
+async fn prepare_summary_indexes(conn: &mut PgConnection) -> Result<(), MigrateError> {
+    sqlx::query("SET max_parallel_maintenance_workers = 0")
+        .execute(&mut *conn)
+        .await?;
+    for (name, drop, create) in SUMMARY_INDEXES {
+        let valid: Option<bool> = sqlx::query_scalar(
+            "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass($1)",
+        )
+        .bind(name)
+        .fetch_optional(&mut *conn)
+        .await?;
+        if valid == Some(true) {
+            continue;
+        }
+        if valid == Some(false) {
+            sqlx::query(drop).execute(&mut *conn).await?;
+        }
+        sqlx::query(create).execute(&mut *conn).await?;
+    }
+    Ok(())
 }
 
 const COUNT_BUDGET: i32 = 20_000;

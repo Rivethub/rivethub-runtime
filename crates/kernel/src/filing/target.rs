@@ -70,7 +70,8 @@ impl Filable {
     #[must_use]
     pub fn of(head: &ConversationHead) -> Self {
         let key = head.session_key.as_str();
-        if key.starts_with(SANDBOX_RUN_PREFIX)
+        if head.trashed
+            || key.starts_with(SANDBOX_RUN_PREFIX)
             || key.starts_with(HEARTBEAT_PREFIX)
             || UnfiledChannel::from_str(&head.channel).is_ok()
         {

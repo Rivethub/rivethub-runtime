@@ -213,10 +213,6 @@ pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<()
             "incomplete or inconsistent top-down summary graph".into(),
         ));
     }
-    sqlx::query("SET CONSTRAINTS rh_summary_one_session IMMEDIATE")
-        .execute(&mut *conn)
-        .await
-        .map_err(|source| Error::operation("validate session summary uniqueness", source))?;
     Ok(())
 }
 

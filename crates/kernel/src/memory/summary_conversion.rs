@@ -52,6 +52,9 @@ pub enum ConversionControl {
     Release {
         conversation: Uuid,
     },
+    ArmOpening {
+        conversation: Uuid,
+    },
 }
 
 #[derive(Debug, Default, Serialize, serde::Deserialize)]

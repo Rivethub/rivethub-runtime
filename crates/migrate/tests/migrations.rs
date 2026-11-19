@@ -338,11 +338,22 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
     )
     .execute(&pool)
     .await?;
+    let filenode_before: u32 = sqlx::query_scalar::<_, sqlx::postgres::types::Oid>(
+        "SELECT pg_relation_filenode('rh_summaries'::regclass)",
+    )
+    .fetch_one(&pool)
+    .await?
+    .0;
     let status = migrate::postgres_pool(&pool).await?;
     assert_eq!(
         (status.current, status.required, status.pending),
         (78, 78, 0)
     );
+    let filenode_after: sqlx::postgres::types::Oid =
+        sqlx::query_scalar("SELECT pg_relation_filenode('rh_summaries'::regclass)")
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(filenode_before, filenode_after.0);
     let row: (String, i32, Option<i32>, bool) =
         sqlx::query_as("SELECT kind, depth, summary_ordinal, index_needs_repair FROM rh_summaries")
             .fetch_one(&pool)
@@ -355,7 +366,7 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
         sqlx::query_as("SELECT content, filing_armed, title_armed FROM rh_summary_openings")
             .fetch_one(&pool)
             .await?;
-    assert_eq!(opening, ("Old fixture note".to_owned(), true, true));
+    assert_eq!(opening, ("Old fixture note".to_owned(), false, false));
     assert!(marker);
     Ok(())
 }
@@ -373,7 +384,7 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     let old = Connection::open(&upgraded)?;
     old.execute_batch(
         "DROP TABLE rh_summary_checkpoints; DROP TABLE rh_summary_runs;
-         DROP TABLE rh_summary_state; DROP TABLE rh_summary_openings;
+         DROP TABLE rh_summary_state; DROP TRIGGER rh_disarm_trashed_openings; DROP TABLE rh_summary_openings;
          ALTER TABLE ros_conversations DROP COLUMN title_from_capture;
          DROP TABLE rh_summary_conversion; DROP TABLE rh_summary_conversion_items;
          DROP TABLE ros_summary_deliveries;
@@ -393,6 +404,12 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
          ALTER TABLE ros_summaries DROP COLUMN section_char_end;
          INSERT INTO ros_summaries (id, kind, depth, content, created_at)
            VALUES ('legacy', 'branch', 2, 'Old fixture note', '2026-10-10T00:00:00.000Z');
+         INSERT INTO ros_conversations (id, session_key, agent, created_at, updated_at)
+         VALUES ('kept','cli:kept','fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'), ('trash','cli:trashed','fixture','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+         INSERT INTO ros_summaries (id, conversation_id, kind, depth, content, created_at)
+         VALUES ('legacy-kept','kept','leaf',0,'Invented packing review','2026-10-10'),
+                ('legacy-trash','trash','leaf',0,'Invented list of fasteners','2026-10-10');
+         INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-10-11');
          PRAGMA user_version = 35;",
     )?;
     drop(old);
@@ -408,10 +425,27 @@ fn top_down_upgrade_from_sqlite_35_preserves_legacy_kinds_and_matches_fresh() ->
     );
     let up = Connection::open(&upgraded)?;
     let row: (String, i32, Option<i32>, bool) = up.query_row(
-        "SELECT kind, depth, summary_ordinal, index_needs_repair FROM ros_summaries",
+        "SELECT kind, depth, summary_ordinal, index_needs_repair FROM ros_summaries WHERE id = 'legacy'",
         [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
+    let opening: (String, bool, bool, bool) = up.query_row(
+        "SELECT conversation_id, filing_armed, title_armed, historical_pending FROM rh_summary_openings",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(opening, ("kept".to_owned(), false, false, true));
+    up.execute(
+        "INSERT INTO rh_summary_conversion_items (conversation_id, last_input_at, estimated_tokens, state)
+         VALUES ('kept','2026-10-11T00:00:00Z',1,'pending')",
+        [],
+    )?;
+    let next: String = up.query_row(
+        "SELECT next_at FROM rh_summary_conversion_items",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(next.parse::<jiff::Timestamp>().is_ok());
     assert_eq!(row, ("branch".to_owned(), 2, None, false));
     assert_eq!(sqlite_definitions(&conn)?, sqlite_definitions(&up)?);
     Ok(())

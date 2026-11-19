@@ -218,6 +218,10 @@ impl SummaryConversion for SqliteStore {
         self.with_conn(move |conn| {
             let tx = immediate(conn)?;
             match action {
+                ConversionControl::ArmOpening { conversation } => {
+                    crate::title::arm_historical(&tx, conversation)?;
+                    return tx.commit().map_err(error);
+                }
                 ConversionControl::Start { rate, include_giants } => tx.execute(
                     "UPDATE rh_summary_conversion SET enabled = 1, include_giants = ?1, rate = coalesce(?2, rate),
                      bucket_tokens = CASE WHEN charged_tokens = 0 AND bucket_tokens = 0 AND inventory_after IS NULL

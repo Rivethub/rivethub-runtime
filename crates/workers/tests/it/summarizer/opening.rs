@@ -22,6 +22,7 @@ async fn title_job_names_an_active_opening_and_preserves_a_supplied_title()
                 agent: "rivet".to_owned(),
                 channel: "cli".to_owned(),
                 title: Some(title.to_owned()),
+                trashed: false,
             },
             content: request.to_owned(),
             armed: true,

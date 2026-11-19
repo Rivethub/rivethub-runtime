@@ -8,53 +8,11 @@ BEGIN
         RETURN;
     END IF;
     PERFORM set_config('rh.maintenance', 'on', true);
-
-    ALTER TABLE rh_summaries
-        ADD COLUMN summary_ordinal integer,
-        ADD COLUMN index_needs_repair boolean NOT NULL DEFAULT false,
-        ADD COLUMN session_root_for uuid GENERATED ALWAYS AS (
-            CASE WHEN kind = 'session' THEN conversation_id END) STORED,
-        ADD CONSTRAINT rh_summary_one_session UNIQUE (session_root_for) DEFERRABLE INITIALLY DEFERRED,
-        ADD COLUMN issued_part_ordinal integer,
-        ADD COLUMN input_token_estimate bigint,
-        ADD COLUMN source_first integer,
-        ADD COLUMN source_last integer,
-        ADD COLUMN range_verified boolean,
-        ADD COLUMN input_key bytea CHECK (octet_length(input_key) = 32),
-        ADD COLUMN index_key bytea CHECK (octet_length(index_key) = 32),
-        ADD COLUMN quality_flags integer NOT NULL DEFAULT 0 CHECK (quality_flags >= 0),
-        ADD COLUMN section_char_start integer,
-        ADD COLUMN section_char_end integer,
-        ADD CONSTRAINT rh_summary_v7_shape CHECK (
-          (kind IN ('leaf', 'branch', 'root') AND pipeline_version < 7)
-          OR (pipeline_version = 7 AND conversation_id IS NOT NULL
-            AND summary_ordinal IS NOT NULL AND summary_ordinal >= 0
-            AND source_first IS NOT NULL AND source_first > 0
-            AND source_last IS NOT NULL AND source_last >= source_first
-            AND input_key IS NOT NULL AND octet_length(input_key) = 32
-            AND message_count > 0 AND earliest_at IS NOT NULL AND latest_at IS NOT NULL
-            AND latest_at >= earliest_at
-            AND CASE kind
-              WHEN 'session' THEN depth = 2 AND parent_id IS NULL AND summary_ordinal = 0
-                AND source_first = 1 AND range_verified IS NULL
-                AND section_char_start IS NULL AND section_char_end IS NULL
-              WHEN 'part' THEN depth = 1 AND parent_id IS NOT NULL AND summary_ordinal > 0
-                AND issued_part_ordinal IS NOT NULL AND issued_part_ordinal > 0
-                AND input_token_estimate IS NOT NULL AND input_token_estimate > 0
-                AND range_verified IS NULL AND section_char_start IS NULL AND section_char_end IS NULL
-              WHEN 'section' THEN depth = 0 AND parent_id IS NOT NULL AND range_verified IS NOT NULL
-                AND section_char_start IS NOT NULL AND section_char_start >= 0
-                AND section_char_end IS NOT NULL AND section_char_end > section_char_start
-              ELSE false
-            END)
-        ) NOT VALID;
-    ALTER TABLE rh_summary_sources
-        ADD COLUMN render_key bytea CHECK (octet_length(render_key) = 32);
-    CREATE INDEX rh_summary_sources_order ON rh_summary_sources (summary_id, ordinal);
+    PERFORM set_config('max_parallel_maintenance_workers', '0', true);
 
     CREATE TABLE rh_summary_passages (
         id uuid PRIMARY KEY,
-        record_id uuid NOT NULL REFERENCES rh_summaries (id) ON DELETE CASCADE,
+        record_id uuid NOT NULL,
         ordinal integer NOT NULL CHECK (ordinal >= 0),
         char_start integer NOT NULL CHECK (char_start >= 0),
         char_end integer NOT NULL,
@@ -78,7 +36,7 @@ BEGIN
     ALTER TABLE rh_summary_passages FORCE ROW LEVEL SECURITY;
 
     CREATE TABLE rh_summary_state (
-        conversation_id uuid PRIMARY KEY REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        conversation_id uuid PRIMARY KEY,
         input_revision bigint NOT NULL CHECK (input_revision >= 0),
         last_input_at timestamptz NOT NULL,
         unsettled_since timestamptz,
@@ -99,14 +57,15 @@ BEGIN
           AND failed_revision IS DISTINCT FROM input_revision;
 
     CREATE TABLE rh_summary_openings (
-        conversation_id uuid PRIMARY KEY REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        conversation_id uuid PRIMARY KEY,
         content text NOT NULL CHECK (char_length(content) BETWEEN 1 AND 2000),
         filing_armed boolean NOT NULL DEFAULT false,
+        historical_pending boolean NOT NULL DEFAULT false,
         title_armed boolean NOT NULL DEFAULT false
     );
     CREATE TABLE rh_summary_runs (
         id uuid PRIMARY KEY,
-        conversation_id uuid NOT NULL UNIQUE REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        conversation_id uuid NOT NULL UNIQUE,
         revision bigint NOT NULL CHECK (revision >= 0),
         expected_root uuid, -- Compare-only. No FK that could pin an old tree.
         manifest jsonb NOT NULL,
@@ -119,10 +78,10 @@ BEGIN
         PRIMARY KEY (run_id, artifact_key)
     );
     CREATE TABLE rh_summary_deliveries (
-        conversation_id uuid NOT NULL REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        conversation_id uuid NOT NULL,
         consumer text NOT NULL CHECK (consumer IN ('wiki', 'entity')),
-        message_id uuid NOT NULL REFERENCES rh_messages (id) ON DELETE CASCADE,
-        anchor_id uuid REFERENCES rh_summaries (id) DEFERRABLE INITIALLY DEFERRED,
+        message_id uuid NOT NULL,
+        anchor_id uuid,
         completed_version integer,
         historical_backlog boolean NOT NULL DEFAULT false,
         PRIMARY KEY (conversation_id, consumer, message_id),
@@ -147,7 +106,7 @@ BEGIN
     );
     INSERT INTO rh_summary_conversion DEFAULT VALUES;
     CREATE TABLE rh_summary_conversion_items (
-        conversation_id uuid PRIMARY KEY REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        conversation_id uuid PRIMARY KEY,
         last_input_at timestamptz NOT NULL,
         last_used_at timestamptz,
         estimated_tokens bigint NOT NULL CHECK (estimated_tokens >= 0),
@@ -183,10 +142,92 @@ BEGIN
     CREATE POLICY rh_summary_openings_read ON rh_summary_openings FOR SELECT USING (
         EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_openings.conversation_id));
 
+    CREATE FUNCTION rh_disarm_trashed_openings() RETURNS trigger LANGUAGE plpgsql AS $trash$
+    BEGIN
+        PERFORM c.id FROM rh_conversations c WHERE c.session_key = NEW.session_key ORDER BY c.id FOR NO KEY UPDATE;
+        UPDATE rh_summary_openings o SET filing_armed = false, title_armed = false
+          FROM rh_conversations c WHERE c.id = o.conversation_id AND c.session_key = NEW.session_key
+            AND (o.filing_armed OR o.title_armed);
+        RETURN NEW;
+    END
+    $trash$;
     -- Portable export follows the same conversation visibility as the tree.
     -- Receipt writes are reserved for maintenance.
     CREATE POLICY rh_summary_deliveries_read ON rh_summary_deliveries FOR SELECT USING (
         EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_deliveries.conversation_id));
+
+    LOCK TABLE rh_conversations, rh_summaries, rh_summary_sources, rh_messages IN ACCESS EXCLUSIVE MODE NOWAIT;
+    LOCK TABLE rh_session_trash IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+
+    IF to_regclass('rh_summary_one_session') IS NULL THEN
+        IF EXISTS (SELECT 1 FROM rh_summaries) THEN
+            RAISE EXCEPTION 'migration 0076 requires the concurrent index preparation in rh db migrate';
+        END IF;
+        CREATE UNIQUE INDEX rh_summary_one_session ON rh_summaries (conversation_id) WHERE kind = 'session';
+    END IF;
+    IF to_regclass('rh_summary_sources_order') IS NULL THEN
+        IF EXISTS (SELECT 1 FROM rh_summary_sources) THEN
+            RAISE EXCEPTION 'migration 0076 requires the concurrent index preparation in rh db migrate';
+        END IF;
+        CREATE INDEX rh_summary_sources_order ON rh_summary_sources (summary_id, ordinal);
+    END IF;
+
+    ALTER TABLE rh_conversations ADD COLUMN title_from_capture boolean NOT NULL DEFAULT false;
+    ALTER TABLE rh_summaries
+        ADD COLUMN summary_ordinal integer,
+        ADD COLUMN index_needs_repair boolean NOT NULL DEFAULT false,
+        ADD COLUMN issued_part_ordinal integer,
+        ADD COLUMN input_token_estimate bigint,
+        ADD COLUMN source_first integer,
+        ADD COLUMN source_last integer,
+        ADD COLUMN range_verified boolean,
+        ADD COLUMN input_key bytea,
+        ADD COLUMN index_key bytea,
+        ADD COLUMN quality_flags integer NOT NULL DEFAULT 0,
+        ADD COLUMN section_char_start integer,
+        ADD COLUMN section_char_end integer,
+        ADD CONSTRAINT rh_summary_input_key CHECK (octet_length(input_key) = 32) NOT VALID,
+        ADD CONSTRAINT rh_summary_index_key CHECK (octet_length(index_key) = 32) NOT VALID,
+        ADD CONSTRAINT rh_summary_quality_flags CHECK (quality_flags >= 0) NOT VALID,
+        ADD CONSTRAINT rh_summary_v7_shape CHECK (
+          (kind IN ('leaf', 'branch', 'root') AND pipeline_version < 7)
+          OR (pipeline_version = 7 AND conversation_id IS NOT NULL
+            AND summary_ordinal IS NOT NULL AND summary_ordinal >= 0
+            AND source_first IS NOT NULL AND source_first > 0
+            AND source_last IS NOT NULL AND source_last >= source_first
+            AND input_key IS NOT NULL AND octet_length(input_key) = 32
+            AND message_count > 0 AND earliest_at IS NOT NULL AND latest_at IS NOT NULL
+            AND latest_at >= earliest_at
+            AND CASE kind
+              WHEN 'session' THEN depth = 2 AND parent_id IS NULL AND summary_ordinal = 0
+                AND source_first = 1 AND range_verified IS NULL
+                AND section_char_start IS NULL AND section_char_end IS NULL
+              WHEN 'part' THEN depth = 1 AND parent_id IS NOT NULL AND summary_ordinal > 0
+                AND issued_part_ordinal IS NOT NULL AND issued_part_ordinal > 0
+                AND input_token_estimate IS NOT NULL AND input_token_estimate > 0
+                AND range_verified IS NULL AND section_char_start IS NULL AND section_char_end IS NULL
+              WHEN 'section' THEN depth = 0 AND parent_id IS NOT NULL AND range_verified IS NOT NULL
+                AND section_char_start IS NOT NULL AND section_char_start >= 0
+                AND section_char_end IS NOT NULL AND section_char_end > section_char_start
+              ELSE false
+            END)
+        ) NOT VALID;
+    ALTER TABLE rh_summary_sources
+        ADD COLUMN render_key bytea,
+        ADD CONSTRAINT rh_summary_render_key CHECK (octet_length(render_key) = 32) NOT VALID;
+
+    ALTER TABLE rh_summary_passages ADD FOREIGN KEY (record_id) REFERENCES rh_summaries (id) ON DELETE CASCADE;
+    ALTER TABLE rh_summary_state ADD FOREIGN KEY (conversation_id) REFERENCES rh_conversations (id) ON DELETE CASCADE;
+    ALTER TABLE rh_summary_openings ADD FOREIGN KEY (conversation_id) REFERENCES rh_conversations (id) ON DELETE CASCADE;
+    ALTER TABLE rh_summary_runs ADD FOREIGN KEY (conversation_id) REFERENCES rh_conversations (id) ON DELETE CASCADE;
+    ALTER TABLE rh_summary_deliveries
+        ADD FOREIGN KEY (conversation_id) REFERENCES rh_conversations (id) ON DELETE CASCADE,
+        ADD FOREIGN KEY (message_id) REFERENCES rh_messages (id) ON DELETE CASCADE,
+        ADD FOREIGN KEY (anchor_id) REFERENCES rh_summaries (id) DEFERRABLE INITIALLY DEFERRED;
+    ALTER TABLE rh_summary_conversion_items ADD FOREIGN KEY (conversation_id) REFERENCES rh_conversations (id) ON DELETE CASCADE;
+
+    CREATE TRIGGER rh_disarm_trashed_openings AFTER INSERT OR UPDATE OF session_key ON rh_session_trash
+        FOR EACH ROW EXECUTE FUNCTION rh_disarm_trashed_openings();
 
     -- Bounded direct link resolver. Legacy rollup-remap's recursive union lives
     -- only in the replacement writer. Read RLS remains security invoker.
@@ -219,6 +260,17 @@ BEGIN
     DROP TRIGGER trg_embed_summary ON rh_summaries;
     CREATE TRIGGER trg_embed_summary AFTER INSERT ON rh_summaries
         FOR EACH ROW WHEN (NEW.pipeline_version < 7) EXECUTE FUNCTION notify_embedding_queue();
+
+    ALTER POLICY rh_write ON rh_summaries USING (
+        (SELECT rh_scope_maintenance()) OR (
+            owner_user_id = (SELECT rh_scope_principal())
+            AND EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summaries.conversation_id
+                        AND c.owner_user_id = rh_summaries.owner_user_id)));
+    ALTER POLICY rh_write ON rh_messages USING (
+        (SELECT rh_scope_maintenance()) OR (
+            owner_user_id = (SELECT rh_scope_principal())
+            AND EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_messages.conversation_id
+                        AND c.owner_user_id = rh_messages.owner_user_id)));
 
     INSERT INTO _rivetos_migrations (name) VALUES ('0076_top_down_summaries.sql');
 END

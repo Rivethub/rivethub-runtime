@@ -1,3 +1,4 @@
+use kernel::filing::Filable;
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::{ConversationHead, names_session, needs_title, summary_title};
 use sqlx::PgConnection;
@@ -7,7 +8,8 @@ use crate::summary_store::HeadRow;
 use crate::{Error, PostgresMemory};
 
 const OPENINGS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
-                               c.title_from_capture, o.content, o.title_armed
+                               c.title_from_capture, o.content, o.title_armed,
+                               EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key) AS trashed
                           FROM rh_conversations c
                           JOIN rh_summary_openings o ON o.conversation_id = c.id
                          WHERE $1::uuid IS NULL OR c.id = $1 ORDER BY c.id";
@@ -47,7 +49,10 @@ impl PostgresMemory {
             .map_err(failure)?;
         let mut titled = 0;
         for opening in rows.into_iter().map(OpeningTitle::from) {
-            if opening.supplied || opening.head.title.as_deref().is_some_and(names_session) {
+            if opening.head.trashed
+                || opening.supplied
+                || opening.head.title.as_deref().is_some_and(names_session)
+            {
                 continue;
             }
             if let Some(title) = summary_title(&opening.content)
@@ -127,14 +132,47 @@ pub(crate) async fn head(
         title_from_capture: bool,
     }
     let row = sqlx::query_as::<_, Current>(
-        "SELECT id, session_key, agent, channel, title, title_from_capture
-           FROM rh_conversations WHERE id = $1",
+        "SELECT id, session_key, agent, channel, title, title_from_capture,
+                EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key) AS trashed
+           FROM rh_conversations c WHERE id = $1",
     )
     .bind(id)
     .fetch_one(conn)
     .await
     .map_err(failure)?;
     Ok((row.head.into(), row.title_from_capture))
+}
+
+pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<(), Error> {
+    let present = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM rh_conversations WHERE id = $1 FOR NO KEY UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(failure)?;
+    if present.is_none() {
+        return Ok(());
+    }
+    let (head, supplied) = head(conn, id).await?;
+    if Filable::of(&head) == Filable::Never {
+        return Ok(());
+    }
+    let title = !supplied && needs_title(head.title.as_deref());
+    sqlx::query(
+        "UPDATE rh_summary_openings SET historical_pending = false, title_armed = $2,
+             filing_armed = NOT EXISTS (SELECT 1 FROM rh_conversation_placements WHERE conversation_id = $1)
+                AND NOT EXISTS (SELECT 1 FROM rh_session_placements WHERE session_id = $3 OR session_id = $4)
+         WHERE conversation_id = $1 AND historical_pending",
+    )
+    .bind(id)
+    .bind(title)
+    .bind(&head.session_key)
+    .bind(kernel::filing::session_key(Some(&head.channel), &head.session_key))
+    .execute(conn)
+    .await
+    .map_err(failure)?;
+    Ok(())
 }
 
 pub(crate) async fn seed(
@@ -147,7 +185,10 @@ pub(crate) async fn seed(
         Some(old) => old.is_seed(),
         None => !head.title.as_deref().is_some_and(names_session),
     };
-    if replace && let Some(title) = summary_title(content) {
+    if !head.trashed
+        && replace
+        && let Some(title) = summary_title(content)
+    {
         set_title(conn, head, &title).await?;
     }
     Ok(())

@@ -20,6 +20,7 @@ pub struct ConversationHead {
     pub agent: String,
     pub channel: String,
     pub title: Option<String>,
+    pub trashed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

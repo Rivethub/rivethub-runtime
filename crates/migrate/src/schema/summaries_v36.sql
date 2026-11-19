@@ -42,6 +42,7 @@ CREATE TABLE rh_summary_openings (
     conversation_id TEXT PRIMARY KEY NOT NULL REFERENCES ros_conversations(id) ON DELETE CASCADE,
     content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 2000),
     filing_armed INTEGER NOT NULL DEFAULT 0 CHECK (filing_armed IN (0,1)),
+    historical_pending INTEGER NOT NULL DEFAULT 0 CHECK (historical_pending IN (0, 1)),
     title_armed INTEGER NOT NULL DEFAULT 0 CHECK (title_armed IN (0,1))
 );
 CREATE TABLE rh_summary_runs (
@@ -92,7 +93,7 @@ CREATE TABLE rh_summary_conversion_items (
     last_used_at TEXT,
     estimated_tokens INTEGER NOT NULL CHECK (estimated_tokens >= 0),
     state TEXT NOT NULL CHECK (state IN ('pending','waiting_quiet','reserved','complete','failed')),
-    next_at TEXT NOT NULL,
+    next_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     reservation_expires_at TEXT,
     last_error TEXT,
     CHECK ((state = 'reserved') = (reservation_expires_at IS NOT NULL))
