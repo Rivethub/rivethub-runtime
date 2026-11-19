@@ -165,7 +165,7 @@ slug: spring
 }
 
 #[test]
-fn free_text_citation_kinds_only_follow_a_date() -> TestResult {
+fn free_text_citation_reads_new_kinds_only_after_a_date() -> TestResult {
     let markdown = "---
 title: Spring inspection
 slug: spring
@@ -176,6 +176,7 @@ slug: spring
 - `00000000-0000-4000-8000-000000000001` the session where we measured part of the spring
 - `00000000-0000-4000-8000-000000000002` 2026-10-10 we measured part of the spring
 - `00000000-0000-4000-8000-000000000003` measured on 2026-10-10 section of the spring
+- `00000000-0000-4000-8000-000000000004` BRANCH noted in the session
 ";
     let page = parse_wiki_page(markdown)?;
     let kinds: Vec<_> = page
@@ -183,7 +184,15 @@ slug: spring
         .iter()
         .map(|citation| citation.kind.map(|kind| kind.to_string()))
         .collect();
-    assert_eq!(kinds, [None, None, Some("section".to_owned())]);
+    assert_eq!(
+        kinds,
+        [
+            None,
+            None,
+            Some("section".to_owned()),
+            Some("branch".to_owned())
+        ]
+    );
     assert!(
         serialize_wiki_page(&page)?
             .contains("|  | leaf | `00000000-0000-4000-8000-000000000001` |")
