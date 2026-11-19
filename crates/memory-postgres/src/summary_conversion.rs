@@ -208,7 +208,7 @@ impl SummaryConversion for PostgresMemory {
             ).bind(include_giants),
             ConversionControl::Pause => sqlx::query("UPDATE rh_summary_conversion SET enabled = false"),
             ConversionControl::Retry { conversation } => sqlx::query(
-                "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL
+                "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0
                  WHERE conversation_id = $1 AND state = 'failed'"
             ).bind(conversation),
             ConversionControl::Release { conversation } => {
@@ -297,8 +297,8 @@ impl SummaryConversion for PostgresMemory {
             return Ok(None);
         }
         clear_stale_items(&mut tx, clock).await.map_err(error)?;
-        let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool)> = sqlx::query_as(
-            "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false) FROM rh_summary_conversion_items i
+        let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool, i32)> = sqlx::query_as(
+            "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false), i.timeout_retries FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
              CROSS JOIN rh_summary_conversion ctl
@@ -313,7 +313,9 @@ impl SummaryConversion for PostgresMemory {
              ORDER BY (i.estimated_tokens > $2), greatest(i.last_input_at, i.last_used_at) DESC, i.conversation_id
              LIMIT 1 FOR UPDATE OF c SKIP LOCKED"
         ).bind(crate::time::BindTime::bind_time(cutoff)).bind(GIANT_TOKENS).fetch_optional(&mut *tx).await.map_err(error)?;
-        let lease = if let Some((conversation, last_input, input_changed)) = candidate {
+        let lease = if let Some((conversation, last_input, input_changed, timeout_retries)) =
+            candidate
+        {
             if input_changed {
                 measure(&mut tx, &[conversation], cutoff)
                     .await
@@ -343,6 +345,7 @@ impl SummaryConversion for PostgresMemory {
                 conversation,
                 revision,
                 claimed_at: clock,
+                timeout_retries,
             })
         } else {
             None
@@ -434,6 +437,11 @@ impl SummaryConversion for PostgresMemory {
         Ok(locked.then(|| Box::new(conn) as Box<dyn SummaryPermit>))
     }
 
+    async fn live_pending(&self) -> Result<bool, SummaryStoreError> {
+        let mut conn = self.pool.acquire().await.map_err(error)?;
+        live_waiting(&mut conn).await.map_err(error)
+    }
+
     async fn report(&self, usage: ConversionUsage) -> Result<(), SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         lock(&mut tx).await.map_err(error)?;
@@ -454,20 +462,17 @@ impl SummaryConversion for PostgresMemory {
     ) -> Result<(), SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         lock(&mut tx).await.map_err(error)?;
-        let (state, failure) = match outcome {
-            ConversionOutcome::Yield => ("pending", None),
-            ConversionOutcome::Complete => ("complete", None),
-            ConversionOutcome::Fail(error) => ("failed", Some(error)),
-        };
+        let (state, failure, retries) = outcome.status(lease);
         sqlx::query(
             "UPDATE rh_summary_conversion_items SET state = $3, reservation_expires_at = NULL,
-                     last_error = $4, next_at = clock_timestamp()
+                     last_error = $4, next_at = clock_timestamp(), timeout_retries = $5
                      WHERE conversation_id = $1 AND next_at = $2 AND state = 'reserved'",
         )
         .bind(lease.conversation)
         .bind(crate::time::BindTime::bind_time(lease.claimed_at))
         .bind(state)
         .bind(failure)
+        .bind(retries)
         .execute(&mut *tx)
         .await
         .map_err(error)?;

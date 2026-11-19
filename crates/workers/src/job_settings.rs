@@ -99,7 +99,40 @@ pub fn tuned_summary(
     if let Some(minutes) = positive(env, "RIVETHUB_SUMMARY_INACTIVITY_MINUTES")? {
         settings.inactivity = jiff::SignedDuration::from_mins(i64::from(minutes));
     }
+    tune_summary_requests(&mut settings, env)?;
     Ok(settings)
+}
+
+fn tune_summary_requests(
+    settings: &mut crate::SummarySettings,
+    env: &Environment,
+) -> Result<(), WorkerError> {
+    for (name, timeout) in [
+        (
+            "RIVETHUB_SUMMARY_FIRST_TOKEN_TIMEOUT_MS",
+            &mut settings.first_token_timeout,
+        ),
+        (
+            "RIVETHUB_SUMMARY_INTER_TOKEN_TIMEOUT_MS",
+            &mut settings.inter_token_timeout,
+        ),
+        (
+            "RIVETHUB_SUMMARY_REQUEST_TIMEOUT_MS",
+            &mut settings.request_timeout,
+        ),
+    ] {
+        if let Some(ms) = positive(env, name)? {
+            *timeout = std::time::Duration::from_millis(u64::from(ms));
+        }
+    }
+    let name = "RIVETHUB_SUMMARY_CONVERSION_TIMEOUT_RETRIES";
+    if let Some(value) = number(env, name)? {
+        settings.conversion_timeout_retries =
+            i32::try_from(value).map_err(|_| WorkerError::JobSetting {
+                name: name.to_owned(),
+            })?;
+    }
+    settings.validate_timeouts()
 }
 
 pub fn tuned_embed(

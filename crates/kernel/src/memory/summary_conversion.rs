@@ -99,13 +99,27 @@ pub struct ConversionLease {
     pub conversation: Uuid,
     pub revision: i64,
     pub claimed_at: Timestamp,
+    pub timeout_retries: i32,
 }
 
 #[derive(Debug)]
 pub enum ConversionOutcome {
     Yield,
+    RetryTimeout,
     Complete,
     Fail(String),
+}
+
+impl ConversionOutcome {
+    #[must_use]
+    pub fn status(self, lease: ConversionLease) -> (&'static str, Option<String>, i32) {
+        match self {
+            Self::Yield => ("pending", None, lease.timeout_retries),
+            Self::RetryTimeout => ("pending", None, lease.timeout_retries.saturating_add(1)),
+            Self::Complete => ("complete", None, 0),
+            Self::Fail(error) => ("failed", Some(error), 0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +169,9 @@ pub trait SummaryConversion: Send + Sync {
         &self,
         limit: u32,
     ) -> Result<Option<Box<dyn SummaryPermit>>, SummaryStoreError>;
+
+    #[doc(hidden)]
+    async fn live_pending(&self) -> Result<bool, SummaryStoreError>;
 
     #[doc(hidden)]
     async fn report(&self, usage: ConversionUsage) -> Result<(), SummaryStoreError>;

@@ -32,6 +32,7 @@ pub async fn handle_conversion_tick(
     env: &live::LiveEnv<'_>,
     store: &dyn SummaryConversion,
 ) -> Result<(), WorkerError> {
+    env.summary.settings.validate_timeouts()?;
     let Some(lease) = store.claim(env.summary.settings.inactivity).await? else {
         return Ok(());
     };
@@ -51,6 +52,11 @@ pub async fn handle_conversion_tick(
             | WorkerError::SummarySuperseded
             | WorkerError::SummaryReplan,
         ) => ConversionOutcome::Yield,
+        Err(WorkerError::ModelTimeout { .. })
+            if lease.timeout_retries < env.summary.settings.conversion_timeout_retries =>
+        {
+            ConversionOutcome::RetryTimeout
+        }
         Err(error) => ConversionOutcome::Fail(failure_reason(&error)),
     };
     store.finish(lease, outcome).await?;
@@ -60,6 +66,7 @@ pub async fn handle_conversion_tick(
 fn failure_reason(error: &WorkerError) -> String {
     match error {
         WorkerError::SummarySettings { message } => return message.clone(),
+        WorkerError::ModelTimeout { .. } => "model request timed out",
         WorkerError::Llm { .. } | WorkerError::ProviderOutage { .. } => "model request failed",
         WorkerError::Embed(_) | WorkerError::EmbedTimeout | WorkerError::NullEmbedding => {
             "summary embedding failed"
@@ -103,7 +110,6 @@ fn failure_reason(error: &WorkerError) -> String {
         | WorkerError::FilePayload { .. }
         | WorkerError::Filing { .. }
         | WorkerError::Cleanup { .. }
-        | WorkerError::ModelTimeout { .. }
         | WorkerError::Topics(..)
         | WorkerError::Lineage(..)
         | WorkerError::Memory(..)

@@ -116,6 +116,7 @@ BEGIN
         next_at timestamptz NOT NULL DEFAULT now(),
         reservation_expires_at timestamptz,
         last_error text,
+        timeout_retries integer NOT NULL DEFAULT 0 CHECK (timeout_retries >= 0),
         CHECK ((state = 'reserved') = (reservation_expires_at IS NOT NULL))
     );
     CREATE UNIQUE INDEX rh_summary_conversion_one_reserved

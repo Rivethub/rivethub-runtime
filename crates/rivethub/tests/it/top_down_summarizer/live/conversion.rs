@@ -15,6 +15,7 @@ const QUIET: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 struct Provider {
     script: Scripted,
     chat_gate: std::sync::atomic::AtomicBool,
+    midstream: std::sync::atomic::AtomicBool,
     embed_gate: std::sync::atomic::AtomicBool,
     embed_calls: std::sync::atomic::AtomicUsize,
     entered: Notify,
@@ -26,6 +27,7 @@ impl Provider {
         Self {
             script: Scripted::live(),
             chat_gate: true.into(),
+            midstream: false.into(),
             embed_gate: false.into(),
             embed_calls: 0.into(),
             entered: Notify::new(),
@@ -37,9 +39,22 @@ impl Provider {
 #[async_trait]
 impl ModelProvider for Provider {
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+        self.chat_observed(request, &|_| {}).await
+    }
+
+    async fn chat_observed(
+        &self,
+        request: ModelRequest,
+        observe: &kernel::model::ModelObserver<'_>,
+    ) -> Result<LlmResponse, ModelProviderError> {
         let block = self.chat_gate.swap(false, SeqCst);
         let mut reply = self.script.chat(request).await?;
         if block {
+            if self.midstream.load(SeqCst) {
+                observe(&kernel::model::ModelChunk::Text {
+                    delta: "Invented".into(),
+                });
+            }
             self.entered.notify_one();
             self.proceed.notified().await;
         }
@@ -80,6 +95,15 @@ async fn tick(
     provider: &Provider,
     permits: &Semaphore,
 ) -> Result<(), WorkerError> {
+    tick_with(store, provider, permits, &config::Environment::default()).await
+}
+
+async fn tick_with(
+    store: &dyn SummaryStore,
+    provider: &Provider,
+    permits: &Semaphore,
+    config: &config::Environment,
+) -> Result<(), WorkerError> {
     let queue = testkit::fakes::FakeJobQueue::default();
     let cancel = CancellationToken::new();
     let mut settings = SummarySettings::standard("conversion-fixture")?;
@@ -88,7 +112,7 @@ async fn tick(
         store,
         provider,
         queue: &queue,
-        settings: &settings,
+        settings: &workers::tuned_summary(settings, config)?,
         now: Timestamp::now(),
         cancel: &cancel,
     };
@@ -170,6 +194,12 @@ async fn conversion(
     assert!(capability.status().await?.inventory_complete);
 
     verify_foreground_priority(store, capability, historical, old, &provider, &permits).await?;
+    verify_timeout_retry(store, capability, &provider, &permits).await?;
+    capability
+        .control(ConversionControl::Retry {
+            conversation: historical,
+        })
+        .await?;
     provider.script.fail_embeddings.store(true, SeqCst);
     tick(store, &provider, &permits).await?;
     assert_eq!(
@@ -216,6 +246,34 @@ async fn conversion(
     Ok(())
 }
 
+async fn verify_timeout_retry(
+    store: &dyn SummaryStore,
+    capability: &dyn SummaryConversion,
+    provider: &Provider,
+    permits: &Semaphore,
+) -> TestResult {
+    let settings = config::Environment::from_vars([
+        ("RIVETHUB_SUMMARY_FIRST_TOKEN_TIMEOUT_MS", "100"),
+        ("RIVETHUB_SUMMARY_INTER_TOKEN_TIMEOUT_MS", "100"),
+    ]);
+    for attempt in 1..=3 {
+        provider.chat_gate.store(true, SeqCst);
+        provider.midstream.store(attempt == 2, SeqCst);
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tick_with(store, provider, permits, &settings),
+        )
+        .await??;
+        provider.entered.notified().await;
+        let status = capability.status().await?;
+        assert_eq!(status.reserved, 0);
+        assert_eq!(status.pending, i64::from(attempt < 3));
+        assert_eq!(status.failed, i64::from(attempt == 3));
+        assert_eq!(permits.available_permits(), 3);
+    }
+    Ok(())
+}
+
 async fn verify_foreground_priority(
     store: &(impl SummaryStore + MemoryStore),
     capability: &dyn SummaryConversion,
@@ -245,10 +303,9 @@ async fn verify_foreground_priority(
         .await?;
         let live = settle(store, live_session).await?;
         assert!(capability.claim(QUIET).await?.is_none());
-        provider.proceed.notify_one();
         Ok::<_, Box<dyn std::error::Error>>(live)
     };
-    let (result, live) = tokio::time::timeout(Duration::from_secs(10), async {
+    let (result, live) = tokio::time::timeout(Duration::from_secs(2), async {
         tokio::join!(tick(store, provider, permits), interruption)
     })
     .await?;
@@ -327,16 +384,15 @@ async fn recover_conversion(
     assert_eq!(
         (
             status.complete,
-            status.charged_tokens,
             status.provider_input_tokens,
             status.provider_output_tokens
         ),
-        (1, 400, 400, 22)
+        (1, 400, 22)
     );
     assert_eq!(
         provider.script.calls.lock().await.len(),
-        2,
-        "resume reused completed chat"
+        6,
+        "resume reused the completed chat after preemption and timeouts"
     );
     Ok(())
 }

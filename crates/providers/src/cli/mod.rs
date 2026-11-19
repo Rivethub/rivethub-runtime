@@ -89,7 +89,15 @@ impl Drop for CliBacked {
 #[async_trait]
 impl ModelProvider for CliBacked {
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
-        crate::collect_response(self.stream(request).await?).await
+        self.chat_observed(request, &|_| {}).await
+    }
+
+    async fn chat_observed(
+        &self,
+        request: ModelRequest,
+        observe: &kernel::model::ModelObserver<'_>,
+    ) -> Result<LlmResponse, ModelProviderError> {
+        crate::collect_response(self.stream(request).await?, observe).await
     }
 
     async fn stream(

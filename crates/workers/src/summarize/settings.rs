@@ -1,4 +1,5 @@
 use jiff::SignedDuration;
+use std::time::Duration;
 
 use super::top_down::{
     prompt::session_ceiling,
@@ -13,6 +14,10 @@ pub struct SummarySettings {
     pub context_tokens: u32,
     pub model_concurrency: u32,
     pub model_profile: String,
+    pub first_token_timeout: Duration,
+    pub inter_token_timeout: Duration,
+    pub request_timeout: Duration,
+    pub conversion_timeout_retries: i32,
 }
 
 impl SummarySettings {
@@ -29,7 +34,30 @@ impl SummarySettings {
             context_tokens: FALLBACK_CONTEXT_TOKENS,
             model_concurrency: 3,
             model_profile: String::new(),
+            first_token_timeout: Duration::from_secs(180),
+            inter_token_timeout: Duration::from_secs(60),
+            request_timeout: Duration::from_mins(30),
+            conversion_timeout_retries: 2,
         })
+    }
+
+    pub(crate) fn validate_timeouts(&self) -> Result<(), WorkerError> {
+        for timeout in [self.first_token_timeout, self.inter_token_timeout] {
+            if timeout.is_zero() || timeout > self.request_timeout {
+                return Err(invalid(
+                    "summary token timeouts must be positive and at most the request timeout",
+                ));
+            }
+        }
+        if self.request_timeout > Duration::from_hours(24) {
+            return Err(invalid("summary request timeout must be at most one day"));
+        }
+        if !(0..=10).contains(&self.conversion_timeout_retries) {
+            return Err(invalid(
+                "summary conversion timeout retries must be between 0 and 10",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn live_limits(&self) -> Result<Limits, WorkerError> {

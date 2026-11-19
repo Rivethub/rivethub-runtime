@@ -1,4 +1,5 @@
 mod packing;
+mod request;
 mod run;
 
 use jiff::Timestamp;
@@ -6,7 +7,6 @@ use kernel::memory::summary_backend::SummaryArtifact;
 use packing::freeze;
 use run::{Run, populate, transcript_warnings};
 use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,7 +39,6 @@ use crate::{EmbedSettings, WorkerError};
 pub(crate) const ATTEMPTS: i32 = 3;
 const INPUT_WARNING: u32 = 1 << 4;
 const CHAT_FRAMING_TOKENS: usize = 32;
-const CONVERSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,20 +125,6 @@ impl Publisher<'_> {
             Ok((local, permit))
         }
     }
-
-    async fn request<T>(
-        &self,
-        future: impl Future<Output = Result<T, kernel::model::ModelProviderError>>,
-    ) -> Result<T, WorkerError> {
-        if self.conversion.is_some() {
-            tokio::time::timeout(CONVERSION_REQUEST_TIMEOUT, future)
-                .await
-                .map_err(|_| settings_error("conversion model request timed out"))?
-                .map_err(super::llm_error)
-        } else {
-            future.await.map_err(super::llm_error)
-        }
-    }
 }
 
 pub(super) async fn convert(
@@ -178,6 +163,7 @@ pub async fn handle(
     request: &LiveRequest,
     attempt: u32,
 ) -> Result<(), WorkerError> {
+    env.summary.settings.validate_timeouts()?;
     let Some(revision) = request.revision else {
         return Ok(());
     };
@@ -412,10 +398,11 @@ async fn tokenize(
         None
     };
     let count = match env
-        .request(env.summary.provider.count_tokens(&settings.model, text))
+        .tokenizer_request(env.summary.provider.count_tokens(&settings.model, text))
         .await
     {
         Ok(count) => count,
+        Err(error @ (WorkerError::ConversionYield | WorkerError::Cancelled)) => return Err(error),
         Err(error) => {
             ensure_eligible(env, id, revision).await?;
             if !env.tokenizer_failed.swap(true, Ordering::Relaxed) {

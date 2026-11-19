@@ -96,6 +96,7 @@ CREATE TABLE rh_summary_conversion_items (
     next_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     reservation_expires_at TEXT,
     last_error TEXT,
+    timeout_retries INTEGER NOT NULL DEFAULT 0 CHECK (timeout_retries >= 0),
     CHECK ((state = 'reserved') = (reservation_expires_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX rh_summary_conversion_one_reserved ON rh_summary_conversion_items ((1))

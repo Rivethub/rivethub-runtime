@@ -238,7 +238,7 @@ impl SummaryConversion for SqliteStore {
                 ),
                 ConversionControl::Pause => tx.execute("UPDATE rh_summary_conversion SET enabled = 0", []),
                 ConversionControl::Retry { conversation } => tx.execute(
-                    "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL
+                    "UPDATE rh_summary_conversion_items SET state = 'pending', last_error = NULL, timeout_retries = 0
                      WHERE conversation_id = ?1 AND state = 'failed'", [conversation.to_string()],
                 ),
                 ConversionControl::Release { conversation } => tx.execute(RELEASE, [conversation.to_string()]),
@@ -292,8 +292,8 @@ impl SummaryConversion for SqliteStore {
                     SELECT c.id FROM ros_conversations c LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
                     WHERE NOT ({INCLUDED}) OR NOT s.historical_only)"
              ), []).map_err(error)?;
-            let candidate: Option<(String, String, bool)> = tx.query_row(
-                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0) FROM rh_summary_conversion_items i
+            let candidate: Option<(String, String, bool, i32)> = tx.query_row(
+                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0), i.timeout_retries FROM rh_summary_conversion_items i
                  LEFT JOIN rh_summary_state s ON s.conversation_id = i.conversation_id
                  LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = i.conversation_id
                  CROSS JOIN rh_summary_conversion ctl
@@ -307,9 +307,9 @@ impl SummaryConversion for SqliteStore {
                    AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
                  ORDER BY (i.estimated_tokens > ?2), max(rh_instant(i.last_input_at), rh_instant(coalesce(i.last_used_at, i.last_input_at))) DESC, i.conversation_id
                  LIMIT 1",
-                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             ).optional().map_err(error)?;
-            let lease = if let Some((id, last_input, input_changed)) = candidate {
+            let lease = if let Some((id, last_input, input_changed, timeout_retries)) = candidate {
                 if input_changed {
                     measure(&tx, &[id], cutoff)?;
                     tx.commit().map_err(error)?;
@@ -325,7 +325,7 @@ impl SummaryConversion for SqliteStore {
                 tx.execute("UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = ?2,
                             reservation_expires_at = ?3 WHERE conversation_id = ?1",
                            params![id, claim_stamp(clock), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))]).map_err(error)?;
-                Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock })
+                Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock, timeout_retries })
             } else {
                 None
             };
@@ -395,6 +395,12 @@ impl SummaryConversion for SqliteStore {
         Ok((limit > 1).then(|| Box::new(()) as Box<dyn SummaryPermit>))
     }
 
+    async fn live_pending(&self) -> Result<bool, SummaryStoreError> {
+        self.with_conn(|conn| live_waiting(conn))
+            .await
+            .map_err(store_error)
+    }
+
     async fn report(&self, usage: ConversionUsage) -> Result<(), SummaryStoreError> {
         self.with_conn(move |conn| {
             let tx = immediate(conn)?;
@@ -415,21 +421,18 @@ impl SummaryConversion for SqliteStore {
         outcome: ConversionOutcome,
     ) -> Result<(), SummaryStoreError> {
         self.with_conn(move |conn| {
-            let (state, failure) = match outcome {
-                ConversionOutcome::Yield => ("pending", None),
-                ConversionOutcome::Complete => ("complete", None),
-                ConversionOutcome::Fail(error) => ("failed", Some(error)),
-            };
+            let (state, failure, retries) = outcome.status(lease);
             conn.execute(
                 "UPDATE rh_summary_conversion_items SET state = ?3, reservation_expires_at = NULL,
-                         last_error = ?4, next_at = ?5
+                         last_error = ?4, next_at = ?5, timeout_retries = ?6
                          WHERE conversation_id = ?1 AND next_at = ?2 AND state = 'reserved'",
                 params![
                     lease.conversation.to_string(),
                     claim_stamp(lease.claimed_at),
                     state,
                     failure,
-                    claim_stamp(Timestamp::now())
+                    claim_stamp(Timestamp::now()),
+                    retries
                 ],
             )
             .map_err(error)?;

@@ -19,6 +19,7 @@ use kernel::model::Embedding;
 use kernel::model::LlmResponse;
 use kernel::model::LlmResponseKind;
 use kernel::model::ModelChunk;
+use kernel::model::ModelObserver;
 use kernel::model::ModelProvider;
 use kernel::model::ModelProviderError;
 use kernel::model::ModelRequest;
@@ -270,9 +271,17 @@ impl ModelProvider for OpenAiCompatible {
     }
 
     async fn chat(&self, request: ModelRequest) -> Result<LlmResponse, ModelProviderError> {
+        self.chat_observed(request, &|_| {}).await
+    }
+
+    async fn chat_observed(
+        &self,
+        request: ModelRequest,
+        observe: &ModelObserver<'_>,
+    ) -> Result<LlmResponse, ModelProviderError> {
         let finish = Arc::new(AtomicU8::new(0));
         let rx = self.send_chat(&request, Some(Arc::clone(&finish))).await?;
-        let collect = collect_response(rx);
+        let collect = collect_response(rx, observe);
         tokio::pin!(collect);
         let mut response = tokio::select! {
             biased;
@@ -320,12 +329,15 @@ impl ModelProvider for OpenAiCompatible {
 
 pub(crate) async fn collect_response(
     mut rx: Receiver<ModelStreamItem>,
+    observe: &ModelObserver<'_>,
 ) -> Result<LlmResponse, ModelProviderError> {
     let mut content = String::new();
     let mut usage: Option<LlmUsage> = None;
     let mut done = false;
     while let Some(item) = rx.recv().await {
-        match item? {
+        let chunk = item?;
+        observe(&chunk);
+        match chunk {
             ModelChunk::Text { delta } => content.push_str(&delta),
             ModelChunk::Reasoning { delta: _ } => {}
             ModelChunk::Usage { usage: received } => usage = Some(received),

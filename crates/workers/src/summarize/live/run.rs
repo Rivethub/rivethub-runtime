@@ -284,7 +284,6 @@ impl Run<'_> {
             .env
             .model_slot(self.request.conversation_id, self.revision)
             .await?;
-        let provider = self.env.summary.provider;
         let model = &self.env.summary.settings.model;
         let tokens = self
             .count(&prompt.system)
@@ -310,7 +309,7 @@ impl Run<'_> {
         self.env.boundary(charge).await?;
         let response = self
             .env
-            .request(provider.chat(llm::model_request(model, &prompt)))
+            .chat_request(llm::model_request(model, &prompt))
             .await?;
         drop(permit);
         drop(local);
