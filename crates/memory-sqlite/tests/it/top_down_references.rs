@@ -948,3 +948,52 @@ async fn pause_before_full_text(
         .await?;
     Ok((ready, resume))
 }
+
+#[tokio::test]
+async fn top_down_replacement_keeps_tag_decisions_over_newer_suggestions() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, source, state, created_at, updated_at)
+                 VALUES ('tag-31', 'summary', ?1, 'part', 'gasket', 'user', 'accepted', '2024-01-01', '2024-01-01'),
+                        ('tag-32', 'summary', ?1, 'part', 'valve', 'user', 'rejected', '2024-01-01', '2024-01-01'),
+                        ('tag-33', 'summary', ?2, 'part', 'gasket', 'model', 'suggested', '2024-01-02', '2024-01-02'),
+                        ('tag-34', 'summary', ?2, 'part', 'valve', 'model', 'suggested', '2024-01-02', '2024-01-02')",
+                params![id(10).to_string(), id(11).to_string()],
+            )
+            .map_err(failed)
+        })
+        .await?;
+    store
+        .replace_summary_tree(tree(&[10, 11, 12], 20, &[2], true))
+        .await?;
+    let tags: Vec<(String, String, String)> = store
+        .with_conn(|conn| {
+            conn.prepare("SELECT entity_id, value, state FROM ros_tags ORDER BY value")
+                .and_then(|mut query| {
+                    query
+                        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                        .collect()
+                })
+                .map_err(failed)
+        })
+        .await?;
+    assert_eq!(
+        tags,
+        [
+            (
+                id(20).to_string(),
+                "gasket".to_owned(),
+                "accepted".to_owned()
+            ),
+            (
+                id(20).to_string(),
+                "valve".to_owned(),
+                "rejected".to_owned()
+            ),
+        ]
+    );
+    Ok(())
+}

@@ -228,7 +228,7 @@ FROM summary_claim_ranks ranked WHERE c.id = ranked.id AND ranked.rank = 1 AND c
 
 CREATE TEMP TABLE summary_tag_ranks ON COMMIT DROP AS
 SELECT t.id, map.new, row_number() OVER (PARTITION BY t.key, t.value, map.new ORDER BY
-       t.updated_at DESC, t.id DESC) AS rank
+       (t.state IN ('accepted', 'rejected')) DESC, t.updated_at DESC, t.id DESC) AS rank
 FROM rh_tags t JOIN summary_reference_map map ON map.old = t.entity_id
 WHERE t.entity_type = 'summary';
 

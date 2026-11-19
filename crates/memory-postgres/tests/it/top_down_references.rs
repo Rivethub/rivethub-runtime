@@ -1373,3 +1373,37 @@ async fn summary_publication_waits_for_merge_to_commit(pool: PgPool) -> TestResu
     assert!(visible);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_replacement_keeps_tag_decisions_over_newer_suggestions(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    sqlx::query(
+        "INSERT INTO rh_tags (entity_type, entity_id, key, value, source, state, updated_at)
+         VALUES ('summary', $1, 'part', 'gasket', 'user', 'accepted', '2024-01-01'),
+                ('summary', $1, 'part', 'valve', 'user', 'rejected', '2024-01-01'),
+                ('summary', $2, 'part', 'gasket', 'model', 'suggested', '2024-01-02'),
+                ('summary', $2, 'part', 'valve', 'model', 'suggested', '2024-01-02')",
+    )
+    .bind(id(10))
+    .bind(id(11))
+    .execute(&pool)
+    .await?;
+    let store = scoped_store(&pool).await?;
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&tree(&[10, 11, 12], 20, &[2], true)))
+        .await?;
+    let tags: Vec<(Uuid, String, String)> =
+        sqlx::query_as("SELECT entity_id, value, state FROM rh_tags ORDER BY value")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(
+        tags,
+        [
+            (id(20), "gasket".to_owned(), "accepted".to_owned()),
+            (id(20), "valve".to_owned(), "rejected".to_owned()),
+        ]
+    );
+    Ok(())
+}
