@@ -479,6 +479,73 @@ async fn incremental_merge_reopens_a_summarized_session_once(pool: PgPool) -> Te
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_replacement_stays_live_and_settles(pool: PgPool) -> TestResult {
+    use jiff::{SignedDuration, Timestamp};
+    use kernel::memory::SummaryStore as _;
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone());
+    let source = PostgresMemory::new(source_pool.clone());
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    capture(&source, "alice", &[(BOTH_SMALLER, 4)]).await?;
+    let session = "SELECT id FROM rh_conversations WHERE session_key = $1";
+    let original: Uuid = sqlx::query_scalar(session)
+        .bind(BOTH_SMALLER)
+        .fetch_one(&pool)
+        .await?;
+    let replacement: Uuid = sqlx::query_scalar(session)
+        .bind(BOTH_SMALLER)
+        .fetch_one(&source_pool)
+        .await?;
+    assert_ne!(original, replacement);
+    let before = family
+        .summary_state(original)
+        .await?
+        .ok_or("live capture")?;
+    assert_eq!(before.input_revision, 1);
+    assert_eq!(before.settled_at, None);
+    assert!(!before.historical_only);
+
+    let cancel = CancellationToken::new();
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let preview = family.merge_store(&source, &request, &cancel).await?;
+    assert!(!preview.committed);
+    assert_eq!(preview.replaced, [BOTH_SMALLER]);
+    assert_eq!(family.summary_state(original).await?, Some(before));
+    assert_eq!(family.summary_state(replacement).await?, None);
+
+    request.dry_run = false;
+    let merged = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(merged.replaced, [BOTH_SMALLER]);
+    assert_eq!(merged.inserted.get("rh_messages"), Some(&4));
+    assert_eq!(family.summary_state(original).await?, None);
+    let state = family
+        .summary_state(replacement)
+        .await?
+        .ok_or("missing live state on replacement")?;
+    assert_eq!(state.input_revision, 1);
+    assert_eq!(state.unsettled_since, Some(state.last_input_at));
+    assert_eq!(state.settled_at, None);
+    assert!(!state.historical_only);
+
+    let rerun = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(rerun.inserted.get("rh_messages"), Some(&0));
+    assert_eq!(family.summary_state(replacement).await?, Some(state));
+
+    let now = Timestamp::now().checked_add(SignedDuration::from_hours(48))?;
+    family.expire_summary_page(None, now, now, 10).await?;
+    assert_eq!(
+        family.live_candidates(Uuid::nil(), 10).await?,
+        [(replacement, 1)]
+    );
+    Ok(())
+}
+
 async fn append_merge_messages(
     source: &PgPool,
     conversation: Uuid,

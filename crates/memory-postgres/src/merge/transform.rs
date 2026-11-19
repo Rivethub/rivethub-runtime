@@ -16,6 +16,8 @@ CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON CO
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
   SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AND NOT has_visible_tree AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
+         EXISTS (SELECT 1 FROM rh_summary_state state WHERE state.conversation_id = t.id
+                 AND NOT state.historical_only) AS target_live,
          (SELECT count(*) FROM merge_rh_messages m WHERE m.conversation_id = s.id) AS source_messages,
          (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = t.id) AS target_messages,
          (EXISTS (SELECT 1 FROM merge_rh_summaries a WHERE a.conversation_id = s.id AND a.index_needs_repair)
@@ -414,7 +416,8 @@ const REFRESH_SETTLEMENT: &str = "
 changed AS (
     UPDATE rh_conversations c SET last_summary_input_at = clock_timestamp()
      WHERE c.id IN (SELECT conversation_id FROM inserted)
-       AND NOT EXISTS (SELECT 1 FROM merge_new_conversations new WHERE new.id = c.id)
+       AND (NOT EXISTS (SELECT 1 FROM merge_new_conversations new WHERE new.id = c.id)
+            OR c.id IN (SELECT source_id FROM merge_dupes WHERE source_wins AND target_live))
     RETURNING c.id, c.last_summary_input_at
 ), refreshed AS (
     INSERT INTO rh_summary_state AS state
