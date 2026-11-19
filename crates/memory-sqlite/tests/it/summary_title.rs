@@ -162,55 +162,59 @@ async fn capture_keeps_one_opening_and_reorders_it_when_the_start_arrives() -> T
     use kernel::filing::FilingStore as _;
 
     let fresh = fresh_store()?;
+    let store = fresh.store.clone().with_language_available(true);
     let owner = testkit::owner()?;
     let now = instant("2026-10-10T12:00:00Z")?;
     let later = batch(7, "Investigate the retry budget")?;
-    let result = fresh
-        .store
-        .capture(later.clone(), &owner, None, now)
-        .await?;
+    let result = store.capture(later.clone(), &owner, None, now).await?;
     let id = Uuid::parse_str(&result.conversation_id)?;
-    let before = fresh.store.opening_title(id).await?.expect("opening");
+    let before = store.opening_title(id).await?.expect("opening");
     assert_eq!(before.content, "Investigate the retry budget");
     assert!(before.is_seed());
     assert_eq!(
-        fresh.store.undelivered_openings().await?,
+        store.undelivered_openings().await?,
         [],
         "capture queued both jobs"
     );
 
     let earlier = batch(2, "Fix the queue receipt")?;
-    fresh
-        .store
+    let mut unpositioned = earlier.clone();
+    unpositioned
+        .messages
+        .first_mut()
+        .ok_or("early message")?
+        .metadata = None;
+    store
         .capture(
-            earlier,
+            unpositioned,
             &owner,
             None,
             now + jiff::SignedDuration::from_secs(1),
         )
         .await?;
-    let duplicate = fresh.store.capture(later, &owner, None, now).await?;
+    assert_eq!(
+        store.opening_title(id).await?.expect("opening").content,
+        before.content
+    );
+    let filled = store.capture(earlier, &owner, None, now).await?;
+    assert_eq!(filled.inserted, 0);
+    let duplicate = store.capture(later, &owner, None, now).await?;
     assert_eq!(duplicate.inserted, 0);
     assert!(
-        !fresh
-            .store
+        !store
             .finish_opening_title(&before, Some("Stale model title"))
             .await?
     );
-    let after = fresh
-        .store
-        .opening_title(id)
-        .await?
-        .expect("earlier opening");
+    let after = store.opening_title(id).await?.expect("earlier opening");
     assert_eq!(after.content, "Fix the queue receipt");
     assert!(after.is_seed());
     assert_eq!(
-        fresh.store.subject(id).await?.expect("subject").summary,
+        store.subject(id).await?.expect("subject").summary,
         Some(after.content)
     );
-    let rows = common::table(&fresh.store, "rh_summary_openings").await?;
+    let rows = common::table(&store, "rh_summary_openings").await?;
     assert_eq!(rows.len(), 1);
-    let jobs = common::table(&fresh.store, "ros_jobs").await?;
+    let jobs = common::table(&store, "ros_jobs").await?;
     for task in ["file-conversation", "title-conversation"] {
         assert_eq!(jobs.iter().filter(|job| job["task"] == task).count(), 1);
     }
@@ -289,5 +293,32 @@ async fn legacy_leaves_are_materialized_once_by_the_sqlite_upgrade() -> TestResu
         .await?;
     assert_eq!(store.undelivered_openings().await?.len(), 2);
     assert_eq!(store.backfill_titles(false).await?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_free_capture_arms_opening_without_enqueuing_jobs() -> TestResult {
+    let fresh = fresh_store()?;
+    let result = fresh
+        .store
+        .capture(
+            batch(1, "Inspect the invented sample")?,
+            &testkit::owner()?,
+            None,
+            instant(common::RECORDED_START)?,
+        )
+        .await?;
+    assert!(
+        fresh
+            .store
+            .opening_title(result.conversation_id.parse()?)
+            .await?
+            .is_some()
+    );
+    assert_eq!(
+        common::table(&fresh.store, "ros_jobs").await?,
+        [] as [testkit::Json; 0]
+    );
+    assert_eq!(fresh.store.undelivered_openings().await?.len(), 2);
     Ok(())
 }

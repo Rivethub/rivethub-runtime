@@ -86,18 +86,15 @@ impl StoreHarness {
     fn trigger(self, event: &str) -> Option<Trigger> {
         match (self, event) {
             (Self::GrokBuild, "Stop" | "PreCompact")
-            | (Self::Opencode, "session.error")
+            | (
+                Self::Opencode,
+                "session.error" | "session.idle" | "session.execution.interrupted",
+            )
             | (Self::Codex, "Stop" | "SubagentStop") => Some(Trigger::Capture),
             (Self::GrokBuild | Self::Codex, "SessionEnd") | (Self::Dsh, "turn/end") => {
                 Some(Trigger::Finalize)
             }
-            (
-                Self::Opencode,
-                "session.idle"
-                | "session.execution.succeeded"
-                | "session.execution.failed"
-                | "session.execution.interrupted",
-            )
+            (Self::Opencode, "session.execution.succeeded" | "session.execution.failed")
             | (Self::Dsh, "subagent/end") => Some(Trigger::SubagentEnd),
             _ => None,
         }

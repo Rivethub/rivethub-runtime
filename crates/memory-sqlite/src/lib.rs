@@ -97,7 +97,7 @@ impl SharedClock {
     }
 }
 
-pub const SCHEMA_VERSION: i64 = 38;
+pub const SCHEMA_VERSION: i64 = 39;
 
 const FILE_PRAGMAS: &str = "PRAGMA journal_mode = wal;\nPRAGMA foreign_keys = ON;";
 
@@ -113,6 +113,7 @@ pub struct SqliteStore {
     pending: tokio_util::task::TaskTracker,
     logs: Arc<Mutex<Vec<String>>>,
     embed: Arc<AtomicBool>,
+    language_available: bool,
     claims: Arc<ClaimIds>,
     clock: SharedClock,
     query_embed: Option<QueryEmbed>,
@@ -142,12 +143,19 @@ impl SqliteStore {
             .map_err(SqliteError::Pragma)?;
         search::functions::register(&conn)?;
         session_catalog::register(&conn)?;
+        time::register(&conn)?;
         Ok(from_conn(conn, SharedClock::new(Timestamp::now)))
     }
 
     #[must_use]
     pub fn with_summary_index_key(mut self, key: [u8; 32]) -> Self {
         self.summary_index_key = Some(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_language_available(mut self, available: bool) -> Self {
+        self.language_available = available;
         self
     }
 
@@ -257,6 +265,7 @@ fn from_conn(conn: Connection, clock: SharedClock) -> SqliteStore {
         pending: tokio_util::task::TaskTracker::new(),
         logs: Arc::new(Mutex::new(Vec::new())),
         embed: Arc::new(AtomicBool::new(false)),
+        language_available: false,
         claims: Arc::new(ClaimIds::default()),
         clock,
         query_embed: None,

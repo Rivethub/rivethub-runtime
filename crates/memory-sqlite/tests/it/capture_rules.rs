@@ -106,7 +106,10 @@ async fn a_filled_tool_result_is_queued_again() -> TestResult {
     fresh
         .store
         .capture(
-            tool_call(None, r#"{"tool_use_id":"tu1","pending_result":true}"#)?,
+            tool_call(
+                None,
+                r#"{"tool_use_id":"tu1","pending_result":true,"session_jsonl_line":4}"#,
+            )?,
             &testkit::owner()?,
             None,
             now,
@@ -123,7 +126,7 @@ async fn a_filled_tool_result_is_queued_again() -> TestResult {
         .capture(
             tool_call(
                 Some("deployed build 42"),
-                r#"{"tool_use_id":"tu1","pending_result":false}"#,
+                r#"{"tool_use_id":"replacement","pending_result":false,"assistant_uuid":"invented"}"#,
             )?,
             &testkit::owner()?,
             None,
@@ -142,6 +145,19 @@ async fn a_filled_tool_result_is_queued_again() -> TestResult {
     assert_eq!(
         row.get("tool_result").and_then(Json::as_str),
         Some("deployed build 42")
+    );
+    let metadata: Json = serde_json::from_str(cell_str(&row, "metadata")?)?;
+    assert_eq!(
+        metadata.get("session_jsonl_line").and_then(Json::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        metadata.get("tool_use_id").and_then(Json::as_str),
+        Some("tu1")
+    );
+    assert_eq!(
+        metadata.get("assistant_uuid").and_then(Json::as_str),
+        Some("invented")
     );
     Ok(())
 }
@@ -249,4 +265,79 @@ async fn a_placeholder_title_never_replaces_the_person_s_words() -> TestResult {
         Some("port the parser")
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn cowork_claim_preserves_hook_metadata_and_deduplicates_both_events() -> TestResult {
+    use testkit::settlement::{batch, cowork_pair};
+
+    let fresh = fresh_store()?;
+    let owner = testkit::owner()?;
+    let now = instant(common::RECORDED_START)?;
+    let key = "cowork:invented-claim";
+    let [hook, transcript] = cowork_pair()?;
+    for row in [hook.clone(), transcript.clone(), transcript, hook] {
+        fresh
+            .store
+            .capture(batch(key, vec![row]), &owner, None, now)
+            .await?;
+    }
+    let rows = table(&fresh.store, "ros_messages").await?;
+    assert_eq!(rows.len(), 1);
+    let metadata: Json =
+        serde_json::from_str(cell_str(rows.first().ok_or("captured row")?, "metadata")?)?;
+    assert_eq!(
+        metadata.get("source").and_then(Json::as_str),
+        Some("cowork-hook")
+    );
+    assert_eq!(
+        metadata.get("event_id").and_then(Json::as_str),
+        Some("hook")
+    );
+    assert_eq!(metadata.get("ordinal").and_then(Json::as_u64), Some(1));
+    assert_eq!(metadata.get("uuid"), Some(&Json::Null));
+    assert_eq!(
+        metadata.get("session_jsonl_line").and_then(Json::as_u64),
+        Some(8)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_nonempty_or_unmarked_result_is_never_replaced() -> TestResult {
+    let fresh = fresh_store()?;
+    let owner = testkit::owner()?;
+    let now = instant(common::RECORDED_START)?;
+    for (key, result, metadata) in [
+        (
+            "cli:stored-result",
+            Some("original result"),
+            r#"{"pending_result":true}"#,
+        ),
+        ("cli:unmarked-result", None, "{}"),
+    ] {
+        let mut initial = tool_call(result, metadata)?;
+        key.clone_into(&mut initial.session_key);
+        let mut replay = tool_call(Some("replacement"), r#"{"pending_result":false}"#)?;
+        key.clone_into(&mut replay.session_key);
+        fresh.store.capture(initial, &owner, None, now).await?;
+        fresh.store.capture(replay, &owner, None, now).await?;
+    }
+    let rows = table(&fresh.store, "ros_messages").await?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        cell_str(rows.first().ok_or("stored result")?, "tool_result")?,
+        "original result"
+    );
+    assert_eq!(
+        rows.get(1).ok_or("unmarked result")?.get("tool_result"),
+        Some(&Json::Null)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn completing_a_pending_result_preserves_the_transcript() -> TestResult {
+    let fresh = fresh_store()?;
+    testkit::settlement::replay_pending(&fresh.store, &testkit::owner()?, true).await
 }

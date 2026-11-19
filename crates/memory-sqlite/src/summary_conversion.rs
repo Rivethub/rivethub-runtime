@@ -61,8 +61,8 @@ fn measure(conn: &Connection, page: &[String], cutoff: Timestamp) -> Result<(), 
     })?;
     conn.execute(&format!(
         "WITH source AS (
-            SELECT m.conversation_id, max(julianday(m.created_at)) AS last_input,
-                   max(julianday(m.last_accessed_at)) AS last_used,
+            SELECT m.conversation_id, max(rh_instant(m.created_at)) AS last_input,
+                   max(rh_instant(m.last_accessed_at)) AS last_used,
                    sum((coalesce(octet_length(m.content), 0) + coalesce(octet_length(m.tool_result), 0)
                         + coalesce(octet_length(m.tool_args), 0) + 32) / 3) AS estimate
             FROM ros_messages m WHERE m.conversation_id IN (SELECT value FROM json_each(?1))
@@ -70,14 +70,15 @@ fn measure(conn: &Connection, page: &[String], cutoff: Timestamp) -> Result<(), 
          )
          INSERT INTO rh_summary_conversion_items
             (conversation_id, last_input_at, last_used_at, estimated_tokens, state, next_at)
-         SELECT c.id, coalesce(s.last_input_at, strftime('%Y-%m-%dT%H:%M:%fZ', coalesce(source.last_input, julianday(c.created_at)))),
-                strftime('%Y-%m-%dT%H:%M:%fZ', nullif(max(coalesce(source.last_used, 0), coalesce(
-                    (SELECT max(julianday(old.last_accessed_at)) FROM ros_summaries old WHERE old.conversation_id = c.id), 0)), 0)),
+         SELECT c.id, coalesce(s.last_input_at, clock.captured_at, rh_timestamp(source.last_input), c.created_at),
+                rh_timestamp(nullif(max(coalesce(source.last_used, ''), coalesce(
+                    (SELECT max(rh_instant(old.last_accessed_at)) FROM ros_summaries old WHERE old.conversation_id = c.id), '')), '')),
                 coalesce(source.estimate, 0),
-                CASE WHEN s.settled_at IS NOT NULL OR coalesce(julianday(s.last_input_at), source.last_input, julianday(c.created_at)) <= julianday(?2)
+                CASE WHEN s.settled_at IS NOT NULL OR coalesce(rh_instant(s.last_input_at), rh_instant(clock.captured_at), source.last_input, rh_instant(c.created_at)) <= ?3
                      THEN 'pending' ELSE 'waiting_quiet' END, ?2
          FROM ros_conversations c LEFT JOIN source ON c.id = source.conversation_id
          LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
+         LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = c.id
          WHERE c.id IN (SELECT value FROM json_each(?1)) AND (
            source.last_input IS NOT NULL OR EXISTS (
              SELECT 1 FROM ros_summaries old WHERE old.conversation_id = c.id AND old.kind IN ('leaf','branch','root')
@@ -87,7 +88,7 @@ fn measure(conn: &Connection, page: &[String], cutoff: Timestamp) -> Result<(), 
          ON CONFLICT (conversation_id) DO UPDATE SET last_used_at = excluded.last_used_at,
             estimated_tokens = excluded.estimated_tokens, last_input_at = excluded.last_input_at
          WHERE rh_summary_conversion_items.state IN ('pending','waiting_quiet')"
-    ), params![ids, time::stamp(cutoff)]).map_err(error)?;
+    ), params![ids, time::stamp(cutoff), time::seek_key(cutoff)]).map_err(error)?;
     Ok(())
 }
 
@@ -292,20 +293,21 @@ impl SummaryConversion for SqliteStore {
                     WHERE NOT ({INCLUDED}) OR NOT s.historical_only)"
              ), []).map_err(error)?;
             let candidate: Option<(String, String, bool)> = tx.query_row(
-                "SELECT i.conversation_id, i.last_input_at, coalesce(s.last_input_at <> i.last_input_at, 0) FROM rh_summary_conversion_items i
+                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0) FROM rh_summary_conversion_items i
                  LEFT JOIN rh_summary_state s ON s.conversation_id = i.conversation_id
+                 LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = i.conversation_id
                  CROSS JOIN rh_summary_conversion ctl
                  WHERE i.state IN ('pending','waiting_quiet')
                    AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE state = 'reserved')
-                   AND (s.settled_at IS NOT NULL OR coalesce(s.last_input_at, i.last_input_at) <= ?1)
+                   AND (s.settled_at IS NOT NULL OR rh_instant(coalesce(s.last_input_at, clock.captured_at, i.last_input_at)) <= ?1)
                    AND (i.estimated_tokens <= ?2 OR (ctl.include_giants AND NOT EXISTS (
                        SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= ?2
                          AND normal.state IN ('pending','waiting_quiet'))))
                    AND coalesce(s.historical_only, 1)
                    AND (s.summarized_through IS NULL OR s.summarized_through < s.input_revision)
-                 ORDER BY (i.estimated_tokens > ?2), max(i.last_input_at, coalesce(i.last_used_at, i.last_input_at)) DESC, i.conversation_id
+                 ORDER BY (i.estimated_tokens > ?2), max(rh_instant(i.last_input_at), rh_instant(coalesce(i.last_used_at, i.last_input_at))) DESC, i.conversation_id
                  LIMIT 1",
-                params![time::stamp(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                params![time::seek_key(cutoff), GIANT_TOKENS], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             ).optional().map_err(error)?;
             let lease = if let Some((id, last_input, input_changed)) = candidate {
                 if input_changed {

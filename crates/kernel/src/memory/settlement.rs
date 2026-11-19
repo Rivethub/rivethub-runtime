@@ -90,9 +90,9 @@ impl SummaryState {
             };
             self.settle(now);
             self.historical_only = false;
-            self.failed_revision = None;
             status
         };
+        self.failed_revision = None;
         SettleResult {
             conversation_id: self.conversation_id,
             input_revision: self.input_revision,

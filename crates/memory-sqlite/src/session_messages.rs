@@ -3,7 +3,7 @@ use kernel::memory::summary_order::{MessagePosition, order_messages};
 use kernel::memory::{
     MemoryBrowseOrder, MemoryEntry, MessageCursor, MessagesQuery, SessionMessages,
 };
-use rusqlite::params;
+use rusqlite::{OptionalExtension as _, params};
 use uuid::Uuid;
 use wire::JsonObject;
 use wire::message::Role;
@@ -28,7 +28,7 @@ pub(crate) fn summary_messages(
     let sql = format!(
         "SELECT {ENTRY_COLUMNS} FROM ros_messages m
         JOIN ros_conversations c ON c.id = m.conversation_id WHERE c.id = ?1
-        ORDER BY m.created_at, m.id"
+        ORDER BY rh_instant(m.created_at), m.id"
     );
     let entries = read_entries(conn, &sql, [id.to_string()])?;
     Ok(order_messages(entries, MemoryBrowseOrder::Asc, |row| {
@@ -109,13 +109,7 @@ fn positioned_page(
         .take(page.len())
         .map(|(id, _)| id)
         .collect();
-    let ids = encode(&ids, "message ids")?;
-    let sql = format!(
-        "SELECT {ENTRY_COLUMNS} FROM json_each(?1) picked
-         JOIN ros_messages m ON m.id = picked.value
-         JOIN ros_conversations c ON c.id = m.conversation_id ORDER BY picked.key"
-    );
-    let entries = read_entries(conn, &sql, [ids])?;
+    let entries = read_ordered_entries(conn, &ids)?;
     Ok(SessionMessages::page(
         entries.into_iter().zip(page).collect(),
         query.limit,
@@ -123,26 +117,106 @@ fn positioned_page(
     ))
 }
 
+fn read_ordered_entries(
+    conn: &rusqlite::Connection,
+    ids: &[impl serde::Serialize],
+) -> Result<Vec<MemoryEntry>, SqliteError> {
+    let ids = encode(&ids, "message ids")?;
+    let sql = format!(
+        "SELECT {ENTRY_COLUMNS} FROM json_each(?1) picked
+         JOIN ros_messages m ON m.id = picked.value
+         JOIN ros_conversations c ON c.id = m.conversation_id ORDER BY picked.key"
+    );
+    read_entries(conn, &sql, [ids])
+}
+
+const KEYSET: &str = "
+    WITH same_time AS (
+        SELECT id, seek_time FROM rh_transcript_times
+        WHERE conversation_id = ?1 AND seek_time = ?2 AND id > ?3
+        ORDER BY id LIMIT ?4
+    ), later AS (
+        SELECT id, seek_time FROM rh_transcript_times
+        WHERE conversation_id = ?1 AND seek_time > ?2
+        ORDER BY seek_time, id LIMIT ?4
+    ), legacy AS (
+        SELECT id, rh_instant(t.created_at) AS seek_time FROM rh_transcript_times t
+        WHERE conversation_id = ?1 AND t.seek_time IS NULL
+    )
+    SELECT id, seek_time FROM same_time
+    UNION ALL
+    SELECT id, seek_time FROM later
+    UNION ALL
+    SELECT id, seek_time FROM legacy WHERE (seek_time, id) > (?2, ?3)
+    ORDER BY seek_time, id LIMIT ?4";
+
+fn keyset_ids(
+    conn: &rusqlite::Connection,
+    keys: &str,
+    query: &MessagesQuery,
+) -> Result<Vec<String>, SqliteError> {
+    let (stamp, id) = match query.after {
+        None => (String::new(), String::new()),
+        Some(cursor) => (cursor_key(conn, keys, cursor)?, cursor.id.to_string()),
+    };
+    let limit = query.limit + 1;
+    let mut sessions = conn
+        .prepare(
+            "SELECT id FROM ros_conversations WHERE task_id IS NULL
+         AND session_key IN (SELECT value FROM json_each(?1))",
+        )
+        .map_err(SqliteError::query(OPERATION))?;
+    let mut page = conn
+        .prepare(KEYSET)
+        .map_err(SqliteError::query(OPERATION))?;
+    let mut candidates = Vec::new();
+    for conversation in sessions
+        .query_map([keys], |row| row.get::<_, String>(0))
+        .map_err(SqliteError::query(OPERATION))?
+    {
+        let conversation = conversation.map_err(SqliteError::query(OPERATION))?;
+        let rows = page
+            .query_map(params![conversation, stamp, id, limit], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, String>(0)?))
+            })
+            .map_err(SqliteError::query(OPERATION))?;
+        candidates.extend(
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(SqliteError::query(OPERATION))?,
+        );
+    }
+    candidates.sort_unstable();
+    let limit = usize::try_from(limit).map_err(SqliteError::Count)?;
+    Ok(candidates
+        .into_iter()
+        .take(limit)
+        .map(|(_, id)| id)
+        .collect())
+}
+
+fn cursor_key(
+    conn: &rusqlite::Connection,
+    keys: &str,
+    cursor: MessageCursor,
+) -> Result<String, SqliteError> {
+    let at: Option<String> = conn
+        .query_row(
+            &format!("SELECT rh_instant(m.created_at){SESSION} AND m.id = ?2"),
+            params![keys, cursor.id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(SqliteError::query(OPERATION))?;
+    Ok(at.unwrap_or_else(|| time::seek_key(cursor.created_at)))
+}
+
 fn keyset_page(
     conn: &rusqlite::Connection,
     keys: &str,
     query: &MessagesQuery,
 ) -> Result<SessionMessages, SqliteError> {
-    let sql = format!(
-        "SELECT {ENTRY_COLUMNS}{SESSION}
-         AND (?2 IS NULL OR m.created_at > ?2 OR (m.created_at = ?2 AND m.id > ?3))
-         ORDER BY m.created_at, m.id LIMIT ?4"
-    );
-    let entries = read_entries(
-        conn,
-        &sql,
-        params![
-            keys,
-            query.after.map(|cursor| time::stamp(cursor.created_at)),
-            query.after.map(|cursor| cursor.id.to_string()),
-            i64::from(query.limit) + 1,
-        ],
-    )?;
+    let ids = keyset_ids(conn, keys, query)?;
+    let entries = read_ordered_entries(conn, &ids)?;
     let rows = entries
         .into_iter()
         .map(|entry| {

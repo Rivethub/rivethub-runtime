@@ -35,6 +35,8 @@ BEGIN
     ALTER TABLE rh_summary_passages ENABLE ROW LEVEL SECURITY;
     ALTER TABLE rh_summary_passages FORCE ROW LEVEL SECURITY;
 
+    ALTER TABLE rh_conversations ADD COLUMN last_summary_input_at timestamptz;
+
     CREATE TABLE rh_summary_state (
         conversation_id uuid PRIMARY KEY,
         input_revision bigint NOT NULL CHECK (input_revision >= 0),
@@ -139,8 +141,6 @@ BEGIN
     CREATE POLICY rh_summary_openings_capture ON rh_summary_openings USING (
         EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_openings.conversation_id
                 AND c.owner_user_id = (SELECT rh_scope_principal())));
-    CREATE POLICY rh_summary_openings_read ON rh_summary_openings FOR SELECT USING (
-        EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_openings.conversation_id));
 
     CREATE FUNCTION rh_disarm_trashed_openings() RETURNS trigger LANGUAGE plpgsql AS $trash$
     BEGIN

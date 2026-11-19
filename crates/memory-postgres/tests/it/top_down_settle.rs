@@ -48,7 +48,7 @@ async fn revisions_and_ownership(pool: PgPool) -> TestResult {
             .is_none()
     );
 
-    sqlx::query("UPDATE rh_summary_state SET summarized_through = input_revision WHERE conversation_id = $1")
+    sqlx::query("UPDATE rh_summary_state SET summarized_through = input_revision, failed_revision = input_revision WHERE conversation_id = $1")
         .bind(id).execute(&pool).await?;
     let result = scope
         .clone()
@@ -56,7 +56,15 @@ async fn revisions_and_ownership(pool: PgPool) -> TestResult {
         .await?
         .ok_or("summarized")?;
     assert_eq!(result.status, SettleStatus::AlreadySummarized);
-    assert!(!scope.run(store.summary_eligible(id, 4)).await?);
+    assert!(!scope.clone().run(store.summary_eligible(id, 4)).await?);
+    assert_eq!(
+        scope
+            .run(store.summary_state(id))
+            .await?
+            .ok_or("state")?
+            .failed_revision,
+        None
+    );
     Ok(())
 }
 
@@ -89,7 +97,7 @@ async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
         .bind(historical)
         .execute(&pool)
         .await?;
-    sqlx::query("UPDATE rh_conversations SET updated_at = clock_timestamp() + interval '5 days' WHERE id = $1")
+    sqlx::query("UPDATE rh_conversations SET last_summary_input_at = NULL, updated_at = clock_timestamp() + interval '5 days' WHERE id = $1")
         .bind(historical).execute(&pool).await?;
     let beat: Uuid = store
         .capture(
@@ -204,5 +212,142 @@ async fn older_legacy_end_does_not_override_known_activity_and_late_input_clears
     assert_eq!(state.summarized_through, Some(0));
     assert_eq!(state.failed_revision, None);
     assert_eq!(state.settled_at, None);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(crate::common::probe(&pool).await?);
+    let alice = Owner::new("alice".to_owned())?;
+    let bob = Owner::new("bob".to_owned())?;
+    let id: Uuid = Scope::Viewer(Viewer::new(alice.clone(), Vec::new()))
+        .run(store.capture(
+            batch(
+                "cli:invented-private",
+                vec![message("invented", "2026-01-02T01:00:00Z")?],
+            ),
+            &alice,
+            None,
+        ))
+        .await?
+        .conversation_id
+        .parse()?;
+    let stranger = Scope::Viewer(Viewer::new(bob, vec![crate::visibility::household()?]));
+    assert!(
+        stranger
+            .clone()
+            .run(store.opening_title(id))
+            .await?
+            .is_none()
+    );
+    sqlx::query("UPDATE rh_conversations SET visibility = 'household' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    assert!(stranger.run(store.opening_title(id)).await?.is_none());
+    assert!(
+        Scope::Viewer(Viewer::new(alice, Vec::new()))
+            .run(store.opening_title(id))
+            .await?
+            .is_some()
+    );
+    assert!(
+        Scope::Maintenance
+            .run(store.opening_title(id))
+            .await?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn unpositioned_keyset_preserves_timestamp_precision(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let key = "claude-code:precise";
+    let messages = testkit::settlement::precision_messages()?;
+    store
+        .capture(batch(key, messages), &testkit::owner()?, None)
+        .await?;
+    sqlx::query(
+        "UPDATE rh_messages SET created_at = CASE metadata->>'event_id'
+        WHEN 'second' THEN '2026-01-01T00:00:01Z'
+        WHEN 'earlier' THEN '2026-01-01T00:00:01.123100Z'
+        WHEN 'later' THEN '2026-01-01T00:00:01.123900Z'
+        WHEN 'offset' THEN '2026-01-01T01:00:01.130+01:00' END::timestamptz",
+    )
+    .execute(&pool)
+    .await?;
+    testkit::settlement::precise_pages(&store, key).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn expiry_recovers_the_capture_clock_when_state_is_missing(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let request = testkit::settlement::old_source_capture()?;
+    let id: Uuid = store
+        .capture(request, &testkit::owner()?, None)
+        .await?
+        .conversation_id
+        .parse()?;
+    let input = store
+        .summary_state(id)
+        .await?
+        .ok_or("live state")?
+        .last_input_at;
+    sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    testkit::settlement::missing_state_expiry(&store, id, input).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn pending_replays_add_positions_without_replacing_transcript_fields(
+    pool: PgPool,
+) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    testkit::settlement::replay_pending(&store, &testkit::owner()?, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn cowork_hook_and_transcript_keep_distinct_event_ids(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    let owner = testkit::owner()?;
+    let key = "cowork:invented-claim";
+    let [hook, transcript] = testkit::settlement::cowork_pair()?;
+    let initial = store
+        .capture(batch(key, vec![hook.clone()]), &owner, None)
+        .await?;
+    let id = initial.conversation_id.parse()?;
+    for (message, inserted) in [(transcript.clone(), 1), (transcript, 0), (hook, 0)] {
+        assert_eq!(
+            store
+                .capture(batch(key, vec![message]), &owner, None)
+                .await?
+                .inserted,
+            inserted
+        );
+    }
+    let input = store.live_input(id).await?.ok_or("summarizer input")?;
+    let metadata = |source| {
+        input
+            .messages
+            .iter()
+            .filter_map(|row| row.metadata.as_ref())
+            .find(|metadata| metadata.get_str("source") == Some(source))
+    };
+    assert_eq!(input.messages.len(), 2);
+    assert_eq!(
+        metadata("cowork-hook")
+            .and_then(|row| row.get("ordinal"))
+            .and_then(testkit::Json::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        metadata("cowork-transcript")
+            .and_then(|row| row.get("session_jsonl_line"))
+            .and_then(testkit::Json::as_u64),
+        Some(8)
+    );
     Ok(())
 }

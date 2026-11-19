@@ -351,6 +351,10 @@ async fn top_down_conversion_sqlite() -> TestResult {
     {
         let conn = rusqlite::Connection::open(&path)?;
         conn.execute(
+            "DELETE FROM rh_summary_capture_clock WHERE conversation_id = ?1",
+            [historical.to_string()],
+        )?;
+        conn.execute(
             "DELETE FROM rh_summary_state WHERE conversation_id = ?1",
             [historical.to_string()],
         )?;
@@ -418,6 +422,8 @@ async fn top_down_conversion_postgres(pool: sqlx::PgPool) -> TestResult {
     let store = memory_postgres::PostgresMemory::new(scoped).with_summary_index_key([7; 32]);
     Scope::Maintenance.run(async {
         let (historical, old) = legacy(&store).await?;
+        sqlx::query("UPDATE rh_conversations SET last_summary_input_at = NULL WHERE id = $1")
+            .bind(historical).execute(&pool).await?;
         sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1").bind(historical).execute(&pool).await?;
         sqlx::query("UPDATE rh_summaries SET embedding = array_fill(0.25::real, ARRAY[1024])::halfvec WHERE id = $1")
             .bind(old).execute(&pool).await?;

@@ -20,7 +20,12 @@ struct Turn {
     content: String,
 }
 
-pub(crate) fn refresh(conn: &Connection, id: &str, now: Timestamp) -> Result<bool, SqliteError> {
+pub(crate) fn refresh(
+    conn: &Connection,
+    id: &str,
+    now: Timestamp,
+    language_available: bool,
+) -> Result<bool, SqliteError> {
     let Some(content) = projection(conn, id)? else {
         return Ok(false);
     };
@@ -41,7 +46,7 @@ pub(crate) fn refresh(conn: &Connection, id: &str, now: Timestamp) -> Result<boo
     if !supplied {
         crate::title::seed(conn, &head, old.as_ref(), &content)?;
     }
-    if old.is_some() {
+    if old.is_some() || !language_available {
         return Ok(false);
     }
     for (arm, consumer) in [
@@ -66,7 +71,7 @@ fn projection(conn: &Connection, id: &str) -> Result<Option<String>, SqliteError
     let mut stmt = conn
         .prepare(
             "SELECT role, metadata, created_at, CASE WHEN role = 'user' THEN content ELSE '' END
-           FROM ros_messages WHERE conversation_id = ?1 ORDER BY created_at, rowid",
+           FROM ros_messages WHERE conversation_id = ?1 ORDER BY rh_instant(created_at), id",
         )
         .map_err(failure)?;
     let rows = stmt

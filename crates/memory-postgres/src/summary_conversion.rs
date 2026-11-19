@@ -57,9 +57,9 @@ async fn measure(
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO rh_summary_conversion_items
             (conversation_id, last_input_at, last_used_at, estimated_tokens, state)
-         SELECT c.id, coalesce(s.last_input_at, source.last_input, c.created_at),
+         SELECT c.id, coalesce(s.last_input_at, c.last_summary_input_at, source.last_input, c.created_at),
                 greatest(source.last_used, summary_access.last_used), coalesce(source.estimate, 0),
-                CASE WHEN s.settled_at IS NOT NULL OR coalesce(s.last_input_at, source.last_input, c.created_at) <= $2
+                CASE WHEN s.settled_at IS NOT NULL OR coalesce(s.last_input_at, c.last_summary_input_at, source.last_input, c.created_at) <= $2
                      THEN 'pending' ELSE 'waiting_quiet' END
          FROM rh_conversations c
          LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
@@ -298,13 +298,13 @@ impl SummaryConversion for PostgresMemory {
         }
         clear_stale_items(&mut tx, clock).await.map_err(error)?;
         let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool)> = sqlx::query_as(
-            "SELECT c.id, i.last_input_at, coalesce(s.last_input_at <> i.last_input_at, false) FROM rh_summary_conversion_items i
+            "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false) FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
              CROSS JOIN rh_summary_conversion ctl
              WHERE i.state IN ('pending','waiting_quiet')
                AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE state = 'reserved')
-               AND (s.settled_at IS NOT NULL OR coalesce(s.last_input_at, i.last_input_at) <= $1)
+               AND (s.settled_at IS NOT NULL OR coalesce(s.last_input_at, c.last_summary_input_at, i.last_input_at) <= $1)
                AND (i.estimated_tokens <= $2 OR (ctl.include_giants AND NOT EXISTS (
                    SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= $2
                      AND normal.state IN ('pending','waiting_quiet'))))

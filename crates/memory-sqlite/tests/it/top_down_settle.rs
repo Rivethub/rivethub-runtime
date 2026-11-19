@@ -5,6 +5,7 @@ use memory_sqlite::SqliteStore;
 use testkit::settlement::{TestResult, batch, expire, message, position_fills, revision_lifecycle};
 use uuid::Uuid;
 use wire::message::Role;
+use wire::time::TimestampFormat as _;
 
 fn store(path: &std::path::Path) -> Result<SqliteStore, Box<dyn std::error::Error>> {
     migrate::sqlite(path)?;
@@ -80,7 +81,7 @@ async fn result_fills_and_persistence() -> TestResult {
     );
 
     local.with_conn(move |conn| {
-        conn.execute("UPDATE rh_summary_state SET summarized_through = input_revision WHERE conversation_id = ?1", [id.to_string()])
+        conn.execute("UPDATE rh_summary_state SET summarized_through = input_revision, failed_revision = input_revision WHERE conversation_id = ?1", [id.to_string()])
             .map_err(|source| memory_sqlite::SqliteError::Query { operation: "test completed revision", source })?;
         Ok(())
     }).await?;
@@ -93,6 +94,14 @@ async fn result_fills_and_persistence() -> TestResult {
         SettleStatus::AlreadySummarized
     );
     assert!(!local.summary_eligible(id, 1).await?);
+    assert_eq!(
+        local
+            .summary_state(id)
+            .await?
+            .ok_or("state")?
+            .failed_revision,
+        None
+    );
     Ok(())
 }
 
@@ -126,6 +135,8 @@ async fn historical_and_live_expiry_across_pages() -> TestResult {
         .conversation_id
         .parse()?;
     local.with_conn(move |conn| {
+        conn.execute("DELETE FROM rh_summary_capture_clock WHERE conversation_id = ?1", [historical.to_string()])
+            .map_err(crate::common::seed)?;
         conn.execute("DELETE FROM rh_summary_state WHERE conversation_id = ?1", [historical.to_string()])
             .map_err(|source| memory_sqlite::SqliteError::Query { operation: "test historical state", source })?;
         conn.execute("UPDATE ros_conversations SET updated_at = '2099-01-02T01:00:00.000Z' WHERE id = ?1", [historical.to_string()])
@@ -193,4 +204,57 @@ async fn settlement_reads_legacy_text_with_its_original_precision() -> TestResul
     )?;
     assert!(local.summary_state(id).await.is_err());
     Ok(())
+}
+
+#[tokio::test]
+async fn unpositioned_keyset_preserves_legacy_timestamp_precision() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let local = store(&home.path().join("memory.sqlite"))?;
+    let key = "claude-code:precise";
+    let messages = testkit::settlement::precision_messages()?;
+    local
+        .capture(
+            batch(key, messages),
+            &testkit::owner()?,
+            None,
+            Timestamp::now(),
+        )
+        .await?;
+    crate::common::execute(
+        &local,
+        "
+        UPDATE ros_messages SET created_at = CASE json_extract(metadata, '$.event_id')
+            WHEN 'second' THEN '2026-01-01T00:00:01Z'
+            WHEN 'earlier' THEN '2026-01-01T00:00:01.123100001Z'
+            WHEN 'later' THEN '2026-01-01T00:00:01.123100002Z'
+            WHEN 'offset' THEN '2026-01-01 01:00:01.130+01'
+        END
+    ",
+    )
+    .await?;
+    testkit::settlement::precise_pages(&local, key).await
+}
+
+#[tokio::test]
+async fn expiry_recovers_the_capture_clock_when_state_is_missing() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let local = store(&home.path().join("memory.sqlite"))?;
+    let now = Timestamp::now().truncate_subseconds(3);
+    let request = testkit::settlement::old_source_capture()?;
+    let id: Uuid = local
+        .capture(request, &testkit::owner()?, None, now)
+        .await?
+        .conversation_id
+        .parse()?;
+    local
+        .with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM rh_summary_state WHERE conversation_id = ?1",
+                [id.to_string()],
+            )
+            .map_err(crate::common::seed)?;
+            Ok(())
+        })
+        .await?;
+    testkit::settlement::missing_state_expiry(&local, id, now).await
 }

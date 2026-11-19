@@ -41,8 +41,8 @@ const MESSAGE_SQL: &str = "SELECT m.id, m.content, m.role, m.agent, m.created_at
      JOIN ros_messages m ON m.id = ros_messages_fts.id \
      WHERE ros_messages_fts MATCH ?1 \
        AND (?2 IS NULL OR m.agent = ?2) \
-       AND (?3 IS NULL OR m.created_at >= ?3) \
-       AND (?4 IS NULL OR m.created_at < ?4) \
+       AND (?3 IS NULL OR rh_instant(m.created_at) >= ?3) \
+       AND (?4 IS NULL OR rh_instant(m.created_at) < ?4) \
        AND (?6 IS NULL OR m.role = ?6) \
        AND (?7 IS NULL OR m.tool_name = ?7) \
        AND (?8 IS NULL OR m.role NOT IN (SELECT value FROM json_each(?8))) \
@@ -65,8 +65,8 @@ const SUMMARY_SQL: &str = "SELECT s.id, s.content, CASE WHEN s.kind IN ('session
        AND (?2 IS NULL OR EXISTS ( \
              SELECT 1 FROM ros_conversations c \
               WHERE c.id = s.conversation_id AND c.agent = ?2)) \
-       AND (?3 IS NULL OR search_time >= ?3) \
-       AND (?4 IS NULL OR search_time < ?4) \
+       AND (?3 IS NULL OR rh_instant(search_time) >= ?3) \
+       AND (?4 IS NULL OR rh_instant(search_time) < ?4) \
        AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr \
              JOIN ros_conversations tc ON tc.session_key = tr.session_key \
             WHERE tc.id = s.conversation_id) \
@@ -231,8 +231,8 @@ impl Plan {
             exclude_roles,
             tool_name: query.tool_name,
             tag: query.tag,
-            since: range.since.map(time::stamp),
-            before: range.before.map(time::stamp),
+            since: range.since.map(time::seek_key),
+            before: range.before.map(time::seek_key),
             limit,
             fetch_limit,
             now,

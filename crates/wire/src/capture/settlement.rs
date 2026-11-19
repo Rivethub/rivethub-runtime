@@ -66,12 +66,7 @@ impl SessionObservation {
             (Some("claude-code-hook"), Some("SubagentStop"))
             | (
                 Some("opencode-hook"),
-                Some(
-                    "session.idle"
-                    | "session.execution.succeeded"
-                    | "session.execution.failed"
-                    | "session.execution.interrupted",
-                ),
+                Some("session.execution.succeeded" | "session.execution.failed"),
             )
             | (Some("dsh-hook"), Some("subagent/end")) => child,
             (Some("claude-code-hook"), Some("SessionEnd")) => {

@@ -79,7 +79,7 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
                FROM ros_messages m \
               WHERE m.conversation_id = ?1 \
                 AND NOT EXISTS (SELECT 1 FROM ros_summary_sources s WHERE s.message_id = m.id) \
-              ORDER BY m.created_at, m.rowid",
+              ORDER BY rh_instant(m.created_at), m.id",
         )
         .map_err(SqliteError::query("load messages"))?;
     let rows = statement
@@ -105,7 +105,7 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
         .map_err(SqliteError::query("load messages"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SqliteError::query("load messages"))?;
-    let mut messages = rows
+    let messages = rows
         .into_iter()
         .map(
             |(id, agent, role, content, created_at, metadata, input, result)| {
@@ -124,12 +124,6 @@ fn load_messages(conn: &rusqlite::Connection, id: &str) -> Result<Vec<WindowMess
             },
         )
         .collect::<Result<Vec<_>, SqliteError>>()?;
-    if messages.iter().any(|(message, metadata)| {
-        MessagePosition::new(message.created_at, message.role, metadata.as_ref())
-            .has_order_evidence()
-    }) {
-        messages.sort_unstable_by_key(|(message, _)| (message.created_at, message.id));
-    }
     Ok(
         order_messages(messages, MemoryBrowseOrder::Asc, |(message, metadata)| {
             MessagePosition::new(message.created_at, message.role, metadata.as_ref())
@@ -234,7 +228,7 @@ fn node(parts: NodeParts) -> Result<SummaryNode, SqliteError> {
 fn latest_message(conn: &rusqlite::Connection, id: &str) -> Result<Option<Timestamp>, SqliteError> {
     let text: Option<String> = conn
         .query_row(
-            "SELECT max(created_at) FROM ros_messages WHERE conversation_id = ?1",
+            "SELECT created_at FROM ros_messages WHERE conversation_id = ?1 ORDER BY rh_instant(created_at) DESC LIMIT 1",
             params_from_iter([Value::Text(id.to_owned())]),
             |row| row.get(0),
         )
