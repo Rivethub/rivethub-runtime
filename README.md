@@ -44,29 +44,6 @@ For `memory_search`, use a few specific keywords instead of a full sentence. Inc
 
 `rh --help` lists every command.
 
-### Optional memory search reranking
-
-Configure a Jev decide endpoint to rerank hybrid memory searches from MCP and
-the HTTP API. The default is off. Use the service base URL, as for
-`entities.matcher_url`, or its full `/v1/decide` URL.
-
-```yaml
-memory:
-  recall:
-    rerank:
-      url: https://decide.example.test
-      top: 24
-      chars: 300
-      timeout_ms: 1500
-```
-
-The example uses the defaults for `top` (1–50), `chars` (1–4,000 Unicode
-characters per window and per title or heading when included), and
-`timeout_ms` (1–5,000 ms). The node sends one request with the query and
-snippets from the first ranked hits, up to the search's existing result limit.
-Fewer than two eligible hits skip the call. A failed or timed-out call keeps
-the original ranking and logs `memory search rerank skipped` with a reason.
-
 ## Layout
 
 | Path | What it holds |

@@ -42,6 +42,7 @@ pub(crate) fn search(
     expand: bool,
     clock: Clock<'_>,
 ) -> Result<String, Error> {
+    let Clock { now, zone } = clock;
     let mut text = String::new();
     if let Some(degraded) = &outcome.degraded {
         writeln!(text, "{}\n", banner(degraded))?;
@@ -80,7 +81,22 @@ pub(crate) fn search(
         });
         let mut blocks = Vec::new();
         for hit in summaries {
-            blocks.push(hit_block(hit, outcome, found, expand, clock)?);
+            let origin = hit
+                .session_id
+                .as_deref()
+                .and_then(|key| found.origins.get(key));
+            let block = if let Some(detail) = outcome.summaries.get(hit.detail_id()) {
+                summary(hit, detail, expand, origin, now, zone)?
+            } else {
+                let lead = format!(
+                    "- [summary/{}] ({}, score: {:.3})",
+                    hit.id,
+                    dated(hit, now, zone),
+                    hit.relevance_score,
+                );
+                attributed(&lead, &hit.content, origin, zone)
+            };
+            blocks.push(block);
         }
         text.push_str(&blocks.join(if expand { "\n\n" } else { "\n" }));
     }
@@ -88,54 +104,14 @@ pub(crate) fn search(
         text.push_str("\n\n### Messages\n\n");
         let mut blocks = Vec::new();
         for hit in hits {
-            blocks.push(hit_block(hit, outcome, found, expand, clock)?);
+            let entry = found.messages.get(&hit.id).ok_or_else(|| {
+                Error::Invalid(format!("message {} disappeared during search", hit.id))
+            })?;
+            blocks.push(message(hit, entry, found, now, zone)?);
         }
         text.push_str(&blocks.join("\n"));
     }
     Ok(text)
-}
-
-pub(crate) fn hit_block(
-    hit: &MemorySearchResult,
-    outcome: &SearchOutcome,
-    found: &HitContext,
-    expand: bool,
-    clock: Clock<'_>,
-) -> Result<String, Error> {
-    let Clock { now, zone } = clock;
-    match hit.source {
-        MemoryHitSource::Message => {
-            let entry = found.messages.get(&hit.id).ok_or_else(|| {
-                Error::Invalid(format!("message {} disappeared during search", hit.id))
-            })?;
-            message(hit, entry, found, now, zone)
-        }
-        MemoryHitSource::Summary => summary_block(hit, outcome, found, expand, clock),
-    }
-}
-
-fn summary_block(
-    hit: &MemorySearchResult,
-    outcome: &SearchOutcome,
-    found: &HitContext,
-    expand: bool,
-    clock: Clock<'_>,
-) -> Result<String, Error> {
-    let Clock { now, zone } = clock;
-    let origin = hit
-        .session_id
-        .as_deref()
-        .and_then(|key| found.origins.get(key));
-    if let Some(detail) = outcome.summaries.get(hit.detail_id()) {
-        return summary(hit, detail, expand, origin, now, zone);
-    }
-    let lead = format!(
-        "- [summary/{}] ({}, score: {:.3})",
-        hit.id,
-        dated(hit, now, zone),
-        hit.relevance_score,
-    );
-    Ok(attributed(&lead, &hit.content, origin, zone))
 }
 
 fn message(

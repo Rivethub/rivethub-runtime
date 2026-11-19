@@ -7,7 +7,6 @@ mod provenance;
 mod render_memory;
 mod render_search;
 mod render_tags;
-pub mod rerank;
 pub mod sessions;
 pub mod tags;
 mod team;
@@ -32,7 +31,6 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct Server {
     instructions: Option<String>,
-    reranker: Option<rerank::Reranker>,
     memory: Arc<dyn MemoryStore>,
     tools: Arc<Vec<Tool>>,
     shutdown: CancellationToken,
@@ -44,7 +42,6 @@ pub struct Server {
 
 pub struct Builder {
     instructions: Option<String>,
-    reranker: Option<rerank::Reranker>,
     memory: Arc<dyn MemoryStore>,
     shutdown: CancellationToken,
     zone: Option<TimeZone>,
@@ -103,7 +100,6 @@ impl Server {
     pub fn builder(memory: Arc<dyn MemoryStore>, shutdown: CancellationToken) -> Builder {
         Builder {
             instructions: None,
-            reranker: None,
             memory,
             shutdown,
             zone: None,
@@ -182,13 +178,7 @@ impl Server {
     ) -> Result<CallToolResult, Error> {
         match operation {
             Operation::Search => {
-                memory::search_with_rerank(
-                    self.memory.as_ref(),
-                    decode(arguments)?,
-                    &self.zone,
-                    self.reranker.as_ref(),
-                )
-                .await
+                memory::search(self.memory.as_ref(), decode(arguments)?, &self.zone).await
             }
             Operation::Browse => {
                 memory::browse(self.memory.as_ref(), decode(arguments)?, &self.zone).await
@@ -244,12 +234,6 @@ impl Builder {
     }
 
     #[must_use]
-    pub fn search_rerank(mut self, config: &config::Config) -> Self {
-        self.reranker = rerank::Reranker::from_config(config);
-        self
-    }
-
-    #[must_use]
     pub fn display_zone(mut self, zone: TimeZone) -> Self {
         self.zone = Some(zone);
         self
@@ -274,7 +258,6 @@ impl Builder {
         }
         Ok(Server {
             instructions: self.instructions,
-            reranker: self.reranker,
             memory: self.memory,
             tools: Arc::new(tools),
             shutdown: self.shutdown,
