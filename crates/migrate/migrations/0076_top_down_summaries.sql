@@ -4,6 +4,7 @@ DO $rivet$
 DECLARE
     relation text;
 BEGIN
+    SET LOCAL lock_timeout = '50ms';
     IF EXISTS (SELECT 1 FROM _rivetos_migrations WHERE name = '0076_top_down_summaries.sql') THEN
         RETURN;
     END IF;
@@ -30,13 +31,6 @@ BEGIN
     CREATE INDEX rh_summary_passages_hnsw ON rh_summary_passages USING hnsw (embedding halfvec_cosine_ops)
         WITH (m = '32', ef_construction = '120');
     CREATE INDEX rh_summary_passages_source_time ON rh_summary_passages (latest_at DESC);
-    CREATE POLICY rh_read ON rh_summary_passages FOR SELECT USING (
-        (SELECT rh_scope_maintenance()) OR EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = rh_summary_passages.record_id));
-    CREATE POLICY rh_write ON rh_summary_passages USING ((SELECT rh_scope_maintenance()));
-    ALTER TABLE rh_summary_passages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE rh_summary_passages FORCE ROW LEVEL SECURITY;
-
-    ALTER TABLE rh_conversations ADD COLUMN last_summary_input_at timestamptz;
 
     CREATE TABLE rh_summary_state (
         conversation_id uuid PRIMARY KEY,
@@ -135,6 +129,17 @@ BEGIN
         EXECUTE format('CREATE POLICY rh_maintenance ON %I USING ((SELECT rh_scope_maintenance()))', relation);
     END LOOP;
 
+    -- New relations above are private to this transaction. Lock live tables
+    -- before parsing policies or running DDL that references them.
+    LOCK TABLE rh_conversations, rh_summaries, rh_summary_sources, rh_messages IN ACCESS EXCLUSIVE MODE NOWAIT;
+    LOCK TABLE rh_session_trash IN SHARE ROW EXCLUSIVE MODE NOWAIT;
+
+    CREATE POLICY rh_read ON rh_summary_passages FOR SELECT USING (
+        (SELECT rh_scope_maintenance()) OR EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = rh_summary_passages.record_id));
+    CREATE POLICY rh_write ON rh_summary_passages USING ((SELECT rh_scope_maintenance()));
+    ALTER TABLE rh_summary_passages ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE rh_summary_passages FORCE ROW LEVEL SECURITY;
+
     -- Capture is scoped to the conversation owner. Other state writes use the
     -- already-authorized repository maintenance transaction.
     CREATE POLICY rh_summary_state_capture ON rh_summary_state USING (
@@ -158,9 +163,6 @@ BEGIN
     CREATE POLICY rh_summary_deliveries_read ON rh_summary_deliveries FOR SELECT USING (
         EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_deliveries.conversation_id));
 
-    LOCK TABLE rh_conversations, rh_summaries, rh_summary_sources, rh_messages IN ACCESS EXCLUSIVE MODE NOWAIT;
-    LOCK TABLE rh_session_trash IN SHARE ROW EXCLUSIVE MODE NOWAIT;
-
     IF to_regclass('rh_summary_one_session') IS NULL THEN
         IF EXISTS (SELECT 1 FROM rh_summaries) THEN
             RAISE EXCEPTION 'migration 0076 requires the concurrent index preparation in rh db migrate';
@@ -174,7 +176,9 @@ BEGIN
         CREATE INDEX rh_summary_sources_order ON rh_summary_sources (summary_id, ordinal);
     END IF;
 
-    ALTER TABLE rh_conversations ADD COLUMN title_from_capture boolean NOT NULL DEFAULT false;
+    ALTER TABLE rh_conversations
+        ADD COLUMN last_summary_input_at timestamptz,
+        ADD COLUMN title_from_capture boolean NOT NULL DEFAULT false;
     ALTER TABLE rh_summaries
         ADD COLUMN summary_ordinal integer,
         ADD COLUMN index_needs_repair boolean NOT NULL DEFAULT false,

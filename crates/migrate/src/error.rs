@@ -57,6 +57,16 @@ pub enum Error {
 
 fn migration_reason(error: &sqlx::migrate::MigrateError) -> String {
     if let sqlx::migrate::MigrateError::ExecuteMigration(source, version) = error {
+        if matches!(version, 76..=78)
+            && source
+                .as_database_error()
+                .is_some_and(|db| db.code().as_deref() == Some("55P03"))
+        {
+            return format!(
+                " at {version:04}: the live store is busy and the migration could not acquire a lock ({}). It is safe to rerun after the blocking transactions finish.",
+                database_reason(source),
+            );
+        }
         return format!(" at {version:04}: {}", database_reason(source));
     }
     if let sqlx::migrate::MigrateError::Execute(source) = error {

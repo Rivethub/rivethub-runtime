@@ -310,8 +310,7 @@ async fn a_session_keeps_one_startup_context(pool: PgPool) -> TestResult {
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) -> TestResult {
+async fn migrate_through_75(pool: &PgPool) -> TestResult {
     let first_top_down = POSTGRES
         .migrations
         .partition_point(|migration| migration.version < 76);
@@ -323,7 +322,102 @@ async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) 
         migrations: std::borrow::Cow::Borrowed(legacy),
         ..sqlx::migrate::Migrator::DEFAULT
     };
-    before.run(&pool).await?;
+    before.run(pool).await?;
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn top_down_upgrade_fails_fast_with_a_reader(pool: PgPool) -> TestResult {
+    check_contended_top_down_upgrade(&pool, "SELECT id FROM rh_conversations").await
+}
+
+#[sqlx::test(migrations = false)]
+async fn top_down_upgrade_fails_fast_with_a_writer(pool: PgPool) -> TestResult {
+    check_contended_top_down_upgrade(
+        &pool,
+        "INSERT INTO rh_conversations (session_key, agent, owner_user_id)
+         VALUES ('cli:lock-fixture', 'rivet', 'alice')",
+    )
+    .await
+}
+
+async fn check_contended_top_down_upgrade(pool: &PgPool, hold: &'static str) -> TestResult {
+    use std::time::Duration;
+
+    migrate_through_75(pool).await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX CONCURRENTLY rh_summary_one_session
+           ON rh_summaries (conversation_id) WHERE kind = 'session'",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX CONCURRENTLY rh_summary_sources_order
+           ON rh_summary_sources (summary_id, ordinal)",
+    )
+    .execute(pool)
+    .await?;
+    let mut blocker = pool.begin().await?;
+    sqlx::query(hold).execute(&mut *blocker).await?;
+    let mut migration = pool.acquire().await?;
+    let migrator_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *migration)
+        .await?;
+    let mut reader = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = '500ms'")
+        .execute(&mut *reader)
+        .await?;
+
+    let started = async {
+        let mut ticks = tokio::time::interval(Duration::from_millis(10));
+        loop {
+            ticks.tick().await;
+            let applying: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1
+                  AND starts_with(query, '-- Runtime path: crates/migrate/migrations/0076'))",
+            )
+            .bind(migrator_pid)
+            .fetch_one(pool)
+            .await?;
+            if applying {
+                return Ok::<_, sqlx::Error>(());
+            }
+        }
+    };
+    let (result, read) = tokio::join!(
+        tokio::time::timeout(Duration::from_secs(4), migrate::postgres_apply(migration)),
+        async {
+            tokio::time::timeout(Duration::from_secs(2), started)
+                .await
+                .map_err(|_| "the migrator did not reach 0076")??;
+            sqlx::query("SELECT id FROM rh_conversations")
+                .execute(&mut *reader)
+                .await?;
+            Ok::<_, Box<dyn std::error::Error>>(())
+        }
+    );
+    assert!(read.is_ok(), "a fresh reader queued behind 0076: {read:?}");
+    let Ok(Err(error)) = result else {
+        return Err(format!("expected 0076 to fail fast, got {result:?}").into());
+    };
+    assert!(
+        matches!(&error,
+            migrate::Error::PostgresMigrate(sqlx::migrate::MigrateError::ExecuteMigration(
+                sqlx::Error::Database(db), 76,
+            )) if db.code().as_deref() == Some("55P03")
+        ),
+        "expected retryable lock contention, got {error:?}",
+    );
+    assert!(error.to_string().contains("safe to rerun"));
+    reader.rollback().await?;
+    blocker.rollback().await?;
+    assert_eq!(migrate::postgres_pool(pool).await?.current, 78);
+    Ok(())
+}
+
+#[sqlx::test(migrations = false)]
+async fn top_down_upgrade_from_postgres_75_preserves_legacy_kinds(pool: PgPool) -> TestResult {
+    migrate_through_75(&pool).await?;
     let pending = migrate::postgres_status_pool(&pool).await?;
     assert_eq!(
         (pending.current, pending.required, pending.pending),

@@ -87,16 +87,17 @@ async fn apply_summary_schema(
     migrator: &Migrator,
     conn: &mut PgConnection,
 ) -> Result<(), MigrateError> {
-    for _ in 0..80 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
         let result = migrator.run_direct(Some(SUMMARY_SCHEMA), conn, false).await;
         if !matches!(&result, Err(MigrateError::ExecuteMigration(sqlx::Error::Database(error), SUMMARY_SCHEMA))
             if error.code().as_deref() == Some("55P03"))
+            || tokio::time::Instant::now() >= deadline
         {
             return result;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    migrator.run_direct(Some(SUMMARY_SCHEMA), conn, false).await
 }
 
 async fn prepare_summary_indexes(conn: &mut PgConnection) -> Result<(), MigrateError> {

@@ -1,5 +1,6 @@
 DO $rivet$
 BEGIN
+    SET LOCAL lock_timeout = '50ms';
     IF EXISTS (SELECT 1 FROM _rivetos_migrations WHERE name = '0077_opening_work.sql') THEN
         RETURN;
     END IF;
