@@ -287,11 +287,18 @@ impl PostgresMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(failure)?;
-        let candidates: Vec<Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT c.id FROM rh_conversations c
+        let candidates: Vec<(Uuid, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT c.id, missing.opening FROM rh_conversations c
              LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
+             LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
+             CROSS JOIN LATERAL (
+                 SELECT o.conversation_id IS NULL AND EXISTS (
+                     SELECT 1 FROM rh_messages m WHERE m.conversation_id = c.id
+                       AND m.role = 'user' AND m.content <> ''
+                 ) AS opening
+             ) missing
              WHERE c.id = ANY($1) AND {INCLUDED}
-               AND (s.input_revision IS NULL OR (s.settled_at IS NULL AND s.last_input_at <= $2))
+               AND (s.input_revision IS NULL OR (s.settled_at IS NULL AND s.last_input_at <= $2) OR missing.opening)
              ORDER BY c.id FOR UPDATE OF c"
         )))
         .bind(&page)
@@ -299,13 +306,19 @@ impl PostgresMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(failure)?;
-        seed_ids(&mut tx, &candidates).await?;
+        let ids: Vec<_> = candidates.iter().map(|(id, _)| *id).collect();
+        seed_ids(&mut tx, &ids).await?;
+        for (id, needs_opening) in candidates {
+            if needs_opening {
+                crate::summary_opening::seed_historical(&mut tx, id).await?;
+            }
+        }
         let settled = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE rh_summary_state s SET settled_at = $3, unsettled_since = NULL
              FROM rh_conversations c WHERE s.conversation_id = c.id AND c.id = ANY($1)
                AND s.settled_at IS NULL AND s.last_input_at <= $2 AND {INCLUDED}"
         )))
-        .bind(&candidates)
+        .bind(&ids)
         .bind(crate::time::BindTime::bind_time(cutoff))
         .bind(crate::time::BindTime::bind_time(now))
         .execute(&mut *tx)

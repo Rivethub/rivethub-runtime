@@ -92,6 +92,22 @@ async fn projection(conn: &mut PgConnection, id: Uuid) -> Result<Option<String>,
     ))
 }
 
+pub(crate) async fn seed_historical(conn: &mut PgConnection, id: Uuid) -> Result<bool, Error> {
+    let Some(content) = projection(conn, id).await? else {
+        return Ok(false);
+    };
+    sqlx::query(
+        "INSERT INTO rh_summary_openings (conversation_id, content, historical_pending)
+         VALUES ($1, $2, true) ON CONFLICT (conversation_id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(content)
+    .execute(conn)
+    .await
+    .map_err(failure)?;
+    Ok(true)
+}
+
 impl PostgresMemory {
     pub(crate) async fn undelivered_openings(&self) -> Result<Vec<Job>, Error> {
         if !GraphileQueue::schema_present(&self.pool).await? {

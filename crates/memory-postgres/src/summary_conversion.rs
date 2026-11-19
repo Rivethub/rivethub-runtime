@@ -223,7 +223,9 @@ impl SummaryConversion for PostgresMemory {
         lock(&mut tx).await.map_err(error)?;
         let query = match action {
             ConversionControl::ArmOpening { conversation } => {
-                crate::title::arm_historical(&mut tx, conversation).await.map_err(error)?;
+                if !crate::title::arm_historical(&mut tx, conversation).await.map_err(error)? {
+                    return Err(SummaryStoreError::NoOpening { conversation });
+                }
                 tx.commit().await.map_err(error)?;
                 return self.status().await;
             }

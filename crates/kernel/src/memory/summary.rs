@@ -149,6 +149,8 @@ pub enum SummaryStoreError {
     Count,
     #[error("summary checkpoint run {id} no longer owns revision {revision}")]
     StaleRun { id: Uuid, revision: i64 },
+    #[error("conversation {conversation} has no opening from a user request")]
+    NoOpening { conversation: Uuid },
     #[error("the summary store is closed")]
     Closed,
 }

@@ -260,19 +260,42 @@ impl SqliteStore {
     ) -> Result<SettlementPage, SqliteError> {
         let limit = limit.clamp(1, SETTLEMENT_PAGE_SIZE);
         self.with_conn(move |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(failure)?;
             if after.is_none() {
                 seed_recent(&tx, cutoff, limit)?;
             }
-            let page = tx.prepare(&format!(
-                "SELECT c.id, {INCLUDED} FROM ros_conversations c WHERE c.id > ?1 ORDER BY c.id LIMIT ?2"
-            )).map_err(failure)?.query_map(params![after.unwrap_or(Uuid::nil()).to_string(), limit],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)))
-                .map_err(failure)?.collect::<Result<Vec<_>, _>>().map_err(failure)?;
+            let page = tx
+                .prepare(&format!(
+                    "SELECT c.id, {INCLUDED}, o.conversation_id IS NULL AND EXISTS (
+                    SELECT 1 FROM ros_messages m WHERE m.conversation_id = c.id
+                      AND m.role = 'user' AND m.content <> ''
+                 ) FROM ros_conversations c
+                 LEFT JOIN rh_summary_openings o ON o.conversation_id = c.id
+                 WHERE c.id > ?1 ORDER BY c.id LIMIT ?2"
+                ))
+                .map_err(failure)?
+                .query_map(
+                    params![after.unwrap_or(Uuid::nil()).to_string(), limit],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, bool>(1)?,
+                            row.get::<_, bool>(2)?,
+                        ))
+                    },
+                )
+                .map_err(failure)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(failure)?;
             let mut settled = 0;
-            for (id, included) in &page {
+            for (id, included, needs_opening) in &page {
                 if !included {
                     continue;
+                }
+                if *needs_opening {
+                    crate::summary_opening::seed_historical(&tx, id)?;
                 }
                 let mut current = state(&tx, id)?;
                 if current.is_none() {
@@ -280,17 +303,19 @@ impl SqliteStore {
                     current = state(&tx, id)?;
                 }
                 if let Some(mut current) = current
-                    && current.settled_at.is_none() && current.last_input_at <= cutoff
+                    && current.settled_at.is_none()
+                    && current.last_input_at <= cutoff
                 {
                     current.settle(now);
                     save(&tx, &current)?;
                     settled += 1;
                 }
             }
-            let next = page.last().map(|(id, _)| parse_id(id)).transpose()?;
+            let next = page.last().map(|(id, _, _)| parse_id(id)).transpose()?;
             tx.commit().map_err(failure)?;
             Ok(SettlementPage { next, settled })
-        }).await
+        })
+        .await
     }
 }
 

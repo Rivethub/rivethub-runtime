@@ -1066,3 +1066,5 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
         ))
         .await
 }
+
+mod openings;

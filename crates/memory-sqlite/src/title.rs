@@ -142,7 +142,10 @@ pub(crate) fn load(conn: &Connection, id: &str) -> Result<Option<OpeningTitle>, 
         .transpose()
 }
 
-pub(crate) fn head(conn: &Connection, id: &str) -> Result<(ConversationHead, bool), SqliteError> {
+pub(crate) fn head(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<(ConversationHead, bool)>, SqliteError> {
     let row = conn
         .query_row(
             "SELECT id, session_key, agent, channel, title, title_from_capture,
@@ -151,21 +154,28 @@ pub(crate) fn head(conn: &Connection, id: &str) -> Result<(ConversationHead, boo
             [id],
             StoredHead::read,
         )
+        .optional()
         .map_err(failure)?;
-    let supplied = row.supplied;
-    Ok((row.head()?, supplied))
+    row.map(|row| {
+        let supplied = row.supplied;
+        Ok((row.head()?, supplied))
+    })
+    .transpose()
 }
 
-pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<usize, SqliteError> {
+pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<bool, SqliteError> {
     let id = id.to_string();
-    let Some(opening) = load(conn, &id)? else {
-        return Ok(0);
+    let Some((head, supplied)) = head(conn, &id)? else {
+        return Ok(false);
     };
-    let head = &opening.head;
-    if Filable::of(head) == Filable::Never {
-        return Ok(0);
+    let has_opening = load(conn, &id)?.is_some();
+    if Filable::of(&head) == Filable::Never {
+        return Ok(has_opening);
     }
-    let title = !opening.supplied && needs_title(head.title.as_deref());
+    if !has_opening && !crate::summary_opening::seed_historical(conn, &id)? {
+        return Ok(false);
+    }
+    let title = !supplied && needs_title(head.title.as_deref());
     conn.execute(
         "UPDATE rh_summary_openings SET historical_pending = 0, title_armed = ?2,
             filing_armed = NOT EXISTS (SELECT 1 FROM rh_conversation_placements WHERE conversation_id = ?1)
@@ -173,7 +183,8 @@ pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<usize,
          WHERE conversation_id = ?1 AND historical_pending",
          params![id, title, head.session_key, kernel::filing::session_key(Some(&head.channel), &head.session_key)],
     )
-    .map_err(failure)
+    .map_err(failure)?;
+    Ok(true)
 }
 
 pub(crate) fn seed(

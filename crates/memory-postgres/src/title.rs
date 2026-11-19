@@ -143,7 +143,7 @@ pub(crate) async fn head(
     Ok((row.head.into(), row.title_from_capture))
 }
 
-pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<(), Error> {
+pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<bool, Error> {
     let present = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM rh_conversations WHERE id = $1 FOR NO KEY UPDATE",
     )
@@ -152,11 +152,15 @@ pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<
     .await
     .map_err(failure)?;
     if present.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     let (head, supplied) = head(conn, id).await?;
+    let has_opening = load(conn, id).await?.is_some();
     if Filable::of(&head) == Filable::Never {
-        return Ok(());
+        return Ok(has_opening);
+    }
+    if !has_opening && !crate::summary_opening::seed_historical(conn, id).await? {
+        return Ok(false);
     }
     let title = !supplied && needs_title(head.title.as_deref());
     sqlx::query(
@@ -172,7 +176,7 @@ pub(crate) async fn arm_historical(conn: &mut PgConnection, id: Uuid) -> Result<
     .execute(conn)
     .await
     .map_err(failure)?;
-    Ok(())
+    Ok(true)
 }
 
 pub(crate) async fn seed(

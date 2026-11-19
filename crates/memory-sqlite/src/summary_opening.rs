@@ -33,7 +33,9 @@ pub(crate) fn refresh(
     if old.as_ref().is_some_and(|old| old.content == content) {
         return Ok(false);
     }
-    let (head, supplied) = crate::title::head(conn, id)?;
+    let Some((head, supplied)) = crate::title::head(conn, id)? else {
+        return Ok(false);
+    };
     let filing = Filable::of(&head) != Filable::Never;
     let title = filing && !supplied && needs_title(head.title.as_deref());
     conn.execute(
@@ -103,6 +105,19 @@ fn projection(conn: &Connection, id: &str) -> Result<Option<String>, SqliteError
             .iter()
             .map(|turn| (turn.role, turn.content.as_str())),
     ))
+}
+
+pub(crate) fn seed_historical(conn: &Connection, id: &str) -> Result<bool, SqliteError> {
+    let Some(content) = projection(conn, id)? else {
+        return Ok(false);
+    };
+    conn.execute(
+        "INSERT INTO rh_summary_openings (conversation_id, content, historical_pending)
+         VALUES (?1, ?2, 1) ON CONFLICT (conversation_id) DO NOTHING",
+        params![id, content],
+    )
+    .map_err(failure)?;
+    Ok(true)
 }
 
 impl SqliteStore {
