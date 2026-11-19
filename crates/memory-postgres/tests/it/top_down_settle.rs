@@ -251,3 +251,54 @@ async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestR
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn pending_replays_add_positions_without_replacing_transcript_fields(
+    pool: PgPool,
+) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    testkit::settlement::replay_pending(&store, &testkit::owner()?, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn cowork_hook_and_transcript_keep_distinct_event_ids(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool);
+    let owner = testkit::owner()?;
+    let key = "cowork:invented-claim";
+    let [hook, transcript] = testkit::settlement::cowork_pair()?;
+    let initial = store
+        .capture(batch(key, vec![hook.clone()]), &owner, None)
+        .await?;
+    let id = initial.conversation_id.parse()?;
+    for (message, inserted) in [(transcript.clone(), 1), (transcript, 0), (hook, 0)] {
+        assert_eq!(
+            store
+                .capture(batch(key, vec![message]), &owner, None)
+                .await?
+                .inserted,
+            inserted
+        );
+    }
+    let input = store.live_input(id).await?.ok_or("summarizer input")?;
+    let metadata = |source| {
+        input
+            .messages
+            .iter()
+            .filter_map(|row| row.metadata.as_ref())
+            .find(|metadata| metadata.get_str("source") == Some(source))
+    };
+    assert_eq!(input.messages.len(), 2);
+    assert_eq!(
+        metadata("cowork-hook")
+            .and_then(|row| row.get("ordinal"))
+            .and_then(testkit::Json::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        metadata("cowork-transcript")
+            .and_then(|row| row.get("session_jsonl_line"))
+            .and_then(testkit::Json::as_u64),
+        Some(8)
+    );
+    Ok(())
+}

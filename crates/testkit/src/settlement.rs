@@ -321,3 +321,82 @@ pub async fn child_resume_signals(
     }
     Ok(())
 }
+
+pub fn pending_result_pair() -> Result<[CaptureMessage; 2], Box<dyn std::error::Error>> {
+    let mut first = message("invented-tool", "2026-01-02T01:00:00Z")?;
+    first.role = Role::Tool;
+    first.tool_name = Some("invented-tool".to_owned());
+    first.tool_args = Some(obj(json!({"fixture": "original"}))?);
+    first.metadata = Some(obj(json!({
+        "pending_result": true, "session_jsonl_line": 4, "tool_use_id": "invented"
+    }))?);
+    let mut done = first.clone();
+    "Attempt to replace invented content.".clone_into(&mut done.content);
+    done.tool_args = Some(obj(json!({"fixture": "replacement"}))?);
+    done.created_at = Some("2026-01-02T01:01:00Z".parse()?);
+    done.tool_result = Some("Invented result.".to_owned());
+    done.metadata = Some(obj(json!({
+        "pending_result": false, "tool_use_id": "replacement", "assistant_uuid": "invented"
+    }))?);
+    Ok([first, done])
+}
+
+pub fn cowork_pair() -> Result<[CaptureMessage; 2], Box<dyn std::error::Error>> {
+    let mut hook = message("hook", "2026-01-02T01:00:00Z")?;
+    hook.metadata = Some(obj(
+        json!({"source": "cowork-hook", "ordinal": 1, "uuid": null}),
+    )?);
+    let mut transcript = hook.clone();
+    "transcript".clone_into(&mut transcript.event_id);
+    transcript.metadata = Some(obj(json!({
+        "source": "cowork-transcript", "session_jsonl_line": 8, "ordinal": 9, "uuid": "invented"
+    }))?);
+    Ok([hook, transcript])
+}
+
+pub async fn replay_pending(
+    store: &(impl MemoryStore + SummaryStore),
+    owner: &Owner,
+    completes_pending: bool,
+) -> TestResult {
+    let key = "claude-code:invented-tool";
+    let [first, done] = pending_result_pair()?;
+    let id = store
+        .capture(batch(key, vec![first.clone()]), owner, None)
+        .await?
+        .conversation_id
+        .parse()?;
+    let mut empty = done.clone();
+    empty.tool_result = Some(String::new());
+    store.capture(batch(key, vec![empty]), owner, None).await?;
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .capture(batch(key, vec![done.clone()]), owner, None)
+                .await?
+                .inserted,
+            0
+        );
+    }
+    let input = store.live_input(id).await?.ok_or("summarizer input")?;
+    let [row] = input.messages.as_slice() else {
+        return Err("expected one stored event".into());
+    };
+    assert_eq!(row.role, first.role);
+    assert_eq!(row.content, first.content);
+    assert_eq!(row.created_at, first.created_at);
+    assert_eq!(row.tool_args, first.tool_args);
+    assert_eq!(
+        row.tool_result,
+        if completes_pending {
+            done.tool_result
+        } else {
+            None
+        }
+    );
+    let metadata = row.metadata.as_ref().ok_or("stored metadata")?;
+    assert_eq!(metadata.get("session_jsonl_line"), Some(&json!(4)));
+    assert_eq!(metadata.get_str("tool_use_id"), Some("invented"));
+    assert_eq!(metadata.get_str("assistant_uuid"), Some("invented"));
+    Ok(())
+}

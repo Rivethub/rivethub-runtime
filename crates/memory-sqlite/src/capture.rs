@@ -1,10 +1,11 @@
+mod replay;
+
 use jiff::Timestamp;
 use kernel::memory::CaptureBatchRequest;
 use kernel::memory::CaptureMessage;
 use kernel::memory::CaptureResult;
 use kernel::memory::spoken_title;
 use kernel::owner::Owner;
-use rusqlite::OptionalExtension as _;
 use rusqlite::Transaction;
 use rusqlite::params;
 use serde::Serialize;
@@ -418,21 +419,25 @@ impl PreparedMessage {
             {
                 *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
             }
-            if self.fill_pending(tx, &stored)? {
-                return Ok(Outcome::Filled(stored));
-            }
+            let completed = self.fill_pending(tx, &stored)?;
             self.fill_position(tx, &stored)?;
-            return Ok(Outcome::Skipped);
+            return Ok(if completed {
+                Outcome::Filled(stored)
+            } else {
+                Outcome::Skipped
+            });
         }
         if let Some(hook_row) = self.unclaimed_hook_row(tx, conversation_id)? {
             if compare && before.is_none() {
                 *before = Some(crate::settlement::rendered_inputs(tx, conversation_id)?);
             }
             tx.execute(
-                "UPDATE ros_messages SET metadata = ?2 WHERE id = ?1",
-                params![hook_row, self.metadata],
+                "UPDATE ros_messages SET metadata = json_set(metadata, '$.cowork_transcript_event_id', ?2)
+                  WHERE id = ?1",
+                params![hook_row, self.event_id],
             )
             .map_err(SqliteError::query("cowork claim"))?;
+            self.fill_position(tx, &hook_row)?;
             return Ok(Outcome::Skipped);
         }
         let id = NewMessage {
@@ -450,80 +455,6 @@ impl PreparedMessage {
         }
         .insert(tx)?;
         Ok(Outcome::Inserted(id))
-    }
-
-    fn stored_by_event(
-        &self,
-        tx: &Transaction<'_>,
-        conversation_id: &str,
-    ) -> Result<Option<String>, SqliteError> {
-        tx.query_row(
-            "SELECT id FROM ros_messages
-              WHERE conversation_id = ?1 AND json_extract(metadata, '$.event_id') = ?2
-              ORDER BY rowid LIMIT 1",
-            params![conversation_id, self.event_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("event id lookup"))
-    }
-
-    fn fill_pending(&self, tx: &Transaction<'_>, id: &str) -> Result<bool, SqliteError> {
-        let changed = tx
-            .execute(
-                "UPDATE ros_messages SET tool_result = ?2, metadata = ?3
-                  WHERE id = ?1
-                    AND ?2 IS NOT NULL
-                    AND json_extract(metadata, '$.pending_result') = 1
-                    AND json_extract(?3, '$.pending_result') IS NOT 1",
-                params![id, self.tool_result, self.metadata],
-            )
-            .map_err(SqliteError::query("pending tool result fill"))?;
-        Ok(changed > 0)
-    }
-
-    fn fill_position(&self, tx: &Transaction<'_>, id: &str) -> Result<(), SqliteError> {
-        let Some(patch) = &self.position_patch else {
-            return Ok(());
-        };
-        tx.execute(
-            "UPDATE ros_messages SET metadata = json_patch(metadata, (
-                 SELECT json_group_object(field.key, ?2 -> field.key)
-                   FROM json_each(?2) AS field
-                  WHERE json_type(metadata, '$.' || field.key) IS NULL
-             ))
-             WHERE id = ?1 AND EXISTS (
-                 SELECT 1 FROM json_each(?2) AS field
-                  WHERE json_type(metadata, '$.' || field.key) IS NULL
-             )",
-            params![id, patch],
-        )
-        .map_err(SqliteError::query("transcript position fill"))?;
-        Ok(())
-    }
-
-    fn unclaimed_hook_row(
-        &self,
-        tx: &Transaction<'_>,
-        conversation_id: &str,
-    ) -> Result<Option<String>, SqliteError> {
-        tx.query_row(
-            "SELECT id FROM ros_messages
-              WHERE json_extract(?4, '$.source') = 'cowork-transcript'
-                AND conversation_id = ?1
-                AND json_extract(metadata, '$.source') = 'cowork-hook'
-                AND role = ?2 AND content = ?3
-              ORDER BY rowid LIMIT 1",
-            params![
-                conversation_id,
-                self.role.to_string(),
-                self.content,
-                self.metadata
-            ],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(SqliteError::query("cowork hook lookup"))
     }
 }
 
@@ -587,7 +518,10 @@ fn stored_metadata(metadata: &StoredMetadata<'_>) -> Result<String, SqliteError>
         column: "metadata",
         source,
     };
-    let merged = serde_json::to_value(metadata).map_err(failed)?;
+    let mut merged = serde_json::to_value(metadata).map_err(failed)?;
+    if let Some(object) = merged.as_object_mut() {
+        object.remove("cowork_transcript_event_id");
+    }
     serde_json::to_string(&merged).map_err(failed)
 }
 
