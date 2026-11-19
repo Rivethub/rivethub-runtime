@@ -171,11 +171,7 @@ impl SqliteStore {
             if plan.mode == SearchMode::Regex {
                 functions::compile(&plan.text)?;
             }
-            let mut outcome = if keyword {
-                execute(conn, &plan)?
-            } else {
-                ranked::execute(conn, &plan, vector.as_deref())?
-            };
+            let mut outcome = search_snapshot(conn, &plan, vector.as_deref(), keyword)?;
             if let Some(reason) = degraded {
                 outcome.degraded = Some(MemoryDegraded {
                     reason,
@@ -240,7 +236,33 @@ impl Plan {
     }
 }
 
-fn execute(conn: &mut Connection, plan: &Plan) -> Result<SearchOutcome, SqliteError> {
+fn search_snapshot(
+    conn: &mut Connection,
+    plan: &Plan,
+    vector: Option<&[f32]>,
+    keyword: bool,
+) -> Result<SearchOutcome, SqliteError> {
+    let snapshot = conn
+        .transaction()
+        .map_err(SqliteError::query("search snapshot"))?;
+    let read = if keyword {
+        execute(&snapshot, plan)?
+    } else {
+        ranked::execute(&snapshot, plan, vector)?
+    };
+    snapshot
+        .commit()
+        .map_err(SqliteError::query("search snapshot commit"))?;
+    bump(conn, &read.reinforced, &time::stamp(plan.now))?;
+    Ok(read.outcome)
+}
+
+struct SearchRead {
+    outcome: SearchOutcome,
+    reinforced: Vec<Candidate>,
+}
+
+fn execute(conn: &Connection, plan: &Plan) -> Result<SearchRead, SqliteError> {
     let mut pool = fetch(conn, plan)?;
     pool.sort_by(|left, right| {
         left.rank
@@ -262,16 +284,22 @@ fn execute(conn: &mut Connection, plan: &Plan) -> Result<SearchOutcome, SqliteEr
         .collect();
     let matched = !selected.is_empty();
     selected.truncate(hit_limit(plan.limit)?);
+    let results = selected
+        .iter()
+        .cloned()
+        .map(Candidate::into_result)
+        .collect();
     let reinforced = if plan.tag.is_some() && matched {
-        pool.as_slice()
+        pool
     } else {
-        selected.as_slice()
+        selected
     };
-    bump(conn, reinforced, &time::stamp(plan.now))?;
-    let results = selected.into_iter().map(Candidate::into_result).collect();
-    Ok(SearchOutcome {
-        results,
-        ..SearchOutcome::default()
+    Ok(SearchRead {
+        outcome: SearchOutcome {
+            results,
+            ..SearchOutcome::default()
+        },
+        reinforced,
     })
 }
 

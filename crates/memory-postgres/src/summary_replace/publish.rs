@@ -412,17 +412,19 @@ async fn import_deliveries(
     sqlx::query(
         "UPDATE rh_summary_deliveries d SET anchor_id = NULL, historical_backlog = true
          FROM summary_replacements r
-         WHERE d.anchor_id = r.old AND NOT EXISTS
+         WHERE d.conversation_id = $1 AND d.anchor_id = r.old AND NOT EXISTS
            (SELECT 1 FROM summary_anchors current WHERE current.message = d.message_id)",
     )
+    .bind(tree.conversation)
     .execute(&mut *conn)
     .await
     .map_err(query)?;
     sqlx::query(
         "UPDATE rh_summary_deliveries d SET anchor_id = a.anchor
          FROM summary_anchors a, summary_replacements r
-         WHERE d.anchor_id = r.old AND a.message = d.message_id",
+         WHERE d.conversation_id = $1 AND d.anchor_id = r.old AND a.message = d.message_id",
     )
+    .bind(tree.conversation)
     .execute(conn)
     .await
     .map_err(query)?;

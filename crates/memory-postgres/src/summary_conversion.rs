@@ -497,12 +497,22 @@ impl SummaryConversion for PostgresMemory {
     }
 }
 
-const RELEASE: &str = "WITH anchors AS (
-            SELECT DISTINCT ON (src.message_id) src.message_id, s.id
-            FROM rh_summaries s JOIN rh_summary_sources src ON src.summary_id = s.id
-            WHERE s.conversation_id = $1 AND s.kind IN ('session','part')
-            ORDER BY src.message_id, (s.kind = 'session'), s.summary_ordinal, s.id
-         )
-         UPDATE rh_summary_deliveries d SET anchor_id = a.id, historical_backlog = false
-         FROM anchors a WHERE d.conversation_id = $1 AND d.message_id = a.message_id
-           AND d.historical_backlog";
+const RELEASE: &str = "WITH part_order AS (
+    SELECT part.id, max(root_link.ordinal) AS last_position, min(root_link.ordinal) AS first_position
+    FROM rh_summaries part JOIN rh_summary_sources link ON link.summary_id = part.id
+    JOIN rh_summary_sources root_link ON root_link.summary_id = part.parent_id
+        AND root_link.message_id = link.message_id
+    WHERE part.conversation_id = $1 AND part.kind = 'part'
+    GROUP BY part.id
+), anchors AS (
+    SELECT DISTINCT ON (src.message_id) src.message_id, s.id
+    FROM rh_summaries s JOIN rh_summary_sources src ON src.summary_id = s.id
+    LEFT JOIN part_order p ON p.id = s.id
+    WHERE s.conversation_id = $1 AND s.kind IN ('session','part')
+    AND (s.kind = 'part' OR NOT EXISTS (SELECT 1 FROM rh_summaries part
+         WHERE part.parent_id = s.id AND part.kind = 'part'))
+    ORDER BY src.message_id, (s.kind = 'session'), p.last_position NULLS LAST, p.first_position NULLS LAST, s.issued_part_ordinal, s.id
+)
+UPDATE rh_summary_deliveries d SET anchor_id = a.id, historical_backlog = false
+FROM anchors a WHERE d.conversation_id = $1 AND d.message_id = a.message_id
+  AND d.historical_backlog";

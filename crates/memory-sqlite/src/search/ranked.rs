@@ -7,7 +7,7 @@ use kernel::memory_core::{
 };
 
 use super::{
-    Candidate, Kind, Plan, SearchMode, SearchOutcome, SqliteError, bump, fetch, hit_limit,
+    Candidate, Kind, Plan, SearchMode, SearchOutcome, SearchRead, SqliteError, fetch, hit_limit,
 };
 use kernel::memory::{MemoryHitSource, MemoryScope};
 use rusqlite::Connection;
@@ -33,10 +33,10 @@ impl FusionItem for ArmRow {
 }
 
 pub(super) fn execute(
-    conn: &mut Connection,
+    conn: &Connection,
     plan: &Plan,
     vector: Option<&[f32]>,
-) -> Result<SearchOutcome, SqliteError> {
+) -> Result<SearchRead, SqliteError> {
     let rows = load(conn, plan)?;
     let mut fallback = None;
     let scored = match plan.mode {
@@ -85,7 +85,6 @@ pub(super) fn execute(
         .iter()
         .map(|(row, _)| row.candidate.clone())
         .collect();
-    bump(conn, &reinforced, &crate::time::stamp(plan.now))?;
     let results = selected
         .into_iter()
         .map(|(row, score)| {
@@ -94,10 +93,13 @@ pub(super) fn execute(
             result
         })
         .collect();
-    Ok(SearchOutcome {
-        results,
-        fallback,
-        ..SearchOutcome::default()
+    Ok(SearchRead {
+        outcome: SearchOutcome {
+            results,
+            fallback,
+            ..SearchOutcome::default()
+        },
+        reinforced,
     })
 }
 

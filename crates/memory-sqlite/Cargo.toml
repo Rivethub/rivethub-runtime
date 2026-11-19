@@ -28,6 +28,7 @@ uuid = { workspace = true }
 wire = { workspace = true }
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["hooks"] }
 sqlx = { workspace = true }
 migrate = { workspace = true }
 sha2 = { workspace = true }

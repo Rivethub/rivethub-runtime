@@ -564,10 +564,20 @@ async fn check_gone(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPool) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
     seed(&pool).await?;
     let store = scoped_store(&pool).await?;
-    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
-    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+    sqlx::query("DELETE FROM rh_wiki_extractions")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03', 'alice')",
+    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
+    {
         prepared.records.push(PreparedSummaryRecord {
             id: id(part),
             parent: Some(id(20)),
@@ -592,16 +602,35 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
         });
     }
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
-    prepared.part_order = vec![id(22), id(21)];
-    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
-    prepared.part_order.clear();
     Scope::Maintenance
         .run(store.replace_summary_tree(&prepared))
         .await?;
+    prepared.expected_ids = BTreeSet::from([id(20), id(21), id(22)]);
+    prepared.retained_parts = BTreeSet::from([id(21), id(22)]);
+    for record in &mut prepared.records {
+        if record.kind == SummaryKind::Session {
+            record.id = id(30);
+            for (source, message) in record.sources.iter_mut().zip([2, 4, 3]) {
+                source.message = id(message);
+            }
+        } else {
+            record.parent = Some(id(30));
+        }
+    }
+    prepared.part_order = vec![id(22), id(21)];
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&prepared))
+        .await?;
+    Scope::Maintenance
+        .run(store.control(ConversionControl::Release {
+            conversation: id(1),
+        }))
+        .await?;
     let found: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+        "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
     ).fetch_all(&pool).await?;
-    assert_eq!(found, [(id(2), id(21)), (id(3), id(22))]);
+    assert_eq!(found, [(id(2), id(22)), (id(3), id(21)), (id(4), id(22))]);
     Ok(())
 }
 
@@ -742,8 +771,15 @@ async fn top_down_references_wiki_projects_committed_ids_after_retry(pool: PgPoo
             Ok::<_, Box<dyn std::error::Error>>(())
         })
         .await?;
-    assert_eq!(tokio::fs::read_to_string(page_path).await?, cached);
+    assert_eq!(tokio::fs::read_to_string(&page_path).await?, cached);
     assert_eq!(tokio::fs::read_to_string(archival_file).await?, cached);
+    tokio::fs::write(&page_path, format!("## Citations\n- {}\n", id(10))).await?;
+    assert!(
+        Scope::Maintenance
+            .run(store.wiki_page(&slug))
+            .await
+            .is_err()
+    );
     assert_eq!(checksum(&pool).await?, before);
     Ok(())
 }
@@ -1011,4 +1047,236 @@ async fn visible_sessions(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
     sqlx::query_scalar("SELECT id FROM rh_summaries WHERE kind = 'session'")
         .fetch_all(pool)
         .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_kept_part_competes_with_incoming_rows(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&initial_parts()))
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2023-12-01', 'alice')",
+    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+    seed_kept_collision(&pool).await?;
+    let before = checksum(&pool).await?;
+    let mut prepared = reopen_parts();
+    prepared
+        .records
+        .retain(|row| row.kind != SummaryKind::Section);
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&prepared))
+        .await?;
+    assert!(
+        Scope::Maintenance
+            .run(store.replace_summary_tree(&prepared))
+            .await
+            .is_err()
+    );
+    assert_eq!(checksum(&pool).await?, before);
+    let actual: (String, String, i32, i32, bool, Vec<String>) = sqlx::query_as(
+        "SELECT c.note, e.status, e.pipeline_version, a.access_count,
+                a.last_accessed_at = '2025-06-01', e.topics_touched
+         FROM rh_wiki_citations c JOIN rh_wiki_extractions e USING (summary_id)
+         JOIN rh_summary_access a USING (summary_id) WHERE c.summary_id = $1",
+    )
+    .bind(id(21))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        actual,
+        (
+            "new note".to_owned(),
+            "done".to_owned(),
+            4,
+            11,
+            true,
+            vec!["gasket".to_owned(), "valve".to_owned()],
+        )
+    );
+    let winners: (Uuid, Uuid, String) = sqlx::query_as(
+        "SELECT t.id, c.id, (d.patches->0->>'slug') || ',' || (d.patches->1->>'slug')
+         FROM rh_tags t JOIN rh_entity_fact_claims c ON c.summary_id = t.entity_id
+         JOIN rh_wiki_deferred d ON d.summary_id = t.entity_id WHERE t.entity_id = $1",
+    )
+    .bind(id(21))
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(winners, (id(23), id(23), "gasket,valve".to_owned()));
+    Ok(())
+}
+
+async fn seed_kept_collision(pool: &PgPool) -> TestResult {
+    sqlx::query(
+        "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+         SELECT $1, id, 'diameter', now() FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
+    )
+    .bind(id(71))
+    .execute(pool)
+    .await?;
+    for sql in [
+        "INSERT INTO rh_wiki_citations (topic_slug, summary_id, kind, note, cited_at, owner_user_id)
+         VALUES ('valve', $1, 'part', 'old note', '2020-01-01', 'alice'),
+                ('valve', $2, 'section', 'new note', '2025-06-01', 'alice')",
+        "INSERT INTO rh_wiki_extractions (summary_id, status, pipeline_version, topics_touched, extracted_at, owner_user_id)
+         VALUES ($1, 'failed', 1, ARRAY['gasket'], '2020-01-01', 'alice'),
+                ($2, 'done', 4, ARRAY['valve'], '2025-06-01', 'alice')",
+        "INSERT INTO rh_summary_access (summary_id, access_count, last_accessed_at)
+         VALUES ($1, 2, '2020-01-01'), ($2, 9, '2025-06-01')",
+        "INSERT INTO rh_tags (id, entity_type, entity_id, key, value, source, state, updated_at)
+         VALUES ($1, 'summary', $1, 'type', 'hardware', 'user', 'accepted', '2020-01-01'),
+                ($2, 'summary', $2, 'type', 'hardware', 'user', 'rejected', '2025-06-01')",
+        "INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
+         SELECT id, '00000000-0000-0000-0000-000000000047', id::text, 'wiki-writer', 'valves', id, at, at, 'alice'
+         FROM (VALUES ($1::uuid, '2020-01-01'::timestamptz), ($2, '2025-06-01')) AS source(id, at)",
+        r#"INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
+         VALUES ($1, '00000000-0000-0000-0000-000000000001', '[{"slug":"valve"}]', '2020-01-01', 'alice'),
+                ($2, '00000000-0000-0000-0000-000000000001', '[{"slug":"gasket"}]', '2025-06-01', 'alice')"#,
+    ] {
+        sqlx::query(sql).bind(id(21)).bind(id(23)).execute(pool).await?;
+    }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_does_not_rewrite_foreign_delivery(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000009', 'other', 'fixture', 'cli', 'alice');
+         INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-000000000009',
+                 'fixture', 'cli', 'user', 'An independent measurement.', 'alice');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_summary_deliveries (conversation_id, consumer, message_id, anchor_id)
+         VALUES ($1, 'wiki', $2, $3)",
+    )
+    .bind(id(9))
+    .bind(id(109))
+    .bind(id(10))
+    .execute(&pool)
+    .await?;
+    let before = checksum(&pool).await?;
+    let prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    assert!(
+        Scope::Maintenance
+            .run(store.replace_summary_tree(&prepared))
+            .await
+            .is_err()
+    );
+    let foreign: (Option<Uuid>, bool) = sqlx::query_as(
+        "SELECT anchor_id, historical_backlog FROM rh_summary_deliveries WHERE conversation_id = $1",
+    ).bind(id(9)).fetch_one(&pool).await?;
+    assert_eq!(foreign, (Some(id(10)), false));
+    assert_eq!(checksum(&pool).await?, before);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_wiki_retry_after_git_commit_fills_sql_receipt(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let directory = tempfile::tempdir()?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    let before = checksum(&pool).await?;
+    Scope::Maintenance
+        .run(exercise_wiki_commit_retry(&pool, &store, directory.path()))
+        .await?;
+    assert_eq!(checksum(&pool).await?, before);
+    Ok(())
+}
+
+async fn exercise_wiki_commit_retry(
+    pool: &PgPool,
+    store: &PostgresMemory,
+    directory: &std::path::Path,
+) -> TestResult {
+    use kernel::memory::MemoryStore as _;
+    use kernel::wiki::WikiLookup;
+    use kernel::wiki::page::{WikiSlug, parse_wiki_page};
+
+    store
+        .replace_summary_tree(&tree(&[10, 11, 12], 20, &[2, 3], false))
+        .await?;
+    let job = ExtractWiki {
+        summary_id: id(20),
+        conversation_id: Some(id(1)),
+    };
+    let WikiWork::Pending(input) = store.wiki_work(&job).await? else {
+        return Err("expected pending work".into());
+    };
+    let routing = WikiRouting {
+        input: Some(input),
+        ..WikiRouting::default()
+    };
+    let when: Timestamp = "2025-06-01T00:00:00Z".parse()?;
+    let slug = WikiSlug::try_from("gasket-rack".to_owned())?;
+    let patch = retry_patch(slug.clone(), when);
+    sqlx::raw_sql(
+        "CREATE FUNCTION refuse_wiki_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'interrupted wiki receipt'; END $$;
+         CREATE CONSTRAINT TRIGGER refuse_wiki_commit AFTER INSERT OR UPDATE ON rh_wiki_extractions
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION refuse_wiki_commit();",
+    )
+    .execute(pool)
+    .await?;
+    assert!(
+        store
+            .apply_wiki(&job, vec![patch.clone()], &routing, when)
+            .await
+            .is_err()
+    );
+    let ahead = tokio::fs::read_to_string(directory.join("topics/gasket-rack.md")).await?;
+    assert_eq!(parse_wiki_page(&ahead)?.history.len(), 1);
+    assert!(matches!(store.wiki_work(&job).await?, WikiWork::Pending(_)));
+    sqlx::query("DROP TRIGGER refuse_wiki_commit ON rh_wiki_extractions")
+        .execute(pool)
+        .await?;
+    store.apply_wiki(&job, vec![patch], &routing, when).await?;
+    assert!(matches!(
+        store.wiki_work(&job).await?,
+        WikiWork::Complete { .. }
+    ));
+    let WikiLookup::Page(page) = store.wiki_page(&slug).await? else {
+        return Err("missing retried wiki page".into());
+    };
+    assert_eq!(parse_wiki_page(&page.markdown)?.history.len(), 1);
+    assert_eq!(page.citations.len(), 1);
+    Ok(())
+}
+fn retry_patch(
+    slug: kernel::wiki::page::WikiSlug,
+    when: Timestamp,
+) -> kernel::wiki::page::WikiPatch {
+    use kernel::wiki::page::{WikiAction, WikiHistoryEntry, WikiPatch};
+    use wire::time::TimestampFormat as _;
+
+    WikiPatch {
+        action: WikiAction::Create,
+        slug,
+        title: "Gasket rack".to_owned(),
+        aliases: Vec::new(),
+        tags: Vec::new(),
+        entities: Vec::new(),
+        summary: "The spare gasket is in the top drawer.".to_owned(),
+        article: None,
+        related: None,
+        history_entry: Some(WikiHistoryEntry {
+            date: when.utc_date(),
+            title: "Put the spare away".to_owned(),
+            body: "The brass drawer is marked with its size.".to_owned(),
+        }),
+        entity_type: None,
+        facts: None,
+    }
 }

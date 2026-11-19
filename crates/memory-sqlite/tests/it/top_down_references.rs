@@ -433,10 +433,28 @@ async fn check_gone(
 
 #[tokio::test]
 async fn top_down_references_split_message_has_only_the_first_anchor() -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
     let (_dir, store) = store(None)?;
     seed(&store).await?;
-    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
-    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+    store
+        .with_conn(|conn| {
+            conn.execute("DELETE FROM ros_wiki_extractions", [])
+                .map_err(failed)
+        })
+        .await?;
+    store
+        .with_conn(|conn| {
+            conn.execute(
+        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03T00:00:00Z')",
+        params![id(4).to_string(), id(1).to_string()],
+    ).map_err(failed)
+        })
+        .await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
+    {
         prepared.records.push(PreparedSummaryRecord {
             id: id(part),
             parent: Some(id(20)),
@@ -461,17 +479,34 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
         });
     }
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
+    store.replace_summary_tree(prepared.clone()).await?;
+    prepared.expected_ids = BTreeSet::from([id(20), id(21), id(22)]);
+    prepared.retained_parts = BTreeSet::from([id(21), id(22)]);
+    for record in &mut prepared.records {
+        if record.kind == SummaryKind::Session {
+            record.id = id(30);
+            for (source, message) in record.sources.iter_mut().zip([2, 4, 3]) {
+                source.message = id(message);
+            }
+        } else {
+            record.parent = Some(id(30));
+        }
+    }
     prepared.part_order = vec![id(22), id(21)];
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
-    prepared.part_order.clear();
     store.replace_summary_tree(prepared).await?;
+    store
+        .control(ConversionControl::Release {
+            conversation: id(1),
+        })
+        .await?;
     store.with_conn(|conn| {
         let mut query = conn.prepare(
-            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
         ).map_err(failed)?;
         let found: Vec<(String, String)> = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(failed)?.collect::<Result<_, _>>().map_err(failed)?;
-        assert_eq!(found, [(id(2).to_string(), id(21).to_string()), (id(3).to_string(), id(22).to_string())]);
+        assert_eq!(found, [(2, 22), (3, 21), (4, 22)].map(|(message, anchor)| (id(message).to_string(), id(anchor).to_string())));
         Ok(())
     }).await?;
     Ok(())
@@ -689,4 +724,227 @@ async fn top_down_references_a_running_wiki_job_cannot_apply_or_retry() -> TestR
     assert!(store.claim(&selector).await?.is_none());
     assert_eq!(snapshot(&store).await?, before);
     Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_kept_part_competes_with_incoming_rows() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store.replace_summary_tree(initial_parts()).await?;
+    store.with_conn(seed_kept_collision).await?;
+    let before = snapshot(&store).await?;
+    let mut prepared = reopen_parts();
+    prepared
+        .records
+        .retain(|row| row.kind != SummaryKind::Section);
+    store.replace_summary_tree(prepared.clone()).await?;
+    assert!(store.replace_summary_tree(prepared).await.is_err());
+    assert_eq!(snapshot(&store).await?, before);
+    let actual: (String, String, i32, i32, bool, String) = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT c.note, e.status, e.pipeline_version, a.access_count,
+                    a.last_accessed_at = '2025-06-01T00:00:00Z', e.topics_touched
+             FROM ros_wiki_citations c JOIN ros_wiki_extractions e USING (summary_id)
+             JOIN ros_summaries a ON a.id = c.summary_id WHERE c.summary_id = ?1",
+                [id(21).to_string()],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .map_err(failed)
+        })
+        .await?;
+    assert_eq!(
+        actual,
+        (
+            "new note".to_owned(),
+            "done".to_owned(),
+            4,
+            11,
+            true,
+            r#"["gasket","valve"]"#.to_owned(),
+        )
+    );
+    let winners: (String, String, String) = store.with_conn(|conn| conn.query_row(
+        "SELECT t.id, c.id, json_extract(d.patches, '$[0].slug') || ',' || json_extract(d.patches, '$[1].slug')
+         FROM ros_tags t JOIN rh_entity_fact_claims c ON c.summary_id = t.entity_id
+         JOIN rh_wiki_deferred d ON d.summary_id = t.entity_id WHERE t.entity_id = ?1",
+        [id(21).to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(failed)).await?;
+    assert_eq!(
+        winners,
+        (
+            id(23).to_string(),
+            id(23).to_string(),
+            "gasket,valve".to_owned()
+        )
+    );
+    Ok(())
+}
+
+fn seed_kept_collision(conn: &mut rusqlite::Connection) -> Result<(), SqliteError> {
+    conn.execute(
+        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2023-12-01T00:00:00Z')",
+        params![id(4).to_string(), id(1).to_string()],
+    )
+    .map_err(failed)?;
+    conn.execute(
+        "INSERT INTO rh_entity_facts (id, topic_id, key, created_at)
+         SELECT 'diameter', id, 'diameter', '2020-01-01' FROM rh_topics WHERE slug = 'hardware' AND kind = 'type'",
+        [],
+    ).map_err(failed)?;
+    for sql in [
+        "INSERT INTO ros_wiki_citations (topic_slug, summary_id, kind, note, cited_at)
+         VALUES ('valve', ?1, 'part', 'old note', '2020-01-01T00:00:00Z'),
+                ('valve', ?2, 'section', 'new note', '2025-06-01T00:00:00Z')",
+        r#"INSERT INTO ros_wiki_extractions (summary_id, status, pipeline_version, topics_touched, extracted_at)
+         VALUES (?1, 'failed', 1, '["gasket"]', '2020-01-01T00:00:00Z'),
+                (?2, 'done', 4, '["valve"]', '2025-06-01T00:00:00Z')"#,
+        "UPDATE ros_summaries SET access_count = CASE WHEN id = ?1 THEN 2 ELSE 9 END,
+             last_accessed_at = CASE WHEN id = ?1 THEN '2020-01-01T00:00:00Z' ELSE '2025-06-01T00:00:00Z' END
+         WHERE id IN (?1, ?2)",
+        "INSERT INTO ros_tags (id, entity_type, entity_id, key, value, source, state, created_at, updated_at)
+         VALUES (?1, 'summary', ?1, 'type', 'hardware', 'user', 'accepted', '2020-01-01', '2020-01-01'),
+                (?2, 'summary', ?2, 'type', 'hardware', 'user', 'rejected', '2025-06-01', '2025-06-01')",
+        "INSERT INTO rh_entity_fact_claims
+            (id, fact_id, value, actor, session_id, summary_id, at, recorded_at, owner_user_id)
+         VALUES (?1, 'diameter', 'small', 'wiki-writer', 'valves', ?1, '2020-01-01', '2020-01-01', 'alice'),
+                (?2, 'diameter', 'large', 'wiki-writer', 'valves', ?2, '2025-06-01', '2025-06-01', 'alice')",
+        r#"INSERT INTO rh_wiki_deferred (summary_id, waits_conversation, patches, deferred_at, owner_user_id)
+         VALUES (?1, '00000000-0000-0000-0000-000000000001', '[{"slug":"valve"}]', '2020-01-01', 'alice'),
+                (?2, '00000000-0000-0000-0000-000000000001', '[{"slug":"gasket"}]', '2025-06-01', 'alice')"#,
+    ] {
+        conn.execute(sql, params![id(21).to_string(), id(23).to_string()]).map_err(failed)?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_does_not_rewrite_foreign_delivery() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store.with_conn(|conn| {
+        conn.execute_batch(
+            "INSERT INTO ros_conversations (id, session_key, agent, channel, owner_user_id, created_at, updated_at)
+             VALUES ('00000000-0000-0000-0000-000000000009', 'other', 'fixture', 'cli', 'alice', '2024-01-01', '2024-01-01');
+             INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+             VALUES ('00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-000000000009',
+                     'fixture', 'cli', 'user', 'An independent measurement.', '2024-01-01');
+             INSERT INTO ros_summary_deliveries (conversation_id, consumer, message_id, anchor_id)
+             VALUES ('00000000-0000-0000-0000-000000000009', 'wiki',
+                     '00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-00000000000a');",
+        ).map_err(failed)
+    }).await?;
+    let before = snapshot(&store).await?;
+    assert!(
+        store
+            .replace_summary_tree(tree(&[10, 11, 12], 20, &[2, 3], false))
+            .await
+            .is_err()
+    );
+    let foreign: (Option<String>, bool) = store.with_conn(|conn| conn.query_row(
+        "SELECT anchor_id, historical_backlog FROM ros_summary_deliveries WHERE conversation_id = ?1",
+        [id(9).to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(failed)).await?;
+    assert_eq!(foreign, (Some(id(10).to_string()), false));
+    assert_eq!(snapshot(&store).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_search_uses_one_snapshot_during_tree_replacement() -> TestResult {
+    use kernel::memory::{MemoryScope, MemoryStore as _, SearchMode};
+    use std::sync::Arc;
+    use testkit::{FakeProvider, Script};
+
+    let vector = kernel::model::Embedding {
+        vector: vec![1.0, 0.0],
+    };
+    let embedder = Arc::new(FakeProvider::new(vec![Script::Embed(vec![vector])]));
+    let (directory, reader) = store(Some(embedder))?;
+    let writer = SqliteStore::open(directory.path().join("memory.sqlite"))?;
+    seed(&writer).await?;
+    let summary = |old: &[u128], next: u128| -> Result<PreparedSummaryTree, &str> {
+        let mut prepared = tree(old, next, &[2, 3], false);
+        prepared
+            .records
+            .first_mut()
+            .ok_or("missing session root")?
+            .content = "The brass valve stays in the cabinet. ".repeat(4);
+        Ok(prepared)
+    };
+    writer
+        .replace_summary_tree(summary(&[10, 11, 12], 20)?)
+        .await?;
+    let before = snapshot(&writer).await?;
+    let (ready, resume) = pause_before_full_text(&reader).await?;
+    let searcher = reader.clone();
+    let mut q = crate::search_support::query("cabinet", SearchMode::Hybrid);
+    q.scope = MemoryScope::Summaries;
+    let request = q.clone();
+    let search = tokio::spawn(async move { searcher.search(request).await });
+    tokio::time::timeout(std::time::Duration::from_secs(15), ready).await??;
+    let swapped = writer.replace_summary_tree(summary(&[20], 30)?).await;
+    resume.send(())?;
+    swapped?;
+    let old = search.await??;
+    assert_eq!(
+        old.results.first().map(|hit| &hit.id),
+        Some(&id(20).to_string())
+    );
+    let new = reader.search(q).await?;
+    assert_eq!(
+        new.results.first().map(|hit| &hit.id),
+        Some(&id(30).to_string())
+    );
+    assert_eq!(snapshot(&writer).await?, before);
+    Ok(())
+}
+
+async fn pause_before_full_text(
+    store: &SqliteStore,
+) -> Result<
+    (
+        tokio::sync::oneshot::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ),
+    SqliteError,
+> {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let (reached, ready) = tokio::sync::oneshot::channel();
+    let (resume, resuming) = std::sync::mpsc::channel();
+    let mut reached = Some(reached);
+    store
+        .with_conn(move |conn| {
+            conn.authorizer(Some(move |context: AuthContext<'_>| {
+                if matches!(
+                    context.action,
+                    AuthAction::Read {
+                        table_name: "ros_summaries_fts",
+                        ..
+                    }
+                ) && let Some(reached) = reached.take()
+                    && (reached.send(()).is_err()
+                        || resuming
+                            .recv_timeout(std::time::Duration::from_secs(15))
+                            .is_err())
+                {
+                    return Authorization::Deny;
+                }
+                Authorization::Allow
+            }))
+            .map_err(failed)
+        })
+        .await?;
+    Ok((ready, resume))
 }
