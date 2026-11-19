@@ -104,3 +104,122 @@ async fn stdio_mcp_reads_the_sqlite_store_of_a_local_node() -> TestResult {
     child.kill().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn recall_results_link_to_this_nodes_pages_and_omit_them_when_the_gateway_is_off()
+-> TestResult {
+    let origin = "http://127.0.0.1:9";
+    let page = format!("{origin}/topics/copper-lantern");
+    let conversation =
+        format!("{origin}/sessions/claude-code%3A44444444-4444-4444-8444-444444444444");
+    let linked = seeded_node("gateway:\n  host: 127.0.0.1\n  port: 9\n").await?;
+    let search = call(
+        &linked.client,
+        "memory_search",
+        r#"{"query":"copper lantern"}"#,
+    )
+    .await?;
+    let wiki = call(&linked.client, "wiki_search", r#"{"query":"lantern"}"#).await?;
+    let read = call(&linked.client, "wiki_read", r#"{"slug":"copper-lantern"}"#).await?;
+    let full = call(
+        &linked.client,
+        "memory_get_full",
+        &format!(r#"{{"id":"{}"}}"#, linked.message_id),
+    )
+    .await?;
+    assert!(search.contains(ANSWER), "{search}");
+    assert_eq!(search.matches(conversation.as_str()).count(), 2, "{search}");
+    assert!(wiki.contains(&page), "{wiki}");
+    assert!(read.starts_with(&format!("{page}\n\n")), "{read}");
+    assert!(!full.contains(&conversation), "{full}");
+    drop(linked);
+    let plain = seeded_node("gateway:\n  enabled: false\n").await?;
+    let hidden = call(
+        &plain.client,
+        "memory_search",
+        r#"{"query":"copper lantern"}"#,
+    )
+    .await?;
+    let hidden_wiki = call(&plain.client, "wiki_search", r#"{"query":"lantern"}"#).await?;
+    assert!(hidden.contains(ANSWER), "{hidden}");
+    assert!(
+        !hidden.contains("http://") && !hidden.contains("https://"),
+        "{hidden}"
+    );
+    assert!(hidden_wiki.contains("Copper lantern"), "{hidden_wiki}");
+    assert!(
+        !hidden_wiki.contains("http://") && !hidden_wiki.contains("https://"),
+        "{hidden_wiki}"
+    );
+    Ok(())
+}
+
+struct Node {
+    _home: tempfile::TempDir,
+    _child: crate::process::guard::Guarded,
+    client: RunningService<RoleClient, ClientConfig>,
+    message_id: String,
+}
+
+async fn seeded_node(gateway: &str) -> TestResult<Node> {
+    let home = tempfile::tempdir()?;
+    let state = home.path().join(".rivethub");
+    std::fs::create_dir_all(&state)?;
+    let database = state.join("memory.sqlite");
+    migrate::sqlite(&database)?;
+    let store = memory_sqlite::SqliteStore::open(&database)?;
+    store
+        .append(
+            &testkit::owner()?,
+            vec![
+                entry(Role::User, "Who logged the copper lantern inventory?"),
+                entry(Role::Assistant, ANSWER),
+            ],
+        )
+        .await?;
+    drop(store);
+    let connection = rusqlite::Connection::open(&database)?;
+    let message_id: String = connection.query_row(
+        "SELECT id FROM ros_messages WHERE role = 'assistant'",
+        [],
+        |row| row.get(0),
+    )?;
+    connection.execute(
+        "INSERT INTO ros_wiki_topics (slug, title, article, search_text, created_at, updated_at)
+         VALUES ('copper-lantern', 'Copper lantern', 'The inventory page.', 'copper lantern',
+                 '2026-11-08T10:00:00.000Z', '2026-11-08T10:00:00.000Z')",
+        [],
+    )?;
+    drop(connection);
+    std::fs::write(
+        state.join("config.yaml"),
+        format!(
+            "memory:\n  backend: sqlite\n  sqlite:\n    path: {}\n{gateway}",
+            database.display()
+        ),
+    )?;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rh"))
+        .arg("mcp")
+        .env_clear()
+        .env("HOME", home.path())
+        .env("RIVETHUB_SHARED_DIR", home.path().join("shared"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn_guarded()?;
+    let stdout = child.stdout.take().ok_or("missing stdout")?;
+    let stdin = child.stdin.take().ok_or("missing stdin")?;
+    let client = tokio::time::timeout(
+        Duration::from_secs(30),
+        ClientConfig::default().serve((stdout, stdin)),
+    )
+    .await?
+    .map_err(|error| format!("mcp connect failed: {error}"))?;
+    Ok(Node {
+        _home: home,
+        _child: child,
+        client,
+        message_id,
+    })
+}

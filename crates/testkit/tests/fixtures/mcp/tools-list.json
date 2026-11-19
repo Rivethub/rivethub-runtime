@@ -108,7 +108,7 @@
     },
     {
       "name": "memory_browse",
-      "description": "Browse RivetOS conversation messages chronologically. Unlike memory_search (which ranks by relevance), this returns messages in time order. By default excludes role=tool rows (pass include_tools=true to see tool calls/results). Use to review what happened in a session, catch up on recent activity, or read a specific conversation by ID. For time-bounded questions (\"today\", \"yesterday\", \"this morning\"), prefer window= over raw since/before so local midnights convert correctly to UTC. Capture-truncated rows append `→ memory_get_full id=` — use that tool for the full payload.",
+      "description": "Browse RivetOS conversation messages chronologically. Unlike memory_search (which ranks by relevance), this returns messages in time order. By default excludes role=tool rows (pass include_tools=true to see tool calls/results). Use to review what happened in a session, catch up on recent activity, or read a specific conversation by ID. For time-bounded questions (\"today\", \"yesterday\", \"this morning\"), prefer window= over raw since/before so local midnights convert correctly to UTC. Capture-truncated rows append `→ memory_get_full id=` — use that tool for the full payload. Results carry page links.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -195,7 +195,7 @@
     },
     {
       "name": "memory_search",
-      "description": "Search RivetOS persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload.",
+      "description": "Search RivetOS persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload. Results carry page links.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -491,7 +491,7 @@
     },
     {
       "name": "wiki_read",
-      "description": "Read one RivetOS wiki topic page: Wikipedia-style Summary (lead), Article body, See also crosslinks, dated History, and Citations (summary UUIDs usable with memory tools for drill-down). Use the slug from wiki_search. Small pages are returned verbatim. Pages larger than 24,000 characters (hub topics with thousands of YAML aliases) return a bounded encyclopedia view so MCP/capture truncation cannot hide Summary behind the alias dump. Pass section=summary|article|history|aliases|citations for a slice; section=full is refused on oversized pages.",
+      "description": "Read one RivetOS wiki topic page: Wikipedia-style Summary (lead), Article body, See also crosslinks, dated History, and Citations (summary UUIDs usable with memory tools for drill-down). Use the slug from wiki_search. Small pages are returned verbatim. Pages larger than 24,000 characters (hub topics with thousands of YAML aliases) return a bounded encyclopedia view so MCP/capture truncation cannot hide Summary behind the alias dump. Pass section=summary|article|history|aliases|citations for a slice; section=full is refused on oversized pages. Results carry page links.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -524,7 +524,7 @@
     },
     {
       "name": "wiki_search",
-      "description": "Search the RivetOS memory wiki — curated topic pages distilled from conversation memory (\"what is currently true about X\"). Higher signal than memory_search for standing facts about projects, hosts, and services; use memory_search when you need what was actually said. Returns slugs — read the page (dated history + provenance) with wiki_read.",
+      "description": "Search the RivetOS memory wiki — curated topic pages distilled from conversation memory (\"what is currently true about X\"). Higher signal than memory_search for standing facts about projects, hosts, and services; use memory_search when you need what was actually said. Returns slugs — read the page (dated history + provenance) with wiki_read. Results carry page links.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {

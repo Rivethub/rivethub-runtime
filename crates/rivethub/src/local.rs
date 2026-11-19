@@ -299,13 +299,14 @@ impl NodeBoot<'_> {
             enqueue_sweep(self.store, FixedJob::ConsolidateWiki, "wiki-consolidate", 5).await?;
         }
         spawn_workers(self.tracker, self.failed, self.shutdown, runners);
-        self.spawn_mcp()
+        self.spawn_mcp().await
     }
 
-    fn spawn_mcp(&self) -> Result<(), LocalError> {
+    async fn spawn_mcp(&self) -> Result<(), LocalError> {
         if !self.switches.contains(&ServiceSwitch::Mcp) {
             return Ok(());
         }
+        let origin = cli::recall_origin(self.env, self.config).await;
         let task = sidecar::memory_future(
             self.config,
             Arc::clone(self.store) as Arc<dyn MemoryStore>,
@@ -314,6 +315,7 @@ impl NodeBoot<'_> {
                 .map(|host| host as Arc<dyn kernel::plugins::PluginTools>),
             sidecar::display_zone(self.env),
             self.shutdown.clone(),
+            origin,
         )?;
         let failed = self.failed.clone();
         self.tracker.spawn(async move {

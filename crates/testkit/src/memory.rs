@@ -57,6 +57,7 @@ pub struct FakeMemoryStore {
     embed_mismatch: Mutex<Option<EmbedModelMismatch>>,
     capture_activity: Mutex<Vec<kernel::harness_setup::CaptureActivity>>,
     owners: Mutex<BTreeMap<String, String>>,
+    team_sessions: Mutex<Vec<kernel::memory::TeamSession>>,
     origins: origins::Origins,
 }
 
@@ -501,6 +502,15 @@ impl MemoryStore for FakeMemoryStore {
         session_keys: Vec<String>,
     ) -> Result<BTreeMap<String, String>, MemoryStoreError> {
         Ok(self.owners_for(session_keys).await)
+    }
+
+    async fn team_sessions(
+        &self,
+        _since: Option<Timestamp>,
+        _before: Option<Timestamp>,
+        _limit: u32,
+    ) -> Result<Vec<kernel::memory::TeamSession>, MemoryStoreError> {
+        Ok(self.team_sessions.lock().await.clone())
     }
 
     async fn lookup_origins(

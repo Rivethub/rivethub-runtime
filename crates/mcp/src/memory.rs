@@ -47,7 +47,7 @@ pub struct Search {
 
 impl crate::catalog::ToolInput for Search {
     const NAME: &'static str = "memory_search";
-    const DESCRIPTION: &'static str = "Search RivetHub persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload.";
+    const DESCRIPTION: &'static str = "Search RivetHub persistent memory (conversation history + summaries). Hybrid FTS + semantic + temporal scoring with auto-expansion of summary hits to their source messages. Use this to find past decisions and prior context. Use a few specific keywords instead of a full sentence. Include names, identifiers, error text, or the subject, such as \"build cache timeout\". If nothing matches, try a second set of keywords. Truncated hits include a `memory_get_full id=` handle — call that tool to recover the full capture payload. Results carry page links.";
     fn annotations() -> Option<rmcp::model::ToolAnnotations> {
         Some(rmcp::model::ToolAnnotations::from_raw(
             None,
@@ -94,7 +94,7 @@ pub struct Browse {
 
 impl crate::catalog::ToolInput for Browse {
     const NAME: &'static str = "memory_browse";
-    const DESCRIPTION: &'static str = "Browse RivetHub conversation messages chronologically. Unlike memory_search (which ranks by relevance), this returns messages in time order. By default excludes role=tool rows (pass include_tools=true to see tool calls/results). Use to review what happened in a session, catch up on recent activity, or read a specific conversation by ID. For time-bounded questions (\"today\", \"yesterday\", \"this morning\"), prefer window= over raw since/before so local midnights convert correctly to UTC. Capture-truncated rows append `→ memory_get_full id=` — use that tool for the full payload.";
+    const DESCRIPTION: &'static str = "Browse RivetHub conversation messages chronologically. Unlike memory_search (which ranks by relevance), this returns messages in time order. By default excludes role=tool rows (pass include_tools=true to see tool calls/results). Use to review what happened in a session, catch up on recent activity, or read a specific conversation by ID. For time-bounded questions (\"today\", \"yesterday\", \"this morning\"), prefer window= over raw since/before so local midnights convert correctly to UTC. Capture-truncated rows append `→ memory_get_full id=` — use that tool for the full payload. Results carry page links.";
     fn annotations() -> Option<rmcp::model::ToolAnnotations> {
         Some(rmcp::model::ToolAnnotations::from_raw(
             None,
@@ -172,10 +172,11 @@ pub(crate) fn limit(
     Ok(Limit::clamped(raw, default, 1..=maximum))
 }
 
-pub async fn search(
+pub(crate) async fn search(
     store: &dyn MemoryStore,
     args: Search,
     zone: &TimeZone,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     let scope = match args.scope {
         Some(scope) => scope,
@@ -218,6 +219,7 @@ pub async fn search(
             now: Timestamp::now(),
             zone,
         },
+        pages,
     )?))
 }
 
@@ -286,10 +288,11 @@ async fn hit_context(
     })
 }
 
-pub async fn browse(
+pub(crate) async fn browse(
     store: &dyn MemoryStore,
     args: Browse,
     zone: &TimeZone,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<CallToolResult, Error> {
     if args.window.is_some() && (args.since.is_some() || args.before.is_some()) {
         return Err(Error::Invalid(
@@ -343,6 +346,7 @@ pub async fn browse(
         &sessions,
         &origins,
         zone,
+        pages,
     )?))
 }
 
