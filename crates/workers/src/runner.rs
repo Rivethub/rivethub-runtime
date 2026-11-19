@@ -357,11 +357,17 @@ where
     }
 
     async fn run_summary_conversion(&self, roles: &[WorkerRole], cancel: &CancellationToken) {
-        if !self.schedules
-            || !roles.contains(&WorkerRole::Summarizer)
-            || self.summaries.live_index_key().is_none()
-            || self.summary.model_concurrency < 2
-        {
+        if !self.schedules || !roles.contains(&WorkerRole::Summarizer) {
+            return;
+        }
+        if self.summary.model_concurrency < 2 {
+            tracing::warn!(
+                "summary conversion cannot run: summary model concurrency must be at least 2"
+            );
+            return;
+        }
+        if self.summaries.live_index_key().is_none() {
+            tracing::warn!("summary conversion cannot run: no summary index key is configured");
             return;
         }
         let Some(store) = self.summaries.summary_conversion() else {

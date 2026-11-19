@@ -596,3 +596,39 @@ async fn embed_jobs_use_the_embedder_provider_and_not_the_summarizer() {
     assert_eq!(embedder.embed_requests().await.len(), 1);
     assert_eq!(summarizer.embed_requests().await.len(), 0);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn scheduled_summarizer_warns_once_when_conversion_cannot_run() {
+    for (concurrency, reason) in [
+        (1, "summary model concurrency must be at least 2"),
+        (2, "no summary index key is configured"),
+    ] {
+        let (guard, lines) = testkit::logs::recorded();
+        let mut deps = deps(Arc::new(Store::new()), fnv_provider());
+        deps.summary.model_concurrency = concurrency;
+        let runner = Runner::new(
+            Arc::new(Queue::new()),
+            RunnerConfig::new(ProcessRole::Summarizer, 1).expect("concurrency"),
+            deps,
+        )
+        .with_schedules(false);
+        let mut idle = runner.idle();
+        let cancel = CancellationToken::new();
+        let (run, ()) = tokio::join!(runner.run(cancel.clone()), async {
+            wait_bool(&mut idle, true).await;
+            cancel.cancel();
+        });
+        run.expect("runner shuts down");
+        drop(guard);
+        let warnings: Vec<_> = lines
+            .lock()
+            .iter()
+            .filter(|line| line.starts_with("WARN summary conversion cannot run"))
+            .cloned()
+            .collect();
+        assert_eq!(
+            warnings,
+            [format!("WARN summary conversion cannot run: {reason}")]
+        );
+    }
+}
