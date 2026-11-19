@@ -42,6 +42,7 @@ CREATE TABLE rh_summary_openings (
     conversation_id TEXT PRIMARY KEY NOT NULL REFERENCES ros_conversations(id) ON DELETE CASCADE,
     content TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 2000),
     filing_armed INTEGER NOT NULL DEFAULT 0 CHECK (filing_armed IN (0,1)),
+    historical_pending INTEGER NOT NULL DEFAULT 0 CHECK (historical_pending IN (0, 1)),
     title_armed INTEGER NOT NULL DEFAULT 0 CHECK (title_armed IN (0,1))
 );
 CREATE TABLE rh_summary_runs (
@@ -80,7 +81,7 @@ CREATE TABLE rh_summary_conversion (
     inventory_complete INTEGER NOT NULL DEFAULT 0 CHECK (inventory_complete IN (0,1)),
     rate INTEGER NOT NULL DEFAULT 200000 CHECK (rate > 0),
     bucket_tokens REAL NOT NULL DEFAULT 0 CHECK (bucket_tokens >= 0),
-    bucket_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
+    bucket_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     charged_tokens INTEGER NOT NULL DEFAULT 0 CHECK (charged_tokens >= 0),
     provider_input_tokens INTEGER NOT NULL DEFAULT 0,
     provider_output_tokens INTEGER NOT NULL DEFAULT 0
@@ -92,7 +93,7 @@ CREATE TABLE rh_summary_conversion_items (
     last_used_at TEXT,
     estimated_tokens INTEGER NOT NULL CHECK (estimated_tokens >= 0),
     state TEXT NOT NULL CHECK (state IN ('pending','waiting_quiet','reserved','complete','failed')),
-    next_at TEXT NOT NULL,
+    next_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     reservation_expires_at TEXT,
     last_error TEXT,
     CHECK ((state = 'reserved') = (reservation_expires_at IS NOT NULL))

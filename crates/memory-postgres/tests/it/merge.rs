@@ -241,12 +241,13 @@ async fn top_down_archive_merge_preserves_receipts_passages_and_the_winning_tree
     ).execute(&source_pool).await?;
     let ready = family.merge_store(&source, &request, &cancel).await?;
     assert_eq!(ready.replaced, ["cli:top-down"]);
+    assert_eq!(ready.dropped_legacy_summaries, 3);
     assert_eq!(ready.inserted.get("rh_summary_passages"), Some(&2));
     assert_eq!(ready.inserted.get("rh_summary_deliveries"), Some(&2));
     let dag = family
         .summary_dag(&SummaryOwner::Session("cli:top-down".to_owned()))
         .await?;
-    assert_eq!(dag.summaries.len(), 7);
+    assert_eq!(dag.summaries.len(), 4);
     assert!(
         dag.summaries
             .iter()
@@ -290,9 +291,10 @@ async fn top_down_foreign_model_passage_is_cleared_during_import(pool: PgPool) -
     let store = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
     let root = Uuid::from_u128(0xc5);
     let dump = one_indexed_summary(root, "Alpha beta gamma.", 0xcd);
-    store
+    let report = store
         .import_memory_dump(&dump, false, &CancellationToken::new())
         .await?;
+    assert_eq!(report.summary_records_needing_reembedding, 1);
     let result: (bool, bool, bool) = sqlx::query_as(
         "SELECT rh_summary_record_indexed(s.id), s.index_needs_repair, p.embedding IS NULL
          FROM rh_summaries s JOIN rh_summary_passages p ON p.record_id = s.id WHERE s.id = $1",
@@ -306,6 +308,15 @@ async fn top_down_foreign_model_passage_is_cleared_during_import(pool: PgPool) -
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgPool) -> TestResult {
+    assert_keeps_destination_tree(pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_reports_an_incoming_tree_over_a_legacy_destination(pool: PgPool) -> TestResult {
+    assert_keeps_destination_tree(pool, true).await
+}
+
+async fn assert_keeps_destination_tree(pool: PgPool, legacy: bool) -> TestResult {
     let source_pool = source_database(&pool).await?;
     let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
     let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
@@ -319,6 +330,11 @@ async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgP
             &cancel,
         )
         .await?;
+    if legacy {
+        sqlx::raw_sql("DELETE FROM rh_summary_passages; UPDATE rh_summaries SET kind = 'leaf', pipeline_version = 6")
+            .execute(&pool)
+            .await?;
+    }
     source
         .import_memory_dump(
             &one_indexed_summary(incoming, "Incoming finished session", 0xab),
@@ -326,6 +342,15 @@ async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgP
             &cancel,
         )
         .await?;
+    if legacy {
+        sqlx::raw_sql(
+            "SET LOCAL rivet.defer_embed_enqueue = 'on';
+             INSERT INTO rh_summaries (conversation_id, content, owner_user_id)
+             SELECT id, 'Invented stale source leaf', owner_user_id FROM rh_conversations",
+        )
+        .execute(&source_pool)
+        .await?;
+    }
     let ready: bool = sqlx::query_scalar("SELECT rh_summary_record_indexed($1)")
         .bind(incoming)
         .fetch_one(&source_pool)
@@ -348,9 +373,10 @@ async fn top_down_reports_a_complete_incoming_tree_with_a_different_id(pool: PgP
             conversation: Uuid::from_u128(0xc1),
             session_key: "cli:keep".to_owned(),
             incoming_session: incoming,
-            destination_session: Some(existing),
+            destination_session: (!legacy).then_some(existing),
         }]
     );
+    assert_eq!(report.dropped_legacy_summaries, u64::from(legacy));
     let summary: (Uuid, String) = sqlx::query_as("SELECT id, content FROM rh_summaries")
         .fetch_one(&pool)
         .await?;

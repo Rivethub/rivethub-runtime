@@ -15,7 +15,8 @@ async fn seed(store: &memory_sqlite::SqliteStore) -> TestResult {
     store.with_conn(|conn| {
         conn.execute_batch(
             "INSERT INTO ros_conversations (id,session_key,agent,channel,created_at,updated_at) VALUES
-             ('c','orchard','fixture','cli','2024-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z');
+             ('c','orchard','fixture','cli','2024-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z'),
+             ('old','old-orchard','fixture','cli','2020-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z');
              INSERT INTO ros_summaries (id,conversation_id,parent_id,content,kind,depth,created_at,earliest_at,latest_at,
                      pipeline_version,summary_ordinal,source_first,source_last,embedding) VALUES
              ('session','c',NULL,'The clementine session record contains all of the orchard planning text.',
@@ -24,7 +25,7 @@ async fn seed(store: &memory_sqlite::SqliteStore) -> TestResult {
                'part',1,'2026-01-01T00:00:00.000Z','2024-02-01T00:00:00.000Z','2024-02-01T00:00:00.000Z',7,1,1,1,X'0000803F00000000'),
              ('section','c','session','clementine sectionduplicate with a vector that would otherwise match',
                'section',0,'2026-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z','2024-01-01T00:00:00.000Z',7,1,1,1,X'0000803F00000000'),
-             ('legacy','c',NULL,'The clementine leaf was written recently about an older orchard project.',
+             ('legacy','old',NULL,'The clementine leaf was written recently about an older orchard project.',
                'leaf',0,'2026-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z','2020-01-01T00:00:00.000Z',6,NULL,NULL,NULL,X'0000803F00000000');
              UPDATE ros_summaries SET index_key = zeroblob(32) WHERE kind IN ('session', 'part');",
         )

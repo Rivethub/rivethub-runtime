@@ -45,6 +45,7 @@ pub struct MemorySummaryNode {
     pub source_last: Option<u32>,
     pub range_verified: Option<bool>,
     #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
     pub quality_flags: u32,
     pub source_message_ids: Vec<String>,
     pub vector: VectorState,
@@ -64,13 +65,20 @@ pub struct MemorySummaryCounts {
     pub branches: u64,
     pub roots: u64,
     #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
     pub sessions: u64,
     #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
     pub parts: u64,
     #[serde(default)]
+    #[schemars(skip_serializing_if = "is_default")]
     pub sections: u64,
     pub embedded: u64,
     pub top: u64,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -415,3 +415,58 @@ async fn export_fixture(
             .await?,
     )?)
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn summary_search_uses_the_session_passage_when_both_trees_exist(pool: PgPool) -> TestResult {
+    use kernel::memory::{Limit, MemoryScope, SearchMode, SearchQuery};
+
+    sqlx::raw_sql(
+        "SET rivet.defer_embed_enqueue = 'on';
+         INSERT INTO rh_conversations (id, session_key, agent, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000001', 'cli:mixed', 'fixture', 'owner');
+         INSERT INTO rh_summaries (id, conversation_id, depth, content, kind, message_count,
+                earliest_at, latest_at, pipeline_version, summary_ordinal, source_first, source_last,
+                input_key, index_key, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001',
+                 0, 'invented tray legacy', 'leaf', 1, now(), now(), 6, NULL, NULL, NULL, NULL, NULL, 'owner'),
+                ('00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000001',
+                 2, 'invented tray session', 'session', 1, now(), now(), 7, 0, 1, 1,
+                 decode(repeat('ab',32),'hex'), decode(repeat('ab',32),'hex'), 'owner');
+         INSERT INTO rh_summary_passages
+                (record_id, id, ordinal, char_start, char_end, content, earliest_at, latest_at, index_key, embedding)
+         SELECT id, '00000000-0000-0000-0000-000000000030', 0, 0, length(content), content,
+                earliest_at, latest_at, index_key, array_fill(0.5::real, ARRAY[1024])::halfvec
+           FROM rh_summaries WHERE kind = 'session';",
+    )
+    .execute(&pool)
+    .await?;
+    let memory = PostgresMemory::new(pool).with_summary_index_key([0xab; 32]);
+    let outcome = memory
+        .search(SearchQuery {
+            text: "tray".to_owned(),
+            mode: SearchMode::Fts,
+            scope: MemoryScope::Summaries,
+            agent: None,
+            role: None,
+            exclude_roles: vec![],
+            tool_name: None,
+            tag: None,
+            limit: Limit::clamped(Some(20), 10, 1..=50),
+            since: None,
+            before: None,
+            window: None,
+            expand: Some(false),
+            synthesize: Some(false),
+        })
+        .await?;
+    assert_eq!(outcome.results.len(), 1);
+    assert_eq!(
+        outcome
+            .results
+            .first()
+            .ok_or("expected session passage")?
+            .content,
+        "invented tray session"
+    );
+    Ok(())
+}

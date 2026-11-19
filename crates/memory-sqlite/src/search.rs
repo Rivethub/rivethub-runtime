@@ -59,6 +59,9 @@ const SUMMARY_SQL: &str = "SELECT s.id, s.content, CASE WHEN s.kind IN ('session
      FROM ros_summaries_fts \
      JOIN ros_summaries s ON s.id = ros_summaries_fts.id \
      WHERE ros_summaries_fts MATCH ?1 AND s.kind <> 'section' \
+       AND (s.kind IN ('session', 'part') OR NOT EXISTS ( \
+             SELECT 1 FROM ros_summaries session \
+              WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')) \
        AND (?2 IS NULL OR EXISTS ( \
              SELECT 1 FROM ros_conversations c \
               WHERE c.id = s.conversation_id AND c.agent = ?2)) \

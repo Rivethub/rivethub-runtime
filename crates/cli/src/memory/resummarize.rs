@@ -32,28 +32,23 @@ enum Verb {
     Status,
     Retry,
     Release,
+    ArmOpening,
     Rehearse,
 }
 
 pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
     let (verb, options) = args.split_first().ok_or(Error::ResummarizeUsage)?;
-    let verb = verb.parse::<Verb>();
-    let verb = match verb {
-        Ok(verb) => Some(verb),
-        Err(error) => {
-            tracing::debug!(%error, "unknown conversion command");
-            None
-        }
-    };
-    let (conversation, options) = if matches!(verb, Some(Verb::Retry | Verb::Release)) {
-        let (id, options) = options.split_first().ok_or(Error::ResummarizeUsage)?;
-        (
-            Some(id.parse().map_err(|_| Error::ResummarizeUsage)?),
-            options,
-        )
-    } else {
-        (None, options)
-    };
+    let verb = parse_verb(verb);
+    let (conversation, options) =
+        if matches!(verb, Some(Verb::Retry | Verb::Release | Verb::ArmOpening)) {
+            let (id, options) = options.split_first().ok_or(Error::ResummarizeUsage)?;
+            (
+                Some(id.parse().map_err(|_| Error::ResummarizeUsage)?),
+                options,
+            )
+        } else {
+            (None, options)
+        };
     let mut scan = Scan::new(options);
     let mut sqlite = None;
     let mut rate = None;
@@ -96,6 +91,9 @@ pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
         Some(Verb::Retry) => Some(ConversionControl::Retry {
             conversation: conversation.ok_or(Error::ResummarizeUsage)?,
         }),
+        Some(Verb::ArmOpening) => Some(ConversionControl::ArmOpening {
+            conversation: conversation.ok_or(Error::ResummarizeUsage)?,
+        }),
         Some(Verb::Release) => Some(ConversionControl::Release {
             conversation: conversation.ok_or(Error::ResummarizeUsage)?,
         }),
@@ -115,6 +113,16 @@ pub(super) fn parse(args: &[String]) -> Result<Args, Error> {
         watch,
         json,
     })
+}
+
+fn parse_verb(text: &str) -> Option<Verb> {
+    match text.parse() {
+        Ok(verb) => Some(verb),
+        Err(error) => {
+            tracing::debug!(%error, "unknown conversion command");
+            None
+        }
+    }
 }
 
 pub(super) async fn run(

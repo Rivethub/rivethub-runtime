@@ -1960,3 +1960,126 @@ async fn top_down_archive_scopes_passages_and_private_tables(pool: PgPool) -> Te
     );
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn only_the_conversation_owner_can_write_its_session_summary(pool: PgPool) -> TestResult {
+    sqlx::raw_sql(
+        "DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rh_release_slot_alice') THEN
+        CREATE ROLE rh_release_slot_alice LOGIN NOSUPERUSER NOBYPASSRLS;
+        CREATE ROLE rh_release_slot_bob LOGIN NOSUPERUSER NOBYPASSRLS;
+    END IF;
+END $$;
+         INSERT INTO rh_role_principals VALUES ('rh_release_slot_alice','alice'), ('rh_release_slot_bob','bob');
+         GRANT SELECT ON rh_conversations, rh_space_members TO rh_release_slot_alice, rh_release_slot_bob;
+         GRANT SELECT, INSERT, UPDATE, DELETE ON rh_summaries TO rh_release_slot_alice, rh_release_slot_bob;
+         GRANT INSERT ON rh_messages TO rh_release_slot_bob;
+         INSERT INTO rh_conversations (id, session_key, agent, owner_user_id, visibility)
+           VALUES ('00000000-0000-0000-0000-000000000001','slot-private','rivet','alice','private'),
+                  ('00000000-0000-0000-0000-000000000002','slot-team','rivet','alice','slot-team'),
+                  ('00000000-0000-0000-0000-000000000003','slot-shared','rivet','alice','slot-shared');",
+    )
+    .execute(&pool)
+    .await?;
+    let tenancy = PostgresTenancy::new(pool.clone());
+    let spaces = [
+        ("slot-team", SpaceKind::Team),
+        ("slot-shared", SpaceKind::Household),
+    ]
+    .into_iter()
+    .map(|(id, kind)| -> Result<_, Box<dyn std::error::Error>> {
+        Ok(Space {
+            id: SpaceId::new(id.to_owned())?,
+            kind,
+            name: id.to_owned(),
+            members: vec![
+                Owner::new("alice".to_owned())?,
+                Owner::new("bob".to_owned())?,
+            ],
+        })
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    tenancy.sync_spaces("slot-test", &spaces).await?;
+
+    sqlx::query("UPDATE rh_conversations SET visibility = session_key WHERE session_key IN ('slot-team', 'slot-shared')")
+        .execute(&pool)
+        .await?;
+
+    let mut alice = pool.acquire().await?;
+    let mut bob = pool.acquire().await?;
+    alice.close_on_drop();
+    bob.close_on_drop();
+    sqlx::query("SET SESSION AUTHORIZATION rh_release_slot_alice")
+        .execute(&mut *alice)
+        .await?;
+    sqlx::query("SET SESSION AUTHORIZATION rh_release_slot_bob")
+        .execute(&mut *bob)
+        .await?;
+    let write = "INSERT INTO rh_summaries (conversation_id, depth, content, kind, message_count,
+              earliest_at, latest_at, pipeline_version, summary_ordinal, source_first, source_last,
+              input_key, owner_user_id)
+         VALUES ($1, 2, 'Invented session', 'session', 1, now(), now(), 7, 0, 1, 1,
+                 decode(repeat('ab',32),'hex'), $2) RETURNING id";
+    for (id, visible) in [(1, 0), (2, 1), (3, 1)] {
+        let conversation = Uuid::from_u128(id);
+        let rejected = sqlx::query_scalar::<_, Uuid>(write)
+            .bind(conversation)
+            .bind("bob")
+            .fetch_one(&mut *bob)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            rejected
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref(),
+            Some("42501")
+        );
+        let summary: Uuid = sqlx::query_scalar(write)
+            .bind(conversation)
+            .bind("alice")
+            .fetch_one(&mut *alice)
+            .await?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_summaries WHERE id = $1")
+            .bind(summary)
+            .fetch_one(&mut *bob)
+            .await?;
+        assert_eq!(count, visible, "visibility for conversation {id}");
+        for sql in [
+            "UPDATE rh_summaries SET content = 'changed' WHERE id = $1",
+            "DELETE FROM rh_summaries WHERE id = $1",
+        ] {
+            assert_eq!(
+                sqlx::query(sql)
+                    .bind(summary)
+                    .execute(&mut *bob)
+                    .await?
+                    .rows_affected(),
+                0
+            );
+            assert_eq!(
+                sqlx::query(sql)
+                    .bind(summary)
+                    .execute(&mut *alice)
+                    .await?
+                    .rows_affected(),
+                1
+            );
+        }
+    }
+    sqlx::query("SET rivet.defer_embed_enqueue = 'on'")
+        .execute(&mut *bob)
+        .await?;
+    let error = sqlx::query(
+        "INSERT INTO rh_messages (conversation_id, agent, channel, role, content, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000001', 'rivet', 'cli', 'user', 'Invented', 'bob')",
+    ).execute(&mut *bob).await.unwrap_err();
+    assert_eq!(
+        error
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("42501")
+    );
+    Ok(())
+}

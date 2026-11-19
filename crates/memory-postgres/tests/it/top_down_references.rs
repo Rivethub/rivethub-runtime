@@ -954,3 +954,61 @@ async fn top_down_references_reuses_passage_vectors_by_window_and_spec(pool: PgP
     assert_eq!(checksum(&pool).await?, transcript);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_swap_keeps_the_old_session_visible_until_commit(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&tree(&[10, 11, 12], 20, &[2, 3], true)))
+        .await?;
+    let mut blocked = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(85112)")
+        .execute(&mut *blocked)
+        .await?;
+    sqlx::raw_sql(
+        "CREATE FUNCTION test_wait_for_publication() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN PERFORM pg_advisory_xact_lock(85112); RETURN NEW; END
+         $$;
+         CREATE TRIGGER test_wait_for_publication BEFORE INSERT ON rh_summaries
+         FOR EACH ROW WHEN (NEW.kind = 'session') EXECUTE FUNCTION test_wait_for_publication();",
+    )
+    .execute(&pool)
+    .await?;
+    let prepared = tree(&[20], 21, &[2, 3], true);
+    let replacement = Scope::Maintenance.run(store.replace_summary_tree(&prepared));
+    let reader = async {
+        await_publication_lock(&pool).await?;
+        assert_eq!(visible_sessions(&pool).await?, [id(20)]);
+        blocked.commit().await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    };
+    tokio::try_join!(async { replacement.await.map_err(Into::into) }, reader)?;
+    assert_eq!(visible_sessions(&pool).await?, [id(21)]);
+    Ok(())
+}
+
+async fn await_publication_lock(pool: &PgPool) -> TestResult {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
+                                AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                                AND objid = 85112 AND NOT granted)",
+            )
+            .fetch_one(pool)
+            .await?;
+            if waiting {
+                return Ok::<(), sqlx::Error>(());
+            }
+        }
+    })
+    .await??;
+    Ok(())
+}
+
+async fn visible_sessions(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT id FROM rh_summaries WHERE kind = 'session'")
+        .fetch_all(pool)
+        .await
+}

@@ -5,7 +5,9 @@ use thiserror::Error;
 pub enum Error {
     #[error("usage: rh memory settle <session> [--sqlite <file>] [--json]")]
     SettleUsage,
-    #[error("usage: rh memory resummarize <start|pause|resume|status|retry|release|rehearse>")]
+    #[error(
+        "usage: rh memory resummarize <start|pause|resume|status|retry|release|arm-opening|rehearse>"
+    )]
     ResummarizeUsage,
     #[error(transparent)]
     ConversionStore(#[from] kernel::memory::SummaryStoreError),

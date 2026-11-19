@@ -45,6 +45,7 @@ fn head(session_key: &str, channel: &str) -> ConversationHead {
         agent: "rivet".to_owned(),
         channel: channel.to_owned(),
         title: None,
+        trashed: false,
     }
 }
 

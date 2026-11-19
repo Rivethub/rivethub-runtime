@@ -64,7 +64,9 @@ impl SearchTable {
     pub(crate) fn push_eligibility(self, query: &mut QueryBuilder<sqlx::Postgres>) {
         query.push(match self {
             Self::Message => "",
-            Self::Legacy => " AND s.kind IN ('leaf', 'branch', 'root')",
+            Self::Legacy => " AND s.kind IN ('leaf', 'branch', 'root')
+                AND NOT EXISTS (SELECT 1 FROM rh_summaries session
+                                WHERE session.conversation_id = s.conversation_id AND session.kind = 'session')",
             Self::Passage => " AND s.kind IN ('session', 'part') AND NOT s.index_needs_repair",
         });
     }

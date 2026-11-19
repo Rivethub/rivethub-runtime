@@ -34,6 +34,7 @@ pub(super) fn load_window(
             agent,
             channel,
             title,
+            trashed: false,
         },
         messages,
         leaves: load_nodes(conn, &id.to_string(), SummaryKind::Leaf)?,

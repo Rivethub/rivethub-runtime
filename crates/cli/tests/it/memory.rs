@@ -930,3 +930,218 @@ async fn memory_settle_reports_the_persisted_revision() -> Result<(), Box<dyn st
     assert_eq!(missing.exit, Exit::Failure);
     Ok(())
 }
+
+#[tokio::test]
+async fn resummarize_arms_one_historical_opening_once() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = migrated(directory.path());
+    let conn = rusqlite::Connection::open(&database).unwrap();
+    conn.execute_batch(
+        "INSERT INTO ros_conversations (id, session_key, agent, channel, created_at, updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000001','cli:historical','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'),
+                ('00000000-0000-0000-0000-000000000002','cli:trashed','fixture','cli','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+         INSERT INTO rh_summary_openings (conversation_id, content, historical_pending)
+         SELECT id, 'Invented equipment review', 1 FROM ros_conversations;
+         INSERT INTO rh_session_trash (session_key, trashed_at) VALUES ('cli:trashed','2026-01-01Z');",
+    ).unwrap();
+    let (_home, environment) = env(&[]);
+    for id in [
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+    ] {
+        let report = run(
+            &[
+                "memory",
+                "resummarize",
+                "arm-opening",
+                id,
+                "--sqlite",
+                database.to_str().unwrap(),
+                "--json",
+            ],
+            &environment,
+        )
+        .await;
+        assert_eq!(report.exit, Exit::Ok, "{}", report.stderr);
+    }
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed AND title_armed"
+        ),
+        1
+    );
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE historical_pending"
+        ),
+        1
+    );
+    conn.execute_batch("UPDATE rh_summary_openings SET filing_armed = 0, title_armed = 0")
+        .unwrap();
+    let retry = run(
+        &[
+            "memory",
+            "resummarize",
+            "arm-opening",
+            "00000000-0000-0000-0000-000000000001",
+            "--sqlite",
+            database.to_str().unwrap(),
+            "--json",
+        ],
+        &environment,
+    )
+    .await;
+    assert_eq!(retry.exit, Exit::Ok, "{}", retry.stderr);
+    assert_eq!(
+        scalar(
+            &database,
+            "SELECT count(*) FROM rh_summary_openings WHERE filing_armed OR title_armed"
+        ),
+        0
+    );
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn cross_store_summary_import_reports_and_repairs_vector_loss(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::{MemoryExport, SummaryStore};
+    use memory_postgres::PostgresMemory;
+    use std::sync::Arc;
+
+    let key = [0xab; 32];
+    let pg = Arc::new(PostgresMemory::new(pool.clone()).with_summary_index_key(key));
+    let original = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let cancel = CancellationToken::new();
+    pg.import_memory_dump(&original, false, &cancel).await?;
+    let part = uuid::uuid!("00000000-0000-4000-8000-000000000021");
+    repair_imported_summary(pg.as_ref(), part).await?;
+    let exporter = cli::memory::MemoryExporter::postgres(pg, url_of(&pool));
+    let dump = tempfile::NamedTempFile::new()?;
+    std::fs::write(
+        dump.path(),
+        gunzip(&exporter.export(None, cancel.clone()).await?),
+    )?;
+    let directory = tempfile::tempdir()?;
+    let sqlite =
+        memory_sqlite::SqliteStore::open(migrated(directory.path()))?.with_summary_index_key(key);
+    let imported = sqlite
+        .import_pg_dump(dump.path().to_path_buf(), cancel.clone())
+        .await?;
+    let ids = sqlite.repair_candidates(16).await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    assert_eq!(imported.summary_records_losing_passage_vectors, 1);
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&sqlite, id).await?;
+    }
+    assert_eq!(sqlite.repair_candidates(16).await?, Vec::<Uuid>::new());
+    let origin = kernel::memory::DumpOrigin {
+        source: kernel::memory::DumpSource::Local,
+        host: "fixture".to_owned(),
+    };
+    let pooled = sqlite.export_pg_dump(None, origin, cancel.clone()).await?;
+    let second = import_fixture_database(&pool).await?;
+    let pg = PostgresMemory::new(second).with_summary_index_key(key);
+    let imported = pg
+        .import_memory_dump(std::str::from_utf8(&pooled)?, false, &cancel)
+        .await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    let ids = pg.repair_candidates(16).await?;
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&pg, id).await?;
+    }
+    assert_eq!(pg.repair_candidates(16).await?, Vec::<Uuid>::new());
+    Ok(())
+}
+
+async fn repair_imported_summary(
+    store: &dyn kernel::memory::SummaryStore,
+    id: Uuid,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
+    let input = store
+        .repair_input(id)
+        .await?
+        .ok_or("missing repair input")?;
+    let start = input.sources.first().ok_or("missing sources")?.1;
+    let end = input.sources.last().ok_or("missing sources")?.1;
+    let vector = vec![0.5; 1024];
+    let index = SummaryIndex {
+        passages: vec![SummaryPassage {
+            content: input.content.clone(),
+            chars: 0..i32::try_from(input.content.chars().count())?,
+            earliest_at: start.min(end),
+            latest_at: start.max(end),
+            vector: vector.clone(),
+        }],
+        pooled: vector,
+    };
+    store.repair_index(input, index).await?;
+    Ok(())
+}
+
+async fn import_fixture_database(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let name: String =
+        sqlx::query_scalar("SELECT 'rh_import_' || left(md5(current_database()), 16)")
+            .fetch_one(pool)
+            .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {name}"
+    )))
+    .execute(pool)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(pool)
+        .await?;
+    let options = pool.connect_options().as_ref().clone().database(&name);
+    let target = sqlx::postgres::PgPoolOptions::new()
+        .connect_with(options)
+        .await?;
+    migrate::postgres_pool(&target).await?;
+    Ok(target)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn starting_and_resuming_conversion_reset_an_idle_bucket_on_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    let pg = memory_postgres::PostgresMemory::new(pool.clone());
+    let directory = tempfile::tempdir()?;
+    let path = migrated(directory.path());
+    let sqlite = memory_sqlite::SqliteStore::open(&path)?;
+    let conn = rusqlite::Connection::open(&path)?;
+    for action in [
+        ConversionControl::Start {
+            rate: Some(200_000),
+            include_giants: false,
+        },
+        ConversionControl::Resume {
+            include_giants: false,
+        },
+    ] {
+        sqlx::query("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01 00:00:00+00'")
+            .execute(&pool)
+            .await?;
+        conn.execute_batch("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01T00:00:00Z'")?;
+        pg.control(action).await?;
+        sqlite.control(action).await?;
+        let pg_reset: bool = sqlx::query_scalar(
+            "SELECT bucket_at >= clock_timestamp() - interval '30 seconds' FROM rh_summary_conversion",
+        ).fetch_one(&pool).await?;
+        assert!(pg_reset);
+        assert_eq!(
+            scalar(
+                &path,
+                "SELECT julianday(bucket_at) >= julianday('now', '-30 seconds') FROM rh_summary_conversion"
+            ),
+            1
+        );
+    }
+    Ok(())
+}

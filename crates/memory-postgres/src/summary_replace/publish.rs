@@ -207,6 +207,14 @@ async fn write_replacement_records(
             .map_err(query)?;
     }
 
+    sqlx::query(
+        "UPDATE rh_summaries s SET kind = 'root', pipeline_version = 6
+         FROM summary_replacements map WHERE s.id = map.old AND s.kind = 'session'",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(query)?;
+
     let mut records: Vec<_> = tree.records.iter().collect();
     records.sort_by_key(|record| std::cmp::Reverse(record.kind.depth()));
     for record in records {

@@ -99,22 +99,34 @@ UPDATE merge_rh_tags x SET owner_user_id = coalesce(
 
 const KEEP_EXISTING_TREE: &str = "
 CREATE TEMP TABLE merge_keep_existing_tree ON COMMIT DROP AS
-    SELECT DISTINCT incoming.conversation_id
+    SELECT incoming.conversation_id
     FROM merge_rh_summaries incoming
-    JOIN rh_summaries current ON current.conversation_id = incoming.conversation_id
     WHERE incoming.kind = 'session'
-      AND ((current.kind = 'session' AND incoming.id <> current.id) OR EXISTS (
+      AND EXISTS (SELECT 1 FROM rh_summaries current WHERE current.conversation_id = incoming.conversation_id)
+      AND (NOT EXISTS (
+          SELECT 1 FROM rh_summaries root WHERE root.id = incoming.id
+            AND root.conversation_id = incoming.conversation_id AND root.kind = 'session'
+      ) OR EXISTS (
           SELECT 1 FROM merge_rh_summaries s
           WHERE s.conversation_id = incoming.conversation_id AND s.pipeline_version = 7
-            AND (s.index_needs_repair OR (current.kind = 'session' AND NOT EXISTS (
-                SELECT 1 FROM rh_summaries t WHERE t.id = s.id)))
+            AND (s.index_needs_repair OR NOT EXISTS (SELECT 1 FROM rh_summaries t WHERE t.id = s.id))
       ));
 ";
 
-const DROP_STAGED_TREE: &str = "
+const STAGED_TREE_NODES: &str = "
 CREATE TEMP TABLE merge_drop_summary_nodes ON COMMIT DROP AS
-    SELECT id FROM merge_rh_summaries
-    WHERE pipeline_version = 7 AND conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree);
+    SELECT s.id, s.pipeline_version FROM merge_rh_summaries s
+    WHERE s.conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree)
+       OR (s.pipeline_version < 7 AND (
+           EXISTS (SELECT 1 FROM rh_summaries current
+                   WHERE current.conversation_id = s.conversation_id AND current.kind = 'session')
+           OR EXISTS (SELECT 1 FROM merge_rh_summaries incoming
+                      WHERE incoming.conversation_id = s.conversation_id AND incoming.kind = 'session'
+                        AND incoming.conversation_id NOT IN (SELECT conversation_id FROM merge_keep_existing_tree))
+       ));
+";
+
+const DROP_STAGED_TREE: &str = "
 DELETE FROM merge_rh_summary_deliveries
     WHERE conversation_id IN (SELECT conversation_id FROM merge_keep_existing_tree);
 DELETE FROM merge_rh_summary_passages WHERE record_id IN (SELECT id FROM merge_drop_summary_nodes);
@@ -340,24 +352,7 @@ pub(super) async fn run(
     )
     .await?;
     batch(conn, OWNERS, "merge owners").await?;
-    batch(conn, KEEP_EXISTING_TREE, "merge existing summary trees").await?;
-    report.dropped_summary_trees.extend(
-        sqlx::query_as(
-            "SELECT incoming.conversation_id AS conversation, c.session_key,
-                    incoming.id AS incoming_session, existing.id AS destination_session
-             FROM merge_keep_existing_tree keep
-             JOIN merge_rh_summaries incoming ON incoming.conversation_id = keep.conversation_id
-             JOIN merge_rh_conversations c ON c.id = keep.conversation_id
-             LEFT JOIN rh_summaries existing ON existing.conversation_id = keep.conversation_id
-                                              AND existing.kind = 'session'
-             WHERE incoming.kind = 'session'
-             ORDER BY c.session_key, incoming.id",
-        )
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(|error| Error::operation("merge dropped summary trees", error))?,
-    );
-    batch(conn, DROP_STAGED_TREE, "merge drop staged summary trees").await?;
+    reconcile_summary_trees(conn, report).await?;
     refuse_collisions(conn).await?;
     batch(conn, TOPICS, "merge topics").await?;
     report.mapped_type_topics = count(conn, "SELECT count(*) FROM merge_topic_map").await?;
@@ -378,6 +373,37 @@ pub(super) async fn run(
     bound(conn, REDIRECTS, owner, "merge pages").await?;
     bound(conn, SCOPE_ROW, owner, "merge pages").await?;
     bound(conn, PAGE_SCOPE, owner, "merge pages").await?;
+    Ok(())
+}
+
+async fn reconcile_summary_trees(
+    conn: &mut PgConnection,
+    report: &mut MergeReport,
+) -> Result<(), Error> {
+    batch(conn, KEEP_EXISTING_TREE, "merge existing summary trees").await?;
+    report.dropped_summary_trees.extend(
+        sqlx::query_as(
+            "SELECT incoming.conversation_id AS conversation, c.session_key,
+                    incoming.id AS incoming_session, existing.id AS destination_session
+             FROM merge_keep_existing_tree keep
+             JOIN merge_rh_summaries incoming ON incoming.conversation_id = keep.conversation_id
+             JOIN merge_rh_conversations c ON c.id = keep.conversation_id
+             LEFT JOIN rh_summaries existing ON existing.conversation_id = keep.conversation_id
+                                              AND existing.kind = 'session'
+             WHERE incoming.kind = 'session'
+             ORDER BY c.session_key, incoming.id",
+        )
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|error| Error::operation("merge dropped summary trees", error))?,
+    );
+    batch(conn, STAGED_TREE_NODES, "merge select discarded summaries").await?;
+    report.dropped_legacy_summaries = count(
+        conn,
+        "SELECT count(*) FROM merge_drop_summary_nodes WHERE pipeline_version < 7",
+    )
+    .await?;
+    batch(conn, DROP_STAGED_TREE, "merge drop staged summary trees").await?;
     Ok(())
 }
 

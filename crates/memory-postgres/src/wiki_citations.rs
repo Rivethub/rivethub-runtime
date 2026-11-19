@@ -58,6 +58,7 @@ impl CitationRow {
             agent: self.agent.clone()?,
             channel: self.channel.clone()?,
             title: self.title.clone(),
+            trashed: false,
         };
         Filable::of(&head).target(head.id)?.session().cloned()
     }

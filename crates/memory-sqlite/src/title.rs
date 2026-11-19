@@ -1,3 +1,4 @@
+use kernel::filing::Filable;
 use kernel::memory::summary_opening::OpeningTitle;
 use kernel::memory::{ConversationHead, names_session, needs_title, summary_title};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
@@ -6,7 +7,9 @@ use crate::summary_port::parse_id;
 use crate::{SqliteError, SqliteStore};
 
 const OPENINGS: &str = "SELECT c.id, c.session_key, c.agent, c.channel, c.title,
-                              c.title_from_capture, o.content, o.title_armed
+                              c.title_from_capture,
+                              EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key),
+                              o.content, o.title_armed
                          FROM ros_conversations c
                          JOIN rh_summary_openings o ON o.conversation_id = c.id
                         WHERE ?1 IS NULL OR c.id = ?1 ORDER BY c.id";
@@ -18,6 +21,7 @@ struct StoredHead {
     channel: String,
     title: Option<String>,
     supplied: bool,
+    trashed: bool,
 }
 
 impl StoredHead {
@@ -29,6 +33,7 @@ impl StoredHead {
             channel: row.get(3)?,
             title: row.get(4)?,
             supplied: row.get(5)?,
+            trashed: row.get(6)?,
         })
     }
 
@@ -39,6 +44,7 @@ impl StoredHead {
             agent: self.agent,
             channel: self.channel,
             title: self.title,
+            trashed: self.trashed,
         })
     }
 }
@@ -53,8 +59,8 @@ impl StoredOpening {
     fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             head: StoredHead::read(row)?,
-            content: row.get(6)?,
-            armed: row.get(7)?,
+            content: row.get(7)?,
+            armed: row.get(8)?,
         })
     }
 
@@ -87,7 +93,7 @@ fn backfill(conn: &mut Connection, dry_run: bool) -> Result<u64, SqliteError> {
     let mut titled = 0;
     for row in rows {
         let current = row.head.title.as_deref();
-        if row.head.supplied || current.is_some_and(names_session) {
+        if row.head.trashed || row.head.supplied || current.is_some_and(names_session) {
             continue;
         }
         if let Some(title) = summary_title(&row.content)
@@ -139,14 +145,35 @@ pub(crate) fn load(conn: &Connection, id: &str) -> Result<Option<OpeningTitle>, 
 pub(crate) fn head(conn: &Connection, id: &str) -> Result<(ConversationHead, bool), SqliteError> {
     let row = conn
         .query_row(
-            "SELECT id, session_key, agent, channel, title, title_from_capture
-           FROM ros_conversations WHERE id = ?1",
+            "SELECT id, session_key, agent, channel, title, title_from_capture,
+                    EXISTS (SELECT 1 FROM rh_session_trash t WHERE t.session_key = c.session_key)
+           FROM ros_conversations c WHERE id = ?1",
             [id],
             StoredHead::read,
         )
         .map_err(failure)?;
     let supplied = row.supplied;
     Ok((row.head()?, supplied))
+}
+
+pub(crate) fn arm_historical(conn: &Connection, id: uuid::Uuid) -> Result<usize, SqliteError> {
+    let id = id.to_string();
+    let Some(opening) = load(conn, &id)? else {
+        return Ok(0);
+    };
+    let head = &opening.head;
+    if Filable::of(head) == Filable::Never {
+        return Ok(0);
+    }
+    let title = !opening.supplied && needs_title(head.title.as_deref());
+    conn.execute(
+        "UPDATE rh_summary_openings SET historical_pending = 0, title_armed = ?2,
+            filing_armed = NOT EXISTS (SELECT 1 FROM rh_conversation_placements WHERE conversation_id = ?1)
+                AND NOT EXISTS (SELECT 1 FROM rh_session_placements WHERE session_id IN (?3, ?4))
+         WHERE conversation_id = ?1 AND historical_pending",
+         params![id, title, head.session_key, kernel::filing::session_key(Some(&head.channel), &head.session_key)],
+    )
+    .map_err(failure)
 }
 
 pub(crate) fn seed(
@@ -159,7 +186,10 @@ pub(crate) fn seed(
         Some(old) => old.is_seed(),
         None => !head.title.as_deref().is_some_and(names_session),
     };
-    if replace && let Some(title) = summary_title(content) {
+    if !head.trashed
+        && replace
+        && let Some(title) = summary_title(content)
+    {
         set_title(conn, &head.id.to_string(), head.title.as_deref(), &title)?;
     }
     Ok(())

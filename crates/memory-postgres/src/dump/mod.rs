@@ -31,6 +31,7 @@ pub struct ImportedDump {
     pub source: Option<String>,
     pub host: Option<String>,
     pub rows: BTreeMap<String, u64>,
+    pub summary_records_needing_reembedding: u64,
 }
 
 impl PostgresMemory {
@@ -69,12 +70,13 @@ impl PostgresMemory {
         )
         .await;
         match imported {
-            Ok(rows) => {
+            Ok((rows, summary_records_needing_reembedding)) => {
                 commit(&mut conn, !dry_run).await?;
                 Ok(ImportedDump {
                     source: parsed.source,
                     host: parsed.host,
                     rows,
+                    summary_records_needing_reembedding,
                 })
             }
             Err(error) => Err(rollback(&mut conn, error).await),
@@ -175,7 +177,7 @@ async fn import_tables(
     parsed: &parse::Parsed,
     cancellation: &CancellationToken,
     index_key: Option<&[u8; 32]>,
-) -> Result<BTreeMap<String, u64>, Error> {
+) -> Result<(BTreeMap<String, u64>, u64), Error> {
     sqlx::query("SET LOCAL rivet.defer_embed_enqueue = 'on'")
         .execute(&mut *conn)
         .await
@@ -200,7 +202,13 @@ async fn import_tables(
     }
     validate_summary_graph(conn).await?;
     mark_summary_index_repairs(conn, index_key).await?;
-    Ok(rows)
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM rh_summaries WHERE kind IN ('session','part') AND index_needs_repair",
+    )
+    .fetch_one(conn)
+    .await
+    .map_err(|source| Error::operation("count summary index repairs", source))?;
+    Ok((rows, u64::try_from(pending)?))
 }
 
 pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<(), Error> {
@@ -213,10 +221,6 @@ pub(crate) async fn validate_summary_graph(conn: &mut PgConnection) -> Result<()
             "incomplete or inconsistent top-down summary graph".into(),
         ));
     }
-    sqlx::query("SET CONSTRAINTS rh_summary_one_session IMMEDIATE")
-        .execute(&mut *conn)
-        .await
-        .map_err(|source| Error::operation("validate session summary uniqueness", source))?;
     Ok(())
 }
 

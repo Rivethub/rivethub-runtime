@@ -349,6 +349,7 @@ fn head_of(
         agent,
         channel,
         title,
+        trashed: false,
     })
 }
 
