@@ -291,9 +291,10 @@ async fn top_down_foreign_model_passage_is_cleared_during_import(pool: PgPool) -
     let store = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
     let root = Uuid::from_u128(0xc5);
     let dump = one_indexed_summary(root, "Alpha beta gamma.", 0xcd);
-    store
+    let report = store
         .import_memory_dump(&dump, false, &CancellationToken::new())
         .await?;
+    assert_eq!(report.summary_records_needing_reembedding, 1);
     let result: (bool, bool, bool) = sqlx::query_as(
         "SELECT rh_summary_record_indexed(s.id), s.index_needs_repair, p.embedding IS NULL
          FROM rh_summaries s JOIN rh_summary_passages p ON p.record_id = s.id WHERE s.id = $1",

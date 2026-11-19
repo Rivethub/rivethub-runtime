@@ -34,6 +34,9 @@ struct ImportSummary {
     source: Source,
     host: String,
     rows: BTreeMap<String, u64>,
+    summary_records_needing_reembedding: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary_records_losing_passage_vectors: Option<u64>,
     dry_run: bool,
 }
 
@@ -133,12 +136,16 @@ pub(super) fn finish_origin(header: Header, fallback: Origin) -> Origin {
 pub(super) fn summary_report(
     origin: Origin,
     rows: BTreeMap<String, u64>,
+    summary_records_needing_reembedding: u64,
+    summary_records_losing_passage_vectors: Option<u64>,
     dry_run: bool,
 ) -> Result<Report, Error> {
     let body = ImportSummary {
         source: origin.source,
         host: origin.host,
         rows,
+        summary_records_needing_reembedding,
+        summary_records_losing_passage_vectors,
         dry_run,
     };
     Ok(Report::success(format!(

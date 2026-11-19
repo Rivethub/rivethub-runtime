@@ -445,12 +445,13 @@ COPY public.ros_summary_sources (summary_id, message_id, ordinal) FROM stdin;
 -- PostgreSQL database dump complete\n",
         "ab".repeat(32), "cd".repeat(32),
     ))?;
-    store
+    let report = store
         .import_pg_dump(
             dump.path().to_path_buf(),
             tokio_util::sync::CancellationToken::new(),
         )
         .await?;
+    assert_eq!(report.summary_records_needing_reembedding, 1);
     let result = store
         .with_conn(|conn| {
             conn.query_row(

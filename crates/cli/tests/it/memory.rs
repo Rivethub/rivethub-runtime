@@ -1004,6 +1004,108 @@ async fn resummarize_arms_one_historical_opening_once() {
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn cross_store_summary_import_reports_and_repairs_vector_loss(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::{MemoryExport, SummaryStore};
+    use memory_postgres::PostgresMemory;
+    use std::sync::Arc;
+
+    let key = [0xab; 32];
+    let pg = Arc::new(PostgresMemory::new(pool.clone()).with_summary_index_key(key));
+    let original = std::fs::read_to_string(testkit::recording("summary-archive/top-down.txt"))?;
+    let cancel = CancellationToken::new();
+    pg.import_memory_dump(&original, false, &cancel).await?;
+    let part = uuid::uuid!("00000000-0000-4000-8000-000000000021");
+    repair_imported_summary(pg.as_ref(), part).await?;
+    let exporter = cli::memory::MemoryExporter::postgres(pg, url_of(&pool));
+    let dump = tempfile::NamedTempFile::new()?;
+    std::fs::write(
+        dump.path(),
+        gunzip(&exporter.export(None, cancel.clone()).await?),
+    )?;
+    let directory = tempfile::tempdir()?;
+    let sqlite =
+        memory_sqlite::SqliteStore::open(migrated(directory.path()))?.with_summary_index_key(key);
+    let imported = sqlite
+        .import_pg_dump(dump.path().to_path_buf(), cancel.clone())
+        .await?;
+    let ids = sqlite.repair_candidates(16).await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    assert_eq!(imported.summary_records_losing_passage_vectors, 1);
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&sqlite, id).await?;
+    }
+    assert_eq!(sqlite.repair_candidates(16).await?, Vec::<Uuid>::new());
+    let origin = kernel::memory::DumpOrigin {
+        source: kernel::memory::DumpSource::Local,
+        host: "fixture".to_owned(),
+    };
+    let pooled = sqlite.export_pg_dump(None, origin, cancel.clone()).await?;
+    let second = import_fixture_database(&pool).await?;
+    let pg = PostgresMemory::new(second).with_summary_index_key(key);
+    let imported = pg
+        .import_memory_dump(std::str::from_utf8(&pooled)?, false, &cancel)
+        .await?;
+    assert_eq!(imported.summary_records_needing_reembedding, 2);
+    let ids = pg.repair_candidates(16).await?;
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        repair_imported_summary(&pg, id).await?;
+    }
+    assert_eq!(pg.repair_candidates(16).await?, Vec::<Uuid>::new());
+    Ok(())
+}
+
+async fn repair_imported_summary(
+    store: &dyn kernel::memory::SummaryStore,
+    id: Uuid,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_backend::{SummaryIndex, SummaryPassage};
+    let input = store
+        .repair_input(id)
+        .await?
+        .ok_or("missing repair input")?;
+    let start = input.sources.first().ok_or("missing sources")?.1;
+    let end = input.sources.last().ok_or("missing sources")?.1;
+    let vector = vec![0.5; 1024];
+    let index = SummaryIndex {
+        passages: vec![SummaryPassage {
+            content: input.content.clone(),
+            chars: 0..i32::try_from(input.content.chars().count())?,
+            earliest_at: start.min(end),
+            latest_at: start.max(end),
+            vector: vector.clone(),
+        }],
+        pooled: vector,
+    };
+    store.repair_index(input, index).await?;
+    Ok(())
+}
+
+async fn import_fixture_database(pool: &PgPool) -> Result<PgPool, Box<dyn std::error::Error>> {
+    let name: String =
+        sqlx::query_scalar("SELECT 'rh_import_' || left(md5(current_database()), 16)")
+            .fetch_one(pool)
+            .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {name}"
+    )))
+    .execute(pool)
+    .await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(pool)
+        .await?;
+    let options = pool.connect_options().as_ref().clone().database(&name);
+    let target = sqlx::postgres::PgPoolOptions::new()
+        .connect_with(options)
+        .await?;
+    migrate::postgres_pool(&target).await?;
+    Ok(target)
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn starting_and_resuming_conversion_reset_an_idle_bucket_on_both_stores(
     pool: PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

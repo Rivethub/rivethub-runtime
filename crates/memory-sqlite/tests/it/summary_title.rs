@@ -280,7 +280,10 @@ async fn legacy_leaves_are_materialized_once_by_the_sqlite_upgrade() -> TestResu
     let opening = store.opening_title(id).await?.expect("historical opening");
     assert_eq!(opening.content, FIRST_LEAF);
     assert!(!opening.armed);
-    assert!(store.undelivered_openings().await?.is_empty());
+    assert_eq!(
+        store.undelivered_openings().await?,
+        Vec::<kernel::queue::Job>::new()
+    );
     store
         .control(ConversionControl::ArmOpening { conversation: id })
         .await?;
