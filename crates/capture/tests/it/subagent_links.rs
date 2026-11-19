@@ -304,7 +304,7 @@ async fn opencode_1_19_subagent_settings_name_the_parent_and_the_task_call() -> 
     )
     .await?;
     assert_eq!(link(&parent), expected([None; 5]));
-    assert!(has_end(child)?);
+    assert!(!has_end(child)?);
     assert!(!has_end(parent)?);
     Ok(())
 }

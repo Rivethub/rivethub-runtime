@@ -322,3 +322,19 @@ async fn assert_owner_only(
     assert!(scope.run(store.summary_eligible(id, 1)).await?);
     Ok(())
 }
+
+#[tokio::test]
+async fn opencode_resume_signals_do_not_settle_sqlite() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("memory.sqlite");
+    migrate::sqlite(&path)?;
+    let store = memory_sqlite::SqliteStore::open(path)?;
+    testkit::settlement::child_resume_signals(&store, &testkit::owner()?).await
+}
+
+#[tokio::test]
+async fn opencode_resume_signals_do_not_settle_postgres() -> TestResult {
+    let db = crate::pgdb::TestDb::migrated().await?;
+    let store = memory_postgres::PostgresMemory::new(db.pool());
+    testkit::settlement::child_resume_signals(&store, &testkit::owner()?).await
+}

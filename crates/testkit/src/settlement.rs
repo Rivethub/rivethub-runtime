@@ -287,3 +287,37 @@ pub async fn expiry_boundary(store: &impl SummaryStore, id: Uuid) -> TestResult 
     );
     Ok(())
 }
+
+pub async fn child_resume_signals(
+    store: &(impl MemoryStore + SummaryStore),
+    owner: &Owner,
+) -> TestResult {
+    for (event, settled) in [
+        ("session.idle", false),
+        ("session.execution.interrupted", false),
+        ("session.execution.succeeded", true),
+        ("session.execution.failed", true),
+    ] {
+        let key = format!("opencode:invented-child-{event}");
+        let id = store
+            .capture(
+                batch(&key, vec![message("invented", "2026-01-01T00:00:00Z")?]),
+                owner,
+                None,
+            )
+            .await?
+            .conversation_id
+            .parse()?;
+        let mut capture = batch(&key, vec![]);
+        capture.finalize = Some(true);
+        capture.settings = Some(obj(json!({
+            "source": "opencode-hook",
+            "parent_session_id": "invented-parent",
+            "last_event": event,
+            "last_ingest_at": "2026-01-01T00:00:01Z",
+        }))?);
+        store.capture(capture, owner, None).await?;
+        assert_eq!(store.summary_eligible(id, 1).await?, settled, "{event}");
+    }
+    Ok(())
+}
