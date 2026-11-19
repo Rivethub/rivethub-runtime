@@ -13,6 +13,9 @@ CREATE TEMP TABLE merge_moves (conversation uuid PRIMARY KEY, owner text NOT NUL
 CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP;
+SELECT t.id FROM rh_conversations t
+  JOIN merge_rh_conversations s USING (session_key, agent)
+ WHERE t.id <> s.id ORDER BY t.id FOR UPDATE OF t;
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
   SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AND NOT has_visible_tree AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
@@ -53,6 +56,26 @@ DELETE FROM merge_rh_conversations WHERE id IN (SELECT id FROM merge_drop);
 const REPLACE_FAMILY: &str = "
 SELECT t.id FROM rh_conversations t JOIN merge_drop_family d ON d.target_id = t.id
  ORDER BY t.id FOR UPDATE OF t;
+DO $$
+DECLARE changed_session text;
+BEGIN
+  SELECT d.session_key INTO changed_session
+    FROM merge_dupes d LEFT JOIN rh_conversations t ON t.id = d.target_id
+   WHERE d.source_wins AND (
+     t.id IS NULL
+     OR (t.session_key, t.agent, t.owner_user_id) IS DISTINCT FROM (d.session_key, d.agent, d.target_owner)
+     OR (SELECT count(*) FROM rh_messages m WHERE m.conversation_id = d.target_id) <> d.target_messages
+     OR EXISTS (SELECT 1 FROM rh_summaries b WHERE b.conversation_id = d.target_id AND (
+       b.kind = 'session'
+       OR EXISTS (SELECT 1 FROM merge_rh_summaries a WHERE a.conversation_id = d.source_id AND a.index_needs_repair)
+     ))
+   )
+   ORDER BY d.target_id LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'destination session % changed during the merge. Rerunning is safe.', changed_session;
+  END IF;
+END;
+$$;
 UPDATE merge_dupes d SET target_live = true
  WHERE d.source_wins AND EXISTS (
    SELECT 1 FROM rh_summary_state state WHERE state.conversation_id = d.target_id AND NOT state.historical_only);

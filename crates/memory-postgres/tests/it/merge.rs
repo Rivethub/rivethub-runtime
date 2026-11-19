@@ -576,23 +576,7 @@ async fn merge_keeps_a_late_capture_live_after_manual_settle(pool: PgPool) -> Te
         .parse()?;
     capture(&source, "alice", &[(BOTH_LARGER, 1)]).await?;
     capture(&family, "alice", &[(BOTH_LARGER, 1)]).await?;
-    sqlx::raw_sql(
-        "CREATE FUNCTION pause_late_capture_merge() RETURNS event_trigger LANGUAGE plpgsql AS $$
-         BEGIN
-             IF TG_TAG = 'CREATE TABLE' AND to_regclass('pg_temp.merge_slug_map') IS NOT NULL
-                 AND to_regclass('pg_temp.merge_dupes') IS NULL
-                 AND current_query() NOT LIKE '%ORDER BY t.id FOR UPDATE OF t%' THEN
-                 PERFORM pg_advisory_xact_lock(176, 4);
-             ELSIF TG_TAG = 'CREATE TABLE AS' AND to_regclass('pg_temp.merge_dupes') IS NOT NULL
-                 AND to_regclass('pg_temp.merge_drop_family') IS NULL THEN
-                 PERFORM pg_advisory_xact_lock(176, 5);
-             END IF;
-         END; $$;
-         CREATE EVENT TRIGGER pause_late_capture_merge ON ddl_command_end
-         WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS') EXECUTE FUNCTION pause_late_capture_merge();",
-    )
-    .execute(&pool)
-    .await?;
+    pause_merge_plan(&pool).await?;
     let mut before_sample = pool.begin().await?;
     let capture_blocker: i32 =
         sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 4)")
@@ -657,6 +641,187 @@ async fn merge_keeps_a_late_capture_live_after_manual_settle(pool: PgPool) -> Te
         "replacement lost live state from the late capture"
     );
     Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_aborts_when_a_late_destination_gains_messages(pool: PgPool) -> TestResult {
+    merge_with_late_append(pool, false).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_dry_run_aborts_when_a_late_destination_gains_messages(pool: PgPool) -> TestResult {
+    merge_with_late_append(pool, true).await
+}
+
+async fn merge_with_late_append(pool: PgPool, dry_run: bool) -> TestResult {
+    use std::time::Duration;
+
+    const LATE_CONTENT: &str = "Water the basil before noon.";
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let session = BOTH_LARGER;
+    capture(
+        &source,
+        "alice",
+        &[(session, 2), (BOTH_SMALLER, 1), (CLEO_ONLY, 1)],
+    )
+    .await?;
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    pause_merge_plan(&pool).await?;
+    let mut before_plan = pool.begin().await?;
+    let before_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 4)")
+            .fetch_one(&mut *before_plan)
+            .await?;
+    sqlx::query("SELECT id FROM rh_conversations WHERE session_key = $1 FOR UPDATE")
+        .bind(BOTH_SMALLER)
+        .execute(&mut *before_plan)
+        .await?;
+    let mut after_plan = pool.begin().await?;
+    let after_blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_plan)
+            .await?;
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run,
+    };
+    let cancel = CancellationToken::new();
+    let options = CaptureOptions::owned_by(&request.owner);
+    let (merged, (destination, before)) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async { Ok(family.merge_store(&source, &request, &cancel).await) },
+            async {
+                merge_settle_waiter(&pool, before_blocker).await?;
+                let destination = family.capture_batch(&batch(session, 1), &options).await?;
+                let destination: Uuid = destination.conversation_id.parse()?;
+                before_plan.commit().await?;
+
+                merge_settle_waiter(&pool, after_blocker).await?;
+                let mut late = batch(session, 2);
+                let last = late.messages.last_mut().ok_or("late message fixture")?;
+                LATE_CONTENT.clone_into(&mut last.content);
+                let captured = family.capture_batch(&late, &options).await?;
+                assert_eq!(captured.conversation_id, destination.to_string());
+                assert_eq!(captured.inserted, 1);
+                let before = destination_messages(&pool, destination).await?;
+                after_plan.commit().await?;
+                Ok::<_, Box<dyn std::error::Error>>((destination, before))
+            },
+        )
+    })
+    .await
+    .map_err(|_| "merge and late capture did not finish in order")??;
+    let Err(error) = merged else {
+        return Err(format!("merge accepted a stale replacement plan: {merged:?}").into());
+    };
+    assert!(
+        error.to_string().contains(&format!(
+            "destination session {session} changed during the merge. Rerunning is safe."
+        )),
+        "{error}"
+    );
+    assert_eq!(before.len(), 2);
+    assert!(before.iter().any(|(_, content)| content == LATE_CONTENT));
+    assert_eq!(destination_messages(&pool, destination).await?, before);
+
+    request.dry_run = false;
+    let rerun = family.merge_store(&source, &request, &cancel).await?;
+    assert!(rerun.committed);
+    assert_eq!(rerun.runs, 1);
+    assert_eq!(rerun.kept_family, [BOTH_SMALLER, session]);
+    assert_eq!(rerun.replaced, [] as [String; 0]);
+    assert_eq!(rerun.inserted.get("rh_messages").copied(), Some(1));
+    assert_eq!(destination_messages(&pool, destination).await?, before);
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn capture_waits_for_the_merge_plan_lock(pool: PgPool) -> TestResult {
+    use std::time::Duration;
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    let session = BOTH_LARGER;
+    capture(&family, "alice", &[(session, 1)]).await?;
+    capture(&source, "alice", &[(session, 2)]).await?;
+    pause_merge_plan(&pool).await?;
+    let mut after_plan = pool.begin().await?;
+    let blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 5)")
+            .fetch_one(&mut *after_plan)
+            .await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let options = CaptureOptions::owned_by(&request.owner);
+    let cancel = CancellationToken::new();
+    let incoming = batch(session, 3);
+    let (merged, captured) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(
+            async { Ok(family.merge_store(&source, &request, &cancel).await?) },
+            async {
+                let merging = merge_settle_waiter(&pool, blocker).await?;
+                let capturing = family.capture_batch(&incoming, &options);
+                tokio::pin!(capturing);
+                tokio::select! {
+                    result = &mut capturing => panic!("capture completed before merge released the plan lock: {result:?}"),
+                    waiter = merge_settle_waiter(&pool, merging) => { waiter?; }
+                }
+                after_plan.commit().await?;
+                Ok::<_, Box<dyn std::error::Error>>(capturing.await?)
+            },
+        )
+    })
+    .await
+    .map_err(|_| "merge and capture did not finish in order")??;
+
+    assert_eq!(merged.replaced, [session]);
+    assert_eq!(captured.inserted, 1);
+    let replacement = captured.conversation_id.parse()?;
+    let messages = destination_messages(&pool, replacement).await?;
+    assert_eq!(messages.len(), 3);
+    let late = incoming.messages.last().ok_or("waiting capture fixture")?;
+    assert!(messages.iter().any(|(_, content)| content == &late.content));
+    Ok(())
+}
+
+async fn destination_messages(
+    pool: &PgPool,
+    conversation: Uuid,
+) -> Result<Vec<(Uuid, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT m.id, m.content FROM rh_conversations c
+         JOIN rh_messages m ON m.conversation_id = c.id WHERE c.id = $1 ORDER BY m.id",
+    )
+    .bind(conversation)
+    .fetch_all(pool)
+    .await
+}
+
+async fn pause_merge_plan(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::raw_sql(
+        "CREATE FUNCTION pause_merge_plan() RETURNS event_trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF TG_TAG = 'CREATE TABLE' AND to_regclass('pg_temp.merge_slug_map') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_dupes') IS NULL
+                 AND current_query() NOT LIKE '%ORDER BY t.id FOR UPDATE OF t%' THEN
+                 PERFORM pg_advisory_xact_lock(176, 4);
+             ELSIF TG_TAG = 'CREATE TABLE AS' AND to_regclass('pg_temp.merge_dupes') IS NOT NULL
+                 AND to_regclass('pg_temp.merge_drop_family') IS NULL THEN
+                 PERFORM pg_advisory_xact_lock(176, 5);
+             END IF;
+         END; $$;
+         CREATE EVENT TRIGGER pause_merge_plan ON ddl_command_end
+         WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS') EXECUTE FUNCTION pause_merge_plan();",
+    )
+    .execute(pool)
+    .await
+    .map(drop)
 }
 
 async fn merge_settle_order(pool: PgPool, settle_first: bool) -> TestResult {
