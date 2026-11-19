@@ -138,9 +138,11 @@ fn sign_in(fixture: &Fixture) -> Result {
 async fn update(fixture: &Fixture, source: Option<UpdateSource>) -> Result<cli::Report> {
     let mut args = args();
     args.source = source;
+    let github = server(Published::Good).await?;
     let updater = Updater::new(
         fixture.binary.clone(),
         "http://127.0.0.1:9/releases/".parse()?,
+        super::web_url(&github)?,
         Scope::User,
     );
     Ok(tokio::time::timeout(
@@ -282,6 +284,7 @@ async fn a_cloud_without_a_release_falls_back_to_github_unless_the_cloud_was_ask
         let updater = Updater::new(
             fixture.binary.clone(),
             format!("http://{}/releases/", github.addr).parse()?,
+            super::web_url(&github)?,
             Scope::User,
         );
         let report = tokio::time::timeout(

@@ -11,9 +11,9 @@ use url::Url;
 use super::{Channel, UpdateError, files};
 
 #[derive(Debug, Deserialize)]
-struct Release {
-    tag_name: String,
-    draft: bool,
+pub(super) struct Release {
+    pub(super) tag_name: String,
+    pub(super) draft: bool,
     prerelease: bool,
     assets: Vec<Asset>,
 }
@@ -77,12 +77,7 @@ pub(super) async fn stage(
     shutdown: &CancellationToken,
 ) -> Result<Staged, UpdateError> {
     let platform = platform()?;
-    let client = reqwest::Client::builder()
-        .user_agent("RivetHub updater")
-        .https_only(api.scheme() == "https")
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(300))
-        .build()?;
+    let client = client(api)?;
     let mut endpoint = api.clone();
     {
         let mut segments = endpoint
@@ -219,7 +214,7 @@ fn newest(releases: Vec<Release>) -> Result<Release, UpdateError> {
         .ok_or(UpdateError::NoRelease)
 }
 
-fn asset(release: &Release, name: &str) -> Result<Url, UpdateError> {
+pub(super) fn asset(release: &Release, name: &str) -> Result<Url, UpdateError> {
     let missing = || UpdateError::Asset {
         tag: release.tag_name.clone(),
         name: name.to_owned(),
@@ -251,7 +246,16 @@ fn checksums(bytes: &[u8]) -> Result<BTreeMap<String, [u8; 32]>, UpdateError> {
     Ok(entries)
 }
 
-async fn download(
+pub(super) fn client(api: &Url) -> Result<reqwest::Client, UpdateError> {
+    Ok(reqwest::Client::builder()
+        .user_agent("RivetHub updater")
+        .https_only(api.scheme() == "https")
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(300))
+        .build()?)
+}
+
+pub(super) async fn download(
     client: &reqwest::Client,
     url: Url,
     limit: usize,

@@ -136,7 +136,11 @@ async fn status_verifies_a_tls_gateway_by_the_name_its_certificate_carries() -> 
     );
     let status = run(&["status"], &env).await;
     assert_eq!(status.exit, Exit::Ok);
-    assert_eq!(status.stdout, "RivetHub is running\n", "{}", status.stderr);
+    assert_eq!(
+        status.stdout, "RivetHub is running\nWeb: none\n",
+        "{}",
+        status.stderr
+    );
     assert!(
         !status.stderr.contains("Health unavailable"),
         "{}",
@@ -184,7 +188,11 @@ async fn status_keeps_a_loopback_name_when_the_certificate_carries_one() -> Resu
         ),
     );
     let status = run(&["status"], &env).await;
-    assert_eq!(status.stdout, "RivetHub is running\n", "{}", status.stderr);
+    assert_eq!(
+        status.stdout, "RivetHub is running\nWeb: none\n",
+        "{}",
+        status.stderr
+    );
     let hosts = served.hosts.lock().clone();
     assert!(
         !hosts.is_empty() && hosts.iter().all(|host| host.starts_with("localhost")),
@@ -229,7 +237,11 @@ async fn status_trusts_the_root_the_config_names_without_any_variable() -> Resul
     );
     let status = run(&["status"], &env).await;
     assert_eq!(status.exit, Exit::Ok);
-    assert_eq!(status.stdout, "RivetHub is running\n", "{}", status.stderr);
+    assert_eq!(
+        status.stdout, "RivetHub is running\nWeb: none\n",
+        "{}",
+        status.stderr
+    );
     served.task.abort();
     Ok(())
 }

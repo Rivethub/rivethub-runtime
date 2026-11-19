@@ -5,6 +5,7 @@ mod files;
 mod node;
 mod release;
 mod source;
+mod web;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,7 +23,18 @@ pub use error::UpdateError;
 use node::Restart;
 use release::Staged;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, strum::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    ValueEnum,
+    strum::Display,
+    serde::Deserialize,
+    serde::Serialize,
+)]
+#[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum Channel {
     Stable,
@@ -38,6 +50,8 @@ pub struct UpdateArgs {
     pub version: Option<String>,
     #[arg(long)]
     pub no_restart: bool,
+    #[arg(long, conflicts_with_all = ["version", "no_restart"], help = "Install only the web app")]
+    pub web_only: bool,
     #[arg(long, value_name = "rivethub-cloud|github")]
     pub source: Option<wire::gateway::account::UpdateSource>,
 }
@@ -46,6 +60,7 @@ pub struct UpdateArgs {
 pub struct Updater {
     binary: PathBuf,
     releases: Url,
+    web_releases: Url,
     scope: Scope,
     running: String,
 }
@@ -59,10 +74,11 @@ struct Prepared {
 }
 
 impl Updater {
-    pub fn new(binary: PathBuf, releases: Url, scope: Scope) -> Self {
+    pub fn new(binary: PathBuf, releases: Url, web_releases: Url, scope: Scope) -> Self {
         Self {
             binary,
             releases,
+            web_releases,
             scope,
             running: env!("CARGO_PKG_VERSION").to_owned(),
         }
@@ -81,10 +97,31 @@ impl Updater {
         shutdown: &CancellationToken,
     ) -> Report {
         let mut report = Report::success("");
-        if let Err(error) = self.execute(args, env, shutdown, &mut report).await {
+        let web_store = prepare_web(env, shutdown).await;
+        let mut runtime = self.running.clone();
+        if !args.web_only
+            && !matches!(&web_store, Err(Error::Update(UpdateError::Busy)))
+            && let Err(error) = self
+                .execute(args, env, shutdown, &mut report, &mut runtime)
+                .await
+        {
             report.stderr.extend(["Error: ", &error.to_string(), "\n"]);
             report.exit = Exit::Failure;
         }
+        let outcome = match web_store {
+            Ok(Some(store)) => {
+                match store
+                    .refresh(&self.web_releases, args.channel, &runtime, shutdown)
+                    .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => web::Outcome::Failed(error.to_string()),
+                }
+            }
+            Ok(None) => web::Outcome::Explicit,
+            Err(error) => web::Outcome::Failed(error.to_string()),
+        };
+        outcome.report(args.channel, &mut report);
         report
     }
 
@@ -191,12 +228,37 @@ impl Updater {
         Ok(())
     }
 
+    async fn restart_installed(
+        &self,
+        restart: Restart,
+        env: &Environment,
+        shutdown: &CancellationToken,
+        report: &mut Report,
+    ) -> Result<(), Error> {
+        match restart {
+            Restart::Skipped => {
+                let note = self.scope.repair_preface(env).await?;
+                if note.starts_with("Updated ") {
+                    self.scope.reload(env, shutdown).await?;
+                }
+                report.stdout.push_str(&note);
+                report.stdout.push_str("Restart skipped (--no-restart).\n");
+            }
+            Restart::Service => self.restart(env, shutdown, report).await?,
+            Restart::Standalone => {
+                node::restart_standalone(&self.binary, env, shutdown, report).await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn execute(
         &self,
         args: &UpdateArgs,
         env: &Environment,
         shutdown: &CancellationToken,
         report: &mut Report,
+        runtime: &mut String,
     ) -> Result<(), Error> {
         let Prepared {
             installation,
@@ -241,30 +303,24 @@ impl Updater {
                     return Ok(());
                 }
             };
+            let installed_version = if args.channel == Channel::Nightly {
+                source::runtime_version(directory, env, shutdown).await?
+            } else {
+                version.strip_prefix('v').unwrap_or(&version).to_owned()
+            };
             check_cancelled(shutdown)?;
             migrate(directory, &target, env, shutdown, report).await?;
             check_cancelled(shutdown)?;
             let installing = Arc::clone(&installation);
             tokio::task::spawn_blocking(move || installing.install()).await??;
+            *runtime = installed_version;
             report.stdout.extend([
                 "Installed ",
                 &version,
                 "; previous binaries saved with .previous suffix.\n",
             ]);
-            match restart {
-                Restart::Skipped => {
-                    let note = self.scope.repair_preface(env).await?;
-                    if note.starts_with("Updated ") {
-                        self.scope.reload(env, shutdown).await?;
-                    }
-                    report.stdout.push_str(&note);
-                    report.stdout.push_str("Restart skipped (--no-restart).\n");
-                }
-                Restart::Service => self.restart(env, shutdown, report).await?,
-                Restart::Standalone => {
-                    node::restart_standalone(&self.binary, env, shutdown, report).await?;
-                }
-            }
+            self.restart_installed(restart, env, shutdown, report)
+                .await?;
             Ok::<_, Error>(())
         }
         .await;
@@ -276,6 +332,48 @@ impl Updater {
         .await??;
         result
     }
+}
+
+async fn prepare_web(
+    env: &Environment,
+    shutdown: &CancellationToken,
+) -> Result<Option<web::Store>, Error> {
+    check_cancelled(shutdown)?;
+    let env = env.clone();
+    tokio::task::spawn_blocking(move || {
+        let config = match config::resolve_config_path(&env)? {
+            Some(path) => config::Config::load(&env, &path)?.config,
+            None => config::Config::default(),
+        };
+        if gateway::explicit_static_dir(&config, &env).is_some() {
+            return Ok(None);
+        }
+        let state = gateway::state_dir(&env)?;
+        let paths = config::Paths::new(&env)?;
+        if env.text("RIVETHUB_HOME").is_none()
+            && paths.legacy_home().symlink_metadata().is_ok()
+            && !paths.state_dir().try_exists()?
+            && state.parent() == Some(paths.home().canonicalize()?.as_path())
+            && state.file_name() == paths.state_dir().file_name()
+        {
+            return Err(UpdateError::WebLegacyState.into());
+        }
+        Ok(Some(web::Store::open(&state)?))
+    })
+    .await?
+}
+
+fn web_endpoint(
+    #[cfg_attr(not(debug_assertions), expect(unused_variables))] env: &Environment,
+) -> Result<Url, Error> {
+    #[cfg(debug_assertions)]
+    if let Some(endpoint) = env.text("RIVETHUB_TEST_WEB_RELEASES") {
+        let url = Url::parse(endpoint)?;
+        if url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "[::1]")) {
+            return Ok(url);
+        }
+    }
+    Ok(Url::parse(web::RELEASES)?)
 }
 
 pub(crate) async fn run(
@@ -292,6 +390,7 @@ pub(crate) async fn run(
     let updater = Updater::new(
         binary,
         releases,
+        web_endpoint(env)?,
         Scope::for_uid(nix::unistd::geteuid().as_raw()),
     );
     Ok(updater.run(&args, env, shutdown).await)
