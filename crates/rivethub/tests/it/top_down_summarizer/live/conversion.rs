@@ -553,6 +553,7 @@ async fn exercise_inventory(
     second: &(impl SummaryConversion + SummaryStore + MemoryStore),
     preferred: Uuid,
     renewal: impl AsyncFnOnce(ConversionLease) -> TestResult,
+    expire: impl AsyncFnOnce(ConversionLease) -> TestResult,
 ) -> TestResult {
     let giant = Uuid::from_u128(201);
     first
@@ -617,10 +618,14 @@ async fn exercise_inventory(
         assert_ne!(normal.conversation, giant);
         second.finish(normal, ConversionOutcome::Complete).await?;
     }
-    exercise_giant_admission(second, giant).await
+    exercise_giant_admission(second, giant, expire).await
 }
 
-async fn exercise_giant_admission(second: &dyn SummaryConversion, giant: Uuid) -> TestResult {
+async fn exercise_giant_admission(
+    second: &dyn SummaryConversion,
+    giant: Uuid,
+    expire: impl AsyncFnOnce(ConversionLease) -> TestResult,
+) -> TestResult {
     assert!(
         second.claim(QUIET).await?.is_none(),
         "giants require opt-in"
@@ -670,22 +675,23 @@ async fn exercise_giant_admission(second: &dyn SummaryConversion, giant: Uuid) -
         ),
         (985_000, 985_000, 200)
     );
+    expire(lease).await?;
+    assert!(
+        second.claim(QUIET).await?.is_none(),
+        "closed bucket defers new claims"
+    );
+    let deferred = second.status().await?;
+    assert_eq!(
+        (deferred.pending, deferred.reserved, deferred.current),
+        (1, 0, None)
+    );
     second
         .finish(lease, ConversionOutcome::Fail("fixture error".into()))
         .await?;
     assert_eq!(
-        second.status().await?.recent_failures,
-        [(giant, "fixture error".into())]
-    );
-    second
-        .control(ConversionControl::Retry {
-            conversation: giant,
-        })
-        .await?;
-    assert_eq!(second.status().await?.failed, 0);
-    assert!(
-        second.claim(QUIET).await?.is_none(),
-        "bucket delay survived reservation release"
+        second.status().await?.failed,
+        0,
+        "the expired lease cannot finish the item"
     );
     Ok(())
 }
@@ -744,6 +750,13 @@ async fn top_down_conversion_inventory_sqlite() -> TestResult {
         assert_eq!(renewed_claim, claim);
         assert!(renewed_expiry >= expiry);
         assert!(renewed_expiry <= (Timestamp::now() + LEASE).rfc3339_millis());
+        Ok(())
+    }, async |lease| {
+        let conn = rusqlite::Connection::open(&path)?;
+        conn.execute(
+            "UPDATE rh_summary_conversion_items SET reservation_expires_at = '2020-01-01T00:00:00.000Z' WHERE conversation_id = ?1",
+            [lease.conversation.to_string()],
+        )?;
         Ok(())
     }).await
 }
@@ -805,6 +818,13 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
                 assert_eq!(renewed_claim, claim);
                 assert!(renewed_expiry.to_jiff() >= expiry.to_jiff());
                 assert!(renewed_expiry.to_jiff() <= Timestamp::now() + LEASE);
+                Ok(())
+            },
+            async |lease| {
+                sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = now() - interval '1 second' WHERE conversation_id = $1")
+                    .bind(lease.conversation)
+                    .execute(&pool)
+                    .await?;
                 Ok(())
             },
         ))

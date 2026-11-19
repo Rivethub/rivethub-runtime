@@ -293,11 +293,12 @@ impl SummaryConversion for SqliteStore {
                 tx.commit().map_err(error)?;
                 return Ok(None);
             }
-            if bucket(&tx)?.at > clock {
-                return Ok(None);
-            }
             tx.execute("UPDATE rh_summary_conversion_items SET state = 'pending', reservation_expires_at = NULL
                          WHERE reservation_expires_at <= ?1", [time::stamp(clock)]).map_err(error)?;
+            if bucket(&tx)?.at > clock {
+                tx.commit().map_err(error)?;
+                return Ok(None);
+            }
             tx.execute(&format!(
                 "DELETE FROM rh_summary_conversion_items
                  WHERE state IN ('pending','waiting_quiet','failed') AND conversation_id IN (

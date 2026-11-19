@@ -293,10 +293,11 @@ impl SummaryConversion for PostgresMemory {
             tx.commit().await.map_err(error)?;
             return Ok(None);
         }
+        clear_stale_items(&mut tx, clock).await.map_err(error)?;
         if bucket(&mut tx).await.map_err(error)?.at > clock {
+            tx.commit().await.map_err(error)?;
             return Ok(None);
         }
-        clear_stale_items(&mut tx, clock).await.map_err(error)?;
         let candidate: Option<(Uuid, jiff_sqlx::Timestamp, bool, i32)> = sqlx::query_as(
             "SELECT c.id, i.last_input_at, coalesce(coalesce(s.last_input_at, c.last_summary_input_at) <> i.last_input_at, false), i.timeout_retries FROM rh_summary_conversion_items i
              JOIN rh_conversations c ON c.id = i.conversation_id
