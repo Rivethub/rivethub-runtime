@@ -24,9 +24,7 @@ const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(42);
 #[derive(Debug)]
 pub(super) struct WriterLock {
     refresh: Refresher,
-    path: PathBuf,
-    token: String,
-    _repository: File,
+    acquired: Acquisition,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -70,17 +68,16 @@ impl WriterLock {
             })
             .await??;
             match result {
-                Attempt::Owned(repository) => {
+                Attempt::Owned(mut acquired) => {
                     let refresh_path = path.clone();
                     let refresh_token = token.clone();
                     let refresh = Refresher::start(refresh_interval, move || {
                         refresh_lock(&refresh_path, &refresh_token)
                     })?;
+                    acquired.cleanup_on_drop = false;
                     return Ok(Self {
                         refresh,
-                        path,
-                        token,
-                        _repository: repository,
+                        acquired,
                         _permit: permit,
                     });
                 }
@@ -100,13 +97,11 @@ impl WriterLock {
         tokio::task::spawn_blocking(move || {
             let Self {
                 refresh,
-                path,
-                token,
-                _repository,
+                acquired,
                 _permit,
             } = self;
             drop(refresh);
-            release(&path, &token)
+            release(&acquired.path, &acquired.token)
         })
         .await??;
         Ok(())
@@ -153,8 +148,26 @@ impl Drop for Refresher {
 }
 
 #[derive(Debug)]
+struct Acquisition {
+    path: PathBuf,
+    token: String,
+    _repository: File,
+    cleanup_on_drop: bool,
+}
+
+impl Drop for Acquisition {
+    fn drop(&mut self) {
+        if self.cleanup_on_drop
+            && let Err(error) = release(&self.path, &self.token)
+        {
+            tracing::warn!(%error, "wiki writer lock acquisition cleanup failed");
+        }
+    }
+}
+
+#[derive(Debug)]
 enum Attempt {
-    Owned(File),
+    Owned(Acquisition),
     Reclaimed,
     Busy,
 }
@@ -170,7 +183,12 @@ fn acquire_once(path: &Path, token: &str, reclaim_age_millis: i64) -> std::io::R
         Err(TryLockError::Error(error)) => return Err(error),
     }
     match publish_lock(path, token, |staged| std::fs::hard_link(staged, path)) {
-        Ok(()) => Ok(Attempt::Owned(repository)),
+        Ok(()) => Ok(Attempt::Owned(Acquisition {
+            path: path.to_path_buf(),
+            token: token.to_owned(),
+            _repository: repository,
+            cleanup_on_drop: true,
+        })),
         Err(error) if error.kind() == ErrorKind::AlreadyExists => reclaim(path, reclaim_age_millis),
         Err(error) => Err(error),
     }
@@ -290,6 +308,22 @@ mod tests {
     const INTERVAL: Duration = Duration::from_millis(10);
     const DEADLINE: Duration = Duration::from_secs(5);
 
+    #[test]
+    fn discarded_acquisition_removes_its_record() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join(".wiki-writer.lock");
+        let acquired = acquire_once(&path, "discarded", RECLAIM_AGE_MILLIS)?;
+        assert!(matches!(acquired, Attempt::Owned(_)));
+        assert!(owns_lock(&path, "discarded")?);
+        drop(acquired);
+        assert!(!path.exists());
+        assert!(matches!(
+            acquire_once(&path, "next", RECLAIM_AGE_MILLIS)?,
+            Attempt::Owned(_)
+        ));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn live_holder_renews_the_legacy_timestamp_past_reclaim_age() -> TestResult {
         let root = tempfile::tempdir()?;
@@ -299,11 +333,12 @@ mod tests {
                 WriterLock::acquire_with_timing(root.path(), AGE_MILLIS, INTERVAL),
             )
             .await??;
-            let initial = timestamp(&holder.path)?;
-            let refreshed = wait_for_timestamp(&holder.path, initial + AGE_MILLIS).await?;
+            let path = &holder.acquired.path;
+            let initial = timestamp(path)?;
+            let refreshed = wait_for_timestamp(path, initial + AGE_MILLIS).await?;
             assert!(Timestamp::now().epoch_millis() - refreshed <= AGE_MILLIS);
             assert!(matches!(
-                acquire_once(&holder.path, "contender", AGE_MILLIS)?,
+                acquire_once(path, "contender", AGE_MILLIS)?,
                 Attempt::Busy
             ));
             holder.release().await
@@ -320,7 +355,7 @@ mod tests {
             WriterLock::acquire_with_timing(root.path(), AGE_MILLIS, INTERVAL),
         )
         .await??;
-        let path = holder.path.clone();
+        let path = holder.acquired.path.clone();
         let initial = timestamp(&path)?;
         wait_for_timestamp(&path, initial).await?;
 
@@ -353,8 +388,8 @@ mod tests {
                 WriterLock::acquire_with_timing(root.path(), AGE_MILLIS, REFRESH_INTERVAL),
             )
             .await??;
-            let path = holder.path.clone();
-            let token = holder.token.clone();
+            let path = holder.acquired.path.clone();
+            let token = holder.acquired.token.clone();
             let refresh_path = path.clone();
             let (started, start) = tokio::sync::oneshot::channel();
             let mut started = Some(started);
