@@ -97,7 +97,7 @@ async fn historical_and_live_expiry_across_pages(pool: PgPool) -> TestResult {
         .bind(historical)
         .execute(&pool)
         .await?;
-    sqlx::query("UPDATE rh_conversations SET updated_at = clock_timestamp() + interval '5 days' WHERE id = $1")
+    sqlx::query("UPDATE rh_conversations SET last_summary_input_at = NULL, updated_at = clock_timestamp() + interval '5 days' WHERE id = $1")
         .bind(historical).execute(&pool).await?;
     let beat: Uuid = store
         .capture(
@@ -261,6 +261,47 @@ async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestR
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn unpositioned_keyset_preserves_timestamp_precision(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let key = "claude-code:precise";
+    let messages = testkit::settlement::precision_messages()?;
+    store
+        .capture(batch(key, messages), &testkit::owner()?, None)
+        .await?;
+    sqlx::query(
+        "UPDATE rh_messages SET created_at = CASE metadata->>'event_id'
+        WHEN 'second' THEN '2026-01-01T00:00:01Z'
+        WHEN 'earlier' THEN '2026-01-01T00:00:01.123100Z'
+        WHEN 'later' THEN '2026-01-01T00:00:01.123900Z'
+        WHEN 'offset' THEN '2026-01-01T01:00:01.130+01:00' END::timestamptz",
+    )
+    .execute(&pool)
+    .await?;
+    testkit::settlement::precise_pages(&store, key).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn expiry_recovers_the_capture_clock_when_state_is_missing(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(pool.clone());
+    let request = testkit::settlement::old_source_capture()?;
+    let id: Uuid = store
+        .capture(request, &testkit::owner()?, None)
+        .await?
+        .conversation_id
+        .parse()?;
+    let input = store
+        .summary_state(id)
+        .await?
+        .ok_or("live state")?
+        .last_input_at;
+    sqlx::query("DELETE FROM rh_summary_state WHERE conversation_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    testkit::settlement::missing_state_expiry(&store, id, input).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn pending_replays_add_positions_without_replacing_transcript_fields(
     pool: PgPool,
 ) -> TestResult {
@@ -309,24 +350,4 @@ async fn cowork_hook_and_transcript_keep_distinct_event_ids(pool: PgPool) -> Tes
         Some(8)
     );
     Ok(())
-}
-
-#[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn unpositioned_keyset_preserves_timestamp_precision(pool: PgPool) -> TestResult {
-    let store = PostgresMemory::new(pool.clone());
-    let key = "claude-code:precise";
-    let messages = testkit::settlement::precision_messages()?;
-    store
-        .capture(batch(key, messages), &testkit::owner()?, None)
-        .await?;
-    sqlx::query(
-        "UPDATE rh_messages SET created_at = CASE metadata->>'event_id'
-        WHEN 'second' THEN '2026-01-01T00:00:01Z'
-        WHEN 'earlier' THEN '2026-01-01T00:00:01.123100Z'
-        WHEN 'later' THEN '2026-01-01T00:00:01.123900Z'
-        WHEN 'offset' THEN '2026-01-01T01:00:01.130+01:00' END::timestamptz",
-    )
-    .execute(&pool)
-    .await?;
-    testkit::settlement::precise_pages(&store, key).await
 }

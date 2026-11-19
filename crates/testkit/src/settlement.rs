@@ -404,6 +404,10 @@ pub async fn expiry_boundary(store: &impl SummaryStore, id: Uuid) -> TestResult 
         .await?
         .ok_or("live state")?
         .last_input_at;
+    expiry_boundary_from(store, id, input).await
+}
+
+async fn expiry_boundary_from(store: &impl SummaryStore, id: Uuid, input: Timestamp) -> TestResult {
     let now = input
         + SignedDuration::from_mins(i64::from(
             kernel::memory::settlement::DEFAULT_INACTIVITY_MINUTES,
@@ -440,6 +444,23 @@ pub async fn expiry_boundary(store: &impl SummaryStore, id: Uuid) -> TestResult 
         Some(now)
     );
     Ok(())
+}
+
+pub fn old_source_capture() -> Result<CaptureBatchRequest, jiff::Error> {
+    let at = "2001-01-01T00:00:00Z";
+    let mut request = batch("cli:invented-old-source", vec![message("invented", at)?]);
+    request.created_at = Some(at.parse()?);
+    request.updated_at = request.created_at;
+    Ok(request)
+}
+
+pub async fn missing_state_expiry(
+    store: &impl SummaryStore,
+    id: Uuid,
+    input: Timestamp,
+) -> TestResult {
+    assert!(store.summary_state(id).await?.is_none());
+    expiry_boundary_from(store, id, input).await
 }
 
 pub fn pending_result_pair() -> Result<[CaptureMessage; 2], Box<dyn std::error::Error>> {

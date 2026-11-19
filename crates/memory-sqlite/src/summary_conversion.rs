@@ -70,14 +70,15 @@ fn measure(conn: &Connection, page: &[String], cutoff: Timestamp) -> Result<(), 
          )
          INSERT INTO rh_summary_conversion_items
             (conversation_id, last_input_at, last_used_at, estimated_tokens, state, next_at)
-         SELECT c.id, coalesce(s.last_input_at, rh_timestamp(source.last_input), c.created_at),
+         SELECT c.id, coalesce(s.last_input_at, clock.captured_at, rh_timestamp(source.last_input), c.created_at),
                 rh_timestamp(nullif(max(coalesce(source.last_used, ''), coalesce(
                     (SELECT max(rh_instant(old.last_accessed_at)) FROM ros_summaries old WHERE old.conversation_id = c.id), '')), '')),
                 coalesce(source.estimate, 0),
-                CASE WHEN s.settled_at IS NOT NULL OR coalesce(rh_instant(s.last_input_at), source.last_input, rh_instant(c.created_at)) <= ?3
+                CASE WHEN s.settled_at IS NOT NULL OR coalesce(rh_instant(s.last_input_at), rh_instant(clock.captured_at), source.last_input, rh_instant(c.created_at)) <= ?3
                      THEN 'pending' ELSE 'waiting_quiet' END, ?2
          FROM ros_conversations c LEFT JOIN source ON c.id = source.conversation_id
          LEFT JOIN rh_summary_state s ON s.conversation_id = c.id
+         LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = c.id
          WHERE c.id IN (SELECT value FROM json_each(?1)) AND (
            source.last_input IS NOT NULL OR EXISTS (
              SELECT 1 FROM ros_summaries old WHERE old.conversation_id = c.id AND old.kind IN ('leaf','branch','root')
@@ -286,12 +287,13 @@ impl SummaryConversion for SqliteStore {
                     WHERE NOT ({INCLUDED}) OR NOT s.historical_only)"
              ), []).map_err(error)?;
             let candidate: Option<(String, String, bool)> = tx.query_row(
-                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(s.last_input_at) <> rh_instant(i.last_input_at), 0) FROM rh_summary_conversion_items i
+                "SELECT i.conversation_id, i.last_input_at, coalesce(rh_instant(coalesce(s.last_input_at, clock.captured_at)) <> rh_instant(i.last_input_at), 0) FROM rh_summary_conversion_items i
                  LEFT JOIN rh_summary_state s ON s.conversation_id = i.conversation_id
+                 LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = i.conversation_id
                  CROSS JOIN rh_summary_conversion ctl
                  WHERE i.state IN ('pending','waiting_quiet')
                    AND NOT EXISTS (SELECT 1 FROM rh_summary_conversion_items WHERE state = 'reserved')
-                   AND (s.settled_at IS NOT NULL OR rh_instant(coalesce(s.last_input_at, i.last_input_at)) <= ?1)
+                   AND (s.settled_at IS NOT NULL OR rh_instant(coalesce(s.last_input_at, clock.captured_at, i.last_input_at)) <= ?1)
                    AND (i.estimated_tokens <= ?2 OR (ctl.include_giants AND NOT EXISTS (
                        SELECT 1 FROM rh_summary_conversion_items normal WHERE normal.estimated_tokens <= ?2
                          AND normal.state IN ('pending','waiting_quiet'))))

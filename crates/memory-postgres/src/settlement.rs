@@ -20,7 +20,7 @@ const SEED: &str = "INSERT INTO rh_summary_state
     SELECT c.id, 0, source.at, source.at, true
     FROM rh_conversations c
     CROSS JOIN LATERAL (
-        SELECT coalesce((SELECT max(m.created_at) FROM rh_messages m WHERE m.conversation_id = c.id),
+        SELECT coalesce(c.last_summary_input_at, (SELECT max(m.created_at) FROM rh_messages m WHERE m.conversation_id = c.id),
                         c.created_at) AS at
     ) source";
 
@@ -161,6 +161,14 @@ impl CaptureWriter<'_> {
             .await
             .map_err(failure)?
             .to_jiff();
+        if changed {
+            sqlx::query("UPDATE rh_conversations SET last_summary_input_at = $2 WHERE id = $1")
+                .bind(id)
+                .bind(crate::time::BindTime::bind_time(now))
+                .execute(&mut *self.tx)
+                .await
+                .map_err(failure)?;
+        }
         let mut current = state(&mut self.tx, id, true).await?;
         if current.is_none() {
             if changed {

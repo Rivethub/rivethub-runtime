@@ -77,6 +77,8 @@ BEGIN
     ALTER TABLE rh_summary_passages ENABLE ROW LEVEL SECURITY;
     ALTER TABLE rh_summary_passages FORCE ROW LEVEL SECURITY;
 
+    ALTER TABLE rh_conversations ADD COLUMN last_summary_input_at timestamptz;
+
     CREATE TABLE rh_summary_state (
         conversation_id uuid PRIMARY KEY REFERENCES rh_conversations (id) ON DELETE CASCADE,
         input_revision bigint NOT NULL CHECK (input_revision >= 0),

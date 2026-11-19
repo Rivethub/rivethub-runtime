@@ -5,6 +5,7 @@ use memory_sqlite::SqliteStore;
 use testkit::settlement::{TestResult, batch, expire, message, position_fills, revision_lifecycle};
 use uuid::Uuid;
 use wire::message::Role;
+use wire::time::TimestampFormat as _;
 
 fn store(path: &std::path::Path) -> Result<SqliteStore, Box<dyn std::error::Error>> {
     migrate::sqlite(path)?;
@@ -134,6 +135,8 @@ async fn historical_and_live_expiry_across_pages() -> TestResult {
         .conversation_id
         .parse()?;
     local.with_conn(move |conn| {
+        conn.execute("DELETE FROM rh_summary_capture_clock WHERE conversation_id = ?1", [historical.to_string()])
+            .map_err(crate::common::seed)?;
         conn.execute("DELETE FROM rh_summary_state WHERE conversation_id = ?1", [historical.to_string()])
             .map_err(|source| memory_sqlite::SqliteError::Query { operation: "test historical state", source })?;
         conn.execute("UPDATE ros_conversations SET updated_at = '2099-01-02T01:00:00.000Z' WHERE id = ?1", [historical.to_string()])
@@ -230,4 +233,28 @@ async fn unpositioned_keyset_preserves_legacy_timestamp_precision() -> TestResul
     )
     .await?;
     testkit::settlement::precise_pages(&local, key).await
+}
+
+#[tokio::test]
+async fn expiry_recovers_the_capture_clock_when_state_is_missing() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let local = store(&home.path().join("memory.sqlite"))?;
+    let now = Timestamp::now().truncate_subseconds(3);
+    let request = testkit::settlement::old_source_capture()?;
+    let id: Uuid = local
+        .capture(request, &testkit::owner()?, None, now)
+        .await?
+        .conversation_id
+        .parse()?;
+    local
+        .with_conn(move |conn| {
+            conn.execute(
+                "DELETE FROM rh_summary_state WHERE conversation_id = ?1",
+                [id.to_string()],
+            )
+            .map_err(crate::common::seed)?;
+            Ok(())
+        })
+        .await?;
+    testkit::settlement::missing_state_expiry(&local, id, now).await
 }

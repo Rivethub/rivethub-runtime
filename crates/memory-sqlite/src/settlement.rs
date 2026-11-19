@@ -19,9 +19,11 @@ fn seed(conn: &Connection, id: &str, fresh: Option<Timestamp>) -> Result<(), Sql
         at
     } else {
         let at: String = conn.query_row(
-                "SELECT coalesce((SELECT m.created_at FROM ros_messages m WHERE m.conversation_id = c.id
-                                  ORDER BY rh_instant(m.created_at) DESC LIMIT 1), c.created_at)
-                   FROM ros_conversations c WHERE c.id = ?1",
+                "SELECT coalesce(clock.captured_at,
+                            (SELECT m.created_at FROM ros_messages m WHERE m.conversation_id = c.id
+                             ORDER BY rh_instant(m.created_at) DESC LIMIT 1), c.created_at)
+                   FROM ros_conversations c LEFT JOIN rh_summary_capture_clock clock ON clock.conversation_id = c.id
+                   WHERE c.id = ?1",
                 [id], |row| row.get(0),
             ).map_err(failure)?;
         time::stored(&at, "last source time")?
@@ -144,6 +146,14 @@ pub(crate) fn record_capture(
     (observation, prior): (Option<&SessionObservation>, Option<&SessionObservation>),
 ) -> Result<(), SqliteError> {
     let now = now.truncate_subseconds(3);
+    if changed {
+        conn.execute(
+            "INSERT INTO rh_summary_capture_clock (conversation_id, captured_at) VALUES (?1, ?2)
+             ON CONFLICT (conversation_id) DO UPDATE SET captured_at = excluded.captured_at",
+            params![id, time::stamp(now)],
+        )
+        .map_err(failure)?;
+    }
     let mut current = state(conn, id)?;
     if current.is_none() {
         seed(conn, id, changed.then_some(now))?;

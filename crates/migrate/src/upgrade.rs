@@ -113,7 +113,11 @@ pub(crate) fn add_transcript_time(tx: &Transaction<'_>) -> rusqlite::Result<()> 
         "CREATE VIEW IF NOT EXISTS rh_transcript_times AS
              SELECT id, conversation_id, created_at, {key} AS seek_time FROM ros_messages;
          CREATE INDEX IF NOT EXISTS rh_transcript_seek ON ros_messages (conversation_id, ({key}), id);
-         CREATE INDEX IF NOT EXISTS rh_transcript_recent ON ros_messages (({key}), conversation_id);"
+         CREATE INDEX IF NOT EXISTS rh_transcript_recent ON ros_messages (({key}), conversation_id);
+         CREATE TABLE IF NOT EXISTS rh_summary_capture_clock (
+             conversation_id TEXT PRIMARY KEY REFERENCES ros_conversations(id) ON DELETE CASCADE,
+             captured_at TEXT NOT NULL
+         );"
     ))
 }
 
