@@ -1,7 +1,7 @@
 use jiff::Timestamp;
 use std::time::Duration;
 
-use kernel::memory::summary_conversion::{ConversionOutcome, SummaryConversion};
+use kernel::memory::summary_conversion::{ConversionLease, ConversionOutcome, SummaryConversion};
 
 use super::{SummarizeEnv, live};
 use crate::WorkerError;
@@ -32,8 +32,13 @@ pub async fn handle_conversion_tick(
     env: &live::LiveEnv<'_>,
     store: &dyn SummaryConversion,
 ) -> Result<(), WorkerError> {
-    env.summary.settings.validate_timeouts()?;
-    let Some(lease) = store.claim(env.summary.settings.inactivity).await? else {
+    let settings = env.summary.settings;
+    settings.validate_timeouts()?;
+    settings.validate_lease()?;
+    let Some(lease) = store
+        .claim_with_expiry(settings.inactivity, settings.conversion_lease)
+        .await?
+    else {
         return Ok(());
     };
     let summary = SummarizeEnv {
@@ -44,7 +49,7 @@ pub async fn handle_conversion_tick(
         summary: &summary,
         ..*env
     };
-    let outcome = match live::convert(&env, store, lease).await {
+    let outcome = match convert_with_heartbeat(&env, store, lease).await {
         Ok(()) => ConversionOutcome::Complete,
         Err(
             WorkerError::ConversionYield
@@ -61,6 +66,36 @@ pub async fn handle_conversion_tick(
     };
     store.finish(lease, outcome).await?;
     Ok(())
+}
+
+async fn convert_with_heartbeat(
+    env: &live::LiveEnv<'_>,
+    store: &dyn SummaryConversion,
+    lease: ConversionLease,
+) -> Result<(), WorkerError> {
+    tokio::select! {
+        biased;
+        result = live::convert(env, store, lease) => result,
+        result = heartbeat(env.summary.settings, store, lease) => {
+            if let Err(error) = result {
+                tracing::warn!(conversation = %lease.conversation, %error, "summary conversion lease renewal failed");
+            }
+            Err(WorkerError::ConversionYield)
+        }
+    }
+}
+
+async fn heartbeat(
+    settings: &super::SummarySettings,
+    store: &dyn SummaryConversion,
+    lease: ConversionLease,
+) -> Result<(), kernel::memory::SummaryStoreError> {
+    loop {
+        tokio::time::sleep(settings.conversion_heartbeat).await;
+        if !store.renew(lease, settings.conversion_lease).await? {
+            return Ok(());
+        }
+    }
 }
 
 fn failure_reason(error: &WorkerError) -> String {

@@ -18,6 +18,8 @@ pub struct SummarySettings {
     pub inter_token_timeout: Duration,
     pub request_timeout: Duration,
     pub conversion_timeout_retries: i32,
+    pub conversion_lease: SignedDuration,
+    pub conversion_heartbeat: Duration,
 }
 
 impl SummarySettings {
@@ -38,6 +40,8 @@ impl SummarySettings {
             inter_token_timeout: Duration::from_secs(60),
             request_timeout: Duration::from_mins(30),
             conversion_timeout_retries: 2,
+            conversion_lease: kernel::memory::summary_conversion::LEASE,
+            conversion_heartbeat: Duration::from_secs(20),
         })
     }
 
@@ -55,6 +59,20 @@ impl SummarySettings {
         if !(0..=10).contains(&self.conversion_timeout_retries) {
             return Err(invalid(
                 "summary conversion timeout retries must be between 0 and 10",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_lease(&self) -> Result<(), WorkerError> {
+        let expiry = Duration::try_from(self.conversion_lease)
+            .map_err(|_| invalid("summary conversion lease must be positive"))?;
+        if self.conversion_heartbeat.is_zero()
+            || expiry < self.conversion_heartbeat.saturating_mul(2)
+            || expiry > Duration::from_hours(24)
+        {
+            return Err(invalid(
+                "summary conversion lease must be at most one day and at least twice the positive heartbeat interval",
             ));
         }
         Ok(())

@@ -10,7 +10,7 @@ use uuid::Uuid;
 pub const GIANT_TOKENS: i64 = 1_000_000;
 pub const DEFAULT_RATE: i64 = 200_000;
 pub const INVENTORY_PAGE_SIZE: u16 = 200;
-pub const LEASE: SignedDuration = SignedDuration::from_mins(20);
+pub const LEASE: SignedDuration = SignedDuration::from_secs(90);
 
 #[doc(hidden)]
 #[must_use]
@@ -147,7 +147,23 @@ pub trait SummaryConversion: Send + Sync {
     async fn claim(
         &self,
         inactivity: SignedDuration,
+    ) -> Result<Option<ConversionLease>, SummaryStoreError> {
+        self.claim_with_expiry(inactivity, LEASE).await
+    }
+
+    #[doc(hidden)]
+    async fn claim_with_expiry(
+        &self,
+        inactivity: SignedDuration,
+        expiry: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError>;
+
+    #[doc(hidden)]
+    async fn renew(
+        &self,
+        lease: ConversionLease,
+        expiry: SignedDuration,
+    ) -> Result<bool, SummaryStoreError>;
 
     #[doc(hidden)]
     async fn admit(

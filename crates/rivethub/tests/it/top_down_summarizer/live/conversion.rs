@@ -171,7 +171,6 @@ async fn conversion(
     store: &(impl SummaryStore + MemoryStore),
     historical: Uuid,
     old: Uuid,
-    expire: impl std::future::Future<Output = TestResult>,
 ) -> TestResult {
     let provider = Provider::new();
     let permits = Semaphore::new(3);
@@ -219,15 +218,7 @@ async fn conversion(
         .await?;
     provider.script.fail_embeddings.store(false, SeqCst);
 
-    recover_conversion(
-        store,
-        capability,
-        historical,
-        old,
-        &provider,
-        (&permits, expire),
-    )
-    .await?;
+    recover_conversion(store, capability, historical, old, &provider, &permits).await?;
     let after = store
         .live_input(historical)
         .await?
@@ -329,23 +320,65 @@ async fn verify_foreground_priority(
     Ok(())
 }
 
+async fn verify_heartbeat(
+    store: &dyn SummaryStore,
+    capability: &dyn SummaryConversion,
+    historical: Uuid,
+    provider: &Provider,
+    permits: &Semaphore,
+) -> TestResult {
+    let settings = config::Environment::from_vars([
+        ("RIVETHUB_SUMMARY_CONVERSION_LEASE_MS", "500"),
+        ("RIVETHUB_SUMMARY_CONVERSION_HEARTBEAT_MS", "50"),
+    ]);
+    provider.embed_gate.store(true, SeqCst);
+    let observe = async {
+        provider.entered.notified().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(650), wait_for_claim(capability))
+                .await
+                .is_err(),
+            "heartbeat must hold the lease across an in-flight request"
+        );
+        assert_eq!(capability.status().await?.current, Some(historical));
+        Ok::<_, Box<dyn std::error::Error>>(())
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            result = observe => result,
+            result = tick_with(store, provider, permits, &settings) => Err(format!("worker finished early: {result:?}").into()),
+        }
+    }).await??;
+    let recovered =
+        tokio::time::timeout(Duration::from_secs(2), wait_for_claim(capability)).await??;
+    assert_eq!(recovered.conversation, historical);
+    capability
+        .finish(recovered, ConversionOutcome::Yield)
+        .await?;
+    Ok(())
+}
+
+async fn wait_for_claim(
+    store: &dyn SummaryConversion,
+) -> Result<ConversionLease, kernel::memory::SummaryStoreError> {
+    let mut claims = tokio::time::interval(Duration::from_millis(25));
+    loop {
+        claims.tick().await;
+        if let Some(lease) = store.claim(QUIET).await? {
+            return Ok(lease);
+        }
+    }
+}
+
 async fn recover_conversion(
     store: &(impl SummaryStore + MemoryStore),
     capability: &dyn SummaryConversion,
     historical: Uuid,
     old: Uuid,
     provider: &Provider,
-    (permits, expire): (&Semaphore, impl std::future::Future<Output = TestResult>),
+    permits: &Semaphore,
 ) -> TestResult {
-    provider.embed_gate.store(true, SeqCst);
-    tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::select! {
-            () = provider.entered.notified() => Ok(()),
-            result = tick(store, provider, permits) => Err(format!("crash fixture finished early: {result:?}")),
-        }
-    }).await??;
-    assert_eq!(capability.status().await?.current, Some(historical));
-    expire.await?;
+    verify_heartbeat(store, capability, historical, provider, permits).await?;
 
     provider.embed_gate.store(true, SeqCst);
     let pause_before_publish = async {
@@ -444,14 +477,7 @@ async fn top_down_conversion_sqlite() -> TestResult {
         1
     );
     assert_eq!(std::fs::read(&path)?, before);
-    conversion(&store, historical, old, async {
-        let conn = rusqlite::Connection::open(&path)?;
-        conn.execute(
-            "UPDATE rh_summary_conversion_items SET reservation_expires_at = '2020-01-01T00:00:00.000Z'
-             WHERE conversation_id = ?1", [historical.to_string()],
-        )?;
-        Ok(())
-    }).await?;
+    conversion(&store, historical, old).await?;
     let conn = rusqlite::Connection::open(&path)?;
     let receipts: Option<i32> = conn.query_row(
         "SELECT completed_version FROM ros_summary_deliveries
@@ -495,11 +521,7 @@ async fn top_down_conversion_postgres(pool: sqlx::PgPool) -> TestResult {
         assert_eq!(report.tables.get("rh_entity_extractions").ok_or("missing rh_entity_extractions disposition")?.remapped, 1);
         assert_eq!(report.tables.get("rh_summary_sources").ok_or("missing rh_summary_sources disposition")?.deleted, 1);
         assert!(!store.summary_conversion().ok_or("conversion")?.status().await?.enabled);
-        conversion(&store, historical, old, async {
-            sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = now() - interval '1 second'
-                         WHERE conversation_id = $1").bind(historical).execute(&pool).await?;
-            Ok(())
-        }).await?;
+        conversion(&store, historical, old).await?;
         let receipts: Vec<(String, i32)> = sqlx::query_as(
             "SELECT consumer, completed_version FROM rh_summary_deliveries
              WHERE conversation_id = $1 ORDER BY consumer"
@@ -577,6 +599,10 @@ async fn exercise_inventory(
     );
     renewal(top).await?;
     second.finish(top, ConversionOutcome::Complete).await?;
+    assert!(
+        !first.renew(top, LEASE).await?,
+        "a released lease cannot be renewed"
+    );
     assert_eq!(
         second.status().await?.discovered,
         200,
@@ -711,9 +737,9 @@ async fn top_down_conversion_inventory_sqlite() -> TestResult {
         assert_eq!(expiry, (lease.claimed_at + LEASE).rfc3339_millis());
         conn.execute(
             "UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
-            (lease.conversation.to_string(), (lease.claimed_at + jiff::SignedDuration::from_mins(5)).rfc3339_millis()),
+            (lease.conversation.to_string(), (lease.claimed_at + jiff::SignedDuration::from_secs(5)).rfc3339_millis()),
         )?;
-        assert!(second.admit(lease, None).await?);
+        assert!(second.renew(lease, LEASE).await?);
         let (renewed_claim, renewed_expiry) = read()?;
         assert_eq!(renewed_claim, claim);
         assert!(renewed_expiry >= expiry);
@@ -769,12 +795,12 @@ async fn top_down_conversion_inventory_postgres(pool: sqlx::PgPool) -> TestResul
                 assert_eq!(claim.to_jiff(), lease.claimed_at);
                 assert_eq!(expiry.to_jiff(), lease.claimed_at + LEASE);
                 sqlx::query(
-                    "UPDATE rh_summary_conversion_items SET reservation_expires_at = next_at + interval '5 minutes' WHERE conversation_id = $1",
+                    "UPDATE rh_summary_conversion_items SET reservation_expires_at = next_at + interval '5 seconds' WHERE conversation_id = $1",
                 )
                 .bind(lease.conversation)
                 .execute(&pool)
                 .await?;
-                assert!(second.admit(lease, None).await?);
+                assert!(second.renew(lease, LEASE).await?);
                 let (renewed_claim, renewed_expiry) = read().await?;
                 assert_eq!(renewed_claim, claim);
                 assert!(renewed_expiry.to_jiff() >= expiry.to_jiff());

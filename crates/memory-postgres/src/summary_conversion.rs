@@ -6,8 +6,7 @@ use kernel::memory::{
     summary_backend::{SummaryIndexes, SummaryPermit},
     summary_conversion::{
         ConversionBucket, ConversionCharge, ConversionControl, ConversionLease, ConversionOutcome,
-        ConversionProgress, ConversionUsage, GIANT_TOKENS, INVENTORY_PAGE_SIZE, LEASE,
-        SummaryConversion,
+        ConversionProgress, ConversionUsage, GIANT_TOKENS, INVENTORY_PAGE_SIZE, SummaryConversion,
     },
     summary_reference::PreparedSummaryTree,
 };
@@ -112,7 +111,7 @@ async fn valid(conn: &mut PgConnection, lease: ConversionLease) -> Result<bool, 
          JOIN rh_conversations c ON c.id = i.conversation_id
          JOIN rh_summary_state s ON s.conversation_id = c.id
          CROSS JOIN rh_summary_conversion ctl
-         WHERE (i.estimated_tokens <= {GIANT_TOKENS} OR ctl.include_giants) AND c.id = $1 AND i.next_at = $2 AND i.reservation_expires_at > clock_timestamp()
+         WHERE (i.estimated_tokens <= {GIANT_TOKENS} OR ctl.include_giants) AND c.id = $1 AND i.next_at = $2 AND i.next_at <= clock_timestamp() AND i.reservation_expires_at > clock_timestamp()
            AND s.historical_only AND {0} AND {INCLUDED})",
         crate::summary_backend::ELIGIBLE.replace("$2", "$3")
     )))
@@ -270,9 +269,10 @@ impl SummaryConversion for PostgresMemory {
         Ok(progress)
     }
 
-    async fn claim(
+    async fn claim_with_expiry(
         &self,
         inactivity: SignedDuration,
+        expiry: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError> {
         let mut tx = self.pool.begin().await.map_err(error)?;
         let active: bool = sqlx::query_scalar("SELECT enabled FROM rh_summary_conversion")
@@ -336,7 +336,7 @@ impl SummaryConversion for PostgresMemory {
             .bind(conversation)
             .bind(crate::time::BindTime::bind_time(clock))
             .bind(crate::time::BindTime::bind_time(
-                kernel::memory::summary_conversion::bounded_deadline(clock, LEASE),
+                kernel::memory::summary_conversion::bounded_deadline(clock, expiry),
             ))
             .execute(&mut *tx)
             .await
@@ -352,6 +352,26 @@ impl SummaryConversion for PostgresMemory {
         };
         tx.commit().await.map_err(error)?;
         Ok(lease)
+    }
+
+    async fn renew(
+        &self,
+        lease: ConversionLease,
+        expiry: SignedDuration,
+    ) -> Result<bool, SummaryStoreError> {
+        let mut tx = self.pool.begin().await.map_err(error)?;
+        lock(&mut tx).await.map_err(error)?;
+        if !valid(&mut tx, lease).await.map_err(error)? {
+            return Ok(false);
+        }
+        let clock = now(&mut tx).await.map_err(error)?;
+        let result = sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = $2 WHERE conversation_id = $1 AND reservation_expires_at > $3 AND next_at <= $3")
+            .bind(lease.conversation)
+            .bind(crate::time::BindTime::bind_time(kernel::memory::summary_conversion::bounded_deadline(clock, expiry)))
+            .bind(crate::time::BindTime::bind_time(clock))
+            .execute(&mut *tx).await.map_err(error)?;
+        tx.commit().await.map_err(error)?;
+        Ok(result.rows_affected() != 0)
     }
 
     async fn admit(
@@ -382,8 +402,6 @@ impl SummaryConversion for PostgresMemory {
                 return Ok(false);
             }
         }
-        sqlx::query("UPDATE rh_summary_conversion_items SET reservation_expires_at = $2 WHERE conversation_id = $1")
-            .bind(lease.conversation).bind(crate::time::BindTime::bind_time(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))).execute(&mut *tx).await.map_err(error)?;
         tx.commit().await.map_err(error)?;
         Ok(true)
     }

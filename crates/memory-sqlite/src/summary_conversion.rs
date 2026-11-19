@@ -6,8 +6,7 @@ use kernel::memory::{
     summary_backend::{SummaryIndexes, SummaryPermit},
     summary_conversion::{
         ConversionBucket, ConversionCharge, ConversionControl, ConversionLease, ConversionOutcome,
-        ConversionProgress, ConversionUsage, GIANT_TOKENS, INVENTORY_PAGE_SIZE, LEASE,
-        SummaryConversion,
+        ConversionProgress, ConversionUsage, GIANT_TOKENS, INVENTORY_PAGE_SIZE, SummaryConversion,
     },
     summary_reference::PreparedSummaryTree,
 };
@@ -102,27 +101,39 @@ fn live_waiting(conn: &Connection) -> Result<bool, SqliteError> {
 }
 
 pub(crate) fn can_publish(conn: &Connection, lease: ConversionLease) -> Result<bool, SqliteError> {
-    let eligible = conn
+    Ok(valid(conn, lease, Timestamp::now(), true)? && !live_waiting(conn)?)
+}
+
+fn valid(
+    conn: &Connection,
+    lease: ConversionLease,
+    clock: Timestamp,
+    publishing: bool,
+) -> Result<bool, SqliteError> {
+    if clock < lease.claimed_at {
+        return Ok(false);
+    }
+    conn
         .query_row(
             &format!(
                 "SELECT EXISTS (SELECT 1 FROM rh_summary_conversion_items i
          JOIN ros_conversations c ON c.id = i.conversation_id
          JOIN rh_summary_state s ON s.conversation_id = c.id
          CROSS JOIN rh_summary_conversion ctl
-         WHERE ctl.enabled AND (i.estimated_tokens <= {GIANT_TOKENS} OR ctl.include_giants) AND c.id = ?1 AND i.next_at = ?2 AND i.reservation_expires_at > ?3
+         WHERE (NOT ?5 OR ctl.enabled) AND (i.estimated_tokens <= {GIANT_TOKENS} OR ctl.include_giants) AND c.id = ?1 AND i.next_at = ?2 AND i.reservation_expires_at > ?3
            AND s.historical_only AND s.input_revision = ?4 AND s.settled_at IS NOT NULL
            AND s.summarized_through IS NOT ?4 AND s.failed_revision IS NOT ?4 AND {INCLUDED})"
             ),
             params![
                 lease.conversation.to_string(),
                 claim_stamp(lease.claimed_at),
-                time::stamp(Timestamp::now()),
-                lease.revision
+                time::stamp(clock),
+                lease.revision,
+                publishing
             ],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(error)?;
-    Ok(eligible && !live_waiting(conn)?)
+        .map_err(error)
 }
 
 fn claim_stamp(at: Timestamp) -> String {
@@ -257,9 +268,10 @@ impl SummaryConversion for SqliteStore {
         .map_err(store_error)
     }
 
-    async fn claim(
+    async fn claim_with_expiry(
         &self,
         inactivity: SignedDuration,
+        expiry: SignedDuration,
     ) -> Result<Option<ConversionLease>, SummaryStoreError> {
         self.with_conn(move |conn| {
             let active: bool = conn.query_row("SELECT enabled FROM rh_summary_conversion", [], |row| row.get(0)).map_err(error)?;
@@ -324,13 +336,31 @@ impl SummaryConversion for SqliteStore {
                 ).map_err(error)?;
                 tx.execute("UPDATE rh_summary_conversion_items SET state = 'reserved', next_at = ?2,
                             reservation_expires_at = ?3 WHERE conversation_id = ?1",
-                           params![id, claim_stamp(clock), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))]).map_err(error)?;
+                           params![id, claim_stamp(clock), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, expiry))]).map_err(error)?;
                 Some(ConversionLease { conversation: parse_id(&id)?, revision, claimed_at: clock, timeout_retries })
             } else {
                 None
             };
             tx.commit().map_err(error)?;
             Ok(lease)
+        }).await.map_err(store_error)
+    }
+
+    async fn renew(
+        &self,
+        lease: ConversionLease,
+        expiry: SignedDuration,
+    ) -> Result<bool, SummaryStoreError> {
+        self.with_conn(move |conn| {
+            let tx = immediate(conn)?;
+            let clock = Timestamp::now();
+            if !valid(&tx, lease, clock, false)? {
+                return Ok(false);
+            }
+            tx.execute("UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
+                params![lease.conversation.to_string(), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, expiry))]).map_err(error)?;
+            tx.commit().map_err(error)?;
+            Ok(true)
         }).await.map_err(store_error)
     }
 
@@ -348,19 +378,26 @@ impl SummaryConversion for SqliteStore {
             if let Some(charge) = charge {
                 let mut bucket = bucket(&tx)?;
                 let admitted = bucket.debit(charge, clock);
-                tx.execute("UPDATE rh_summary_conversion SET bucket_tokens = ?1, bucket_at = ?2,
+                tx.execute(
+                    "UPDATE rh_summary_conversion SET bucket_tokens = ?1, bucket_at = ?2,
                              charged_tokens = charged_tokens + ?3",
-                    params![bucket.tokens, time::stamp(bucket.at), if admitted { charge.estimate } else { 0 }]).map_err(error)?;
+                    params![
+                        bucket.tokens,
+                        time::stamp(bucket.at),
+                        if admitted { charge.estimate } else { 0 }
+                    ],
+                )
+                .map_err(error)?;
                 if !admitted {
                     tx.commit().map_err(error)?;
                     return Ok(false);
                 }
             }
-            tx.execute("UPDATE rh_summary_conversion_items SET reservation_expires_at = ?2 WHERE conversation_id = ?1",
-                params![lease.conversation.to_string(), time::stamp(kernel::memory::summary_conversion::bounded_deadline(clock, LEASE))]).map_err(error)?;
             tx.commit().map_err(error)?;
             Ok(true)
-        }).await.map_err(store_error)
+        })
+        .await
+        .map_err(store_error)
     }
 
     async fn freeze(
