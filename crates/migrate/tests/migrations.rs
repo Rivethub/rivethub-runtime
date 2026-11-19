@@ -459,3 +459,17 @@ fn sqlite_definitions(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<(Stri
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect()
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_passages_use_store_hnsw_options(pool: PgPool) -> TestResult {
+    let options: Option<Vec<String>> = sqlx::query_scalar(
+        "SELECT reloptions FROM pg_class WHERE oid = 'rh_summary_passages_hnsw'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        options.as_deref(),
+        Some(["m=32".to_owned(), "ef_construction=120".to_owned()].as_slice())
+    );
+    Ok(())
+}

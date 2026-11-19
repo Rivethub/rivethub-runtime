@@ -27,7 +27,8 @@ BEGIN
     );
     CREATE INDEX rh_summary_passages_fts ON rh_summary_passages USING gin (content_tsv);
     CREATE INDEX rh_summary_passages_trgm ON rh_summary_passages USING gin (content gin_trgm_ops);
-    CREATE INDEX rh_summary_passages_hnsw ON rh_summary_passages USING hnsw (embedding halfvec_cosine_ops);
+    CREATE INDEX rh_summary_passages_hnsw ON rh_summary_passages USING hnsw (embedding halfvec_cosine_ops)
+        WITH (m = '32', ef_construction = '120');
     CREATE INDEX rh_summary_passages_source_time ON rh_summary_passages (latest_at DESC);
     CREATE POLICY rh_read ON rh_summary_passages FOR SELECT USING (
         (SELECT rh_scope_maintenance()) OR EXISTS (SELECT 1 FROM rh_summaries s WHERE s.id = rh_summary_passages.record_id));
