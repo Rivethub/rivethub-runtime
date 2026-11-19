@@ -564,10 +564,20 @@ async fn check_gone(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPool) -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
     seed(&pool).await?;
     let store = scoped_store(&pool).await?;
-    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
-    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+    sqlx::query("DELETE FROM rh_wiki_extractions")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03', 'alice')",
+    ).bind(id(4)).bind(id(1)).execute(&pool).await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
+    {
         prepared.records.push(PreparedSummaryRecord {
             id: id(part),
             parent: Some(id(20)),
@@ -592,16 +602,35 @@ async fn top_down_references_split_message_has_only_the_first_anchor(pool: PgPoo
         });
     }
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
-    prepared.part_order = vec![id(22), id(21)];
-    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
-    prepared.part_order.clear();
     Scope::Maintenance
         .run(store.replace_summary_tree(&prepared))
         .await?;
+    prepared.expected_ids = BTreeSet::from([id(20), id(21), id(22)]);
+    prepared.retained_parts = BTreeSet::from([id(21), id(22)]);
+    for record in &mut prepared.records {
+        if record.kind == SummaryKind::Session {
+            record.id = id(30);
+            for (source, message) in record.sources.iter_mut().zip([2, 4, 3]) {
+                source.message = id(message);
+            }
+        } else {
+            record.parent = Some(id(30));
+        }
+    }
+    prepared.part_order = vec![id(22), id(21)];
+    assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
+    Scope::Maintenance
+        .run(store.replace_summary_tree(&prepared))
+        .await?;
+    Scope::Maintenance
+        .run(store.control(ConversionControl::Release {
+            conversation: id(1),
+        }))
+        .await?;
     let found: Vec<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+        "SELECT message_id, anchor_id FROM rh_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
     ).fetch_all(&pool).await?;
-    assert_eq!(found, [(id(2), id(21)), (id(3), id(22))]);
+    assert_eq!(found, [(id(2), id(22)), (id(3), id(21)), (id(4), id(22))]);
     Ok(())
 }
 
@@ -1044,5 +1073,43 @@ async fn seed_kept_collision(pool: &PgPool) -> TestResult {
     ] {
         sqlx::query(sql).bind(id(21)).bind(id(23)).execute(pool).await?;
     }
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn top_down_references_does_not_rewrite_foreign_delivery(pool: PgPool) -> TestResult {
+    seed(&pool).await?;
+    let store = scoped_store(&pool).await?;
+    sqlx::raw_sql(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-000000000009', 'other', 'fixture', 'cli', 'alice');
+         INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, owner_user_id)
+         VALUES ('00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-000000000009',
+                 'fixture', 'cli', 'user', 'An independent measurement.', 'alice');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_summary_deliveries (conversation_id, consumer, message_id, anchor_id)
+         VALUES ($1, 'wiki', $2, $3)",
+    )
+    .bind(id(9))
+    .bind(id(109))
+    .bind(id(10))
+    .execute(&pool)
+    .await?;
+    let before = checksum(&pool).await?;
+    let prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    assert!(
+        Scope::Maintenance
+            .run(store.replace_summary_tree(&prepared))
+            .await
+            .is_err()
+    );
+    let foreign: (Option<Uuid>, bool) = sqlx::query_as(
+        "SELECT anchor_id, historical_backlog FROM rh_summary_deliveries WHERE conversation_id = $1",
+    ).bind(id(9)).fetch_one(&pool).await?;
+    assert_eq!(foreign, (Some(id(10)), false));
+    assert_eq!(checksum(&pool).await?, before);
     Ok(())
 }

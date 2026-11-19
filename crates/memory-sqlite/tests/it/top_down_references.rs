@@ -433,10 +433,28 @@ async fn check_gone(
 
 #[tokio::test]
 async fn top_down_references_split_message_has_only_the_first_anchor() -> TestResult {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
     let (_dir, store) = store(None)?;
     seed(&store).await?;
-    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
-    for (part, ordinal, messages) in [(21, 1, vec![(2, 1)]), (22, 2, vec![(2, 1), (3, 2)])] {
+    store
+        .with_conn(|conn| {
+            conn.execute("DELETE FROM ros_wiki_extractions", [])
+                .map_err(failed)
+        })
+        .await?;
+    store
+        .with_conn(|conn| {
+            conn.execute(
+        "INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+         VALUES (?1, ?2, 'fixture', 'cli', 'user', 'A new measurement.', '2024-01-03T00:00:00Z')",
+        params![id(4).to_string(), id(1).to_string()],
+    ).map_err(failed)
+        })
+        .await?;
+    let mut prepared = tree(&[10, 11, 12], 20, &[2, 3, 4], true);
+    for (part, ordinal, messages) in [(21, 1, vec![(2, 1), (3, 2)]), (22, 2, vec![(2, 1), (4, 2)])]
+    {
         prepared.records.push(PreparedSummaryRecord {
             id: id(part),
             parent: Some(id(20)),
@@ -461,17 +479,34 @@ async fn top_down_references_split_message_has_only_the_first_anchor() -> TestRe
         });
     }
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(21)));
+    store.replace_summary_tree(prepared.clone()).await?;
+    prepared.expected_ids = BTreeSet::from([id(20), id(21), id(22)]);
+    prepared.retained_parts = BTreeSet::from([id(21), id(22)]);
+    for record in &mut prepared.records {
+        if record.kind == SummaryKind::Session {
+            record.id = id(30);
+            for (source, message) in record.sources.iter_mut().zip([2, 4, 3]) {
+                source.message = id(message);
+            }
+        } else {
+            record.parent = Some(id(30));
+        }
+    }
     prepared.part_order = vec![id(22), id(21)];
     assert_eq!(prepared.anchors().get(&id(2)), Some(&id(22)));
-    prepared.part_order.clear();
     store.replace_summary_tree(prepared).await?;
+    store
+        .control(ConversionControl::Release {
+            conversation: id(1),
+        })
+        .await?;
     store.with_conn(|conn| {
         let mut query = conn.prepare(
-            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'entity' ORDER BY message_id",
+            "SELECT message_id, anchor_id FROM ros_summary_deliveries WHERE consumer = 'wiki' AND anchor_id IS NOT NULL ORDER BY message_id",
         ).map_err(failed)?;
         let found: Vec<(String, String)> = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(failed)?.collect::<Result<_, _>>().map_err(failed)?;
-        assert_eq!(found, [(id(2).to_string(), id(21).to_string()), (id(3).to_string(), id(22).to_string())]);
+        assert_eq!(found, [(2, 22), (3, 21), (4, 22)].map(|(message, anchor)| (id(message).to_string(), id(anchor).to_string())));
         Ok(())
     }).await?;
     Ok(())
@@ -790,5 +825,38 @@ fn seed_kept_collision(conn: &mut rusqlite::Connection) -> Result<(), SqliteErro
     ] {
         conn.execute(sql, params![id(21).to_string(), id(23).to_string()]).map_err(failed)?;
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn top_down_references_does_not_rewrite_foreign_delivery() -> TestResult {
+    let (_dir, store) = store(None)?;
+    seed(&store).await?;
+    store.with_conn(|conn| {
+        conn.execute_batch(
+            "INSERT INTO ros_conversations (id, session_key, agent, channel, owner_user_id, created_at, updated_at)
+             VALUES ('00000000-0000-0000-0000-000000000009', 'other', 'fixture', 'cli', 'alice', '2024-01-01', '2024-01-01');
+             INSERT INTO ros_messages (id, conversation_id, agent, channel, role, content, created_at)
+             VALUES ('00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-000000000009',
+                     'fixture', 'cli', 'user', 'An independent measurement.', '2024-01-01');
+             INSERT INTO ros_summary_deliveries (conversation_id, consumer, message_id, anchor_id)
+             VALUES ('00000000-0000-0000-0000-000000000009', 'wiki',
+                     '00000000-0000-0000-0000-00000000006d', '00000000-0000-0000-0000-00000000000a');",
+        ).map_err(failed)
+    }).await?;
+    let before = snapshot(&store).await?;
+    assert!(
+        store
+            .replace_summary_tree(tree(&[10, 11, 12], 20, &[2, 3], false))
+            .await
+            .is_err()
+    );
+    let foreign: (Option<String>, bool) = store.with_conn(|conn| conn.query_row(
+        "SELECT anchor_id, historical_backlog FROM ros_summary_deliveries WHERE conversation_id = ?1",
+        [id(9).to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(failed)).await?;
+    assert_eq!(foreign, (Some(id(10).to_string()), false));
+    assert_eq!(snapshot(&store).await?, before);
     Ok(())
 }

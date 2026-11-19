@@ -1,9 +1,9 @@
-pub(super) const BEFORE_DELETE: &str = r"UPDATE ros_summary_deliveries AS d
+pub(super) const REBIND_DELIVERIES: &str = r"UPDATE ros_summary_deliveries AS d
 SET anchor_id = (SELECT a.anchor FROM summary_anchors a WHERE a.message = d.message_id),
     historical_backlog = NOT EXISTS (SELECT 1 FROM summary_anchors a WHERE a.message = d.message_id)
-WHERE d.anchor_id IN (SELECT old FROM summary_replacements);
+WHERE d.conversation_id = ?1 AND d.anchor_id IN (SELECT old FROM summary_replacements)";
 
-CREATE TEMP TABLE summary_reference_map AS
+pub(super) const BEFORE_DELETE: &str = r"CREATE TEMP TABLE summary_reference_map AS
 SELECT old, new, kind FROM summary_replacements WHERE new IS NOT NULL
 UNION ALL
 SELECT DISTINCT map.new, map.new, map.kind

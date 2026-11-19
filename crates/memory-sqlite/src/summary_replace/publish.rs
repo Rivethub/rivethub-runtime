@@ -105,6 +105,7 @@ impl SqliteStore {
                 params![prepared.conversation.to_string(), prepared.historical],
             ).map_err(failure)?;
             tx.execute_batch(sql::REUSE_VECTORS).map_err(failure)?;
+            tx.execute(sql::REBIND_DELIVERIES, [prepared.conversation.to_string()]).map_err(failure)?;
             tx.execute_batch(sql::BEFORE_DELETE).map_err(failure)?;
 
             let mut records: Vec<_> = prepared.records.iter().collect();

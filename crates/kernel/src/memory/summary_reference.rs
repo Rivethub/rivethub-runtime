@@ -150,15 +150,17 @@ impl PreparedSummaryTree {
         let root_ids: BTreeSet<_> = root_members.values().copied().collect();
         let coverages = self.record_coverage(&records, root.id, &root_ids)?;
 
-        let parts: Vec<_> = self
+        let mut parts: Vec<_> = self
             .records
             .iter()
             .filter(|row| row.kind == SummaryKind::Part)
             .collect();
         if !self.part_order.is_empty() {
-            let ids: BTreeSet<_> = parts.iter().map(|row| row.id).collect();
-            if self.part_order.len() != ids.len()
-                || self.part_order.iter().copied().collect::<BTreeSet<_>>() != ids
+            sort_parts(&mut parts, &root.sources);
+            if parts
+                .iter()
+                .map(|row| row.id)
+                .ne(self.part_order.iter().copied())
             {
                 return Err(InvalidSummaryManifest);
             }
@@ -372,16 +374,12 @@ impl PreparedSummaryTree {
                     .filter(|record| record.kind == SummaryKind::Session),
             );
         }
-        if self.part_order.is_empty() {
-            parts.sort_by_key(|record| record.ordinal);
-        } else {
-            let order: BTreeMap<_, _> = self
-                .part_order
-                .iter()
-                .enumerate()
-                .map(|(position, id)| (*id, position))
-                .collect();
-            parts.sort_by_key(|record| order.get(&record.id).copied());
+        if let Some(root) = self
+            .records
+            .iter()
+            .find(|row| row.kind == SummaryKind::Session)
+        {
+            sort_parts(&mut parts, &root.sources);
         }
         let mut anchors = BTreeMap::new();
         for part in parts {
@@ -435,4 +433,23 @@ pub fn summary_job_target(task: &str, payload: &serde_json::value::RawValue) -> 
             None
         }
     }
+}
+
+fn sort_parts(parts: &mut [&PreparedSummaryRecord], root: &[SummaryManifestEntry]) {
+    let positions: BTreeMap<_, _> = root
+        .iter()
+        .map(|entry| (entry.message, entry.ordinal))
+        .collect();
+    parts.sort_by_cached_key(|part| {
+        let ordinals = part
+            .sources
+            .iter()
+            .filter_map(|entry| positions.get(&entry.message));
+        (
+            ordinals.clone().max(),
+            ordinals.min(),
+            part.issued_part_ordinal,
+            part.id,
+        )
+    });
 }
