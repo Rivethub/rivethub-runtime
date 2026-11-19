@@ -1291,6 +1291,238 @@ fn retry_patch(
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn wiki_repository_holder_can_read_references_while_merge_waits(pool: PgPool) -> TestResult {
+    use kernel::owner::Owner;
+    use memory_postgres::merge::MergeRequest;
+    use tokio_util::sync::CancellationToken;
+
+    seed(&pool).await?;
+    let directory = tempfile::tempdir()?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    let source = PostgresMemory::new(super::merge::source_database(&pool).await?);
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let cancel = CancellationToken::new();
+    let merge = async {
+        let report = store.merge_store(&source, &request, &cancel).await?;
+        assert!(!report.committed);
+        Ok(())
+    };
+    Box::pin(Scope::Maintenance.run(wiki_reference_queue(
+        &pool,
+        &store,
+        directory.path(),
+        false,
+        merge,
+    )))
+    .await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn wiki_repository_holder_can_read_references_while_publication_waits(
+    pool: PgPool,
+) -> TestResult {
+    seed(&pool).await?;
+    let directory = tempfile::tempdir()?;
+    let store = scoped_store(&pool)
+        .await?
+        .with_wiki_directory(directory.path().to_path_buf());
+    let prepared = tree(&[10, 11, 12], 20, &[2, 3], false);
+    let publish = async {
+        store.replace_summary_tree(&prepared).await?;
+        Ok(())
+    };
+    Box::pin(Scope::Maintenance.run(wiki_reference_queue(
+        &pool,
+        &store,
+        directory.path(),
+        true,
+        publish,
+    )))
+    .await
+}
+
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "model a writer holding the repository through its reference read"
+)]
+async fn wiki_reference_queue(
+    pool: &PgPool,
+    store: &PostgresMemory,
+    directory: &std::path::Path,
+    publication: bool,
+    exclusive: impl Future<Output = TestResult>,
+) -> TestResult {
+    use std::time::Duration;
+
+    use kernel::wiki::entity_pass::{
+        ENTITY_LOCK_CLASS, EntityProse, EntityStore, EntityStoreError, PublishOutcome,
+    };
+    use memory_postgres::wiki_writer::WikiRepository;
+
+    let now = Timestamp::now();
+    let summary = id(10);
+    let view = entity_page_fixture(store, summary, now).await?;
+    assert_eq!(
+        view.history.first().map(|line| line.summary_id),
+        Some(summary)
+    );
+    let prose = EntityProse {
+        summary: "A brass valve.".to_owned(),
+        article: "The brass valve seals the test pipe.".to_owned(),
+    };
+    let (class, key) = if publication {
+        let key = sqlx::query_scalar("SELECT hashtext($1::text)")
+            .bind(id(1).to_string())
+            .fetch_one(pool)
+            .await?;
+        (0x7375_6d6d_i32, key)
+    } else {
+        (0x7374_6f72_i32, 2_i32)
+    };
+    let entity_key = sqlx::query_scalar("SELECT hashtext($1::text)")
+        .bind(format!("id:{}", view.id))
+        .fetch_one(pool)
+        .await?;
+    let mut entity = std::pin::pin!(store.publish(&view, &prose, now));
+    let result = {
+        let repository = WikiRepository::new(directory.to_path_buf()).lock().await?;
+        let read = async {
+            tokio::select! {
+                result = &mut entity => panic!("entity publication bypassed the repository: {result:?}"),
+                result = wait_for_advisory(pool, ENTITY_LOCK_CLASS, entity_key, "ExclusiveLock", true) => result?,
+            }
+            drain_reference_queue(pool, class, key, exclusive).await
+        };
+        let result = tokio::time::timeout(Duration::from_secs(5), read).await;
+        repository.release().await?;
+        result
+    };
+    result.map_err(
+        |_| "reference queue stalled while entity publication waited for the repository",
+    )??;
+    let outcome = tokio::time::timeout(Duration::from_secs(5), entity).await?;
+    if publication {
+        assert!(
+            matches!(outcome, Err(EntityStoreError::Reference(SummaryReferenceError::Gone(id))) if id == summary),
+            "{outcome:?}"
+        );
+    } else {
+        assert!(matches!(outcome?, PublishOutcome::Stored { .. }));
+    }
+    Ok(())
+}
+
+async fn drain_reference_queue(
+    pool: &PgPool,
+    class: i32,
+    key: i32,
+    exclusive: impl Future<Output = TestResult>,
+) -> TestResult {
+    let mut barrier = pool.begin().await?;
+    let share = || {
+        sqlx::query("SELECT pg_advisory_xact_lock_shared($1, $2)")
+            .bind(class)
+            .bind(key)
+    };
+    share().execute(&mut *barrier).await?;
+    let mut exclusive = std::pin::pin!(exclusive);
+    tokio::select! {
+        result = &mut exclusive => panic!("exclusive writer bypassed the barrier: {result:?}"),
+        result = wait_for_advisory(pool, class, key, "ExclusiveLock", false) => result?,
+    }
+
+    let mut recompile_reader = std::pin::pin!(async {
+        let mut tx = pool.begin().await?;
+        share().execute(&mut *tx).await?;
+        tx.commit().await
+    });
+    tokio::select! {
+        result = &mut recompile_reader => panic!("reader bypassed the exclusive waiter: {result:?}"),
+        result = wait_for_advisory(pool, class, key, "ShareLock", false) => result?,
+    }
+    barrier.rollback().await?;
+    let (exclusive, reader) = tokio::join!(exclusive, recompile_reader);
+    exclusive?;
+    reader?;
+    Ok(())
+}
+
+async fn entity_page_fixture(
+    store: &PostgresMemory,
+    summary: Uuid,
+    now: Timestamp,
+) -> Result<kernel::wiki::entity_pass::EntityView, Box<dyn std::error::Error>> {
+    use kernel::wiki::entity_pass::{EntityLeaf, EntityStore, PreparedEntity, PreparedHistory};
+    use wire::time::TimestampFormat as _;
+
+    let view = store
+        .commit(
+            &[EntityLeaf {
+                delivery: None,
+                id: summary,
+                conversation_id: Some(id(1)),
+                content: "Earlier summary.".to_owned(),
+                start: now,
+                end: now,
+                owner: Some("alice".to_owned()),
+            }],
+            &PreparedEntity {
+                entity_ref: None,
+                name: "Brass Valve".to_owned(),
+                type_name: "Tools".to_owned(),
+                aliases: Vec::new(),
+                facts: Vec::new(),
+                history: vec![PreparedHistory {
+                    summary_id: summary,
+                    conversation_id: Some(id(1)),
+                    session_on: now.utc_date(),
+                    sentence: "The valve was sealed.".to_owned(),
+                }],
+            },
+            now,
+        )
+        .await?
+        .ok_or("entity fixture was skipped")?;
+    Ok(view)
+}
+
+async fn wait_for_advisory(
+    pool: &PgPool,
+    class: i32,
+    key: i32,
+    mode: &str,
+    granted: bool,
+) -> Result<(), sqlx::Error> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    loop {
+        interval.tick().await;
+        let found: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
+                  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                  AND classid = $1::oid AND objid = $2::oid AND objsubid = 2
+                  AND mode = $3 AND granted = $4
+            )",
+        )
+        .bind(class)
+        .bind(key)
+        .bind(mode)
+        .bind(granted)
+        .fetch_one(pool)
+        .await?;
+        if found {
+            return Ok(());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn summary_publication_waits_for_merge_to_commit(pool: PgPool) -> TestResult {
     use std::time::Duration;
 

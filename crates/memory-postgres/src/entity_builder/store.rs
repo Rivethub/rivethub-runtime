@@ -39,6 +39,7 @@ use super::error::fence_error;
 use crate::PostgresMemory;
 use crate::graphile::GraphileQueue;
 use crate::summary_replace;
+use crate::wiki_writer::WikiRepository;
 use kernel::memory::summary_reference::{SummaryConsumer, SummaryReferenceError};
 
 use super::error::query_error;
@@ -50,9 +51,11 @@ use super::identity::resolve;
 use super::identity::write_aliases;
 use super::known::known_entities;
 use super::lease::PgLease;
-use super::lease::commit_page;
+use super::lease::finish_page_write;
 use super::lease::hold_payload;
 use super::lease::ignore_idle_timeout;
+use super::lease::publish_current_page;
+use super::lease::release_page;
 use super::rewrite::write_history;
 use super::sql::BACKFILL;
 use super::sql::DONE;
@@ -196,6 +199,7 @@ impl EntityStore for PostgresMemory {
         };
         let started = leaves.first().map_or(now, |leaf| leaf.start);
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        lock_names(&mut tx, prepared).await?;
         let ids: Vec<_> = leaves
             .iter()
             .map(|leaf| leaf.id)
@@ -213,7 +217,6 @@ impl EntityStore for PostgresMemory {
                 validate_leaf(&mut tx, input, leaf).await?;
             }
         }
-        lock_names(&mut tx, prepared).await?;
         let mut types = type_rows(&mut tx).await?;
         let Some(kind) = ensure_type(&mut tx, &prepared.type_name, &mut types, &owner, now).await?
         else {
@@ -252,17 +255,14 @@ impl EntityStore for PostgresMemory {
         now: Timestamp,
     ) -> Result<PublishOutcome, EntityStoreError> {
         let directory = self.wiki_home("").map_err(store_error)?;
-        let mut tx = self.pool.begin().await.map_err(query_error)?;
-        let ids: Vec<_> = view.history.iter().map(|line| line.summary_id).collect();
-        summary_replace::shared(&mut tx, &ids)
-            .await
-            .map_err(fence_error)?;
+        let mut conn = self.pool.acquire().await.map_err(query_error)?.detach();
+        let mut tx = conn.begin().await.map_err(query_error)?;
         lock_view(&mut tx, view).await?;
-        let fresh = load_view(&mut tx, view.id).await?;
-        if fresh.snapshot != view.snapshot {
-            return Ok(PublishOutcome::Stale(Box::new(fresh)));
-        }
-        commit_page(tx, &directory, &fresh, prose, now).await
+        let mut repository = WikiRepository::new(directory).lock().await?;
+        let published = publish_current_page(&mut tx, &mut repository, view, prose, now).await;
+        let published = finish_page_write(tx, published).await;
+        drop(conn);
+        release_page(repository, published).await
     }
 
     async fn lease_entity(&self, id: Uuid) -> Result<Box<dyn EntityLease>, EntityStoreError> {
@@ -478,6 +478,9 @@ impl EntityStore for PostgresMemory {
             return Ok(None);
         }
         let mut tx = self.pool.begin().await.map_err(query_error)?;
+        super::merge::lock_pair(&mut tx, left, right)
+            .await
+            .map_err(query_error)?;
         let ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT summary_id FROM rh_entity_history WHERE entity_id = ANY($1)
              UNION SELECT summary_id FROM rh_entity_applied WHERE entity_id = ANY($1)

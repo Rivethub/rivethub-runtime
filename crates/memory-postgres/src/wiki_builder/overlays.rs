@@ -119,6 +119,13 @@ impl PostgresMemory {
                 })
             });
         }
+        self.empty_overlay_page(slug).await
+    }
+
+    pub(super) async fn empty_overlay_page(
+        &self,
+        slug: &WikiSlug,
+    ) -> Result<Option<TopicPage>, WikiStoreError> {
         let title: Option<String> =
             sqlx::query_scalar("SELECT title FROM rh_wiki_topics WHERE slug = $1")
                 .bind(slug.as_ref())

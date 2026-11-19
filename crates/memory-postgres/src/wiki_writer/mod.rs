@@ -58,6 +58,21 @@ impl WikiRepository {
         history::since(&root, slug, since).await
     }
 
+    #[doc = "Wiki writer lock order.
+
+Take any route lease (store apply, then conversation apply) or entity identity
+locks before the repository. Then take transactional summary fences (store
+reference, then conversation references) and do the database writes. Hold the
+repository through commit or rollback. Never wait for a repository while
+holding a reference fence, or acquire a second repository lock while holding
+the first.
+
+Merge and summary publication never take the repository lock. They can queue
+for an exclusive reference fence while a wiki writer holds the repository.
+An earlier reference holder must be able to finish without needing that
+repository. Entity-only writers therefore also acquire identity locks before
+reference fences. Direct entity publication detaches its connection so a
+repository holder can still acquire a pooled connection."]
     pub async fn lock(&self) -> Result<LockedRepository, WikiWriteError> {
         let root = prepare_root(&self.root).await?;
         let lock = WriterLock::acquire(&root).await?;

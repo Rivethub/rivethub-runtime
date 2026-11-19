@@ -226,7 +226,7 @@ impl PostgresMemory {
                 ..topic_page(stored)?
             },
             None if !placed.canonical => self
-                .overlay_page(slug, placed)
+                .empty_overlay_page(slug)
                 .await?
                 .ok_or_else(|| WikiStoreError::TopicMissing(slug.as_ref().to_owned()))?,
             None => return Err(WikiStoreError::TopicMissing(slug.as_ref().to_owned())),
