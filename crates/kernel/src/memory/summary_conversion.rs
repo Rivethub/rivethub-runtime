@@ -187,19 +187,22 @@ pub struct ConversionBucket {
 impl ConversionBucket {
     pub fn debit(&mut self, charge: ConversionCharge, now: Timestamp) -> bool {
         let elapsed = (now - self.at).as_millis().max(0);
-        let capacity = self.rate.max(charge.capacity).max(charge.estimate) as f64;
+        let capacity = self.rate.max(charge.capacity) as f64;
         let tokens = (self.tokens + elapsed as f64 * self.rate as f64 / 60_000.0).min(capacity);
+        self.tokens = tokens;
         if now < self.at {
             return false;
         }
+        self.at = now;
+        if charge.estimate < 0 || charge.estimate as f64 > capacity {
+            return false;
+        }
         if tokens < charge.estimate as f64 {
-            self.at = now;
             self.defer(charge.estimate as f64 - tokens);
             self.tokens = charge.estimate as f64;
             return false;
         }
         self.tokens = tokens - charge.estimate as f64;
-        self.at = now;
         true
     }
 
@@ -259,6 +262,23 @@ mod tests {
     use super::{ConversionBucket, ConversionCharge};
     use jiff::{SignedDuration, Timestamp};
 
+    #[test]
+    fn idle_bucket_refuses_a_charge_above_its_capacity() {
+        let mut bucket = ConversionBucket {
+            rate: 200_000,
+            tokens: 200_000.0,
+            at: Timestamp::UNIX_EPOCH,
+        };
+        let now = Timestamp::UNIX_EPOCH + SignedDuration::from_hours(24);
+        assert!(!bucket.debit(
+            ConversionCharge {
+                estimate: 5_000_000,
+                capacity: 500_000
+            },
+            now
+        ));
+        assert_eq!(bucket.tokens.to_bits(), 500_000.0_f64.to_bits());
+    }
     #[test]
     fn conversion_bucket_refills_in_whole_milliseconds_and_caps_large_intervals() {
         let start = Timestamp::UNIX_EPOCH;

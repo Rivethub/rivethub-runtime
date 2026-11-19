@@ -1002,3 +1002,44 @@ async fn resummarize_arms_one_historical_opening_once() {
         0
     );
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn starting_and_resuming_conversion_reset_an_idle_bucket_on_both_stores(
+    pool: PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use kernel::memory::summary_conversion::{ConversionControl, SummaryConversion};
+
+    let pg = memory_postgres::PostgresMemory::new(pool.clone());
+    let directory = tempfile::tempdir()?;
+    let path = migrated(directory.path());
+    let sqlite = memory_sqlite::SqliteStore::open(&path)?;
+    let conn = rusqlite::Connection::open(&path)?;
+    for action in [
+        ConversionControl::Start {
+            rate: Some(200_000),
+            include_giants: false,
+        },
+        ConversionControl::Resume {
+            include_giants: false,
+        },
+    ] {
+        sqlx::query("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01 00:00:00+00'")
+            .execute(&pool)
+            .await?;
+        conn.execute_batch("UPDATE rh_summary_conversion SET bucket_at = '1970-01-01T00:00:00Z'")?;
+        pg.control(action).await?;
+        sqlite.control(action).await?;
+        let pg_reset: bool = sqlx::query_scalar(
+            "SELECT bucket_at >= clock_timestamp() - interval '30 seconds' FROM rh_summary_conversion",
+        ).fetch_one(&pool).await?;
+        assert!(pg_reset);
+        assert_eq!(
+            scalar(
+                &path,
+                "SELECT julianday(bucket_at) >= julianday('now', '-30 seconds') FROM rh_summary_conversion"
+            ),
+            1
+        );
+    }
+    Ok(())
+}

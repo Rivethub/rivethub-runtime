@@ -226,12 +226,14 @@ impl SummaryConversion for SqliteStore {
                     "UPDATE rh_summary_conversion SET enabled = 1, include_giants = ?1, rate = coalesce(?2, rate),
                      bucket_tokens = CASE WHEN charged_tokens = 0 AND bucket_tokens = 0 AND inventory_after IS NULL
                                           THEN coalesce(?2, rate) ELSE bucket_tokens END,
+                     bucket_at = CASE WHEN julianday(bucket_at) > julianday(?3) THEN bucket_at ELSE ?3 END,
                      inventory_after = NULL, inventory_complete = 0",
-                    params![include_giants, rate],
+                    params![include_giants, rate, time::stamp(Timestamp::now())],
                 ),
                 ConversionControl::Resume { include_giants } => tx.execute(
-                    "UPDATE rh_summary_conversion SET enabled = 1, include_giants = include_giants OR ?1",
-                    [include_giants],
+                    "UPDATE rh_summary_conversion SET enabled = 1, include_giants = include_giants OR ?1,
+                     bucket_at = CASE WHEN julianday(bucket_at) > julianday(?2) THEN bucket_at ELSE ?2 END",
+                    params![include_giants, time::stamp(Timestamp::now())],
                 ),
                 ConversionControl::Pause => tx.execute("UPDATE rh_summary_conversion SET enabled = 0", []),
                 ConversionControl::Retry { conversation } => tx.execute(

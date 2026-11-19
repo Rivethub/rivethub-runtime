@@ -81,7 +81,7 @@ CREATE TABLE rh_summary_conversion (
     inventory_complete INTEGER NOT NULL DEFAULT 0 CHECK (inventory_complete IN (0,1)),
     rate INTEGER NOT NULL DEFAULT 200000 CHECK (rate > 0),
     bucket_tokens REAL NOT NULL DEFAULT 0 CHECK (bucket_tokens >= 0),
-    bucket_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
+    bucket_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     charged_tokens INTEGER NOT NULL DEFAULT 0 CHECK (charged_tokens >= 0),
     provider_input_tokens INTEGER NOT NULL DEFAULT 0,
     provider_output_tokens INTEGER NOT NULL DEFAULT 0
