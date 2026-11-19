@@ -23,7 +23,7 @@ const FIRST: &str = "Repair the recovery callback";
 const LATER: &str = "Inspect the missing receipts";
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
-async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_write_it(
+async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_access_it(
     pool: PgPool,
 ) -> TestResult {
     seed(&pool).await?;
@@ -87,8 +87,8 @@ async fn the_opening_uses_transcript_order_and_a_shared_reader_cannot_write_it(
         .clone()
         .run(memory.subject(id))
         .await?
-        .expect("visible opening");
-    assert_eq!(visible.summary.as_deref(), Some(FIRST));
+        .expect("visible conversation");
+    assert_eq!(visible.summary, None);
     let changed = bob.run(async {
         sqlx::query("UPDATE rh_summary_openings SET content = 'Should be rejected' WHERE conversation_id = $1")
             .bind(id).execute(&scoped).await

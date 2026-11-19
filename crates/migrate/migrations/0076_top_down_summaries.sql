@@ -180,8 +180,6 @@ BEGIN
     CREATE POLICY rh_summary_openings_capture ON rh_summary_openings USING (
         EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_openings.conversation_id
                 AND c.owner_user_id = (SELECT rh_scope_principal())));
-    CREATE POLICY rh_summary_openings_read ON rh_summary_openings FOR SELECT USING (
-        EXISTS (SELECT 1 FROM rh_conversations c WHERE c.id = rh_summary_openings.conversation_id));
 
     -- Portable export follows the same conversation visibility as the tree.
     -- Receipt writes are reserved for maintenance.

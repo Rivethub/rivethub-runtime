@@ -206,3 +206,48 @@ async fn older_legacy_end_does_not_override_known_activity_and_late_input_clears
     assert_eq!(state.settled_at, None);
     Ok(())
 }
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn opening_is_visible_only_to_owner_and_maintenance(pool: PgPool) -> TestResult {
+    let store = PostgresMemory::new(crate::common::probe(&pool).await?);
+    let alice = Owner::new("alice".to_owned())?;
+    let bob = Owner::new("bob".to_owned())?;
+    let id: Uuid = Scope::Viewer(Viewer::new(alice.clone(), Vec::new()))
+        .run(store.capture(
+            batch(
+                "cli:invented-private",
+                vec![message("invented", "2026-01-02T01:00:00Z")?],
+            ),
+            &alice,
+            None,
+        ))
+        .await?
+        .conversation_id
+        .parse()?;
+    let stranger = Scope::Viewer(Viewer::new(bob, vec![crate::visibility::household()?]));
+    assert!(
+        stranger
+            .clone()
+            .run(store.opening_title(id))
+            .await?
+            .is_none()
+    );
+    sqlx::query("UPDATE rh_conversations SET visibility = 'household' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    assert!(stranger.run(store.opening_title(id)).await?.is_none());
+    assert!(
+        Scope::Viewer(Viewer::new(alice, Vec::new()))
+            .run(store.opening_title(id))
+            .await?
+            .is_some()
+    );
+    assert!(
+        Scope::Maintenance
+            .run(store.opening_title(id))
+            .await?
+            .is_some()
+    );
+    Ok(())
+}
