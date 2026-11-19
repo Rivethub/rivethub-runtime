@@ -358,6 +358,9 @@ const SUMMARY_CANDIDATES: &str = "SELECT id, content, CASE WHEN kind IN ('sessio
          access_count, 0.6,
          (SELECT c.session_key FROM ros_conversations c WHERE c.id = s.conversation_id)
          FROM ros_summaries s WHERE kind <> 'section' AND (?1 IS NULL OR EXISTS (SELECT 1 FROM ros_conversations c WHERE c.id = s.conversation_id AND c.agent = ?1))
+         AND (s.kind IN ('session', 'part') OR NOT EXISTS (
+             SELECT 1 FROM ros_summaries session
+             WHERE session.conversation_id = s.conversation_id AND session.kind = 'session'))
          AND (?2 IS NULL OR search_time >= ?2) AND (?3 IS NULL OR search_time < ?3)
          AND NOT EXISTS (SELECT 1 FROM rh_session_trash tr JOIN ros_conversations tc ON tc.session_key = tr.session_key WHERE tc.id = s.conversation_id)";
 

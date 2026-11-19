@@ -29,6 +29,7 @@ pub struct MergeReport {
     pub inserted: BTreeMap<String, u64>,
     pub kept_family: Vec<String>,
     pub dropped_summary_trees: Vec<DroppedSummaryTree>,
+    pub dropped_legacy_summaries: u64,
     pub replaced: Vec<String>,
     pub moved_conversations: u64,
     pub mapped_type_topics: u64,
