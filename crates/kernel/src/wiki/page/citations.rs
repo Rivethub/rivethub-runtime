@@ -101,11 +101,18 @@ fn bullet_entry(line: &str) -> Option<PageCitation> {
     }
     let mut words = rest.split_whitespace();
     let date = words.find_map(iso_date);
-    let dated = date.and_then(|_| words.next().and_then(CitationKind::from_label));
+    let dated = date
+        .and_then(|_| words.next().and_then(CitationKind::from_label))
+        .filter(|kind| {
+            matches!(
+                kind,
+                CitationKind::Session | CitationKind::Part | CitationKind::Section
+            )
+        });
     Some(PageCitation {
         summary_id,
         date,
-        kind: rest.split_whitespace().find_map(legacy_kind).or(dated),
+        kind: dated.or_else(|| rest.split_whitespace().find_map(legacy_kind)),
         note: Some(item.to_owned()),
     })
 }

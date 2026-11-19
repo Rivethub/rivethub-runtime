@@ -177,6 +177,10 @@ slug: spring
 - `00000000-0000-4000-8000-000000000002` 2026-10-10 we measured part of the spring
 - `00000000-0000-4000-8000-000000000003` measured on 2026-10-10 section of the spring
 - `00000000-0000-4000-8000-000000000004` BRANCH noted in the session
+- `00000000-0000-4000-8000-000000000005` 2026-10-10 section notes the root cause
+- `00000000-0000-4000-8000-000000000006` 2026-10-10 session discusses a branch
+- `00000000-0000-4000-8000-000000000007` leaf measurements from 2026-10-10 part of the spring
+- `00000000-0000-4000-8000-000000000008` branch measurements from 2026-10-10 root of the spring
 ";
     let page = parse_wiki_page(markdown)?;
     let kinds: Vec<_> = page
@@ -190,7 +194,11 @@ slug: spring
             None,
             None,
             Some("section".to_owned()),
-            Some("branch".to_owned())
+            Some("branch".to_owned()),
+            Some("section".to_owned()),
+            Some("session".to_owned()),
+            Some("part".to_owned()),
+            Some("branch".to_owned()),
         ]
     );
     assert!(
