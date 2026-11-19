@@ -546,6 +546,145 @@ async fn merge_replacement_stays_live_and_settles(pool: PgPool) -> TestResult {
     Ok(())
 }
 
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn merge_samples_after_manual_settle_commits(pool: PgPool) -> TestResult {
+    merge_settle_order(pool, true).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn manual_settle_waits_for_merge_and_settles_replacement(pool: PgPool) -> TestResult {
+    merge_settle_order(pool, false).await
+}
+
+async fn merge_settle_order(pool: PgPool, settle_first: bool) -> TestResult {
+    use std::time::Duration;
+
+    use kernel::memory::{MemoryStore as _, SummaryStore as _, settlement::SettleStatus};
+
+    let source = PostgresMemory::new(source_database(&pool).await?);
+    let family = PostgresMemory::new(pool.clone());
+    capture(&family, "alice", &[(BOTH_SMALLER, 1)]).await?;
+    capture(&source, "alice", &[(BOTH_SMALLER, 4)]).await?;
+    let original = prepare_merge_settle_race(&pool, settle_first).await?;
+
+    let mut barrier = pool.begin().await?;
+    let blocker: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid() FROM pg_advisory_xact_lock(176, 3)")
+            .fetch_one(&mut *barrier)
+            .await?;
+    let request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: false,
+    };
+    let cancel = CancellationToken::new();
+    let (start_second, second_ready) = tokio::sync::oneshot::channel();
+    let (merge_ready, settle_ready) = if settle_first {
+        (Some(second_ready), None)
+    } else {
+        (None, Some(second_ready))
+    };
+    let merge = async {
+        if let Some(ready) = merge_ready {
+            ready.await?;
+        }
+        Ok::<_, Box<dyn std::error::Error>>(family.merge_store(&source, &request, &cancel).await?)
+    };
+    let settle = async {
+        if let Some(ready) = settle_ready {
+            ready.await?;
+        }
+        Ok::<_, Box<dyn std::error::Error>>(
+            family
+                .mark_summary_settled(BOTH_SMALLER, &request.owner)
+                .await?,
+        )
+    };
+    let (merged, settled, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(merge, settle, async {
+            let first = merge_settle_waiter(&pool, blocker).await?;
+            start_second
+                .send(())
+                .map_err(|()| "second writer stopped")?;
+            merge_settle_waiter(&pool, first).await?;
+            barrier.commit().await?;
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+    })
+    .await
+    .map_err(|_| "merge and manual settle did not wait in order and finish")??;
+
+    assert_eq!(merged.replaced, [BOTH_SMALLER]);
+    let settled = settled.ok_or("manual settle lost the session")?;
+    assert_eq!(settled.status, SettleStatus::Settled);
+    let replacement: Uuid =
+        sqlx::query_scalar("SELECT id FROM rh_conversations WHERE session_key = $1")
+            .bind(BOTH_SMALLER)
+            .fetch_one(&pool)
+            .await?;
+    let state = family
+        .summary_state(replacement)
+        .await?
+        .ok_or("replacement lost live state")?;
+    assert!(!state.historical_only);
+    if settle_first {
+        assert_eq!(settled.conversation_id, original);
+        assert_eq!(state.settled_at, None);
+    } else {
+        assert_eq!(settled.conversation_id, replacement);
+        assert_eq!(state.settled_at, settled.settled_at);
+        assert_eq!(
+            family.live_candidates(Uuid::nil(), 10).await?,
+            [(replacement, state.input_revision)]
+        );
+    }
+    Ok(())
+}
+
+async fn prepare_merge_settle_race(pool: &PgPool, settle_first: bool) -> Result<Uuid, sqlx::Error> {
+    let original = sqlx::query_scalar(
+        "UPDATE rh_summary_state SET historical_only = true RETURNING conversation_id",
+    )
+    .fetch_one(pool)
+    .await?;
+    sqlx::query(
+        "CREATE FUNCTION pause_merge_settle() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             PERFORM pg_advisory_xact_lock(176, 3);
+             RETURN NULL;
+         END; $$",
+    )
+    .execute(pool)
+    .await?;
+    let trigger = if settle_first {
+        "CREATE TRIGGER pause_settle BEFORE UPDATE ON rh_summary_state
+         FOR EACH STATEMENT EXECUTE FUNCTION pause_merge_settle()"
+    } else {
+        "CREATE TRIGGER pause_merge BEFORE DELETE ON rh_tags
+         FOR EACH STATEMENT EXECUTE FUNCTION pause_merge_settle()"
+    };
+    sqlx::query(trigger).execute(pool).await?;
+    Ok(original)
+}
+
+async fn merge_settle_waiter(pool: &PgPool, blocker: i32) -> Result<i32, sqlx::Error> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+    loop {
+        interval.tick().await;
+        let waiter = sqlx::query_scalar(
+            "SELECT pid FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'
+               AND $1 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(blocker)
+        .fetch_optional(pool)
+        .await?;
+        if let Some(waiter) = waiter {
+            return Ok(waiter);
+        }
+    }
+}
+
 async fn append_merge_messages(
     source: &PgPool,
     conversation: Uuid,

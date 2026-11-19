@@ -206,17 +206,20 @@ impl PostgresMemory {
     ) -> Result<Option<SettleResult>, Error> {
         let mut tx = self.pool.begin().await.map_err(failure)?;
         let id = kernel::memory::settlement::session_uuid(session);
-        let found: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM rh_conversations
-             WHERE owner_user_id = $1 AND (id = $2 OR session_key = $3)
-             ORDER BY id LIMIT 2 FOR UPDATE",
-        )
-        .bind(owner)
-        .bind(id)
-        .bind(session)
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(failure)?;
+        let lookup = || {
+            sqlx::query_scalar(
+                "SELECT id FROM rh_conversations
+                 WHERE owner_user_id = $1 AND (id = $2 OR session_key = $3)
+                 ORDER BY id LIMIT 2 FOR UPDATE",
+            )
+            .bind(owner)
+            .bind(id)
+            .bind(session)
+        };
+        let mut found: Vec<Uuid> = lookup().fetch_all(&mut *tx).await.map_err(failure)?;
+        if found.is_empty() {
+            found = lookup().fetch_all(&mut *tx).await.map_err(failure)?;
+        }
         let [id] = found.as_slice() else {
             return Ok(None);
         };

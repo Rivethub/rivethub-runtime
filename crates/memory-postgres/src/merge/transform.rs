@@ -13,6 +13,9 @@ CREATE TEMP TABLE merge_moves (conversation uuid PRIMARY KEY, owner text NOT NUL
 CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_slug_map (old text PRIMARY KEY, new text NOT NULL) ON COMMIT DROP;
+SELECT t.id FROM rh_conversations t
+  JOIN merge_rh_conversations s USING (session_key, agent)
+ WHERE t.id <> s.id ORDER BY t.id FOR UPDATE OF t;
 CREATE TEMP TABLE merge_dupes ON COMMIT DROP AS
   SELECT pairs.*, source_messages > target_messages AND NOT needs_repair AND NOT has_visible_tree AS source_wins FROM (
   SELECT s.id AS source_id, t.id AS target_id, s.session_key, s.agent, t.owner_user_id AS target_owner,
