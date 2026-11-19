@@ -27,6 +27,7 @@ fn team_sessions_are_grouped_and_all_session_text_is_quoted_data() {
         records,
         &jiff::tz::TimeZone::UTC,
         Timestamp::new(0, 0).expect("now"),
+        None,
     )
     .expect("render");
     let text = serde_json::to_string(&reply).expect("json");
@@ -64,10 +65,30 @@ fn team_time_is_relative_and_minute_precision_without_an_empty_topic_separator()
         vec![record],
         &wire::time::bundled_zone("America/New_York").expect("bundled zone"),
         now,
+        None,
     )
     .expect("render");
     let text = serde_json::to_string(&reply).expect("json");
     assert!(text.contains("Recent work · 4m ago · 2026-11-13 20:37 EST\\n"));
     assert!(!text.contains("445744"));
     assert!(!text.contains("EST ·"));
+}
+
+#[test]
+fn a_session_key_carries_its_page_and_a_title_does_not() {
+    let pages =
+        crate::pages::Pages::new(url::Url::parse("https://localhost:5174").expect("origin"));
+    let mut keyed = session("ines", "notes", Some("body"));
+    keyed.session_id = "claude-code:field-gulls".into();
+    let reply = render(
+        vec![keyed, session("tom", "a title", None)],
+        &jiff::tz::TimeZone::UTC,
+        Timestamp::new(0, 0).expect("now"),
+        Some(&pages),
+    )
+    .expect("render");
+    let text = serde_json::to_string(&reply).expect("json");
+    assert_eq!(text.matches("https://localhost:5174/sessions/").count(), 1);
+    assert!(text.contains("https://localhost:5174/sessions/claude-code%3Afield-gulls"));
+    assert!(text.contains("Session from ines"));
 }

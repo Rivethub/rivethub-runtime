@@ -204,13 +204,14 @@ pub(crate) async fn gateway_as(
     gateway_with(env, config, timeout, Redirects::Follow, owner_uid).await
 }
 
-async fn gateway_with(
-    env: &Environment,
-    config: &Config,
-    timeout: Duration,
-    redirects: Redirects,
-    owner_uid: Option<u32>,
-) -> Result<Endpoint, Error> {
+struct GatewayTarget {
+    source: BindSource,
+    url: url::Url,
+    ca: Option<std::path::PathBuf>,
+    pin: Option<(String, SocketAddr)>,
+}
+
+async fn gateway_target(env: &Environment, config: &Config) -> Result<GatewayTarget, Error> {
     let hostname = host_name()?;
     let node = config::resolve_node_name(config, env, &hostname)?;
     let section = config.gateway.clone();
@@ -220,6 +221,21 @@ async fn gateway_with(
         BindSource::resolve_section(section.as_ref(), &tls_env, &node, &shared)
     })
     .await?;
+    let mut url = listen_url(&source)?;
+    let ca = gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env));
+    let pin = match (&source.tls_cert, &ca) {
+        (Some(cert), Some(_)) => served_pin(&mut url, cert, source.port)?,
+        _ => None,
+    };
+    Ok(GatewayTarget {
+        source,
+        url,
+        ca,
+        pin,
+    })
+}
+
+fn listen_url(source: &BindSource) -> Result<url::Url, Error> {
     let mut url = url::Url::parse(if source.tls_cert.is_some() {
         "https://localhost/"
     } else {
@@ -228,7 +244,7 @@ async fn gateway_with(
     let host = if source.host.contains(':') && !source.host.starts_with('[') {
         format!("[{}]", source.host)
     } else {
-        source.host
+        source.host.clone()
     };
     url.set_host(Some(&host))?;
     match url.host() {
@@ -243,6 +259,102 @@ async fn gateway_with(
     }
     url.set_port(Some(source.port))
         .map_err(|()| Error::Address)?;
+    Ok(url)
+}
+
+pub async fn recall_origin(env: &Environment, config: &Config) -> Option<url::Url> {
+    if config
+        .gateway
+        .as_ref()
+        .is_some_and(|section| section.enabled == Some(false))
+    {
+        return None;
+    }
+    if remote_store_without_gateway_host(config, env) {
+        return None;
+    }
+    match gateway_target(env, config).await {
+        Ok(target) => Some(target.url),
+        Err(error) => {
+            tracing::debug!(%error, "recall page links omitted");
+            None
+        }
+    }
+}
+
+fn remote_store_without_gateway_host(config: &Config, env: &Environment) -> bool {
+    if config
+        .gateway
+        .as_ref()
+        .is_some_and(|section| section.host.is_some())
+    {
+        return false;
+    }
+    if !config.postgres_selected(env) {
+        return false;
+    }
+    match config.memory_postgres_url(env) {
+        Some(raw) => !matches!(store_place(&raw), StorePlace::Local),
+        None => false,
+    }
+}
+
+#[derive(Debug)]
+enum StorePlace {
+    Local,
+    Remote,
+    Unknown,
+}
+
+fn store_place(raw: &str) -> StorePlace {
+    let url = match url::Url::parse(raw) {
+        Ok(url) => url,
+        Err(error) => {
+            tracing::debug!(%error, "postgres connection string is not a URL");
+            return StorePlace::Unknown;
+        }
+    };
+    match url.host() {
+        None => StorePlace::Local,
+        Some(url::Host::Domain(name)) => place_of_name(name),
+        Some(url::Host::Ipv4(address)) => place_of_ip(IpAddr::V4(address)),
+        Some(url::Host::Ipv6(address)) => place_of_ip(IpAddr::V6(address)),
+    }
+}
+
+fn place_of_name(name: &str) -> StorePlace {
+    if name.eq_ignore_ascii_case("localhost") {
+        return StorePlace::Local;
+    }
+    let bare = name
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(name);
+    match bare.parse::<IpAddr>() {
+        Ok(address) => place_of_ip(address),
+        Err(error) => {
+            tracing::debug!(%error, "postgres host is a name");
+            StorePlace::Remote
+        }
+    }
+}
+
+fn place_of_ip(address: IpAddr) -> StorePlace {
+    if address.is_loopback() {
+        StorePlace::Local
+    } else {
+        StorePlace::Remote
+    }
+}
+
+async fn gateway_with(
+    env: &Environment,
+    config: &Config,
+    timeout: Duration,
+    redirects: Redirects,
+    owner_uid: Option<u32>,
+) -> Result<Endpoint, Error> {
+    let target = gateway_target(env, config).await?;
     let policy = match redirects {
         Redirects::Follow => reqwest::redirect::Policy::default(),
         Redirects::Refuse => reqwest::redirect::Policy::none(),
@@ -251,8 +363,7 @@ async fn gateway_with(
         .no_proxy()
         .redirect(policy)
         .timeout(timeout);
-    let ca = gateway::private_ca(config.gateway.as_ref(), env, &config::shared_dir(env));
-    let verified_tls = source.tls_cert.is_some() && ca.is_some();
+    let verified_tls = target.source.tls_cert.is_some() && target.ca.is_some();
     let token = match owner_uid {
         Some(_) => gateway::local_owner::read_token(&gateway::state_dir(env)?)?,
         None => None,
@@ -260,18 +371,27 @@ async fn gateway_with(
     let builder = match (token, owner_uid) {
         (Some(token), Some(uid)) => {
             if !verified_tls {
-                crate::listener::require_ours(source.port, uid).await?;
+                crate::listener::require_ours(target.source.port, uid).await?;
             }
             builder.default_headers(owner_header(token.expose())?)
         }
         _ => builder,
     };
-    let client = match (&source.tls_cert, &ca) {
-        (Some(cert), Some(ca)) => verified(builder, &mut url, cert, ca, source.port)?,
-        _ => builder,
-    }
-    .build()?;
-    Ok(Endpoint { url, client })
+    let builder = match &target.ca {
+        Some(ca) if verified_tls => {
+            let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
+            builder.tls_certs_only(roots)
+        }
+        Some(_) | None => builder,
+    };
+    let builder = match &target.pin {
+        Some((name, address)) => builder.resolve(name, *address),
+        None => builder,
+    };
+    Ok(Endpoint {
+        url: target.url,
+        client: builder.build()?,
+    })
 }
 
 fn owner_header(token: &str) -> Result<reqwest::header::HeaderMap, Error> {
@@ -283,25 +403,21 @@ fn owner_header(token: &str) -> Result<reqwest::header::HeaderMap, Error> {
     Ok(headers)
 }
 
-fn verified(
-    builder: reqwest::ClientBuilder,
+fn served_pin(
     url: &mut url::Url,
     cert: &Path,
-    ca: &Path,
     port: u16,
-) -> Result<reqwest::ClientBuilder, Error> {
-    let roots = reqwest::Certificate::from_pem_bundle(&std::fs::read(ca)?)?;
-    let builder = builder.tls_certs_only(roots);
+) -> Result<Option<(String, SocketAddr)>, Error> {
     let address = match url.host() {
         Some(url::Host::Ipv4(address)) => IpAddr::V4(address),
         Some(url::Host::Ipv6(address)) => IpAddr::V6(address),
-        Some(url::Host::Domain(_)) | None => return Ok(builder),
+        Some(url::Host::Domain(_)) | None => return Ok(None),
     };
     let Some(name) = served_name(cert, address)? else {
-        return Ok(builder);
+        return Ok(None);
     };
     url.set_host(Some(&name))?;
-    Ok(builder.resolve(&name, SocketAddr::new(address, port)))
+    Ok(Some((name, SocketAddr::new(address, port))))
 }
 
 fn served_name(cert: &Path, address: IpAddr) -> Result<Option<String>, Error> {
@@ -417,6 +533,37 @@ mod tests {
         server.abort();
         let seen = seen.lock().clone();
         (built, seen)
+    }
+
+    #[test]
+    fn a_numeric_postgres_host_is_local_only_on_loopback() {
+        for local in [
+            "postgres://rivet@127.0.0.1/memory",
+            "postgres://rivet@127.0.0.1:5432/memory",
+            "postgres://rivet@localhost/memory",
+            "postgres://rivet@LOCALHOST/memory",
+            "postgres:///memory",
+            "postgres://rivet@[::1]/memory",
+        ] {
+            assert!(
+                matches!(super::store_place(local), super::StorePlace::Local),
+                "{local}"
+            );
+        }
+        for remote in [
+            "postgres://user@203.0.113.10/memory",
+            "postgres://user@db.example/memory",
+            "postgres://user@[2001:db8::1]/memory",
+        ] {
+            assert!(
+                matches!(super::store_place(remote), super::StorePlace::Remote),
+                "{remote}"
+            );
+        }
+        assert!(matches!(
+            super::store_place("host=db.example.com dbname=memory"),
+            super::StorePlace::Unknown
+        ));
     }
 
     #[tokio::test]

@@ -15,6 +15,7 @@ axum = { workspace = true }
 jiff = { workspace = true }
 kernel = { workspace = true }
 nix = { workspace = true }
+percent-encoding = { workspace = true }
 reqwest = { workspace = true }
 rmcp = { workspace = true, features = ["server", "client", "transport-io", "transport-child-process", "transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
 schemars = { workspace = true }
@@ -27,6 +28,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt", "sync", "fs", "io-util", "io-std", "time"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 strum = { workspace = true }
 uuid = { workspace = true }
 wire = { workspace = true }

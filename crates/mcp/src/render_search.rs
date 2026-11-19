@@ -41,6 +41,7 @@ pub(crate) fn search(
     found: &HitContext,
     expand: bool,
     clock: Clock<'_>,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let Clock { now, zone } = clock;
     let mut text = String::new();
@@ -86,7 +87,7 @@ pub(crate) fn search(
                 .as_deref()
                 .and_then(|key| found.origins.get(key));
             let block = if let Some(detail) = outcome.summaries.get(&hit.id) {
-                summary(hit, detail, expand, origin, now, zone)?
+                summary(hit, detail, expand, origin, clock, pages)?
             } else {
                 let lead = format!(
                     "- [summary/{}] ({}, score: {:.3})",
@@ -94,7 +95,11 @@ pub(crate) fn search(
                     dated(hit, now, zone),
                     hit.relevance_score,
                 );
-                attributed(&lead, &hit.content, origin, zone)
+                format!(
+                    "{}{}",
+                    attributed(&lead, &hit.content, origin, zone),
+                    session_line(pages, hit.session_id.as_deref())
+                )
             };
             blocks.push(block);
         }
@@ -107,7 +112,7 @@ pub(crate) fn search(
             let entry = found.messages.get(&hit.id).ok_or_else(|| {
                 Error::Invalid(format!("message {} disappeared during search", hit.id))
             })?;
-            blocks.push(message(hit, entry, found, now, zone)?);
+            blocks.push(message(hit, entry, found, now, zone, pages)?);
         }
         text.push_str(&blocks.join("\n"));
     }
@@ -120,6 +125,7 @@ fn message(
     found: &HitContext,
     now: Timestamp,
     zone: &TimeZone,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
     let origin = found.origins.get(&entry.session_id);
     let imported = origin.is_some();
@@ -167,7 +173,14 @@ fn message(
         Some(provenance) => kernel::memory::quote(provenance, &payload),
         None => payload,
     };
-    Ok(format!("{heading}\n{payload}"))
+    Ok(format!(
+        "{heading}{}\n{payload}",
+        session_line(pages, Some(&entry.session_id))
+    ))
+}
+
+fn session_line(pages: Option<&crate::pages::Pages>, session: Option<&str>) -> String {
+    crate::pages::suffix(pages.and_then(|pages| session.and_then(|id| pages.session(id))))
 }
 
 fn attributed(lead: &str, content: &str, origin: Option<&Provenance>, zone: &TimeZone) -> String {
@@ -233,9 +246,10 @@ fn summary(
     detail: &SummaryDetail,
     expand: bool,
     origin: Option<&Provenance>,
-    now: Timestamp,
-    zone: &TimeZone,
+    clock: Clock<'_>,
+    pages: Option<&crate::pages::Pages>,
 ) -> Result<String, Error> {
+    let Clock { now, zone } = clock;
     let tags = if detail.tags.is_empty() {
         String::new()
     } else {
@@ -249,7 +263,11 @@ fn summary(
             dated(hit, now, zone),
             hit.relevance_score,
         );
-        return Ok(attributed(&lead, &hit.content, origin, zone));
+        return Ok(format!(
+            "{}{}",
+            attributed(&lead, &hit.content, origin, zone),
+            session_line(pages, hit.session_id.as_deref())
+        ));
     }
     let mut text = format!(
         "**[{}]** ({}, score: {:.3}",
@@ -309,6 +327,7 @@ fn summary(
         Some(provenance) => kernel::memory::quote(provenance, &body),
         None => body,
     });
+    text.push_str(&session_line(pages, hit.session_id.as_deref()));
     Ok(text)
 }
 
