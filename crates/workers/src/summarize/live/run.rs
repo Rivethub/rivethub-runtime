@@ -342,6 +342,7 @@ impl Run<'_> {
         Ok(
             tokenize(self.env, self.request.conversation_id, self.revision, text)
                 .await?
+                .filter(|&count| count != 0 || text.is_empty())
                 .unwrap_or_else(|| self.meter.estimate(text)),
         )
     }

@@ -38,8 +38,6 @@ pub(crate) enum PlanError {
     InvalidMeter,
     #[error("chunk budget and meter leave no room for a character")]
     InvalidCut,
-    #[error("summary tokenizer became unavailable")]
-    ExactCount,
     #[error("composition needs at least one record")]
     EmptyComposition,
     #[error("one composition record exceeds its context budget")]
@@ -206,7 +204,7 @@ impl Meter {
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss
     )]
-    fn cut_chars(self, budget: usize) -> Result<usize, PlanError> {
+    pub(crate) fn cut_chars(self, budget: usize) -> Result<usize, PlanError> {
         let cut = (budget as f64 * self.0) as usize;
         if cut == 0 {
             return Err(PlanError::InvalidCut);
@@ -235,7 +233,13 @@ pub(crate) struct TranscriptPlan {
     pub(crate) total_tokens: usize,
 }
 
-pub(crate) type ExactCounter<'a> = dyn FnMut(&str) -> Result<usize, PlanError> + 'a;
+pub(crate) enum ExactCount {
+    Pending,
+    Known(usize),
+    OverContext,
+}
+
+pub(crate) type ExactCounter<'a> = dyn FnMut(&str) -> ExactCount + 'a;
 
 #[derive(Default)]
 struct Packed {
@@ -266,12 +270,12 @@ impl Packed {
         budget: usize,
         exact: &mut Option<&mut ExactCounter<'_>>,
         output: &mut Vec<Chunk>,
-    ) -> Result<(), PlanError> {
+    ) {
         if self.fragments.is_empty() {
-            return Ok(());
+            return;
         }
         let mut pieces = Vec::new();
-        split_exact(&self.text, budget, exact, &mut pieces)?;
+        split_exact(&self.text, budget, exact, &mut pieces);
         let mut start = 0;
         let mut first_fragment = 0;
         for piece in pieces {
@@ -309,7 +313,6 @@ impl Packed {
             });
             start = end;
         }
-        Ok(())
     }
 }
 
@@ -324,24 +327,26 @@ fn split_exact<'a>(
     budget: usize,
     exact: &mut Option<&mut ExactCounter<'_>>,
     output: &mut Vec<&'a str>,
-) -> Result<(), PlanError> {
-    if let Some(count) = exact
-        && count(text)? > budget
-    {
-        let chars = text.chars().count();
-        if chars >= 2_000 {
-            let midpoint = byte_at(text, chars / 2);
+) {
+    if let Some(count) = exact {
+        let split = match count(text) {
+            ExactCount::Pending => false,
+            ExactCount::Known(count) => count == 0 || count > budget,
+            ExactCount::OverContext => true,
+        };
+        if split && text.chars().count() >= 2_000 {
+            let midpoint = byte_at(text, text.chars().count() / 2);
             let cut = text[..midpoint]
                 .rfind('\n')
                 .filter(|cut| *cut > 0)
                 .unwrap_or(midpoint);
             let (left, right) = text.split_at(cut);
-            split_exact(left, budget, exact, output)?;
-            return split_exact(right, budget, exact, output);
+            split_exact(left, budget, exact, output);
+            split_exact(right, budget, exact, output);
+            return;
         }
     }
     output.push(text);
-    Ok(())
 }
 
 pub(crate) fn pack(
@@ -361,9 +366,9 @@ pub(crate) fn pack(
         while meter.estimate_chars(chars) > budget {
             let cut = meter.cut_chars(budget)?.min(chars);
             let (piece, rest) = text.split_at(byte_at(text, cut));
-            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks)?;
+            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks);
             packed.push(block, piece, offset..offset + cut);
-            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks)?;
+            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks);
             text = rest;
             chars -= cut;
             offset += cut;
@@ -373,13 +378,13 @@ pub(crate) fn pack(
         if !packed.fragments.is_empty()
             && (used + size > budget || (block.role == Role::User && used * 5 > budget * 4))
         {
-            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks)?;
+            std::mem::take(&mut packed).finish(meter, budget, &mut exact, &mut chunks);
             used = 0;
         }
         packed.push(block, text, offset..offset + chars);
         used += size;
     }
-    packed.finish(meter, budget, &mut exact, &mut chunks)?;
+    packed.finish(meter, budget, &mut exact, &mut chunks);
     let total_tokens = chunks.iter().map(|chunk| chunk.input_token_estimate).sum();
     Ok(TranscriptPlan {
         chunks,
@@ -440,4 +445,68 @@ fn condense(
 pub(crate) fn after_reduction(mut parent: Prompt, records: [&str; 2]) -> Prompt {
     parent.user = prompt::join_records(&records);
     parent
+}
+
+#[cfg(test)]
+mod probes {
+    use super::*;
+
+    fn block(ordinal: usize, role: Role, text: &str) -> Block {
+        Block {
+            source: Source {
+                id: Uuid::from_u128(u128::from(u64::try_from(ordinal).expect("ordinal"))),
+                ordinal,
+                created_at: Timestamp::UNIX_EPOCH,
+                render_key: [0; 32],
+            },
+            text: text.to_owned(),
+            role,
+        }
+    }
+
+    #[test]
+    fn preflight_splits_context_overflow_before_collecting_pending_counts() {
+        let limits = Limits::new(10_000, 1_000, false).expect("limits");
+        let mut pending_lengths = Vec::new();
+        let mut exact = |text: &str| {
+            let length = text.chars().count();
+            if length == 2_500 {
+                ExactCount::OverContext
+            } else {
+                pending_lengths.push(length);
+                ExactCount::Pending
+            }
+        };
+        pack(
+            &[block(1, Role::Assistant, &"🌿".repeat(2_500))],
+            Meter::uncalibrated(),
+            limits,
+            Some(&mut exact),
+        )
+        .expect("packed");
+        assert_eq!(pending_lengths, [1_250, 1_250]);
+    }
+
+    #[test]
+    fn zero_count_splits_nonempty_text_at_the_scalar_midpoint() {
+        let limits = Limits::new(10_000, 1_000, false).expect("limits");
+        let text = "a".repeat(3_000);
+        let mut zero = |_: &str| ExactCount::Known(0);
+        let plan = pack(
+            &[block(1, Role::Assistant, &text)],
+            Meter::uncalibrated(),
+            limits,
+            Some(&mut zero),
+        )
+        .expect("packed");
+        let sizes: Vec<_> = plan
+            .chunks
+            .iter()
+            .map(|chunk| chunk.text.chars().count())
+            .collect();
+        assert!(
+            sizes.iter().all(|size| *size <= 2_000),
+            "a zero tokenizer count left over-budget chunks of {sizes:?}"
+        );
+    }
 }

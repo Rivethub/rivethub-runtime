@@ -1,12 +1,15 @@
+mod packing;
 mod run;
 
 use jiff::Timestamp;
 use kernel::memory::summary_backend::SummaryArtifact;
+use packing::freeze;
 use run::{Run, populate, transcript_warnings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::{StreamExt as _, stream};
@@ -26,7 +29,7 @@ use uuid::Uuid;
 
 use super::top_down::{
     llm::{self, Reply},
-    plan::{self, Block, Chunk, ComposePlan, Meter, PlanError, Source, TranscriptPlan},
+    plan::{self, Block, Chunk, ComposePlan, ExactCount, Meter, PlanError, Source, TranscriptPlan},
     prompt::{self, Mode, Prompt},
     settings::{self, Limits},
 };
@@ -57,6 +60,7 @@ struct Publisher<'a> {
     live: &'a LiveEnv<'a>,
     conversion: Option<(&'a dyn SummaryConversion, ConversionLease)>,
     token_workspace: OnceLock<Uuid>,
+    tokenizer_failed: AtomicBool,
 }
 
 impl<'a> std::ops::Deref for Publisher<'a> {
@@ -147,6 +151,7 @@ pub(super) async fn convert(
         live: env,
         conversion: Some((store, lease)),
         token_workspace: OnceLock::new(),
+        tokenizer_failed: AtomicBool::new(false),
     };
     let request = LiveRequest {
         conversation_id: lease.conversation,
@@ -180,6 +185,7 @@ pub async fn handle(
         live: env,
         conversion: None,
         token_workspace: OnceLock::new(),
+        tokenizer_failed: AtomicBool::new(false),
     };
     let mut outcome = publish(&publisher, request, revision).await;
     if matches!(outcome, Err(WorkerError::SummaryReplan)) {
@@ -356,129 +362,6 @@ async fn commit_tree(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
-async fn freeze(
-    env: &Publisher<'_>,
-    request: &LiveRequest,
-    revision: i64,
-    input: &SummaryInput,
-    blocks: &[Block],
-    sources: Vec<Source>,
-    limits: Limits,
-    profile: [u8; 32],
-) -> Result<Frozen, WorkerError> {
-    let sample: String = blocks
-        .iter()
-        .enumerate()
-        .flat_map(|(index, block)| {
-            (index != 0)
-                .then_some('\n')
-                .into_iter()
-                .chain(block.text.chars())
-        })
-        .take(200_000)
-        .collect();
-    let exact = if sample.is_empty() {
-        None
-    } else {
-        let (local, permit) = env.model_slot(request.conversation_id, revision).await?;
-        let count = tokenize(env, request.conversation_id, revision, &sample).await?;
-        drop(permit);
-        drop(local);
-        count.filter(|&count| count > 0)
-    };
-    let meter = match exact {
-        Some(count) => Meter::calibrate(&sample, count).map_err(settings_error)?,
-        None => Meter::uncalibrated(),
-    };
-    let all = pack(
-        env,
-        (request.conversation_id, revision),
-        blocks,
-        meter,
-        limits,
-        exact.is_some(),
-    )
-    .await?;
-    let direct = all.chunks.len() <= 1;
-    let mut retained = BTreeSet::new();
-    let mut chunks = all.chunks;
-    let mut issued_after = 0;
-    if !direct && !input.parts.is_empty() {
-        let coverage = retained_coverage(&sources, &input.parts);
-        retained = coverage.parts;
-        issued_after = coverage.issued_after;
-        if !retained.is_empty() {
-            chunks = Vec::new();
-            for uncovered in blocks.split(|block| coverage.messages.contains(&block.source.id)) {
-                chunks.extend(
-                    pack(
-                        env,
-                        (request.conversation_id, revision),
-                        uncovered,
-                        meter,
-                        limits,
-                        exact.is_some(),
-                    )
-                    .await?
-                    .chunks,
-                );
-            }
-        }
-    }
-    Ok(Frozen {
-        profile,
-        root: input.expected_root,
-        sources,
-        ratio: meter.ratio(),
-        total_tokens: all.total_tokens,
-        retained,
-        issued_after,
-        chunks,
-        direct,
-    })
-}
-
-struct RetainedCoverage {
-    parts: BTreeSet<Uuid>,
-    messages: BTreeSet<Uuid>,
-    issued_after: i32,
-}
-
-fn retained_coverage(sources: &[Source], parts: &[PreparedSummaryRecord]) -> RetainedCoverage {
-    let mut retained = BTreeSet::new();
-    let mut issued_after = 0;
-    let current: BTreeMap<_, _> = sources.iter().map(|source| (source.id, source)).collect();
-    let mut covered = BTreeSet::new();
-    let mut invalid = BTreeSet::new();
-    for part in parts {
-        if let Some(ordinal) = part.issued_part_ordinal {
-            issued_after = issued_after.max(ordinal);
-        }
-        let mut previous = 0;
-        let matches = part.sources.iter().all(|source| {
-            current.get(&source.message).is_some_and(|current| {
-                let same =
-                    source.render_key == Some(current.render_key) && previous < current.ordinal;
-                previous = current.ordinal;
-                same
-            })
-        });
-        if !part.sources.is_empty() && matches {
-            retained.insert(part.id);
-            covered.extend(part.sources.iter().map(|source| source.message));
-        } else {
-            invalid.extend(part.sources.iter().map(|source| source.message));
-        }
-    }
-    covered.retain(|id| !invalid.contains(id));
-    RetainedCoverage {
-        parts: retained,
-        messages: covered,
-        issued_after,
-    }
-}
-
 async fn admission(
     env: &Publisher<'_>,
     id: Uuid,
@@ -505,6 +388,9 @@ async fn tokenize(
     text: &str,
 ) -> Result<Option<usize>, WorkerError> {
     ensure_eligible(env, id, revision).await?;
+    if env.tokenizer_failed.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
     let store = env.summary.store;
     let settings = env.summary.settings;
     let key = if let Some(&run) = env.token_workspace.get() {
@@ -521,60 +407,25 @@ async fn tokenize(
     } else {
         None
     };
-    let count = env
+    let count = match env
         .request(env.summary.provider.count_tokens(&settings.model, text))
-        .await?;
+        .await
+    {
+        Ok(count) => count,
+        Err(error) => {
+            ensure_eligible(env, id, revision).await?;
+            if !env.tokenizer_failed.swap(true, Ordering::Relaxed) {
+                tracing::warn!(conversation = %id, revision, %error, "summary tokenizer failed; using character estimates");
+            }
+            return Ok(None);
+        }
+    };
     if let Some((run, key)) = key {
         store
             .save_live_checkpoint(run, revision, key, encode(&count)?)
             .await?;
     }
     Ok(count)
-}
-
-async fn pack(
-    env: &Publisher<'_>,
-    (id, revision): (Uuid, i64),
-    blocks: &[Block],
-    meter: Meter,
-    limits: Limits,
-    exact: bool,
-) -> Result<TranscriptPlan, WorkerError> {
-    if !exact || blocks.is_empty() {
-        return plan::pack(blocks, meter, limits, None).map_err(settings_error);
-    }
-    let (local, permit) = env.model_slot(id, revision).await?;
-    let mut counts = BTreeMap::new();
-    loop {
-        let mut missing = BTreeMap::new();
-        let packed = plan::pack(
-            blocks,
-            meter,
-            limits,
-            Some(&mut |text| {
-                let key: [u8; 32] = Sha256::digest(text.as_bytes()).into();
-                if let Some(&count) = counts.get(&key) {
-                    Ok(count)
-                } else {
-                    missing.entry(key).or_insert_with(|| text.to_owned());
-                    Ok(0)
-                }
-            }),
-        )
-        .map_err(settings_error)?;
-        if missing.is_empty() {
-            drop(permit);
-            drop(local);
-            return Ok(packed);
-        }
-        for (key, text) in missing {
-            let count = tokenize(env, id, revision, &text)
-                .await?
-                .ok_or(PlanError::ExactCount)
-                .map_err(settings_error)?;
-            counts.insert(key, count);
-        }
-    }
 }
 
 async fn ensure_eligible(env: &Publisher<'_>, id: Uuid, revision: i64) -> Result<(), WorkerError> {

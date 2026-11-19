@@ -306,19 +306,8 @@ fn check_packing(
     meter: Meter,
     limits: Limits,
 ) -> plan::TranscriptPlan {
-    let mut unavailable = |_: &str| Err(plan::PlanError::ExactCount);
-    assert_eq!(
-        plan::pack(
-            blocks,
-            Meter::uncalibrated(),
-            limits,
-            Some(&mut unavailable)
-        )
-        .expect_err("failed tokenizer"),
-        plan::PlanError::ExactCount
-    );
     let mut exact = |text: &str| {
-        Ok(if case.dense_exact {
+        plan::ExactCount::Known(if case.dense_exact {
             text.chars().count()
         } else {
             meter.estimate(text)
