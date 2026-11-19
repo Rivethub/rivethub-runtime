@@ -10,6 +10,7 @@ use kernel::memory::{
 };
 use kernel::tenancy::Scope;
 use kernel::wiki::builder::{ExtractWiki, WikiBuilderStore, WikiRouting, WikiStoreError, WikiWork};
+use kernel::wiki::entity_pass::{EntityLease, EntityStoreError};
 use memory_postgres::PostgresMemory;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -1349,18 +1350,23 @@ async fn wiki_repository_holder_can_read_references_while_publication_waits(
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn wiki_reference_queue_drains_while_entity_lease_waits(pool: PgPool) -> TestResult {
-    Box::pin(Scope::Maintenance.run(entity_lease_reference_queue(pool))).await
+    Box::pin(Scope::Maintenance.run(entity_lease_reference_queue(pool, false))).await
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn wiki_reference_queue_drains_while_entity_mention_waits(pool: PgPool) -> TestResult {
+    Box::pin(Scope::Maintenance.run(entity_lease_reference_queue(pool, true))).await
 }
 
 #[expect(
     clippy::significant_drop_tightening,
     reason = "hold the repository until the reference queue drains"
 )]
-async fn entity_lease_reference_queue(pool: PgPool) -> TestResult {
+async fn entity_lease_reference_queue(pool: PgPool, mention: bool) -> TestResult {
     use std::time::Duration;
 
     use kernel::owner::Owner;
-    use kernel::wiki::entity_pass::{EntityStore, PublishOutcome, StoredRewrite};
+    use kernel::wiki::entity_pass::EntityStore;
     use memory_postgres::merge::MergeRequest;
     use memory_postgres::wiki_writer::WikiRepository;
     use tokio_util::sync::CancellationToken;
@@ -1381,23 +1387,18 @@ async fn entity_lease_reference_queue(pool: PgPool) -> TestResult {
     let summary = id(10);
     let view = entity_page_fixture(&store, summary, now).await?;
     let mut lease = store.lease_entity(view.id).await?;
-    let rewrite = StoredRewrite {
-        summary: "A brass valve.".to_owned(),
-        article: "The brass valve seals the test pipe.".to_owned(),
-        facts: Vec::new(),
-        history: None,
-        owner: "alice".to_owned(),
-        session_at: now,
-        session_id: summary,
-        evidence: "The valve was sealed.".to_owned(),
-    };
     let class = 0x7374_6f72_i32;
     let key = 2_i32;
     let outcome = {
         let repository = WikiRepository::new(directory.path().to_path_buf())
             .lock()
             .await?;
-        let mut apply = std::pin::pin!(lease.apply(&rewrite, now));
+        let mut write = std::pin::pin!(write_while_repository_held(
+            &mut *lease,
+            mention,
+            summary,
+            now
+        ));
         let queue = async {
             if let Ok(result) = tokio::time::timeout(
                 Duration::from_millis(250),
@@ -1423,17 +1424,60 @@ async fn entity_lease_reference_queue(pool: PgPool) -> TestResult {
         };
         let drained = tokio::select! {
             result = tokio::time::timeout(Duration::from_secs(5), queue) => result,
-            result = &mut apply => panic!("entity lease bypassed the repository: {result:?}"),
+            result = &mut write => panic!("entity lease bypassed the repository: {result:?}"),
         };
         repository.release().await?;
         drained.map_err(
             |_| "reference queue stalled while the entity lease waited for the repository",
         )??;
-        tokio::time::timeout(Duration::from_secs(5), apply).await??
+        tokio::time::timeout(Duration::from_secs(5), write).await??
     };
     lease.release().await?;
-    assert!(matches!(outcome, PublishOutcome::Stored { .. }));
+    assert!(outcome);
     Ok(())
+}
+
+async fn write_while_repository_held(
+    lease: &mut dyn EntityLease,
+    mention: bool,
+    summary: Uuid,
+    now: Timestamp,
+) -> Result<bool, EntityStoreError> {
+    use kernel::wiki::entity_pass::{MentionNote, PreparedHistory, PublishOutcome, StoredRewrite};
+    use wire::time::TimestampFormat as _;
+
+    if mention {
+        let note = MentionNote {
+            history: Some(PreparedHistory {
+                summary_id: id(11),
+                conversation_id: Some(id(1)),
+                session_on: now.utc_date(),
+                sentence: "The valve was inspected again.".to_owned(),
+            }),
+            session_at: now,
+            session_id: id(11),
+            owner: "alice".to_owned(),
+        };
+        lease
+            .record_mention(&note, now)
+            .await
+            .map(|sha| sha.is_some())
+    } else {
+        let rewrite = StoredRewrite {
+            summary: "A brass valve.".to_owned(),
+            article: "The brass valve seals the test pipe.".to_owned(),
+            facts: Vec::new(),
+            history: None,
+            owner: "alice".to_owned(),
+            session_at: now,
+            session_id: summary,
+            evidence: "The valve was sealed.".to_owned(),
+        };
+        lease
+            .apply(&rewrite, now)
+            .await
+            .map(|outcome| matches!(outcome, PublishOutcome::Stored { .. }))
+    }
 }
 
 #[expect(
