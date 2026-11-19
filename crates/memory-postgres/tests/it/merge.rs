@@ -386,6 +386,162 @@ async fn assert_keeps_destination_tree(pool: PgPool, legacy: bool) -> TestResult
 }
 
 #[sqlx::test(migrator = "migrate::POSTGRES")]
+async fn incremental_merge_reopens_a_summarized_session_once(pool: PgPool) -> TestResult {
+    use jiff::Timestamp;
+    use kernel::memory::settlement::SettleStatus;
+    use kernel::memory::{MemoryStore as _, SummaryStore as _};
+
+    let source_pool = source_database(&pool).await?;
+    let family = PostgresMemory::new(pool.clone()).with_summary_index_key([0xab; 32]);
+    let source = PostgresMemory::new(source_pool.clone()).with_summary_index_key([0xab; 32]);
+    let conversation = Uuid::from_u128(0xc1);
+    let root = Uuid::from_u128(0xa1);
+    let text = "The spring fits the brass housing.";
+    let dump = one_indexed_summary(root, text, 0xab);
+    let cancel = CancellationToken::new();
+    family.import_memory_dump(&dump, false, &cancel).await?;
+    source.import_memory_dump(&dump, false, &cancel).await?;
+    sqlx::query(
+        "INSERT INTO rh_summary_state (conversation_id, input_revision, last_input_at,
+            settled_at, summarized_through, failed_revision, historical_only)
+         VALUES ($1, 1, '2024-01-01', '2024-01-02', 1, 1, true)",
+    )
+    .bind(conversation)
+    .execute(&pool)
+    .await?;
+    let new_conversation = Uuid::from_u128(0xc4);
+    append_merge_messages(&source_pool, conversation, new_conversation).await?;
+
+    let mut request = MergeRequest {
+        owner: Owner::new("alice".to_owned())?,
+        moves: BTreeMap::new(),
+        dry_run: true,
+    };
+    let before = family
+        .summary_state(conversation)
+        .await?
+        .ok_or("original state")?;
+    let dry_run = family.merge_store(&source, &request, &cancel).await?;
+    assert!(!dry_run.committed);
+    assert_eq!(dry_run.inserted.get("rh_messages"), Some(&2));
+    assert_eq!(
+        family.summary_state(conversation).await?,
+        Some(before.clone())
+    );
+    let messages: i64 = sqlx::query_scalar("SELECT count(*) FROM rh_messages")
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(messages, 1);
+
+    request.dry_run = false;
+    let merged = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(merged.inserted.get("rh_messages"), Some(&2));
+    let after = family
+        .summary_state(conversation)
+        .await?
+        .ok_or("reopened state")?;
+    assert_eq!(after.input_revision, before.input_revision + 1);
+    assert_eq!(after.summarized_through, before.summarized_through);
+    assert!(after.last_input_at > before.last_input_at);
+    assert_eq!(after.unsettled_since, Some(after.last_input_at));
+    assert_eq!(after.settled_at, None);
+    assert_eq!(after.failed_revision, None);
+    assert!(!after.historical_only);
+
+    assert_merged_tree_searchable(&family, root, text).await?;
+    let again = family.merge_store(&source, &request, &cancel).await?;
+    assert_eq!(again.inserted.get("rh_messages"), Some(&0));
+    assert_eq!(
+        family.summary_state(conversation).await?,
+        Some(after.clone())
+    );
+
+    let settled = family
+        .mark_summary_settled("cli:keep", &request.owner)
+        .await?
+        .ok_or("manual settlement")?;
+    assert_eq!(settled.status, SettleStatus::Settled);
+    assert_eq!(
+        family.live_candidates(Uuid::nil(), 10).await?,
+        [(conversation, after.input_revision)]
+    );
+
+    assert_eq!(family.summary_state(new_conversation).await?, None);
+    let now = Timestamp::now();
+    family.expire_summary_page(None, now, now, 10).await?;
+    let historical = family
+        .summary_state(new_conversation)
+        .await?
+        .ok_or("historical state")?;
+    assert!(historical.historical_only);
+    assert_eq!(historical.input_revision, 0);
+    assert!(historical.settled_at.is_some());
+    Ok(())
+}
+
+async fn append_merge_messages(
+    source: &PgPool,
+    conversation: Uuid,
+    new_conversation: Uuid,
+) -> TestResult {
+    sqlx::query(
+        "INSERT INTO rh_conversations (id, session_key, agent, channel, owner_user_id)
+         VALUES ($1, 'cli:new', 'fixture', 'cli', 'alice')",
+    )
+    .bind(new_conversation)
+    .execute(source)
+    .await?;
+    sqlx::query(
+        "INSERT INTO rh_messages (id, conversation_id, agent, channel, role, content, created_at, owner_user_id)
+         VALUES ($1, $2, 'fixture', 'cli', 'user', 'The gasket needs replacing.', '2024-01-03', 'alice'),
+                ($3, $4, 'fixture', 'cli', 'user', 'Calibrate the new gauge.', '2024-01-04', 'alice')",
+    )
+    .bind(Uuid::from_u128(0xc3))
+    .bind(conversation)
+    .bind(Uuid::from_u128(0xc5))
+    .bind(new_conversation)
+    .execute(source)
+    .await?;
+
+    Ok(())
+}
+
+async fn assert_merged_tree_searchable(
+    store: &PostgresMemory,
+    root: Uuid,
+    text: &str,
+) -> TestResult {
+    use kernel::memory::{Limit, MemoryScope, MemoryStore as _, SearchMode, SearchQuery};
+
+    let root = root.to_string();
+    let search = store
+        .search(SearchQuery {
+            text: "brass housing".to_owned(),
+            mode: SearchMode::Fts,
+            scope: MemoryScope::Summaries,
+            since: None,
+            before: None,
+            window: None,
+            expand: None,
+            synthesize: None,
+            agent: None,
+            role: None,
+            exclude_roles: Vec::new(),
+            tool_name: None,
+            tag: None,
+            limit: Limit::clamped(Some(10), 10, 1..=50),
+        })
+        .await?;
+    assert!(
+        search
+            .results
+            .iter()
+            .any(|hit| hit.id == root && hit.content == text)
+    );
+    Ok(())
+}
+
+#[sqlx::test(migrator = "migrate::POSTGRES")]
 async fn merge_accepts_a_store_with_eight_thousand_conversations(pool: PgPool) -> TestResult {
     let source = PostgresMemory::new(source_database(&pool).await?);
     let family = PostgresMemory::new(pool.clone());

@@ -106,7 +106,7 @@ impl PostgresMemory {
             .map_err(|error| Error::operation("merge summary fence", error))?;
         transform::run(&mut tx, request, &mut report).await?;
         for (table, staged) in &columns {
-            let rows = transform::insert(&mut tx, table.name(), staged).await?;
+            let rows = transform::insert(&mut tx, *table, staged).await?;
             report.inserted.insert(table.name().to_owned(), rows);
         }
         crate::dump::validate_summary_graph(&mut tx).await?;

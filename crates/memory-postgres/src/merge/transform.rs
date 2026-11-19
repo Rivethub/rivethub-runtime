@@ -4,9 +4,11 @@ use uuid::Uuid;
 use super::MergeReport;
 use super::MergeRequest;
 use super::stage::staged;
+use super::table::Table;
 use crate::error::Error;
 
 const SETUP: &str = "
+CREATE TEMP TABLE merge_new_conversations (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_moves (conversation uuid PRIMARY KEY, owner text NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE merge_drop (id uuid PRIMARY KEY) ON COMMIT DROP;
 CREATE TEMP TABLE merge_topic_map (source_id uuid PRIMARY KEY, target_id uuid NOT NULL) ON COMMIT DROP;
@@ -407,26 +409,70 @@ async fn reconcile_summary_trees(
     Ok(())
 }
 
+const REFRESH_SETTLEMENT: &str = "
+-- Reopen existing sessions and keep summarized_through and their current trees.
+changed AS (
+    UPDATE rh_conversations c SET last_summary_input_at = clock_timestamp()
+     WHERE c.id IN (SELECT conversation_id FROM inserted)
+       AND NOT EXISTS (SELECT 1 FROM merge_new_conversations new WHERE new.id = c.id)
+    RETURNING c.id, c.last_summary_input_at
+), refreshed AS (
+    INSERT INTO rh_summary_state AS state
+        (conversation_id, input_revision, last_input_at, unsettled_since, historical_only)
+    SELECT id, 1, last_summary_input_at, last_summary_input_at, false FROM changed
+    ON CONFLICT (conversation_id) DO UPDATE SET
+        input_revision = state.input_revision + 1,
+        last_input_at = excluded.last_input_at,
+        unsettled_since = coalesce(state.unsettled_since, excluded.unsettled_since),
+        settled_at = NULL,
+        failed_revision = NULL,
+        historical_only = false
+)";
+
 pub(super) async fn insert(
     conn: &mut PgConnection,
-    table: &str,
+    table: Table,
     columns: &[String],
 ) -> Result<u64, Error> {
     if columns.is_empty() {
         return Ok(0);
     }
-    let stage = staged(table);
+    let name = table.name();
+    let stage = staged(name);
     let list = columns
         .iter()
         .map(|column| format!("\"{column}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let conflict = if table == "rh_summaries" { "(id)" } else { "" };
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO public.{table} ({list}) SELECT {list} FROM {stage} ON CONFLICT {conflict} DO NOTHING"
-    )))
-    .execute(&mut *conn)
-    .await
-    .map(|done| done.rows_affected())
-    .map_err(|error| Error::operation("merge insert", error))
+    let conflict = if table == Table::Summaries {
+        "(id)"
+    } else {
+        ""
+    };
+    let insert = format!(
+        "INSERT INTO public.{name} ({list}) SELECT {list} FROM {stage} ON CONFLICT {conflict} DO NOTHING"
+    );
+    if table == Table::Messages {
+        return count(
+            conn,
+            &format!(
+                "WITH inserted AS ({insert} RETURNING conversation_id),
+                 {REFRESH_SETTLEMENT} SELECT count(*) FROM inserted"
+            ),
+        )
+        .await;
+    }
+    let statement = if table == Table::Conversations {
+        format!(
+            "WITH inserted AS ({insert} RETURNING id)
+             INSERT INTO merge_new_conversations SELECT id FROM inserted"
+        )
+    } else {
+        insert
+    };
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&mut *conn)
+        .await
+        .map(|done| done.rows_affected())
+        .map_err(|error| Error::operation("merge insert", error))
 }
