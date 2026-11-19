@@ -99,10 +99,13 @@ fn bullet_entry(line: &str) -> Option<PageCitation> {
             note: note.filter(|note| !note.is_empty()),
         });
     }
+    let mut words = rest.split_whitespace();
+    let date = words.find_map(iso_date);
+    let kind = date.and_then(|_| words.next().and_then(CitationKind::from_label));
     Some(PageCitation {
         summary_id,
-        date: rest.split_whitespace().find_map(iso_date),
-        kind: rest.split_whitespace().find_map(CitationKind::from_label),
+        date,
+        kind,
         note: Some(item.to_owned()),
     })
 }

@@ -163,3 +163,30 @@ slug: spring
     assert_eq!(parse_wiki_page(&serialize_wiki_page(&page)?)?, page);
     Ok(())
 }
+
+#[test]
+fn free_text_citation_kinds_only_follow_a_date() -> TestResult {
+    let markdown = "---
+title: Spring inspection
+slug: spring
+---
+
+## Citations
+
+- `00000000-0000-4000-8000-000000000001` the session where we measured part of the spring
+- `00000000-0000-4000-8000-000000000002` 2026-10-10 we measured part of the spring
+- `00000000-0000-4000-8000-000000000003` measured on 2026-10-10 section of the spring
+";
+    let page = parse_wiki_page(markdown)?;
+    let kinds: Vec<_> = page
+        .citations
+        .iter()
+        .map(|citation| citation.kind.map(|kind| kind.to_string()))
+        .collect();
+    assert_eq!(kinds, [None, None, Some("section".to_owned())]);
+    assert!(
+        serialize_wiki_page(&page)?
+            .contains("|  | leaf | `00000000-0000-4000-8000-000000000001` |")
+    );
+    Ok(())
+}
